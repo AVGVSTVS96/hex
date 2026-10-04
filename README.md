@@ -33,6 +33,7 @@ hex runs on your own always-on Linux box, with your own Claude subscription. It'
 - **It speaks up on its own, but only when it matters.** At :45 every hour it runs a heartbeat. It checks your email, the work it started, topics waiting on you, and anything it said it would follow up on. If nothing is worth your time, it stays quiet.
 - **Schedules are a JSON file.** `schedules.json` maps a name to a cron line and a prompt. A small Claude Code mod reads it every minute and sends each job to the assistant when it's due.
 - **Memory is files you can read.** `SOUL.md` is who it is, `MEMORY.md` is what it knows about you, `AGENTS.md` is how it works. hex edits them itself as it learns. `MEMORY.md` is created at install and git ignores it, so updates never touch what it knows about you. Every conversation is saved as markdown in `log/`, and each new General session starts with the end of the last one.
+- **All your accounts, one sign-in.** If you use [Executor](https://executor.sh), add it once as a connector in your Claude account and hex can use everything you've connected there: GitHub, Slack, Linear and the rest. Anything Executor says needs approval, hex asks you about in Telegram first.
 - **Voice notes** work with any OpenAI-compatible speech-to-text endpoint, hosted or local.
 
 ## Two front ends

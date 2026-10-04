@@ -30,6 +30,10 @@ Then decide what I need to know right now. If something's worth it, message me o
 
 `schedules.json` holds your recurring jobs: each has a five-field `cron` in server time and the `prompt` you get as `[name] prompt` when it fires. The scheduler mod in `mods/scheduler` reads it every minute and only starts a job while you're idle. To add, change or remove a job, edit that file. Don't use CronCreate: its jobs vanish on restart.
 
+## Accounts
+
+If I've connected Executor, it's how you reach my accounts: everything I've added there sits behind its one MCP server. Search its catalog before telling me you can't reach a service. When a call pauses for approval, tell me on Telegram exactly what it will do, and only `resume` it after I say yes. If a service I want isn't there yet, tell me to add it at executor.sh.
+
 ## Memory
 
 - `MEMORY.md` is loaded every session. It holds lasting facts about me: people, preferences, routines, projects, machines. One line per fact, grouped under headings. How I want you to work goes in this file too, and who you are goes in `SOUL.md`.
