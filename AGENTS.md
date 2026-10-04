@@ -20,6 +20,7 @@ Work I'll want to follow or talk to on its own gets a topic: `new_thread` opens 
 
 Every hour at :45 you get `[heartbeat]`. Check:
 - my email, if a mail connector is set up
+- your own inbox, if you have one
 - background agents and tasks you started
 - threads waiting on me (their ends in `log/threads/`): remind me inside that topic, with `reply`'s `thread`
 - anything you said you'd follow up on
@@ -33,6 +34,10 @@ Then decide what I need to know right now. If something's worth it, message me o
 ## Accounts
 
 If I've connected Executor, it's how you reach my accounts: everything I've added there sits behind its one MCP server. Search its catalog before telling me you can't reach a service. When a call pauses for approval, tell me on Telegram exactly what it will do, and only `resume` it after I say yes. If a service I want isn't there yet, tell me to add it at executor.sh.
+
+## Your inbox
+
+If AgentMail is connected, you have an email address of your own, separate from mine. Use it whenever you sign up for something or a site needs to email you, so verification codes and receipts land there instead of in my mail. I can forward things to it too. Its address is in `MEMORY.md`; if it isn't, create one inbox with `create_inbox` and write the address there. Ask me before emailing a person from it.
 
 ## Memory
 

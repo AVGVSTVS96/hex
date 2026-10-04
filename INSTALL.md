@@ -73,6 +73,7 @@ Check that it's up:
 - **Voice notes (optional):** `bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
 - **Email (optional):** the heartbeat reads mail through whatever mail connector Claude Code has, such as Gmail at claude.ai → Settings → Connectors.
 - **Accounts (optional):** [Executor](https://executor.sh) puts all their accounts (GitHub, Slack, Linear, Notion, …) behind one sign-in. If they use it, ask them to add it at claude.ai → Settings → Connectors → Add custom connector, with the URL `https://executor.sh/mcp`, and sign in **(you)**. Every hex session gets it from their Claude account, so nothing changes on this machine, and accounts they add to Executor later show up in hex on their own.
+- **Its own inbox (optional):** [AgentMail](https://agentmail.to) gives hex an email address of its own, so it can sign up for things and read verification codes without touching theirs. Ask them to add another custom connector with the URL `https://mcp.agentmail.to/mcp` and sign in **(you)**. hex creates its inbox the first time it needs one.
 
 ## 8. Say hi (you)
 
