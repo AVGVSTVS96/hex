@@ -3,161 +3,187 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>hex, a personal assistant in your Telegram</title>
-<meta name="description" content="hex is a personal assistant that lives in your Telegram. Built on Claude Code, running on your own always-on Linux box with your own Claude subscription.">
+<title>hex · Claude Code as your personal assistant</title>
+<meta name="description" content="hex is a personal assistant built on Claude Code. It runs on your own always-on Linux box with your own Claude subscription, and you talk to it in a Telegram group where every topic is its own session.">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#F6F7F5" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#12161C" media="(prefers-color-scheme: dark)">
-<meta property="og:title" content="hex">
-<meta property="og:description" content="A personal assistant that lives in your Telegram. Built on Claude Code, running on your own box.">
+<meta name="theme-color" content="#F4F4F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0A0A0A" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="hex · Claude Code as your personal assistant">
+<meta property="og:description" content="hex is a personal assistant built on Claude Code. It runs on your own always-on Linux box with your own Claude subscription, and you talk to it in a Telegram group where every topic is its own session.">
 <meta property="og:type" content="website">
-<meta property="og:image" content="/og.png">
+<meta property="og:url" content="https://hex-sand.vercel.app">
+<meta property="og:image" content="https://hex-sand.vercel.app/og.png">
 <meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://hex-sand.vercel.app/og.png">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="preload" href="/fonts/spectral-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
+<div class="frame">
 
-<header class="hero wrap">
+<header class="bar">
+  <a href="/" class="bar-mark" aria-label="hex home">
+    <svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg>
+  </a>
+  <nav>
+    <a href="#install">Install</a>
+    <a href="https://github.com/AVGVSTVS96/hex">GitHub</a>
+  </nav>
+</header>
+
+<section class="hero">
   <div class="hero-copy">
-    <svg class="wordmark" viewBox="0 0 1474 760" role="img" aria-label="hex"><path fill="currentColor" d="M0 750V734L64 702V114L3 63V55L151 0H158V363H162Q200 325 235 307Q270 289 314 289Q373 289 411 318.5Q449 348 449 407V702L512 734V750H288V734L354 705V453Q354 410 328 388.5Q302 367 261 367Q236 367 206.5 375.5Q177 384 158 400V705L224 734V750ZM783 760Q685 760 628 701Q571 642 571 544Q571 470 601.5 412Q632 354 682.5 321.5Q733 289 792 289Q871 289 916.5 343.5Q962 398 963 500L958 505H663Q664 551 680.5 590Q697 629 734 653Q771 677 832 677Q890 677 961 639H964V651Q940 697 893 728.5Q846 760 783 760ZM774 333Q730 333 701.5 366Q673 399 666 459H878Q868 392 842 362.5Q816 333 774 333ZM1013 750V734L1067 700L1199 530L1064 345L1017 315V299H1239V315L1174 344V350L1263 471L1343 356V350L1288 315V299H1457V315L1404 349L1285 501L1433 704L1474 734V750H1263V734L1322 705V699L1222 561L1130 693V699L1191 734V750Z"/></svg>
-    <h1>A personal assistant that lives in your Telegram.</h1>
-    <p class="lede">Built on Claude Code. It runs on your own always-on Linux box with your own Claude subscription, works in the background, and only messages you when it’s worth it.</p>
+    <h1>Claude Code as your personal assistant.</h1>
+    <p class="lede">hex runs on your own always-on Linux box, with your own Claude subscription. You talk to it in a Telegram group. It works in the background and messages you only when something matters.</p>
     <div class="actions">
       <a class="button" href="#install">Install</a>
-      <a class="link" href="https://github.com/AVGVSTVS96/hex">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        GitHub
-      </a>
+      <a class="button ghost" href="https://github.com/AVGVSTVS96/hex">View on GitHub</a>
     </div>
   </div>
 
   <figure class="chat">
-    <div class="tg" aria-label="hex in a Telegram forum group">
-      <aside class="tg-topics" aria-label="Topics">
-        <div class="tg-group">
-          <span class="avatar">h</span>
-          <span><b>hex</b><small>4 topics</small></span>
-        </div>
-        <ul>
-          <li class="active"><i class="ti ti-general">#</i><span><b>General</b><small>On it. I opened a topic for it…</small></span></li>
-          <li class="new"><i class="ti" style="--c:#6F8FD8">L</i><span><b>Landing page</b><small>Starting with the copy.</small></span></li>
-          <li><i class="ti" style="--c:#6FAE8F">B</i><span><b>Backup script</b><small>All 3 restores passed.</small></span></li>
-          <li><i class="ti" style="--c:#C79A5E">F</i><span><b>Flights in May</b><small>Two options under $400.</small></span></li>
-        </ul>
-      </aside>
-      <div class="tg-thread">
-        <div class="tg-head"><b>General</b><small>hex</small></div>
-        <div class="tg-messages">
-          <span class="tg-day">Today</span>
-          <p class="msg in m1">Saw a Waymo receipt from 9:28, so I’m guessing you made it to the hack. Submissions close at 4:30…<time>12:45</time></p>
-          <p class="msg out m2">Made it. Can you start on the landing page?<time>12:51</time></p>
-          <p class="msg in m3">On it. I opened a topic for it, and a fresh session is working there now.<time>12:51</time></p>
-          <span class="tg-service m4">hex created the topic “Landing page”</span>
-        </div>
+    <div class="tg" aria-label="The General topic in hex's Telegram group">
+      <div class="tg-head">
+        <span class="avatar" aria-hidden="true">#</span>
+        <span><b>General</b><small>hex</small></span>
+      </div>
+      <div class="tg-messages">
+        <p class="msg in m1">Saw a Waymo receipt from 9:28, so I'm guessing you made it to the hack. Submissions close at 4:30, about 3h45m from now. If you want help with research, building, or the 2-min pitch, just say so here and I'll get started.<time>12:45</time></p>
+        <p class="msg out voice m2"><span class="play" aria-hidden="true"></span><span class="wave" aria-label="Voice message"></span><time>1:35</time></p>
+        <p class="msg in m3">Here's the schedule:<br>• 4:30 submissions close<br>• 4:45 top 6 demo (2 min + 1 min Q&amp;A)<br>• 5:25 awards<br>The demo is the part you need to be there for, so be back by 4:30 at the latest.<time>1:35</time></p>
+        <p class="msg in m4">⏰ Hack check: it's 2:45. Submissions close at 4:30, and the top 6 demo is at 4:45. Leave home with enough time for the Waymo to get you to Terra Gallery by 4:30.<time>2:45</time></p>
       </div>
     </div>
-    <figcaption>The first message is real. Nobody asked; hex saw the receipt during its hourly check.</figcaption>
+    <figcaption>Nobody asked for the first message. hex saw the receipt during its hourly check.</figcaption>
   </figure>
-</header>
+</section>
 
-<main>
-  <section class="how wrap" aria-labelledby="how">
-    <h2 id="how">How it works</h2>
+<section class="block" aria-labelledby="how-title">
+  <div class="block-head">
+    <h2 id="how-title">How it works</h2>
+  </div>
 
-    <div class="row">
-      <div class="text">
-        <h3>Every topic is its own session</h3>
-        <p>General is your main assistant. Ask it to start something and it opens a new topic with a fresh Claude Code agent working on it. Close the topic when it’s done.</p>
-      </div>
-      <div class="detail flow" aria-hidden="true">
-        <span class="flow-label">Telegram</span>
-        <span class="flow-label">Your Linux box</span>
-        <span class="topic"># General</span><span class="session">main assistant</span>
-        <span class="topic"># Landing page</span><span class="session">Claude Code session</span>
-        <span class="topic"># Backup script</span><span class="session">Claude Code session</span>
-      </div>
+  <div class="cells">
+    <div class="cell">
+      <h3>Every topic is its own session</h3>
+      <p>General is your main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh Claude Code session working there, and closes the topic when the work is done. Idle sessions stop and pick up again when you write.</p>
     </div>
-
-    <div class="row">
-      <div class="text">
-        <h3>It speaks up when it’s worth it</h3>
-        <p>Every hour it checks your email, work it started in the background, threads waiting on you, and anything it promised to follow up on. If nothing needs you, you hear nothing.</p>
-        <p>Scheduled jobs live in a plain JSON file of cron entries, and only run while it’s idle.</p>
-      </div>
-      <ol class="detail beats" aria-label="A morning of hourly checks">
-        <li><time>10:45</time><span>Nothing worth saying</span></li>
-        <li><time>11:45</time><span>Nothing worth saying</span></li>
-        <li class="spoke"><time>12:45</time><span>“Saw a Waymo receipt from 9:28…”</span></li>
-        <li><time>1:45</time><span>Nothing worth saying</span></li>
-        <li><time>2:45</time><span>Nothing worth saying</span></li>
-      </ol>
+    <div class="cell">
+      <h3>It speaks up when it's worth it</h3>
+      <p>Every hour it checks your email, the work it started, topics waiting on you, and anything it said it would follow up on. If nothing needs you, you hear nothing.</p>
     </div>
-
-    <div class="row">
-      <div class="text">
-        <h3>Its memory is files you can read</h3>
-        <p>Everything it knows is plain text you can open and edit. Every conversation is saved as markdown, and each new session picks up where the last one ended.</p>
-      </div>
-      <dl class="detail files">
-        <div><dt>SOUL.md</dt><dd>Who it is</dd></div>
-        <div><dt>MEMORY.md</dt><dd>What it knows about you</dd></div>
-        <div><dt>AGENTS.md</dt><dd>How it works</dd></div>
-      </dl>
+    <div class="cell">
+      <h3>Schedules are a plain JSON file</h3>
+      <p>Each job is a name, a cron line and a prompt. The hourly check is just the first one.</p>
     </div>
-
-    <div class="also">
-      <div>
-        <h3>Voice notes</h3>
-        <p>Send one from wherever you are. It transcribes it and answers.</p>
-      </div>
-      <div>
-        <h3>Keeps itself current</h3>
-        <p>Its Telegram channel is a fork of Anthropic’s official Claude Code plugins. Every day a pipeline re-applies hex’s patches onto the latest upstream, Claude fixes any conflicts, and nothing ships unless the tests pass.</p>
-      </div>
+    <div class="cell">
+      <h3>Its memory is files you can read</h3>
+      <p><code>SOUL.md</code> is who it is. <code>MEMORY.md</code> is what it knows about you. <code>AGENTS.md</code> is how it works. hex edits them itself as it learns. Every conversation is saved as markdown, and each new session picks up where the last one ended.</p>
     </div>
-  </section>
+    <div class="cell">
+      <h3>Voice notes</h3>
+      <p>Send one from wherever you are. It transcribes it and answers.</p>
+    </div>
+    <div class="cell">
+      <h3>Keeps itself current</h3>
+      <p>Its Telegram channel is a fork of Anthropic's official Claude Code plugins. Every day a pipeline re-applies hex's patches onto the latest version, Claude fixes any conflicts, and nothing is published unless the checks pass. Your box checks again before it updates.</p>
+    </div>
+  </div>
+</section>
 
-  <section class="install wrap" id="install" aria-labelledby="install-title">
+<section class="block" aria-labelledby="fronts-title">
+  <div class="block-head">
+    <h2 id="fronts-title">Two ways to work with it</h2>
+    <p>hex has two front ends. They are two different ways of working, not copies of each other. One hub on your box serves both.</p>
+  </div>
+
+  <div class="diagram" role="img" aria-label="Telegram and Discord both connect to the hex hub on your box. The hub starts one Claude Code session per thread. Discord and the handoff from Telegram to Discord are in progress.">
+    <div class="fronts">
+      <div class="node app"><b>Telegram</b><small>in your pocket</small></div>
+      <div class="handoff"><span>take this to Discord</span></div>
+      <div class="node app soon"><b>Discord</b><small>in progress</small></div>
+    </div>
+    <div class="box">
+      <span class="box-label">your box</span>
+      <div class="node hub"><b>hex hub</b><small>one connection per app</small></div>
+      <div class="sessions">
+        <div class="node session">Claude Code session</div>
+        <div class="node session">Claude Code session</div>
+        <div class="node session">Claude Code session</div>
+        <small class="sessions-note">one per thread</small>
+      </div>
+      <p class="box-files">SOUL.md · MEMORY.md · AGENTS.md · log/</p>
+    </div>
+  </div>
+
+  <div class="cells fronts-detail">
+    <div class="cell">
+      <header class="front-head"><h3>Telegram</h3><span class="status built">Built and running</span></header>
+      <p class="front-role">Your assistant in your pocket.</p>
+      <ul>
+        <li>General is the main assistant. Every topic is its own session.</li>
+        <li>Short, phone-sized answers.</li>
+        <li>It comes to you with the hourly check and reminders.</li>
+      </ul>
+    </div>
+    <div class="cell soon">
+      <header class="front-head"><h3>Discord</h3><span class="status next">In progress</span></header>
+      <p class="front-role">Tag it and it gets to work.</p>
+      <ul>
+        <li>Tag the bot in any channel and it starts a thread on your message, with a fresh session inside.</li>
+        <li>Inside a thread, just talk.</li>
+        <li>Channels group work by area, like #research and #dev. Room for longer answers, code blocks and history.</li>
+      </ul>
+    </div>
+    <div class="cell handoff-line soon">
+      <span class="status next">In progress</span>
+      <p>Each thread lives in one app. Say "take this to Discord" and the same session moves over with its memory. The Telegram topic posts a link and closes.</p>
+    </div>
+  </div>
+</section>
+
+<section class="block install" id="install" aria-labelledby="install-title">
+  <div class="block-head">
     <h2 id="install-title">Install with one prompt</h2>
-    <p>Paste this into Claude Code. Your coding agent sets up the rest.</p>
-    <div class="prompt">
-      <pre><code id="prompt">Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTALL.md in that repo.</code></pre>
-      <button type="button" class="copy" data-copy="prompt">
-        <svg class="i-copy" viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 3.5v-.5A1.5 1.5 0 0 0 9 1.5H4A1.5 1.5 0 0 0 2.5 3v5A1.5 1.5 0 0 0 4 9.5h.5"/></svg>
-        <svg class="i-done" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3 3 7-7"/></svg>
-        <span aria-live="polite">Copy</span>
-      </button>
-    </div>
-    <div class="needs">
-      <div>
-        <h3>You’ll need</h3>
-        <ul>
-          <li>An always-on Linux box, like a home server or a cloud&nbsp;VM</li>
-          <li>A Claude subscription</li>
-          <li>Telegram</li>
-        </ul>
-      </div>
-      <div>
-        <h3>The only manual steps</h3>
-        <ol>
-          <li>Create a Telegram bot with BotFather</li>
-          <li>Create a forum group, a Telegram group with topics turned on</li>
-        </ol>
-      </div>
-    </div>
-  </section>
-</main>
+    <p>Paste this into Claude Code on your box. It does the setup and tells you when it needs you.</p>
+  </div>
 
-<footer class="wrap">
-  <img src="/logo.svg" alt="hex" class="foot-mark light-only" width="58" height="30">
-  <img src="/logo-light.svg" alt="hex" class="foot-mark dark-only" width="58" height="30">
-  <p>Open source under MIT. Discord, as a separate space for teams, is coming next.</p>
-  <a href="https://github.com/AVGVSTVS96/hex">github.com/AVGVSTVS96/hex</a>
+  <div class="prompt">
+    <pre><code id="prompt">Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTALL.md in that repo.</code></pre>
+    <button type="button" class="copy" data-copy="prompt"><span aria-live="polite">Copy</span></button>
+  </div>
+
+  <div class="cells needs">
+    <div class="cell">
+      <h3>You'll need</h3>
+      <ul>
+        <li>An always-on Linux box with systemd, like a home server or a cloud&nbsp;VM</li>
+        <li>A Claude subscription</li>
+        <li>Telegram</li>
+      </ul>
+    </div>
+    <div class="cell">
+      <h3>What you do yourself</h3>
+      <ul>
+        <li>Make a bot with @BotFather</li>
+        <li>Make a Telegram group with Topics turned on, and add the bot as an admin</li>
+        <li>Say hi</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="foot-row">
+    <p>Open source under MIT.</p>
+    <a href="https://github.com/AVGVSTVS96/hex">github.com/AVGVSTVS96/hex</a>
+  </div>
+  <svg class="foot-mark" viewBox="0 0 2167 737" role="img" aria-label="hex"><path id="wordmark" fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></svg>
 </footer>
 
+</div>
 <script>
 document.querySelectorAll('[data-copy]').forEach((button) => {
   const label = button.querySelector('span');
