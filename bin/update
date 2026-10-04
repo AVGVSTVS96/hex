@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")/.."
+git pull -q --ff-only
+
+cd channels
+git fetch -q origin main
+current=$(git rev-parse HEAD)
+incoming=$(git rev-parse origin/main)
+if [ "$current" = "$incoming" ]; then
+  echo "up to date at $(git rev-parse --short HEAD)"
+  exit 0
+fi
+
+check=$(mktemp -d)
+trap 'git worktree remove --force "$check" 2>/dev/null; rm -rf "$check"' EXIT
+git worktree add -q --detach "$check" "$incoming"
+if ! output=$(PYTHONDONTWRITEBYTECODE=1 "$check/scripts/verify" 2>&1); then
+  printf '%s\n' "$output"
+  echo "not updated: $(git rev-parse --short "$incoming") fails scripts/verify"
+  exit 1
+fi
+
+git checkout -q --detach "$incoming"
+systemctl --user restart hex-hub
+echo "updated $(git rev-parse --short "$current")..$(git rev-parse --short "$incoming") and restarted the hub"

@@ -1,0 +1,1 @@
+{ "name": "scheduler", "version": "0.1.0", "description": "Fires the jobs in schedules.json as prompts while the session is idle" }

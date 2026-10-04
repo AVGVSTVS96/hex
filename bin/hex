@@ -1,0 +1,11 @@
+#!/bin/sh
+cd "$(dirname "$0")/.." || exit 1
+set -a; . ./.env; set +a
+
+claude agents --json | jq -e '.[] | select(.name == "hex" and .pid)' >/dev/null && exit 0
+
+exec claude --bg --name hex \
+  --channels plugin:telegram@assistant \
+  --plugin-dir mods/scheduler \
+  --settings "$(jq --arg thread "$ASSISTANT_MAIN_THREAD" --arg hub "$HOME/.claude/channels/telegram-hub/hub.sock" \
+    '.env = { ASSISTANT_THREAD: $thread, ASSISTANT_HUB: $hub }' .claude/main.json)"

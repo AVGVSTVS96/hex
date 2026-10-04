@@ -1,0 +1,10 @@
+#!/bin/sh
+set -a; . "$(dirname "$0")/../.env"; set +a
+if [ -z "${TRANSCRIBE_URL:-}" ] || [ -z "${TRANSCRIBE_MODEL:-}" ]; then
+  echo "voice isn't set up: add TRANSCRIBE_URL and TRANSCRIBE_MODEL to .env" >&2
+  exit 1
+fi
+
+set -- -F file=@"$1" -F model="$TRANSCRIBE_MODEL"
+[ -n "${TRANSCRIBE_API_KEY:-}" ] && set -- "$@" -H "Authorization: Bearer $TRANSCRIBE_API_KEY"
+curl -sf "$TRANSCRIBE_URL" "$@" | jq -r .text

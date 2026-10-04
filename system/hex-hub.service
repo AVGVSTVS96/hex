@@ -1,0 +1,16 @@
+[Unit]
+Description=hex Telegram hub: one bot connection, one Claude session per topic
+
+[Service]
+WorkingDirectory=%h/hex/channels/external_plugins/telegram
+EnvironmentFile=%h/hex/.env
+Environment=ASSISTANT_DIR=%h/hex
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+ExecStartPre=/usr/bin/env bun install --no-summary
+ExecStart=/usr/bin/env bun bot.ts
+KillMode=process
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target

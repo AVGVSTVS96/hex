@@ -1,0 +1,6 @@
+{
+  "heartbeat": {
+    "cron": "45 * * * *",
+    "prompt": "Hourly check, see \"Heartbeat\" in AGENTS.md"
+  }
+}
