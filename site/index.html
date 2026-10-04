@@ -6,7 +6,7 @@
 <title>hex · Claude Code as your assistant</title>
 <meta name="description" content="hex is Claude Code as your assistant: personal on Telegram, work on Discord, one memory. It runs on your own box with your own Claude plan.">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#F4F4F1" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#F3EFE6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0A0A0A" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="hex · Claude Code as your assistant">
 <meta property="og:description" content="hex is Claude Code as your assistant: personal on Telegram, work on Discord, one memory. It runs on your own box with your own Claude plan.">
@@ -23,6 +23,10 @@
 <body>
 <div class="frame">
 
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="bubble" viewBox="0 0 24 24"><path d="M12 2.5C6.5 2.5 2 6.4 2 11.2c0 2.6 1.3 4.9 3.4 6.5L4.6 21l4-1.9c1.1.3 2.2.5 3.4.5 5.5 0 10-3.9 10-8.6S17.5 2.5 12 2.5Z" fill="currentColor"/></symbol>
+</svg>
+
 <header class="bar">
   <a href="/" class="bar-mark" aria-label="hex home">
     <svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg>
@@ -35,36 +39,55 @@
 
 <section class="hero">
   <div class="hero-copy">
-    <h1>Claude Code as your assistant.</h1>
-    <p class="lede">Personal on Telegram. Work on Discord. One memory, running on your own box with your own Claude plan.</p>
+    <span class="sticker">Built on Claude Code</span>
+    <h1>Claude Code as your <mark>assistant.</mark></h1>
+    <p class="lede">Personal on Telegram. Work on Discord. One memory, on your own box, with your own Claude plan.</p>
     <div class="actions">
       <a class="button" href="#install">Install</a>
       <a class="button ghost" href="https://github.com/AVGVSTVS96/hex">View on GitHub</a>
     </div>
   </div>
 
-  <figure class="chat">
-    <div class="tg" aria-label="The General topic in hex's Telegram group">
+  <figure class="stage" aria-label="hex in Telegram">
+    <div class="phone" aria-hidden="true">
       <div class="tg-head">
-        <span class="avatar" aria-hidden="true">#</span>
-        <span><b>General</b><small>hex</small></span>
+        <span class="tg-back">‹</span>
+        <img class="tg-avatar" src="/icon.svg" alt="">
+        <span class="tg-title"><b>hex</b><small>General</small></span>
       </div>
-      <div class="tg-messages">
-        <p class="msg in m1">Saw a Waymo receipt from 9:28, so I'm guessing you made it to the hack. Submissions close at 4:30. Want help with the build or the pitch?<time>12:45</time></p>
-        <p class="msg out voice m2"><span class="play" aria-hidden="true"></span><span class="wave" aria-label="Voice message"></span><time>1:35</time></p>
-        <p class="msg in m3">Here's the schedule:<br>• 4:30 submissions close<br>• 4:45 top 6 demo<br>• 5:25 awards<time>1:35</time></p>
-        <p class="msg in m4">⏰ It's 2:45. Leave with enough time for the Waymo to get you to Terra Gallery by 4:30.<time>2:45</time></p>
+      <div class="tg-chat">
+        <p class="bub out a1">find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it<time>4:41 <b>✓✓</b></time></p>
+        <p class="bub in a2">On it. Opened <span class="link">#ramen-tonight</span>.<time>4:41</time></p>
+        <div class="bub in card a3">
+          <span class="card-bar"></span>
+          <span class="card-body"><b>Live: ramen-tonight.vercel.app</b><small>3 spots compared · open now · walking distance</small></span>
+          <time>4:47</time>
+        </div>
+      </div>
+      <div class="tg-tabs">
+        <span class="tab on"><svg style="color:#3E95F2"><use href="#bubble"/></svg>General</span>
+        <span class="tab new"><svg style="color:#F25C8E"><use href="#bubble"/></svg>ramen-tonight<span class="states"><em>working…</em><em class="done">done ✓</em></span></span>
+        <span class="tab"><svg style="color:#FF7A45"><use href="#bubble"/></svg>Theo clips</span>
+        <span class="tab"><svg style="color:#8E6CF2"><use href="#bubble"/></svg>Leisure time</span>
+        <span class="tab"><svg style="color:#3CB371"><use href="#bubble"/></svg>Connectors</span>
+      </div>
+      <div class="tg-compose">
+        <svg viewBox="0 0 24 24" class="ico"><path d="M16.5 6.5 8.4 14.6a2 2 0 1 0 2.8 2.8l8.1-8.1a4 4 0 0 0-5.6-5.6L5.4 12a6 6 0 0 0 8.5 8.5l6.6-6.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <span class="tg-input">Message</span>
+        <svg viewBox="0 0 24 24" class="ico"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       </div>
     </div>
   </figure>
 </section>
 
 <section class="stats" aria-label="At a glance">
-  <div><b>2</b><span>front ends</span></div>
-  <div><b>1</b><span>shared memory</span></div>
-  <div><b>0</b><span>databases</span></div>
-  <div><b>1</b><span>prompt to install</span></div>
+  <div class="s-blue"><b>~<span data-count="330">330</span></b><span>lines of hex. The rest is Claude Code.</span></div>
+  <div class="s-yellow"><b>$0</b><span>extra. Runs on the Claude plan you already pay for.</span></div>
+  <div class="s-pink"><b>1</b><span>Claude Code session per thread</span></div>
+  <div class="s-ink"><b>0</b><span>databases</span></div>
 </section>
+
+<p class="plan">No API key, no per-token bill. hex runs the official Claude Code app, so your Claude plan powers it the way Anthropic intends.</p>
 
 <section class="block" aria-labelledby="ways-title">
   <div class="block-head">
@@ -75,20 +98,21 @@
   <div class="ways">
     <article class="way">
       <header>
-        <span class="tag">Telegram</span>
+        <span class="tag t-tg">Telegram</span>
         <h3>Personal assistant</h3>
+        <p>In your pocket.</p>
       </header>
-      <div class="mock tg-topics" aria-hidden="true">
-        <div class="topic on"><span>#</span><b>General</b><small>Your main assistant</small></div>
-        <div class="topic"><span>#</span><b>Theo clips</b><small>Working…</small></div>
-        <div class="topic"><span>#</span><b>Leisure</b><small>Saturday plans</small></div>
-        <div class="topic"><span>#</span><b>Connectors</b><small>Done ✓</small></div>
+      <div class="tg-list" aria-hidden="true">
+        <div class="row"><svg style="color:#3E95F2"><use href="#bubble"/></svg><span><b>General</b><small>On it. Opened #ramen-tonight.</small></span><time>4:41</time></div>
+        <div class="row"><svg style="color:#F25C8E"><use href="#bubble"/></svg><span><b>ramen-tonight</b><small>Live: ramen-tonight.vercel.app</small></span><time>4:47</time><em>1</em></div>
+        <div class="row"><svg style="color:#FF7A45"><use href="#bubble"/></svg><span><b>Theo clips</b><small class="typing">hex is typing<i></i><i></i><i></i></small></span><time>now</time></div>
+        <div class="row"><svg style="color:#8E6CF2"><use href="#bubble"/></svg><span><b>Leisure time</b><small>Saturday: 3 options for you</small></span><time>Sat</time></div>
+        <div class="row"><svg style="color:#3CB371"><use href="#bubble"/></svg><span><b>Connectors</b><small>Done ✓ Closing this topic.</small></span><time>Fri</time></div>
       </div>
       <ul>
-        <li>In your pocket</li>
         <li>Every topic is its own session</li>
         <li>Voice notes in, short answers out</li>
-        <li>It messages you first</li>
+        <li>Ship things straight from your phone</li>
       </ul>
     </article>
 
@@ -96,27 +120,45 @@
 
     <article class="way">
       <header>
-        <span class="tag">Discord</span>
+        <span class="tag t-dc">Discord</span>
         <h3>Work assistant</h3>
+        <p>At your desk, with your team.</p>
       </header>
-      <div class="mock dc" aria-hidden="true">
+      <div class="dc" aria-hidden="true">
+        <div class="dc-rail"><span class="srv"><img src="/icon.svg" alt=""></span><span class="srv dim"></span><span class="srv dim"></span></div>
         <div class="dc-side">
-          <span class="on"># general</span>
+          <b>hex</b>
+          <span># general</span>
           <span># research</span>
-          <span># dev</span>
+          <span class="on"># dev</span>
         </div>
         <div class="dc-main">
-          <p class="dc-msg"><b>you</b><span class="mention">@hex</span> why did last night's deploy fail?</p>
-          <p class="dc-thread"><span>Thread</span>Last night's deploy · hex is working</p>
+          <div class="dc-msg">
+            <span class="dc-av"></span>
+            <div><b>you</b> <small>Today at 4:02 PM</small>
+              <p><span class="mention">@hex</span> why did last night's deploy fail?</p>
+              <div class="dc-thread">
+                <b>Deploy failure</b>
+                <p><span class="who">hex</span> Build ran out of memory on step 3. Fix is ready to review.</p>
+                <small>3 Messages ›</small>
+              </div>
+            </div>
+          </div>
+          <div class="dc-typing"><i></i><i></i><i></i> <b>hex</b> is typing…</div>
+          <div class="dc-compose">Message #dev</div>
         </div>
       </div>
       <ul>
-        <li>At your desk, with your team</li>
-        <li>Tag it, and it starts a thread</li>
+        <li>Tag it, and it opens a thread</li>
         <li>Room for code, logs and long answers</li>
         <li>Channels group work by area</li>
       </ul>
     </article>
+  </div>
+
+  <div class="shared">
+    <span class="shared-label">Both share one memory</span>
+    <span class="file">SOUL.md</span><span class="file">MEMORY.md</span><span class="file">AGENTS.md</span><span class="file">log/</span>
   </div>
 </section>
 
@@ -126,30 +168,102 @@
     <p>One hub on your box. A real Claude Code session behind every thread.</p>
   </div>
 
-  <div class="diagram" role="img" aria-label="Telegram and Discord connect to the hex hub on your box. The hub starts one Claude Code session per thread. Sessions share memory files and can use hex's own computer, its own inbox and your accounts.">
-    <div class="fronts">
-      <div class="node app"><b>Telegram</b><small>personal</small></div>
-      <div class="handoff"><span>hand off</span></div>
-      <div class="node app"><b>Discord</b><small>work</small></div>
-    </div>
-    <div class="box">
-      <span class="box-label">your box</span>
-      <div class="node hub"><b>hex hub</b><small>routes every thread</small></div>
-      <div class="sessions">
-        <div class="node session">Claude Code session</div>
-        <div class="node session">Claude Code session</div>
-        <div class="node session">Claude Code session</div>
-        <small class="sessions-note">one per thread</small>
-      </div>
-      <p class="box-files">SOUL.md · MEMORY.md · AGENTS.md · log/</p>
-    </div>
-  </div>
+  <figure class="flow" role="img" aria-label="Telegram and Discord send messages to the hex hub on your box. The hub routes each thread to its own Claude Code session. Sessions share memory files.">
+    <svg class="flow-wide" viewBox="0 0 1100 460" aria-hidden="true">
+      <rect class="f-box" x="330" y="24" width="744" height="412"/>
+      <rect class="f-boxlabel" x="330" y="24" width="96" height="26"/>
+      <text class="f-mono f-inv" x="344" y="42">your box</text>
 
-  <div class="reach">
-    <div><span class="tag">it can use →</span></div>
-    <div class="node"><b>Its own computer</b><small>cloud desktop + Chrome</small></div>
-    <div class="node"><b>Its own inbox</b><small>AgentMail</small></div>
-    <div class="node"><b>Your accounts</b><small>Executor</small></div>
+      <path id="w1" class="f-wire" d="M240 126 H300 V208 H384"/>
+      <path id="w2" class="f-wire" d="M240 334 H300 V232 H384"/>
+      <path id="w3" class="f-wire" d="M596 220 H648 V108 H704"/>
+      <path id="w4" class="f-wire" d="M596 220 H704"/>
+      <path id="w5" class="f-wire" d="M596 220 H648 V332 H704"/>
+      <path class="f-hand" d="M140 166 V286"/>
+      <path class="f-handhead" d="M134 278 L140 290 L146 278"/>
+      <text class="f-mono f-muted" x="154" y="232">hand off</text>
+
+      <rect class="f-shadow" x="34" y="94" width="206" height="72"/>
+      <rect class="f-tg" x="28" y="88" width="206" height="72"/>
+      <text class="f-title f-inv" x="48" y="122">Telegram</text>
+      <text class="f-mono f-inv f-soft" x="48" y="144">personal</text>
+
+      <rect class="f-shadow" x="34" y="302" width="206" height="72"/>
+      <rect class="f-dc" x="28" y="296" width="206" height="72"/>
+      <text class="f-title f-inv" x="48" y="330">Discord</text>
+      <text class="f-mono f-inv f-soft" x="48" y="352">work</text>
+
+      <rect class="f-shadow" x="390" y="188" width="206" height="76"/>
+      <rect class="f-hub" x="384" y="182" width="206" height="76"/>
+      <text class="f-title" x="404" y="217">hex hub</text>
+      <text class="f-mono" x="404" y="240">routes every thread</text>
+
+      <g class="f-sess">
+        <rect class="f-shadow" x="710" y="86" width="320" height="56"/><rect class="f-node" x="704" y="80" width="320" height="56"/>
+        <text class="f-label" x="724" y="113">Claude Code</text><text class="f-mono f-muted" x="1004" y="113" text-anchor="end">ramen-tonight</text>
+        <rect class="f-shadow" x="710" y="198" width="320" height="56"/><rect class="f-node" x="704" y="192" width="320" height="56"/>
+        <text class="f-label" x="724" y="225">Claude Code</text><text class="f-mono f-muted" x="1004" y="225" text-anchor="end">Theo clips</text>
+        <rect class="f-shadow" x="710" y="310" width="320" height="56"/><rect class="f-node" x="704" y="304" width="320" height="56"/>
+        <text class="f-label" x="724" y="337">Claude Code</text><text class="f-mono f-muted" x="1004" y="337" text-anchor="end">#dev</text>
+      </g>
+
+      <text class="f-mono f-muted" x="384" y="412">SOUL.md · MEMORY.md · AGENTS.md · log/</text>
+
+    <circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.22;1" calcMode="linear"><mpath href="#w1"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22" values="1;0"/></circle>
+<circle class="f-dot f-dot-dc" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5;0.72;1" calcMode="linear"><mpath href="#w2"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.5;0.72" values="0;1;0"/></circle>
+<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#w3"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
+<circle class="f-dot f-dot-pink" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#w4"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
+<circle class="f-dot f-dot-dc" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#w5"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
+<rect class="f-glow" x="704" y="80" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
+<rect class="f-glow" x="704" y="192" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
+<rect class="f-glow" x="704" y="304" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
+    </svg>
+
+    <svg class="flow-tall" viewBox="0 0 420 640" aria-hidden="true">
+      <rect class="f-box" x="10" y="150" width="400" height="476"/>
+      <rect class="f-boxlabel" x="10" y="150" width="96" height="26"/>
+      <text class="f-mono f-inv" x="24" y="168">your box</text>
+
+      <path id="v1" class="f-wire" d="M110 86 V128 H196 V206"/>
+      <path id="v2" class="f-wire" d="M310 86 V128 H224 V206"/>
+      <path id="v3" class="f-wire" d="M210 280 V312 H38 V367 H60"/>
+      <path id="v4" class="f-wire" d="M210 280 V312 H38 V441 H60"/>
+      <path id="v5" class="f-wire" d="M210 280 V312 H38 V515 H60"/>
+      <path class="f-hand" d="M202 52 H214"/>
+
+      <rect class="f-shadow" x="26" y="26" width="176" height="60"/><rect class="f-tg" x="20" y="20" width="176" height="60"/>
+      <text class="f-title f-inv" x="36" y="48">Telegram</text><text class="f-mono f-inv f-soft" x="36" y="68">personal</text>
+      <rect class="f-shadow" x="230" y="26" width="176" height="60"/><rect class="f-dc" x="224" y="20" width="176" height="60"/>
+      <text class="f-title f-inv" x="240" y="48">Discord</text><text class="f-mono f-inv f-soft" x="240" y="68">work</text>
+
+      <rect class="f-shadow" x="116" y="212" width="200" height="70"/><rect class="f-hub" x="110" y="206" width="200" height="70"/>
+      <text class="f-title" x="128" y="238">hex hub</text><text class="f-mono" x="128" y="260">routes every thread</text>
+
+      <rect class="f-shadow" x="66" y="346" width="320" height="50"/><rect class="f-node" x="60" y="340" width="320" height="50"/>
+      <text class="f-label" x="78" y="370">Claude Code</text><text class="f-mono f-muted" x="364" y="370" text-anchor="end">ramen-tonight</text>
+      <rect class="f-shadow" x="66" y="420" width="320" height="50"/><rect class="f-node" x="60" y="414" width="320" height="50"/>
+      <text class="f-label" x="78" y="444">Claude Code</text><text class="f-mono f-muted" x="364" y="444" text-anchor="end">Theo clips</text>
+      <rect class="f-shadow" x="66" y="494" width="320" height="50"/><rect class="f-node" x="60" y="488" width="320" height="50"/>
+      <text class="f-label" x="78" y="518">Claude Code</text><text class="f-mono f-muted" x="364" y="518" text-anchor="end">#dev</text>
+
+      <text class="f-mono f-muted" x="60" y="590">SOUL.md · MEMORY.md · AGENTS.md · log/</text>
+
+    <circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;1" keyTimes="0;0.22;1" calcMode="linear"><mpath href="#v1"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22" values="1;0"/></circle>
+<circle class="f-dot f-dot-dc" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;1" keyTimes="0;0.5;0.72;1" calcMode="linear"><mpath href="#v2"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.5;0.72" values="0;1;0"/></circle>
+<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v3"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
+<circle class="f-dot f-dot-pink" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v4"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
+<circle class="f-dot f-dot-dc" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v5"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
+<rect class="f-glow" x="60" y="340" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
+<rect class="f-glow" x="60" y="414" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
+<rect class="f-glow" x="60" y="488" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
+    </svg>
+  </figure>
+
+  <div class="uses">
+    <span class="uses-label">Every session can use</span>
+    <div class="use u-blue"><b>Its own computer</b><small>cloud desktop + Chrome</small></div>
+    <div class="use u-yellow"><b>Its own inbox</b><small>AgentMail</small></div>
+    <div class="use u-pink"><b>Your accounts</b><small>Executor</small></div>
   </div>
 </section>
 
@@ -158,49 +272,103 @@
     <h2 id="does-title">What it does</h2>
   </div>
 
-  <div class="cells features">
-    <div class="cell">
-      <span class="tag">heartbeat</span>
-      <h3>Speaks up first</h3>
-      <p>Checks your email and open work every hour. Quiet when nothing needs you.</p>
+  <div class="features lead">
+    <div class="feat">
+      <div class="viz v-term v-ship" aria-hidden="true">
+<pre><span class="l l1"><b>$</b> bun create astro ramen-tonight</span>
+<span class="l l2"><b>$</b> bun run build <span class="ok">✓</span></span>
+<span class="l l3"><b>$</b> vercel deploy --prod</span>
+<span class="l l4"><span class="ok">✓ deployed</span></span>
+<span class="l l5 url">ramen-tonight.vercel.app ↗</span></pre>
+      </div>
+      <h3>Builds and ships</h3>
+      <p>Every thread is a full Claude Code session. It writes code, runs it, deploys it and sends you the link.</p>
     </div>
-    <div class="cell">
-      <span class="tag">computer</span>
-      <h3>Has its own computer</h3>
-      <p>A cloud desktop with Chrome. Logs in, clicks through and solves CAPTCHAs.</p>
+
+    <div class="feat">
+      <div class="viz v-team" aria-hidden="true">
+        <span class="tt t1"><svg style="color:#F25C8E"><use href="#bubble"/></svg>ramen-tonight<em>working…</em></span>
+        <span class="tt t2"><svg style="color:#FF7A45"><use href="#bubble"/></svg>flight-options<em>working…</em></span>
+        <span class="tt t3"><svg style="color:#3CB371"><use href="#bubble"/></svg>fix-deploy<em class="done">done ✓</em></span>
+      </div>
+      <h3>A team, not a chatbot</h3>
+      <p>Ask for three things and get three sessions working at once, each in its own thread.</p>
     </div>
-    <div class="cell">
-      <span class="tag">inbox</span>
-      <h3>Has its own email</h3>
-      <p>Signs up for things and reads its own verification codes.</p>
+
+    <div class="feat">
+      <div class="viz v-code v-self" aria-hidden="true">
+<pre><span class="dim">hex/bin/transcribe</span>
+<span class="del">- set -- -F file=@"$1"</span>
+<span class="add">+ set -- -F file=@"$1" \</span>
+<span class="add">+   -F language=en</span>
+<span class="ok">tests pass · restarted</span></pre>
+      </div>
+      <h3>Upgrades itself</h3>
+      <p>hex is plain files and Claude Code. Missing a feature? Ask. It edits itself, runs the tests and restarts.</p>
     </div>
-    <div class="cell">
-      <span class="tag">accounts</span>
-      <h3>Reaches your accounts</h3>
-      <p>Connect them once through Executor. Every session can use them.</p>
+
+    <div class="feat">
+      <div class="viz v-chips" aria-hidden="true">
+        <span class="chip c1">Skills</span><span class="chip c2">MCP</span><span class="chip c3">Subagents</span><span class="chip c4">Computer use</span>
+        <span class="sync">↻ same-day upgrades</span>
+      </div>
+      <h3>Gets everything Claude Code gets</h3>
+      <p>Skills, MCP, subagents, computer use. Every Claude Code upgrade lands in hex the same day.</p>
     </div>
-    <div class="cell">
-      <span class="tag">schedules.json</span>
-      <h3>Schedules itself</h3>
-<pre class="snippet"><code>"morning-news": {
-  "cron": "0 8 * * *",
-  "prompt": "Top AI news"
-}</code></pre>
+  </div>
+
+  <div class="features rest">
+    <div class="feat">
+      <div class="viz v-computer" aria-hidden="true">
+        <div class="win">
+          <div class="win-bar"><i></i><i></i><i></i><span>luma.com/signin</span></div>
+          <div class="win-body">
+            <span class="field"></span><span class="field short"></span>
+            <span class="captcha"><span class="box"></span>I'm not a robot</span>
+            <svg class="cursor" viewBox="0 0 16 20"><path d="M1 1v16l4.5-4.2 3 6.2 2.6-1.2-3-6.1H14Z" fill="#0A0A0A" stroke="#fff" stroke-width="1.2"/></svg>
+          </div>
+        </div>
+      </div>
+      <h3>Its own computer</h3>
+      <p>A cloud desktop with Chrome. Logs in, gets past CAPTCHAs.</p>
     </div>
-    <div class="cell">
-      <span class="tag">memory</span>
-      <h3>Remembers in plain files</h3>
-      <p>Markdown you can read and edit. It updates them as it learns.</p>
+
+    <div class="feat">
+      <div class="viz v-inbox" aria-hidden="true">
+        <div class="mail"><b>Luma</b><span>Your code is <mark>482 913</mark></span></div>
+        <div class="mail dim"><b>GitHub</b><span>Verify your email</span></div>
+        <div class="mail dim"><b>Vercel</b><span>Welcome aboard</span></div>
+      </div>
+      <h3>Its own email</h3>
+      <p>Signs up for things and reads its own codes.</p>
     </div>
-    <div class="cell">
-      <span class="tag">voice</span>
-      <h3>Hears voice notes</h3>
-      <p>Talk from anywhere. It transcribes and answers.</p>
+
+    <div class="feat">
+      <div class="viz v-accounts" aria-hidden="true">
+        <span class="hubchip">Executor</span>
+        <span class="acct c1">Gmail</span><span class="acct c2">Calendar</span><span class="acct c3">GitHub</span><span class="acct c4">Drive</span>
+      </div>
+      <h3>Your accounts</h3>
+      <p>Connect once. Every session can use them.</p>
     </div>
-    <div class="cell">
-      <span class="tag">updates</span>
-      <h3>Keeps itself current</h3>
-      <p>Rebuilds on the latest Claude Code plugins daily. Claude fixes conflicts. Ships only if checks pass.</p>
+
+    <div class="feat">
+      <div class="viz v-code" aria-hidden="true">
+<pre><span class="dim"># MEMORY.md</span>
+<span class="dim">- Building hex for the hack</span>
+<span class="add">+ "clot" in voice = Claude</span></pre>
+      </div>
+      <h3>One memory</h3>
+      <p>Plain markdown, shared by every thread.</p>
+    </div>
+
+    <div class="feat">
+      <div class="viz v-voice" aria-hidden="true">
+        <div class="vbars"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <p class="vtext">"deploy it when it's done"</p>
+      </div>
+      <h3>Voice notes</h3>
+      <p>Talk from anywhere. It transcribes and acts.</p>
     </div>
   </div>
 </section>
@@ -216,8 +384,8 @@
     <button type="button" class="copy" data-copy="prompt"><span aria-live="polite">Copy</span></button>
   </div>
 
-  <div class="cells needs">
-    <div class="cell">
+  <div class="needs">
+    <div>
       <h3>You'll need</h3>
       <ul>
         <li>An always-on Linux box</li>
@@ -225,7 +393,7 @@
         <li>Telegram, Discord, or both</li>
       </ul>
     </div>
-    <div class="cell">
+    <div>
       <h3>You do</h3>
       <ul>
         <li>Make a bot</li>
@@ -260,6 +428,21 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
     }, 1800);
   });
 });
+
+const counter = document.querySelector('[data-count]');
+new IntersectionObserver(([entry], observer) => {
+  if (!entry.isIntersecting) return;
+  observer.disconnect();
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const target = Number(counter.dataset.count);
+  const start = performance.now();
+  const tick = (now) => {
+    const t = Math.min((now - start) / 1200, 1);
+    counter.textContent = Math.round(target * (1 - (1 - t) ** 3));
+    if (t < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}, { threshold: 0.6 }).observe(counter);
 </script>
 </body>
 </html>
