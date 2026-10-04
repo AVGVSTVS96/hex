@@ -2,5 +2,9 @@
   "heartbeat": {
     "cron": "45 * * * *",
     "prompt": "Hourly check, see \"Heartbeat\" in AGENTS.md"
+  },
+  "update": {
+    "cron": "5 8 * * *",
+    "prompt": "Run `bin/update`. Tell me only if it updated something or failed."
   }
 }
