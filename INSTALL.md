@@ -69,7 +69,7 @@ Check that it's up:
 
 ## 7. Make it theirs
 
-- Ask their name, what they do, and anything they want hex to know from day one. Write it in `~/hex/MEMORY.md` under `## Me`, one fact per line.
+- Create `~/hex/MEMORY.md` with the headings `# Memory`, `## Me`, `## Preferences` and `## Projects`. It stays on this machine: git ignores it, so updates never touch it. Ask their name, what they do, and anything they want hex to know from day one, and write it under `## Me`, one fact per line.
 - **Voice notes (optional):** `bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
 - **Email (optional):** the heartbeat reads mail through whatever mail connector Claude Code has, such as Gmail at claude.ai → Settings → Connectors.
 
