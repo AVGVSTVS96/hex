@@ -5,7 +5,7 @@
   </picture>
 </p>
 
-<p align="center">A personal assistant that lives in your Telegram, built on Claude Code.</p>
+<p align="center">A personal assistant that lives in your Telegram, built on Claude Code.<br><a href="https://hex-sand.vercel.app">hex-sand.vercel.app</a></p>
 
 ---
 
