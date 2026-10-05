@@ -1,108 +1,146 @@
 # hex landing page copy
 
-Final copy. Use it word for word. Text in `code` is shown as code. Notes in *(italics)* are for the designer, not the page.
+Final copy. Use it word for word. Text in `code` is shown as code. Notes in *(italics)* are for the designer, not the page. Anything marked **coming** is not built yet and must look it on the page (dashed, muted, a small "coming" tag).
 
 ## Page
 
-- `<title>`: hex · Claude Code as your personal assistant
-- Meta description: hex is a personal assistant built on Claude Code. It runs on your own always-on Linux box with your own Claude subscription, and you talk to it in a Telegram group where every topic is its own session.
+- `<title>`: hex · The best personal assistant is already on your machine
+- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,400 lines, on the Claude plan you already pay for.
 
 ## Hero
 
-- Hero line: Claude Code as your personal assistant.
-- Sub line: hex runs on your own always-on Linux box, with your own Claude subscription. You talk to it in a Telegram group. It works in the background and messages you only when something matters.
+- Sticker: Built on Claude Code
+- Hero line: The best personal assistant is already on your machine.
+- Sub line: It's just been busy writing code. hex points Claude Code at your life. Opus 5.5 at the wheel, on the Claude plan you already pay for.
 - Primary CTA: Install
 - Secondary CTA: View on GitHub
 
-## The real moment
+*(Telegram phone mock: "find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it" → "On it. Opened #ramen-tonight." → "Live: ramen-tonight.vercel.app".)*
 
-*(A Telegram chat in the General topic. All three messages are real, from the author's own hex, today. Show them as written.)*
+## Stats
 
-- 12:45 · hex: Saw a Waymo receipt from 9:28, so I'm guessing you made it to the hack. Submissions close at 4:30, about 3h45m from now. If you want help with research, building, or the 2-min pitch, just say so here and I'll get started.
-- 1:35 · me: *(voice message)*
-- 1:35 · hex: Here's the schedule:
-  • 4:30 submissions close
-  • 4:45 top 6 demo (2 min + 1 min Q&A)
-  • 5:25 awards
-  The demo is the part you need to be there for, so be back by 4:30 at the latest. *(The real reply goes on. End it here, after "at the latest.")*
-- 2:45 · hex: ⏰ Hack check: it's 2:45. Submissions close at 4:30, and the top 6 demo is at 4:45. Leave home with enough time for the Waymo to get you to Terra Gallery by 4:30.
+- ~1,400 · lines of hex. Claude Code does the rest.
+- $0 · extra. Runs on the Claude plan you already pay for.
+- 1 · Telegram bot. As many Claude Code sessions as you need.
+- 0 · frameworks, 0 databases. Just plain files.
 
-Caption: Nobody asked for the first message. hex saw the receipt during its hourly check.
+## The bet
 
-## How it works
+Section title: Everyone's building an agent. We plugged into the best one.
+Intro: Claude Code is the most capable agent around. It just happens to be pointed at code. hex points it at your life.
 
-Section title: How it works
+### Size strip
 
-1. **Every topic is its own session**
-   General is your main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh Claude Code session working there, and closes the topic when the work is done. Idle sessions stop and pick up again when you write.
+Heading: They rebuild the agent. hex uses Claude Code as the agent, so all it needs is the thin layer.
 
-2. **It speaks up when it's worth it**
-   Every hour it checks your email, the work it started, topics waiting on you, and anything it said it would follow up on. If nothing needs you, you hear nothing.
+*(Bars on one linear scale. hex's bar is a sliver.)*
 
-3. **Schedules are a plain JSON file**
-   Each job is a name, a cron line and a prompt. The hourly check is just the first one.
+- OpenClaw · 4 million+
+- Hermes Agent · 1.5 million
+- NanoClaw (the minimal one) · 68,000
+- hex · ~1,400
 
-4. **Its memory is files you can read**
-   SOUL.md is who it is. MEMORY.md is what it knows about you. AGENTS.md is how it works. hex edits them itself as it learns. Every conversation is saved as markdown, and each new session picks up where the last one ended.
+Caption: Lines of source. Tests and generated code excluded, counted Oct 2026. Even the minimal one is about 50x bigger.
 
-5. **Voice notes**
-   Send one from wherever you are. It transcribes it and answers.
+### Layer stack
 
-6. **Keeps itself current**
-   Its Telegram channel is a fork of Anthropic's official Claude Code plugins. Every day a pipeline re-applies hex's patches onto the latest version, Claude fixes any conflicts, and nothing is published unless the checks pass. Your box checks again before it updates.
+*(Three stacked layers: a thin one on top, a thick one in the middle, the model at the bottom.)*
 
-## Two front ends
+- hex · ~1,400 lines · a phone · its own computer · a memory · a hub
+- Claude Code · the hard part · reasoning, tools, MCP, skills, subagents, computer use
+- Opus 5.5 · does the thinking
 
-Section title: Two ways to work with it
+Body: hex is a personal assistant built the simplest way possible. Claude Code already does the hard part: reasoning, tools, MCP, skills, subagents, computer use. hex adds the thin layer it was missing. That's a phone to reach it on, its own computer, a memory you can read, and a hub that lets one bot run as many Claude sessions as you need.
 
-Intro: hex has two front ends. They are two different ways of working, not copies of each other. One hub on your box serves both.
+- Why rebuild the agent when Anthropic ships a better one every week?
+- No framework, no database. Just Claude Code and a few plain files.
+- Its Telegram channel is 650 lines, smaller than the one upstream file it replaced, and it runs many sessions instead of one.
+- Super minimal, super light, super snappy.
 
-**Telegram** · Built and running
-Your assistant in your pocket.
-- General is the main assistant. Every topic is its own session.
-- Short, phone-sized answers.
-- It comes to you with the hourly check and reminders.
+Band: Claude models are the best personal assistant models, period. Everything else is cope.
 
-**Discord** · In progress
-Tag it and it gets to work.
-- Tag the bot in any channel and it starts a thread on your message, with a fresh session inside.
-- Inside a thread, just talk.
-- Channels group work by area, like #research and #dev. Room for longer answers, code blocks and history.
+## One bot, a whole crew
 
-Handoff line: Each thread lives in one app. Say "take this to Discord" and the same session moves over with its memory. The Telegram topic posts a link and closes. *(Mark this line as in progress too.)*
+Section title: One bot. A whole crew.
+Intro: Built on Claude Code's own channel plugins, forked so one Telegram bot can run as many Claude Code sessions as you need.
 
 ### Diagram labels
 
-*(Both front ends feed one hub on your box. The hub starts one Claude Code session per thread. Draw the Discord side and the handoff arrow as dashed or muted.)*
+- Telegram · your pocket
+- Discord · your desk · coming *(dashed, muted)*
+- Handoff arrow, Telegram to Discord: hand off · coming
+- hex hub · one bot, many sessions
+- Claude Code × 3 · ramen-tonight, Theo clips, flight-options
+- SOUL.md · MEMORY.md · AGENTS.md · log/
+- Frame: your box
 
-- Left, top: Telegram
-  - under it: in your pocket
-- Left, bottom: Discord
-  - under it: in progress
-- Handoff arrow, Telegram to Discord: take this to Discord
-- Middle box: hex hub
-  - under it: one connection per app
-- Right, stacked: Claude Code session (one per thread)
-- Bottom of the right side: SOUL.md · MEMORY.md · AGENTS.md · log/
-- Frame around hub, sessions and files: your box
+### Features
+
+1. **A crew, not a chatbot**: Every topic is a separate Claude Code session with its own context, working in parallel.
+2. **It still writes code**: Every session is the full Claude Code. Ask for a page from your phone and it builds it, ships it and sends the link.
+3. **Rebuilds itself daily**: The fork rebuilds itself on Anthropic's latest code every day, and Claude fixes its own patches when upstream changes.
+
+## Its own machine
+
+Section title: It doesn't live in a chat window.
+Intro: It lives on your server, with a computer of its own and a way into every machine you have.
+
+- **Its own computer**: A cloud desktop with Chrome, where it works without touching yours.
+- **Your whole network**: It can reach every machine on your network.
+- **Its own inbox**: Signs up for things and reads its own codes. Your mail stays yours.
+- **Your accounts**: Connect them once in Executor. Every session can use them.
+- **Its own vault** · coming: Give it your eBay login once. It browses from its own computer, signed in as you, without hitting bot blocks.
+
+## Front ends
+
+Section title: Different rooms, same house.
+Intro: The front ends aren't copies of each other. Each app does what it's best at, and hex connects them.
+
+**Telegram** · Your pocket.
+- Every topic is its own session
+- Voice notes in, short answers out
+- It speaks up when something needs you
+
+Bridge: take this to Discord · coming
+
+**Discord** · Your desk. · coming
+- Tag it, and it opens a thread
+- Room for code, logs and long answers
+- Channels group work by area
+
+Coming next:
+- Say "take this to Discord" and the session moves over with all its memory.
+- Check on Discord work from Telegram without switching apps.
+- Tell it from your phone to keep going, and the message shows up in Discord as if you'd typed it there.
+
+Shared line: One agent, many front ends, nothing lost in between. · SOUL.md · MEMORY.md · AGENTS.md · log/
+
+## Basics
+
+The basics are in there too: an hourly check that stays quiet unless something needs you, schedules in one JSON file, memory in markdown you can read, voice notes. Table stakes.
+
+## Closer
+
+- We didn't build a personal assistant. We found one inside Claude Code and gave it a phone, a computer and a memory.
+- The less we built, the better it gets: every Claude Code upgrade is a hex upgrade the same day.
 
 ## Install
 
 Section title: Install with one prompt
-Sub line: Paste this into Claude Code on your box. It does the setup and tells you when it needs you.
+Sub line: Paste this into Claude Code on your box. It sets everything up and asks when it needs you.
 
 Code block: `Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTALL.md in that repo.`
 
 Copy button: Copy · after click: Copied
 
 **You'll need**
-- An always-on Linux box with systemd, like a home server or a cloud VM
+- An always-on Linux box
 - A Claude subscription
 - Telegram
 
-**What you do yourself**
+**You do**
 - Make a bot with @BotFather
-- Make a Telegram group with Topics turned on, and add the bot as an admin
+- Make a group with Topics on and add the bot
 - Say hi
 
 ## Footer
