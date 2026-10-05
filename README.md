@@ -12,21 +12,22 @@
 > **9:28am** · I take a Waymo to the hackathon. The receipt goes to my email.
 > **12:45pm** · hex, on its hourly check, without being asked: *"Saw a Waymo receipt from 9:28, so I'm guessing you made it to the hack. Submissions close at 4:30, about 3h45m from now. If you want help with research, building, or the 2-min pitch, just say so here and I'll get started."*
 
-hex runs on your own always-on Linux box, with your own Claude subscription. It's a handful of plain files around Claude Code: no framework, no database. One small hub process holds the bot connection and starts a Claude Code session for each conversation.
+hex runs on your own always-on Linux box, with your own Claude subscription. It's a handful of plain files around Claude Code: no framework, no database. One small hub process holds the bot connections and starts a Claude Code session for each conversation.
 
 ## How it works
 
 ```
  your phone                     your Linux box
 ┌──────────────┐               ┌─────────────────────────────────────────────┐
-│ Telegram     │               │  hex-hub  (one bot connection)              │
-│ group        │◀─────────────▶│    │                                        │
-│  ├ General   │               │    ├──▶ claude  "hex"      General          │
-│  ├ research  │               │    ├──▶ claude  (bg)       research         │
-│  └ trip      │               │    └──▶ claude  (bg)       trip             │
-└──────────────┘               │                                             │
-                               │  SOUL.md  MEMORY.md  AGENTS.md  log/        │
-                               └─────────────────────────────────────────────┘
+│ Telegram     │               │  hex-hub  (one connection per app)          │
+│  ├ General   │◀─────────────▶│    │                                        │
+│  └ trip      │               │    ├──▶ claude  "hex"      General          │
+└──────────────┘               │    ├──▶ claude  (bg)       trip             │
+┌──────────────┐               │    └──▶ claude  (bg)       #dev › fix ci    │
+│ Discord      │◀─────────────▶│                                             │
+│  └ #dev      │               │  SOUL.md  MEMORY.md  AGENTS.md  log/        │
+│    └ fix ci  │               └─────────────────────────────────────────────┘
+└──────────────┘
 ```
 
 - **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for 30 minutes stops, and starts again with its conversation when you write.
@@ -46,7 +47,7 @@ hex has two front ends. They are two different ways of working, not copies of ea
 - Short, phone-sized answers.
 - It comes to you: the hourly heartbeat, and reminders about anything waiting on you.
 
-**Discord: tag it and it gets to work.** In progress, not built yet.
+**Discord: tag it and it gets to work.** Built and running today.
 - Tag the bot in any channel and it starts a thread on your message, with a fresh session working inside it. Inside a thread you just talk.
 - Channels group work by area, like `#research` or `#dev`. Room for longer answers, code blocks and history.
 - Each thread lives in one app. Say "take this to Discord" in a Telegram topic and the same session moves over with its memory. The Telegram topic posts a link to the new thread and closes.
@@ -76,20 +77,16 @@ hex/
 │   └── update                      pulls updates, verified before they go live
 ├── mods/scheduler/                 sends schedules.json jobs to the assistant
 ├── system/                         two systemd user services
-└── channels/                       the Telegram channel and hub (submodule)
+└── channels/                       the Telegram and Discord channels and hub (submodule)
 ```
 
-`channels/` is [a fork of Anthropic's official plugin marketplace](https://github.com/AVGVSTVS96/claude-plugins-official). Its patches add one bot connection that serves every forum topic, and a hub that gives each topic its own session. Every day a GitHub Actions pipeline re-applies the patches onto the latest upstream, Claude fixes any conflicts, and the result is only published once `scripts/verify` passes. `bin/update` pulls hex (your local edits are stashed and put back), then runs `scripts/verify` again before your hub restarts on the new channel.
+`channels/` is [a fork of Anthropic's official plugin marketplace](https://github.com/AVGVSTVS96/claude-plugins-official). Its patches add one bot connection per app, serving every Telegram topic and Discord thread, and a hub that gives each thread its own session. Every day a GitHub Actions pipeline re-applies the patches onto the latest upstream, Claude fixes any conflicts, and the result is only published once `scripts/verify` passes. `bin/update` pulls hex (your local edits are stashed and put back), then runs `scripts/verify` again before your hub restarts on the new channel.
 
 ## Principles
 
 - **Don't interrupt.** Scheduled jobs wait their turn. The heartbeat only messages you when something needs you. Idle sessions stop and come back when you write.
 - **Plain files over infrastructure.** Everything hex knows lives in markdown you can open, edit and grep.
 - **Your machine, your account.** hex runs on your box with your Claude subscription. Its memory and logs are files on that box, and only you can talk to it.
-
-## Next
-
-The Discord front end and moving threads from Telegram to Discord, as described in [Two front ends](#two-front-ends).
 
 ## License
 

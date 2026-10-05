@@ -1,13 +1,14 @@
 [Unit]
-Description=hex Telegram hub: one bot connection, one Claude session per topic
+Description=hex hub: one connection per app, one Claude session per thread
 
 [Service]
-WorkingDirectory=%h/hex/channels/external_plugins/telegram
+WorkingDirectory=%h/hex/channels
 EnvironmentFile=%h/hex/.env
 Environment=ASSISTANT_DIR=%h/hex
 Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
-ExecStartPre=/usr/bin/env bun install --no-summary
-ExecStart=/usr/bin/env bun bot.ts
+ExecStartPre=/usr/bin/env bun install --no-summary --cwd external_plugins/telegram
+ExecStartPre=/usr/bin/env bun install --no-summary --cwd external_plugins/discord
+ExecStart=/usr/bin/env bun hub/serve.ts
 KillMode=process
 Restart=always
 RestartSec=3
