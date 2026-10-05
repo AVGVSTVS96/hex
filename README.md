@@ -82,6 +82,10 @@ hex/
 
 `channels/` is [a fork of Anthropic's official plugin marketplace](https://github.com/AVGVSTVS96/claude-plugins-official). Its patches add one bot connection per app, serving every Telegram topic and Discord thread, and a hub that gives each thread its own session. Every day a GitHub Actions pipeline re-applies the patches onto the latest upstream, Claude fixes any conflicts, and the result is only published once `scripts/verify` passes. `bin/update` pulls hex (your local edits are stashed and put back), then runs `scripts/verify` again before your hub restarts on the new channel.
 
+## Known issues
+
+- **A project's own instructions don't load on their own.** Every hex session starts in `~/hex`, because that's what makes it hex: AGENTS.md, SOUL.md, MEMORY.md and the hooks all load from there. Claude Code only picks up a CLAUDE.md or AGENTS.md on its own inside the folder a session starts in, so when hex works in a repo somewhere else, like `~/Projects/foo`, that repo's rules go unread unless hex opens them itself. A fix is planned soon. Until then, ask hex to read the repo's AGENTS.md or CLAUDE.md before it starts.
+
 ## Principles
 
 - **Don't interrupt.** Scheduled jobs wait their turn. The heartbeat only messages you when something needs you. Idle sessions stop and come back when you write.
