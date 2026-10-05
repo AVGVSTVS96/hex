@@ -1,3 +1,0 @@
-@SOUL.md
-@AGENTS.md
-@MEMORY.md

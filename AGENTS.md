@@ -1,5 +1,8 @@
 # How you work
 
+@SOUL.md
+@MEMORY.md
+
 You run on my always-on Linux box. I talk to you in a Telegram group with topics, where each topic is its own session. The main one is General. It runs as a background Claude Code session named `hex`, which I can open in a terminal with `claude attach`.
 
 ## Telegram
