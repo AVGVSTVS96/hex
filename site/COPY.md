@@ -23,7 +23,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 ## Stats
 
-- ~3,800 · lines of hex. Claude Code does the rest.
+- ~3,800 · lines, connectors included. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
 - 3 · front ends: Telegram, Discord and Buzz.
 - 0 · frameworks, 0 databases. Just plain files.
@@ -43,10 +43,11 @@ Label: Lines of source
 - Hermes Agent · 1.5 million
 - NanoClaw (the minimal one) · 68,000
 - hex · ~3,800
+- hex, up close: one bar, split pink/blue 761:2,967. Legend: hex itself · ~800, connectors · ~3,000 (Telegram, Discord, Buzz)
 
 Fine print: Tests and generated code excluded. Counted Oct 2026. Even the minimal one is 17x bigger.
 
-*(hex counts what it runs, without tests or this site: the scripts and TS in bin/, plugin/, mods/ and computer/, the JSON in defaults/, the hub, and every TS file of the Telegram, Discord and Buzz channels. 3,728 lines on Oct 6 2026 after Buzz landed (Buzz alone is 1,648), rounded up. NanoClaw: 68,000 / 3,800 = 17x.)*
+*(hex counts what it runs, without tests or this site: the scripts and TS in bin/, plugin/, mods/ and computer/, the JSON in defaults/, the hub, and every TS file of the Telegram, Discord and Buzz channels. 3,728 lines on Oct 6 2026 after Buzz landed, rounded up. hex itself is 761 (402 in this repo + the 359-line hub); the connectors are 2,967 (Telegram 714, Discord 605, Buzz 1,648). NanoClaw: 68,000 / 3,800 = 17x.)*
 
 ### Layer stack
 
@@ -107,16 +108,14 @@ Line: Each app does what it's best at. hex connects them.
 - Voice notes in, short answers out
 - It speaks up when something needs you
 
-Bridge: take this to Discord
-
-Bridge, above Buzz: take this to Buzz
+Bridge: take this to Discord or Buzz
 
 **Discord** · Your desk.
 - Tag it, and it opens a thread
 - Room for code, logs and long answers
 - Channels group work by area
 
-**Buzz** · Your workspace. *(Full-width row under the other two, on their columns. Mock: a thread on the left, Buzz Desktop's Activity / Memory / Files panel on the right.)*
+**Buzz** · Your workspace. *(Next to Discord: the two desk apps sit side by side under Telegram's full-width row and the bridge. Mock: a thread on the left, Buzz Desktop's Activity / Memory / Files panel on the right.)*
 - Watch it work, step by step
 - Edit its memory and files
 - Shared with people and agents
