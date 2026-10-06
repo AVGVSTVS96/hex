@@ -7,13 +7,15 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 ## Page
 
 - `<title>`: hex · The best personal assistant is already on your machine
-- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 2,000 lines, on the Claude plan you already pay for.
+- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 2,100 lines, on the Claude plan you already pay for.
 
 ## Hero
 
 - Sticker: Built on Claude Code
 - Hero line: The best personal assistant is already on your machine.
-- Sub line: It's just been busy writing code. hex points Claude Code at your life, on the Claude plan you already pay for.
+- Sub line: It's just been busy writing code.
+
+*(The hero is one glance: sticker, three-line headline, one short sub line, two buttons. The stats right under it carry the price.)*
 - Primary CTA: Install
 - Secondary CTA: View on GitHub
 
@@ -21,7 +23,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 ## Stats
 
-- ~2,000 · lines of hex. Claude Code does the rest.
+- ~2,100 · lines of hex. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
 - 2 · front ends: Telegram and Discord.
 - 0 · frameworks, 0 databases. Just plain files.
@@ -40,17 +42,17 @@ Label: Lines of source
 - OpenClaw · 4 million+
 - Hermes Agent · 1.5 million
 - NanoClaw (the minimal one) · 68,000
-- hex · ~2,000
+- hex · ~2,100
 
-Fine print: Tests and generated code excluded. Counted Oct 2026. Even the minimal one is 34x bigger.
+Fine print: Tests and generated code excluded. Counted Oct 2026. Even the minimal one is 32x bigger.
 
-*(hex counts what it runs: bin/, mods/, system/, .claude/*.json, the hub and the Telegram and Discord bot and server files. 2,016 lines on Oct 6 2026.)*
+*(hex counts what it runs, without tests or this site: the scripts and TS in bin/, plugin/, mods/ and computer/, the JSON in defaults/, the hub, and the Telegram and Discord bot and server files. 2,072 lines on Oct 6 2026, rounded up.)*
 
 ### Layer stack
 
 *(Three stacked layers: a thin one on top, a thick one in the middle, the model at the bottom. Three points beside it.)*
 
-- hex · ~2,000 lines · phone · computer · memory · hub
+- hex · ~2,100 lines · phone · computer · memory · hub
 - Claude Code · the hard part · reasoning, tools, MCP, skills, subagents, computer use
 - Opus 5.5 · does the thinking
 
@@ -87,9 +89,9 @@ Line: Claude Code's own channel plugins, forked so every topic and thread gets i
 ## Its own machine
 
 Section title: It doesn't live in a chat window.
-Line: It lives on your box, with a computer of its own and your whole network.
+Line: It lives on your box, with your whole network and, if you want, a computer of its own.
 
-- **Its own computer**: A cloud desktop with Chrome. Yours stays untouched.
+- **Its own computer**: Optional: a cloud desktop with Chrome. Watch it work. *(computer/setup turns a Fly.io Sprite into a Linux desktop with Chrome that hex drives with cua-driver. An optional install step, not coming.)*
 - **Your whole network**: Every machine you can ssh into.
 - **Your connectors**: Every session gets the ones your account has. *(Mock: "your Claude account" over Gmail, Executor, AgentMail, Calendar. They're examples, not hex features.)*
 - **Its own vault** · coming: Your logins, used from its own computer.
@@ -132,7 +134,7 @@ Code block: `Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTAL
 Copy button: Copy · after click: Copied
 
 **You'll need**
-- An always-on Linux box
+- A machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM
 - A Claude subscription
 - Telegram, Discord, or both
 

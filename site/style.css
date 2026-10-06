@@ -107,6 +107,7 @@ a { color: inherit; }
   display: flex; flex-direction: column; justify-content: center; align-items: flex-start;
   gap: var(--s4);
   padding: var(--section) var(--pad);
+  container-type: inline-size;
 }
 
 .sticker {
@@ -118,14 +119,10 @@ a { color: inherit; }
   transform: rotate(-2deg);
 }
 
-h1 { font-size: clamp(2.5rem, 1.1rem + 4.4vw, 4.5rem); line-height: 0.98; max-width: 13ch; }
-h1 mark {
-  padding: 0 0.12em;
-  background: var(--yellow); color: var(--black);
-  box-decoration-break: clone; -webkit-box-decoration-break: clone;
-}
+h1 { font-size: clamp(2.25rem, 9.6cqi, 4.75rem); line-height: 0.98; }
+mark { display: inline-block; margin-top: 0.1em; padding: 0 0.12em 0.04em; background: var(--yellow); color: var(--black); }
 
-.lede { max-width: 30rem; color: var(--muted); font-size: 1.1875rem; line-height: 1.5; }
+.lede { color: var(--muted); font-size: clamp(1.1875rem, 1rem + 0.5vw, 1.375rem); line-height: 1.4; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 0.875rem; }
 
@@ -151,7 +148,7 @@ h1 mark {
     var(--blue);
 }
 @media (min-width: 62rem) {
-  .hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .hero { grid-template-columns: minmax(0, 1fr) clamp(26rem, 40%, 34rem); }
   .stage { border-top: 0; border-left: var(--b); }
 }
 
@@ -243,14 +240,14 @@ h1 mark {
   gap: 2px; background: var(--line);
   border-bottom: var(--b);
 }
-.stats > div { display: grid; align-content: start; gap: var(--s1); padding: var(--s4) var(--pad); color: var(--black); }
-.stats b { font-size: clamp(2.75rem, 1.5rem + 3.4vw, 4.25rem); font-weight: 800; font-stretch: 115%; line-height: 1; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
+.stats > div { display: grid; align-content: start; gap: var(--s1); padding: var(--s4) var(--pad); color: var(--black); container-type: inline-size; }
+.stats b { font-size: min(4.25rem, 26cqi); font-weight: 800; font-stretch: 115%; line-height: 1; letter-spacing: -0.05em; font-variant-numeric: tabular-nums; }
 .stats > div > span { font: 500 0.75rem/1.45 var(--mono); max-width: 18rem; }
 .s-blue { background: var(--blue); color: #fff !important; }
 .s-yellow { background: var(--yellow); }
 .s-pink { background: var(--pink); }
 .s-ink { background: var(--black); color: #F3EFE6 !important; }
-@media (min-width: 52rem) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 72rem) { .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 .strip {
   display: flex; align-items: baseline; gap: var(--s2);
@@ -450,7 +447,6 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
   color: #fff;
 }
 .closer h2 { max-width: 22ch; }
-.closer mark { padding: 0 0.12em; background: var(--yellow); color: #0A0A0A; }
 .closer p { max-width: 34rem; font: 500 0.9375rem/1.6 var(--mono); }
 
 /* Flow diagram */
@@ -503,7 +499,7 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
   .lead .viz { grid-row: auto; margin-bottom: var(--s2); }
   .lead .feat h3, .lead .feat p { grid-row: auto; }
 }
-@media (min-width: 72rem) { .rest { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 80rem) { .rest { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
 .viz {
   position: relative;
@@ -514,11 +510,11 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
   background: var(--surface);
   box-shadow: 5px 5px 0 var(--shadow);
 }
-.viz pre { padding: 0.8rem 0.9rem; font: 400 0.6875rem/1.75 var(--mono); white-space: pre; overflow: hidden; }
+.viz pre { padding: 0.8rem 0.9rem; font: 400 min(0.6875rem, 3.9cqi)/1.75 var(--mono); white-space: pre; overflow: hidden; }
 .viz .dim { color: var(--muted); }
 .viz .ok { color: var(--green); font-weight: 600; }
 
-.v-term { background: #0A0A0A; color: #F3EFE6; box-shadow: 5px 5px 0 var(--blue); }
+.v-term { background: #0A0A0A; color: #F3EFE6; box-shadow: 5px 5px 0 var(--blue); container-type: inline-size; }
 .v-term .dim { color: #8A877F; }
 .v-term b { color: var(--yellow); font-weight: 600; }
 .v-ship .l { display: inline-block; }
