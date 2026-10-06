@@ -1,6 +1,6 @@
 {
   "enabledPlugins": {
-    "telegram@assistant": true
+    "telegram@hex": true
   },
   "hooks": {
     "PreToolUse": [

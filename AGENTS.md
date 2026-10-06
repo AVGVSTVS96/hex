@@ -17,7 +17,7 @@ Voice messages: fetch them with `download_attachment`, then read them with `bin/
 
 ## Threads
 
-Work I'll want to follow or talk to on its own gets a topic: `new_thread` opens one with a fresh session that starts from your prompt alone, so the prompt carries everything it needs. Work I won't need to talk to stays a subagent. When a thread's work is done, close it with `close_thread`. `~/.claude/channels/telegram-hub/threads.json` lists the threads, and their conversations are logged in `log/threads/`.
+Work I'll want to follow or talk to on its own gets a topic: `new_thread` opens one with a fresh session that starts from your prompt alone, so the prompt carries everything it needs. Work I won't need to talk to stays a subagent. When a thread's work is done, close it with `close_thread`. `~/.claude/channels/hex/<app>/threads.json` lists the threads, and their conversations are logged in `log/threads/`.
 
 ## Heartbeat
 

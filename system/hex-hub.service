@@ -4,7 +4,7 @@ Description=hex hub: one connection per app, one Claude session per thread
 [Service]
 WorkingDirectory=%h/hex/channels
 EnvironmentFile=%h/hex/.env
-Environment=ASSISTANT_DIR=%h/hex
+Environment=HEX_DIR=%h/hex
 Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 ExecStartPre=/usr/bin/env bun install --no-summary --cwd external_plugins/telegram
 ExecStartPre=/usr/bin/env bun install --no-summary --cwd external_plugins/discord

@@ -5,7 +5,7 @@ set -a; . ./.env; set +a
 claude agents --json | jq -e '.[] | select(.name == "hex" and .pid)' >/dev/null && exit 0
 
 exec claude --bg --name hex \
-  --channels plugin:telegram@assistant \
+  --channels plugin:telegram@hex \
   --plugin-dir mods/scheduler \
-  --settings "$(jq --arg thread "$ASSISTANT_MAIN_THREAD" --arg hub "$HOME/.claude/channels/telegram-hub/hub.sock" \
-    '.env = { ASSISTANT_THREAD: $thread, ASSISTANT_HUB: $hub }' .claude/main.json)"
+  --settings "$(jq --arg thread "$HEX_MAIN_THREAD" --arg hub "$HOME/.claude/channels/hex/telegram/hub.sock" \
+    '.env = { HEX_THREAD: $thread, HEX_HUB: $hub }' .claude/main.json)"
