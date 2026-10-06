@@ -6,6 +6,7 @@ cd "$hex"
 
 before=$(git rev-parse --short HEAD)
 git pull -q --ff-only
+"$hex/bin/optmem"
 
 git -C channels fetch -q origin main
 current=$(git -C channels rev-parse HEAD)

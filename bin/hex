@@ -16,7 +16,9 @@ case "${1:-}" in
     [ -e "$home/.gitignore" ] || cp "$hex/defaults/gitignore" "$home/.gitignore"
     [ -e "$home/.env" ] || (umask 077 && cp "$hex/defaults/env" "$home/.env")
     mkdir -p "$home/.claude" "$home/log" "$home/state/telegram" "$home/state/discord"
-    [ -e "$home/.claude/settings.json" ] || cp "$hex/defaults/settings.json" "$home/.claude/settings.json"
+    [ -e "$home/.claude/settings.json" ] || jq --arg memory "$home/memory" '.env.MEMORY_DIR = $memory' "$hex/defaults/settings.json" > "$home/.claude/settings.json"
+    "$hex/bin/optmem"
+    MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
     chmod 700 "$home" "$home/state"
     [ -d "$home/.git" ] || { git -C "$home" init -q && git -C "$home" add -A && git -C "$home" commit -qm "A new hex"; }
     echo "hex is set up in $home"

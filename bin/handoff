@@ -1,8 +1,0 @@
-#!/bin/sh
-[ -n "${HEX_MAIN:-}" ] || exit 0
-last=$(ls -t "$CLAUDE_PROJECT_DIR"/log/*.md 2>/dev/null | head -n 1)
-[ -n "$last" ] || exit 0
-
-start=$(grep -nE '^## (me|assistant) · ' "$last" | tail -n 20 | head -n 1 | cut -d: -f1)
-printf 'The previous conversation ended like this (full log: %s):\n\n' "log/$(basename "$last")"
-tail -n +"${start:-1}" "$last"

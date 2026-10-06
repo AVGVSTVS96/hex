@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+pin=1fb164cf39028047781f72ac3bb1e5a691c1dcb0
+vendor=$(cd "$(dirname "$0")/.." && pwd)/vendor
+[ "$(cat "$vendor/memo.pin" 2>/dev/null)" = "$pin" ] && exit 0
+mkdir -p "$vendor"
+curl -fsSL "https://raw.githubusercontent.com/VictorTaelin/OptMem/$pin/memo" -o "$vendor/memo.new"
+chmod +x "$vendor/memo.new"
+mv "$vendor/memo.new" "$vendor/memo"
+echo "$pin" > "$vendor/memo.pin"
