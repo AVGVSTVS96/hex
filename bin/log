@@ -5,7 +5,8 @@ session=$(printf '%s' "$input" | jq -r .session_id)
 [ -f "$transcript" ] || exit 0
 
 started=$(jq -r 'select(.timestamp) | .timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%Y-%m-%d")' "$transcript" | head -n 1)
-dir="$CLAUDE_PROJECT_DIR/log${1:+/$1}"
+dir="$CLAUDE_PROJECT_DIR/log"
+[ -n "${HEX_THREAD:-}" ] && [ -z "${HEX_MAIN:-}" ] && dir="$dir/threads"
 out="$dir/$started-$(printf '%s' "$session" | cut -c 1-8).md"
 mkdir -p "$dir"
 
@@ -15,7 +16,7 @@ body=$(jq -r '
     def texts: if type == "string" then . else .[] | select(.type == "text") | .text end;
     def heard($e; $text):
       if ($text | startswith("<channel")) then
-        block($e; "me"; "telegram";
+        block($e; "me"; ([$text | capture("^<channel source=\"(plugin:)?(?<app>[a-z]+)").app] | first // "chat");
           ([$text | capture("^<channel[^>]*>(?<m>[\\s\\S]*)</channel>").m] | first // $text) | gsub("^\\s+|\\s+$"; ""))
       elif ($text | test("^<(local-command|command-|system-reminder|task-notification)")) then empty
       else block($e; "me"; "terminal"; $text) end;
@@ -26,7 +27,7 @@ body=$(jq -r '
       elif .type == "assistant" then
         .message.content[]
         | if .type == "text" and (.text | test("^\\s*HEARTBEAT_OK\\s*$") | not) then block($e; "assistant"; "terminal"; .text)
-          elif .type == "tool_use" and (.name | endswith("telegram__reply")) then block($e; "assistant"; "telegram"; .input.text)
+          elif .type == "tool_use" and (.name | test("^mcp__plugin_[a-z]+_[a-z]+__reply$")) then block($e; "assistant"; (.name | capture("^mcp__plugin_(?<app>[a-z]+)_").app); .input.text)
           else empty end
       else empty end
   ' "$transcript")

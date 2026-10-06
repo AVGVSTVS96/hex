@@ -1,26 +1,36 @@
 #!/bin/sh
 set -eu
-cd "$(dirname "$0")/.."
-git pull -q --rebase --autostash
+hex=$(cd "$(dirname "$0")/.." && pwd)
+home=$(cd "$hex/.." && pwd)
+cd "$hex"
 
-cd channels
-git fetch -q origin main
-current=$(git rev-parse HEAD)
-incoming=$(git rev-parse origin/main)
-if [ "$current" = "$incoming" ]; then
-  echo "up to date at $(git rev-parse --short HEAD)"
+before=$(git rev-parse --short HEAD)
+git pull -q --ff-only
+
+git -C channels fetch -q origin main
+current=$(git -C channels rev-parse HEAD)
+incoming=$(git -C channels rev-parse origin/main)
+if [ "$current" != "$incoming" ]; then
+  check=$(mktemp -d)
+  trap 'git -C "$hex/channels" worktree remove --force "$check" 2>/dev/null; rm -rf "$check"' EXIT
+  git -C channels worktree add -q --detach "$check" "$incoming"
+  if ! output=$(PYTHONDONTWRITEBYTECODE=1 "$check/scripts/verify" 2>&1); then
+    printf '%s\n' "$output"
+    echo "channels not updated: $(git -C channels rev-parse --short "$incoming") fails scripts/verify"
+    exit 1
+  fi
+  git -C channels checkout -q --detach "$incoming"
+fi
+
+after=$(git rev-parse --short HEAD)
+if [ "$before" = "$after" ] && [ "$current" = "$incoming" ]; then
+  echo "up to date at $after"
   exit 0
 fi
 
-check=$(mktemp -d)
-trap 'git worktree remove --force "$check" 2>/dev/null; rm -rf "$check"' EXIT
-git worktree add -q --detach "$check" "$incoming"
-if ! output=$(PYTHONDONTWRITEBYTECODE=1 "$check/scripts/verify" 2>&1); then
-  printf '%s\n' "$output"
-  echo "not updated: $(git rev-parse --short "$incoming") fails scripts/verify"
-  exit 1
-fi
-
-git checkout -q --detach "$incoming"
-systemctl --user restart hex-hub
-echo "updated $(git rev-parse --short "$current")..$(git rev-parse --short "$incoming") and restarted the hub"
+"$hex/bin/hex" restart
+self=${CLAUDE_CODE_SESSION_ID:-}
+claude agents --json | jq -r --arg home "$home" --arg self "$self" '.[] | select(.cwd == $home and .pid and .sessionId != $self) | .sessionId[0:8]' |
+  while read -r session; do claude respawn "$session" >/dev/null; done
+[ -z "$self" ] || nohup sh -c "sleep 120; claude respawn $(printf %.8s "$self")" >/dev/null 2>&1 &
+echo "updated hex $before..$after, channels $(git -C channels rev-parse --short "$current")..$(git -C channels rev-parse --short HEAD); restarted the hub and the other sessions, and this one restarts in two minutes"

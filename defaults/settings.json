@@ -1,0 +1,13 @@
+{
+  "model": "opus",
+  "effortLevel": "medium",
+  "autoMemoryEnabled": false,
+  "permissions": {
+    "defaultMode": "auto",
+    "deny": [
+      "Read(./.env)",
+      "Read(./state/*/.env)",
+      "Edit(./state/**)"
+    ]
+  }
+}

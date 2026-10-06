@@ -1,6 +1,6 @@
 #!/bin/sh
 input=$(cat)
-gate='^mcp__claude_ai_Gmail__(send_message|reply|forward|trash_.*|delete_.*|mark_.*_spam)$'
+gate='^mcp__claude_ai_[^_].*__((send|reply|forward|trash|delete)[a-z_]*|mark_[a-z_]*spam)$'
 printf '%s' "$input" | jq -e --arg gate "$gate" '.tool_name | test($gate)' >/dev/null || exit 0
 
 transcript=$(printf '%s' "$input" | jq -r .transcript_path)
@@ -11,13 +11,13 @@ id=$(printf '%s' "$input" | jq -r .tool_use_id)
   def gated: .message.content | arrays | .[] | select(.type == "tool_use" and .id != $id and (.name | test($gate)));
   (map(.origin.kind == "channel") | rindex(true)) as $said
   | $said != null
-    and (.[$said] | text | sub("^<channel[^>]*>\\s*(<@&?[0-9]+>\\s*)*"; "")
-      | test("^(yes|yep|yeah|yup|sure|ok|okay|send it|do it|go ahead)\\b"; "i"))
+    and (.[$said] | text | sub("^<channel[^>]*>\\s*(<@[!&]?[0-9]+>\\s*)*"; "") | sub("\\s*</channel>\\s*$"; "")
+      | test("^(yes|yep|yeah|yup|sure|ok|okay|send it|do it|go ahead)[.!\\s]*$"; "i"))
     and ([.[$said + 1:][] | gated] | length == 0)
 ' "$transcript" >/dev/null && exit 0
 
 jq -n '{hookSpecificOutput: {
   hookEventName: "PreToolUse",
   permissionDecision: "deny",
-  permissionDecisionReason: "Sending, replying, forwarding, trashing, deleting or marking spam in Gmail needs Bassim'"'"'s yes. Tell him in chat exactly what this call will do, wait for him to reply yes, then retry it. Each yes covers one call."
+  permissionDecisionReason: "Sending, replying, forwarding, trashing, deleting or marking spam through a connector needs my yes. Tell me in chat exactly what this call will do, wait for me to reply yes, then retry it. Each yes covers one call."
 }}'

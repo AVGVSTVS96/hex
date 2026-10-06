@@ -2,84 +2,101 @@
 
 These steps are written for a coding agent (Claude Code, Codex, …) setting hex up for its user. Follow them in order. Steps marked **(you)** need the person: tell them exactly what to do, then wait for them to confirm.
 
-hex needs an always-on Linux machine with systemd: a home server or a cloud VM. Run everything below on that machine, as the user hex will run as.
+hex runs wherever Claude Code does, on a machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM. Run everything below on that machine, as the user hex will run as.
 
 ## 1. Check what's there
 
-`git`, `curl`, `jq`, `bun` and `claude` must be on the `PATH`, and `systemctl --user status` must work.
+`git`, `curl`, `jq`, `bun` and `claude` must be on the `PATH`.
 
 - Missing `bun`: install it from https://bun.sh.
 - Missing `jq`: install it with the system package manager, after asking.
 - Missing `claude`: install Claude Code from https://claude.com/claude-code. The person signs in by running `claude` once **(you)**.
 
-hex lives at `~/hex`. If that path already exists, stop and ask.
+## 2. Make their hex
+
+A person's hex is a folder of their own, `~/hex` unless they want another place. hex itself lives inside it, in `.hex/`. If the folder already exists, stop and ask.
 
 ```sh
-git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex
+git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex/.hex
+~/hex/.hex/bin/hex init
 ```
 
-## 2. Make the Telegram bot and group (you)
+`init` writes their `SOUL.md`, `MEMORY.md`, `schedules.json`, `AGENTS.md`, `.env` and `.claude/settings.json`, and makes the folder a private git repo. Updates only ever touch `.hex/`.
+
+## 3. Make the Telegram bot and group (you)
 
 1. In Telegram, open **@BotFather**, send `/newbot`, and copy the token it gives you.
 2. Create a new group, open its settings, and turn on **Topics**.
 3. Add the bot to the group and make it an admin with **Manage Topics**. hex opens a topic for each piece of work it starts.
 4. Send any message in the group's **General** topic.
 
-## 3. Connect hex to the group
+## 4. Connect hex to the group
 
-Write the token to `~/hex/.env`, copied from `.env.example`, and `chmod 600` it.
+Write the token to `TELEGRAM_BOT_TOKEN` in `~/hex/.env`.
 
-Find the group and the person with the bot's recent updates. The hub isn't running yet, so nothing else is reading them:
+Find the group and the person with the bot's recent updates. hex isn't running yet, so nothing else is reading them:
 
 ```sh
+. ~/hex/.env
 curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates" \
   | jq '.result[].message | select(.chat.is_forum) | { chat: .chat.id, title: .chat.title, from: .from.id, name: .from.first_name }'
 ```
 
 - Set `HEX_MAIN_THREAD` in `.env` to the group's `chat` id. It starts with `-100`.
-- Only the person may talk to hex. Write their `from` id to `~/.claude/channels/hex/telegram/access.json` as `{ "allowFrom": ["<from id>"] }`, and make that directory `chmod 700`.
+- Only the person may talk to hex. Write their `from` id to `~/hex/state/telegram/access.json` as `{ "allowFrom": ["<from id>"] }`.
 
 If nothing shows up, the bot isn't an admin yet or the message was sent before it joined. Ask them to send another one.
 
-## 4. Install the Telegram channel
+## 5. Install the channels
 
-The channel and its hub live in `~/hex/channels`, a fork of Anthropic's official plugin marketplace:
+The Telegram and Discord channels come from hex's own plugin marketplace:
 
 ```sh
-claude plugin marketplace add ~/hex/channels
+claude plugin marketplace add ~/hex/.hex/channels
 claude plugin install telegram@hex
+claude plugin disable telegram@hex
 ```
 
-## 5. Trust the folder (you)
+Disabling it keeps the channel out of their other Claude Code sessions; hex turns it on for its own.
 
-hex starts its sessions in `~/hex`, and Claude Code only runs there once the folder is trusted. Ask the person to run `cd ~/hex && claude`, accept the trust prompt, then quit with `/exit`.
+Claude Code only runs a channel from a marketplace other than Anthropic's when the machine's managed settings allow it. Add this to the managed settings file, merging with what's there: `/etc/claude-code/managed-settings.json` on Linux, `/Library/Application Support/ClaudeCode/managed-settings.json` on macOS. Writing it needs `sudo`; ask first.
 
-## 6. Start it
+```json
+{
+  "channelsEnabled": true,
+  "allowedChannelPlugins": [
+    { "plugin": "telegram", "marketplace": "hex" },
+    { "plugin": "discord", "marketplace": "hex" }
+  ]
+}
+```
+
+## 6. Trust the folder (you)
+
+hex's sessions run in `~/hex`, and Claude Code only runs there once the folder is trusted. Ask the person to run `cd ~/hex && claude`, choose **Yes, I trust this folder**, then quit with `/exit`.
+
+## 7. Start it
 
 ```sh
-systemctl --user link ~/hex/system/hex-hub.service ~/hex/system/hex.service
-systemctl --user enable --now hex-hub hex
+~/hex/.hex/bin/hex start
+~/hex/.hex/bin/hex status
 ```
 
-To keep hex running after the person logs out, run `loginctl enable-linger "$USER"`. Some systems need `sudo` for this; ask first.
+`status` should show the hub running and a session named `hex`. The hub keeps General running and starts a session for every other thread when it's needed.
 
-Check that it's up:
-- `systemctl --user status hex-hub hex`: both are active.
-- `claude agents --json | jq '.[] | select(.name == "hex")'`: shows a session with a `pid`.
+To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex run` (it stays in the foreground) with whatever it uses for that: a systemd user service with `Restart=always` plus `loginctl enable-linger "$USER"` (may need `sudo`; ask first), a launchd agent with `KeepAlive` on macOS, a Sprite service on a Fly.io Sprite, or a crontab line `@reboot ~/hex/.hex/bin/hex start`.
 
-## 7. Make it theirs
+## 8. Make it theirs
 
-- Create `~/hex/MEMORY.md` with the headings `# Memory`, `## Me`, `## Preferences` and `## Projects`. It stays on this machine: git ignores it, so updates never touch it. Ask their name, what they do, and anything they want hex to know from day one, and write it under `## Me`, one fact per line.
-- **Voice notes (optional):** `bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
-- **Email (optional):** the heartbeat reads mail through whatever mail connector Claude Code has, such as Gmail at claude.ai → Settings → Connectors.
-- **Accounts (optional):** [Executor](https://executor.sh) puts all their accounts (GitHub, Slack, Linear, Notion, …) behind one sign-in. If they use it, ask them to add it at claude.ai → Settings → Connectors → Add custom connector, with the URL `https://executor.sh/mcp`, and sign in **(you)**. Every hex session gets it from their Claude account, so nothing changes on this machine, and accounts they add to Executor later show up in hex on their own.
-- **Discord (optional):** a second front end. Tag the bot in any channel and it opens a thread with its own session. Ask them to create an application at https://discord.com/developers/applications, turn on **Message Content Intent** under Bot, copy the bot token, and invite the bot to their server with the `bot` scope and the Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History and Add Reactions permissions **(you)**. Then set `DISCORD_BOT_TOKEN` in `.env`, write their Discord user id to `~/.claude/channels/hex/discord/access.json` as `{ "allowFrom": ["<user id>"] }`, run `claude plugin install discord@hex` and `systemctl --user restart hex-hub`.
-- **Its own inbox (optional):** [AgentMail](https://agentmail.to) gives hex an email address of its own, so it can sign up for things and read verification codes without touching theirs. Ask them to add another custom connector with the URL `https://mcp.agentmail.to/mcp` and sign in **(you)**. hex creates its inbox the first time it needs one.
+- Ask their name, what they do, and anything they want hex to know from day one, and write it under `## Me` in `~/hex/MEMORY.md`, one fact per line.
+- **Voice notes (optional):** `.hex/bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
+- **Connectors (optional):** every connector on their Claude account works in every hex session, nothing to set up on this machine. They add them at claude.ai → Settings → Connectors **(you)**. Mail lets the hourly check read their inbox. Some that suit hex: [Executor](https://executor.sh) puts many accounts behind one connector (`https://executor.sh/mcp`), and [AgentMail](https://agentmail.to) gives hex an inbox of its own (`https://mcp.agentmail.to/mcp`).
+- **Discord (optional):** a second app for deeper work. Tag the bot in any channel and it opens a thread with its own session. Ask them to create an application at https://discord.com/developers/applications, turn on **Message Content Intent** under Bot, copy the bot token, and invite the bot to their server with the `bot` scope and the Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Attach Files and Add Reactions permissions **(you)**. Then set `DISCORD_BOT_TOKEN` in `.env`, write their Discord user id to `~/hex/state/discord/access.json` as `{ "allowFrom": ["<user id>"] }`, run `claude plugin install discord@hex` and `claude plugin disable discord@hex`, then `~/hex/.hex/bin/hex restart`.
 
-## 8. Say hi (you)
+## 9. Say hi (you)
 
 Ask them to say hi in General. hex should answer within a few seconds. Then show them what hex does on its own: ask for something worth its own thread (for example "research X and keep me posted") and a new topic will appear with a session working on it.
 
 ## Updating
 
-`~/hex/bin/update` pulls hex, then moves the channel to the fork's latest `main`, but only after its `scripts/verify` passes, and restarts the hub. To make it run daily, add it to `schedules.json`.
+`.hex/bin/update` runs every morning from `schedules.json`. It pulls hex, moves the channels to the fork's latest verified version once its `scripts/verify` passes, and restarts the hub and hex's sessions.

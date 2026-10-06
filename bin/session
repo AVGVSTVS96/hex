@@ -1,0 +1,8 @@
+#!/bin/sh
+hex=$(cd "$(dirname "$0")/.." && pwd)
+for arg; do
+  [ "${flag:-}" = --settings ] && main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
+  flag=$arg
+done
+[ -n "${main:-}" ] && set -- --plugin-dir "$hex/mods/scheduler" "$@"
+exec claude --plugin-dir "$hex/plugin" "$@"

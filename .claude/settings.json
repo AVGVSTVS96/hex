@@ -1,8 +1,0 @@
-{
-  "model": "opus",
-  "effortLevel": "medium",
-  "autoMemoryEnabled": false,
-  "permissions": {
-    "allow": ["Edit(./MEMORY.md)"]
-  }
-}

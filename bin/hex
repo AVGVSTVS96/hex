@@ -1,11 +1,61 @@
 #!/bin/sh
-cd "$(dirname "$0")/.." || exit 1
-set -a; . ./.env; set +a
+set -eu
+hex=$(cd "$(dirname "$0")/.." && pwd)
+home=$(cd "$hex/.." && pwd)
+pidfile="$home/state/hub.pid"
 
-claude agents --json | jq -e '.[] | select(.name == "hex" and .pid)' >/dev/null && exit 0
+running() {
+  [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
+}
 
-exec claude --bg --name hex \
-  --channels plugin:telegram@hex \
-  --plugin-dir mods/scheduler \
-  --settings "$(jq --arg thread "$HEX_MAIN_THREAD" --arg hub "$HOME/.claude/channels/hex/telegram/hub.sock" \
-    '.env = { HEX_THREAD: $thread, HEX_HUB: $hub }' .claude/main.json)"
+case "${1:-}" in
+  init)
+    for file in AGENTS.md SOUL.md MEMORY.md schedules.json; do
+      [ -e "$home/$file" ] || cp "$hex/defaults/$file" "$home/$file"
+    done
+    [ -e "$home/.gitignore" ] || cp "$hex/defaults/gitignore" "$home/.gitignore"
+    [ -e "$home/.env" ] || (umask 077 && cp "$hex/defaults/env" "$home/.env")
+    mkdir -p "$home/.claude" "$home/log" "$home/state/telegram" "$home/state/discord"
+    [ -e "$home/.claude/settings.json" ] || cp "$hex/defaults/settings.json" "$home/.claude/settings.json"
+    chmod 700 "$home" "$home/state"
+    [ -d "$home/.git" ] || { git -C "$home" init -q && git -C "$home" add -A && git -C "$home" commit -qm "A new hex"; }
+    echo "hex is set up in $home"
+    ;;
+  run)
+    set -a; . "$home/.env"; set +a
+    [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
+    export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
+    export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord"
+    echo $$ > "$pidfile"
+    for plugin in telegram discord; do
+      bun install --no-summary --cwd "$hex/channels/external_plugins/$plugin" >/dev/null
+    done
+    trap 'kill "$hub" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
+    trap 'kill "$hub" 2>/dev/null' HUP
+    while :; do
+      bun "$hex/channels/hub/serve.ts" &
+      hub=$!
+      wait "$hub" || true
+      sleep 3
+    done
+    ;;
+  start)
+    running && exit 0
+    nohup "$0" run >> "$home/state/hub.log" 2>&1 &
+    echo "hex started; its log is state/hub.log"
+    ;;
+  stop)
+    running && kill "$(cat "$pidfile")"
+    ;;
+  restart)
+    running && kill -HUP "$(cat "$pidfile")" || "$0" start
+    ;;
+  status)
+    if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi
+    claude agents --json | jq -r --arg home "$home" '.[] | select(.cwd == $home) | "\(.name): \(.status // "running")"'
+    ;;
+  *)
+    echo "usage: hex init|start|stop|restart|status|run" >&2
+    exit 2
+    ;;
+esac
