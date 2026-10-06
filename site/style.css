@@ -40,6 +40,8 @@
   --s4: 1.5rem;
   --s5: 2.5rem;
   --section: clamp(3rem, 7vw, 5rem);
+  --rail: clamp(0.75rem, 2.5vw, 2rem);
+  --bar: 3.75rem;
   --b: 2px solid var(--line);
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -66,7 +68,10 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; scroll-behavior: 
 
 body {
   margin: 0;
-  background: var(--bg);
+  background:
+    linear-gradient(var(--line) 0 0) 0 var(--rail) / 100% 2px no-repeat,
+    linear-gradient(var(--line) 0 0) 0 calc(var(--rail) + var(--bar) - 2px) / 100% 2px no-repeat,
+    var(--bg);
   color: var(--ink);
   font: 400 1.0625rem/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -80,15 +85,15 @@ p { text-wrap: pretty; }
 a { color: inherit; }
 :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
 
-.frame { max-width: 84rem; margin-inline: auto; border-inline: var(--b); min-height: 100vh; overflow: clip; }
+.frame { max-width: 84rem; margin-inline: auto; padding-top: var(--rail); border-inline: var(--b); min-height: 100vh; overflow: clip; }
 
 /* Bar */
 
 .bar {
   position: sticky; top: 0; z-index: 5;
   display: flex; align-items: center; justify-content: space-between;
-  height: 3.75rem; padding-inline: var(--pad);
-  border-bottom: var(--b);
+  height: var(--bar); padding-inline: var(--pad);
+  border-block: var(--b);
   background: color-mix(in oklab, var(--bg) 88%, transparent);
   backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
 }
