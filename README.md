@@ -1,3 +1,19 @@
+> Built in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is _**my version**_ of the personal assistant
+> 
+> - as simple, elegant, portable, and modifiable as humanly possible
+> - more capable than any other assistant on the market (Dots, Instinct, Grok Bot, Hermes, OpenClaw)
+> - clean and solid foundation to build on, claude code updates immediately benefit hex with no modification
+> - relies on an [auto-maintained fork](https://github.com/AVGVSTVS96/claude-code-plugins) of Anthropic's telegram + discord connectors which support multiple threads per channel
+>
+> Collectively, we still have a lot of work to do before we figure out the "right" way to build these products
+> 
+> while hex will serve as my sandbox for ongoing experimentation and testing, it's packaged as a complete product and can be installed and iterated on with ease
+>
+> please join me in my quest to build the perfect assistant with as few moving parts as possible!
+>
+> 
+> -- bassim
+
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/logo-light.svg">
