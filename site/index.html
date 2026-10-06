@@ -83,7 +83,7 @@
 <section class="stats" aria-label="At a glance">
   <div class="s-blue"><b>~<span data-count="2100">2,100</span></b><span>lines of hex. Claude Code does the rest.</span></div>
   <div class="s-yellow"><b>$0</b><span>extra, on the Claude plan you already pay for.</span></div>
-  <div class="s-pink"><b>2</b><span>front ends: Telegram and Discord.</span></div>
+  <div class="s-pink"><b>3</b><span>front ends: Telegram, Discord and Buzz.</span></div>
   <div class="s-ink"><b>0</b><span>frameworks, 0 databases. Just plain files.</span></div>
 </section>
 
@@ -109,11 +109,11 @@
         <span class="parts">phone · computer · memory · hub</span>
       </div>
       <div class="layer l-cc">
-        <b>Claude Code</b><span class="size">the hard part</span>
+        <b>Claude Code</b><span class="size">the best agent harness</span>
         <span class="chips"><i class="chip">reasoning</i><i class="chip">tools</i><i class="chip">MCP</i><i class="chip">skills</i><i class="chip">subagents</i><i class="chip">computer use</i></span>
       </div>
       <div class="layer l-model">
-        <b>Opus 5.5</b><span class="size">does the thinking</span>
+        <b>Opus 5.5</b><span class="size">the best agent model</span>
       </div>
     </figure>
 
@@ -130,33 +130,42 @@
 <section class="block" aria-labelledby="crew-title">
   <div class="block-head">
     <h2 id="crew-title">One bot. A whole crew.</h2>
-    <p>Claude Code's own channel plugins, forked so every topic and thread gets its own session.</p>
+    <p>Anthropic's own channel plugins, forked so every topic and thread gets its own session. Buzz is built the same way.</p>
   </div>
 
-  <figure class="flow" role="img" aria-label="Telegram and Discord send messages to the hex hub on your box. The hub routes each topic or thread to its own Claude Code session, and a session can be handed off from Telegram to Discord. Sessions share memory files.">
+  <figure class="flow" role="img" aria-label="Telegram, Discord and Buzz send messages to the hex hub on your box. The hub routes each topic or thread to its own Claude Code session, and a session can be handed off between apps. Sessions share memory files.">
     <svg class="flow-wide" viewBox="26 0 1050 460" aria-hidden="true">
       <rect class="f-box" x="330" y="24" width="744" height="412"/>
       <rect class="f-boxlabel" x="330" y="24" width="96" height="26"/>
       <text class="f-mono f-inv" x="344" y="42">your box</text>
 
-      <path id="w1" class="f-wire" d="M240 126 H300 V208 H384"/>
-      <path id="w2" class="f-wire" d="M240 332 H300 V232 H384"/>
+      <path id="w1" class="f-wire" d="M240 76 H300 V200 H384"/>
+      <path id="w2" class="f-wire" d="M240 220 H384"/>
+      <path id="w6" class="f-wire" d="M240 364 H300 V240 H384"/>
       <path id="w3" class="f-wire" d="M606 220 H648 V108 H704"/>
       <path id="w4" class="f-wire" d="M606 220 H704"/>
       <path id="w5" class="f-wire" d="M606 220 H648 V332 H704"/>
-      <path class="f-hand" d="M140 166 V286"/>
-      <path class="f-handhead" d="M134 278 L140 290 L146 278"/>
-      <text class="f-mono f-muted" x="154" y="232">hand off</text>
+      <path class="f-hand" d="M140 126 V176"/>
+      <path class="f-handhead" d="M134 132 L140 122 L146 132 M134 170 L140 180 L146 170"/>
+      <text class="f-mono f-muted" x="154" y="155">hand off</text>
+      <path class="f-hand" d="M140 270 V320"/>
+      <path class="f-handhead" d="M134 276 L140 266 L146 276 M134 314 L140 324 L146 314"/>
+      <text class="f-mono f-muted" x="154" y="299">hand off</text>
 
-      <rect class="f-shadow" x="34" y="94" width="206" height="72"/>
-      <rect class="f-tg" x="28" y="88" width="206" height="72"/>
-      <text class="f-title f-inv" x="48" y="122">Telegram</text>
-      <text class="f-mono f-inv f-soft" x="48" y="144">your pocket</text>
+      <rect class="f-shadow" x="34" y="46" width="206" height="72"/>
+      <rect class="f-tg" x="28" y="40" width="206" height="72"/>
+      <text class="f-title f-inv" x="48" y="74">Telegram</text>
+      <text class="f-mono f-inv f-soft" x="48" y="96">your pocket</text>
 
-      <rect class="f-shadow" x="34" y="302" width="206" height="72"/>
-      <rect class="f-dc" x="28" y="296" width="206" height="72"/>
-      <text class="f-title f-inv" x="48" y="330">Discord</text>
-      <text class="f-mono f-inv f-soft" x="48" y="352">your desk</text>
+      <rect class="f-shadow" x="34" y="190" width="206" height="72"/>
+      <rect class="f-dc" x="28" y="184" width="206" height="72"/>
+      <text class="f-title f-inv" x="48" y="218">Discord</text>
+      <text class="f-mono f-inv f-soft" x="48" y="240">your desk</text>
+
+      <rect class="f-shadow" x="34" y="334" width="206" height="72"/>
+      <rect class="f-bz" x="28" y="328" width="206" height="72"/>
+      <text class="f-title" x="48" y="362">Buzz</text>
+      <text class="f-mono" x="48" y="384">your workspace</text>
 
       <rect class="f-shadow" x="390" y="188" width="216" height="76"/>
       <rect class="f-hub" x="384" y="182" width="216" height="76"/>
@@ -183,23 +192,28 @@
 <rect class="f-glow" x="704" y="304" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
     </svg>
 
-    <svg class="flow-tall" viewBox="0 0 420 640" aria-hidden="true">
+    <svg class="flow-tall" viewBox="0 0 460 640" aria-hidden="true">
+      <path id="v1" class="f-wire" d="M74 86 V128 H210 V206"/>
+      <path class="f-wire" d="M230 86 V206"/>
+      <path class="f-wire" d="M386 86 V128 H250 V206"/>
+      <path class="f-handhead" d="M146 50 H164 M151 45 L146 50 L151 55 M159 45 L164 50 L159 55"/>
+      <path class="f-handhead" d="M302 50 H320 M307 45 L302 50 L307 55 M315 45 L320 50 L315 55"/>
+
+      <rect class="f-shadow" x="16" y="26" width="128" height="60"/><rect class="f-tg" x="10" y="20" width="128" height="60"/>
+      <text class="f-title f-inv" x="24" y="48">Telegram</text><text class="f-mono f-inv f-soft" x="24" y="68">your pocket</text>
+      <rect class="f-shadow" x="172" y="26" width="128" height="60"/><rect class="f-dc" x="166" y="20" width="128" height="60"/>
+      <text class="f-title f-inv" x="180" y="48">Discord</text><text class="f-mono f-inv f-soft" x="180" y="68">your desk</text>
+      <rect class="f-shadow" x="328" y="26" width="128" height="60"/><rect class="f-bz" x="322" y="20" width="128" height="60"/>
+      <text class="f-title" x="336" y="48">Buzz</text><text class="f-mono" x="336" y="68">your workspace</text>
+
+      <g transform="translate(20 0)">
       <rect class="f-box" x="10" y="150" width="400" height="476"/>
       <rect class="f-boxlabel" x="10" y="150" width="96" height="26"/>
       <text class="f-mono f-inv" x="24" y="168">your box</text>
 
-      <path id="v1" class="f-wire" d="M110 86 V128 H196 V206"/>
-      <path id="v2" class="f-wire" d="M310 86 V128 H224 V206"/>
       <path id="v3" class="f-wire" d="M210 282 V312 H38 V367 H60"/>
       <path id="v4" class="f-wire" d="M210 282 V312 H38 V441 H60"/>
       <path id="v5" class="f-wire" d="M210 282 V312 H38 V515 H60"/>
-      <path class="f-hand" d="M196 50 H216"/>
-      <path class="f-handhead" d="M210 44 L218 50 L210 56"/>
-
-      <rect class="f-shadow" x="26" y="26" width="176" height="60"/><rect class="f-tg" x="20" y="20" width="176" height="60"/>
-      <text class="f-title f-inv" x="36" y="48">Telegram</text><text class="f-mono f-inv f-soft" x="36" y="68">your pocket</text>
-      <rect class="f-shadow" x="230" y="26" width="176" height="60"/><rect class="f-dc" x="224" y="20" width="176" height="60"/>
-      <text class="f-title f-inv" x="240" y="48">Discord</text><text class="f-mono f-inv f-soft" x="240" y="68">your desk</text>
 
       <rect class="f-shadow" x="106" y="212" width="220" height="70"/><rect class="f-hub" x="100" y="206" width="220" height="70"/>
       <text class="f-title" x="118" y="238">hex hub</text><text class="f-mono" x="118" y="260">one bot, many sessions</text>
@@ -212,14 +226,14 @@
       <text class="f-label" x="78" y="518">Claude Code</text><text class="f-mono f-muted" x="364" y="518" text-anchor="end">#dev › fix ci</text>
 
       <text class="f-mono f-muted" x="60" y="590">SOUL.md · MEMORY.md · AGENTS.md · log/</text>
-
-<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;0;0;1;1" keyTimes="0;0.22;0.23;0.5;0.72;1" calcMode="linear"><mpath href="#v1"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.5;0.72" values="1;0;1;0"/></circle>
 <circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v3"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
 <circle class="f-dot f-dot-pink" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v4"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
 <circle class="f-dot f-dot-yellow" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v5"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
 <rect class="f-glow" x="60" y="340" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
 <rect class="f-glow" x="60" y="414" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
 <rect class="f-glow" x="60" y="488" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
+      </g>
+<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;0;0;1;1" keyTimes="0;0.22;0.23;0.5;0.72;1" calcMode="linear"><mpath href="#v1"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.5;0.72" values="1;0;1;0"/></circle>
     </svg>
   </figure>
 
@@ -263,7 +277,7 @@
 <section class="block" aria-labelledby="box-title">
   <div class="block-head">
     <h2 id="box-title">It doesn't live in a chat window.</h2>
-    <p>It lives on your box, with your whole network and, if you want, a computer of its own.</p>
+    <p>It lives on your box, with your whole network, a memory of its own and, if you want, a computer too.</p>
   </div>
 
   <div class="features rest">
@@ -279,7 +293,7 @@
         </div>
       </div>
       <h3>Its own computer</h3>
-      <p>Optional: a cloud desktop with Chrome. Watch it work.</p>
+      <p>Optional: a cloud desktop with Chrome, on any provider you like.</p>
     </div>
 
     <div class="feat">
@@ -298,17 +312,20 @@
         <span class="hubchip">your Claude account</span>
         <span class="chip acct c1">Gmail</span><span class="chip acct c2">Executor</span><span class="chip acct c3">AgentMail</span><span class="chip acct c4">Calendar</span>
       </div>
-      <h3>Your connectors</h3>
-      <p>Every session gets the ones your account has.</p>
+      <h3>Every connector</h3>
+      <p>Whatever your Claude account has.</p>
     </div>
 
-    <div class="feat soon">
-      <div class="viz v-inbox" aria-hidden="true">
-        <div class="mail"><b>ebay.com</b><span>signed in as you</span></div>
-        <div class="mail dim"><b>password</b><span>••••••••••</span></div>
+    <div class="feat">
+      <div class="viz v-term" aria-hidden="true">
+<pre><span class="dim">OptMem · memory/</span>
+today      flight Fri 9:40
+this week  aisle seats, always
+earlier    summarized <span class="ok">✓</span>
+<b>nightly</b>    → MEMORY.md</pre>
       </div>
-      <h3>Its own vault <span class="soon-tag">coming</span></h3>
-      <p>Your logins, used from its own computer.</p>
+      <h3>Memory with a timeline</h3>
+      <p>OptMem, folded into MEMORY.md every night.</p>
     </div>
   </div>
 </section>
@@ -376,9 +393,35 @@
         <li>Channels group work by area</li>
       </ul>
     </article>
+    <article class="way wide">
+      <header>
+        <span class="tag t-bz">Buzz</span>
+        <h3>Your workspace.</h3>
+      </header>
+      <div class="bz" aria-hidden="true">
+        <div class="bz-thread">
+          <div class="bz-msg"><span class="dc-av"></span><p><b>you</b><span class="mention">@hex</span> back up the NAS before tonight's update</p></div>
+          <div class="bz-msg"><img class="bz-av" src="/icon.svg" alt=""><p><b>hex</b>On it. Follow along in Activity.</p></div>
+          <div class="bz-compose">Message #ops</div>
+        </div>
+        <div class="bz-panel">
+          <div class="bz-tabs"><b>Activity</b><span>Memory</span><span>Files</span></div>
+          <ol class="bz-steps">
+            <li class="ok">Read MEMORY.md</li>
+            <li class="ok">ssh nas df -h /data</li>
+            <li class="run">rsync /data → offsite<i></i><i></i><i></i></li>
+          </ol>
+        </div>
+      </div>
+      <ul>
+        <li>Watch it work, step by step</li>
+        <li>Edit its memory and files</li>
+        <li>Shared with people and agents</li>
+      </ul>
+    </article>
   </div>
 
-  <p class="strip"><span class="soon-tag">coming</span> Check on Discord work from Telegram, and keep it going from your phone.</p>
+  <p class="strip"><span class="soon-tag">coming</span> iMessage, and checking on any thread from any app.</p>
 </section>
 
 <p class="strip plan">Table stakes too: an hourly check that stays quiet unless something needs you, schedules in one JSON file, voice notes.</p>
@@ -405,7 +448,7 @@
       <ul>
         <li>A machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM</li>
         <li>A Claude subscription</li>
-        <li>Telegram, Discord, or both</li>
+        <li>Telegram, Discord, Buzz, or any mix</li>
       </ul>
     </div>
     <div>
@@ -417,6 +460,17 @@
       </ul>
     </div>
   </div>
+</section>
+
+<section class="block build" aria-labelledby="build-title">
+  <div class="block-head">
+    <h2 id="build-title">hex is my sandbox. Come build it with me.</h2>
+    <p>Fork it. Try your ideas. Send back what works. Let's make it the best assistant in the world.<span class="sign">— bassim</span></p>
+  </div>
+  <div class="actions">
+    <a class="button" href="https://github.com/AVGVSTVS96/hex/fork">Fork on GitHub</a>
+  </div>
+  <p class="strip"><span class="soon-tag">next</span> A vault for its logins. More modular. More portable.</p>
 </section>
 
 <footer>

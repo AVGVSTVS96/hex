@@ -25,7 +25,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 - ~2,100 · lines of hex. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
-- 2 · front ends: Telegram and Discord.
+- 3 · front ends: Telegram, Discord and Buzz.
 - 0 · frameworks, 0 databases. Just plain files.
 
 ## The bet
@@ -53,8 +53,8 @@ Fine print: Tests and generated code excluded. Counted Oct 2026. Even the minima
 *(Three stacked layers: a thin one on top, a thick one in the middle, the model at the bottom. Three points beside it.)*
 
 - hex · ~2,100 lines · phone · computer · memory · hub
-- Claude Code · the hard part · reasoning, tools, MCP, skills, subagents, computer use
-- Opus 5.5 · does the thinking
+- Claude Code · the best agent harness · reasoning, tools, MCP, skills, subagents, computer use
+- Opus 5.5 · the best agent model
 
 Points:
 - Why rebuild what Anthropic ships every week?
@@ -68,13 +68,14 @@ Band: Claude models are the best personal assistant models, period. Everything e
 ## One bot, a whole crew
 
 Section title: One bot. A whole crew.
-Line: Claude Code's own channel plugins, forked so every topic and thread gets its own session.
+Line: Anthropic's own channel plugins, forked so every topic and thread gets its own session. Buzz is built the same way.
 
 ### Diagram labels
 
 - Telegram · your pocket
 - Discord · your desk
-- Arrow, Telegram to Discord: hand off
+- Buzz · your workspace
+- Arrows between neighbouring apps: hand off
 - hex hub · one bot, many sessions
 - Claude Code × 3 · ramen-tonight, Theo clips, #dev › fix ci
 - SOUL.md · MEMORY.md · AGENTS.md · log/
@@ -89,12 +90,12 @@ Line: Claude Code's own channel plugins, forked so every topic and thread gets i
 ## Its own machine
 
 Section title: It doesn't live in a chat window.
-Line: It lives on your box, with your whole network and, if you want, a computer of its own.
+Line: It lives on your box, with your whole network, a memory of its own and, if you want, a computer too.
 
-- **Its own computer**: Optional: a cloud desktop with Chrome. Watch it work. *(computer/setup turns a Fly.io Sprite into a Linux desktop with Chrome that hex drives with cua-driver. An optional install step, not coming.)*
+- **Its own computer**: Optional: a cloud desktop with Chrome, on any provider you like. *(computer/setup builds one on a Fly.io Sprite. Don't name the provider on the page.)*
 - **Your whole network**: Every machine you can ssh into.
-- **Your connectors**: Every session gets the ones your account has. *(Mock: "your Claude account" over Gmail, Executor, AgentMail, Calendar. They're examples, not hex features.)*
-- **Its own vault** · coming: Your logins, used from its own computer.
+- **Every connector**: Whatever your Claude account has. *(Mock: "your Claude account" over Gmail, Executor, AgentMail, Calendar. They're examples, not hex features.)*
+- **Memory with a timeline**: OptMem, folded into MEMORY.md every night. *(Terminal mock: today / this week / earlier, then nightly → MEMORY.md.)*
 
 ## Front ends
 
@@ -113,7 +114,12 @@ Bridge: take this to Discord
 - Room for code, logs and long answers
 - Channels group work by area
 
-Strip, **coming**: Check on Discord work from Telegram, and keep it going from your phone.
+**Buzz** · Your workspace. *(Full-width row under the other two, on their columns. Mock: a thread on the left, Buzz Desktop's Activity / Memory / Files panel on the right.)*
+- Watch it work, step by step
+- Edit its memory and files
+- Shared with people and agents
+
+Strip, **coming**: iMessage, and checking on any thread from any app.
 
 ## Basics
 
@@ -136,12 +142,20 @@ Copy button: Copy · after click: Copied
 **You'll need**
 - A machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM
 - A Claude subscription
-- Telegram, Discord, or both
+- Telegram, Discord, Buzz, or any mix
 
 **You do**
 - Make a bot
 - Add it to your group or server
 - Say hi
+
+## Build
+
+Section title: hex is my sandbox. Come build it with me.
+Line: Fork it. Try your ideas. Send back what works. Let's make it the best assistant in the world. — bassim
+Button: Fork on GitHub
+
+Strip, **next**: A vault for its logins. More modular. More portable.
 
 ## Footer
 

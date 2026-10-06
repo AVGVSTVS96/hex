@@ -21,26 +21,31 @@
   </picture>
 </p>
 
-<p align="center">Claude Code as your personal assistant. It runs on your own machine, and you talk to it in Telegram and Discord.<br><a href="https://hex-sand.vercel.app">hex-sand.vercel.app</a></p>
+<p align="center">Claude Code as your personal assistant. It runs on your own machine, and you talk to it in Telegram, Discord and Buzz.<br><a href="https://hex-sand.vercel.app">hex-sand.vercel.app</a></p>
 
 ---
 
-hex runs wherever Claude Code does, on a machine that stays on (a home server, a Mac that doesn't sleep, a cloud VM), with your own Claude subscription. It's a handful of plain files around Claude Code: no framework, no database, no service manager required. One small hub process holds the bot connections and starts a Claude Code session for each conversation.
+hex runs wherever Claude Code does, on a machine that stays on (a home server, a Mac that doesn't sleep, a cloud VM), with your own Claude subscription, and Opus 5.5 does the thinking. It's a handful of plain files around Claude Code: no framework, no database, no service manager required. One small hub process holds the bot connections and starts a Claude Code session for each conversation.
 
 ## How it works
 
 ```
- your phone                     your machine
+ your apps                      your machine
 ┌──────────────┐               ┌─────────────────────────────────────────────┐
-│ Telegram     │               │  hub  (one connection per app)              │
-│  ├ General   │◀─────────────▶│    │                                        │
-│  └ trip      │               │    ├──▶ claude  "hex"      General          │
-└──────────────┘               │    ├──▶ claude  (bg)       trip             │
-┌──────────────┐               │    └──▶ claude  (bg)       #dev › fix ci    │
-│ Discord      │◀─────────────▶│                                             │
-│  └ #dev      │               │  SOUL.md  MEMORY.md  AGENTS.md  log/        │
-│    └ fix ci  │               └─────────────────────────────────────────────┘
-└──────────────┘
+│ Telegram     │               │                                             │
+│  ├ General   │◀─────────────▶│  hub  (one connection per app)              │
+│  └ trip      │               │    │                                        │
+└──────────────┘               │    ├──▶ claude  "hex"      General          │
+┌──────────────┐               │    ├──▶ claude  (bg)       trip             │
+│ Discord      │               │    ├──▶ claude  (bg)       #dev › fix ci    │
+│  └ #dev      │◀─────────────▶│    └──▶ claude  (bg)       #ops › backups   │
+│    └ fix ci  │               │                                             │
+└──────────────┘               │                                             │
+┌──────────────┐               │                                             │
+│ Buzz         │               │                                             │
+│  └ #ops      │◀─────────────▶│  SOUL.md  MEMORY.md  AGENTS.md  log/        │
+│    └ backups │               │                                             │
+└──────────────┘               └─────────────────────────────────────────────┘
 ```
 
 - **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for 30 minutes stops, and starts again with its conversation when you write.
@@ -48,12 +53,12 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 - **Memory with a timeline.** Next to `MEMORY.md`, every session notes what happened in [OptMem](https://github.com/VictorTaelin/OptMem): plain text files, read back at the start of each session, with older memories summarized and still searchable word for word. Every night hex folds the day's notes into `MEMORY.md`.
 - **Works with any Claude connector.** Every connector on your Claude account works in every hex session, with nothing to set up on the machine: Gmail, your calendar, [Executor](https://executor.sh) for many accounts behind one sign-in, [AgentMail](https://agentmail.to) for an inbox of its own. Sending, replying or deleting through any of them waits for your yes.
 - **It speaks up when it matters.** Every hour while you're up it checks your mail, the work it started, threads waiting on you, and anything it said it would follow up on, and only messages you if something's worth it. Other jobs are lines in `schedules.json`, a cron line and a prompt each.
-- **A computer of its own (optional).** `computer/setup` turns a [Fly.io Sprite](https://sprites.dev) into a Linux desktop with Chrome that hex drives with [cua-driver](https://cua.ai), for anything that needs a real browser. You can watch its screen.
+- **A computer of its own (optional).** A cloud desktop with Chrome that hex drives with [cua-driver](https://cua.ai), for anything that needs a real browser, on whatever provider you like. You can watch its screen. `computer/setup` builds one on a [Fly.io Sprite](https://sprites.dev) in one command.
 - **Voice notes** work with any OpenAI-compatible speech-to-text endpoint, hosted or local.
 
-## Two front ends
+## Three front ends
 
-hex has two front ends. They are two different ways of working, not copies of each other. One hub serves both.
+hex has three front ends. They are different ways of working, not copies of each other. One hub serves all three.
 
 **Telegram: the assistant in your pocket.** Built and running today.
 - A group with Topics turned on. General is the main assistant, and every topic is its own session.
@@ -63,7 +68,13 @@ hex has two front ends. They are two different ways of working, not copies of ea
 **Discord: tag it and it gets to work.** Built and running today.
 - Tag the bot in any channel and it starts a thread on your message, with a fresh session working inside it. Inside a thread you just talk.
 - Channels group work by area, like `#research` or `#dev`. Room for longer answers, code blocks and history.
-- Each thread lives in one app. Say "take this to Discord" in a Telegram topic and the same session moves over with its memory. The Telegram topic posts a link to the new thread and closes.
+
+**Buzz: a workspace you share.** Built and running today.
+- A workspace for people and agents. Mention hex in a channel, or DM it, and it works in a thread with its own session.
+- Buzz Desktop shows what hex is doing as it works, step by step.
+- Its memory and the files you share from your folder show up in Buzz. Edit them there and hex commits the change.
+
+Each thread lives in one app. Say "take this to Discord" or "take this to Buzz" and the same session moves over with its memory. The old thread posts a link to the new one and closes.
 
 ## Install
 
@@ -97,12 +108,21 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     ├── mods/scheduler/             sends schedules.json jobs to General
     ├── computer/setup              turns a Sprite into its computer
     ├── defaults/                   what `hex init` starts your folder with
-    └── channels/                   the Telegram and Discord channels and hub (submodule)
+    └── channels/                   the Telegram, Discord and Buzz channels and hub (submodule)
 ```
 
 hex doesn't need systemd or any service manager. `hex start` runs the hub in the background, and the hub keeps General running. To have it come back after a reboot, point whatever your machine uses at `hex run`: a systemd user service, a launchd agent, a Sprite service, or an `@reboot` cron line.
 
-`channels/` is [a fork of Anthropic's official plugin marketplace](https://github.com/AVGVSTVS96/claude-plugins-official). Its patches add one bot connection per app, serving every Telegram topic and Discord thread, and a hub that gives each thread its own session. Every day a GitHub Actions pipeline re-applies the patches onto the latest upstream, Claude fixes any conflicts, and the result is only published once `scripts/verify` passes. Every morning `bin/update` pulls hex and runs `scripts/verify` again before your hub restarts on the new channel.
+`channels/` is [a fork of Anthropic's official plugin marketplace](https://github.com/AVGVSTVS96/claude-plugins-official). Its patches add one bot connection per app, serving every Telegram topic and Discord thread, a Buzz channel built the same way, and a hub that gives each thread its own session. Every day a GitHub Actions pipeline re-applies the patches onto the latest upstream, Claude fixes any conflicts, and the result is only published once `scripts/verify` passes. Every morning `bin/update` pulls hex and runs `scripts/verify` again before your hub restarts on the new channel.
+
+## What's next
+
+- **iMessage**, as a fourth front end.
+- **Check on any thread from any app**, and keep it going from your phone.
+- **A vault of its own** for the logins it uses on its computer.
+- **More modular, more portable.**
+
+hex is my sandbox. Fork it, try your ideas, and send back what works.
 
 ## Known issues
 
