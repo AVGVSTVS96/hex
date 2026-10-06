@@ -6,5 +6,6 @@ This repo is hex itself. A user's hex is a folder of their own (`~/hex`) with th
 - `defaults/` seeds a new user's folder (`bin/hex init`). Updates never touch those files once they exist, so anything every hex must get belongs in `HEX.md`, `plugin/` or `bin/`.
 - Memory is [OptMem](https://github.com/VictorTaelin/OptMem): `bin/optmem` downloads the pinned version into `vendor/` at init and on every update. It has no license, so it's never committed here.
 - `plugin/` holds the hooks every session loads; `mods/scheduler` runs `schedules.json` in General only. `bin/session` is how the hub starts a session.
+- `computer/setup` turns a fresh Fly.io Sprite into hex's own computer (XFCE, Chrome, cua-driver, a noVNC viewer), run inside it with `sprite exec`.
 - `channels/` is a fork of Anthropic's plugin marketplace, rebuilt daily from upstream plus `channels/patches/`. Change it there: edit the code, update the patch's `PATCH.md`, run `python3 scripts/fork_sync.py refresh --source-sha <baseline>` and `scripts/verify`.
 - Nothing personal goes in this repo: no names, accounts, machines or memories.

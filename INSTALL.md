@@ -92,6 +92,15 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
 - Ask what time zone they're in. If `date` here shows another one, set `env.TZ` in `~/hex/.claude/settings.json` to theirs (like `America/New_York`), so schedules fire on their clock. The hourly check runs from 8:45 to 22:45; if they keep other hours, change the heartbeat's `cron` in `~/hex/schedules.json`.
 - **Voice notes (optional):** `.hex/bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
 - **Connectors (optional):** every connector on their Claude account works in every hex session, nothing to set up on this machine. They add them at claude.ai → Settings → Connectors **(you)**. Mail lets the hourly check read their inbox. Some that suit hex: [Executor](https://executor.sh) puts many accounts behind one connector (`https://executor.sh/mcp`), and [AgentMail](https://agentmail.to) gives hex an inbox of its own (`https://mcp.agentmail.to/mcp`).
+- **A computer of its own (optional):** a [Fly.io Sprite](https://sprites.dev) with a desktop and Chrome, for anything that needs a real browser. Install the `sprite` CLI (`curl -fsSL https://sprites.dev/install.sh | sh`) and ask them to run `sprite login` **(you)**. Then:
+
+  ```sh
+  sprite create hex-computer
+  sprite file push -s hex-computer ~/hex/.hex/computer/setup /home/sprite/setup
+  sprite exec -s hex-computer -- sh -c '~/setup > ~/setup.log 2>&1; tail -n 8 ~/setup.log'
+  ```
+
+  It ends with `cua-driver doctor`, which should be all `[ok  ]`. If the push fails right after `create`, run it again. Write `- Agent computer: Sprite hex-computer` under `## Machines` in `~/hex/MEMORY.md`. They can watch its screen from a machine with the `sprite` CLI: `sprite proxy -s hex-computer 6080`, then http://localhost:6080/vnc.html.
 - **Discord (optional):** a second app for deeper work. Tag the bot in any channel and it opens a thread with its own session. Ask them to create an application at https://discord.com/developers/applications, turn on **Message Content Intent** under Bot, copy the bot token, and invite the bot to their server with the `bot` scope and the Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Attach Files and Add Reactions permissions **(you)**. Then set `DISCORD_BOT_TOKEN` in `.env`, write their Discord user id to `~/hex/state/discord/access.json` as `{ "allowFrom": ["<user id>"] }`, run `claude plugin install discord@hex` and `claude plugin disable discord@hex`, then `~/hex/.hex/bin/hex restart`.
 
 ## 9. Say hi (you)

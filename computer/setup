@@ -1,0 +1,68 @@
+#!/bin/sh
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+
+sudo apt-get update -qq
+sudo apt-get install -y -qq xfce4 xfce4-terminal dbus-x11 tigervnc-standalone-server novnc websockify \
+  at-spi2-core xdotool xclip librsvg2-common adwaita-icon-theme \
+  fonts-noto-color-emoji fonts-noto-cjk fonts-liberation >/dev/null
+sudo apt-get purge -y -qq xfce4-screensaver light-locker >/dev/null
+
+if ! command -v google-chrome-stable >/dev/null; then
+  curl -fsSLo /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+  sudo apt-get install -y -qq /tmp/chrome.deb >/dev/null
+  rm /tmp/chrome.deb
+fi
+
+[ -x ~/.local/bin/cua-driver ] || curl -fsSL https://cua.ai/install.sh | sh -s -- --select cua-driver
+~/.local/bin/cua-driver telemetry disable >/dev/null
+
+sudo mkdir -p -m1777 /tmp/.X11-unix
+
+sudo mkdir -p /etc/opt/chrome/policies/managed
+sudo tee /etc/opt/chrome/policies/managed/hex.json >/dev/null <<'EOF'
+{
+  "BrowserSignin": 0,
+  "PasswordManagerEnabled": false,
+  "TranslateEnabled": false,
+  "DefaultBrowserSettingEnabled": false,
+  "MetricsReportingEnabled": false,
+  "DefaultNotificationsSetting": 2,
+  "BackgroundModeEnabled": false,
+  "PromptForDownloadLocation": false,
+  "PrivacySandboxPromptEnabled": false
+}
+EOF
+
+mkdir -p ~/.config/autostart ~/.config/xfce4
+printf 'WebBrowser=google-chrome\n' > ~/.config/xfce4/helpers.rc
+cat > ~/.config/autostart/chrome.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Chrome
+Exec=google-chrome-stable --force-renderer-accessibility --password-store=basic --no-first-run --no-default-browser-check --hide-crash-restore-bubble
+EOF
+cat > ~/.config/autostart/noblank.desktop <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=No blanking
+Exec=xset s off -dpms s noblank
+EOF
+
+service() {
+  name=$1
+  shift
+  sprite-env services get "$name" >/dev/null 2>&1 || sprite-env services create "$name" "$@" --no-stream >/dev/null
+}
+
+# Sprites start every process with all capabilities inheritable, and bubblewrap
+# (which GTK's image loaders run in) refuses to start with them, so the desktop
+# drops them; without it XFCE dies on a black screen.
+service desktop-x --cmd /usr/bin/Xvnc --args ":1,-geometry,1440x900,-depth,24,-SecurityTypes,None,-localhost,yes,-AlwaysShared"
+service desktop --cmd /usr/bin/setpriv --args "--inh-caps=-all,--ambient-caps=-all,dbus-run-session,xfce4-session" \
+  --env "DISPLAY=:1" --needs desktop-x
+service cua-driver --cmd "$HOME/.local/bin/cua-driver" --args serve --env "DISPLAY=:1" --needs desktop-x
+service viewer --cmd /usr/bin/websockify --args "--web,/usr/share/novnc,6080,localhost:5901" --needs desktop-x
+
+sleep 5
+DISPLAY=:1 ~/.local/bin/cua-driver doctor
