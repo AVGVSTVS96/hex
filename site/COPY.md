@@ -19,7 +19,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 - Primary CTA: Install
 - Secondary CTA: View on GitHub
 
-*(Telegram phone mock: "find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it" → "On it. Opened #ramen-tonight." → "Live: ramen-tonight.vercel.app".)*
+*(Telegram phone mock, as Telegram looks on iOS 26: dark, with Liquid Glass header pills, topic bar and composer. "find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it" → "On it. Opened #ramen-tonight." → "It's live." with a link preview of ramen-tonight.vercel.app.)*
 
 ## Stats
 
