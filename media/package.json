@@ -1,0 +1,13 @@
+{
+  "name": "hex-media",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "serve": "node render.mjs launch serve",
+    "launch": "node render.mjs launch all"
+  },
+  "dependencies": {
+    "cuelume": "0.2.4",
+    "puppeteer-core": "^24.0.0"
+  }
+}

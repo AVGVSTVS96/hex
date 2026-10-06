@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hex · launch</title>
+<link rel="stylesheet" href="../kit/stage.css">
+<link rel="stylesheet" href="launch.css">
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="wm" viewBox="0 0 2167 737"><path fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></symbol>
+  <symbol id="bubble" viewBox="0 0 24 24"><path d="M12 2.5C6.5 2.5 2 6.4 2 11.2c0 2.6 1.3 4.9 3.4 6.5L4.6 21l4-1.9c1.1.3 2.2.5 3.4.5 5.5 0 10-3.9 10-8.6S17.5 2.5 12 2.5Z" fill="currentColor"/></symbol>
+</svg>
+
+<main id="stage">
+
+<section class="scene" data-s="0" data-e="6" data-theme="cream">
+  <div class="frame names">
+    <div class="list a" style="--k:defocus;--d:3.4;--dur:.7s">
+      <div class="row"><i class="a hl-line" style="--k:grow-x;--d:.1"></i><span class="m"><b class="a" style="--d:.5" data-cue="select">OpenAI Dots</b></span></div>
+      <div class="row"><i class="a hl-line" style="--k:grow-x;--d:.2"></i><span class="m"><b class="a" style="--d:1" data-cue="select">Instinct</b></span></div>
+      <div class="row"><i class="a hl-line" style="--k:grow-x;--d:.3"></i><span class="m"><b class="a" style="--d:1.5" data-cue="select">Grok Bot</b></span></div>
+      <div class="row"><i class="a hl-line" style="--k:grow-x;--d:.4"></i><span class="m"><b class="a" style="--d:2" data-cue="select">Hermes</b></span></div>
+      <div class="row"><span class="m"><b class="a" style="--d:2.5" data-cue="select">OpenClaw</b></span></div>
+    </div>
+    <p class="verdict"><span class="m"><span class="a" style="--d:3.6" data-cue="close">I wasn't happy with</span></span><span class="m"><span class="a" style="--d:3.7">any of them.</span></span></p>
+  </div>
+</section>
+
+<section class="scene" data-s="6" data-e="9.5" data-music="drop" data-theme="blue">
+  <div class="frame center">
+    <span class="m wm-mask"><svg class="wm-xl a" style="--dur:.9s" data-cue="success emphasis=strong"><use href="#wm"/></svg></span>
+    <p class="mono-l a" style="--k:up;--d:.75">my version of the personal assistant.</p>
+  </div>
+</section>
+
+<section class="scene" data-s="9.5" data-e="15.5" data-theme="cream">
+  <div class="frame stack">
+    <div class="srow"><span class="label a" style="--k:fade;--d:.05">the best agent model</span><span class="m"><b class="a" data-cue="tap">Opus 5.5</b></span><i class="a hl-line" style="--k:grow-x"></i></div>
+    <div class="srow"><span class="label a" style="--k:fade;--d:1.05">the best agent harness</span><span class="m"><b class="a" style="--d:1" data-cue="tap">Claude Code</b></span><i class="a hl-line" style="--k:grow-x;--d:1"></i></div>
+    <div class="srow"><span class="label a" style="--k:fade;--d:2.05">already paid for</span><span class="m"><b class="a" style="--d:2" data-cue="tap">Your Claude Max plan</b></span><i class="a hl-line" style="--k:grow-x;--d:2.4"></i></div>
+    <div class="srow yellow a" style="--k:wipe;--d:3;--dur:.6s" data-cue="toggle"><span class="label"><svg class="wm-s"><use href="#wm"/></svg></span><span class="m"><b class="a" style="--d:3.2">makes it your personal assistant.</b></span></div>
+    <i class="vline a" style="--k:grow-y"></i>
+  </div>
+</section>
+
+<section class="scene" data-s="15.5" data-e="22" data-theme="cream">
+  <div class="frame size">
+    <header><span class="m"><b class="a" style="--d:.1">As few moving parts as possible.</b></span><span class="label a" style="--k:fade;--d:.4">lines of source</span></header>
+    <div class="brow"><span class="who a" style="--k:fade;--d:.5">OpenClaw</span><span class="track"><i class="a" style="--k:grow-x;--d:.5;--dur:1.1s;--w:100%" data-cue="navigate"></i></span><b class="val a" style="--k:fade;--d:.9">4.4M</b></div>
+    <div class="brow"><span class="who a" style="--k:fade;--d:.75">Hermes Agent</span><span class="track"><i class="a" style="--k:grow-x;--d:.8;--dur:1.1s;--w:34%"></i></span><b class="val a" style="--k:fade;--d:1.2">1.5M</b></div>
+    <div class="brow hex"><span class="who a" style="--k:fade;--d:1.5"><svg class="wm-s"><use href="#wm"/></svg></span><span class="track"><i class="a" style="--k:grow-x;--d:1.5;--w:6px"></i></span><b class="val a" style="--k:fade;--d:1.5">~<span data-count="3800" data-at="1.5" data-dur="1" data-cue="count duration=1000">3,800</span></b></div>
+    <footer class="a" style="--k:wipe;--d:3;--dur:.6s" data-cue="ready"><span class="m"><span class="a" style="--d:3.2">Every Claude Code update is a hex update.</span></span><span class="m"><span class="dim a" style="--d:3.35">No changes needed.</span></span></footer>
+  </div>
+</section>
+
+<section class="scene" data-s="22" data-e="29" data-theme="black">
+  <div class="frame hood">
+    <header><h2><span class="m"><span class="a" style="--d:.1">Every thread is a real</span></span><span class="m"><span class="a" style="--d:.2">Claude Code session.</span></span></h2></header>
+    <div class="srow-h a" style="--k:fade;--d:.6"><span>thread</span><span>app</span><span>process</span><span>status</span></div>
+    <div class="proc a" style="--k:cell;--d:1" data-cue="select"><b>General</b><span class="app t-tg">Telegram</span><code>claude</code><em class="idle">idle</em></div>
+    <div class="proc a" style="--k:cell;--d:1.5" data-cue="select"><b>ramen-tonight</b><span class="app t-tg">Telegram</span><code>claude --bg</code><em class="busy">working</em></div>
+    <div class="proc a" style="--k:cell;--d:2" data-cue="select"><b>#dev › fix ci</b><span class="app t-dc">Discord</span><code>claude --bg</code><em class="busy">working</em></div>
+    <div class="proc a" style="--k:cell;--d:2.5" data-cue="select"><b>#launch › video</b><span class="app t-bz">Buzz</span><code>claude --bg</code><em class="done">done</em></div>
+    <footer class="a" style="--k:up;--d:3.1" data-cue="ready emphasis=subtle">the same harness · tools · skills · MCP · subagents · computer use</footer>
+  </div>
+</section>
+
+<section class="scene" data-s="29" data-e="38" data-theme="blue">
+  <div class="frame threads">
+    <div class="copy">
+      <h2><span class="m"><span class="a" style="--d:.1">Ask once.</span></span><span class="m"><span class="a" style="--d:.2">It opens a thread</span></span><span class="m"><span class="a" style="--d:.3">and gets to work.</span></span></h2>
+      <p class="mono-l a" style="--k:up;--d:.9">Many sessions per channel, on Anthropic's own channel plugins, forked. The fork maintains itself.</p>
+    </div>
+    <div class="phone-wrap a" style="--k:phone;--d:.25;--dur:1s">
+      <div class="phone">
+        <div class="tg-head">
+          <span class="tg-back">‹</span>
+          <img class="tg-avatar" src="../../site/icon.svg" alt="">
+          <span class="tg-title"><b>hex</b><small>General</small></span>
+        </div>
+        <div class="tg-chat">
+          <div class="msg a" style="--k:open;--d:1;--dur:.5s" data-cue="tap"><div><p class="bub out">find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it<time>4:41 <b>✓✓</b></time></p></div></div>
+          <div class="msg a" style="--k:open;--d:1.75;--dur:.5s" data-cue="ready emphasis=subtle"><div><p class="bub in">On it. Opened <span class="link">#ramen-tonight</span>.<time>4:41</time></p></div></div>
+          <div class="msg a" style="--k:open;--d:3.5;--dur:.5s"><div><div class="bub in card"><span class="card-bar"></span><span class="card-body"><b>Live: ramen-tonight.vercel.app</b><small>3 spots compared · open now · walking distance</small></span><time>4:47</time></div></div></div>
+          <div class="msg a" style="--k:open;--d:5;--dur:.5s" data-cue="tap"><div><p class="bub out">take this to Buzz<time>4:48 <b>✓✓</b></time></p></div></div>
+          <div class="msg a" style="--k:open;--d:5.75;--dur:.5s" data-cue="navigate"><div><p class="bub in">Moved to <span class="link">#team › ramen-tonight</span> on Buzz.<time>4:48</time></p></div></div>
+        </div>
+        <div class="tg-tabs">
+          <span class="tab on"><svg style="color:#3E95F2"><use href="#bubble"/></svg>General</span>
+          <span class="tab-slot a" style="--k:open-x;--d:2;--dur:.6s" data-cue="open"><span><span class="tab new"><svg style="color:#F25C8E"><use href="#bubble"/></svg>ramen-tonight<span class="states"><em class="a" style="--k:out;--d:3.5;--dur:.2s">working…</em><em class="done a" style="--k:fade;--d:3.6;--dur:.2s" data-cue="success">done ✓</em></span></span></span></span>
+          <span class="tab"><svg style="color:#FF7A45"><use href="#bubble"/></svg>Theo clips</span>
+          <span class="tab"><svg style="color:#8E6CF2"><use href="#bubble"/></svg>Leisure time</span>
+        </div>
+        <div class="tg-compose">
+          <svg viewBox="0 0 24 24" class="ico"><path d="M16.5 6.5 8.4 14.6a2 2 0 1 0 2.8 2.8l8.1-8.1a4 4 0 0 0-5.6-5.6L5.4 12a6 6 0 0 0 8.5 8.5l6.6-6.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+          <span class="tg-input">Message</span>
+          <svg viewBox="0 0 24 24" class="ico"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="scene" data-s="38" data-e="44" data-theme="cream">
+  <div class="frame apps">
+    <header><span class="m"><b class="a" style="--d:.1">Different apps, different jobs.</b></span><span class="m"><span class="sub a" style="--d:2">One assistant behind all three.</span></span></header>
+    <div class="col tg a" style="--k:wipe-y;--d:.5" data-cue="select"><span class="tag a" style="--k:up;--d:.7">Telegram</span><b class="a" style="--k:up;--d:.8">Your pocket.</b><span class="mono-s a" style="--k:up;--d:.9">topics · voice notes · quick replies</span></div>
+    <div class="col dc a" style="--k:wipe-y;--d:1" data-cue="select"><span class="tag a" style="--k:up;--d:1.2">Discord</span><b class="a" style="--k:up;--d:1.3">Your desk.</b><span class="mono-s a" style="--k:up;--d:1.4">threads · code · long answers</span></div>
+    <div class="col bz a" style="--k:wipe-y;--d:1.5" data-cue="select"><span class="tag a" style="--k:up;--d:1.7">Buzz</span><span class="sticker a" style="--k:stamp;--d:2;--dur:.5s" data-cue="toggle">new</span><b class="a" style="--k:up;--d:1.8">Your workspace.</b><span class="mono-s a" style="--k:up;--d:1.9">activity · memory · files</span></div>
+    <span class="bridge a" style="--k:slide;--d:2.5;--dur:.9s" data-cue="navigate">take this to Discord or Buzz →</span>
+  </div>
+</section>
+
+<section class="scene" data-s="44" data-e="50" data-theme="blue">
+  <div class="frame handoff">
+    <header><span class="m"><b class="a" style="--d:.1">Hand off mid-task.</b></span><span class="m"><span class="mono-l a" style="--d:.3">Same Claude Code session, same context. Just a different app.</span></span></header>
+    <div class="lane a" style="--k:wipe-y;--d:.3"><span class="tag t-tg">Telegram</span><span class="where">on the go</span></div>
+    <div class="lane a" style="--k:wipe-y;--d:.4"><span class="tag t-dc">Discord</span><span class="where">at your desk</span></div>
+    <div class="lane a" style="--k:wipe-y;--d:.5"><span class="tag t-bz">Buzz</span><span class="where">in your workspace</span></div>
+    <div class="session-track">
+      <div class="session a" style="--k:hop;--d:.6;--dur:3.6s">
+        <span class="kicker">Claude Code session</span>
+        <b>ramen-tonight</b>
+        <span class="meta">context · files · tools</span>
+      </div>
+    </div>
+    <span class="hop-cue" data-cue="navigate" style="--d:1.5"></span>
+    <span class="hop-cue" data-cue="navigate" style="--d:2.85"></span>
+    <span class="hop-cue" data-cue="success emphasis=subtle" style="--d:3.7"></span>
+  </div>
+</section>
+
+<section class="scene" data-s="50" data-e="58" data-theme="cream">
+  <div class="frame feats">
+    <header><span class="m"><b class="a" style="--d:.1">Featuring</b></span><span class="label a" style="--k:fade;--d:.3">and everything Claude Code already does</span></header>
+    <div class="cell a" style="--k:cell;--d:.5" data-cue="select"><span class="n">01</span><b>OptMem</b><span class="mono-s">Memory with a timeline, folded into MEMORY.md every night.</span></div>
+    <div class="cell a" style="--k:cell;--d:1" data-cue="select"><span class="n">02</span><b>Every connector</b><span class="mono-s">Gmail, calendar, email. Whatever your Claude account has.</span></div>
+    <div class="cell a" style="--k:cell;--d:1.5" data-cue="select"><span class="n">03</span><b>Its own computer</b><span class="mono-s">A cloud desktop with Chrome, on any provider you like.</span></div>
+    <div class="cell a" style="--k:cell;--d:2" data-cue="select"><span class="n">04</span><b>Your network</b><span class="mono-s">Every machine you can ssh into.</span></div>
+    <div class="cell a" style="--k:cell;--d:2.5" data-cue="select"><span class="n">05</span><b>Speaks up</b><span class="mono-s">Checks in every hour. Quiet unless something needs you.</span></div>
+    <div class="cell a" style="--k:cell;--d:3" data-cue="select"><span class="n">06</span><b>Plain files</b><span class="mono-s">No framework, no database. A git repo you own.</span></div>
+  </div>
+</section>
+
+<section class="scene" data-s="58" data-e="62" data-music="break" data-theme="black">
+  <div class="frame soon">
+    <span class="label yellow-t a" style="--k:fade;--d:.1">coming soon</span>
+    <span class="m"><b class="imsg a" style="--d:.25;--dur:.9s" data-cue="attention">iMessage.</b></span>
+    <div class="more">
+      <span class="m"><span class="a" style="--d:1.5" data-cue="tap emphasis=subtle">More modular.</span></span>
+      <span class="m"><span class="a" style="--d:2" data-cue="tap emphasis=subtle">More portable.</span></span>
+      <span class="m"><span class="tiny a" style="--d:2.75">other agents? maybe.</span></span>
+    </div>
+  </div>
+</section>
+
+<section class="scene" data-s="62" data-e="68" data-music="lift" data-theme="cream">
+  <div class="frame invite">
+    <h2>
+      <span class="m"><span class="a" style="--d:.1">hex is my sandbox.</span></span>
+      <span class="m"><span class="a" style="--d:.9">Come build it <mark class="a" style="--k:hl;--d:1.4;--dur:.5s" data-cue="toggle">with me.</mark></span></span>
+    </h2>
+    <p class="mono-l a" style="--k:up;--d:1.9">Fork it. Try your ideas. Send back what works.<br>Let's make it the best assistant in the world.</p>
+  </div>
+</section>
+
+<section class="scene" data-s="68" data-e="73.5" data-music="end" data-theme="blue">
+  <div class="frame center end">
+    <span class="m wm-mask"><svg class="wm-l a" style="--dur:.9s" data-cue="success emphasis=strong"><use href="#wm"/></svg></span>
+    <p class="mono-l a" style="--k:up;--d:.6">Claude Code as your personal assistant.</p>
+    <div class="links a" style="--k:up;--d:.9"><span>github.com/AVGVSTVS96/hex</span><span>hex-sand.vercel.app</span></div>
+    <span class="sig a" style="--k:fade;--d:1.6">— bassim</span>
+  </div>
+</section>
+
+<div class="rails">
+  <i class="h a" style="--s:0;--k:grow-x;--dur:1s;top:86px" data-cue="open emphasis=subtle"></i>
+  <i class="h a" style="--s:0;--k:grow-x;--dur:1s;--d:.1;top:990px"></i>
+  <i class="v a" style="--s:0;--k:grow-y;--dur:1s;left:94px"></i>
+  <i class="v a" style="--s:0;--k:grow-y;--dur:1s;--d:.1;left:1822px"></i>
+  <svg class="rail-wm a" style="--s:0;--k:fade;--d:.3"><use href="#wm"/></svg>
+  <span class="rail-t tr a" style="--s:0;--k:fade;--d:.4">Claude Code as your personal assistant</span>
+  <span class="rail-t bl a" style="--s:0;--k:fade;--d:.5" id="count">01</span>
+  <span class="rail-t br a" style="--s:0;--k:fade;--d:.5">github.com/AVGVSTVS96/hex</span>
+</div>
+
+</main>
+
+<script src="../kit/stage.js"></script>
+<script type="module">
+  import { soundtrack } from "../kit/sound.js"
+  import music from "./music.js"
+  soundtrack(music)
+</script>
+</body>
+</html>
