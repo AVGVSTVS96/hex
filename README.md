@@ -3,7 +3,7 @@
 > - as simple, elegant, portable, and modifiable as humanly possible
 > - more capable than any other assistant on the market (Dots, Instinct, Grok Bot, Hermes, OpenClaw)
 > - clean and solid foundation to build on, claude code updates immediately benefit hex with no modification
-> - relies on an [auto-maintained fork](https://github.com/AVGVSTVS96/claude-code-plugins) of Anthropic's telegram + discord connectors which support multiple threads per channel
+> - relies on an [auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official) of Anthropic's telegram + discord connectors which support multiple threads per channel
 >
 > collectively, we still have a lot of work to do before we figure out the "right" way to build these products
 > 
