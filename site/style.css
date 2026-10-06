@@ -456,6 +456,7 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
 .r-hex .track i { background: var(--pink); }
 .r-hex b { padding: 0.3rem 0.45rem; background: var(--yellow); color: #0A0A0A; }
 .fine { color: var(--muted); font: 500 0.6875rem/1.6 var(--mono); }
+.fine .note { font-size: 0.5625rem; }
 @media (max-width: 40rem) {
   .bar-row { grid-template-columns: minmax(0, 1fr) auto; }
   .track { grid-column: 1 / -1; grid-row: 2; }
