@@ -455,18 +455,10 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
 .r-hex .track { border-color: var(--blue-text); }
 .r-hex .track i { background: var(--pink); }
 .r-hex b { padding: 0.3rem 0.45rem; background: var(--yellow); color: #0A0A0A; }
-.r-zoom .who { align-self: start; }
-.zoom { display: grid; gap: var(--s1); }
-.split { display: flex; height: 1.75rem; border: 2px solid var(--line); }
-.split i { flex: 1; background: var(--blue); }
-.split i:first-child { flex: 0 0 var(--w); border-right: 2px solid var(--line); background: var(--pink); }
-.legend { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; color: var(--muted); font: 500 0.6875rem/1.4 var(--mono); }
-.legend span::before { content: ""; display: inline-block; width: 0.75rem; height: 0.75rem; margin-right: 0.45rem; vertical-align: -0.1em; border: 2px solid var(--line); background: var(--pink); }
-.legend .conn::before { background: var(--blue); }
 .fine { color: var(--muted); font: 500 0.6875rem/1.6 var(--mono); }
 @media (max-width: 40rem) {
   .bar-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .track, .zoom { grid-column: 1 / -1; grid-row: 2; }
+  .track { grid-column: 1 / -1; grid-row: 2; }
 }
 
 .quote {
