@@ -49,7 +49,7 @@ If nothing shows up, the bot isn't an admin yet or the message was sent before i
 
 ## 5. Install the channels
 
-The Telegram and Discord channels come from hex's own plugin marketplace:
+The Telegram, Discord and Buzz channels come from hex's own plugin marketplace:
 
 ```sh
 claude plugin marketplace add ~/hex/.hex/channels
@@ -66,7 +66,8 @@ Claude Code only runs a channel from a marketplace other than Anthropic's when t
   "channelsEnabled": true,
   "allowedChannelPlugins": [
     { "plugin": "telegram", "marketplace": "hex" },
-    { "plugin": "discord", "marketplace": "hex" }
+    { "plugin": "discord", "marketplace": "hex" },
+    { "plugin": "buzz", "marketplace": "hex" }
   ]
 }
 ```
@@ -102,6 +103,13 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
 
   It ends with `cua-driver doctor`, which should be all `[ok  ]`. If the push fails right after `create`, run it again. Write `- Agent computer: Sprite hex-computer` under `## Machines` in `~/hex/MEMORY.md`. They can watch its screen from a machine with the `sprite` CLI: `sprite proxy -s hex-computer 6080`, then http://localhost:6080/vnc.html.
 - **Discord (optional):** a second app for deeper work. Tag the bot in any channel and it opens a thread with its own session. Ask them to create an application at https://discord.com/developers/applications, turn on **Message Content Intent** under Bot, copy the bot token, and invite the bot to their server with the `bot` scope and the Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Attach Files and Add Reactions permissions **(you)**. Then set `DISCORD_BOT_TOKEN` in `.env`, write their Discord user id to `~/hex/state/discord/access.json` as `{ "allowFrom": ["<user id>"] }`, run `claude plugin install discord@hex` and `claude plugin disable discord@hex`, then `~/hex/.hex/bin/hex restart`.
+- **Buzz (optional):** [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels; hex joins as an agent and works like it does in Discord. Buzz Desktop deploys it through a provider that writes hex's Buzz key over SSH, so the computer running Buzz Desktop must reach this machine with `ssh` and a key, no password. Build the provider for that computer (`bun-darwin-arm64` for an Apple silicon Mac, `bun-darwin-x64`, `bun-linux-x64`) and copy it into its `~/.local/bin`:
+
+  ```sh
+  bun build --compile --target=bun-darwin-arm64 ~/hex/.hex/channels/external_plugins/buzz/provider.ts --outfile /tmp/buzz-backend-hex
+  ```
+
+  Run `claude plugin install buzz@hex` and `claude plugin disable buzz@hex` here. Then ask them to create an agent named hex in Buzz Desktop, pick **hex** as where it runs with this machine's SSH destination (like `user@host`), deploy it, and add it to the channels they want it in **(you)**. Deploying writes `~/hex/state/buzz/.env` and restarts the hub. Tag hex in a channel to check it answers.
 
 ## 9. Say hi (you)
 

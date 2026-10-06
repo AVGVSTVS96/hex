@@ -15,7 +15,7 @@ case "${1:-}" in
     done
     [ -e "$home/.gitignore" ] || cp "$hex/defaults/gitignore" "$home/.gitignore"
     [ -e "$home/.env" ] || (umask 077 && cp "$hex/defaults/env" "$home/.env")
-    mkdir -p "$home/.claude" "$home/log" "$home/state/telegram" "$home/state/discord"
+    mkdir -p "$home/.claude" "$home/log" "$home/state/telegram" "$home/state/discord" "$home/state/buzz"
     [ -e "$home/.claude/settings.json" ] || jq --arg memory "$home/memory" '.env.MEMORY_DIR = $memory' "$hex/defaults/settings.json" > "$home/.claude/settings.json"
     "$hex/bin/optmem"
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
@@ -27,9 +27,9 @@ case "${1:-}" in
     set -a; . "$home/.env"; set +a
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
-    export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord"
+    export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz"
     echo $$ > "$pidfile"
-    for plugin in telegram discord; do
+    for plugin in telegram discord buzz; do
       bun install --no-summary --cwd "$hex/channels/external_plugins/$plugin" >/dev/null
     done
     trap 'kill "$hub" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
