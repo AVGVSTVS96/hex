@@ -308,7 +308,6 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
   box-shadow: 4px 4px 0 var(--black);
 }
 .bridge span::after { content: "\00a0↓"; display: inline-block; }
-.way.wide { border-top: var(--b); }
 @media (min-width: 56rem) {
   .ways { grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); }
   .way.wide { grid-column: 1 / -1; grid-template-columns: subgrid; grid-template-rows: auto 1fr; padding-inline: 0; }
@@ -318,6 +317,9 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
   .bridge { border-block: 0; border-inline: var(--b); padding: var(--s3) var(--s2); }
   .bridge span { writing-mode: vertical-rl; padding: var(--s2) var(--s1); }
   .bridge span::after { content: "\00a0↑"; }
+  .bridge.across { grid-column: 1 / -1; border-inline: 0; border-block: var(--b); padding: var(--s3) var(--pad); }
+  .bridge.across span { writing-mode: horizontal-tb; padding: 0.55rem 0.8rem; }
+  .bridge.across span::after { content: "\00a0↓"; animation-name: nudge; }
 }
 
 .tg-list, .dc, .bz {

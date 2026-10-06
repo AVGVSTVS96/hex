@@ -7,7 +7,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 ## Page
 
 - `<title>`: hex · The best personal assistant is already on your machine
-- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 2,100 lines, on the Claude plan you already pay for.
+- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 3,800 lines, on the Claude plan you already pay for.
 
 ## Hero
 
@@ -23,7 +23,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 ## Stats
 
-- ~2,100 · lines of hex. Claude Code does the rest.
+- ~3,800 · lines of hex. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
 - 3 · front ends: Telegram, Discord and Buzz.
 - 0 · frameworks, 0 databases. Just plain files.
@@ -42,17 +42,17 @@ Label: Lines of source
 - OpenClaw · 4 million+
 - Hermes Agent · 1.5 million
 - NanoClaw (the minimal one) · 68,000
-- hex · ~2,100
+- hex · ~3,800
 
-Fine print: Tests and generated code excluded. Counted Oct 2026. Even the minimal one is 32x bigger.
+Fine print: Tests and generated code excluded. Counted Oct 2026. Even the minimal one is 17x bigger.
 
-*(hex counts what it runs, without tests or this site: the scripts and TS in bin/, plugin/, mods/ and computer/, the JSON in defaults/, the hub, and the Telegram and Discord bot and server files. 2,072 lines on Oct 6 2026, rounded up.)*
+*(hex counts what it runs, without tests or this site: the scripts and TS in bin/, plugin/, mods/ and computer/, the JSON in defaults/, the hub, and every TS file of the Telegram, Discord and Buzz channels. 3,728 lines on Oct 6 2026 after Buzz landed (Buzz alone is 1,648), rounded up. NanoClaw: 68,000 / 3,800 = 17x.)*
 
 ### Layer stack
 
 *(Three stacked layers: a thin one on top, a thick one in the middle, the model at the bottom. Three points beside it.)*
 
-- hex · ~2,100 lines · phone · computer · memory · hub
+- hex · ~3,800 lines · phone · computer · memory · hub
 - Claude Code · the best agent harness · reasoning, tools, MCP, skills, subagents, computer use
 - Opus 5.5 · the best agent model
 
@@ -108,6 +108,8 @@ Line: Each app does what it's best at. hex connects them.
 - It speaks up when something needs you
 
 Bridge: take this to Discord
+
+Bridge, above Buzz: take this to Buzz
 
 **Discord** · Your desk.
 - Tag it, and it opens a thread

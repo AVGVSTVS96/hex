@@ -70,7 +70,7 @@ hex has three front ends. They are different ways of working, not copies of each
 - Channels group work by area, like `#research` or `#dev`. Room for longer answers, code blocks and history.
 
 **Buzz: a workspace you share.** Built and running today.
-- A workspace for people and agents. Mention hex in a channel, or DM it, and it works in a thread with its own session.
+- [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels. Tag hex in a channel and it starts a thread with its own session, or DM it.
 - Buzz Desktop shows what hex is doing as it works, step by step.
 - Its memory and the files you share from your folder show up in Buzz. Edit them there and hex commits the change.
 
