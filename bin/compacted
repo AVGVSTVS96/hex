@@ -1,0 +1,54 @@
+#!/bin/sh
+input=$(cat)
+session=$(printf '%s' "$input" | jq -r .session_id)
+here=$(cd "$(dirname "$0")" && pwd)
+export LC_ALL=C
+
+# Claude Code puts at most 10,000 characters of a hook's output into context.
+# Past that it saves the output to a file and shows only a 2,000-character preview.
+room=9500
+
+case "${1:-}" in
+  memory)
+    memo="$here/../vendor/memo"
+    [ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] || exit 0
+    wake=$("$memo" wake 2>&1)
+    echo "Your context was just compacted, so this is \`.hex/vendor/memo wake\` again. Carry on from it as you would at the start of a session."
+    echo
+    if [ "$(printf '%s\n' "$wake" | wc -c)" -le "$room" ]; then
+      printf '%s\n' "$wake"
+      exit 0
+    fi
+    rest="${TMPDIR:-/tmp}/hex-wake-$session.txt"
+    printf '%s\n' "$wake" > "$rest"
+    shown=$(awk -v room="$room" '{ size += length($0) + 1 } size > room { exit } { n = NR } END { print n + 0 }' "$rest")
+    head -n "$shown" "$rest"
+    echo
+    echo "That's all that fits here. Read the rest from line $((shown + 1)) of $rest, and do what it says."
+    ;;
+  turns)
+    printf '%s' "$input" | "$here/log"
+    cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
+    id=$(printf %.8s "$session")
+    for log in log/*-"$id".md log/threads/*-"$id".md; do [ -f "$log" ] && break; done
+    [ -f "$log" ] || exit 0
+    start=$(awk -v room="$room" '
+      { line[NR] = $0; turn[NR] = /^## (me|assistant) · .+ · [0-9][0-9]:[0-9][0-9]$/ }
+      END {
+        for (i = NR; i > 0 && size + length(line[i]) + 1 <= room; i--) size += length(line[i]) + 1
+        for (j = i + 1; j <= NR && !turn[j]; j++) ;
+        print j <= NR ? j : i + 1
+      }' "$log")
+    if [ "$(awk '/^## (me|assistant) · /{ print NR; exit }' "$log")" = "$start" ]; then
+      echo "Your context was just compacted. This is the whole conversation so far, word for word, from $log:"
+    else
+      echo "Your context was just compacted. This is the end of the conversation, word for word, from line $start of $log. Earlier turns are above it there."
+    fi
+    echo
+    tail -n +"$start" "$log"
+    ;;
+  *)
+    echo "usage: compacted memory|turns" >&2
+    exit 2
+    ;;
+esac

@@ -1,5 +1,11 @@
 {
   "hooks": {
+    "SessionStart": [
+      { "matcher": "compact", "hooks": [
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted memory" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted turns" }
+      ] }
+    ],
     "PreToolUse": [
       { "matcher": "mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }] }
     ],

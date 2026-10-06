@@ -21,7 +21,7 @@ body=$(jq -r '
       elif ($text | test("^<(local-command|command-|system-reminder|task-notification)")) then empty
       else block($e; "me"; "terminal"; $text) end;
 
-    select(.isSidechain != true and .origin.kind != "plugin" and (.isMeta != true or .origin.kind == "channel")) | . as $e
+    select(.isSidechain != true and .isCompactSummary != true and .origin.kind != "plugin" and (.isMeta != true or .origin.kind == "channel")) | . as $e
     | if .type == "user" then (.message.content | texts) as $t | heard($e; $t)
       elif .type == "attachment" and .attachment.type == "queued_command" then (.attachment.prompt | texts) as $t | heard($e; $t)
       elif .type == "assistant" then
