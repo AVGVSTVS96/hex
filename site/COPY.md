@@ -28,6 +28,27 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 - 3 · front ends built in: Telegram, Discord, Buzz. Or build your own.
 - 0 · frameworks, 0 databases. Just plain files you own.
 
+## A note from bassim
+
+*(Bassim's handwritten note from the top of the README, in his words: lowercase, as written. A ruled paper card in Caveat with a pink "a note from bassim" sticker, a strip of tape, a slight tilt and the hard shadow. The paper stays paper in dark mode. "my version" is bold italic with a yellow marker swipe; "auto-maintained fork" links to https://github.com/AVGVSTVS96/claude-plugins-official.)*
+
+Sticker: a note from bassim
+
+built in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is ***my version*** of the personal assistant
+
+- as simple, elegant, portable, and modifiable as humanly possible
+- more capable than any other assistant on the market (Dots, Instinct, Grok Bot, Hermes, OpenClaw)
+- clean and solid foundation to build on, claude code updates immediately benefit hex with no modification
+- relies on an [auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official) of Anthropic's telegram + discord connectors which support multiple threads per channel
+
+collectively, we still have a lot of work to do before we figure out the "right" way to build these products
+
+while hex will serve as my sandbox for ongoing experimentation and testing, it's packaged as a complete product and can be installed and iterated on with ease
+
+please join me in my quest to build the perfect assistant with as few moving parts as possible!
+
+— bassim
+
 ## The bet
 
 Section title: Everyone's building an agent. We plugged into the best one.
@@ -164,7 +185,7 @@ Copy button: Copy · after click: Copied
 ## Build
 
 Section title: hex is my sandbox. Come build it with me.
-Line: Fork it. Try your ideas. Send back what works. Let's make it the best assistant in the world. — bassim
+Line: Fork it. Try your ideas. Send back what works. *(Short on purpose: the note up top already says the rest and carries his signature.)*
 Button: Fork on GitHub
 
 Strip, **next**: A vault for its logins. More modular. More portable.
