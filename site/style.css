@@ -515,6 +515,8 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
 .f-tg { fill: var(--tg); stroke: #0A0A0A; stroke-width: 2; }
 .f-dc { fill: var(--dc); stroke: #0A0A0A; stroke-width: 2; }
 .f-bz { fill: var(--bz); stroke: #0A0A0A; stroke-width: 2; }
+.f-yours { fill: var(--bg); stroke: var(--line); stroke-width: 2; stroke-dasharray: 7 5; }
+.f-maybe { stroke-dasharray: 7 5; }
 .f-hub { fill: var(--yellow); stroke: #0A0A0A; stroke-width: 2; }
 .f-glow { fill: none; stroke: var(--pink); stroke-width: 5; opacity: 0; }
 .f-title { font: 800 22px var(--sans); font-stretch: 112%; letter-spacing: -0.02em; fill: #0A0A0A; }
@@ -523,6 +525,7 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
 .f-inv { fill: #fff; }
 .f-soft { opacity: 0.85; }
 .f-muted { fill: var(--muted); }
+.f-ink { fill: var(--ink); }
 .f-boxlabel + .f-mono, .flow .f-inv { fill: var(--bg); }
 .f-tg ~ .f-inv, .f-dc ~ .f-inv { fill: #fff; }
 .f-dot { fill: var(--blue); stroke: #0A0A0A; stroke-width: 2; }
@@ -603,6 +606,10 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
 .v-accounts { grid-template-columns: repeat(2, max-content); justify-content: center; gap: var(--s1); padding: var(--s2); background: var(--pink); }
 .hubchip { grid-column: 1 / -1; justify-self: center; padding: 0.35rem 0.6rem; border: 2px solid #0A0A0A; background: #0A0A0A; color: #fff; font: 600 0.6875rem/1 var(--mono); }
 .acct { justify-self: center; border-color: #0A0A0A; background: #fff; color: #0A0A0A; }
+
+.v-ext { display: flex; flex-wrap: wrap; align-content: center; justify-content: center; gap: var(--s1); padding: var(--s3); background: var(--yellow); }
+.v-ext .chip { border-color: #0A0A0A; background: #fff; color: #0A0A0A; }
+.v-ext .add { border-style: dashed; background: transparent; }
 
 /* Install */
 

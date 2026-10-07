@@ -76,8 +76,8 @@
 <section class="stats" aria-label="At a glance">
   <div class="s-blue"><b>~<span data-count="800">800</span></b><span>lines of hex, plus ~3,000 in connectors. Claude Code does the rest.</span></div>
   <div class="s-yellow"><b>$0</b><span>extra, on the Claude plan you already pay for.</span></div>
-  <div class="s-pink"><b>3</b><span>front ends: Telegram, Discord and Buzz.</span></div>
-  <div class="s-ink"><b>0</b><span>frameworks, 0 databases. Just plain files.</span></div>
+  <div class="s-pink"><b>3</b><span>front ends built in: Telegram, Discord, Buzz. Or build your own.</span></div>
+  <div class="s-ink"><b>0</b><span>frameworks, 0 databases. Just plain files you own.</span></div>
 </section>
 
 <section class="block" aria-labelledby="bet-title">
@@ -123,42 +123,47 @@
 <section class="block" aria-labelledby="crew-title">
   <div class="block-head">
     <h2 id="crew-title">One bot. A whole crew.</h2>
-    <p>Anthropic's own channel plugins, forked so every topic and thread gets its own session. Buzz is built the same way.</p>
+    <p>Telegram, Discord and Buzz come built in, on Anthropic's own channel plugins. Use one, use all three, or build your own on the same hub.</p>
   </div>
 
-  <figure class="flow" role="img" aria-label="Telegram, Discord and Buzz send messages to the hex hub on your box. The hub routes each topic or thread to its own Claude Code session, and a session can be handed off between apps. Sessions share memory files.">
+  <figure class="flow" role="img" aria-label="Telegram, Discord, Buzz, or a channel you build yourself, send messages to the hex hub on your box. The hub routes each topic or thread to its own Claude Code session, and a session can be handed off between apps. Sessions share memory files.">
     <svg class="flow-wide" viewBox="26 0 1050 460" aria-hidden="true">
       <rect class="f-box" x="330" y="24" width="744" height="412"/>
       <rect class="f-boxlabel" x="330" y="24" width="96" height="26"/>
       <text class="f-mono f-inv" x="344" y="42">your box</text>
 
-      <path id="w1" class="f-wire" d="M240 76 H300 V200 H384"/>
-      <path id="w2" class="f-wire" d="M240 220 H384"/>
-      <path id="w6" class="f-wire" d="M240 364 H300 V240 H384"/>
+      <path id="w1" class="f-wire" d="M240 64 H300 V220 H384"/>
+      <path class="f-wire" d="M240 168 H300"/>
+      <path class="f-wire" d="M240 272 H300 V220"/>
+      <path class="f-wire f-maybe" d="M240 376 H300 V272"/>
       <path id="w3" class="f-wire" d="M606 220 H648 V108 H704"/>
       <path id="w4" class="f-wire" d="M606 220 H704"/>
       <path id="w5" class="f-wire" d="M606 220 H648 V332 H704"/>
-      <path class="f-hand" d="M140 126 V176"/>
-      <path class="f-handhead" d="M134 132 L140 122 L146 132 M134 170 L140 180 L146 170"/>
-      <text class="f-mono f-muted" x="154" y="155">hand off</text>
-      <path class="f-hand" d="M140 270 V320"/>
-      <path class="f-handhead" d="M134 276 L140 266 L146 276 M134 314 L140 324 L146 314"/>
-      <text class="f-mono f-muted" x="154" y="299">hand off</text>
+      <path class="f-hand" d="M140 108 V130"/>
+      <path class="f-handhead" d="M134 112 L140 104 L146 112 M134 126 L140 134 L146 126"/>
+      <text class="f-mono f-muted" x="154" y="123">hand off</text>
+      <path class="f-hand" d="M140 212 V234"/>
+      <path class="f-handhead" d="M134 216 L140 208 L146 216 M134 230 L140 238 L146 230"/>
+      <text class="f-mono f-muted" x="154" y="227">hand off</text>
 
-      <rect class="f-shadow" x="34" y="46" width="206" height="72"/>
-      <rect class="f-tg" x="28" y="40" width="206" height="72"/>
-      <text class="f-title f-inv" x="48" y="74">Telegram</text>
-      <text class="f-mono f-inv f-soft" x="48" y="96">your pocket</text>
+      <rect class="f-shadow" x="34" y="38" width="206" height="64"/>
+      <rect class="f-tg" x="28" y="32" width="206" height="64"/>
+      <text class="f-title f-inv" x="48" y="62">Telegram</text>
+      <text class="f-mono f-inv f-soft" x="48" y="83">your pocket</text>
 
-      <rect class="f-shadow" x="34" y="190" width="206" height="72"/>
-      <rect class="f-dc" x="28" y="184" width="206" height="72"/>
-      <text class="f-title f-inv" x="48" y="218">Discord</text>
-      <text class="f-mono f-inv f-soft" x="48" y="240">your desk</text>
+      <rect class="f-shadow" x="34" y="142" width="206" height="64"/>
+      <rect class="f-dc" x="28" y="136" width="206" height="64"/>
+      <text class="f-title f-inv" x="48" y="166">Discord</text>
+      <text class="f-mono f-inv f-soft" x="48" y="187">your desk</text>
 
-      <rect class="f-shadow" x="34" y="334" width="206" height="72"/>
-      <rect class="f-bz" x="28" y="328" width="206" height="72"/>
-      <text class="f-title" x="48" y="362">Buzz</text>
-      <text class="f-mono" x="48" y="384">your workspace</text>
+      <rect class="f-shadow" x="34" y="246" width="206" height="64"/>
+      <rect class="f-bz" x="28" y="240" width="206" height="64"/>
+      <text class="f-title" x="48" y="270">Buzz</text>
+      <text class="f-mono" x="48" y="291">your workspace</text>
+
+      <rect class="f-yours" x="28" y="344" width="206" height="64"/>
+      <text class="f-title f-ink" x="48" y="374">Your own</text>
+      <text class="f-mono f-muted" x="48" y="395">build one on the hub</text>
 
       <rect class="f-shadow" x="390" y="188" width="216" height="76"/>
       <rect class="f-hub" x="384" y="182" width="216" height="76"/>
@@ -185,21 +190,22 @@
 <rect class="f-glow" x="704" y="304" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
     </svg>
 
-    <svg class="flow-tall" viewBox="0 0 460 640" aria-hidden="true">
-      <path id="v1" class="f-wire" d="M74 86 V128 H210 V206"/>
-      <path class="f-wire" d="M230 86 V206"/>
-      <path class="f-wire" d="M386 86 V128 H250 V206"/>
-      <path class="f-handhead" d="M146 50 H164 M151 45 L146 50 L151 55 M159 45 L164 50 L159 55"/>
-      <path class="f-handhead" d="M302 50 H320 M307 45 L302 50 L307 55 M315 45 L320 50 L315 55"/>
+    <svg class="flow-tall" viewBox="0 0 460 710" aria-hidden="true">
+      <path id="v1" class="f-wire" d="M216 50 H228 V276"/>
+      <path class="f-wire" d="M240 50 H228"/>
+      <path class="f-wire" d="M216 130 H228"/>
+      <path class="f-wire f-maybe" d="M240 130 H228"/>
 
-      <rect class="f-shadow" x="16" y="26" width="128" height="60"/><rect class="f-tg" x="10" y="20" width="128" height="60"/>
+      <rect class="f-shadow" x="16" y="26" width="200" height="60"/><rect class="f-tg" x="10" y="20" width="200" height="60"/>
       <text class="f-title f-inv" x="24" y="48">Telegram</text><text class="f-mono f-inv f-soft" x="24" y="68">your pocket</text>
-      <rect class="f-shadow" x="172" y="26" width="128" height="60"/><rect class="f-dc" x="166" y="20" width="128" height="60"/>
-      <text class="f-title f-inv" x="180" y="48">Discord</text><text class="f-mono f-inv f-soft" x="180" y="68">your desk</text>
-      <rect class="f-shadow" x="328" y="26" width="128" height="60"/><rect class="f-bz" x="322" y="20" width="128" height="60"/>
-      <text class="f-title" x="336" y="48">Buzz</text><text class="f-mono" x="336" y="68">your workspace</text>
+      <rect class="f-shadow" x="246" y="26" width="200" height="60"/><rect class="f-dc" x="240" y="20" width="200" height="60"/>
+      <text class="f-title f-inv" x="254" y="48">Discord</text><text class="f-mono f-inv f-soft" x="254" y="68">your desk</text>
+      <rect class="f-shadow" x="16" y="106" width="200" height="60"/><rect class="f-bz" x="10" y="100" width="200" height="60"/>
+      <text class="f-title" x="24" y="128">Buzz</text><text class="f-mono" x="24" y="148">your workspace</text>
+      <rect class="f-yours" x="240" y="100" width="200" height="60"/>
+      <text class="f-title f-ink" x="254" y="128">Your own</text><text class="f-mono f-muted" x="254" y="148">build one on the hub</text>
 
-      <g transform="translate(20 0)">
+      <g transform="translate(20 70)">
       <rect class="f-box" x="10" y="150" width="400" height="476"/>
       <rect class="f-boxlabel" x="10" y="150" width="96" height="26"/>
       <text class="f-mono f-inv" x="24" y="168">your box</text>
@@ -326,7 +332,7 @@ earlier    summarized <span class="ok">✓</span>
 <section class="block" aria-labelledby="rooms-title">
   <div class="block-head">
     <h2 id="rooms-title">Different rooms, same house.</h2>
-    <p>Each app does what it's best at. hex connects them.</p>
+    <p>Each app does what it's best at. Use the ones you like, and hex connects them.</p>
   </div>
 
   <div class="ways">
@@ -419,6 +425,44 @@ earlier    summarized <span class="ok">✓</span>
 
 <p class="strip plan">Table stakes too: an hourly check that stays quiet unless something needs you, schedules in one JSON file, voice notes.</p>
 
+<section class="block" aria-labelledby="yours-title">
+  <div class="block-head">
+    <h2 id="yours-title">There are many assistants. This one is <mark>yours.</mark></h2>
+    <p>About 800 lines you can read in an afternoon, in a folder you own. Change it, extend it, fork it.</p>
+  </div>
+
+  <div class="features lead">
+    <div class="feat">
+      <div class="viz v-term" aria-hidden="true">
+<pre><b>you</b>  no check-ins on weekends
+<b>hex</b>  edited schedules.json
+     <span class="ok">committed ✓</span></pre>
+      </div>
+      <h3>Ask it to change itself</h3>
+      <p>It edits its own rules, schedules and memory, and commits every change.</p>
+    </div>
+
+    <div class="feat">
+      <div class="viz v-ext" aria-hidden="true">
+        <i class="chip">skills</i><i class="chip">MCP</i><i class="chip">plugins</i><i class="chip">hooks</i><i class="chip">channels</i><i class="chip add">+ yours</i>
+      </div>
+      <h3>Extend it with anything</h3>
+      <p>Whatever Claude Code can load, hex can use.</p>
+    </div>
+
+    <div class="feat">
+      <div class="viz v-term" aria-hidden="true">
+<pre><b>~/hex/</b>        <span class="dim">your git repo</span>
+  SOUL.md     <span class="dim">who it is</span>
+  MEMORY.md   <span class="dim">what it knows</span>
+  .hex/       <span class="dim">hex, updated</span></pre>
+      </div>
+      <h3>A folder you own</h3>
+      <p>Plain files in your own repo. Updates never touch them.</p>
+    </div>
+  </div>
+</section>
+
 <section class="closer" aria-label="Why hex">
   <h2>We didn't build a personal assistant. We found one inside Claude Code and gave it a phone, a computer and a <mark>memory.</mark></h2>
   <p>Every Claude Code upgrade is a hex upgrade the same day.</p>
@@ -468,7 +512,7 @@ earlier    summarized <span class="ok">✓</span>
 
 <footer>
   <div class="foot-row">
-    <p>Open source under MIT.</p>
+    <p>Open source under MIT. Yours to fork.</p>
     <a href="https://github.com/AVGVSTVS96/hex">github.com/AVGVSTVS96/hex</a>
   </div>
   <svg class="foot-mark" viewBox="0 0 2167 737" role="img" aria-label="hex"><path id="wordmark" fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></svg>

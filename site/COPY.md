@@ -25,8 +25,8 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 - ~800 · lines of hex, plus ~3,000 in connectors. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
-- 3 · front ends: Telegram, Discord and Buzz.
-- 0 · frameworks, 0 databases. Just plain files.
+- 3 · front ends built in: Telegram, Discord, Buzz. Or build your own.
+- 0 · frameworks, 0 databases. Just plain files you own.
 
 ## The bet
 
@@ -68,13 +68,14 @@ Band: Claude models are the best personal assistant models, period. Everything e
 ## One bot, a whole crew
 
 Section title: One bot. A whole crew.
-Line: Anthropic's own channel plugins, forked so every topic and thread gets its own session. Buzz is built the same way.
+Line: Telegram, Discord and Buzz come built in, on Anthropic's own channel plugins. Use one, use all three, or build your own on the same hub.
 
 ### Diagram labels
 
 - Telegram · your pocket
 - Discord · your desk
 - Buzz · your workspace
+- Your own · build one on the hub *(dashed box and dashed wire: optional, yours to add)*
 - Arrows between neighbouring apps: hand off
 - hex hub · one bot, many sessions
 - Claude Code × 3 · ramen-tonight, Theo clips, #dev › fix ci
@@ -100,7 +101,7 @@ Line: It lives on your box, with your whole network, a memory of its own and, if
 ## Front ends
 
 Section title: Different rooms, same house.
-Line: Each app does what it's best at. hex connects them.
+Line: Each app does what it's best at. Use the ones you like, and hex connects them.
 
 **Telegram** · Your pocket.
 - Every topic is its own session
@@ -124,6 +125,17 @@ Strip, **coming**: iMessage, and checking on any thread from any app.
 ## Basics
 
 Table stakes too: an hourly check that stays quiet unless something needs you, schedules in one JSON file, voice notes.
+
+## Yours
+
+*(The theme of the page: hex is modifiable, extensible and yours, the way pi is the coding agent that's yours.)*
+
+Section title: There are many assistants. This one is yours. *("yours." highlighted)*
+Line: About 800 lines you can read in an afternoon, in a folder you own. Change it, extend it, fork it.
+
+1. **Ask it to change itself**: It edits its own rules, schedules and memory, and commits every change. *(Terminal: you "no check-ins on weekends" → hex "edited schedules.json" → committed ✓)*
+2. **Extend it with anything**: Whatever Claude Code can load, hex can use. *(Chips: skills, MCP, plugins, hooks, channels, + yours dashed)*
+3. **A folder you own**: Plain files in your own repo. Updates never touch them. *(Terminal: ~/hex/ your git repo · SOUL.md who it is · MEMORY.md what it knows · .hex/ hex, updated)*
 
 ## Closer
 
@@ -159,5 +171,5 @@ Strip, **next**: A vault for its logins. More modular. More portable.
 
 ## Footer
 
-- Open source under MIT.
+- Open source under MIT. Yours to fork.
 - github.com/AVGVSTVS96/hex

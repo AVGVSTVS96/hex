@@ -58,7 +58,7 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 
 ## Three front ends
 
-hex has three front ends. They are different ways of working, not copies of each other. One hub serves all three.
+hex comes with three front ends. They are different ways of working, not copies of each other, and one hub serves them all. Use one, use all three, or build your own on the same hub: Buzz was built that way.
 
 **Telegram: the assistant in your pocket.** Built and running today.
 - A group with Topics turned on. General is the main assistant, and every topic is its own session.
@@ -134,6 +134,7 @@ hex is my sandbox. Fork it, try your ideas, and send back what works.
 - **Don't interrupt.** Scheduled jobs wait their turn. The heartbeat only messages you when something needs you. Idle sessions stop and come back when you write.
 - **Plain files over infrastructure.** Everything hex knows lives in markdown you can open, edit and grep.
 - **Your machine, your account.** hex runs on your machine with your Claude subscription. Its memory and logs are files in your folder, and only you can talk to it.
+- **Yours to change.** About 800 lines you can read in an afternoon. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, build your own front end on the hub, or fork the whole thing.
 
 ## License
 
