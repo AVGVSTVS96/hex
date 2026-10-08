@@ -28,7 +28,7 @@ case "${1:-}" in
     ;;
   turns)
     printf '%s' "$input" | "$here/log"
-    cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
+    cd "$here/../.." || exit 0
     id=$(printf %.8s "$session")
     for log in log/*-"$id".md log/threads/*-"$id".md; do [ -f "$log" ] && break; done
     [ -f "$log" ] || exit 0

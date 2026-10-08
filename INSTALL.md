@@ -49,7 +49,7 @@ If nothing shows up, the bot isn't an admin yet or the message was sent before i
 
 ## 5. Install the channels
 
-The Telegram, Discord and Buzz channels come from hex's own plugin marketplace:
+The Telegram, Discord, Buzz and T3 Code channels come from hex's own plugin marketplace:
 
 ```sh
 claude plugin marketplace add ~/hex/.hex/channels
@@ -67,7 +67,8 @@ Claude Code only runs a channel from a marketplace other than Anthropic's when t
   "allowedChannelPlugins": [
     { "plugin": "telegram", "marketplace": "hex" },
     { "plugin": "discord", "marketplace": "hex" },
-    { "plugin": "buzz", "marketplace": "hex" }
+    { "plugin": "buzz", "marketplace": "hex" },
+    { "plugin": "t3", "marketplace": "hex" }
   ]
 }
 ```
@@ -111,6 +112,13 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
   ```
 
   Run `claude plugin install buzz@hex` and `claude plugin disable buzz@hex` here. Then ask them to create an agent named hex in Buzz Desktop, pick **hex** as where it runs with this machine's SSH destination (like `user@host`), deploy it, and add it to the channels they want it in **(you)**. Deploying writes `~/hex/state/buzz/.env` and restarts the hub. Tag hex in a channel to check it answers.
+- **T3 Code (optional):** if they run [T3 Code](https://github.com/pingdotgg/t3code) on this machine, hex can be one of its agents, working in whatever project a thread is in. Run `claude plugin install t3@hex` and `claude plugin disable t3@hex`, then add hex to T3 as a local ACP agent whose command is `~/hex/.hex/bin/hex acp`, under `providerInstances` in `~/.t3/userdata/settings.json` (T3 picks it up without a restart):
+
+  ```json
+  "hex": { "driver": "acpRegistry", "displayName": "hex", "config": { "source": "local", "commandPath": "/home/<user>/hex/.hex/bin/hex", "commandArgs": ["acp"] } }
+  ```
+
+  Claude Code starts background sessions only in folders it trusts. If a T3 thread says its folder isn't trusted, they run `claude` there once and accept.
 
 ## 9. Say hi (you)
 

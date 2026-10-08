@@ -1,0 +1,27 @@
+#!/usr/bin/env bun
+import { readFileSync } from 'fs'
+import { homedir } from 'os'
+import { dirname, join, relative, resolve } from 'path'
+
+const home = resolve(process.argv[2] ?? join(import.meta.dir, '../..'))
+
+// AGENTS.md as Claude Code loads it: the file, then each `@path` it imports
+// (relative to the importing file, `~/` for home), five levels deep at most.
+function loaded(file: string, seen = new Set<string>(), depth = 0): [string, string][] {
+  if (seen.has(file) || depth > 5) return []
+  seen.add(file)
+  let text
+  try {
+    text = readFileSync(file, 'utf8')
+  } catch {
+    return []
+  }
+  const imports = [...text.matchAll(/(?:^|\s)@(\S+)/g)].map(([, target]) => target!.startsWith('~/') ? join(homedir(), target!.slice(2)) : resolve(dirname(file), target!))
+  return [[file, text], ...imports.flatMap(target => loaded(target, seen, depth + 1))]
+}
+
+const files = loaded(join(home, 'AGENTS.md')).map(([file, text]) => `── ${relative(home, file)} ──\n${text.trim()}`)
+
+console.log(`You are hex, working in ${process.cwd()} instead of your own folder, ${home}. Your instructions below come from there, and every path in them is relative to it: \`.hex/vendor/memo\` is \`${home}/.hex/vendor/memo\`, and the files you keep and commit (MEMORY.md, schedules.json, log/) live there too.
+
+${files.join('\n\n')}`)
