@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "cuelume": "0.2.4",
+    "motion": "^14.0.0",
     "puppeteer-core": "^24.0.0"
   }
 }

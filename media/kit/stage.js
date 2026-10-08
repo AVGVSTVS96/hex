@@ -1,12 +1,27 @@
+const { spring, cubicBezier } = Motion
+
 const stage = document.getElementById("stage")
 const scenes = [...document.querySelectorAll(".scene")]
 const count = document.getElementById("count")
 const counters = [...document.querySelectorAll("[data-count]")]
 const END = Math.max(...scenes.map(s => +s.dataset.e))
-const easeOut = x => 1 - (1 - x) ** 4
+const easeOut = cubicBezier(0.23, 1, 0.32, 1)
 const clamp01 = x => Math.min(Math.max(x, 0), 1)
 
+const springs = { settle: [0.55, 0], draw: [0.8, 0], pop: [0.45, 0.25], swing: [0.7, 0.12] }
+for (const [name, [duration, bounce]] of Object.entries(springs)) stage.style.setProperty(`--${name}`, spring(duration, bounce))
+
 for (const s of scenes) s.style.setProperty("--s", s.dataset.s)
+
+for (const el of document.querySelectorAll("[data-split]")) {
+  const [start, step] = el.dataset.split.split(" ").map(Number)
+  el.innerHTML = [...el.textContent].map((c, i) => `<span class="m"><span class="a" style="--d:${start + i * step}">${c}</span></span>`).join("")
+}
+
+const roll = spring({ keyframes: [0, 1], visualDuration: 0.45, bounce: 0 })
+const pad = n => String(n).padStart(2, "0")
+if (count) count.innerHTML = `<span class="roll"><span>${scenes.map((_, i) => `<span>${pad(i + 1)}</span>`).join("")}</span></span> / ${pad(scenes.length)}`
+const numbers = count?.querySelector(".roll > span")
 
 function seek(t) {
   scenes.forEach((s, i) => {
@@ -14,7 +29,8 @@ function seek(t) {
     s.classList.toggle("on", on)
     if (on) {
       stage.dataset.theme = s.dataset.theme
-      if (count) count.textContent = `${String(i + 1).padStart(2, "0")} / ${scenes.length}`
+      const at = i && i - 1 + roll.next((t - +s.dataset.s) * 1000).value
+      if (numbers) numbers.style.transform = `translateY(${-at}em)`
     }
   })
   for (const el of counters) {
