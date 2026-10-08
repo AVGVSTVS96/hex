@@ -72,7 +72,7 @@ hex comes with three front ends. They are different ways of working, not copies 
 **Buzz: a workspace you share.** Built and running today.
 - [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels. Tag hex in a channel and it starts a thread with its own session, or DM it.
 - Buzz Desktop shows what hex is doing as it works, step by step.
-- Its memory and the files you share from your folder show up in Buzz. Edit them there and hex commits the change.
+- Its memory shows up in Buzz. Browsing and editing its files there is coming soon.
 
 Each thread lives in one app. Say "take this to Discord" or "take this to Buzz" and the same session moves over with its memory. The old thread posts a link to the new one and closes.
 
