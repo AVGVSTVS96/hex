@@ -561,20 +561,19 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
 
 .stack { display: grid; border: 3px solid var(--line); box-shadow: 10px 10px 0 var(--shadow); }
 .layer {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 0.5rem 1rem;
+  display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 0.5rem 1rem;
   padding: var(--s3) var(--s4);
   color: var(--black);
 }
 .layer + .layer { border-top: 3px solid var(--line); }
-.layer b { font-size: 1.375rem; font-weight: 800; font-stretch: 112%; letter-spacing: -0.03em; }
+.layer b { font-size: 1.375rem; font-weight: 800; font-stretch: 112%; letter-spacing: -0.03em; white-space: nowrap; }
 .layer .size { font: 600 0.6875rem/1 var(--mono); }
-.layer .parts { grid-column: 1 / -1; font: 500 0.75rem/1.5 var(--mono); }
+.layer .parts { flex-basis: 100%; font: 500 0.75rem/1.5 var(--mono); }
 .l-hex { background: var(--yellow); }
 .l-cc { gap: var(--s3); padding-block: var(--s4); background: var(--surface); color: var(--ink); }
 .l-cc b { font-size: clamp(1.625rem, 1rem + 2.4vw, 2.25rem); line-height: 1.05; }
-@media (max-width: 30rem) { .l-cc { grid-template-columns: minmax(0, 1fr); } }
 .l-model { background: var(--blue); color: #fff; }
-.chips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: var(--s1); }
+.chips { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: var(--s1); }
 .chips .chip { border-color: var(--line); background: var(--bg); }
 
 .points { padding: 0; list-style: none; font-size: clamp(1.125rem, 1rem + 0.5vw, 1.375rem); font-weight: 700; font-stretch: 108%; letter-spacing: -0.015em; }
@@ -592,7 +591,7 @@ h2 { font-size: clamp(2rem, 1.2rem + 2.8vw, 3.5rem); line-height: 0.98; max-widt
 .r-hex .track i { background: var(--pink); }
 .r-hex b { padding: 0.3rem 0.45rem; background: var(--yellow); color: #0A0A0A; }
 .fine { color: var(--muted); font: 500 0.6875rem/1.6 var(--mono); }
-.fine .note { font-size: 0.5625rem; }
+.fine small { font-size: 0.5625rem; }
 @media (max-width: 40rem) {
   .bar-row { grid-template-columns: minmax(0, 1fr) auto; }
   .track { grid-column: 1 / -1; grid-row: 2; }
