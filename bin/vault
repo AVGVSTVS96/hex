@@ -1,0 +1,115 @@
+#!/usr/bin/env bun
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises"
+import { isAbsolute, resolve } from "node:path"
+
+const hex = resolve(import.meta.dir, "..")
+const home = resolve(hex, "..")
+try {
+  process.loadEnvFile(`${home}/.env`)
+} catch {}
+process.env.HEX_DIR = home
+
+const plugin = (path: string) => (isAbsolute(path) ? path : resolve(home, path))
+const relay = plugin(process.env.HEX_VAULT_RELAY || `${hex}/vault/relay`)
+const store = plugin(process.env.HEX_VAULT_STORE || `${hex}/vault/store`)
+const pending = `${home}/state/vault/pending`
+
+const base64 = (bytes: ArrayBuffer | Uint8Array) => Buffer.from(new Uint8Array(bytes)).toString("base64url")
+
+function fail(message: string): never {
+  console.error(message)
+  process.exit(1)
+}
+
+async function run(command: string[], input?: string) {
+  const child = Bun.spawn(command, { stdin: input === undefined ? "ignore" : new Blob([input]), stderr: "inherit", env: process.env })
+  const out = await new Response(child.stdout).text()
+  return { ok: (await child.exited) === 0, out }
+}
+
+async function ask(name: string, fields: string[]) {
+  if (!/^[\w.-]+$/.test(name) || !fields.length || !fields.every((field) => /^\w+$/.test(field)))
+    fail("usage: vault ask <name> <field…>   e.g. vault ask GitHub username password")
+  const old = await readFile(`${pending}/${name}.json`, "utf8").catch(() => null)
+  if (old) await run([relay, "close", JSON.parse(old).id])
+
+  const pair = (await crypto.subtle.generateKey({ name: "X25519" }, true, ["deriveBits"])) as CryptoKeyPair
+  const opened = await run([relay, "open"])
+  if (!opened.ok) fail("couldn't reach the vault relay")
+  const { id, url } = JSON.parse(opened.out)
+  const recipient = base64(await crypto.subtle.exportKey("raw", pair.publicKey))
+  const key = base64(await crypto.subtle.exportKey("pkcs8", pair.privateKey))
+
+  await mkdir(pending, { recursive: true, mode: 0o700 })
+  await writeFile(`${pending}/${name}.json`, JSON.stringify({ id, url, fields, recipient, key }), { mode: 0o600 })
+  const fragment = new URLSearchParams({ a: process.env.HEX_NAME || "hex", n: name, f: fields.join(","), k: recipient })
+  console.log(`${url}#${fragment}`)
+}
+
+async function unseal(sealed: string, { url, recipient, key }: Record<string, string>) {
+  const [ephemeral, iv, data] = sealed.trim().split(".").map((part) => Buffer.from(part, "base64url"))
+  const ours = await crypto.subtle.importKey("pkcs8", Buffer.from(key, "base64url"), { name: "X25519" }, false, ["deriveBits"])
+  const theirs = await crypto.subtle.importKey("raw", ephemeral, { name: "X25519" }, false, [])
+  const shared = await crypto.subtle.deriveBits({ name: "X25519", public: theirs }, ours, 256)
+  const hkdf = await crypto.subtle.importKey("raw", shared, "HKDF", false, ["deriveKey"])
+  const salt = Buffer.concat([ephemeral, Buffer.from(recipient, "base64url")])
+  const aes = await crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt, info: Buffer.from(url) },
+    hkdf,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"],
+  )
+  return JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv }, aes, data)))
+}
+
+async function wait(name: string) {
+  const request = await readFile(`${pending}/${name}.json`, "utf8").catch(() => null)
+  if (!request) fail(`nothing was asked for ${name}; run vault ask first`)
+  const { id, fields, ...keys } = JSON.parse(request)
+  const sealed = await run([relay, "wait", id])
+  await rm(`${pending}/${name}.json`)
+  if (!sealed.ok) fail(`expired: nobody filled in ${name}`)
+
+  const values = await unseal(sealed.out, keys)
+  const kept = Object.fromEntries(fields.filter((field: string) => typeof values[field] === "string" && values[field]).map((field: string) => [field, values[field]]))
+  if (!(await run([store, "put", name], JSON.stringify(kept))).ok) fail(`couldn't save ${name}`)
+  console.log(`saved ${name}: ${Object.keys(kept).join(", ")}`)
+}
+
+async function totp(setup: string, now = Date.now()) {
+  const uri = setup.startsWith("otpauth://") ? new URL(setup).searchParams : new URLSearchParams()
+  const secret = (uri.get("secret") ?? setup).replace(/[\s=-]/g, "").toUpperCase()
+  const digits = Number(uri.get("digits") ?? 6)
+  const period = Number(uri.get("period") ?? 30)
+  const hash = `SHA-${(uri.get("algorithm") ?? "SHA1").toUpperCase().replace(/^SHA-?/, "")}`
+  const bits = [...secret].map((char) => "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567".indexOf(char).toString(2).padStart(5, "0")).join("")
+  const raw = Uint8Array.from(bits.match(/.{8}/g) ?? [], (byte) => parseInt(byte, 2))
+  const counter = new DataView(new ArrayBuffer(8))
+  counter.setBigUint64(0, BigInt(Math.floor(now / 1000 / period)))
+  const hmac = await crypto.subtle.importKey("raw", raw, { name: "HMAC", hash }, false, ["sign"])
+  const mac = new DataView(await crypto.subtle.sign("HMAC", hmac, counter.buffer))
+  const code = (mac.getUint32(mac.getUint8(mac.byteLength - 1) & 15) & 0x7fffffff) % 10 ** digits
+  return String(code).padStart(digits, "0")
+}
+
+async function fill(name: string, field: string) {
+  const computer = process.env.HEX_COMPUTER
+  if (!computer) fail("set HEX_COMPUTER in .env to your computer's Sprite name")
+  const saved = await run([store, "get", name, field])
+  if (!saved.ok) process.exit(1)
+  const text = field === "totp" ? await totp(saved.out) : saved.out
+  const typed = await run(
+    ["sprite", "exec", "-s", computer, "--", "env", "DISPLAY=:1", "/home/sprite/.local/bin/cua-driver", "call", "type_text"],
+    JSON.stringify({ scope: "desktop", text }),
+  )
+  if (!typed.ok) fail(`couldn't type on ${computer}`)
+  console.log(`typed ${name}'s ${field} on ${computer}`)
+}
+
+const [command, name, ...rest] = process.argv.slice(2)
+if (command === "ask" && name) await ask(name, rest)
+else if (command === "wait" && name) await wait(name)
+else if (command === "fill" && name && rest.length === 1) await fill(name, rest[0])
+else if (command === "list") process.exit(Bun.spawnSync([store, "list"], { stdout: "inherit", stderr: "inherit", env: process.env }).exitCode)
+else fail("usage: vault ask <name> <field…> | wait <name> | fill <name> <field> | list")

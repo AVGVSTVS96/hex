@@ -54,6 +54,7 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 - **Works with any Claude connector.** Every connector on your Claude account works in every hex session, with nothing to set up on the machine: Gmail, your calendar, [Executor](https://executor.sh) for many accounts behind one sign-in, [AgentMail](https://agentmail.to) for an inbox of its own. Sending, replying or deleting through any of them waits for your yes.
 - **It speaks up when it matters.** Every hour while you're up it checks your mail, the work it started, threads waiting on you, and anything it said it would follow up on, and only messages you if something's worth it. Other jobs are lines in `schedules.json`, a cron line and a prompt each.
 - **A computer of its own (optional).** A cloud desktop with Chrome that hex drives with [cua-driver](https://cua.ai), for anything that needs a real browser, on whatever provider you like. You can watch its screen. `computer/setup` builds one on a [Fly.io Sprite](https://sprites.dev) in one command.
+- **A vault of its own.** When hex needs a password, it sends you a link. What you type there is encrypted in your browser and only hex can open it, so it never passes through chat or the model. hex signs in with it on its computer without ever seeing it.
 - **Voice notes** work with any OpenAI-compatible speech-to-text endpoint, hosted or local.
 
 ## Three front ends
@@ -94,7 +95,8 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 ├── SOUL.md  MEMORY.md              who it is, what's true about you now
 ├── schedules.json                  recurring jobs, the hourly check included
 ├── memory/  log/                   its OptMem memory, every conversation as markdown
-├── .env  state/                    bot tokens, thread lists (never committed)
+├── vault/                          its saved secrets, encrypted
+├── .env  state/                    bot tokens, thread lists, the vault key (never committed)
 └── .hex/                           hex itself: this repo
     ├── HEX.md                      how it works
     ├── bin/
@@ -104,10 +106,12 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── compacted               puts memory and the last turns back after a compaction
     │   ├── send-gate               holds sends and deletes until you say yes
     │   ├── transcribe              voice notes → text
+    │   ├── vault                   asks you for secrets by link, signs in with them
     │   └── update                  pulls updates, verified before they go live
     ├── plugin/                     the hooks every session loads
     ├── mods/scheduler/             sends schedules.json jobs to General
     ├── computer/setup              turns a Sprite into its computer
+    ├── vault/                      the vault's relay, page and default store
     ├── defaults/                   what `hex init` starts your folder with
     └── channels/                   the Telegram, Discord and Buzz channels and hub (submodule)
 ```
@@ -120,7 +124,6 @@ hex doesn't need systemd or any service manager. `hex start` runs the hub in the
 
 - **iMessage**, as a fourth front end.
 - **Check on any thread from any app**, and keep it going from your phone.
-- **A vault of its own** for the logins it uses on its computer.
 - **More modular, more portable.**
 
 hex is my sandbox. Fork it, try your ideas, and send back what works.

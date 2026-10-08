@@ -1,0 +1,48 @@
+#!/usr/bin/env bun
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
+
+const home = process.env.HEX_DIR || (console.error("HEX_DIR isn't set"), process.exit(2))
+const dir = `${home}/vault`
+const keyFile = `${home}/state/vault/key`
+const [command, name, field] = process.argv.slice(2)
+
+async function key() {
+  await mkdir(`${home}/state/vault`, { recursive: true, mode: 0o700 })
+  await writeFile(keyFile, Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url"), { flag: "wx", mode: 0o600 }).catch(() => {})
+  const raw = Buffer.from(await readFile(keyFile, "utf8"), "base64url")
+  return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"])
+}
+
+async function read(name: string): Promise<Record<string, string> | null> {
+  const sealed = await readFile(`${dir}/${name}.sealed`, "utf8").catch(() => null)
+  if (!sealed) return null
+  const [iv, data] = sealed.trim().split(".").map((part) => Buffer.from(part, "base64url"))
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv, additionalData: Buffer.from(name) }, await key(), data)
+  return JSON.parse(new TextDecoder().decode(plain))
+}
+
+async function write(name: string, values: Record<string, string>) {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: Buffer.from(name) }, await key(), Buffer.from(JSON.stringify(values)))
+  await mkdir(dir, { recursive: true })
+  await writeFile(`${dir}/${name}.sealed`, [iv, new Uint8Array(data)].map((part) => Buffer.from(part).toString("base64url")).join(".") + "\n")
+}
+
+if (command === "put" && name) {
+  await write(name, { ...(await read(name)), ...(await Bun.stdin.json()) })
+} else if (command === "get" && name && field) {
+  const value = (await read(name))?.[field]
+  if (value === undefined) {
+    console.error(`nothing saved for ${name} ${field}`)
+    process.exitCode = 1
+  } else process.stdout.write(value)
+} else if (command === "list") {
+  const files = (await readdir(dir).catch(() => [])).filter((file) => file.endsWith(".sealed"))
+  for (const file of files.sort()) {
+    const name = file.slice(0, -".sealed".length)
+    console.log(`${name}: ${Object.keys((await read(name)) ?? {}).join(", ")}`)
+  }
+} else {
+  console.error("usage: store put <name> < values.json | get <name> <field> | list")
+  process.exitCode = 2
+}

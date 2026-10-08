@@ -29,8 +29,8 @@ case "${1:-}" in
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz"
     echo $$ > "$pidfile"
-    for plugin in telegram discord buzz; do
-      bun install --no-summary --cwd "$hex/channels/external_plugins/$plugin" >/dev/null
+    for dir in channels/external_plugins/telegram channels/external_plugins/discord channels/external_plugins/buzz vault; do
+      bun install --no-summary --cwd "$hex/$dir" >/dev/null
     done
     trap 'kill "$hub" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
     trap 'kill "$hub" 2>/dev/null' HUP

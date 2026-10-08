@@ -1,0 +1,6 @@
+{
+  "private": true,
+  "dependencies": {
+    "convex": "1.46.0"
+  }
+}
