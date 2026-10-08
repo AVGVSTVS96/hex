@@ -112,7 +112,9 @@ if (mode === "serve") {
       const { stdin, done } = ffmpeg([
         "-loglevel", "error",
         "-f", "image2pipe", "-framerate", String(fps), "-c:v", "png", "-i", "-",
-        "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-profile:v", "high", "-pix_fmt", "yuv420p", "-threads", "4", join(parts, `${name}.tmp.mp4`),
+        "-c:v", "libx264", "-preset", "slow", "-crf", "14", "-profile:v", "high",
+        "-vf", "scale=out_color_matrix=bt709:out_range=tv:flags=accurate_rnd+full_chroma_int,format=yuv420p,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv",
+        "-threads", "4", join(parts, `${name}.tmp.mp4`),
       ])
       for (let i = from; i < Math.min(from + batch, frames); i++) {
         if (!stdin.write(await shot(i / fps))) await new Promise(r => stdin.once("drain", r))
