@@ -1,1 +1,1 @@
-{ "name": "hex", "description": "hex's hooks: chat state, conversation logs, memory and live status at session start, context size each message, memory and the last turns back after a compaction, and the send gate" }
+{ "name": "hex", "description": "hex's hooks: chat state, conversation logs, memory and live status at session start, memory and the last turns back after a compaction, and the send gate" }
