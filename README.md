@@ -112,7 +112,9 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code
     │   ├── session                 how the hub starts each session
     │   ├── log                     saves each conversation to log/ as markdown
+    │   ├── wake                    loads its memory as each session starts
     │   ├── compacted               puts memory and the last turns back after a compaction
+    │   ├── context-size            tells it how full its context is, each message
     │   ├── send-gate               holds sends and deletes until you say yes
     │   ├── transcribe              voice notes → text
     │   ├── vault                   asks you for secrets by link, signs in with them

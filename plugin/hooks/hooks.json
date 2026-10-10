@@ -1,6 +1,14 @@
 {
   "hooks": {
     "SessionStart": [
+      { "matcher": "startup|resume|clear", "hooks": [
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 1" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 2" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 3" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 4" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 5" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 6 last" }
+      ] },
       { "matcher": "compact", "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted memory" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted turns" }
@@ -15,6 +23,7 @@
     "UserPromptSubmit": [
       { "hooks": [
         { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts busy" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/context-size" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/reading turn" }
       ] }
     ],
