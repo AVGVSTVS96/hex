@@ -135,12 +135,12 @@ hex is a testbed. Let's make it better together: fork it, do what you want with 
 ```
             pull what's new              every morning's update
 this repo ─────────────────▶ your fork ───────────────────────▶ your hex
-    ▲                          │    ▲                              │
-    └────── pull request ──────┘    └──────── your changes ────────┘
+    ▲                          │    ▲
+    └────── pull request ──────┘    └── your changes
 ```
 
 1. **Install your fork.** Paste the prompt from [Install](#install) with your fork's URL. Your hex is a clone of the repo it was installed from, so its updates come from your fork.
-2. **Change anything.** By hand, with any coding agent (`AGENTS.md` shows it around), or by asking hex. Push to your fork, and your hex picks it up on its next update.
+2. **Change anything,** by hand or with any coding agent (`AGENTS.md` shows it around). Push to your fork, and your hex picks it up on its next update.
 3. **Pull in what's new here** whenever you want: **Sync fork** on your fork's GitHub page, or `git pull https://github.com/AVGVSTVS96/hex main` and push.
 4. **Send back what works.** Open a pull request that says what it does and the decisions it makes, with screenshots if it shows anything.
 
