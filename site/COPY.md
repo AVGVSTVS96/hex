@@ -76,7 +76,7 @@ Label: Lines of source
 
 Fine print: * Plus ~4,200 lines of connectors for Telegram, Discord and Buzz, left out like NanoClaw's chat adapters. Tests, docs and generated code excluded. Counted Oct 2026. Even the minimal one is 33x bigger.
 
-*(Both are counted the same way: every line (`wc -l`, comments and blanks included) of what it runs, without tests, Markdown, lockfiles or this site. hex is the files in bin/, plugin/, mods/, computer/ and vault/, the JSON in defaults/, and the hub; on Oct 10 2026 (main at ffccf30, channels at 5db7131) that's 1,394: 707 in bin/plugin/mods/computer/defaults, 327 in vault/, 360 in the hub. Its connectors are the Telegram, Discord and Buzz TS files: 4,165 (Telegram 1,123, Discord 982, Buzz 2,060). NanoClaw is src/ and container/ at commit af699e7 (Oct 9): 47,198 lines in 313 files. Its chat adapters copy in from a separate `channels` branch and its setup/ wizard (19,495) isn't counted either, so its number is rounded down and generous. hex's is rounded up. 47,000 / 1,400 = 33.6, shown as 33x. Bar widths keep the old scale (a full bar is 4.39 million lines). OpenClaw and Hermes weren't recounted.)*
+*(Both are counted the same way: every line (`wc -l`, comments and blanks included) of what it runs, without tests, Markdown, lockfiles or this site. hex is the files in bin/, plugin/, mods/, computer/ and vault/, the JSON in defaults/, and the hub; on Oct 10 2026 (main at ffccf30, channels at 5db7131) that's 1,394: 707 in bin/plugin/mods/computer/defaults, 327 in vault/, 360 in the hub. Its connectors are the Telegram, Discord and Buzz TS files: 4,165 (Telegram 1,123, Discord 982, Buzz 2,060). NanoClaw is src/ and container/ at commit af699e7 (Oct 9): 47,198 lines in 313 files. Its chat adapters copy in from a separate `channels` branch and its setup/ wizard (19,495) isn't counted either, so its number is rounded down and generous. hex's is rounded up. 47,000 / 1,400 = 33.6, shown as 33x. Bar widths keep the old scale (a full bar is 4.39 million lines). OpenClaw (5,300,069 at e09de504) and Hermes Agent (1,597,845 at f925b017) were recounted the same way on Oct 10; the page keeps the lower 4 million+ and 1.5 million.)*
 
 ### Next to the minimal one
 
@@ -140,7 +140,7 @@ Line: It lives on your box, with your whole network, a memory of its own and, if
 
 ## Clients
 
-*(Bassim: "works with your client. pick a client, couple prebuilt connectors, or tell your agent to build your own. offer prompts." Never frame these as "three front ends".)*
+*(Bassim: "works with your client. pick a client, couple prebuilt connectors, or tell your agent to build your own offer prompts. offer fucking prompts". Never frame these as "three front ends".)*
 
 Section title: Works with your client.
 Line: Pick a ready one, or tell your agent to build yours. hex connects them all.

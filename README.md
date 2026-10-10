@@ -57,9 +57,9 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 - **A vault of its own.** When hex needs a password, it sends you a link. What you type there is encrypted in your browser and only hex can open it, so it never passes through chat or the model. hex signs in with it on its computer without ever seeing it.
 - **Voice notes** work with any OpenAI-compatible speech-to-text endpoint, hosted or local.
 
-## Three front ends
+## Works with your client
 
-hex comes with three front ends. They are different ways of working, not copies of each other, and one hub serves them all. Use one, use all three, or build your own on the same hub: Buzz was built that way.
+Pick a client that's ready, or tell your agent to build yours. One hub serves them all, and each is its own way of working, not a copy of the others.
 
 **Telegram: the assistant in your pocket.** Built and running today.
 - A group with Topics turned on. General is the main assistant, and every topic is its own session.
@@ -73,6 +73,12 @@ hex comes with three front ends. They are different ways of working, not copies 
 **Buzz: a workspace you share.** Built and running today.
 - [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels. Tag hex in a channel and it starts a thread with its own session, or DM it.
 - Buzz Desktop shows what hex is doing as it works, step by step.
+
+**Your own: tell your agent.** Buzz was built this way. Swap in any app:
+
+```
+Build me a Slack channel on your hub, modeled on your Discord one, so every Slack thread is its own session.
+```
 - Its memory shows up in Buzz. Browsing and editing its files there is coming soon.
 
 Each thread lives in one app. Say "take this to Discord" or "take this to Buzz" and the same session moves over with its memory. The old thread posts a link to the new one and closes.
@@ -142,7 +148,7 @@ Your hex still gets its channels from [the auto-maintained fork](https://github.
 
 ## What's next
 
-- **iMessage**, as a fourth front end.
+- **A ready-made iMessage client.**
 - **Check on any thread from any app**, and keep it going from your phone.
 - **More modular, more portable.**
 
@@ -155,7 +161,7 @@ Your hex still gets its channels from [the auto-maintained fork](https://github.
 - **Don't interrupt.** Scheduled jobs wait their turn. The heartbeat only messages you when something needs you. Idle sessions stop and come back when you write.
 - **Plain files over infrastructure.** Everything hex knows lives in markdown you can open, edit and grep.
 - **Your machine, your account.** hex runs on your machine with your Claude subscription. Its memory and logs are files in your folder, and only you can talk to it.
-- **Yours to change.** About 1,400 lines you can read in an afternoon. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, build your own front end on the hub, or fork the whole thing.
+- **Yours to change.** About 1,400 lines you can read in an afternoon. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, have your agent build your own client, or fork the whole thing.
 
 ## License
 
