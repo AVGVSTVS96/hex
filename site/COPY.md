@@ -112,9 +112,9 @@ Line: Every topic and thread gets its own Claude Code session, all on one hub bu
 
 ### Diagram labels
 
-- Telegram · your pocket
-- Discord · your desk
-- Buzz · your workspace
+- Telegram · topics, voice notes
+- Discord · threads, long answers
+- Buzz · watch it work
 - Your own · your agent builds it *(dashed box and dashed wire: optional, yours to add)*
 - Arrows between neighbouring apps: hand off
 - hex hub · one bot, many sessions
@@ -142,23 +142,25 @@ Line: It lives on your box, with your whole network, a memory of its own and, if
 
 *(Bassim: "works with your client. pick a client, couple prebuilt connectors, or tell your agent to build your own offer prompts. offer fucking prompts". Never frame these as "three front ends".)*
 
-Section title: Works with your client.
-Line: Pick a ready one, or tell your agent to build yours. hex connects them all.
+*(Bassim, Oct 8: "I don't want it to be like, this is the client you use for work, this is the client you use for personal ... Pick your personal surface, pick your work surface." No client gets a role like "your pocket" or "your desk": each says what it's like, and you pick.)*
 
-**Telegram** · Your pocket.
+Section title: Works with your client.
+Line: Pick a ready one, or tell your agent to build yours. Use one for everything, or one for work and another for the rest. hex connects them all.
+
+**Telegram** · Topics and voice notes.
 - Every topic is its own session
 - Voice notes in, short answers out
 - It speaks up when something needs you
 
 Bridge: take this to Discord or Buzz
 
-**Discord** · Your desk.
+**Discord** · Threads and long answers.
 - Tag it, and it opens a thread
 - Room for code, logs and long answers
 - Channels group work by area
 
-**Buzz** · Your workspace. *(Next to Discord: the two desk apps sit side by side under Telegram's full-width row and the bridge. Mock: a thread on the left, Buzz Desktop's Activity / Memory / Files panel on the right.)*
-- Watch it work, step by step
+**Buzz** · Watch it work. *(Next to Discord: the two sit side by side under Telegram's full-width row and the bridge. Mock: a thread on the left, Buzz Desktop's Activity / Memory / Files panel on the right.)*
+- Every step shows as it runs
 - Edit its memory and files
 - Shared with people and agents
 

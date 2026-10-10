@@ -63,9 +63,9 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 
 ## Works with your client
 
-Pick a client that's ready, or tell your agent to build yours. One hub serves them all, and each is its own way of working, not a copy of the others.
+Pick a client that's ready, or tell your agent to build yours. Use one for everything, or one for work and another for the rest. One hub serves them all, and each is its own way of working, not a copy of the others.
 
-**Telegram: the assistant in your pocket.** Built and running today.
+**Telegram: topics and voice notes.** Built and running today.
 - A group with Topics turned on. General is the main assistant, and every topic is its own session.
 - Short, phone-sized answers.
 - It comes to you: the hourly heartbeat, and reminders about anything waiting on you.
@@ -74,7 +74,7 @@ Pick a client that's ready, or tell your agent to build yours. One hub serves th
 - Tag the bot in any channel and it starts a thread on your message, with a fresh session working inside it. Inside a thread you just talk.
 - Channels group work by area, like `#research` or `#dev`. Room for longer answers, code blocks and history.
 
-**Buzz: a workspace you share.** Built and running today.
+**Buzz: watch it work.** Built and running today.
 - [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels. Tag hex in a channel and it starts a thread with its own session, or DM it.
 - Buzz Desktop shows what hex is doing as it works, step by step.
 - Its memory shows up in Buzz. Browsing and editing its files there is coming soon.
