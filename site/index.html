@@ -4,17 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>hex · The best personal assistant is already on your machine</title>
-<meta name="description" content="Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,000 lines plus its connectors, on the Claude plan you already pay for.">
+<meta name="description" content="Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,400 lines plus its connectors, on the Claude plan you already pay for.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#F3EFE6" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#0A0A0A" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="hex · The best personal assistant is already on your machine">
-<meta property="og:description" content="Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,000 lines plus its connectors, on the Claude plan you already pay for.">
+<meta property="og:description" content="Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,400 lines plus its connectors, on the Claude plan you already pay for.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://hex-sand.vercel.app">
-<meta property="og:image" content="https://hex-sand.vercel.app/og.png?v=4">
+<meta property="og:image" content="https://hex-sand.vercel.app/og.png?v=5">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="hex: The best personal assistant is already on your machine. About 1,400 lines, $0 extra on your Claude plan, any client, no frameworks.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://hex-sand.vercel.app/og.png?v=4">
+<meta name="twitter:image" content="https://hex-sand.vercel.app/og.png?v=5">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
@@ -74,9 +77,9 @@
 </section>
 
 <section class="stats" aria-label="At a glance">
-  <div class="s-blue"><b>~<span data-count="1000">1,000</span></b><span>lines of hex, plus ~3,000 in connectors. Claude Code does the rest.</span></div>
+  <div class="s-blue"><b>~<span data-count="1400">1,400</span></b><span>lines of hex, plus ~4,200 in connectors. Claude Code does the rest.</span></div>
   <div class="s-yellow"><b>$0</b><span>extra, on the Claude plan you already pay for.</span></div>
-  <div class="s-pink"><b>3</b><span>front ends built in: Telegram, Discord, Buzz. Or build your own.</span></div>
+  <div class="s-pink"><b>Any</b><span>client: Telegram, Discord, Buzz, or one you build.</span></div>
   <div class="s-ink"><b>0</b><span>frameworks, 0 databases. Just plain files you own.</span></div>
 </section>
 
@@ -107,16 +110,28 @@
     <figcaption class="label">Lines of source</figcaption>
     <div class="bar-row"><span class="who">OpenClaw</span><span class="track" aria-hidden="true"><i style="--w:100%"></i></span><b>4 million+</b></div>
     <div class="bar-row"><span class="who">Hermes Agent</span><span class="track" aria-hidden="true"><i style="--w:34%"></i></span><b>1.5 million</b></div>
-    <div class="bar-row"><span class="who">NanoClaw<small>the minimal one</small></span><span class="track" aria-hidden="true"><i style="--w:1.55%"></i></span><b>68,000</b></div>
-    <div class="bar-row r-hex"><span class="who">hex</span><span class="track" aria-hidden="true"><i style="--w:0.023%"></i></span><b>~1,000*</b></div>
-    <p class="fine"><small>* Plus ~3,000 lines of forked and custom connectors for Telegram, Discord and Buzz.</small><br>Tests and generated code excluded. Counted Oct 2026. Even the minimal one is 68x bigger.</p>
+    <div class="bar-row"><span class="who">NanoClaw<small>the minimal one</small></span><span class="track" aria-hidden="true"><i style="--w:1.07%"></i></span><b>47,000</b></div>
+    <div class="bar-row r-hex"><span class="who">hex</span><span class="track" aria-hidden="true"><i style="--w:0.032%"></i></span><b>~1,400*</b></div>
+    <p class="fine"><small>* Plus ~4,200 lines of connectors for Telegram, Discord and Buzz, left out like NanoClaw's chat adapters.</small><br>Tests, docs and generated code excluded. Counted Oct 2026. Even the minimal one is 33x bigger.</p>
+  </figure>
+
+  <figure class="versus" aria-labelledby="vs-title">
+    <figcaption id="vs-title" class="label">Next to the minimal one</figcaption>
+    <table>
+      <thead><tr><td></td><th scope="col">NanoClaw</th><th scope="col"><span>hex</span></th></tr></thead>
+      <tbody>
+        <tr><th scope="row">Runs Claude</th><td>through the Agent SDK, each agent in its own container</td><td>as Claude Code itself, the one you already use</td></tr>
+        <tr><th scope="row">Keeps state</th><td>in a SQLite database</td><td>in plain files, in a git repo you own</td></tr>
+        <tr><th scope="row">Guardrails</th><td>a wall: every agent in a container</td><td>at the edges: who can reach it, what it can send, secrets it never sees</td></tr>
+      </tbody>
+    </table>
   </figure>
 
   <div class="bet">
     <figure class="stack" aria-label="hex is a thin layer on top of Claude Code, which runs on Opus 5.5">
       <div class="layer l-hex">
-        <b>hex</b><span class="size">~1,000 lines</span>
-        <span class="parts">phone&nbsp;· computer&nbsp;· memory&nbsp;· hub</span>
+        <b>hex</b><span class="size">~1,400 lines</span>
+        <span class="parts">phone&nbsp;· computer&nbsp;· memory&nbsp;· vault&nbsp;· hub</span>
       </div>
       <div class="layer l-cc">
         <b>Claude Code</b><span class="size">the best agent harness</span>
@@ -128,22 +143,22 @@
     </figure>
 
     <ul class="points">
-      <li>Why rebuild what Anthropic ships every week?</li>
-      <li>Telegram channel: 714 lines. Upstream's: 1,045.</li>
       <li>Super minimal, super light, super snappy.</li>
+      <li>Why rebuild what Anthropic ships every week?</li>
+      <li>Claude models are the best personal assistant models, period. Everything else is cope.</li>
     </ul>
   </div>
 
-  <p class="quote">Claude models are the best personal assistant models, period. <span>Everything else is cope.</span></p>
+  <p class="quote">The very best personal assistant is the one that does the very least <span>while adding the very most capability.</span></p>
 </section>
 
 <section class="block" aria-labelledby="crew-title">
   <div class="block-head">
     <h2 id="crew-title">One bot. A whole crew.</h2>
-    <p>Telegram, Discord and Buzz come built in, on Anthropic's own channel plugins. Use one, use all three, or build your own on the same hub.</p>
+    <p>Every topic and thread gets its own Claude Code session, all on one hub built on Anthropic's own channel plugins.</p>
   </div>
 
-  <figure class="flow" role="img" aria-label="Telegram, Discord, Buzz, or a channel you build yourself, send messages to the hex hub on your box. The hub routes each topic or thread to its own Claude Code session, and a session can be handed off between apps. Sessions share memory files.">
+  <figure class="flow" role="img" aria-label="Telegram, Discord, Buzz, or a client your agent builds, send messages to the hex hub on your box. The hub routes each topic or thread to its own Claude Code session, and a session can be handed off between apps. Sessions share memory files.">
     <svg class="flow-wide" viewBox="26 0 1050 460" aria-hidden="true">
       <rect class="f-box" x="330" y="24" width="744" height="412"/>
       <rect class="f-boxlabel" x="330" y="24" width="96" height="26"/>
@@ -180,7 +195,7 @@
 
       <rect class="f-yours" x="28" y="344" width="206" height="64"/>
       <text class="f-title f-ink" x="48" y="374">Your own</text>
-      <text class="f-mono f-muted" x="48" y="395">build one on the hub</text>
+      <text class="f-mono f-muted" x="48" y="395">your agent builds it</text>
 
       <rect class="f-shadow" x="390" y="188" width="216" height="76"/>
       <rect class="f-hub" x="384" y="182" width="216" height="76"/>
@@ -220,7 +235,7 @@
       <rect class="f-shadow" x="16" y="106" width="200" height="60"/><rect class="f-bz" x="10" y="100" width="200" height="60"/>
       <text class="f-title" x="24" y="128">Buzz</text><text class="f-mono" x="24" y="148">your workspace</text>
       <rect class="f-yours" x="240" y="100" width="200" height="60"/>
-      <text class="f-title f-ink" x="254" y="128">Your own</text><text class="f-mono f-muted" x="254" y="148">build one on the hub</text>
+      <text class="f-title f-ink" x="254" y="128">Your own</text><text class="f-mono f-muted" x="254" y="148">your agent builds it</text>
 
       <g transform="translate(20 70)">
       <rect class="f-box" x="10" y="150" width="400" height="476"/>
@@ -348,8 +363,8 @@ earlier    summarized <span class="ok">✓</span>
 
 <section class="block" aria-labelledby="rooms-title">
   <div class="block-head">
-    <h2 id="rooms-title">Different rooms, same house.</h2>
-    <p>Each app does what it's best at. Use the ones you like, and hex connects them.</p>
+    <h2 id="rooms-title">Works with your client.</h2>
+    <p>Pick a ready one, or tell your agent to build yours. hex connects them all.</p>
   </div>
 
   <div class="ways">
@@ -455,9 +470,32 @@ earlier    summarized <span class="ok">✓</span>
         <li>Shared with people and agents</li>
       </ul>
     </article>
+    <article class="way wide own-way">
+      <header>
+        <span class="tag t-own">Your own</span>
+        <h3>Tell your agent.</h3>
+      </header>
+      <div class="own">
+        <div class="own-apps" role="group" aria-label="Pick an app">
+          <button type="button" class="chip" aria-pressed="true" data-app="Slack" data-unit="thread">Slack</button>
+          <button type="button" class="chip" aria-pressed="false" data-app="WhatsApp" data-unit="chat">WhatsApp</button>
+          <button type="button" class="chip" aria-pressed="false" data-app="Signal" data-unit="chat">Signal</button>
+          <button type="button" class="chip" aria-pressed="false" data-app="Matrix" data-unit="room">Matrix</button>
+        </div>
+        <div class="prompt">
+          <pre><code id="own-prompt">Build me a <b data-slot="app">Slack</b> channel on your hub, modeled on your Discord one, so every <b data-slot="app">Slack</b> <b data-slot="unit">thread</b> is its own session.</code></pre>
+          <button type="button" class="copy" data-copy="own-prompt"><span aria-live="polite">Copy</span></button>
+        </div>
+      </div>
+      <ul>
+        <li>Same hub, same sessions, same memory</li>
+        <li>Pick an app, paste the prompt</li>
+        <li>Buzz was built this way</li>
+      </ul>
+    </article>
   </div>
 
-  <p class="strip"><span class="soon-tag">coming</span> iMessage, and checking on any thread from any app.</p>
+  <p class="strip"><span class="soon-tag">coming</span> A ready-made iMessage client, and checking on any thread from any app.</p>
 </section>
 
 <p class="strip plan">Table stakes too: an hourly check that stays quiet unless something needs you, schedules in one JSON file, voice notes.</p>
@@ -465,7 +503,7 @@ earlier    summarized <span class="ok">✓</span>
 <section class="block" aria-labelledby="yours-title">
   <div class="block-head">
     <h2 id="yours-title">There are many assistants. This one is <mark>yours.</mark></h2>
-    <p>About 1,000 lines you can read in an afternoon, in a folder you own. Change it, extend it, fork it.</p>
+    <p>About 1,400 lines you can read in an afternoon, in a folder you own. Change it, extend it, fork it.</p>
   </div>
 
   <div class="features lead">
@@ -572,11 +610,23 @@ document.querySelectorAll('[data-copy]').forEach((button) => {
   });
 });
 
+const ownPrompt = document.getElementById('own-prompt');
+const calm = matchMedia('(prefers-reduced-motion: reduce)');
+document.querySelectorAll('[data-app]').forEach((chip, _, chips) => {
+  chip.addEventListener('click', () => {
+    chips.forEach((other) => other.setAttribute('aria-pressed', other === chip));
+    ownPrompt.querySelectorAll('[data-slot]').forEach((slot) => {
+      slot.textContent = chip.dataset[slot.dataset.slot];
+      if (!calm.matches) slot.animate([{ opacity: 0, transform: 'translateY(0.25em)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+    });
+  });
+});
+
 const counter = document.querySelector('[data-count]');
 new IntersectionObserver(([entry], observer) => {
   if (!entry.isIntersecting) return;
   observer.disconnect();
-  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  if (calm.matches) return;
   const target = Number(counter.dataset.count);
   const start = performance.now();
   const tick = (now) => {

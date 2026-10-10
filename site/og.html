@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>hex link preview</title>
+<style>
+@font-face { font-family: "Archivo"; src: url("/fonts/archivo.woff2") format("woff2"); font-weight: 100 900; font-stretch: 62% 125%; }
+@font-face { font-family: "Martian Mono"; src: url("/fonts/martian-mono.woff2") format("woff2"); font-weight: 100 800; font-stretch: 75% 112.5%; }
+* { box-sizing: border-box; margin: 0; }
+html, body { width: 1200px; height: 630px; overflow: hidden; }
+body { display: grid; grid-template-rows: 1fr 141px; border: 4px solid #0A0A0A; background: #F3EFE6; color: #0A0A0A; font-family: "Archivo", sans-serif; -webkit-font-smoothing: antialiased; }
+.top { position: relative; padding: 78px 64px 0; border-bottom: 4px solid #0A0A0A; }
+.mark { position: absolute; top: 44px; right: 60px; width: 118px; fill: #0A0A0A; }
+.sticker { display: inline-block; padding: 7px 12px; border: 2px solid #0A0A0A; background: #FF5FA2; font: 600 19px/1 "Martian Mono", monospace; box-shadow: 4px 4px 0 #0A0A0A; transform: rotate(-2deg); }
+h1 { margin-top: 20px; font-size: 71px; font-weight: 800; font-stretch: 112%; line-height: 0.92; letter-spacing: -0.035em; }
+mark { display: inline-block; margin-top: 8px; padding: 0 9px 4px; background: #FFD23F; color: #0A0A0A; }
+p { margin-top: 26px; color: #57544C; font-size: 25px; }
+.stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; background: #0A0A0A; }
+.stats div { display: grid; align-content: center; gap: 16px; padding: 0 24px; }
+.stats b { font-size: 50px; font-weight: 800; font-stretch: 115%; line-height: 0.9; letter-spacing: -0.05em; }
+.stats span { font: 500 14px/1 "Martian Mono", monospace; white-space: nowrap; }
+.blue { background: #2B3EFF; color: #fff; }
+.yellow { background: #FFD23F; }
+.pink { background: #FF5FA2; }
+.ink { background: #0A0A0A; color: #F3EFE6; }
+</style>
+</head>
+<body>
+<div class="top">
+  <svg class="mark" viewBox="0 0 2167 737" aria-label="hex"><path d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></svg>
+  <span class="sticker">Built on Claude Code</span>
+  <h1>The best personal<br>assistant is already on your<br><mark>machine.</mark></h1>
+  <p>It's just been busy writing code.</p>
+</div>
+<div class="stats">
+  <div class="blue"><b>~1,400</b><span>lines of hex itself</span></div>
+  <div class="yellow"><b>$0</b><span>extra on your Claude plan</span></div>
+  <div class="pink"><b>Any</b><span>client, or build yours</span></div>
+  <div class="ink"><b>0</b><span>frameworks, plain files</span></div>
+</div>
+</body>
+</html>
