@@ -33,9 +33,12 @@ if [ "$before" = "$after" ] && [ "$current" = "$incoming" ]; then
   exit 0
 fi
 
-"$hex/bin/hex" restart
-self=${CLAUDE_CODE_SESSION_ID:-}
-claude agents --json | jq -r --arg home "$home" --arg self "$self" '.[] | select(.cwd == $home and .pid and .sessionId != $self) | .sessionId[0:8]' |
-  while read -r session; do claude respawn "$session" >/dev/null; done
-[ -z "$self" ] || nohup sh -c "sleep 120; claude respawn $(printf %.8s "$self")" >/dev/null 2>&1 &
-echo "updated hex $before..$after, channels $(git -C channels rev-parse --short "$current")..$(git -C channels rev-parse --short HEAD); restarted the hub and the other sessions, and this one restarts in two minutes"
+# A restart cuts off whatever a session is doing, so the hub and every session restart
+# on the new code once none of them is busy, this one included once its turn ends.
+nohup sh -c '
+  until claude agents --json | jq -e --arg home "$1" "all(.[]; .cwd != \$home or .status != \"busy\")" >/dev/null; do sleep 30; done
+  "$2/bin/hex" restart
+  claude agents --json | jq -r --arg home "$1" ".[] | select(.cwd == \$home and .pid) | .sessionId[0:8]" |
+    while read -r session; do claude respawn "$session" >/dev/null; done
+' sh "$home" "$hex" >/dev/null 2>&1 &
+echo "updated hex $before..$after, channels $(git -C channels rev-parse --short "$current")..$(git -C channels rev-parse --short HEAD); the hub and sessions restart on it as soon as none of them is busy"
