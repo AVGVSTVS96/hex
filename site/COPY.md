@@ -19,7 +19,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 - Primary CTA: Install
 - Secondary CTA: View on GitHub
 
-*(Telegram phone mock, as Telegram looks on iOS 26: dark, with Liquid Glass header pills, topic bar and composer. "find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it" → "On it. Opened #ramen-tonight." → "It's live." with a link preview of ramen-tonight.vercel.app.)*
+*(Telegram phone mock, as Telegram looks on iOS 26: dark, with Liquid Glass header pills, topic bar and composer. "find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it" → "On it. Opened #ramen." → "It's live." with a link preview of ramen-tonight.vercel.app.)*
 
 ## Stats
 
@@ -118,7 +118,7 @@ Line: Every topic and thread gets its own Claude Code session, all on one hub bu
 - Your own · your agent builds it *(dashed box and dashed wire: optional, yours to add)*
 - Arrows between neighbouring apps: hand off
 - hex hub · one bot, many sessions
-- Claude Code × 3 · ramen-tonight, Theo clips, #dev › fix ci
+- Claude Code × 3 · ramen, clips, #dev › ci
 - SOUL.md · AGENTS.md · memory/ · log/
 - Frame: your box
 

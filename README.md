@@ -37,9 +37,9 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 │  └ trip      │               │    │                                        │
 └──────────────┘               │    ├──▶ claude  "hex"      General          │
 ┌──────────────┐               │    ├──▶ claude  (bg)       trip             │
-│ Discord      │               │    ├──▶ claude  (bg)       #dev › fix ci    │
+│ Discord      │               │    ├──▶ claude  (bg)       #dev › ci        │
 │  └ #dev      │◀─────────────▶│    └──▶ claude  (bg)       #ops › backups   │
-│    └ fix ci  │               │                                             │
+│    └ ci      │               │                                             │
 └──────────────┘               │                                             │
 ┌──────────────┐               │                                             │
 │ Buzz         │               │                                             │
