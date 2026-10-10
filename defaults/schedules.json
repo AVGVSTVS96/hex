@@ -3,10 +3,6 @@
     "cron": "45 8-22 * * *",
     "prompt": "Hourly check, see \"Heartbeat\" in .hex/HEX.md"
   },
-  "memory": {
-    "cron": "30 3 * * *",
-    "prompt": "Nightly memory pass, see \"Memory\" in .hex/HEX.md"
-  },
   "update": {
     "cron": "5 8 * * *",
     "prompt": "Run `.hex/bin/update`. Tell me only if it updated something or failed."

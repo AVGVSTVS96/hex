@@ -21,7 +21,7 @@ git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex/.hex   # 
 ~/hex/.hex/bin/hex init
 ```
 
-`init` writes their `SOUL.md`, `MEMORY.md`, `schedules.json`, `AGENTS.md`, `.env` and `.claude/settings.json`, sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
+`init` writes their `CLAUDE.md`, `AGENTS.md`, `SOUL.md`, `schedules.json`, `.env` and `.claude/settings.json`, sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
 
 ## 3. Make the Telegram bot and group (you)
 
@@ -89,7 +89,7 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
 
 ## 8. Make it theirs
 
-- Ask their name, what they do, and anything they want hex to know from day one, and write it under `## Me` in `~/hex/MEMORY.md`, one fact per line.
+- Ask their name, what they do, and anything they want hex to know from day one, and save each fact as a memory: `MEMORY_DIR=~/hex/memory ~/hex/.hex/vendor/memo note "<fact>"`.
 - Ask what time zone they're in. If `date` here shows another one, set `env.TZ` in `~/hex/.claude/settings.json` to theirs (like `America/New_York`), so schedules fire on their clock. The hourly check runs from 8:45 to 22:45; if they keep other hours, change the heartbeat's `cron` in `~/hex/schedules.json`.
 - **Voice notes (optional):** `.hex/bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
 - **Connectors (optional):** every connector on their Claude account works in every hex session, nothing to set up on this machine. They add them at claude.ai → Settings → Connectors **(you)**. Mail lets the hourly check read their inbox. Some that suit hex: [Executor](https://executor.sh) puts many accounts behind one connector (`https://executor.sh/mcp`), and [AgentMail](https://agentmail.to) gives hex an inbox of its own (`https://mcp.agentmail.to/mcp`).
@@ -101,7 +101,7 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
   sprite exec -s hex-computer -- sh -c '~/setup > ~/setup.log 2>&1; tail -n 8 ~/setup.log'
   ```
 
-  It ends with `cua-driver doctor`, which should be all `[ok  ]`. If the push fails right after `create`, run it again. Write `- Agent computer: Sprite hex-computer` under `## Machines` in `~/hex/MEMORY.md`, and set `HEX_COMPUTER=hex-computer` in `~/hex/.env` so hex can sign in there with its vault. They can watch its screen from a machine with the `sprite` CLI: `sprite proxy -s hex-computer 6080`, then http://localhost:6080/vnc.html.
+  It ends with `cua-driver doctor`, which should be all `[ok  ]`. If the push fails right after `create`, run it again. Add `- Agent computer: Sprite hex-computer` to `~/hex/AGENTS.md`, and set `HEX_COMPUTER=hex-computer` in `~/hex/.env` so hex can sign in there with its vault. They can watch its screen from a machine with the `sprite` CLI: `sprite proxy -s hex-computer 6080`, then http://localhost:6080/vnc.html.
 - **The vault** works with nothing to set up: hex sends a link, they fill it in, and it's saved encrypted in `~/hex/vault/`. The key that opens it is `~/hex/state/vault/key`; tell them to back it up somewhere safe, since git never gets it. The link goes through a relay the hex project hosts, which only ever sees encrypted data. To run their own, deploy it to their Convex account with `cd ~/hex/.hex/vault && npx convex deploy` and set `HEX_VAULT_CONVEX_URL` in `.env` to the URL it prints. `vault/README.md` explains how to swap the relay or the store for something else entirely.
 - **Discord (optional):** a second app for deeper work. Tag the bot in any channel and it opens a thread with its own session. Ask them to create an application at https://discord.com/developers/applications, turn on **Message Content Intent** under Bot, copy the bot token, and invite the bot to their server with the `bot` scope and the Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Attach Files and Add Reactions permissions **(you)**. Then set `DISCORD_BOT_TOKEN` in `.env`, write their Discord user id to `~/hex/state/discord/access.json` as `{ "allowFrom": ["<user id>"] }`, run `claude plugin install discord@hex` and `claude plugin disable discord@hex`, then `~/hex/.hex/bin/hex restart`.
 - **Buzz (optional):** [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels; hex joins as an agent and works like it does in Discord. Buzz Desktop deploys it through a provider that writes hex's Buzz key over SSH, so the computer running Buzz Desktop must reach this machine with `ssh` and a key, no password. Build the provider for that computer (`bun-darwin-arm64` for an Apple silicon Mac, `bun-darwin-x64`, `bun-linux-x64`) and copy it into its `~/.local/bin`:

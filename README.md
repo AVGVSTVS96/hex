@@ -43,14 +43,14 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 └──────────────┘               │                                             │
 ┌──────────────┐               │                                             │
 │ Buzz         │               │                                             │
-│  └ #ops      │◀─────────────▶│  SOUL.md  MEMORY.md  AGENTS.md  log/        │
+│  └ #ops      │◀─────────────▶│  SOUL.md  AGENTS.md  memory/  log/          │
 │    └ backups │               │                                             │
 └──────────────┘               └─────────────────────────────────────────────┘
 ```
 
 - **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for 30 minutes stops, and starts again with its conversation when you write.
-- **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), `MEMORY.md` (what's true about you now), `schedules.json`, your own rules in `AGENTS.md`, its memory and every conversation as markdown in `log/`. It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo that updates never mix with your files.
-- **Memory with a timeline.** Next to `MEMORY.md`, every session notes what happened in [OptMem](https://github.com/VictorTaelin/OptMem): plain text files, read back at the start of each session, with older memories summarized and still searchable word for word. Every night hex folds the day's notes into `MEMORY.md`.
+- **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), your own rules in `AGENTS.md`, `schedules.json`, its memory and every conversation as markdown in `log/`. It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo that updates never mix with your files.
+- **One memory, with a timeline.** Every session notes what it learns and what happened in [OptMem](https://github.com/VictorTaelin/OptMem): plain text files, read back at the start of each session, with older memories summarized on the spot and still searchable word for word. Your rules live in `AGENTS.md`; everything else hex knows is in OptMem.
 - **Works with any Claude connector.** Every connector on your Claude account works in every hex session, with nothing to set up on the machine: Gmail, your calendar, [Executor](https://executor.sh) for many accounts behind one sign-in, [AgentMail](https://agentmail.to) for an inbox of its own. Sending, replying or deleting through any of them waits for your yes.
 - **It speaks up when it matters.** Every hour while you're up it checks your mail, the work it started, threads waiting on you, and anything it said it would follow up on, and only messages you if something's worth it. Other jobs are lines in `schedules.json`, a cron line and a prompt each.
 - **A computer of its own (optional).** A cloud desktop with Chrome that hex drives with [cua-driver](https://cua.ai), for anything that needs a real browser, on whatever provider you like. You can watch its screen. `computer/setup` builds one on a [Fly.io Sprite](https://sprites.dev) in one command.
@@ -97,8 +97,9 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 
 ```
 ~/hex/                              yours: a private git repo
-├── AGENTS.md                       your rules; imports SOUL, MEMORY and .hex/HEX.md
-├── SOUL.md  MEMORY.md              who it is, what's true about you now
+├── CLAUDE.md                       loads .hex/HEX.md, SOUL.md and AGENTS.md
+├── AGENTS.md                       your rules
+├── SOUL.md                         who it is
 ├── schedules.json                  recurring jobs, the hourly check included
 ├── memory/  log/                   its OptMem memory, every conversation as markdown
 ├── vault/                          its saved secrets, encrypted
@@ -154,7 +155,7 @@ Your hex still gets its channels from [the auto-maintained fork](https://github.
 
 ## Known issues
 
-- **A project's own instructions don't load on their own.** Every hex session starts in `~/hex`, because that's what makes it hex: AGENTS.md, SOUL.md, MEMORY.md and the hooks all load from there. Claude Code only picks up a CLAUDE.md or AGENTS.md on its own inside the folder a session starts in, so when hex works in a repo somewhere else, like `~/Projects/foo`, that repo's rules go unread unless hex opens them itself. A fix is planned soon. Until then, ask hex to read the repo's AGENTS.md or CLAUDE.md before it starts.
+- **A project's own instructions don't load on their own.** Every hex session starts in `~/hex`, because that's what makes it hex: CLAUDE.md, AGENTS.md, SOUL.md and the hooks all load from there. Claude Code only picks up a CLAUDE.md or AGENTS.md on its own inside the folder a session starts in, so when hex works in a repo somewhere else, like `~/Projects/foo`, that repo's rules go unread unless hex opens them itself. A fix is planned soon. Until then, ask hex to read the repo's AGENTS.md or CLAUDE.md before it starts.
 
 ## Principles
 

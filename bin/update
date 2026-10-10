@@ -8,6 +8,11 @@ before=$(git rev-parse --short HEAD)
 git pull -q --ff-only
 "$hex/bin/optmem"
 
+[ -e "$home/CLAUDE.md" ] || cp "$hex/defaults/CLAUDE.md" "$home/CLAUDE.md"
+if [ "$(jq -r '.memory.prompt // empty' "$home/schedules.json")" = 'Nightly memory pass, see "Memory" in .hex/HEX.md' ]; then
+  jq 'del(.memory)' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
+fi
+
 git -C channels fetch -q origin main
 current=$(git -C channels rev-parse HEAD)
 incoming=$(git -C channels rev-parse origin/main)

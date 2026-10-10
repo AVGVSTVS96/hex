@@ -119,7 +119,7 @@ Line: Every topic and thread gets its own Claude Code session, all on one hub bu
 - Arrows between neighbouring apps: hand off
 - hex hub · one bot, many sessions
 - Claude Code × 3 · ramen-tonight, Theo clips, #dev › fix ci
-- SOUL.md · MEMORY.md · AGENTS.md · log/
+- SOUL.md · AGENTS.md · memory/ · log/
 - Frame: your box
 
 ### Features
@@ -136,7 +136,7 @@ Line: It lives on your box, with your whole network, a memory of its own and, if
 - **Its own computer**: Optional: a cloud desktop with Chrome, on any provider you like. *(computer/setup builds one on a Fly.io Sprite. Don't name the provider on the page.)*
 - **Your whole network**: Every machine you can ssh into.
 - **Every connector**: Whatever your Claude account has. *(Mock: "your Claude account" over Gmail, Executor, AgentMail, Calendar. They're examples, not hex features.)*
-- **Memory with a timeline**: OptMem, folded into MEMORY.md every night. *(Terminal mock: today / this week / earlier, then nightly → MEMORY.md.)*
+- **Memory with a timeline**: one memory, OptMem, summarized as it goes, searchable word for word. *(Terminal mock: today / this week / earlier, then recall → any word, ever.)*
 
 ## Clients
 
@@ -186,7 +186,7 @@ Line: About 1,400 lines you can read in an afternoon, in a folder you own. Chang
 
 1. **Ask it to change itself**: It edits its own rules, schedules and memory, and commits every change. *(Terminal: you "no check-ins on weekends" → hex "edited schedules.json" → committed ✓)*
 2. **Extend it with anything**: Whatever Claude Code can load, hex can use. *(Chips: skills, MCP, plugins, hooks, channels, + yours dashed)*
-3. **A folder you own**: Plain files in your own repo. Updates never touch them. *(Terminal: ~/hex/ your git repo · SOUL.md who it is · MEMORY.md what it knows · .hex/ hex, updated)*
+3. **A folder you own**: Plain files in your own repo. Updates never touch them. *(Terminal: ~/hex/ your git repo · SOUL.md who it is · memory/ what it knows · .hex/ hex, updated)*
 
 ## Closer
 
