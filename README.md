@@ -122,13 +122,29 @@ hex doesn't need systemd or any service manager. `hex start` runs the hub in the
 
 `channels/` is [a fork of Anthropic's official plugin marketplace](https://github.com/AVGVSTVS96/claude-plugins-official). Its patches add one bot connection per app, serving every Telegram topic and Discord thread, a Buzz channel built the same way, and a hub that gives each thread its own session. Every day a GitHub Actions pipeline re-applies the patches onto the latest upstream, Claude fixes any conflicts, and the result is only published once `scripts/verify` passes. Every morning `bin/update` pulls hex and runs `scripts/verify` again before your hub restarts on the new channel.
 
+## Fork it
+
+hex is a testbed. Let's make it better together: fork it, do what you want with it, and send back what works.
+
+```
+            pull what's new              every morning's update
+this repo ─────────────────▶ your fork ───────────────────────▶ your hex
+    ▲                          │    ▲                              │
+    └────── pull request ──────┘    └──────── your changes ────────┘
+```
+
+1. **Install your fork.** Paste the prompt from [Install](#install) with your fork's URL. Your hex is a clone of the repo it was installed from, so its updates come from your fork.
+2. **Change anything.** By hand, with any coding agent (`AGENTS.md` shows it around), or by asking hex. Push to your fork, and your hex picks it up on its next update.
+3. **Pull in what's new here** whenever you want: **Sync fork** on your fork's GitHub page, or `git pull https://github.com/AVGVSTVS96/hex main` and push.
+4. **Send back what works.** Open a pull request that says what it does and the decisions it makes, with screenshots if it shows anything.
+
+Your hex still gets its channels from [the auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official), so they stay current on their own. To change the channels too, fork that repo as well, turn on its Actions, add a `CLAUDE_CODE_OAUTH_TOKEN` secret (`claude setup-token` makes one) so its daily sync can run, then point `.gitmodules` at it and run `git submodule sync`.
+
 ## What's next
 
 - **iMessage**, as a fourth front end.
 - **Check on any thread from any app**, and keep it going from your phone.
 - **More modular, more portable.**
-
-hex is my sandbox. Fork it, try your ideas, and send back what works.
 
 ## Known issues
 

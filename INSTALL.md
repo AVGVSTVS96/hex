@@ -14,10 +14,10 @@ hex runs wherever Claude Code does, on a machine that stays on: a home server, a
 
 ## 2. Make their hex
 
-A person's hex is a folder of their own, `~/hex` unless they want another place. hex itself lives inside it, in `.hex/`. If the folder already exists, stop and ask.
+A person's hex is a folder of their own, `~/hex` unless they want another place. hex itself lives inside it, in `.hex/`: a clone of the repo they pointed you to, this one or their fork, and updates pull from there. If the folder already exists, stop and ask.
 
 ```sh
-git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex/.hex
+git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex/.hex   # or their fork
 ~/hex/.hex/bin/hex init
 ```
 
