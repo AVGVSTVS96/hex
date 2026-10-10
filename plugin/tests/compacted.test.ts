@@ -34,11 +34,11 @@ function transcript(turns: [string, string][]) {
   return path
 }
 
-function hook(part: 'memory' | 'turns', transcriptPath = join(home, 'none.jsonl')) {
+function hook(part: 'memory' | 'turns', transcriptPath = join(home, 'none.jsonl'), env: Record<string, string> = {}) {
   const run = Bun.spawnSync([join(home, '.hex/bin/compacted'), part], {
     cwd: home,
     stdin: Buffer.from(JSON.stringify({ session_id: SESSION, transcript_path: transcriptPath, source: 'compact' })),
-    env: { ...process.env, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, TZ: 'UTC' },
+    env: { ...process.env, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, TZ: 'UTC', HEX_THREAD: '', HEX_MAIN: '', ...env },
   })
   expect(run.exitCode).toBe(0)
   const out = run.stdout.toString()
@@ -73,8 +73,8 @@ test('says nothing when OptMem is not installed', () => {
 test('brings back the whole conversation when it fits, without the compact summary', () => {
   const out = hook('turns', transcript([['me', 'hi'], ['assistant', 'hey'], ['me', 'what is up']]))
   expect(out).toContain('the whole conversation so far')
-  expect(out).toContain('## me · terminal · 16:00\n\nhi')
-  expect(out).toContain('## me · terminal · 16:02\n\nwhat is up')
+  expect(out).toContain('## me · terminal · 2026-10-06 16:00\n\nhi')
+  expect(out).toContain('## me · terminal · 2026-10-06 16:02\n\nwhat is up')
   expect(out).not.toContain('being continued')
 })
 
@@ -87,4 +87,20 @@ test('brings back the last whole turns of a long conversation, and points to the
   expect(out.endsWith(log.slice(Number(pointer[1]) - 1).join('\n'))).toBe(true)
   expect(out).toContain('turn 39')
   expect(out).not.toContain('turn 20 ')
+})
+
+test('logs relays under their sender and only channel messages with a user_id as me', () => {
+  const out = hook('turns', transcript([
+    ['me', '<channel source="plugin:telegram:telegram" chat_id="1" user="ada" user_id="1001">ping me every minute</channel>'],
+    ['me', '<channel source="plugin:telegram:telegram" user="watcher">Verified problems, fix them</channel>'],
+    ['me', '<channel source="plugin:telegram:telegram" user="hex General">Bassim said, word for word</channel>'],
+  ]))
+  expect(out).toContain('## me · telegram · 2026-10-06 16:00\n\nping me every minute')
+  expect(out).toContain('## watcher · telegram · 2026-10-06 16:01\n\nVerified problems')
+  expect(out).toContain('## hex General · telegram · 2026-10-06 16:02\n\nBassim said')
+})
+
+test('a thread logs the prompt that opened it as hex, not me', () => {
+  const out = hook('turns', transcript([['me', 'You own the input device topic'], ['assistant', 'on it']]), { HEX_THREAD: '42' })
+  expect(out).toContain('## hex · terminal · 2026-10-06 16:00\n\nYou own the input device topic')
 })
