@@ -1,0 +1,54 @@
+mark { display: inline; padding: 0 .08em .02em; background: linear-gradient(var(--yellow), var(--yellow)) no-repeat 0 0 / 100% 100%; color: var(--ink); }
+
+/* the point */
+
+.point { display: flex; flex-direction: column; justify-content: center; gap: 56px; padding: 0 var(--pad); }
+.point h2 { font-size: 172px; letter-spacing: -.05em; line-height: 1.04; }
+.point .mono-l { font-size: 44px; color: var(--muted); }
+
+/* the trend */
+
+.trend { display: grid; grid-template-columns: 1fr 620px; color: var(--cream); }
+.trend .copy { position: relative; }
+.trend .before, .trend .after { position: absolute; left: var(--pad); right: var(--pad); top: 50%; translate: 0 -50%; }
+.trend h2 { font-size: 112px; letter-spacing: -.045em; line-height: 1.04; }
+.trend .after { display: grid; gap: 44px; }
+.trend .after .mono-l { color: #A7A399; max-width: 940px; }
+.harness { position: relative; display: grid; align-content: center; gap: 14px; padding: 0 84px; border-left: 2px solid var(--cream); }
+.part { display: block; padding: 18px 24px; border: 2px solid #6F6B62; color: #A7A399; font: 500 26px/1 var(--mono); font-style: normal; }
+.skill { position: absolute; left: 50%; top: 50%; translate: -50% -50%; padding: 28px 40px; border: 2px solid var(--ink); background: var(--yellow); color: var(--ink); box-shadow: 8px 8px 0 var(--cream); font: 700 52px/1 var(--mono); letter-spacing: -.02em; }
+@keyframes gather { to { opacity: 0; transform: translateY(calc((3.5 - var(--i)) * 84px)) scaleX(.5); } }
+
+/* the pieces */
+
+.pieces { display: grid; grid-template-rows: 300px 1fr 150px; color: #fff; }
+.pieces header { display: flex; align-items: center; padding: 0 var(--pad); border-bottom: var(--line); }
+.pieces h2 { font-size: 96px; letter-spacing: -.045em; line-height: 1.04; }
+.row { display: flex; align-items: flex-start; padding: 64px var(--pad) 0; }
+.piece { display: grid; align-content: start; gap: 18px; width: 316px; min-height: 236px; padding: 30px 30px 34px; border: 2px solid var(--ink); background: var(--cream); color: var(--ink); box-shadow: 8px 8px 0 var(--ink); }
+.piece + .piece { margin-left: -2px; }
+.piece b { font-size: 44px; letter-spacing: -.035em; white-space: nowrap; }
+.piece .mono-s { color: var(--muted); }
+.piece.core { width: 600px; background: #fff; }
+.piece.core b { font-size: 80px; }
+.piece.core .sticker { justify-self: start; margin-top: 18px; rotate: -3deg; }
+.pieces footer { display: flex; align-items: center; gap: 48px; padding: 0 var(--pad); border-top: var(--line); font: 400 30px/1.4 var(--mono); }
+.row > .a:not(.swell) { animation: var(--k) var(--t) calc((var(--s) + var(--d)) * 1s) both, show .1s linear calc((var(--s) + var(--d)) * 1s) both; }
+@keyframes snap { from { transform: translateX(160px); } }
+@keyframes lift { from { transform: translateY(90px); } }
+@keyframes show { from { opacity: 0; } }
+
+.swell { background: var(--pink); }
+.swell ol { display: grid; padding: 0; list-style: none; }
+.swell li { display: grid; overflow: clip; font: 600 22px/52px var(--mono); }
+.swell li span { min-height: 0; line-height: 52px; box-shadow: inset 0 2px var(--ink); }
+@keyframes swell { from { background: var(--cream); } }
+.pieces .late { font-size: 30px; padding: 14px 22px; background: var(--pink); }
+
+/* the invite */
+
+.invite { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 52px; padding: 0 var(--pad); }
+.invite h2 { font-size: 124px; letter-spacing: -.045em; line-height: 1.04; }
+.invite .mono-l { color: var(--muted); }
+.links { display: flex; border: 2px solid var(--ink); background: #fff; box-shadow: 8px 8px 0 var(--ink); font: 500 30px/1 var(--mono); }
+.links span { padding: 24px 32px; }

@@ -11,6 +11,7 @@ media/
     apps.js     fills in each app's standard parts, so a scene only writes the conversation
     sound.js    sound effects from data-cue (cuelume), the shared room, the WAV encoder
   launch/       the launch video: index.html, launch.css, music.js
+  delayed/      a short silent cut: the idea behind hex, and why its launch waits
   render.mjs
 ```
 
