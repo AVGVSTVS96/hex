@@ -25,7 +25,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 - ~1,400 · lines of hex, plus ~4,200 in connectors. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
-- Any · client. Telegram, Discord and Buzz come ready, or your agent builds yours.
+- Any · client: Telegram, Discord, Buzz, or one you build.
 - 0 · frameworks, 0 databases. Just plain files you own.
 
 ## Link preview
@@ -97,9 +97,11 @@ Fine print: * Plus ~4,200 lines of connectors for Telegram, Discord and Buzz, le
 - Opus 5.5 · the best agent model
 
 Points:
+*(One point per layer, top to bottom: hex, Claude Code, the model.)*
+
+- Super minimal, super light, super snappy.
 - Why rebuild what Anthropic ships every week?
 - Claude models are the best personal assistant models, period. Everything else is cope.
-- Super minimal, super light, super snappy.
 
 Band, in Bassim's words: The very best personal assistant is the one that does the very least while adding the very most capability. *("while adding the very most capability." in yellow.)*
 
@@ -169,7 +171,7 @@ Chips: Slack (thread) · WhatsApp (chat) · Signal (chat) · Matrix (room)
 
 Prompt: `Build me a Slack channel on your hub, modeled on your Discord one, so every Slack thread is its own session.`
 
-Strip, **coming**: iMessage, and checking on any thread from any app.
+Strip, **coming**: A ready-made iMessage client, and checking on any thread from any app.
 
 ## Basics
 
