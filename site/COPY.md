@@ -7,7 +7,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 ## Page
 
 - `<title>`: hex · The best personal assistant is already on your machine
-- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,000 lines plus its connectors, on the Claude plan you already pay for.
+- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,400 lines plus its connectors, on the Claude plan you already pay for.
 
 ## Hero
 
@@ -23,10 +23,19 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 ## Stats
 
-- ~1,000 · lines of hex, plus ~3,000 in connectors. Claude Code does the rest.
+- ~1,400 · lines of hex, plus ~4,200 in connectors. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
-- 3 · front ends built in: Telegram, Discord, Buzz. Or build your own.
+- Any · client. Telegram, Discord and Buzz come ready, or your agent builds yours.
 - 0 · frameworks, 0 databases. Just plain files you own.
+
+## Link preview
+
+*(og.html beside og.png, 1200×630, rendered with brand-it's shoot.mjs. The hero as on the page, then four stat blocks. No competitor names here.)*
+
+- ~1,400 · lines of hex itself
+- $0 · extra on your Claude plan
+- Any · client, or build yours
+- 0 · frameworks, plain files
 
 ## A note from bassim
 
@@ -62,41 +71,49 @@ Label: Lines of source
 
 - OpenClaw · 4 million+
 - Hermes Agent · 1.5 million
-- NanoClaw (the minimal one) · 68,000
-- hex · ~1,000*
+- NanoClaw (the minimal one) · 47,000
+- hex · ~1,400*
 
-Fine print: * Plus ~3,000 lines of forked and custom connectors for Telegram, Discord and Buzz. Tests and generated code excluded. Counted Oct 2026. Even the minimal one is 68x bigger.
+Fine print: * Plus ~4,200 lines of connectors for Telegram, Discord and Buzz, left out like NanoClaw's chat adapters. Tests, docs and generated code excluded. Counted Oct 2026. Even the minimal one is 33x bigger.
 
-*(hex counts what it runs, without tests or this site: the scripts and TS in bin/, plugin/, mods/ and computer/, the JSON in defaults/, the hub, and every TS file of the Telegram, Discord and Buzz channels. 3,903 lines on Oct 8 2026, rounded up. hex itself is 936 (577 in this repo + the 359-line hub); the connectors are 2,967 (Telegram 714, Discord 605, Buzz 1,648). The page shows hex itself (~1,000) and footnotes the connectors (~3,000). NanoClaw: 68,000 / 1,000 = 68x.)*
+*(Both are counted the same way: every line (`wc -l`, comments and blanks included) of what it runs, without tests, Markdown, lockfiles or this site. hex is the files in bin/, plugin/, mods/, computer/ and vault/, the JSON in defaults/, and the hub; on Oct 10 2026 (main at ffccf30, channels at 5db7131) that's 1,394: 707 in bin/plugin/mods/computer/defaults, 327 in vault/, 360 in the hub. Its connectors are the Telegram, Discord and Buzz TS files: 4,165 (Telegram 1,123, Discord 982, Buzz 2,060). NanoClaw is src/ and container/ at commit af699e7 (Oct 9): 47,198 lines in 313 files. Its chat adapters copy in from a separate `channels` branch and its setup/ wizard (19,495) isn't counted either, so its number is rounded down and generous. hex's is rounded up. 47,000 / 1,400 = 33.6, shown as 33x. Bar widths keep the old scale (a full bar is 4.39 million lines). OpenClaw and Hermes weren't recounted.)*
+
+### Next to the minimal one
+
+*(A plain three-column ledger under the size strip, aligned to the bars: row label, NanoClaw muted, hex in ink. Same state, like for like.)*
+
+- Runs Claude · through the Agent SDK, each agent in its own container · as Claude Code itself, the one you already use
+- Keeps state · in a SQLite database · in plain files, in a git repo you own
+- Guardrails · a wall: every agent in a container · at the edges: who can reach it, what it can send, secrets it never sees
+
+*(NanoClaw: README "runs agents securely in their own containers", better-sqlite3 in src/db, @anthropic-ai/claude-agent-sdk in container/agent-runner. hex: only you can message the bot, send-gate holds sends and deletes until your yes, the vault keeps secrets out of chat and the model.)*
 
 ### Layer stack
 
 *(Three stacked layers: a thin one on top, a thick one in the middle, the model at the bottom. Three points beside it.)*
 
-- hex · ~1,000 lines · phone · computer · memory · hub
+- hex · ~1,400 lines · phone · computer · memory · vault · hub
 - Claude Code · the best agent harness · reasoning, tools, MCP, skills, subagents, computer use
 - Opus 5.5 · the best agent model
 
 Points:
 - Why rebuild what Anthropic ships every week?
-- Telegram channel: 714 lines. Upstream's: 1,045.
+- Claude models are the best personal assistant models, period. Everything else is cope.
 - Super minimal, super light, super snappy.
 
-*(714 is the fork's telegram bot.ts + server.ts; 1,045 is upstream's one server.ts.)*
-
-Band: Claude models are the best personal assistant models, period. Everything else is cope.
+Band, in Bassim's words: The very best personal assistant is the one that does the very least while adding the very most capability. *("while adding the very most capability." in yellow.)*
 
 ## One bot, a whole crew
 
 Section title: One bot. A whole crew.
-Line: Telegram, Discord and Buzz come built in, on Anthropic's own channel plugins. Use one, use all three, or build your own on the same hub.
+Line: Every topic and thread gets its own Claude Code session, all on one hub built on Anthropic's own channel plugins.
 
 ### Diagram labels
 
 - Telegram · your pocket
 - Discord · your desk
 - Buzz · your workspace
-- Your own · build one on the hub *(dashed box and dashed wire: optional, yours to add)*
+- Your own · your agent builds it *(dashed box and dashed wire: optional, yours to add)*
 - Arrows between neighbouring apps: hand off
 - hex hub · one bot, many sessions
 - Claude Code × 3 · ramen-tonight, Theo clips, #dev › fix ci
@@ -119,10 +136,12 @@ Line: It lives on your box, with your whole network, a memory of its own and, if
 - **Every connector**: Whatever your Claude account has. *(Mock: "your Claude account" over Gmail, Executor, AgentMail, Calendar. They're examples, not hex features.)*
 - **Memory with a timeline**: OptMem, folded into MEMORY.md every night. *(Terminal mock: today / this week / earlier, then nightly → MEMORY.md.)*
 
-## Front ends
+## Clients
 
-Section title: Different rooms, same house.
-Line: Each app does what it's best at. Use the ones you like, and hex connects them.
+*(Bassim: "works with your client. pick a client, couple prebuilt connectors, or tell your agent to build your own. offer prompts." Never frame these as "three front ends".)*
+
+Section title: Works with your client.
+Line: Pick a ready one, or tell your agent to build yours. hex connects them all.
 
 **Telegram** · Your pocket.
 - Every topic is its own session
@@ -141,6 +160,15 @@ Bridge: take this to Discord or Buzz
 - Edit its memory and files
 - Shared with people and agents
 
+**Your own** · Tell your agent. *(Full-width row under Discord and Buzz on a dot grid, dashed tag. Chips pick the app and swap it into the prompt; Copy copies it.)*
+- Same hub, same sessions, same memory
+- Pick an app, paste the prompt
+- Buzz was built this way
+
+Chips: Slack (thread) · WhatsApp (chat) · Signal (chat) · Matrix (room)
+
+Prompt: `Build me a Slack channel on your hub, modeled on your Discord one, so every Slack thread is its own session.`
+
 Strip, **coming**: iMessage, and checking on any thread from any app.
 
 ## Basics
@@ -152,7 +180,7 @@ Table stakes too: an hourly check that stays quiet unless something needs you, s
 *(The theme of the page: hex is modifiable, extensible and yours, the way pi is the coding agent that's yours.)*
 
 Section title: There are many assistants. This one is yours. *("yours." highlighted)*
-Line: About 1,000 lines you can read in an afternoon, in a folder you own. Change it, extend it, fork it.
+Line: About 1,400 lines you can read in an afternoon, in a folder you own. Change it, extend it, fork it.
 
 1. **Ask it to change itself**: It edits its own rules, schedules and memory, and commits every change. *(Terminal: you "no check-ins on weekends" → hex "edited schedules.json" → committed ✓)*
 2. **Extend it with anything**: Whatever Claude Code can load, hex can use. *(Chips: skills, MCP, plugins, hooks, channels, + yours dashed)*
@@ -188,7 +216,7 @@ Section title: hex is my sandbox. Come build it with me.
 Line: Fork it. Try your ideas. Send back what works. *(Short on purpose: the note up top already says the rest and carries his signature.)*
 Button: Fork on GitHub
 
-Strip, **next**: A vault for its logins. More modular. More portable.
+Strip, **next**: More modular. More portable. *(The vault shipped Oct 8.)*
 
 ## Footer
 

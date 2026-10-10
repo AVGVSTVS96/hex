@@ -155,7 +155,7 @@ Your hex still gets its channels from [the auto-maintained fork](https://github.
 - **Don't interrupt.** Scheduled jobs wait their turn. The heartbeat only messages you when something needs you. Idle sessions stop and come back when you write.
 - **Plain files over infrastructure.** Everything hex knows lives in markdown you can open, edit and grep.
 - **Your machine, your account.** hex runs on your machine with your Claude subscription. Its memory and logs are files in your folder, and only you can talk to it.
-- **Yours to change.** About 1,000 lines you can read in an afternoon. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, build your own front end on the hub, or fork the whole thing.
+- **Yours to change.** About 1,400 lines you can read in an afternoon. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, build your own front end on the hub, or fork the whole thing.
 
 ## License
 
