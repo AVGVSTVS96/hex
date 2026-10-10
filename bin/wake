@@ -1,0 +1,39 @@
+#!/bin/sh
+input=$(cat)
+session=$(printf '%s' "$input" | jq -r .session_id)
+here=$(cd "$(dirname "$0")" && pwd)
+memo="$here/../vendor/memo"
+[ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] || exit 0
+export LC_ALL=C
+
+# Claude Code puts at most 10,000 characters of a hook's output into context,
+# so plugin/hooks/hooks.json runs this once per chunk: `wake 1` … `wake <n> last`.
+n=${1:?usage: wake <chunk> [last]}
+last=${2:-}
+room=9000
+
+k=1 T=
+wake=$(
+  while :; do
+    part=$("$memo" wake $k $T 2>&1)
+    next=$(printf '%s\n' "$part" | sed -n 's/^Not awake yet\. Run: .* wake \([0-9]*\) \([0-9]*\)$/\1 \2/p')
+    printf '%s\n' "$part" | grep -v '^Not awake yet\. Run: '
+    [ -n "$next" ] || break
+    set -- $next
+    k=$1 T=$2
+  done
+)
+
+rest="${TMPDIR:-/tmp}/hex-wake-$session.txt"
+printf '%s\n' "$wake" | awk -v n="$n" -v last="$last" -v room="$room" -v rest="$rest" '
+  { if (size && size + length($0) + 1 > room) { chunks++; size = 0 }
+    size += length($0) + 1
+    if (chunks + 1 == n) { out = out $0 "\n"; end = NR }
+    if (last) print > rest }
+  END {
+    if (out == "") exit
+    total = chunks + 1
+    printf "This is `.hex/vendor/memo wake`, run in full for you as this session started, so you don'"'"'t need to run it. "
+    printf "It arrives in %d chunks; this is chunk %d of %d. Read them in order, then do what it says, to the end.\n\n%s", total, n, total, out
+    if (last && total > n) printf "\nThat'"'"'s all the hooks can show. Read the rest from line %d of %s, and do what it says.\n", end + 1, rest
+  }'

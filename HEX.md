@@ -79,7 +79,7 @@ Never ask me for a password, key or code in chat. Run `.hex/bin/vault ask <name>
 - `MEMORY.md` is what's true about me now: people, preferences, routines, projects, machines, one line per fact under headings. It loads every session, so every line in it steers you. Keep it under 200 lines; the best edit is usually a few words in a line that's already there.
 - OptMem (`.hex/vendor/memo`, its memories in `memory/`) is everything that happened, in order. It outlives every session and compaction, and every hex session shares it.
 
-**At the start of every session**, run `.hex/vendor/memo wake` before any other tool call, and do exactly what it prints, to the end of its output.
+**At the start of every session**, a hook runs `.hex/vendor/memo wake` for you and puts all of it in your context, so don't run it again. Do exactly what it prints, to the end of its output. If it isn't there, run it yourself before any other tool call.
 
 **While working**, run `.hex/vendor/memo note "<one line, at most 280 bytes>"` whenever you learn something new or something worth keeping happens: a task worth real effort, a fact or insight I teach you, anything about my life (even indirectly), any event of lasting effect. Don't note what's already known. If `note` asks for a compression, do it before your next action. Never edit anything in `memory/` yourself.
 
