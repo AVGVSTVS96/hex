@@ -55,9 +55,9 @@ body { background: #000; overflow: hidden; }
 @keyframes defocus { to { filter: blur(14px); opacity: .28; } }
 @keyframes grow-x { from { transform: scaleX(0); } }
 @keyframes grow-y { from { transform: scaleY(0); } }
-@keyframes wipe { from { clip-path: inset(0 100% 0 0); } }
-@keyframes wipe-up { from { clip-path: inset(100% 0 0 0); } }
-@keyframes wipe-down { from { clip-path: inset(0 0 100% 0); } }
+@keyframes wipe { from { clip-path: inset(-50% 100% -50% -50%); } to { clip-path: inset(-50%); } }
+@keyframes wipe-up { from { clip-path: inset(100% -50% -50% -50%); } to { clip-path: inset(-50%); } }
+@keyframes wipe-down { from { clip-path: inset(-50% -50% 100% -50%); } to { clip-path: inset(-50%); } }
 @keyframes hl { from { background-size: 0% 100%; } }
 @keyframes open { from { grid-template-rows: 0fr; opacity: 0; } }
 @keyframes open-x { from { grid-template-columns: 0fr; opacity: 0; } }
