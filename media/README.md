@@ -1,6 +1,6 @@
 # media
 
-Videos in hex's look, made from HTML. Each video is a page of timed scenes. Headless Chrome renders it frame by frame, and the soundtrack is synthesized from the same page, so picture and sound can't drift apart.
+Videos in hex's look, made from HTML. Each video is a page of timed scenes. Headless Chrome renders it frame by frame, and the sound effects are placed from the same page's timing, so picture and sound can't drift apart.
 
 ```
 media/
@@ -9,8 +9,8 @@ media/
     stage.js    the timeline: shows scenes, seeks every animation, springs from Motion, counters
     apps.css    Telegram (iOS 26), Discord and Buzz, drawn like the real apps
     apps.js     fills in each app's standard parts, so a scene only writes the conversation
-    sound.js    sound effects from data-cue (cuelume), the shared room, the WAV encoder
-  launch/       the launch video: index.html, launch.css, music.js
+    sound.js    lists every data-cue with its time and place on screen, for the sound layer
+  launch/       the launch video: index.html, launch.css, music.m4a, score.json, CREDITS.md
   delayed/      a short silent cut: an "introducing hex" that gets a record scratch when the memory piles up
   render.mjs
 ```
@@ -23,7 +23,7 @@ Fonts and the icon come from `site/`, so the videos and the site stay one design
 cd media && npm install
 node render.mjs launch serve           # watch it live; click to play with sound, ?t=12 to jump
 node render.mjs launch stills 12 30.5  # PNGs of single moments, in out/launch/
-node render.mjs launch audio           # soundtrack.wav: music and effects, mixed to -14 LUFS
+node render.mjs launch audio           # soundtrack.wav: music and effects, mixed to -14 LUFS (needs SOUND_LAYER)
 node render.mjs launch video           # launch.mp4 at 60fps, with the soundtrack if there is one
 node render.mjs launch all             # audio, then video
 ```
@@ -58,21 +58,25 @@ Write the messages; `apps.js` adds the rest of each app around them.
   <div class="tg-tabs glass">…</div>                        <!-- or a .tg-rail inside .phone.side -->
 </div>
 <div class="dc-win" data-channel="dev" data-thread="fix ci"><div class="dc-feed">…</div></div>
-<div class="bz-win" data-channel="team"><div class="bz-main"><div class="bz-feed">…</div></div><div class="bz-panel">…</div></div>
+<div class="bz-win" data-channel="team" data-channels="general team research"><div class="bz-feed">…</div></div>
 ```
 
 ## Sound
 
-Effects come from [cuelume](https://github.com/danielwh2/cuelume). Put the cue on the element it belongs to, and it plays when that element starts animating:
+The sound is mixed by [opus-sound-layer](https://github.com/Bodila51/opus-sound-layer): real CC0 recordings, each placed from the picture's own timing, over the video's music. Clone it, build its library once (`uv run scripts/sfx.py kit`), and point `SOUND_LAYER` at the clone.
+
+Put a cue on the element it belongs to, and its sound peaks when that element starts animating:
 
 ```html
-<div class="msg a" style="--d:1" data-cue="tap emphasis=subtle">…</div>
-<b class="imsg a" data-cue="attention">iMessage.</b>
+<div class="msg a" style="--d:1" data-cue="tap/kenney-impact-impact-glass-light-001">…</div>
+<div class="frame end" data-cue="tap/kenney-impact-impact-glass-heavy-000 weight=hero stop_before visual=cut">…</div>
+<b class="val a" data-cue="tick repeat=7 every=.14">…</b>
 ```
 
-- Each cue sits where its element is on screen (and follows it if it moves), out of the bass, in the same room as the music.
-- Use them sparingly: one for a moment that matters, not one per item. `volume=` sets its tier: 1 for the one or two big moments, about .5 for a tap or a toggle, about .35 for a whoosh.
+- The first word is a sound from the library (`sfx.py browse --type tap` shows the choices), or just a type. The rest are its options: `weight=hero` for the one or two big moments, `stop_before` drops the music out just before it, `build` filters the music up into it, `pitch=1` moves it a semitone into the music's key, `align=end` ends it on the cue instead of peaking there, `visual=cut|move|land` is what `qa.py` checks against the picture, and `repeat` with `every` makes a run.
+- Each cue sits where its element is on screen, and the mixer sets every level against the music in that sound's own band.
+- Use them sparingly: one for a moment that matters, not one per item.
 
-Music is a function per video (`launch/music.js`) that builds the track in Web Audio. It finds its sections from elements marked `data-music`, so a drop or a breakdown stays on its cut when scenes move. The launch track runs at 120 BPM in C major, the key cuelume's cues are pitched in, so every chime lands in tune. Cuts on half seconds land on the beat.
+`score.json` holds the rest of the cue sheet: the music, the loudness and any planned silence. The launch music (`music.m4a`) is a Suno v6 instrumental, slowed to 120 BPM and cut on its own beats so its drop lands on the reveal at 8s, its breakdowns on 33s and 74s, and its last hit on the end card. If a scene moves, recut the music to match.
 
-`audio` glues the music, tucks it under the bigger effects, sets the effects a fixed level over the music (`audio 11` is the default, in dB), and masters to -14 LUFS with true peaks under -2 dB.
+`audio` writes `out/<video>/cues.json` and mixes it to -14 LUFS with true peaks under -2 dB. After `video`, check the result with the sound layer's QA: `uv run $SOUND_LAYER/scripts/qa.py out/launch/launch.mp4 --audio out/launch/sound`.

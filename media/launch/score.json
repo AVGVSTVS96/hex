@@ -1,0 +1,5 @@
+{
+  "energy": "punchy",
+  "music": { "file": "music.m4a", "fade_out_s": 0.2 },
+  "silence_ok": [[86.5, 89]]
+}

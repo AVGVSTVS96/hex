@@ -1,5 +1,5 @@
 import { createServer } from "node:http"
-import { readFile, mkdir, writeFile, rename, readdir, rm } from "node:fs/promises"
+import { readFile, mkdir, writeFile, rename, readdir, rm, copyFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { extname, join } from "node:path"
 import { spawn } from "node:child_process"
@@ -8,7 +8,7 @@ import puppeteer from "puppeteer-core"
 
 const [video, mode = "video", ...rest] = process.argv.slice(2)
 if (!video || !existsSync(join(import.meta.dirname, video, "index.html"))) {
-  console.error("usage: node render.mjs <video> [serve | stills <t…> | audio [effects dB over the music at -14 LUFS] | video [fps] | all]")
+  console.error("usage: node render.mjs <video> [serve | stills <t…> | audio | video [fps] | all]")
   process.exit(1)
 }
 
@@ -71,30 +71,22 @@ if (mode === "serve") {
     return { stdin: child.stdin, done }
   }
 
-  const loudness = async filters => {
-    const log = await ffmpeg(["-i", join(out, "music.wav"), "-i", join(out, "cues.wav"), "-filter_complex", `${filters},ebur128=peak=true`, "-f", "null", "-"]).done
-    const summary = log.slice(log.lastIndexOf("Summary"))
-    return { lufs: Number(summary.match(/I:\s+(-?[\d.]+)/)[1]), peak: Number(summary.match(/Peak:\s+(-?[\d.]+)/)[1]) }
-  }
-
-  const audio = async (cues = 11) => {
-    await page.mouse.click(1, 1)
-    const stems = await page.evaluate(() => window.soundtrack())
-    for (const [name, data] of Object.entries(stems)) await writeFile(join(out, `${name}.wav`), Buffer.from(data, "base64"))
-    const music = (await loudness("[0]anull")).lufs
-    const mix = [
-      "[0]acompressor=threshold=-18dB:ratio=2:attack=30:release=150:knee=6[glued]",
-      `[1]volume=${cues + music + 14}dB,asplit[c][k]`,
-      "[k]atrim=start=0.015,asetpts=PTS-STARTPTS,apad[key]",
-      "[glued][key]sidechaincompress=threshold=0.025:ratio=2:attack=5:release=200[ducked]",
-      "[ducked][c]amix=inputs=2:normalize=0,adelay=33:all=1",
-    ].join(";")
-    const master = gain => `${mix},volume=${gain}dB,aresample=192000,alimiter=limit=0.794:attack=5:release=50:level=0:latency=1,aresample=48000`
-    let gain = -14 - (await loudness(mix)).lufs
-    gain += -14 - (await loudness(master(gain))).lufs
-    await ffmpeg(["-loglevel", "error", "-i", join(out, "music.wav"), "-i", join(out, "cues.wav"), "-filter_complex", master(gain), "-c:a", "pcm_f32le", join(out, "soundtrack.wav")]).done
-    const { lufs, peak } = await loudness(master(gain))
-    console.log(`soundtrack: ${lufs} LUFS, true peak ${peak} dBTP`)
+  const audio = async () => {
+    const layer = process.env.SOUND_LAYER
+    if (!layer) throw new Error("audio needs SOUND_LAYER, a clone of github.com/Bodila51/opus-sound-layer with its kit built")
+    const score = JSON.parse(await readFile(join(import.meta.dirname, video, "score.json"), "utf8"))
+    const sheet = join(out, "cues.json")
+    await writeFile(sheet, JSON.stringify({
+      fps: 60,
+      duration_s: end,
+      kit: join(layer, "audio", "kit"),
+      ...score,
+      music: { ...score.music, file: join(import.meta.dirname, video, score.music.file) },
+      cues: await page.evaluate(() => window.cues()),
+    }, null, 1))
+    const mix = spawn("uv", ["run", "-q", join(layer, "scripts", "mix.py"), sheet, "--out", join(out, "sound")], { stdio: "inherit" })
+    await new Promise((resolve, reject) => mix.on("close", code => (code ? reject(new Error(`mix.py exited ${code}`)) : resolve())))
+    await copyFile(join(out, "sound", "mix.wav"), join(out, "soundtrack.wav"))
   }
 
   const render = async (fps = 60) => {
@@ -136,7 +128,7 @@ if (mode === "serve") {
   }
 
   if (mode === "stills") for (const t of rest.map(Number)) await writeFile(join(out, `${t.toFixed(2)}.png`), await shot(t))
-  if (mode === "audio" || mode === "all") await audio(...rest.map(Number))
+  if (mode === "audio" || mode === "all") await audio()
   if (mode === "video") await render(...rest.map(Number))
   if (mode === "all") await open().then(() => render())
 

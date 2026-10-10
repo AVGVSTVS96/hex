@@ -137,35 +137,38 @@ img.dc-av { background: #000; }
 
 /* Buzz Desktop */
 
-.bz-win { display: grid; grid-template-rows: 36px minmax(0, 1fr); overflow: hidden; border: 2px solid var(--ink); border-radius: 12px; background: linear-gradient(165deg, #EEF0B4 0%, #E4EACB 45%, #C8D5E4 100%); color: #1C1C1E; box-shadow: 8px 8px 0 var(--ink); font: 400 15px/1.4 var(--ui); }
-.bz-title { display: flex; align-items: center; gap: 16px; padding: 0 12px; color: #6B6B70; font: 400 15px/1 var(--ui); }
-.bz-title svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; }
-.bz-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; min-height: 0; margin: 0 6px 6px; overflow: hidden; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .08); }
-.bz-main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; min-width: 0; }
-.bz-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 46px; padding: 0 14px; font: 600 15px/1 var(--ui); white-space: nowrap; }
-.bz-head span:first-child::before { content: "# "; color: #8E8E93; }
-.bz-head small { padding: 4px 8px; border: 1px solid #E5E5EA; border-radius: 8px; color: #3A3A3C; font: 500 12px/1 var(--ui); }
-.bz-feed { display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; min-height: 0; padding: 6px 14px 10px; overflow: hidden; }
+.bz-win { display: grid; grid-template-columns: 148px minmax(0, 1fr); grid-template-rows: 34px minmax(0, 1fr); overflow: hidden; border: 2px solid var(--ink); border-radius: 12px; background: linear-gradient(170deg, #EBEBB6 0%, #E2E7CC 45%, #C9D4E2 100%); color: #1C1C1E; box-shadow: 8px 8px 0 var(--ink); font: 400 15px/1.4 var(--ui); }
+.bz-win svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.bz-title { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 12px; color: #6B6B70; }
+.bz-title svg { width: 15px; height: 15px; }
+.bz-side { display: grid; align-content: start; gap: 2px; padding: 4px 8px; color: #2C2C2E; font: 400 14px/1 var(--ui); white-space: nowrap; }
+.bz-side span { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; }
+.bz-side svg { width: 15px; height: 15px; flex: none; color: #48484A; }
+.bz-side i { width: 15px; color: #48484A; font-style: normal; text-align: center; }
+.bz-side .bz-search { margin-bottom: 8px; background: rgb(0 0 0 / .05); color: #8E8E93; }
+.bz-side small { padding: 14px 8px 6px; color: #8E8E93; font-size: 12px; }
+.bz-side .on { background: rgb(0 0 0 / .07); }
+.bz-main { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; min-height: 0; margin: 0 6px 6px 0; overflow: hidden; border-radius: 10px; background: #fff; box-shadow: 0 1px 3px rgb(0 0 0 / .08); }
+.bz-head { display: flex; align-items: center; gap: 6px; height: 46px; padding: 0 10px 0 14px; white-space: nowrap; }
+.bz-head b { flex: 1; font: 600 15px/1 var(--ui); }
+.bz-head b i { margin-right: 5px; color: #48484A; font-style: normal; font-weight: 400; }
+.bz-head span { display: flex; align-items: center; gap: 5px; height: 26px; padding: 0 7px; border: 1px solid #E5E5EA; border-radius: 7px; color: #3A3A3C; font: 500 13px/1 var(--ui); }
+.bz-head svg { width: 14px; height: 14px; }
+.bz-feed { display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; min-height: 0; padding: 6px 14px 12px; overflow: hidden; }
 .bz-msg { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; transform-origin: 0 0; }
-.bz-msg .dc-av, .bz-av { width: 34px; height: 34px; border-radius: 50%; }
-.bz-av { background: #000; }
+.bz-av { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: #000; color: #fff; font: 600 13px/1 var(--ui); }
+.bz-av.you { background: #1C1C1E; }
 .bz-msg b { font: 600 15px/1.3 var(--ui); }
+.bz-msg .by { display: inline-flex; align-items: center; gap: 4px; margin-left: 6px; color: #8E8E93; font-size: 12px; }
+.bz-msg .by svg { width: 12px; height: 12px; }
 .bz-msg small { margin-left: 6px; color: #8E8E93; font-size: 12px; }
 .bz-msg p { margin: 0; }
 .chip { display: inline-flex; align-items: center; gap: 3px; margin-right: 3px; padding: 0 6px; border-radius: 6px; background: #ECECEF; font: 600 14px/1.5 var(--ui); }
 .chip svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 1.8; }
-.bz-compose { display: grid; gap: 10px; margin: 0 12px; padding: 11px 12px 9px; border: 1px solid #E5E5EA; border-radius: 12px; color: #8E8E93; font-size: 15px; }
+.bz-replies { display: flex; align-items: center; gap: 6px; margin-top: 6px; color: #8E8E93; font-size: 12px; }
+.bz-replies b { color: #1C1C1E; font-size: 12px; }
+.bz-compose { display: grid; gap: 10px; margin: 0 10px 10px; padding: 11px 12px 9px; border: 1px solid #E5E5EA; border-radius: 12px; color: #8E8E93; font-size: 15px; }
 .bz-compose div { display: flex; align-items: center; gap: 12px; }
-.bz-compose svg { width: 16px; height: 16px; fill: none; stroke: #3A3A3C; stroke-width: 1.7; stroke-linecap: round; }
+.bz-compose svg { width: 16px; height: 16px; stroke: #3A3A3C; stroke-width: 1.7; }
 .bz-compose .send { margin-left: auto; display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #8E8E93; }
 .bz-compose .send svg { stroke: #fff; }
-.bz-status { display: flex; align-items: center; gap: 7px; height: 34px; padding: 0 14px; font: 600 13px/1 var(--ui); }
-.bz-status img { width: 18px; height: 18px; border-radius: 50%; background: #000; }
-.bz-panel { display: grid; align-content: start; gap: 14px; width: 176px; padding: 14px 14px; border-left: 1px solid #EDEDF0; background: #FAFAFB; }
-.bz-tabs { display: flex; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid #E5E5EA; color: #8E8E93; font-size: 13px; }
-.bz-tabs b { color: #1C1C1E; font: 600 13px/1 var(--ui); box-shadow: 0 9px 0 -6px var(--bz); }
-.bz-steps { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; font: 500 12.5px/1.4 var(--mono); }
-.bz-steps li { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bz-steps li::before { display: inline-block; width: 18px; }
-.bz-steps .ok::before { content: "✓"; color: #16A34A; }
-.bz-steps .run::before { content: "●"; color: var(--bz); }
