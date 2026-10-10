@@ -8,6 +8,11 @@ tokens=$(printf '%s' "$input" | "$here/context-size" tokens)
 [ "$(printf '%s' "$input" | jq '.background_tasks // [] | length')" = 0 ] || exit 0
 
 if [ "$(printf '%s' "$input" | jq .stop_hook_active)" = true ]; then
+  crons=$(printf '%s' "$input" | jq '.session_crons // [] | select(length > 0) | map({ cron: .schedule, prompt, recurring })')
+  if [ -n "$crons" ]; then
+    mkdir -p "$CLAUDE_PROJECT_DIR/state"
+    printf '%s\n' "$crons" > "$CLAUDE_PROJECT_DIR/state/crons-$(printf '%s' "$input" | jq -r .session_id).json"
+  fi
   exec bun "$here/../channels/hub/fresh.ts"
 fi
 

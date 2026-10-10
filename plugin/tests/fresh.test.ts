@@ -20,7 +20,7 @@ function hook(tokens: number, input: object = {}, env: Record<string, string> = 
   writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: { model: 'claude', usage: { input_tokens: tokens, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } } }) + '\n')
   const run = Bun.spawnSync([join(home, 'bin/fresh')], {
     stdin: Buffer.from(JSON.stringify({ transcript_path: transcript, stop_hook_active: false, background_tasks: [], ...input })),
-    env: { PATH: process.env.PATH!, ...env },
+    env: { PATH: process.env.PATH!, CLAUDE_PROJECT_DIR: home, ...env },
   })
   expect(run.exitCode).toBe(0)
   return run.stdout.toString()
@@ -56,4 +56,16 @@ test('waits while background work could still wake the session', () => {
   expect(hook(530_000, { stop_hook_active: true, background_tasks: [{ id: 'a1', type: 'subagent', status: 'running', description: 'research' }] })).toBe('')
   expect(hook(530_000, { background_tasks: [{ id: 'a1', type: 'subagent', status: 'running', description: 'research' }] })).toBe('')
   expect(asked()).toBe(false)
+})
+
+test('saves the session crons for the fresh session to re-arm', () => {
+  const crons = [{ id: 'c1', schedule: '*/20 * * * *', recurring: true, prompt: 'check the deploy' }]
+  hook(530_000, { stop_hook_active: true, session_id: 'a1a1a1a1', session_crons: crons })
+  expect(JSON.parse(readFileSync(join(home, 'state/crons-a1a1a1a1.json'), 'utf8'))).toEqual([{ cron: '*/20 * * * *', prompt: 'check the deploy', recurring: true }])
+  expect(asked()).toBe(true)
+})
+
+test('saves nothing when there are no session crons', () => {
+  hook(530_000, { stop_hook_active: true, session_id: 'a1a1a1a1', session_crons: [] })
+  expect(existsSync(join(home, 'state'))).toBe(false)
 })

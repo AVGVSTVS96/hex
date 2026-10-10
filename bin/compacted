@@ -34,6 +34,13 @@ case "${1:-}" in
       session=$HEX_PREVIOUS
       input=$(jq -n --arg session "$session" --arg transcript "$(dirname "$transcript")/$session.jsonl" '{ session_id: $session, transcript_path: $transcript }')
       said="This session takes over from session $session, which filled its context."
+      crons="${CLAUDE_PROJECT_DIR:-.}/state/crons-$session.json"
+      if [ -f "$crons" ]; then
+        echo "Its session crons don't carry over on their own, so re-arm each one now with CronCreate, with the same cron, prompt and recurring:"
+        cat "$crons"
+        echo
+        room=$((room - $(wc -c < "$crons") - 200))
+      fi
     fi
     printf '%s' "$input" | "$here/log"
     cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0

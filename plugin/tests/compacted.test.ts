@@ -101,3 +101,15 @@ test('a fresh session gets the end of the session it takes over from, word for w
 test('a session that takes over from none starts with nothing extra', () => {
   expect(hook('fresh', transcript([['me', 'hi']]))).toBe('')
 })
+
+test('a fresh session is told to re-arm the session crons of the one it takes over from', () => {
+  const previous = 'b0b0b0b0-0000-4000-8000-000000000000'
+  renameSync(transcript([['me', 'loop the deploy check']]), join(home, `${previous}.jsonl`))
+  mkdirSync(join(home, 'state'))
+  const crons = [{ cron: '*/20 * * * *', prompt: 'check the deploy', recurring: true }]
+  writeFileSync(join(home, `state/crons-${previous}.json`), JSON.stringify(crons) + '\n')
+  const out = hook('fresh', join(home, `${SESSION}.jsonl`), { HEX_PREVIOUS: previous })
+  const [, saved] = out.match(/re-arm each one now with CronCreate.*\n(.*)\n/)!
+  expect(JSON.parse(saved!)).toEqual(crons)
+  expect(out).toContain('loop the deploy check')
+})
