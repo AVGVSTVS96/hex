@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+home = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[2])
+now = time.time()
+
+
+def ago(t):
+    m = int((now - t) // 60)
+    return f"{m}m ago" if m < 60 else f"{m // 60}h ago" if m < 2880 else f"{m // 1440}d ago"
+
+
+def capped(items, n):
+    return items[:n] + ([f"- +{len(items) - n} more"] if len(items) > n else [])
+
+
+def git(*args):
+    return subprocess.run(["git", "-C", str(home), *args], capture_output=True, text=True).stdout
+
+
+def branches():
+    unmerged = set(git("branch", "--no-merged", "HEAD", "--format=%(refname:short)").split())
+    rows = [r.split("\t") for r in git("for-each-ref", "--sort=-committerdate",
+                                       "--format=%(refname:short)\t%(committerdate:unix)\t%(subject)",
+                                       "refs/heads").splitlines()]
+    return [f"- {name} ({ago(int(t))}): {subject[:100]}" for name, t, subject in rows if name in unmerged]
+
+
+def one_offs():
+    try:
+        jobs = json.loads((home / "schedules.json").read_text())
+    except (OSError, ValueError):
+        return []
+    upcoming = []
+    for name, job in jobs.items():
+        minute, hour, day, month, _ = job["cron"].split()
+        if not all(f.isdigit() for f in (minute, hour, day, month)):
+            continue
+        when = datetime(datetime.now().year, int(month), int(day), int(hour), int(minute))
+        if when.timestamp() < now:
+            when = when.replace(year=when.year + 1)
+        upcoming.append((when, f"- {when:%a %b %-d %-I:%M%p}: {name}"))
+    return [line for _, line in sorted(upcoming)]
+
+
+def sessions():
+    agents = json.loads(subprocess.run(["claude", "agents", "--json"], capture_output=True,
+                                       text=True, timeout=2).stdout)
+    by_state = {}
+    for a in sorted(agents, key=lambda a: -a.get("startedAt", 0)):
+        if a.get("kind") == "background" and (a.get("cwd", "") + "/").startswith(f"{home}/"):
+            by_state.setdefault(a.get("state", "?"), []).append(a.get("name") or a.get("id", "?"))
+    return [f"- {state} ({len(names)}): " + ", ".join(names[:8]) + (f", +{len(names) - 8} more" if len(names) > 8 else "")
+            for state, names in sorted(by_state.items())]
+
+
+def section(title, read):
+    try:
+        lines = read()
+    except Exception:
+        return ""
+    return f"\n\n{title}:\n" + ("\n".join(lines) if lines else "- none")
+
+
+sys.stdin.read()
+sections = "".join([
+    section("Unmerged hex branches, newest first", lambda: capped(branches(), 8)),
+    section("Upcoming one-off jobs in schedules.json", lambda: capped(one_offs(), 6)),
+    section("hex background sessions by state (`claude agents`)", sessions),
+])
+if sections:
+    print(f"Live status, read just now ({datetime.now():%a %b %-d %-I:%M%p}). It's read from real state every session start; "
+          f"trust it over any stored 'waiting on' note, and recheck the source before acting.{sections}")

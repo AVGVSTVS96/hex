@@ -113,6 +113,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── session                 how the hub starts each session
     │   ├── log                     saves each conversation to log/ as markdown
     │   ├── wake                    loads its memory as each session starts
+    │   ├── live-status             shows its branches, upcoming jobs and sessions as each session starts
     │   ├── compacted               puts memory and the last turns back after a compaction
     │   ├── context-size            tells it how full its context is, each message
     │   ├── send-gate               holds sends and deletes until you say yes
