@@ -3,100 +3,314 @@
 <head>
 <meta charset="utf-8">
 <title>hex · delayed</title>
-<link rel="stylesheet" href="../kit/stage.css">
 <link rel="stylesheet" href="delayed.css">
 </head>
 <body>
 
-<svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="wm" viewBox="0 0 2167 737"><path fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></symbol>
-</svg>
+<main id="stage" style="--f:6.93">
 
-<main id="stage">
-
-<section class="scene" data-s="0" data-e="3" data-theme="cream">
-  <div class="frame point">
-    <h2>The best assistant<br>does <mark class="a" style="--k:hl;--d:.3;--t:.6s var(--out)">the least</mark><br>and adds <mark class="a" style="--k:hl;--d:1;--t:.6s var(--out)">the most.</mark></h2>
+<section id="wall">
+  <div class="paths"><div>src/worker/worker-tool-surface.test-support.ts
+src/agents/sandbox/browser-bridges.ts
+src/agents/auth-profiles/credential-schema.ts
+src/gateway/derive-goal-session-title.ts
+src/gateway/device-token-client-lifecycle.ts
+src/acp/control-plane/manager.ts
+src/gateway/cli-session-history.process-held.ts
+src/agents/tools/sessions-tool-control.ts
+src/acp/runtime/session-meta-write.worker.ts
+src/agents/embedded-agent-runner/usage-accumulato…
+src/agents/cli-runner/execute-process.ts
+src/tui/components/chat-log.ts
+src/transcripts/store-worker-contract.ts
+src/acp/runtime/session-meta-control.types.ts
+src/agents/spawn-requester-origin.ts
+src/worker/workspace-rsync-receiver.ts
+src/agents/conversation-tool-policy-pipeline.ts
+src/agents/harness/projection-settlement.ts
+src/agents/agent-auth-credentials.ts
+src/tts/tts-auto-mode.ts
+src/transcripts/library.ts
+src/agents/embedded-agent-runner/extra-params.tes…
+src/agents/bundle-mcp-shared.test-harness.ts
+src/agents/tools/skill-workshop-tool-library.ts
+src/agents/embedded-agent-runner/context-engine-m…
+src/agents/embedded-agent-runner/compact.queued.ts
+src/agents/agent-bundle-mcp-runtime-shared.ts
+src/gateway/server-methods/skills.test-helpers.ts
+src/trajectory/paths.ts
+src/skills/runtime/remote.test-helpers.ts
+src/agents/bootstrap-files.ts
+src/agents/agent-command.prepared-config.test-sup…
+src/config/sessions/session-transcript-read-fence…
+src/gateway/desktop/computer-protocol.ts
+src/agents/tools/gateway-caller-context.ts
+src/agents/context.ts
+src/gateway/mention-inbox.native.ts
+src/acp/runtime/registry.ts
+src/config/sessions/session-transcript-lock-settl…
+src/agents/session-async-task-status.ts
+src/audit/audit-config.ts
+src/agents/sandbox/registry-write.worker.ts
+src/agents/harness/gateway-question-dispatch.ts
+src/gateway/cron-stream-output.ts
+src/commands/doctor.worker.ts
+src/state/user-background-image.ts
+src/agents/harness/context-engine-turn-outbox.wor…
+src/gateway/server-methods/sessions-suggestions.ts
+src/config/sessions/session-system-prompt-report.…
+src/agents/embedded-agent-runner/compact.hooks.sa…
+src/commands/doctor-host-desktop.ts
+src/test-utils/retention.ts
+src/channels/message-access/ingress-host-owner.ts
+src/agents/tools/transcripts-tool-result.ts
+src/agents/harness/settled-turn-finalization-outc…
+src/agents/compaction.ts
+src/agents/embedded-agent-runner/run/attempt-sess…
+src/test-utils/frozen-time.ts
+src/skills/runtime/env-overrides.ts
+src/gateway/control-ui-session-pr-request.ts
+src/agents/auth-profiles/credential-fixtures.test…
+src/gateway/control-ui-public-chat.ts
+src/cron/isolated-agent/current-session-completio…
+src/agents/agent-delete-safety.ts
+src/agents/agent-tool-availability.ts
+src/channels/message-access/admission-evidence.ts
+src/acp/runtime/session-meta-write.worker-contrac…
+src/agents/agent-harness-completion-scope.ts
+src/agents/worktrees/snapshot-index-objects.ts
+src/gateway/control-ui-plugin-assets.ts</div><div>src/config/sessions/session-accessor.sqlite-conve…
+src/agents/openai-strict-tool-setting.ts
+src/agents/embedded-agent-runner/run/overflow-con…
+src/agents/tools/subagents-tool.ts
+src/agents/sandbox/tool-policy.ts
+src/plugin-sdk/memory-core-host-engine-foundation…
+src/agents/sandbox/shared.ts
+src/commands/doctor-gateway-services.tokens.test-…
+src/tui/components/searchable-select-list.ts
+src/transcripts/summary-work.ts
+src/acp/persistent-bindings.resolve.ts
+src/commands/doctor-gateway-runtime-plan.ts
+src/agents/bash-tools.exec-approval-followup-stat…
+src/audit/audit-event-writer.test-support.ts
+src/agents/embedded-agent-runner/run.ts
+src/agents/tools/nodes-tool-media.ts
+src/tts/tts-runtime-types.ts
+src/transcripts/status.producer.test-harness.ts
+src/commands/doctor-heartbeat-main-session-repair…
+src/agents/harness/native-hook-relay-constants.ts
+src/channels/message/ingress-queue.types.ts
+src/agents/models-config.providers.secrets.ts
+src/plugin-sdk/memory-core-host-runtime-cli.ts
+src/agents/embedded-agent-runner/compact.hooks.ow…
+src/acp/control-plane/manager.turn-timeout.ts
+src/trajectory/types.ts
+src/agents/tools/sessions-spawn-visible-owner.ts
+src/agents/embedded-agent-runner/usage-reporting.…
+src/audit/execution-identity-admission.ts
+src/commands/doctor-config-preflight.test-support…
+src/gateway/server-methods/sessions.messages-subs…
+src/gateway/conversation-read-origin.ts
+src/agents/tools/terminal-tool.ts
+src/test-utils/symlink-rebind-race.ts
+src/tui/tui-formatters.ts
+src/commands/doctor-foreign-launchd-jobs.ts
+src/gateway/control-ui-root-assets.ts
+src/commands/doctor-config-preflight-plugin-index…
+src/channels/message/ingress-drain.ts
+src/commands/doctor-db-bloat.read.ts
+src/agents/agent-hooks/session-manager-runtime-re…
+src/test-utils/mock-http.ts
+src/agents/sandbox/backend.ts
+src/agents/models-config.providers.normalize.ts
+src/agents/test-helpers/live-model-dynamic-candid…
+src/agents/auth-profiles/operation-cleanup.ts
+src/gateway/cron-exit-watchers.ts
+src/agents/agent-create-error.ts
+src/skills/runtime/refresh-watch-registry.ts
+src/agents/embedded-agent-runner/run/attempt-exec…
+src/agents/agent-compaction-constants.ts
+src/config/sessions/session-store-owner.ts
+src/config/sessions/session-transcript-projection…
+src/gateway/worker-environments/placement-dispatc…
+src/agents/embedded-agent-runner/run.midturn-prec…
+src/agents/embedded-agent-runner.cache.test-suppo…
+src/config/sessions/session-transcript-commit-com…
+src/agents/agent-hooks/compaction-safeguard-runti…
+src/channels/message/ingress-drain-lifecycle.ts
+src/gateway/control-ui-share.ts
+src/agents/models-config.providers.discovery-auth…
+src/agents/startup-timing.ts
+src/agents/main-session-recovery/main-session-res…
+src/gateway/mention-inbox-presentation.ts
+src/agents/tools/image-tool.ts
+src/commands/status-overview-values.ts
+src/test-utils/agent-deletion-journal.ts
+src/gateway/cli-session-history-index.worker.ts
+src/agents/cli-runner.runtime.ts
+src/agents/agent-command.restart-recovery.test-ha…</div><div>src/gateway/device-pairing-join-http.ts
+src/audit/execution-decision-facts.ts
+src/infra/runtime-dependency-ownership.ts
+src/infra/retry-after.ts
+src/acp/runtime/session-meta-resume.ts
+src/tui/embedded-history-runtime.ts
+src/tts/provider-registry.ts
+src/agents/harness/selection-decision.ts
+src/acp/runtime/session-meta.ts
+src/agents/harness/runtime-artifact.types.ts
+src/agents/tools/presence-tool-authority.ts
+src/agents/tools/sessions-send-tool.steering.ts
+src/agents/bootstrap-budget-warning.ts
+src/tts/tts-telephony.ts
+src/transcripts/store-export-state.ts
+src/gateway/worker-environments/placement-project…
+src/agents/auth-profiles/external-cli-auth-select…
+src/agents/credential-safety-prompt.ts
+src/gateway/worker-environments/placement-lifecyc…
+src/agents/session-maintenance/run.ts
+src/agents/compaction-usage.ts
+src/agents/openclaw-tools.sessions.mocks.test-sup…
+src/transcripts/capture.ts
+src/commands/doctor-lint.oauth-isolation.test-sup…
+src/agents/tools/media-generate-background.ts
+src/gateway/desktop/observe-bridge.ts
+src/agents/bash-tools.exec-path-prepend.ts
+src/commands/doctor-lint-output.ts
+src/agents/harness/lifecycle-hook-messages.ts
+src/tui/gateway-chat.test-support.ts
+src/channels/message/contracts.ts
+src/channels/message-access/runtime-access-groups…
+src/llm/utils/oauth/anthropic.ts
+src/agents/session-model-ref.ts
+src/gateway/credentials-secret-inputs.ts
+src/plugin-sdk/media-generation-runtime.ts
+src/plugin-sdk/media-understanding.ts
+src/acp/runtime/session-meta-resume-authorization…
+src/test-utils/plugin-setup-wizard.ts
+src/gateway/control-ui-public-session-render.ts
+src/agents/embedded-agent-mcp.ts
+src/agents/tools/screen-tool.ts
+src/agents/content-blocks.ts
+src/skills/loading/workspace-skill-prompt.ts
+src/gateway/control-ui-session-prs-git.runtime.ts
+src/test-utils/vitest-mock-fn.ts
+src/agents/openai-transport-stream.ts
+src/acp/translator.bridge-test-helpers.ts
+src/agents/agent-team.ts
+src/gateway/control-ui-image-http-routes.ts
+src/agents/code-mode-node.ts
+src/config/channel-alias-migration.ts
+src/gateway/desktop/host-source.ts
+src/commands/doctor-config-flow.test-utils.ts
+src/agents/openclaw-tools.plugin-context.ts
+src/agents/auth-profiles/inline-usage.worker.ts
+src/tui/tui-backend.ts
+src/agents/embedded-agent-runner/tool-result-char…
+src/agents/tools/mobile-ui-tool.ts
+src/infra/restart-sentinel.worker.ts
+src/agents/tools/agents-wait-tool.test-support.ts
+src/test-utils/chunk-test-helpers.ts
+src/agents/models-config.runtime.ts
+src/agents/embedded-agent-runner/compact-reasons.…
+src/agents/tools/sessions-send-resume.ts
+src/agents/agent-scope-config.ts
+src/agents/main-session-recovery/main-session-res…
+src/gateway/control-ui-session-path-resolve.ts
+src/agents/agent-tools.before-tool-call.approval.…
+src/config/agent-roster-provenance.ts</div></div>
+  <div class="big">
+    <p>openclaw</p>
+    <b><output data-count="5300069" data-at=".15" data-dur="1.2">0</output> <span>lines</span></b>
   </div>
-  <span class="rail-t bl">01 / 05</span>
 </section>
 
-<section class="scene" data-s="3" data-e="8" data-theme="black">
-  <div class="frame trend">
-    <div class="copy">
-      <h2 class="before a" style="--k:out;--d:1.75;--t:.2s var(--out)">Agent harnesses<br>kept growing.</h2>
-      <h2 class="after a" style="--k:arrive;--d:2">Most of it could've<br>been a skill file.<br><span class="dim a" style="--k:arrive;--d:2.6">Or a prompt.</span></h2>
-    </div>
-    <div class="harness">
-      <i class="part a" style="--i:0;--d:1.6">orchestrator</i>
-      <i class="part a" style="--i:1;--d:1.62">planner</i>
-      <i class="part a" style="--i:2;--d:1.64">router</i>
-      <i class="part a" style="--i:3;--d:1.66">tool registry</i>
-      <i class="part a" style="--i:4;--d:1.68">vector store</i>
-      <i class="part a" style="--i:5;--d:1.7">memory db</i>
-      <i class="part a" style="--i:6;--d:1.72">retry loop</i>
-      <i class="part a" style="--i:7;--d:1.74">prompt builder</i>
-      <b class="skill a" style="--d:2.1">SKILL.md</b>
-    </div>
-  </div>
-  <span class="rail-t bl">02 / 05</span>
-</section>
-
-<section class="scene" data-s="8" data-e="11.5" data-theme="blue">
-  <div class="frame pieces">
-    <header><h2>Start with Claude Code.<br>Snap on a few pieces.</h2></header>
-    <div class="row">
-      <div class="piece core a" style="--k:lift;--d:.2"><b>Claude Code</b><span class="sticker">Opus 5.5 · max effort</span></div>
-      <div class="piece a" style="--k:snap;--d:.45"><b>your client</b></div>
-      <div class="piece a" style="--k:snap;--d:.7"><b>memory</b></div>
-      <div class="piece a" style="--k:snap;--d:.95"><b>a computer</b></div>
-    </div>
-    <footer class="a" style="--k:up;--d:1.3">On the Claude plan you already pay for.</footer>
-  </div>
-  <span class="rail-t bl">03 / 05</span>
-</section>
-
-<section class="scene" data-s="11.5" data-e="16.5" data-theme="blue">
-  <div class="frame pieces over">
-    <header><h2>I still overbuilt<br>the memory.</h2></header>
-    <div class="row">
-      <div class="piece core"><b>Claude Code</b><span class="sticker">Opus 5.5 · max effort</span></div>
-      <div class="piece"><b>your client</b></div>
-      <div class="piece swell"><b>memory</b>
-        <ol>
-          <li style="--d:.55"><span>6 wake hooks</span></li>
-          <li style="--d:.8"><span>nightly fold</span></li>
-          <li style="--d:1.05"><span>4 rule files</span></li>
-        </ol>
+<section id="intro">
+  <div class="film">
+      <div class="col">
+        <p class="kicker at" style="--k:rise;--d:2.3">introducing</p>
+        <svg class="at" style="--k:land;--d:2.45;--t:.7s var(--pop)" viewBox="0 0 2167 737"><path fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></svg>
+        <p class="tag at" style="--k:rise;--d:3">claude code + a few files.</p>
+        <ul class="tree">
+          <li class="at" style="--k:add;--d:3.4">~/hex</li>
+          <li class="at" style="--k:add;--d:3.5">├─ AGENTS.md</li>
+          <li class="at" style="--k:add;--d:3.6">├─ SOUL.md</li>
+          <li class="at" style="--k:add;--d:3.7">├─ MEMORY.md</li>
+          <li class="at" style="--k:add;--d:3.8">└─ memory/</li>
+        </ul>
       </div>
-      <div class="piece"><b>a computer</b></div>
-    </div>
-    <footer class="a" style="--k:up;--d:3.1">Cutting it back. Then we launch.</footer>
   </div>
-  <span class="rail-t bl">04 / 05</span>
+  <div class="vignette"></div>
+  <div class="scratch"></div>
+  <div class="flash"></div>
+  <div class="subs">
+    <div data-on="7.05 7.95"><span class="sub cue">*record scratch*</span><span class="sub cue" data-on="7.45 7.95">*freeze frame*</span></div>
+    <div data-on="7.95 9.35"><span class="sub">whoops. i overbuilt the memory.</span></div>
+    <div data-on="9.35 10.8"><span class="sub">i was trying to keep it minimal.</span></div>
+  </div>
 </section>
 
-<section class="scene" data-s="16.5" data-e="20.5" data-theme="cream">
-  <div class="frame invite">
-    <h2>hex is a testbed.<br>Fork it. Do what you want.<br>Let's make it better<br><mark class="a" style="--k:hl;--d:.4;--t:.6s var(--out)">together.</mark></h2>
-    <div class="links a" style="--d:.9"><span>github.com/AVGVSTVS96/hex</span></div>
-  </div>
-  <span class="rail-t bl">05 / 05</span>
+<section id="end">
+  <h2 class="at" style="--k:rise;--d:10.9">hex launch:<br><mark class="at" style="--k:hl;--d:11.2;--t:.5s var(--out)">delayed.</mark></h2>
+  <p class="at" style="--k:rise;--d:11.65">it's a testbed. <b>let's make it better together:</b></p>
+  <code class="at" style="--k:rise;--d:12.1"><i>$</i> <span data-type="12.35 .035">gh repo fork AVGVSTVS96/hex</span><span class="cursor" style="--d:12.35"></span></code>
 </section>
-
-<div class="rails">
-  <i class="h" style="top:86px"></i>
-  <i class="h" style="top:990px"></i>
-  <i class="v" style="left:94px"></i>
-  <i class="v" style="left:1822px"></i>
-  <svg class="rail-wm"><use href="#wm"/></svg>
-  <span class="rail-t tr">Claude Code as your personal assistant</span>
-  <span class="rail-t br">github.com/AVGVSTVS96/hex</span>
-</div>
 
 </main>
 
-<script src="../node_modules/motion/dist/motion.js"></script>
-<script src="../kit/stage.js"></script>
+<script>
+const stage = document.getElementById("stage")
+const F = +stage.style.getPropertyValue("--f")
+const END = 14.6
+const easeOut = x => 1 - (1 - Math.min(Math.max(x, 0), 1)) ** 3
+
+const pile = ["wake hook 1", "wake hook 2", "wake hook 3", "wake hook 4", "wake hook 5", "wake hook 6", "compact hook: memory", "compact hook: turns", "memo wake", "memo note", "memo recall", "memo zoom", "nightly fold", "200-line cap"]
+const gaps = [0, .32, .27, .23, .2, .17, .15, .13, .11, .1, .09, .08, .07, .07]
+const at = gaps.map((_, i) => 4.9 + gaps.slice(0, i + 1).reduce((a, b) => a + b))
+document.querySelector(".tree").insertAdjacentHTML("beforeend", pile.map((name, i) => `<li class="pile at" style="--k:add;--d:${at[i]};--t:.2s var(--out)">   <i>+</i> ${name}</li>`).join(""))
+
+for (const el of document.querySelectorAll("[data-type]")) {
+  const [start, step] = el.dataset.type.split(" ").map(Number)
+  Object.assign(el.dataset, { start, step, full: el.textContent })
+}
+
+const col = document.querySelector(".col")
+const live = document.querySelector(".film")
+const counters = [...document.querySelectorAll("[data-count]")]
+const cues = [...document.querySelectorAll("[data-on]")]
+const typed = [...document.querySelectorAll("[data-type]")]
+
+function seek(t) {
+  stage.dataset.at = t < 2.2 ? "wall" : t < 10.8 ? "intro" : "end"
+  const frozen = Math.min(t, F)
+  const shown = at.reduce((sum, d) => sum + easeOut((frozen - d) / .25), 0)
+  const tall = 836 + 76 * shown
+  const zoom = Math.max(.6, Math.min(1, 960 / tall))
+  col.style.transform = `translateY(${Math.max(60, (1080 - zoom * tall) / 2)}px) scale(${zoom})`
+  for (const el of counters) el.value = Math.round(+el.dataset.count * easeOut((t - +el.dataset.at) / +el.dataset.dur)).toLocaleString("en-US")
+  for (const el of typed) el.textContent = el.dataset.full.slice(0, Math.max(0, Math.floor((t - el.dataset.start) / el.dataset.step) + 1))
+  for (const el of cues) {
+    const [on, off] = el.dataset.on.split(" ").map(Number)
+    el.style.visibility = t >= on && t < off ? "" : "hidden"
+  }
+  for (const a of document.getAnimations()) {
+    a.pause()
+    const inside = live.contains(a.effect.target) && a.effect.target !== live
+    a.currentTime = (inside ? frozen : t) * 1000
+  }
+}
+
+window.seek = seek
+window.END = END
+
+if (!navigator.webdriver) {
+  const from = +new URLSearchParams(location.search).get("t") || 0
+  const t0 = performance.now() - from * 1000
+  const tick = now => {
+    seek(((now - t0) / 1000) % END)
+    requestAnimationFrame(tick)
+  }
+  document.fonts.ready.then(() => requestAnimationFrame(tick))
+}
+</script>
 </body>
 </html>
