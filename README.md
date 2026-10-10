@@ -107,6 +107,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── live-status             shows its branches, upcoming jobs and sessions as each session starts
     │   ├── compacted               puts memory and the last turns back after a compaction
     │   ├── context-size            tells it how full its context is, each message
+    │   ├── verbatim                saves each of your messages to memory word for word (off; `HEX_VERBATIM=1` in `.claude/settings.json`'s env turns it on)
     │   ├── send-gate               holds sends and deletes until you say yes
     │   ├── transcribe              voice notes → text
     │   ├── vault                   asks you for secrets by link, signs in with them

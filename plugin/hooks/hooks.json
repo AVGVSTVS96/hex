@@ -21,7 +21,8 @@
     "UserPromptSubmit": [
       { "hooks": [
         { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts busy" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/context-size" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/context-size" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/verbatim" }
       ] }
     ],
     "Stop": [
