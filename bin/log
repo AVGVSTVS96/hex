@@ -8,20 +8,23 @@ said=terminal
 case "${HEX_CHANNEL:-}" in plugin:t3@*) said=t3 ;; esac
 started=$(jq -r 'select(.timestamp) | .timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%Y-%m-%d")' "$transcript" | head -n 1)
 dir="$(cd "$(dirname "$0")/../.." && pwd)/log"
-[ -n "${HEX_THREAD:-}" ] && [ -z "${HEX_MAIN:-}" ] && dir="$dir/threads"
+typist=me
+[ -n "${HEX_THREAD:-}" ] && [ -z "${HEX_MAIN:-}" ] && dir="$dir/threads" && [ "$said" = terminal ] && typist=hex
 out="$dir/$started-$(printf '%s' "$session" | cut -c 1-8).md"
 mkdir -p "$dir"
 
-body=$(jq -r '
-    def clock: .timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%H:%M");
+body=$(jq -r --arg typist "$typist" '
+    def clock: .timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%Y-%m-%d %H:%M");
     def block($e; $who; $via; $text): "## \($who) · \($via) · \($e | clock)\n\n\($text)\n";
     def texts: if type == "string" then . else .[] | select(.type == "text") | .text end;
     def heard($e; $text):
       if ($text | startswith("<channel")) then
-        block($e; "me"; ([$text | capture("^<channel source=\"(plugin:)?(?<app>[a-z]+)").app] | first // "chat");
+        ($text | capture("^<channel(?<a>[^>]*)>").a) as $tag
+        | block($e; if ($tag | test(" user_id=")) then "me" else [$tag | capture(" user=\"(?<u>[^\"]+)\"").u] | first // "hex" end;
+          ([$text | capture("^<channel source=\"(plugin:)?(?<app>[a-z]+)").app] | first // "chat");
           ([$text | capture("^<channel[^>]*>(?<m>[\\s\\S]*)</channel>").m] | first // $text) | gsub("^\\s+|\\s+$"; ""))
       elif ($text | test("^<(local-command|command-|system-reminder|task-notification)")) then empty
-      else block($e; "me"; "terminal"; $text) end;
+      else block($e; $typist; "terminal"; $text) end;
 
     select(.isSidechain != true and .isCompactSummary != true and .origin.kind != "plugin" and (.isMeta != true or .origin.kind == "channel")) | . as $e
     | if .type == "user" then (.message.content | texts) as $t | heard($e; $t)
