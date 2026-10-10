@@ -7,7 +7,8 @@
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 3" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 4" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 5" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 6 last" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 6 last" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" }
       ] },
       { "matcher": "compact", "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted memory" },
