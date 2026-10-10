@@ -81,7 +81,9 @@ def main():
             continue
         app = re.sub(r"^plugin:|:.*$", "", meta.get("source", "chat"))
         where = " ".join(filter(None, [app, thread_name(home, app)]))
-        suffix = f" — Bassim, {where}, {datetime.now():%Y-%m-%d %H:%M}, {log_file(hook)}"
+        sent = datetime.fromisoformat(meta["ts"].replace("Z", "+00:00")).astimezone() if meta.get("ts") else datetime.now()
+        message = f" #{meta['message_id'][:12]}" if meta.get("message_id") else ""
+        suffix = f" — Bassim, {where}, {sent:%Y-%m-%d %H:%M}, {log_file(hook)}{message}"
         if subprocess.run([memo, "note", fit(text, limit - len(suffix.encode())) + suffix], capture_output=True).returncode:
             mark.unlink()
 

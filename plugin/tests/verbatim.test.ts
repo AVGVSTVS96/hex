@@ -40,13 +40,13 @@ const notes = () => (existsSync(join(home, 'notes')) ? readFileSync(join(home, '
 const date = (iso: string) => new Date(iso).toLocaleDateString('sv')
 
 test('saves his message word for word, signed with app, thread, time and its log file', () => {
-  const [line] = hook(channel({ user: 'bassim', user_id: 'u1' }, 'save   this\nexactly,  please'))
-  expect(line).toMatch(new RegExp(`^save this exactly, please — Bassim, buzz Context check, \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d, log/threads/${date('2026-10-09T12:00:00Z')}-8e990b61\\.md$`))
+  const [line] = hook(channel({ user: 'bassim', user_id: 'u1', message_id: '05be3eb354e72f4424de', ts: '2026-10-10T02:02:56.000Z' }, 'save   this\nexactly,  please'), { TZ: 'America/Los_Angeles' })
+  expect(line).toBe(`save this exactly, please — Bassim, buzz Context check, 2026-10-09 19:02, log/threads/${date('2026-10-09T12:00:00Z')}-8e990b61.md #05be3eb354e7`)
 })
 
 test('names General and its log folder in the main session', () => {
   const [line] = hook(channel({ source: 'plugin:telegram:telegram', user_id: 'u1' }, 'hi'), { HEX_MAIN: '1' })
-  expect(line).toMatch(/^hi — Bassim, telegram General, .*, log\/\d{4}-\d\d-\d\d-8e990b61\.md$/)
+  expect(line).toMatch(/^hi — Bassim, telegram General, .*, log\/\d{4}-\d\d-\d\d-8e990b61\.md #m1$/)
 })
 
 test('cuts a long message at a word to fit memo\'s byte limit', () => {
