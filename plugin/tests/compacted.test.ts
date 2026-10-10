@@ -93,11 +93,11 @@ test('logs relays under their sender and only channel messages with a user_id as
   const out = hook('turns', transcript([
     ['me', '<channel source="plugin:telegram:telegram" chat_id="1" user="ada" user_id="1001">ping me every minute</channel>'],
     ['me', '<channel source="plugin:telegram:telegram" user="watcher">Verified problems, fix them</channel>'],
-    ['me', '<channel source="plugin:telegram:telegram" user="hex General">Bassim said, word for word</channel>'],
+    ['me', '<channel source="plugin:telegram:telegram" user="hex General">Ada said, word for word</channel>'],
   ]))
   expect(out).toContain('## me · telegram · 2026-10-06 16:00\n\nping me every minute')
   expect(out).toContain('## watcher · telegram · 2026-10-06 16:01\n\nVerified problems')
-  expect(out).toContain('## hex General · telegram · 2026-10-06 16:02\n\nBassim said')
+  expect(out).toContain('## hex General · telegram · 2026-10-06 16:02\n\nAda said')
 })
 
 test('a thread logs the prompt that opened it as hex, not me', () => {
