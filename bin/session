@@ -1,8 +1,17 @@
 #!/bin/sh
 hex=$(cd "$(dirname "$0")/.." && pwd)
+home=$(cd "$hex/.." && pwd)
+[ "$(pwd -P)" = "$(cd "$home" && pwd -P)" ] || away=1
 for arg; do
-  [ "${flag:-}" = --settings ] && main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
+  shift
+  if [ "${flag:-}" = --settings ]; then
+    main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
+    # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
+    [ -n "${away:-}" ] && arg=$(jq -c --arg home "$home" --argjson hub "$arg" '.permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub' "$home/.claude/settings.json")
+  fi
+  set -- "$@" "$arg"
   flag=$arg
 done
 [ -n "${main:-}" ] && set -- --plugin-dir "$hex/mods/scheduler" "$@"
+[ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
 exec claude --plugin-dir "$hex/plugin" "$@"

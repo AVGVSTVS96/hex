@@ -21,7 +21,7 @@
   </picture>
 </p>
 
-<p align="center">Claude Code as your personal assistant. It runs on your own machine, and you talk to it in Telegram, Discord and Buzz.<br><a href="https://hex-sand.vercel.app">hex-sand.vercel.app</a></p>
+<p align="center">Claude Code as your personal assistant. It runs on your own machine, and you talk to it in Telegram, Discord, Buzz and T3 Code.<br><a href="https://hex-sand.vercel.app">hex-sand.vercel.app</a></p>
 
 ---
 
@@ -38,13 +38,17 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 └──────────────┘               │    ├──▶ claude  "hex"      General          │
 ┌──────────────┐               │    ├──▶ claude  (bg)       trip             │
 │ Discord      │               │    ├──▶ claude  (bg)       #dev › ci        │
-│  └ #dev      │◀─────────────▶│    └──▶ claude  (bg)       #ops › backups   │
-│    └ ci      │               │                                             │
+│  └ #dev      │◀─────────────▶│    ├──▶ claude  (bg)       #ops › backups   │
+│    └ ci      │               │    └──▶ claude  (bg)       ~/code/app       │
 └──────────────┘               │                                             │
 ┌──────────────┐               │                                             │
 │ Buzz         │               │                                             │
 │  └ #ops      │◀─────────────▶│  SOUL.md  AGENTS.md  memory/  log/          │
 │    └ backups │               │                                             │
+└──────────────┘               │                                             │
+┌──────────────┐               │                                             │
+│ T3 Code      │               │                                             │
+│  └ ~/code/app│◀─────────────▶│                                             │
 └──────────────┘               └─────────────────────────────────────────────┘
 ```
 
@@ -73,13 +77,18 @@ Pick a client that's ready, or tell your agent to build yours. One hub serves th
 **Buzz: a workspace you share.** Built and running today.
 - [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels. Tag hex in a channel and it starts a thread with its own session, or DM it.
 - Buzz Desktop shows what hex is doing as it works, step by step.
+- Its memory shows up in Buzz. Browsing and editing its files there is coming soon.
+
+**T3 Code: hex in any project.** Built and running today.
+- [T3 Code](https://github.com/pingdotgg/t3code) runs coding agents, and hex is one of them: pick hex in any project and that thread is a hex session working in that project's folder, with its memory, rules and tools, T3's own included.
+- T3 shows its work as it happens: every command, edit and answer, with T3's own diffs and checkpoints.
+- hex reaches T3 over [ACP](https://agentclientprotocol.com): `hex acp` connects T3 to the hex that's already running.
 
 **Your own: tell your agent.** Buzz was built this way. Swap in any app:
 
 ```
 Build me a Slack channel on your hub, modeled on your Discord one, so every Slack thread is its own session.
 ```
-- Its memory shows up in Buzz. Browsing and editing its files there is coming soon.
 
 Each thread lives in one app. Say "take this to Discord" or "take this to Buzz" and the same session moves over with its memory. The old thread posts a link to the new one and closes.
 
@@ -106,7 +115,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 └── .hex/                           hex itself: this repo
     ├── HEX.md                      how it works
     ├── bin/
-    │   ├── hex                     init, start, stop, restart, status; run keeps the hub up
+    │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code
     │   ├── session                 how the hub starts each session
     │   ├── log                     saves each conversation to log/ as markdown
     │   ├── wake                    loads its memory as each session starts
@@ -121,7 +130,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     ├── computer/setup              turns a Sprite into its computer
     ├── vault/                      the vault's relay, page and default store
     ├── defaults/                   what `hex init` starts your folder with
-    └── channels/                   the Telegram, Discord and Buzz channels and hub (submodule)
+    └── channels/                   the Telegram, Discord, Buzz and T3 Code channels and hub (submodule)
 ```
 
 hex doesn't need systemd or any service manager. `hex start` runs the hub in the background, and the hub keeps General running. To have it come back after a reboot, point whatever your machine uses at `hex run`: a systemd user service, a launchd agent, a Sprite service, or an `@reboot` cron line.
