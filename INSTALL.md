@@ -25,6 +25,8 @@ git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex/.hex   # 
 
 ## 3. Make the Telegram bot and group (you)
 
+Ask them: "What's the most convenient place to reach you?" Its main chat becomes home, where reminders and anything hex brings up on its own land; they can still talk to hex from any app it's in. Home is Telegram's General for now, so if they name another app (texts, iMessage, Slack), tell them hex reaches them on Telegram until it can live there.
+
 1. In Telegram, open **@BotFather**, send `/newbot`, and copy the token it gives you.
 2. Create a new group, open its settings, and turn on **Topics**.
 3. Add the bot to the group and make it an admin with **Manage Topics**. hex opens a topic for each piece of work it starts.

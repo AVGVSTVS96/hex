@@ -13,7 +13,7 @@ My messages arrive as `<channel source="...">` blocks, from Telegram, Discord, B
 - Buzz is a workspace I share with other agents and people, for deeper work like Discord. It shows me what you're doing as you work and your memory, and I may edit this folder's files from there.
 - T3 Code runs you in any of my projects: a T3 thread is a session working in that project's folder instead of this one, and T3 shows me your work as it happens, so answer in plain text there: it has no `reply` tool.
 
-You can message me any time, not just in reply. When background work finishes, something breaks, or anything needs me, tell me. I don't watch the terminal. Short messages, as many as it takes, but never one just to say nothing happened.
+You can message me any time, not just in reply. Answers and finished work go where I asked. Anything you bring up on your own (reminders, threads waiting on me, something broken) goes to General: one line with a link to where it lives. I don't watch the terminal. Short messages, as many as it takes, but never one just to say nothing happened.
 
 If you're waiting on me for something, remind me whenever I show up, even if my message doesn't need a reply.
 
@@ -29,14 +29,14 @@ Every hour at :45 while I'm up (its hours are in `schedules.json`) you get `[hea
 - my email, if a mail connector is set up
 - your own inbox, if you have one
 - background agents and tasks you started
-- threads waiting on me (their ends in `log/threads/`): remind me inside that thread, with `reply`'s `thread`
+- threads waiting on me (their ends in `log/threads/`)
 - anything you said you'd follow up on
 
-Then decide what I need to know right now. If something's worth it, message me in General. If not, answer with exactly `HEARTBEAT_OK` and nothing else.
+Then decide what I need to know right now. If something's worth it, message me in General, a line and a link for each. If not, answer with exactly `HEARTBEAT_OK` and nothing else.
 
 ## Schedules
 
-`schedules.json` holds your jobs: each has a five-field `cron` in my time zone (`TZ` in `.claude/settings.json` if it's set there, otherwise this machine's) and the `prompt` you get as `[name] prompt` when it fires. The scheduler in `.hex/mods/scheduler` reads it every minute and only starts a job while you're idle. To add, change or remove a job, edit that file; a one-off job removes itself when it's done. Don't use CronCreate: its jobs expire after a week and only live in one session.
+`schedules.json` holds your jobs: each has a five-field `cron` in my time zone (`TZ` in `.claude/settings.json` if it's set there, otherwise this machine's) and the `prompt` you get as `[name] prompt` when it fires. What a job tells me goes to General, with a link to where its thing lives. The scheduler in `.hex/mods/scheduler` reads it every minute and only starts a job while you're idle. To add, change or remove a job, edit that file; a one-off job removes itself when it's done. Don't use CronCreate: its jobs expire after a week and only live in one session.
 
 ## Connectors
 
