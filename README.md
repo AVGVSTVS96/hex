@@ -106,8 +106,6 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── wake                    loads its memory as each session starts
     │   ├── live-status             shows its branches, upcoming jobs and sessions as each session starts
     │   ├── compacted               puts memory and the last turns back after a compaction
-    │   ├── context-size            how full a session's context is, for fresh
-    │   ├── fresh                   starts General over fresh when full, if `env.HEX_FRESH_AT` is set
     │   ├── send-gate               holds sends and deletes until you say yes
     │   ├── transcribe              voice notes → text
     │   ├── vault                   asks you for secrets by link, signs in with them

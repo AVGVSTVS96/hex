@@ -10,9 +10,6 @@
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 6 last" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" }
       ] },
-      { "matcher": "startup", "hooks": [
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted fresh" }
-      ] },
       { "matcher": "compact", "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted memory" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted turns" }
@@ -27,8 +24,7 @@
     "Stop": [
       { "hooks": [
         { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts idle" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/fresh" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" }
       ] }
     ],
     "StopFailure": [

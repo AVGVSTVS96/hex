@@ -26,22 +26,7 @@ case "${1:-}" in
     echo
     echo "That's all that fits here. Read the rest from line $((shown + 1)) of $rest, and do what it says."
     ;;
-  turns|fresh)
-    said="Your context was just compacted."
-    if [ "$1" = fresh ]; then
-      [ -n "${HEX_PREVIOUS:-}" ] || exit 0
-      transcript=$(printf '%s' "$input" | jq -r .transcript_path)
-      session=$HEX_PREVIOUS
-      input=$(jq -n --arg session "$session" --arg transcript "$(dirname "$transcript")/$session.jsonl" '{ session_id: $session, transcript_path: $transcript }')
-      said="This session takes over from session $session, which filled its context."
-      crons="${CLAUDE_PROJECT_DIR:-.}/state/crons-$session.json"
-      if [ -f "$crons" ]; then
-        echo "Its session crons don't carry over on their own, so re-arm each one now with CronCreate, with the same cron, prompt and recurring:"
-        cat "$crons"
-        echo
-        room=$((room - $(wc -c < "$crons") - 200))
-      fi
-    fi
+  turns)
     printf '%s' "$input" | "$here/log"
     cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
     id=$(printf %.8s "$session")
@@ -55,15 +40,15 @@ case "${1:-}" in
         print j <= NR ? j : i + 1
       }' "$log")
     if [ "$(awk '/^## (me|assistant) · /{ print NR; exit }' "$log")" = "$start" ]; then
-      echo "$said This is the whole conversation so far, word for word, from $log:"
+      echo "Your context was just compacted. This is the whole conversation so far, word for word, from $log:"
     else
-      echo "$said This is the end of the conversation, word for word, from line $start of $log. Earlier turns are above it there."
+      echo "Your context was just compacted. This is the end of the conversation, word for word, from line $start of $log. Earlier turns are above it there."
     fi
     echo
     tail -n +"$start" "$log"
     ;;
   *)
-    echo "usage: compacted memory|turns|fresh" >&2
+    echo "usage: compacted memory|turns" >&2
     exit 2
     ;;
 esac
