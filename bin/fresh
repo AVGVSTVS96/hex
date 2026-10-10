@@ -1,0 +1,17 @@
+#!/bin/sh
+[ -n "${HEX_FRESH_AT:-}" ] && [ -n "${HEX_MAIN:-}" ] || exit 0
+input=$(cat)
+here=$(cd "$(dirname "$0")" && pwd)
+
+tokens=$(printf '%s' "$input" | "$here/context-size" tokens)
+[ "${tokens:-0}" -ge "$HEX_FRESH_AT" ] || exit 0
+[ "$(printf '%s' "$input" | jq '.background_tasks // [] | length')" = 0 ] || exit 0
+
+if [ "$(printf '%s' "$input" | jq .stop_hook_active)" = true ]; then
+  exec bun "$here/../channels/hub/fresh.ts"
+fi
+
+jq -n --arg size "$(( (tokens + 500) / 1000 ))k" '{
+  decision: "block",
+  reason: "Your context is full (\($size) tokens), so when this turn ends General starts over in a fresh session instead of compacting. It gets memo wake and the end of this chat'"'"'s log back on its own, and nothing else. So first save what'"'"'s in flight: one `.hex/vendor/memo note` for each thing you'"'"'re in the middle of or waiting on (what it is, for whom, the next step), unless memory already has it. Don'"'"'t message me about this. Then end your turn."
+}'

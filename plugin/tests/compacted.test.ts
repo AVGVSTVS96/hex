@@ -1,5 +1,5 @@
 import { beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
+import { chmodSync, copyFileSync, renameSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -34,11 +34,11 @@ function transcript(turns: [string, string][]) {
   return path
 }
 
-function hook(part: 'memory' | 'turns', transcriptPath = join(home, 'none.jsonl')) {
+function hook(part: 'memory' | 'turns' | 'fresh', transcriptPath = join(home, 'none.jsonl'), env: Record<string, string> = {}) {
   const run = Bun.spawnSync([join(home, '.hex/bin/compacted'), part], {
     cwd: home,
-    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, transcript_path: transcriptPath, source: 'compact' })),
-    env: { ...process.env, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, TZ: 'UTC' },
+    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, transcript_path: transcriptPath, source: part === 'fresh' ? 'startup' : 'compact' })),
+    env: { ...process.env, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, TZ: 'UTC', ...env },
   })
   expect(run.exitCode).toBe(0)
   const out = run.stdout.toString()
@@ -87,4 +87,17 @@ test('brings back the last whole turns of a long conversation, and points to the
   expect(out.endsWith(log.slice(Number(pointer[1]) - 1).join('\n'))).toBe(true)
   expect(out).toContain('turn 39')
   expect(out).not.toContain('turn 20 ')
+})
+
+test('a fresh session gets the end of the session it takes over from, word for word', () => {
+  const previous = 'b0b0b0b0-0000-4000-8000-000000000000'
+  renameSync(transcript([['me', 'still waiting on Apple'], ['assistant', 'noted']]), join(home, `${previous}.jsonl`))
+  const out = hook('fresh', join(home, `${SESSION}.jsonl`), { HEX_PREVIOUS: previous })
+  expect(out).toContain(`takes over from session ${previous}, which filled its context. This is the whole conversation so far`)
+  expect(out).toContain('## me · terminal · 16:00\n\nstill waiting on Apple')
+  expect(out).toContain('log/2026-10-06-b0b0b0b0.md')
+})
+
+test('a session that takes over from none starts with nothing extra', () => {
+  expect(hook('fresh', transcript([['me', 'hi']]))).toBe('')
 })

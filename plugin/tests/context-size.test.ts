@@ -5,10 +5,10 @@ import { join } from 'path'
 
 const SCRIPT = join(import.meta.dir, '../../bin/context-size')
 
-function hook(lines: object[]) {
+function hook(lines: object[], args: string[] = []) {
   const path = join(mkdtempSync(join(tmpdir(), 'context-size-')), 'transcript.jsonl')
   writeFileSync(path, lines.map(line => JSON.stringify(line)).join('\n') + '\n')
-  const run = Bun.spawnSync([SCRIPT], { stdin: Buffer.from(JSON.stringify({ transcript_path: path })) })
+  const run = Bun.spawnSync([SCRIPT, ...args], { stdin: Buffer.from(JSON.stringify({ transcript_path: path })) })
   expect(run.exitCode).toBe(0)
   return run.stdout.toString()
 }
@@ -31,4 +31,8 @@ test('skips subagent and synthetic turns', () => {
 
 test('says nothing before the first reply', () => {
   expect(hook([{ type: 'user', message: { content: 'hi' } }])).toBe('')
+})
+
+test('gives just the count to other hooks', () => {
+  expect(hook([turn(2, 40_000, 1_500)], ['tokens'])).toBe('41502\n')
 })
