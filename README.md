@@ -97,8 +97,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 
 ```
 ~/hex/                              yours: a private git repo
-├── CLAUDE.md                       loads .hex/HEX.md, SOUL.md and AGENTS.md
-├── AGENTS.md                       your rules
+├── AGENTS.md                       your rules; imports SOUL.md and .hex/HEX.md
 ├── SOUL.md                         who it is
 ├── schedules.json                  recurring jobs, the hourly check included
 ├── memory/  log/                   its OptMem memory, every conversation as markdown
@@ -155,7 +154,7 @@ Your hex still gets its channels from [the auto-maintained fork](https://github.
 
 ## Known issues
 
-- **A project's own instructions don't load on their own.** Every hex session starts in `~/hex`, because that's what makes it hex: CLAUDE.md, AGENTS.md, SOUL.md and the hooks all load from there. Claude Code only picks up a CLAUDE.md or AGENTS.md on its own inside the folder a session starts in, so when hex works in a repo somewhere else, like `~/Projects/foo`, that repo's rules go unread unless hex opens them itself. A fix is planned soon. Until then, ask hex to read the repo's AGENTS.md or CLAUDE.md before it starts.
+- **A project's own instructions don't load on their own.** Every hex session starts in `~/hex`, because that's what makes it hex: AGENTS.md, SOUL.md and the hooks all load from there. Claude Code only picks up a CLAUDE.md or AGENTS.md on its own inside the folder a session starts in, so when hex works in a repo somewhere else, like `~/Projects/foo`, that repo's rules go unread unless hex opens them itself. A fix is planned soon. Until then, ask hex to read the repo's AGENTS.md or CLAUDE.md before it starts.
 
 ## Principles
 

@@ -21,7 +21,7 @@ git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex/.hex   # 
 ~/hex/.hex/bin/hex init
 ```
 
-`init` writes their `CLAUDE.md`, `AGENTS.md`, `SOUL.md`, `schedules.json`, `.env` and `.claude/settings.json`, sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
+`init` writes their `AGENTS.md`, `SOUL.md`, `schedules.json`, `.env` and `.claude/settings.json`, sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
 
 ## 3. Make the Telegram bot and group (you)
 

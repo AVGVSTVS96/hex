@@ -10,7 +10,7 @@ running() {
 
 case "${1:-}" in
   init)
-    for file in CLAUDE.md AGENTS.md SOUL.md schedules.json; do
+    for file in AGENTS.md SOUL.md schedules.json; do
       [ -e "$home/$file" ] || cp "$hex/defaults/$file" "$home/$file"
     done
     [ -e "$home/.gitignore" ] || cp "$hex/defaults/gitignore" "$home/.gitignore"
