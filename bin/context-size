@@ -7,10 +7,4 @@ tokens=$(jq -c '
   | .message.usage | select(.)
   | .input_tokens + .cache_read_input_tokens + .cache_creation_input_tokens
   | select(. > 0)' "$transcript" 2>/dev/null | tail -n 1)
-[ -n "$tokens" ] || exit 0
-
-if [ "${1:-}" = tokens ]; then
-  echo "$tokens"
-else
-  echo "Context: $(( (tokens + 500) / 1000 ))k tokens (input + cache read + cache write) of this session's window."
-fi
+[ -z "$tokens" ] || echo "$tokens"

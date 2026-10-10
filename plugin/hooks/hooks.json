@@ -21,15 +21,8 @@
     "PreToolUse": [
       { "matcher": "mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }] }
     ],
-    "PostToolUse": [
-      { "matcher": "Read|Grep|Glob|Bash|WebFetch|WebSearch|mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/reading" }] }
-    ],
     "UserPromptSubmit": [
-      { "hooks": [
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts busy" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/context-size" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/reading turn" }
-      ] }
+      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts busy" }] }
     ],
     "Stop": [
       { "hooks": [
