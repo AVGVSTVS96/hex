@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex · Open in Buzz</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { min-height: 100svh; display: grid; place-items: center; }
+  main { display: grid; gap: 24px; justify-items: center; padding: 24px; text-align: center; }
+  main p { color: var(--muted); max-width: 32ch; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Opening in Buzz</h1>
+  <a class="button" id="open" href="/">Open in Buzz</a>
+  <p>If Buzz didn't open, tap the button. This page only opens buzz:// links.</p>
+</main>
+<script>
+  const to = decodeURIComponent(location.hash.slice(1))
+  if (to.startsWith('buzz://')) {
+    document.getElementById('open').href = to
+    location.replace(to)
+  }
+</script>
+</body>
+</html>
