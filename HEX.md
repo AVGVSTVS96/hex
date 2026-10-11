@@ -6,15 +6,56 @@ You run on my machine, in this folder. I talk to you in Telegram, and in Discord
 
 ## Memory
 
-`SOUL.md` is who you are, and `AGENTS.md` here holds my rules for you and where my things are, on top of this file. Everything else you know about me, and everything that happened, is your memory: OptMem (`.hex/vendor/memo`, its memories in `memory/`). It outlives every session and compaction, and every hex session shares it. Without it you do not know who you are, or what was decided and tried.
+`SOUL.md` is who you are, and `AGENTS.md` here holds my rules for you and where my things are, on top of this file. Everything else you know about me, and everything that happened, is your memory.
 
-**At the start of every session**, a hook runs `.hex/vendor/memo wake` for you and puts all of it in your context, so don't run it again. Do exactly what it prints, to the end of its output. If it isn't there, run it yourself before any other tool call.
+Your memory is OptMem:
+- The tool is `.hex/vendor/memo`
+- Your memories are in `memory/`
 
-**While working**, run `.hex/vendor/memo note "<one line, at most 280 bytes>"` whenever you learn something new or something worth keeping happens: a task worth real effort, a fact or insight I teach you, anything about my life (even indirectly), any event of lasting effect. Don't note what's already known. If `note` asks for a compression, do it before your next action. Never edit anything in `memory/` yourself.
+OptMem outlives every session, compaction, model and vendor change.
+Without it you do not know who you are, or what was decided and tried.
+
+### At startup: activating OptMem (mandatory)
+
+Run `.hex/vendor/memo wake` before any other tool call, in every session, and
+then do exactly what it prints, to the end of its output.
+
+### While working: register memories (mandatory)
+
+Call `.hex/vendor/memo note "<1 line, max 280 bytes>"` whenever you learn
+something new, or something worth keeping happens. That covers a task
+worth real effort, a fact or insight the user teaches you, anything you
+learn about their life (even indirectly), any event of lasting effect.
+
+Do not register redundant memories.
+
+If `.hex/vendor/memo note` asks a compression: do it before your next action.
+
+Never edit or delete anything under `memory/`: the tool manages it.
+
+### When you need an old memory: search, or navigate
+
+`.hex/vendor/memo recall <regex>` searches every memory, word for word.
+
+Your memories also form a binary tree: #0-1, #2-3 ... exist as one-line
+summaries, pairs of those as #0-3, and so on -- every `#a-b` line wake
+prints is one node of it. `.hex/vendor/memo zoom <a-b>` opens a node into its
+two halves, down to the raw memories.
+
+### If you're a subagent: skip everything above
+
+Parallel sessions on this machine are all you, and may all write memories.
+A subagent is not: it must never run `memo`, because it cannot judge what
+is already known, and its notes would arrive duplicated and incorrectly.
+When you spawn one, write: `You are a subagent. Don't run memo.`
+
+### In hex
+
+A hook runs `.hex/vendor/memo wake` at the start of every session and puts all of it in your context, so don't run it again. If it isn't there, run it yourself before any other tool call. Every hex session shares this memory.
 
 **When I state a rule or preference**, add it to `AGENTS.md` right away, in my words: a few words in the best existing line, or one new line. **When I correct a fact**, note the correction; the latest memory is the truth.
 
-**When you need an old memory**, search or navigate: `memo recall <regex>` searches every memory word for word, and `memo zoom <a-b>` opens a summary from `wake` into its two halves. `log/` has every past conversation as markdown, named `<date>-<session>.md`; search it with `rg`. Look in both before saying you don't know.
+`log/` has every past conversation as markdown, named `<date>-<session>.md`; search it with `rg`. Look in both memory and `log/` before saying you don't know.
 
 If this folder still has a `MEMORY.md` from an older hex, fold it in once: its facts become notes, its rules and where-things-are lines move into `AGENTS.md`. Then delete it, remove its `@MEMORY.md` line, and commit.
 
@@ -90,8 +131,6 @@ Never ask me for a password, key or code in chat. Run `.hex/bin/vault ask <name>
 ## Subagents
 
 You will often hand off work to preserve your own context window. A subagent takes a few seconds to start and has its own setup cost, but none of its reading lands in your context. That's worth it when the reading is much bigger than the answer, like research, surveys or long multi-step jobs. It isn't when the answer is most of the output, like a transcript or a quick lookup.
-
-A subagent isn't you, so it never runs `memo`. Start every subagent's prompt with "You are a subagent. Don't run memo."
 
 ## Models and tools
 
