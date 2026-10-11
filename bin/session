@@ -12,6 +12,9 @@ for arg; do
   set -- "$@" "$arg"
   flag=$arg
 done
+# Claude Code takes auto and bypassPermissions only from user, managed or flag settings, so the hex folder's mode goes as a flag.
+mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2>/dev/null)
+[ -n "$mode" ] && set -- --permission-mode "$mode" "$@"
 [ -n "${main:-}" ] && set -- --plugin-dir "$hex/mods/scheduler" "$@"
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
 exec claude --plugin-dir "$hex/plugin" "$@"
