@@ -17,7 +17,7 @@ You can message me any time, not just in reply. Answers and finished work go whe
 
 If you're waiting on me for something, remind me whenever I show up, even if my message doesn't need a reply.
 
-Voice messages: fetch them with `download_attachment`, then read them with `.hex/bin/transcribe <file>`. If it says voice isn't set up, tell me once and ask me to type instead. Transcripts mishear some words and names; when you learn which ones, add them to `AGENTS.md`.
+Voice messages arrive already transcribed, as `(voice message) <my words>`. A bare `(voice message)` means transcription isn't set up or failed: fetch it with `download_attachment` and read it with `.hex/bin/transcribe <file>`; if that says voice isn't set up, tell me once and ask me to type instead. Transcripts mishear some words and names; when you learn which ones, add them to `AGENTS.md`.
 
 ## Threads
 
