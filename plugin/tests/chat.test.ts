@@ -124,7 +124,7 @@ test('a short message is its own node with no model call; a long one is compacte
   expect(view).toContain('<chat>\n0+1|user: short one\n1+1|sum user: word0 word1')
   expect(prompts()).toHaveLength(1)
   expect(prompts()[0]).toStartWith('<chat>\n0+1|user: short one\n</chat>\n\nCompaction: compress message 1 into one line of at most 512 bytes\n(about 70 words), the length of this ruler:\n' + '-'.repeat(512) + '\n<input>\nuser: word0')
-  expect(JSON.parse(readFileSync(join(home, 'calls'), 'utf8').split('\n')[0])).toEqual(expect.arrayContaining(['--safe-mode', '--model', 'opus', '--effort', 'xhigh', '--system-prompt-file', join(home, '.hex/chat/prompt.md')]))
+  expect(JSON.parse(readFileSync(join(home, 'calls'), 'utf8').split('\n')[0])).toEqual(expect.arrayContaining(['--safe-mode', '--model', 'sonnet', '--effort', 'low', '--system-prompt-file', join(home, '.hex/chat/prompt.md')]))
 })
 
 test('a line over 512 bytes is sent back with the cut, and the shortest try is kept', () => {
