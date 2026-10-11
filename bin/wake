@@ -3,7 +3,7 @@ input=$(cat)
 session=$(printf '%s' "$input" | jq -r .session_id)
 here=$(cd "$(dirname "$0")" && pwd)
 memo="$here/../vendor/memo"
-[ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] && [ -z "${HEX_FRESH:-}" ] || exit 0
+[ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] || exit 0
 export LC_ALL=C
 
 # Claude Code puts at most 10,000 characters of a hook's output into context,

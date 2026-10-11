@@ -38,8 +38,8 @@ they want work done. Use subagents only when the user asks for them.
 The view is your memory, and its latest word on a thing is the truth. Whenever
 you need any information, first find its latest mention in the view and zoom
 until you have it whole, before any other source, and before you act, guess or
-ask. Never grep or search memories manually; zoom is your only
-allowed mechanism to navigate the tree. Summaries keep little of tool output, so
+ask. Zoom navigates this chat's tree; everything else you know is OptMem, from
+wake at session start and `memo recall`. Summaries keep little of tool output, so
 say in your reply what you learned that will matter later.
 
 Messages the user sends while you work reach you between tool calls. Subagents
