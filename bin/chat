@@ -2,7 +2,7 @@
 """One chat that never ends, for a hex thread whose every message gets a fresh session.
 
 Taelin's OptChat (gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449):
-every message is logged word for word, Sonnet compresses the log into a binary tree
+every message is logged word for word, Haiku compresses the log into a binary tree
 of one-line summaries, and each session sees the view of that tree instead of a history.
 
   chat begin            SessionStart hook: remember this session's transcript
@@ -257,10 +257,10 @@ def too_long(line):
 
 
 def ask(first):
-    """One compaction: a Sonnet session that gets the task, and as many size retries as it needs."""
+    """One compaction: a Haiku session that gets the task, and as many size retries as it needs."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("HEX_", "CLAUDECODE"))}
     proc = subprocess.Popen(
-        [CLAUDE, "-p", "--safe-mode", "--model", "sonnet", "--effort", "low", "--tools", "",
+        [CLAUDE, "-p", "--safe-mode", "--model", "haiku", "--effort", "medium", "--tools", "",
          "--system-prompt-file", str(PROMPT), "--input-format", "stream-json",
          "--output-format", "stream-json", "--verbose", "--no-session-persistence"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
