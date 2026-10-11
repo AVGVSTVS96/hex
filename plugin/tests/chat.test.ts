@@ -123,10 +123,35 @@ test('a turn starts at once, with messages not summarized yet word for word; a s
   expect(view.startsWith(readFileSync(join(HEX, 'chat/prompt.md'), 'utf8'))).toBe(true)
   expect(view).toContain('<chat>\n0+1|user: short one\n1+1|user: word0 word1')
   run(['compact', chat])
-  expect(run(['view', chat])).toStartWith('<chat>\n0+1|user: short one\n1+1|sum user: word0 word1')
+  expect(run(['view', chat])).toStartWith('<chat>\n0+1|user: short one\n1+1|user: word0 word1')
   expect(prompts()).toHaveLength(1)
   expect(prompts()[0]).toStartWith('<chat>\n0+1|user: short one\n</chat>\n\nCompaction: compress message 1 into one line of at most 512 bytes\n(about 70 words), the length of this ruler:\n' + '-'.repeat(512) + '\n<input>\nuser: word0')
   expect(JSON.parse(readFileSync(join(home, 'calls'), 'utf8').split('\n')[0])).toEqual(expect.arrayContaining(['--safe-mode', '--model', 'haiku', '--effort', 'high', '--system-prompt-file', join(home, '.hex/chat/prompt.md')]))
+})
+
+test('the user\'s last two messages and everything after them stay word for word once summarized, a long one logged in pieces counting once', () => {
+  const records: object[] = [
+    { type: 'user', message: { content: words(200, 'old') } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: words(120, 'cmd') } }] } },
+    { type: 'user', message: { content: words(200, 'a') } },
+    { type: 'assistant', message: { content: [{ type: 'tool_use', name: 'Bash', input: { command: words(120, 'ls') } }] } },
+    { type: 'user', message: { content: [{ type: 'tool_result', content: [{ type: 'text', text: words(200, 'out') }] }] } },
+    { type: 'user', message: { content: words(200, 'b') } },
+  ]
+  write(records)
+  run(['begin'], hook())
+  run(['turn'])
+  run(['compact', chat])
+  const view = run(['view', chat])
+  expect(view).toMatch(/\n0\+1\|sum user: old0 /)
+  expect(view).toMatch(/\n1\+1\|sum tool: Bash /)
+  expect(view).toContain(`\n2+1|user: ${words(200, 'a')}\n3+1|tool: Bash {"command": "${words(120, 'ls')}"}\n4+1|echo: ${words(200, 'out')}\n5+1|user: ${words(200, 'b')}\n`)
+  write([...records, { type: 'user', message: { content: 'z'.repeat(70_000) } }])
+  run(['log'], hook())
+  run(['compact', chat])
+  const after = run(['view', chat])
+  expect(after).toMatch(/\n2\+1\|sum user: a0 /)
+  expect(after).toContain(`\n5+1|user: ${words(200, 'b')}\n6+1|user: ${'z'.repeat(30_000)}\n7+1|user: `)
 })
 
 test('a line over 512 bytes is sent back with the cut, and the shortest try is kept', () => {
@@ -137,7 +162,7 @@ test('a line over 512 bytes is sent back with the cut, and the shortest try is k
   const sent = prompts()
   expect(sent[1]).toStartWith('Too long: your line is 700 bytes, over the 512-byte limit. Write\nthe whole line again for the same <input>, cutting just enough of the\nleast valuable items to fit before this cut:\n' + 'x'.repeat(512) + '| ← LIMIT')
   expect(sent).toHaveLength(3)
-  expect(run(['view', chat])).toMatch(/^<chat>\n0\+1\|sum /)
+  expect(readFileSync(join(chat, 'tree', readdirSync(join(chat, 'tree'))[0]), 'utf8')).toMatch(/"text": "sum /)
 })
 
 test('pairs merge into their parent, which zoom opens again, down to the message whole; date gives its time', () => {

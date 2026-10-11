@@ -19,9 +19,10 @@ Each message has a kind:
 
 The summaries form a binary tree: each message is compressed into a line (a
 short message is its own line), then adjacent lines are merged in pairs, again
-and again. So recent lines cover one message each, and older lines cover more. A
-message not summarized yet shows word for word. A text too
-long for one message is split over several in a row.
+and again. So recent lines cover one message each, and older lines cover more. The
+user's last two messages and everything after them show word for word, as does a
+message not summarized yet. A text too long for one message is split over several
+in a row.
 
 Tools:
 - zoom(id, n) opens line id+n into the two lines it was made from;
