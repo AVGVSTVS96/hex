@@ -33,8 +33,6 @@ JOBS = 8
 TRIES = 5
 CLIP = 30_000
 CALL = 300
-TURN_WAIT = 180
-PLACEHOLDER = "(not summarized yet: zoom it)"
 
 HEX = Path(__file__).resolve().parents[1]
 HOME = HEX.parent
@@ -170,7 +168,7 @@ class Chat:
         return sorted(self.pending)
 
     def weight(self, lines):
-        return sum(size(self.nodes.get(p, PLACEHOLDER)) for p in lines)
+        return sum(size(self.text(*p)) for p in lines)
 
     def fold(self, lines, low):
         """Merge the most due pair whose parent is built until the lines fit in low.
@@ -216,8 +214,13 @@ class Chat:
             if self.weight(self.context) <= low and self.built(self.context):
                 self.trimming = False
 
+    def text(self, l, i):
+        if (l, i) in self.nodes:
+            return self.nodes[(l, i)]
+        return "\n".join(message(self, m) for m in range(i << l, min((i + 1) << l, len(self.messages))))
+
     def lines(self, lines):
-        return "\n".join(f"{label(l, i)}|{flat(self.nodes.get((l, i), PLACEHOLDER))}" for l, i in lines)
+        return "\n".join(f"{label(l, i)}|{flat(self.text(l, i))}" for l, i in lines)
 
     def render(self):
         return f"<chat>\n{self.lines(self.view)}\n</chat>"
@@ -465,11 +468,6 @@ def turn():
         log(chat)
         chat.save()
     background(root)
-    end = time.time() + TURN_WAIT
-    while not chat.built(chat.view) and time.time() < end:
-        time.sleep(0.25)
-        with chat.lock():
-            chat.load()
     out = root / "turn.md"
     out.write_text(f"{PROMPT.read_text()}\n{chat.render()}\n")
     print(out)

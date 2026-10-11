@@ -112,7 +112,7 @@ test('outside a fresh thread the hooks do nothing', () => {
   expect(readdirSync(home)).not.toContain('chat')
 })
 
-test('a short message is its own node with no model call; a long one is compacted, with the chat before it as context', () => {
+test('a turn starts at once, with messages not summarized yet word for word; a short message is its own node, a long one is compacted with the chat before it as context', () => {
   write([
     { type: 'user', message: { content: 'short one' } },
     { type: 'user', message: { content: words(200) } },
@@ -121,7 +121,9 @@ test('a short message is its own node with no model call; a long one is compacte
   const system = run(['turn']).trim()
   const view = readFileSync(system, 'utf8')
   expect(view.startsWith(readFileSync(join(HEX, 'chat/prompt.md'), 'utf8'))).toBe(true)
-  expect(view).toContain('<chat>\n0+1|user: short one\n1+1|sum user: word0 word1')
+  expect(view).toContain('<chat>\n0+1|user: short one\n1+1|user: word0 word1')
+  run(['compact', chat])
+  expect(run(['view', chat])).toStartWith('<chat>\n0+1|user: short one\n1+1|sum user: word0 word1')
   expect(prompts()).toHaveLength(1)
   expect(prompts()[0]).toStartWith('<chat>\n0+1|user: short one\n</chat>\n\nCompaction: compress message 1 into one line of at most 512 bytes\n(about 70 words), the length of this ruler:\n' + '-'.repeat(512) + '\n<input>\nuser: word0')
   expect(JSON.parse(readFileSync(join(home, 'calls'), 'utf8').split('\n')[0])).toEqual(expect.arrayContaining(['--safe-mode', '--model', 'haiku', '--effort', 'high', '--system-prompt-file', join(home, '.hex/chat/prompt.md')]))
@@ -130,7 +132,8 @@ test('a short message is its own node with no model call; a long one is compacte
 test('a line over 512 bytes is sent back with the cut, and the shortest try is kept', () => {
   write([{ type: 'user', message: { content: words(200) } }])
   run(['begin'], hook())
-  readFileSync(run(['turn'], '', { LONG: '1' }).trim(), 'utf8')
+  run(['turn'], '', { LONG: '1' })
+  run(['compact', chat], '', { LONG: '1' })
   const sent = prompts()
   expect(sent[1]).toStartWith('Too long: your line is 700 bytes, over the 512-byte limit. Write\nthe whole line again for the same <input>, cutting just enough of the\nleast valuable items to fit before this cut:\n' + 'x'.repeat(512) + '| ← LIMIT')
   expect(sent).toHaveLength(3)
