@@ -260,7 +260,7 @@ def ask(first):
     """One compaction: a Haiku session that gets the task, and as many size retries as it needs."""
     env = {k: v for k, v in os.environ.items() if not k.startswith(("HEX_", "CLAUDECODE"))}
     proc = subprocess.Popen(
-        [CLAUDE, "-p", "--safe-mode", "--model", "haiku", "--effort", "medium", "--tools", "",
+        [CLAUDE, "-p", "--safe-mode", "--model", "haiku", "--effort", "high", "--tools", "",
          "--system-prompt-file", str(PROMPT), "--input-format", "stream-json",
          "--output-format", "stream-json", "--verbose", "--no-session-persistence"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
