@@ -6,6 +6,7 @@ for arg; do
   shift
   if [ "${flag:-}" = --settings ]; then
     main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
+    chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
     [ -n "${away:-}" ] && arg=$(jq -c --arg home "$home" --argjson hub "$arg" '.permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub' "$home/.claude/settings.json")
   fi
@@ -16,5 +17,9 @@ done
 mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "$mode" ] && set -- --permission-mode "$mode" "$@"
 [ -n "${main:-}" ] && set -- --plugin-dir "$hex/mods/scheduler" "$@"
+if [ -n "${chat:-}" ]; then
+  system=$(env $chat "$hex/bin/chat" turn) || exit
+  set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --append-system-prompt-file "$system" "$@"
+fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
 exec claude --plugin-dir "$hex/plugin" "$@"

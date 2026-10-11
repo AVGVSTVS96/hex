@@ -8,7 +8,8 @@
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 4" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 5" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 6 last" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat begin" }
       ] },
       { "matcher": "compact", "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted memory" },
@@ -24,7 +25,8 @@
     "Stop": [
       { "hooks": [
         { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts idle" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat log" }
       ] }
     ],
     "StopFailure": [

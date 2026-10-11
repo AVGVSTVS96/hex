@@ -1,0 +1,554 @@
+#!/usr/bin/env python3
+"""One chat that never ends, for a hex thread whose every message gets a fresh session.
+
+Taelin's OptChat (gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449):
+every message is logged word for word, Haiku compresses the log into a binary tree
+of one-line summaries, and each session sees the view of that tree instead of a history.
+
+  chat begin            SessionStart hook: remember this session's transcript
+  chat log              Stop hook: log the transcript's new messages, then compact
+  chat turn             before a session starts: log, compact, print the system prompt file
+  chat compact          build every node that's ready
+  chat mcp <dir>        the zoom and date tools
+  chat view <dir>       print the view
+"""
+
+import concurrent.futures
+import fcntl
+import json
+import os
+import re
+import subprocess
+import sys
+import threading
+import time
+from bisect import bisect_left
+from datetime import datetime
+from pathlib import Path
+
+NODE = 512
+VIEW = (64_000, 128_000)
+CONTEXT = (16_000, 32_000)
+JOBS = 8
+TRIES = 5
+CLIP = 30_000
+CALL = 300
+TURN_WAIT = 180
+PLACEHOLDER = "(not summarized yet: zoom it)"
+
+HEX = Path(__file__).resolve().parents[1]
+HOME = HEX.parent
+PROMPT = HEX / "chat" / "prompt.md"
+CLAUDE = os.environ.get("HEX_CHAT_CLAUDE", "claude")
+
+
+def size(text):
+    return len(text.encode())
+
+
+def flat(text):
+    return re.sub(r"\r\n|\r|\n", " ", text)
+
+
+def label(l, i):
+    return f"{i << l}+{1 << l}"
+
+
+def cut(text, limit):
+    return text.encode()[:limit].decode(errors="ignore")
+
+
+class Chat:
+    """The log, the tree and the views of one chat. Every write holds the lock and
+    starts from what's on disk, so the logger, the compactor and a turn can share it."""
+
+    def __init__(self, root):
+        self.root = Path(root)
+        (self.root / "main").mkdir(parents=True, exist_ok=True)
+        (self.root / "tree").mkdir(exist_ok=True)
+        self.read = {}
+        self.messages = []
+        self.nodes = {}
+        self.pending = set()
+        self.view, self.folding = [], False
+        self.context, self.trimming = [], False
+        self.transcripts = {}
+
+    def lock(self):
+        handle = open(self.root / ".lock", "a")
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        return handle
+
+    def tail(self, folder):
+        for path in sorted((self.root / folder).glob("*.jsonl")):
+            with open(path, "rb") as f:
+                f.seek(self.read.get(path, 0))
+                for line in f:
+                    if not line.endswith(b"\n"):
+                        break
+                    self.read[path] = self.read.get(path, 0) + len(line)
+                    yield json.loads(line)
+
+    def load(self):
+        for m in self.tail("main"):
+            self.got(m)
+        for n in self.tail("tree"):
+            self.settle(n["l"], n["i"], n["text"])
+        try:
+            state = json.loads((self.root / "view.json").read_text())
+        except FileNotFoundError:
+            state = {}
+        self.view = [tuple(p) for p in state.get("view", [])]
+        self.folding = state.get("folding", False)
+        self.context = [tuple(p) for p in state.get("context", [])]
+        self.trimming = state.get("trimming", False)
+        self.transcripts = state.get("transcripts", {})
+        return self
+
+    def save(self):
+        state = {"view": self.view, "folding": self.folding, "context": self.context,
+                 "trimming": self.trimming, "transcripts": self.transcripts}
+        tmp = self.root / "view.json.tmp"
+        tmp.write_text(json.dumps(state) + "\n")
+        os.replace(tmp, self.root / "view.json")
+
+    def append(self, folder, record):
+        path = self.root / folder / f"{datetime.now():%Y-%m-%d}.jsonl"
+        with open(path, "a") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+            self.read[path] = f.tell()
+
+    def got(self, m):
+        self.messages.append(m)
+        self.pending.add((0, m["i"]))
+
+    def settle(self, l, i, text):
+        self.nodes[l, i] = text
+        self.pending.discard((l, i))
+        if (l, i ^ 1) in self.nodes and (l + 1, i // 2) not in self.nodes:
+            self.pending.add((l + 1, i // 2))
+
+    def add(self, kind, text, date):
+        for k in range(0, max(len(text), 1), CLIP):
+            m = {"i": len(self.messages), "kind": kind, "text": text[k:k + CLIP], "date": date}
+            m["size"] = size(m["text"])
+            self.append("main", m)
+            self.got(m)
+            self.view.append((0, m["i"]))
+            self.context.append((0, m["i"]))
+        self.free()
+        self.fit()
+
+    def put(self, l, i, text):
+        if (l, i) not in self.nodes:
+            self.store(l, i, text)
+            self.free()
+            self.fit()
+
+    def store(self, l, i, text):
+        self.append("tree", {"l": l, "i": i, "text": text, "size": size(text)})
+        self.settle(l, i, text)
+
+    def source(self, l, i):
+        if l == 0:
+            m = self.messages[i]
+            return f"{m['kind']}: {m['text']}"
+        return f"{self.nodes[l - 1, 2 * i]}\n{self.nodes[l - 1, 2 * i + 1]}"
+
+    def free(self):
+        """A source that fits in a node is its own node, with no model call."""
+        while True:
+            short = next(((l, i, text) for l, i in self.todo() if size(text := self.source(l, i)) <= NODE), None)
+            if not short:
+                return
+            self.store(*short)
+
+    def todo(self):
+        """The nodes ready to build: messages in order first, then merges, lowest first."""
+        return sorted(self.pending)
+
+    def weight(self, lines):
+        return sum(size(self.nodes.get(p, PLACEHOLDER)) for p in lines)
+
+    def fold(self, lines, low):
+        """Merge the most due pair whose parent is built until the lines fit in low.
+        A pair is due by how long ago it ended, in its own line size."""
+        T = len(self.messages)
+        merged = False
+        while self.weight(lines) > low:
+            best, due = None, None
+            for k in range(len(lines) - 1):
+                (l, i), (l2, j) = lines[k], lines[k + 1]
+                if l != l2 or i % 2 or j != i + 1 or (l + 1, i // 2) not in self.nodes:
+                    continue
+                d = (T - ((i + 2) << l) + 1) / (1 << l)
+                if due is None or d > due:
+                    best, due = k, d
+            if best is None:
+                break
+            l, i = lines[best]
+            lines[best:best + 2] = [(l + 1, i // 2)]
+            merged = True
+        return merged
+
+    def built(self, lines):
+        return all(p in self.nodes for p in lines)
+
+    def fit(self):
+        """The view grows a line per message, and past its high mark merges down to its low
+        mark in one batch, so turns keep reading its prefix from the cache. The compaction
+        view does the same at its own size, and starts over from the view when that merges."""
+        low, high = VIEW
+        if self.weight(self.view) > high:
+            self.folding = True
+        if self.folding:
+            if self.fold(self.view, low):
+                self.context, self.trimming = list(self.view), True
+            if self.weight(self.view) <= low and self.built(self.view):
+                self.folding = False
+        low, high = CONTEXT
+        if self.weight(self.context) > high:
+            self.trimming = True
+        if self.trimming:
+            self.fold(self.context, low)
+            if self.weight(self.context) <= low and self.built(self.context):
+                self.trimming = False
+
+    def lines(self, lines):
+        return "\n".join(f"{label(l, i)}|{flat(self.nodes.get((l, i), PLACEHOLDER))}" for l, i in lines)
+
+    def render(self):
+        return f"<chat>\n{self.lines(self.view)}\n</chat>"
+
+    def seen(self, end):
+        """The compaction view for a node ending at message end: the lines before it, up to
+        the first one still unbuilt."""
+        out = []
+        for l, i in self.context:
+            if (i + 1) << l > end or (l, i) not in self.nodes:
+                break
+            out.append((l, i))
+        return out
+
+
+ruler = "-" * NODE
+
+
+def task(chat, l, i):
+    if l == 0:
+        m = chat.messages[i]
+        return (f"Compaction: compress message {i} into one line of at most {NODE} bytes\n"
+                f"(about 70 words), the length of this ruler:\n{ruler}\n"
+                f"<input>\n{m['kind']}: {m['text']}\n</input>")
+    a, b = chat.nodes[l - 1, 2 * i], chat.nodes[l - 1, 2 * i + 1]
+    return (f"Compaction: merge lines {label(l - 1, 2 * i)} and {label(l - 1, 2 * i + 1)}, adjacent, into one line of at most\n"
+            f"{NODE} bytes (about 70 words), the length of this ruler:\n{ruler}\n"
+            f"<chat> may hold their messages, {i << l} to {((i + 1) << l) - 1}, in more detail: take details\n"
+            f"of them from there too.\n"
+            f"<input>\n{flat(a)}\n{flat(b)}\n</input>")
+
+
+def too_long(line):
+    return (f"Too long: your line is {size(line)} bytes, over the {NODE}-byte limit. Write\n"
+            f"the whole line again for the same <input>, cutting just enough of the\n"
+            f"least valuable items to fit before this cut:\n{cut(line, NODE)}| ← LIMIT")
+
+
+def ask(first):
+    """One compaction: a Haiku session that gets the task, and as many size retries as it needs."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("HEX_", "CLAUDECODE"))}
+    proc = subprocess.Popen(
+        [CLAUDE, "-p", "--safe-mode", "--model", "haiku", "--effort", "xhigh", "--tools", "",
+         "--system-prompt-file", str(PROMPT), "--input-format", "stream-json",
+         "--output-format", "stream-json", "--verbose", "--no-session-persistence"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, env=env)
+    timer = threading.Timer(CALL, proc.kill)
+    timer.start()
+    tries, text = [], first
+    try:
+        while len(tries) < TRIES:
+            proc.stdin.write(json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n")
+            proc.stdin.flush()
+            for line in proc.stdout:
+                event = json.loads(line)
+                if event.get("type") == "result":
+                    break
+            else:
+                break
+            line = flat(str(event.get("result") or "")).strip()
+            if event.get("is_error") or not line:
+                break
+            tries.append(line)
+            if size(line) <= NODE:
+                break
+            text = too_long(line)
+    except (OSError, ValueError):
+        pass
+    finally:
+        timer.cancel()
+        proc.kill()
+        proc.wait()
+    return min(tries, key=size) if tries else None
+
+
+def compact(root):
+    """Build every node that's ready, up to JOBS at once. A message's node starts once
+    fewer than JOBS lines before it are unbuilt, a merge once both halves are built.
+    A call that fails is tried again on the next run."""
+    chat = Chat(root)
+    with open(chat.root / ".compactor", "a") as hold:
+        fcntl.flock(hold, fcntl.LOCK_EX)
+        with chat.lock():
+            chat.load()
+        running, failed = {}, set()
+        with concurrent.futures.ThreadPoolExecutor(JOBS) as pool:
+            while True:
+                for node in starts(chat, running, failed):
+                    l, i = node
+                    prompt = f"<chat>\n{chat.lines(chat.seen(i if l == 0 else (i + 1) << l))}\n</chat>\n\n{task(chat, l, i)}"
+                    running[pool.submit(ask, prompt)] = node
+                if not running:
+                    break
+                done, _ = concurrent.futures.wait(running, timeout=5, return_when=concurrent.futures.FIRST_COMPLETED)
+                with chat.lock():
+                    chat.load()
+                    for future in done:
+                        node, line = running.pop(future), future.result()
+                        if line:
+                            chat.put(*node, line)
+                        else:
+                            failed.add(node)
+                    chat.save()
+    return chat
+
+
+def starts(chat, running, failed):
+    busy = set(running.values())
+    unbuilt = [i << l for l, i in chat.view if (l, i) not in chat.nodes]
+    for l, i in chat.todo():
+        if len(busy) >= JOBS:
+            return
+        if (l, i) in busy or (l, i) in failed or l == 0 and bisect_left(unbuilt, i) >= JOBS:
+            continue
+        busy.add((l, i))
+        yield l, i
+
+
+def where():
+    channel, thread = os.environ.get("HEX_CHANNEL", ""), os.environ.get("HEX_THREAD", "")
+    app = re.sub(r"^plugin:|@.*$", "", channel)
+    return HOME / "chat" / re.sub(r"[^\w.-]", "_", f"{app}-{thread}")
+
+
+def fresh():
+    return os.environ.get("HEX_FRESH") and os.environ.get("HEX_THREAD")
+
+
+CHANNEL = re.compile(r"^<channel([^>]*)>([\s\S]*)</channel>\s*$")
+DROPPED = {"source", "chat_id", "message_id", "user", "user_id", "ts"}
+
+
+def heard(text):
+    """A message as the user sent it: a channel message's words, with what the tag
+    says about it beyond who and where."""
+    match = CHANNEL.match(text.strip())
+    if not match:
+        return "user", text
+    tags = [f"({k}: {v})" for k, v in re.findall(r' (\w+)="([^"]*)"', match[1]) if k not in DROPPED]
+    return "user", " ".join(tags + [match[2].strip()])
+
+
+def said(content):
+    if isinstance(content, str):
+        return [content]
+    return [block.get("text", "") for block in content if block.get("type") == "text"]
+
+
+def clip(text):
+    if len(text) <= CLIP:
+        return text
+    half = CLIP // 2
+    return f"{text[:half]}\n[… {len(text) - CLIP} characters cut …]\n{text[-half:]}"
+
+
+def entries(record):
+    """What one transcript line adds to the chat. Thoughts, reminders and subagents' own steps stay out."""
+    if record.get("isSidechain") or record.get("isCompactSummary"):
+        return
+    origin = (record.get("origin") or {}).get("kind")
+    if origin == "plugin" or (record.get("isMeta") and origin != "channel"):
+        return
+    kind = record.get("type")
+    if kind == "attachment" and (record.get("attachment") or {}).get("type") == "queued_command":
+        content = record["attachment"].get("prompt", "")
+    elif kind == "user":
+        content = record["message"]["content"]
+    elif kind == "assistant":
+        for block in record["message"]["content"]:
+            if block.get("type") == "text" and block["text"].strip():
+                yield "hex", block["text"]
+            elif block.get("type") == "tool_use":
+                if re.fullmatch(r"mcp__plugin_[a-z]+_[a-z]+__reply", block["name"]):
+                    yield "hex", block["input"].get("text", "")
+                else:
+                    yield "tool", f"{block['name']} {json.dumps(block['input'], ensure_ascii=False)}"
+        return
+    else:
+        return
+    if isinstance(content, list):
+        for block in content:
+            if block.get("type") == "tool_result":
+                yield "echo", clip("\n".join(said(block.get("content") or "")))
+    for text in said(content):
+        if text.startswith("<task-notification"):
+            yield "work", text
+        elif text.strip() and not re.match(r"^<(local-command|command-|system-reminder)", text):
+            yield heard(text)
+
+
+def when(record):
+    stamp = record.get("timestamp")
+    moment = datetime.fromisoformat(stamp.replace("Z", "+00:00")) if stamp else datetime.now()
+    return moment.astimezone().isoformat(timespec="seconds")
+
+
+def log(chat):
+    """Every transcript this chat's sessions wrote, from where the last log stopped."""
+    for path, done in list(chat.transcripts.items()):
+        try:
+            lines = Path(path).read_text().splitlines()
+        except FileNotFoundError:
+            continue
+        for line in lines[done:]:
+            try:
+                record = json.loads(line)
+            except ValueError:
+                break
+            for kind, text in entries(record):
+                chat.add(kind, text, when(record))
+            done += 1
+        chat.transcripts[path] = done
+
+
+def begin(hook):
+    chat = Chat(where())
+    with chat.lock():
+        chat.load()
+        chat.transcripts.setdefault(hook["transcript_path"], 0)
+        chat.save()
+
+
+def stop(hook):
+    chat = Chat(where())
+    with chat.lock():
+        chat.load()
+        chat.transcripts.setdefault(hook["transcript_path"], 0)
+        log(chat)
+        chat.save()
+    background(chat.root)
+
+
+def background(root):
+    subprocess.Popen([__file__, "compact", str(root)], start_new_session=True,
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def turn():
+    """What a fresh session starts from: the chat logged and summarized up to now, then
+    the system prompt and the view, in one file for --append-system-prompt-file."""
+    root = where()
+    chat = Chat(root)
+    with chat.lock():
+        chat.load()
+        log(chat)
+        chat.save()
+    background(root)
+    end = time.time() + TURN_WAIT
+    while not chat.built(chat.view) and time.time() < end:
+        time.sleep(0.25)
+        with chat.lock():
+            chat.load()
+    out = root / "turn.md"
+    out.write_text(f"{PROMPT.read_text()}\n{chat.render()}\n")
+    print(out)
+
+
+def message(chat, i):
+    m = chat.messages[i]
+    return f"{m['kind']}: {m['text']}"
+
+
+def zoom(chat, id, n):
+    T = len(chat.messages)
+    if n < 1 or n & (n - 1) or id % n or not 0 <= id < T or id + n > T:
+        raise ValueError(f"{id}+{n} isn't a line of this chat: n is a power of 2, id a multiple of n, and the chat holds {T} messages")
+    if n == 1:
+        return message(chat, id)
+    l, half = (n // 2).bit_length() - 1, n // 2
+    return chat.lines([(l, id // half), (l, id // half + 1)])
+
+
+def date(chat, id):
+    return chat.messages[id]["date"]
+
+
+TOOLS = [
+    {"name": "zoom", "description": "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole.",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}, "n": {"type": "integer"}}, "required": ["id", "n"]}},
+    {"name": "date", "description": "The date and time of message id.",
+     "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
+]
+
+
+def mcp(root):
+    for line in sys.stdin:
+        request = json.loads(line)
+        method, id = request.get("method"), request.get("id")
+        if id is None:
+            continue
+        if method == "initialize":
+            result = {"protocolVersion": request["params"]["protocolVersion"], "capabilities": {"tools": {}},
+                      "serverInfo": {"name": "chat", "version": "1"}}
+        elif method == "tools/list":
+            result = {"tools": TOOLS}
+        elif method == "tools/call":
+            chat = Chat(root).load()
+            args = request["params"].get("arguments") or {}
+            try:
+                if request["params"]["name"] == "zoom":
+                    text = zoom(chat, int(args["id"]), int(args["n"]))
+                else:
+                    text = date(chat, int(args["id"]))
+                result = {"content": [{"type": "text", "text": text}]}
+            except (ValueError, IndexError, KeyError) as error:
+                result = {"content": [{"type": "text", "text": str(error)}], "isError": True}
+        elif method == "ping":
+            result = {}
+        else:
+            print(json.dumps({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": method}}), flush=True)
+            continue
+        print(json.dumps({"jsonrpc": "2.0", "id": id, "result": result}, ensure_ascii=False), flush=True)
+
+
+def main():
+    command, args = (sys.argv[1:2] or [""])[0], sys.argv[2:]
+    if command in ("begin", "log"):
+        hook = json.load(sys.stdin)
+        if fresh():
+            (begin if command == "begin" else stop)(hook)
+    elif command == "turn":
+        turn()
+    elif command == "compact":
+        compact(args[0] if args else where())
+    elif command == "mcp":
+        mcp(args[0])
+    elif command == "view":
+        print(Chat(args[0] if args else where()).load().render())
+    else:
+        sys.exit(__doc__.strip())
+
+
+if __name__ == "__main__":
+    main()

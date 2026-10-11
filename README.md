@@ -53,6 +53,7 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 ```
 
 - **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for 30 minutes stops, and starts again with its conversation when you write.
+- **A DM is one chat that never ends.** Your DMs to hex work like Taelin's [OptChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449): every message is logged word for word in `chat/`, Haiku compresses the log into a tree of one-line summaries in the background, and each message starts a fresh session that sees those summaries instead of a history, opening any line back up to the words it came from. Nothing is compacted and nothing is lost. A message sent while hex is still working reaches that same session.
 - **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), your own rules in `AGENTS.md`, `schedules.json`, its memory and every conversation as markdown in `log/`. It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo that updates never mix with your files.
 - **One memory, with a timeline.** Every session notes what it learns and what happened in [OptMem](https://github.com/VictorTaelin/OptMem): plain text files, read back at the start of each session, with older memories summarized on the spot and still searchable word for word. Your rules live in `AGENTS.md`; everything else hex knows is in OptMem.
 - **Works with any Claude connector.** Every connector on your Claude account works in every hex session, with nothing to set up on the machine: Gmail, your calendar, [Executor](https://executor.sh) for many accounts behind one sign-in, [AgentMail](https://agentmail.to) for an inbox of its own. Sending, replying or deleting through any of them waits for your yes.
@@ -110,6 +111,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 ├── SOUL.md                         who it is
 ├── schedules.json                  recurring jobs, the hourly check included
 ├── memory/  log/                   its OptMem memory, every conversation as markdown
+├── chat/                           each DM's chat that never ends: its log, summary tree and view
 ├── vault/                          its saved secrets, encrypted
 ├── .env  state/                    bot tokens, thread lists, the vault key (never committed)
 └── .hex/                           hex itself: this repo
@@ -118,6 +120,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code
     │   ├── session                 how the hub starts each session
     │   ├── log                     saves each conversation to log/ as markdown
+    │   ├── chat                        logs a DM, compresses it, and builds what its next session sees
     │   ├── wake                    loads its memory as each session starts
     │   ├── live-status             shows its branches, upcoming jobs and sessions as each session starts
     │   ├── compacted               puts memory and the last turns back after a compaction
@@ -125,6 +128,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── transcribe              voice notes → text
     │   ├── vault                   asks you for secrets by link, signs in with them
     │   └── update                  pulls updates, verified before they go live
+    ├── chat/prompt.md              Taelin's OptChat prompt, for DM sessions and their compactions
     ├── plugin/                     the hooks every session loads
     ├── mods/scheduler/             sends schedules.json jobs to General
     ├── computer/setup              turns a Sprite into its computer
