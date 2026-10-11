@@ -28,6 +28,7 @@ from pathlib import Path
 
 NODE = 512
 VIEW = (64_000, 128_000)
+TAIL = 32_000
 CONTEXT = (16_000, 32_000)
 JOBS = 8
 TRIES = 5
@@ -71,6 +72,7 @@ class Chat:
         self.pending = set()
         self.view, self.folding = [], False
         self.context, self.trimming = [], False
+        self.frozen = []
         self.transcripts = {}
 
     def lock(self):
@@ -101,12 +103,13 @@ class Chat:
         self.folding = state.get("folding", False)
         self.context = [tuple(p) for p in state.get("context", [])]
         self.trimming = state.get("trimming", False)
+        self.frozen = [tuple(p) for p in state.get("frozen", [])]
         self.transcripts = state.get("transcripts", {})
         return self
 
     def save(self):
         state = {"view": self.view, "folding": self.folding, "context": self.context,
-                 "trimming": self.trimming, "transcripts": self.transcripts}
+                 "trimming": self.trimming, "frozen": self.frozen, "transcripts": self.transcripts}
         tmp = self.root / "view.json.tmp"
         tmp.write_text(json.dumps(state) + "\n")
         os.replace(tmp, self.root / "view.json")
@@ -232,6 +235,18 @@ class Chat:
 
     def render(self):
         return f"<chat>\n{self.lines(self.view, self.recent())}\n</chat>"
+
+    def split(self):
+        """The view as a head that stays byte for byte the same, so every turn reads it from
+        the cache, and the lines after it. The head moves up to the last settled line only
+        when a batch merges inside it or the settled lines after it pass TAIL."""
+        whole = self.recent()
+        settled = next((k for k, (l, i) in enumerate(self.view) if (l, i) not in self.nodes or not l and i >= whole), len(self.view))
+        n = len(self.frozen)
+        if not n or self.view[:n] != self.frozen or size(self.lines(self.view[n:settled])) > TAIL:
+            n = settled
+            self.frozen = self.view[:n]
+        return self.lines(self.view[:n], whole), self.lines(self.view[n:], whole)
 
     def seen(self, end):
         """The compaction view for a node ending at message end: the lines before it, up to
@@ -467,17 +482,24 @@ def background(root):
 
 
 def turn():
-    """What a fresh session starts from: the chat logged and summarized up to now, then
-    the system prompt and the view, in one file for --append-system-prompt-file."""
+    """What a fresh session starts from: the chat logged and summarized up to now, then the
+    system prompt and the view's head in turn.md for --append-system-prompt-file, and the
+    rest of the view in tail/CLAUDE.md, which Claude Code puts in the first message, past
+    the system prompt's cache mark."""
     root = where()
     chat = Chat(root)
     with chat.lock():
         chat.load()
         log(chat)
+        head, tail = chat.split()
         chat.save()
     background(root)
+    (root / "tail").mkdir(exist_ok=True)
+    fence = "`" * max(3, 1 + max(map(len, re.findall(r"`+", tail)), default=0))
+    (root / "tail" / "CLAUDE.md").write_text(
+        f"The view's newest lines, after the <chat> in the system prompt:\n\n{fence}\n<chat>\n{tail}\n</chat>\n{fence}\n")
     out = root / "turn.md"
-    out.write_text(f"{PROMPT.read_text()}\n{chat.render()}\n")
+    out.write_text(f"{PROMPT.read_text()}\n<chat>\n{head}\n</chat>\n")
     print(out)
 
 

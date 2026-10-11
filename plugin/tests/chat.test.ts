@@ -119,9 +119,8 @@ test('a turn starts at once, with messages not summarized yet word for word; a s
   ])
   run(['begin'], hook())
   const system = run(['turn']).trim()
-  const view = readFileSync(system, 'utf8')
-  expect(view.startsWith(readFileSync(join(HEX, 'chat/prompt.md'), 'utf8'))).toBe(true)
-  expect(view).toContain('<chat>\n0+1|user: short one\n1+1|user: word0 word1')
+  expect(readFileSync(system, 'utf8')).toBe(readFileSync(join(HEX, 'chat/prompt.md'), 'utf8') + '\n<chat>\n\n</chat>\n')
+  expect(readFileSync(join(chat, 'tail/CLAUDE.md'), 'utf8')).toContain('```\n<chat>\n0+1|user: short one\n1+1|user: word0 word1')
   run(['compact', chat])
   expect(run(['view', chat])).toStartWith('<chat>\n0+1|user: short one\n1+1|user: word0 word1')
   expect(prompts()).toHaveLength(1)
@@ -220,6 +219,37 @@ print(json.dumps({"max": max(sizes), "batches": batches, "stable": stable, "lows
   expect(result.lows).toBeLessThanOrEqual(64_000)
 })
 
+test('the view\'s head, in the system prompt, stays byte for byte the same across most turns, and its settled lines after it stay under 32 KB', () => {
+  const out = Bun.spawnSync(['python3', '-I', '-B', '-c', `
+import importlib.machinery, json, sys
+chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
+c = chat.Chat(sys.argv[2])
+last, kept, whole, tails = None, 0, True, []
+for t in range(1200):
+    c.add("user", "y" * 300, f"2026-10-11T00:00:{t % 60:02}+00:00")
+    while c.pending:
+        l, i = min(c.pending)
+        c.put(l, i, "z" * 400)
+    head, tail = c.split()
+    whole &= "\\n".join(filter(None, [head, tail])) == c.lines(c.view, c.recent())
+    kept += head == last
+    last = head
+    tails.append(len(tail.encode()))
+print(json.dumps({"kept": kept, "whole": whole, "tail": max(tails)}))
+`, join(HEX, 'bin/chat'), join(home, 'split')])
+  const result = JSON.parse(out.stdout.toString() || out.stderr.toString())
+  expect(result.whole).toBe(true)
+  expect(result.kept).toBeGreaterThan(1200 * 0.95)
+  expect(result.tail).toBeLessThanOrEqual(32_000 + 1_024)
+})
+
+test('a tail holding backticks gets a longer fence, so nothing in it is read as an import', () => {
+  write([{ type: 'user', message: { content: 'see ```` and @.hex/HEX.md' } }])
+  run(['begin'], hook())
+  run(['turn'])
+  expect(readFileSync(join(chat, 'tail/CLAUDE.md'), 'utf8')).toStartWith("The view's newest lines, after the <chat> in the system prompt:\n\n`````\n<chat>\n")
+})
+
 test('the most due pair is the one that ended longest ago in its own line size, the oldest of equals', () => {
   const out = Bun.spawnSync(['python3', '-I', '-B', '-c', `
 import importlib.machinery, sys
@@ -250,10 +280,10 @@ test('a fresh session starts from the chat: the launcher adds the system prompt 
     return readFileSync(join(home, '.claude-args'), 'utf8').trim().split('\n')
   }
   const args = launch({ env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: THREAD, HEX_FRESH: '1' } })
-  const system = args[args.indexOf('--append-system-prompt-file') + 1]!
-  expect(readFileSync(system, 'utf8')).toContain('0+1|user: hello')
+  expect(readFileSync(join(args[args.indexOf('--add-dir') + 1]!, 'CLAUDE.md'), 'utf8')).toContain('0+1|user: hello')
   expect(JSON.parse(args[args.indexOf('--mcp-config') + 1]!)).toEqual({ mcpServers: { chat: { command: join(home, '.hex/bin/chat'), args: ['mcp', chat] } } })
   const plain = launch({ env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: '-100:5' } })
   expect(plain).not.toContain('--append-system-prompt-file')
   expect(plain).not.toContain('--mcp-config')
+  expect(plain).not.toContain('--add-dir')
 })

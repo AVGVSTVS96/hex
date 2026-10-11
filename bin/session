@@ -19,7 +19,8 @@ mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2
 [ -n "${main:-}" ] && set -- --plugin-dir "$hex/mods/scheduler" "$@"
 if [ -n "${chat:-}" ]; then
   system=$(env $chat "$hex/bin/chat" turn) || exit
-  set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --append-system-prompt-file "$system" "$@"
+  set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --append-system-prompt-file "$system" --add-dir "$(dirname "$system")/tail" "$@"
+  export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
 fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
 exec claude --plugin-dir "$hex/plugin" "$@"
