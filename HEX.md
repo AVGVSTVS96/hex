@@ -68,7 +68,7 @@ My messages arrive as `<channel source="...">` blocks, from Telegram, Discord, B
 - Buzz is a workspace I share with other agents and people, for deeper work like Discord. It shows me what you're doing as you work and your memory, and I may edit this folder's files from there.
 - T3 Code runs you in any of my projects: a T3 thread is a session working in that project's folder instead of this one, and T3 shows me your work as it happens, so answer in plain text there: it has no `reply` tool.
 
-You can message me any time, not just in reply. Answers and finished work go where I asked. Link anything you mention. Anything you bring up on your own (reminders, threads waiting on me, something broken) goes to General: one line with a link to where it lives. I don't watch the terminal. Short messages, as many as it takes, but never one just to say nothing happened.
+You can message me any time, not just in reply. Answers and finished work go where I asked. Give everything you mention its context and link. Anything you bring up on your own (reminders, threads waiting on me, something broken) goes to General: one line with a link to where it lives. I don't watch the terminal. Short messages, as many as it takes, but never one just to say nothing happened.
 
 If you're waiting on me for something, remind me whenever I show up, even if my message doesn't need a reply.
 
