@@ -181,6 +181,7 @@ test('pairs merge into their parent, which zoom opens again, down to the message
     { method: 'tools/call', params: { name: 'zoom', arguments: { id: 1, n: 2 } } },
   ])
   expect(list.tools.map((tool: { name: string }) => tool.name)).toEqual(['zoom', 'date'])
+  expect(list.tools.every((tool: { _meta: Record<string, boolean> }) => tool._meta['anthropic/alwaysLoad'])).toBe(true)
   expect(two.content[0].text).toMatch(/^0\+2\|sum .*\n2\+2\|sum /)
   expect(one.content[0].text).toBe(`user: ${words(120, 'm2w')}`)
   expect(when.content[0].text).toMatch(/^2026-10-11T/)
@@ -217,6 +218,25 @@ print(json.dumps({"max": max(sizes), "batches": batches, "stable": stable, "lows
   expect(result.batches).toBeGreaterThan(1)
   expect(result.stable).toBe(true)
   expect(result.lows).toBeLessThanOrEqual(64_000)
+})
+
+test('long tool output still waiting for its summaries weighs a line each, so it merges none of the chat before it', () => {
+  const out = Bun.spawnSync(['python3', '-I', '-B', '-c', `
+import importlib.machinery, json, sys
+chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
+c = chat.Chat(sys.argv[2])
+for t in range(150):
+    c.add("user", "y" * 300, "2026-10-11T00:00:00+00:00")
+    while c.pending:
+        l, i = min(c.pending)
+        c.put(l, i, "z" * 400)
+before = list(c.view)
+for t in range(40):
+    c.add("echo", "o" * 25_000, "2026-10-11T00:00:00+00:00")
+print(json.dumps({"kept": c.view[:len(before)] == before, "folding": c.folding}))
+`, join(HEX, 'bin/chat'), join(home, 'burst')])
+  const result = JSON.parse(out.stdout.toString() || out.stderr.toString())
+  expect(result).toEqual({ kept: true, folding: false })
 })
 
 test('the view\'s head, in the system prompt, stays byte for byte the same across most turns, and its settled lines after it stay under 32 KB', () => {

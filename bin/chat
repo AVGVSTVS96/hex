@@ -172,7 +172,9 @@ class Chat:
         return sorted(self.pending)
 
     def weight(self, lines):
-        return sum(size(self.text(*p)) for p in lines)
+        """What the lines will weigh once summarized: a line still waiting for its summary counts
+        no more than one, so a burst of long tool output can't make a batch merge the chat away."""
+        return sum(size(self.nodes[p]) if p in self.nodes else min(size(self.text(*p)), NODE) for p in lines)
 
     def fold(self, lines, low):
         """Merge the most due pair whose parent is built until the lines fit in low.
@@ -523,9 +525,10 @@ def date(chat, id):
 
 
 TOOLS = [
-    {"name": "zoom", "description": "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole.",
+    {"name": "zoom", "_meta": {"anthropic/alwaysLoad": True},
+     "description": "Open the line id+n of the view into the two lines of n/2 under it; n = 1 gives the message whole.",
      "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}, "n": {"type": "integer"}}, "required": ["id", "n"]}},
-    {"name": "date", "description": "The date and time of message id.",
+    {"name": "date", "_meta": {"anthropic/alwaysLoad": True}, "description": "The date and time of message id.",
      "inputSchema": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}},
 ]
 
