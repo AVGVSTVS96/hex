@@ -1,0 +1,43 @@
+#!/usr/bin/env bun
+import { spawnSync } from 'bun'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { homedir, tmpdir } from 'os'
+import { join, relative, resolve } from 'path'
+import { loaded } from './identity'
+
+// Claude Code reads its instruction files only when a session starts, resumes or
+// compacts, so a session that runs for days keeps the rules it started with.
+// SessionStart records what the session loaded; each prompt after that gets a diff
+// of whatever changed since.
+
+const room = 9500
+const home = resolve(import.meta.dir, '../..')
+const { session_id, hook_event_name } = JSON.parse(await Bun.stdin.text())
+const seen = join(process.env.TMPDIR ?? tmpdir(), `hex-rules-${session_id}.json`)
+
+const now = Object.fromEntries([
+  ...loaded(join(homedir(), '.claude/CLAUDE.md')),
+  ...loaded(join(home, 'AGENTS.md')),
+])
+
+if (hook_event_name !== 'SessionStart' && existsSync(seen)) {
+  const before: Record<string, string> = JSON.parse(readFileSync(seen, 'utf8'))
+  const changed = [...new Set([...Object.keys(before), ...Object.keys(now)])].filter(file => before[file] !== now[file])
+  if (changed.length) {
+    const scratch = mkdtempSync(join(tmpdir(), 'hex-rules-'))
+    const diffs = changed.map((file, i) => {
+      const name = file.startsWith(home) ? relative(home, file) : file.replace(homedir(), '~')
+      const old = join(scratch, `${i}`), next = join(scratch, `${i}.new`)
+      writeFileSync(old, before[file] ?? '')
+      writeFileSync(next, now[file] ?? '')
+      return spawnSync(['diff', '-u', '--label', name, '--label', name, old, next]).stdout.toString()
+    })
+    rmSync(scratch, { recursive: true })
+    const names = changed.map(file => file.replace(homedir(), '~'))
+    const body = diffs.join('\n')
+    console.log(`Your instruction files changed since this session loaded them. From now on, follow their new wording${
+      body.length <= room ? `; this is what changed:\n\n${body}` : `. The change is too long to show here, so read them again: ${names.join(', ')}`}`)
+  }
+}
+
+writeFileSync(seen, JSON.stringify(now))
