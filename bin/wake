@@ -1,19 +1,10 @@
 #!/bin/sh
-input=$(cat)
-session=$(printf '%s' "$input" | jq -r .session_id)
 here=$(cd "$(dirname "$0")" && pwd)
 memo="$here/../vendor/memo"
-[ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] || exit 0
 export LC_ALL=C
 
-# Claude Code puts at most 10,000 characters of a hook's output into context,
-# so plugin/hooks/hooks.json runs this once per chunk: `wake 1` … `wake <n> last`.
-n=${1:?usage: wake <chunk> [last]}
-last=${2:-}
-room=9000
-
-k=1 T=
-wake=$(
+whole() {
+  k=1 T=
   while :; do
     part=$("$memo" wake $k $T 2>&1)
     next=$(printf '%s\n' "$part" | sed -n 's/^Not awake yet\. Run: .* wake \([0-9]*\) \([0-9]*\)$/\1 \2/p')
@@ -22,7 +13,28 @@ wake=$(
     set -- $next
     k=$1 T=$2
   done
-)
+}
+
+if [ "${1:-}" = all ]; then
+  [ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] || exit 0
+  wake=$(whole)
+  [ -n "$wake" ] || exit 0
+  printf 'This is `.hex/vendor/memo wake`, run in full for you as this session started, so you don'"'"'t need to run it. Do what it says, to the end.\n\n%s\n' "$wake"
+  exit
+fi
+
+input=$(cat)
+session=$(printf '%s' "$input" | jq -r .session_id)
+[ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] && [ -z "${HEX_WAKE:-}" ] || exit 0
+
+# Claude Code puts at most 10,000 characters of a hook's output into context,
+# so plugin/hooks/hooks.json runs this once per chunk: `wake 1` … `wake <n> last`.
+# Sessions hex's launcher starts get the whole wake as a file instead (`wake all`, HEX_WAKE).
+n=${1:?usage: wake all | wake <chunk> [last]}
+last=${2:-}
+room=9000
+
+wake=$(whole)
 
 rest="${TMPDIR:-/tmp}/hex-wake-$session.txt"
 printf '%s\n' "$wake" | awk -v n="$n" -v last="$last" -v room="$room" -v rest="$rest" '

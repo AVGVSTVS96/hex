@@ -72,3 +72,55 @@ test('a wake longer than every slot points the last one at the rest', () => {
 test('says nothing when OptMem is not installed', () => {
   expect(hook(1)).toBe('')
 })
+
+test('`wake all` prints every part in order, as long as it runs, for the launcher to hand over as a file', () => {
+  const wake = [
+    notes(0, 200) + 'Not awake yet. Run: /x/memo wake 2 400\n',
+    'Your memory, part 2 of 2\n' + notes(200, 200) + 'You are awake.\n',
+  ]
+  memo(wake)
+  const run = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...process.env, MEMORY_DIR: join(home, 'memory') } })
+  const out = run.stdout.toString()
+  expect(out.length).toBeGreaterThan(LIMIT * 6)
+  expect(out).toStartWith('This is `.hex/vendor/memo wake`, run in full for you')
+  expect(body(out)).toBe(wake.join('').replace('Not awake yet. Run: /x/memo wake 2 400\n', ''))
+})
+
+test('the hooks say nothing in a session the launcher already handed its wake', () => {
+  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
+  const run = Bun.spawnSync([join(home, '.hex/bin/wake'), '1'], {
+    cwd: home,
+    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, source: 'startup' })),
+    env: { ...process.env, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, HEX_WAKE: join(home, 'state/wake/CLAUDE.md') },
+  })
+  expect(run.stdout.toString()).toBe('')
+})
+
+test('the launcher writes the whole wake where Claude Code loads it at startup, and tells the hooks so', () => {
+  copyFileSync(join(BIN, 'session'), join(home, '.hex/bin/session'))
+  mkdirSync(join(home, '.claude'))
+  writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { MEMORY_DIR: join(home, 'memory') } }))
+  mkdirSync(join(home, 'fake'))
+  writeFileSync(join(home, 'fake/claude'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${home}/args"\nenv > "${home}/env"\n`)
+  chmodSync(join(home, 'fake/claude'), 0o755)
+  const launch = () => {
+    Bun.spawnSync([join(home, '.hex/bin/session'), '--bg', '--settings', JSON.stringify({ env: { HEX_THREAD: '-100:5' } })], {
+      cwd: home,
+      env: { ...process.env, PATH: `${join(home, 'fake')}:${process.env.PATH}` },
+    })
+    return { args: readFileSync(join(home, 'args'), 'utf8').trim().split('\n'), env: readFileSync(join(home, 'env'), 'utf8') }
+  }
+  const wake = notes(0, 400) + 'You are awake.\n'
+  memo([wake])
+  const settings = (args: string[]) => JSON.parse(args[args.indexOf('--settings') + 1]!)
+  const { args, env } = launch()
+  const dir = args[args.indexOf('--add-dir') + 1]!
+  expect(dir).toBe(join(home, 'state/wake'))
+  expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
+  expect(settings(args).env).toEqual({ HEX_THREAD: '-100:5', HEX_WAKE: join(dir, 'CLAUDE.md') })
+  expect(env).toContain('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1')
+  writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\nexit 1\n')
+  const without = launch()
+  expect(without.args).not.toContain(join(home, 'state/wake'))
+  expect(settings(without.args).env).toEqual({ HEX_THREAD: '-100:5' })
+})

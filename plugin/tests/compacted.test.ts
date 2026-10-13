@@ -46,6 +46,11 @@ function hook(part: 'memory' | 'turns', transcriptPath = join(home, 'none.jsonl'
   return out
 }
 
+test('leaves memory to the wake file in a session the launcher handed one', () => {
+  memo('#0 2026-10-06 First note.\nYou are awake.\n')
+  expect(hook('memory', undefined, { HEX_WAKE: join(home, 'state/wake/CLAUDE.md') })).toBe('')
+})
+
 test('puts all of wake back when it fits', () => {
   const wake = '#0 2026-10-06 First note.\n#1 2026-10-06 Second note.\nYou are awake.\n'
   memo(wake)

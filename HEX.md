@@ -51,7 +51,7 @@ When you spawn one, write: `You are a subagent. Don't run memo.`
 
 ### In hex
 
-A hook runs `.hex/vendor/memo wake` at the start of every session and puts all of it in your context, so don't run it again. If it isn't there, run it yourself before any other tool call. Every hex session shares this memory.
+hex runs `.hex/vendor/memo wake` at the start of every session and puts all of it in your context, so don't run it again. If it isn't there, run it yourself before any other tool call. Every hex session shares this memory.
 
 **When I state a rule or preference**, add it to `AGENTS.md` right away, in my words: a few words in the best existing line, or one new line. **When I correct a fact**, note the correction; the latest memory is the truth.
 

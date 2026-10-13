@@ -2,6 +2,16 @@
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 [ "$(pwd -P)" = "$(cd "$home" && pwd -P)" ] || away=1
+# Memory goes in whole as a file Claude Code loads at startup and again after compacting, since a hook's output is cut past 10,000 characters.
+wake="$home/state/wake"
+mkdir -p "$wake"
+MEMORY_DIR=$(jq -r '.env.MEMORY_DIR // empty' "$home/.claude/settings.json" 2>/dev/null) "$hex/bin/wake" all > "$wake/CLAUDE.md.$$"
+if [ -s "$wake/CLAUDE.md.$$" ]; then
+  mv "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
+  woke="$wake/CLAUDE.md"
+else
+  rm -f "$wake/CLAUDE.md.$$"
+fi
 for arg; do
   shift
   if [ "${flag:-}" = --settings ]; then
@@ -9,6 +19,8 @@ for arg; do
     chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
     [ -n "${away:-}" ] && arg=$(jq -c --arg home "$home" --argjson hub "$arg" '.permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub' "$home/.claude/settings.json")
+    # A background session gets only the environment its settings give it, so the hooks learn here that memory came as a file.
+    [ -n "${woke:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg woke "$woke" '.env.HEX_WAKE = $woke')
   fi
   set -- "$@" "$arg"
   flag=$arg
@@ -17,10 +29,11 @@ done
 mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "$mode" ] && set -- --permission-mode "$mode" "$@"
 [ -n "${main:-}" ] && set -- --plugin-dir "$hex/mods/scheduler" "$@"
+[ -n "${woke:-}" ] && set -- --add-dir "$wake" "$@"
 if [ -n "${chat:-}" ]; then
   system=$(env $chat "$hex/bin/chat" turn) || exit
   set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --append-system-prompt-file "$system" --add-dir "$(dirname "$system")/tail" "$@"
-  export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
 fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
+export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
 exec claude --plugin-dir "$hex/plugin" "$@"
