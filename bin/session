@@ -42,5 +42,7 @@ if [ -n "${chat:-}" ]; then
   set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --system-prompt-file "$system" --add-dir "$(dirname "$system")/tail" --disallowedTools Artifact,AskUserQuestion,EnterWorktree,Workflow,ScheduleWakeup,ReportFindings "$@"
 fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
+# With several Claude accounts pooled by tokenmaxxing (github.com/anaclumos/tokenmaxxing), each session starts on the one with the most headroom left.
+[ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
 exec claude --plugin-dir "$hex/plugin" "$@"
