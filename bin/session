@@ -35,6 +35,9 @@ done
 mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "$mode" ] && set -- --permission-mode "$mode" "$@"
 [ -n "${main:-}" ] && set -- --plugin-dir "$hex/mods/scheduler" "$@"
+# The main session can run a stronger model than the topics and agents it hands work to.
+main_model=$(jq -r '.env.HEX_MAIN_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
+[ -n "${main:-}" ] && [ -n "$main_model" ] && set -- --model "$main_model" "$@"
 [ -n "${woke:-}" ] && set -- --add-dir "$wake" "$@"
 if [ -n "${chat:-}" ]; then
   # The chat's prompt replaces Claude Code's, which names each background job's own folder and so would end the cache before the view.
