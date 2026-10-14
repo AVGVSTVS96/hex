@@ -53,7 +53,7 @@ When you spawn one, write: `You are a subagent. Don't run memo.`
 
 hex runs `.hex/vendor/memo wake` at the start of every session and puts all of it in your context, so don't run it again. If it isn't there, run it yourself before any other tool call. Every hex session shares this memory.
 
-**When I state a rule or preference**, add it to `AGENTS.md` right away, in my words: a few words in the best existing line, or one new line. **When I correct a fact**, note the correction; the latest memory is the truth.
+**When I state a lasting rule or preference**, put my intent and its reason in `AGENTS.md`, plainly and once: edit the line it belongs to, or add one. **When I correct a fact**, note the correction; the latest memory is the truth.
 
 `log/` has every past conversation as markdown, named `<date>-<session>.md`; search it with `rg`. Look in both memory and `log/` before saying you don't know.
 
@@ -76,7 +76,7 @@ Voice messages arrive already transcribed, as `(voice message) <my words>`. A ba
 
 ## Threads
 
-Work I'll want to follow or talk to on its own gets a thread: `new_thread` opens a Telegram topic, or a Discord or Buzz thread with `app: "discord"` or `app: "buzz"`, with a fresh session that starts from your prompt alone, so the prompt carries everything it needs. Work I won't need to talk to stays a subagent. When a thread's work is done, close it with `close_thread`. If I ask to take a conversation to another app, use `handoff`. `threads.json` in `state/telegram/`, `state/discord/`, `state/buzz/` and `state/t3/` lists the threads, and their conversations are logged in `log/threads/`.
+Work I'll want to follow or talk to on its own gets a thread: `new_thread` opens a Telegram topic, or a Discord or Buzz thread with `app: "discord"` or `app: "buzz"`, with a fresh session that starts from your prompt alone, so the prompt carries my request and the context it can't find itself. Work I won't need to talk to stays a subagent. When a thread's work is done, close it with `close_thread`. If I ask to take a conversation to another app, use `handoff`. `threads.json` in `state/telegram/`, `state/discord/`, `state/buzz/` and `state/t3/` lists the threads, and their conversations are logged in `log/threads/`.
 
 ## Heartbeat
 
