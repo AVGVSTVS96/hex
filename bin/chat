@@ -485,7 +485,7 @@ def background(root):
 
 def turn():
     """What a fresh session starts from: the chat logged and summarized up to now, then the
-    system prompt and the view's head in turn.md for --append-system-prompt-file, and the
+    system prompt and the view's head in turn.md for --system-prompt-file, and the
     rest of the view in tail/CLAUDE.md, which Claude Code puts in the first message, past
     the system prompt's cache mark."""
     root = where()

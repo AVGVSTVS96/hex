@@ -301,9 +301,10 @@ test('a fresh session starts from the chat: the launcher adds the system prompt 
   }
   const args = launch({ env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: THREAD, HEX_FRESH: '1' } })
   expect(readFileSync(join(args[args.indexOf('--add-dir') + 1]!, 'CLAUDE.md'), 'utf8')).toContain('0+1|user: hello')
+  expect(readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8')).toStartWith('You are hex')
   expect(JSON.parse(args[args.indexOf('--mcp-config') + 1]!)).toEqual({ mcpServers: { chat: { command: join(home, '.hex/bin/chat'), args: ['mcp', chat] } } })
   const plain = launch({ env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: '-100:5' } })
-  expect(plain).not.toContain('--append-system-prompt-file')
+  expect(plain).not.toContain('--system-prompt-file')
   expect(plain).not.toContain('--mcp-config')
   expect(plain).not.toContain('--add-dir')
 })
