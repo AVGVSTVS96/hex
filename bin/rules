@@ -32,8 +32,10 @@ if (hook_event_name !== 'SessionStart' && existsSync(seen)) {
     rmSync(scratch, { recursive: true })
     const names = changed.map(file => file.replace(homedir(), '~'))
     const body = diffs.join('\n')
-    console.log(`Your instruction files changed since this session loaded them. From now on, follow their new wording${
-      body.length <= room ? `; this is what changed:\n\n${body}` : `. The change is too long to show here, so read them again: ${names.join(', ')}`}`)
+    const lead = 'Your instruction files changed since this session loaded them. From now on, follow their new wording'
+    // A chat's next session starts from the new files anyway, so a change too long to show waits for it.
+    if (body.length <= room) console.log(`${lead}; this is what changed:\n\n${body}`)
+    else if (!(process.env.HEX_FRESH && process.env.HEX_THREAD)) console.log(`${lead}. The change is too long to show here, so read them again: ${names.join(', ')}`)
   }
 }
 

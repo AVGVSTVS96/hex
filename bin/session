@@ -17,12 +17,16 @@ for arg; do
   if [ "${flag:-}" = --settings ]; then
     main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
     chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
+    voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
     [ -n "${away:-}" ] && arg=$(jq -c --arg home "$home" --argjson hub "$arg" '.permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub' "$home/.claude/settings.json")
     # A background session gets only the environment its settings give it, so the hooks learn here that memory came as a file.
     [ -n "${woke:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg woke "$woke" '.env.HEX_WAKE = $woke')
     # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.
-    [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files')
+    # A chat turn lists skills by name only; the Skill tool still loads any of them.
+    [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files | .skillListingBudgetFraction = 0.0001')
+    # The caller waits on every turn, so a call runs a fast model. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
+    [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c '{model: "claude-sonnet-5-5", effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
   fi
   set -- "$@" "$arg"
   flag=$arg
@@ -35,7 +39,7 @@ mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2
 if [ -n "${chat:-}" ]; then
   # The chat's prompt replaces Claude Code's, which names each background job's own folder and so would end the cache before the view.
   system=$(env $chat "$hex/bin/chat" turn) || exit
-  set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --system-prompt-file "$system" --add-dir "$(dirname "$system")/tail" "$@"
+  set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --system-prompt-file "$system" --add-dir "$(dirname "$system")/tail" --disallowedTools Artifact,AskUserQuestion,EnterWorktree,Workflow,ScheduleWakeup,ReportFindings "$@"
 fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1

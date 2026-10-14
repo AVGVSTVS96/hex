@@ -11,7 +11,7 @@ import { loaded } from './identity'
 // in chunks under the 10,000 characters a hook's output may put into context.
 
 const home = resolve(import.meta.dir, '../..')
-const intro = 'Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.'
+const intro = 'The user\'s instruction files are below. Follow them as written; they take precedence over default behavior.'
 const room = 9000
 
 export const files = () => [
