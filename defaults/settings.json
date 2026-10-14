@@ -7,7 +7,14 @@
     "deny": [
       "Read(./.env)",
       "Read(./state/*/.env)",
-      "Edit(./state/**)"
+      "Edit(./state/**)",
+      "Artifact",
+      "AskUserQuestion",
+      "ReportFindings"
     ]
-  }
+  },
+  "worktree": {
+    "bgIsolation": "none"
+  },
+  "skillListingBudgetFraction": 0.004
 }
