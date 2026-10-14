@@ -82,7 +82,7 @@ test('`wake all` prints every part in order, as long as it runs, for the launche
   const run = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...process.env, MEMORY_DIR: join(home, 'memory') } })
   const out = run.stdout.toString()
   expect(out.length).toBeGreaterThan(LIMIT * 6)
-  expect(out).toStartWith('This is `.hex/vendor/memo wake`, run in full for you')
+  expect(out).toStartWith('This is your memory: `.hex/vendor/memo wake`, run in full for you')
   expect(body(out)).toBe(wake.join('').replace('Not awake yet. Run: /x/memo wake 2 400\n', ''))
 })
 
