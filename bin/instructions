@@ -1,0 +1,54 @@
+#!/usr/bin/env bun
+import { readFileSync, writeFileSync } from 'fs'
+import { homedir, tmpdir } from 'os'
+import { join, resolve } from 'path'
+import { loaded } from './identity'
+
+// The instruction files Claude Code loads into a hex session, rendered the way it
+// renders them. A DM or voice turn carries them at the end of its system prompt,
+// where the cache reads them, and has Claude Code skip them (claudeMdExcludes),
+// which also keeps them from its subagents, so SubagentStart hands them over here,
+// in chunks under the 10,000 characters a hook's output may put into context.
+
+const home = resolve(import.meta.dir, '../..')
+const intro = 'Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.'
+const room = 9000
+
+export const files = () => [
+  ...loaded(join(homedir(), '.claude/CLAUDE.md')).map(([path, text]) => ({ path, text, kind: "user's private global instructions for all projects" })),
+  ...loaded(join(home, 'AGENTS.md')).map(([path, text]) => ({ path, text, kind: 'project instructions, checked into the codebase' })),
+]
+
+export function rendered() {
+  const all = files()
+  return all.length ? [intro, ...all.map(file => `Contents of ${file.path} (${file.kind}):\n\n${file.text.trim()}`)].join('\n\n') : ''
+}
+
+function chunks(text: string) {
+  const out = ['']
+  for (const line of text.split('\n')) {
+    if (out.at(-1) && out.at(-1)!.length + line.length + 1 > room) out.push('')
+    out[out.length - 1] += `${line}\n`
+  }
+  return out
+}
+
+function subagent(n: number, last: boolean) {
+  const { session_id } = JSON.parse(readFileSync(0, 'utf8'))
+  const parts = chunks(rendered())
+  if (!parts[n - 1]?.trim()) return
+  let text = `Your instruction files, in ${parts.length} parts that may arrive out of order; this is part ${n} of ${parts.length}. Read them in order.\n\n${parts[n - 1]}`
+  if (last && parts.length > n) {
+    const rest = join(process.env.TMPDIR ?? tmpdir(), `hex-instructions-${session_id}.md`)
+    writeFileSync(rest, parts.slice(n).join(''))
+    text += `\nThat's all the hooks can show. Read parts ${n + 1} to ${parts.length} from ${rest}, and follow them.\n`
+  }
+  console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: text } }))
+}
+
+if (import.meta.main) {
+  const [command, flag] = process.argv.slice(2)
+  if (command === 'paths') console.log(JSON.stringify(files().map(file => file.path)))
+  else if (!command) console.log(rendered())
+  else if (process.env.HEX_FRESH && process.env.HEX_THREAD) subagent(Number(command), flag === 'last')
+}

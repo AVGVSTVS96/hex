@@ -485,9 +485,9 @@ def background(root):
 
 def turn():
     """What a fresh session starts from: the chat logged and summarized up to now, then the
-    system prompt and the view's head in turn.md for --system-prompt-file, and the
-    rest of the view in tail/CLAUDE.md, which Claude Code puts in the first message, past
-    the system prompt's cache mark."""
+    system prompt, the view's head and the user's instruction files in turn.md for
+    --system-prompt-file, and the rest of the view in tail/CLAUDE.md, which Claude Code
+    puts in the first message, past the system prompt's cache mark."""
     root = where()
     chat = Chat(root)
     with chat.lock():
@@ -501,7 +501,8 @@ def turn():
     (root / "tail" / "CLAUDE.md").write_text(
         f"The view's newest lines, after the <chat> in the system prompt:\n\n{fence}\n<chat>\n{tail}\n</chat>\n{fence}\n")
     out = root / "turn.md"
-    out.write_text(f"{PROMPT.read_text()}\n<chat>\n{head}\n</chat>\n")
+    rules = subprocess.run([HEX / "bin" / "instructions"], capture_output=True, text=True, check=True).stdout
+    out.write_text(f"{PROMPT.read_text()}\n<chat>\n{head}\n</chat>\n\n{rules}")
     print(out)
 
 

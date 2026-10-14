@@ -12,7 +12,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'rules-'))
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
   mkdirSync(join(home, '.claude'))
-  for (const script of ['rules', 'identity']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
+  for (const script of ['rules', 'identity', 'instructions']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
   writeFileSync(join(home, 'AGENTS.md'), '@.hex/HEX.md\n\n- Keep it short.\n')
   writeFileSync(join(home, '.hex/HEX.md'), '# How you work\n\nAnswer in plain words.\n')
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')

@@ -21,6 +21,8 @@ for arg; do
     [ -n "${away:-}" ] && arg=$(jq -c --arg home "$home" --argjson hub "$arg" '.permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub' "$home/.claude/settings.json")
     # A background session gets only the environment its settings give it, so the hooks learn here that memory came as a file.
     [ -n "${woke:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg woke "$woke" '.env.HEX_WAKE = $woke')
+    # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.
+    [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files')
   fi
   set -- "$@" "$arg"
   flag=$arg

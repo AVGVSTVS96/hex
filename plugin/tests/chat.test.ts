@@ -17,7 +17,12 @@ beforeEach(() => {
   mkdirSync(join(home, '.hex/chat'))
   copyFileSync(join(HEX, 'bin/chat'), join(home, '.hex/bin/chat'))
   copyFileSync(join(HEX, 'bin/session'), join(home, '.hex/bin/session'))
+  for (const script of ['instructions', 'identity']) copyFileSync(join(HEX, 'bin', script), join(home, '.hex/bin', script))
   copyFileSync(join(HEX, 'chat/prompt.md'), join(home, '.hex/chat/prompt.md'))
+  mkdirSync(join(home, '.claude'))
+  writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')
+  writeFileSync(join(home, 'AGENTS.md'), '@.hex/HEX.md\n\n- Keep it short.\n')
+  writeFileSync(join(home, '.hex/HEX.md'), 'Answer in plain words.\n')
   chat = join(home, 'chat', `telegram-${THREAD}`)
   transcript = join(home, 'transcript.jsonl')
   writeFileSync(join(home, 'calls'), '')
@@ -42,12 +47,30 @@ for line in sys.stdin:
 
 const env = (extra: Record<string, string> = {}) => ({
   ...process.env,
+  HOME: home,
   HEX_FRESH: '1',
   HEX_CHANNEL: CHANNEL,
   HEX_THREAD: THREAD,
   HEX_CHAT_CLAUDE: join(home, 'claude'),
   ...extra,
 })
+
+const instructions = () => `Codebase and user instructions are shown below. Be sure to adhere to these instructions. IMPORTANT: These instructions OVERRIDE any default behavior and you MUST follow them exactly as written.
+
+Contents of ${home}/.claude/CLAUDE.md (user's private global instructions for all projects):
+
+# Global
+
+Contents of ${home}/AGENTS.md (project instructions, checked into the codebase):
+
+@.hex/HEX.md
+
+- Keep it short.
+
+Contents of ${home}/.hex/HEX.md (project instructions, checked into the codebase):
+
+Answer in plain words.
+`
 
 function run(args: string[], input = '', extra: Record<string, string> = {}) {
   const result = Bun.spawnSync([join(home, '.hex/bin/chat'), ...args], { stdin: Buffer.from(input), env: env(extra) })
@@ -119,7 +142,7 @@ test('a turn starts at once, with messages not summarized yet word for word; a s
   ])
   run(['begin'], hook())
   const system = run(['turn']).trim()
-  expect(readFileSync(system, 'utf8')).toBe(readFileSync(join(HEX, 'chat/prompt.md'), 'utf8') + '\n<chat>\n\n</chat>\n')
+  expect(readFileSync(system, 'utf8')).toBe(readFileSync(join(HEX, 'chat/prompt.md'), 'utf8') + '\n<chat>\n\n</chat>\n\n' + instructions())
   expect(readFileSync(join(chat, 'tail/CLAUDE.md'), 'utf8')).toContain('```\n<chat>\n0+1|user: short one\n1+1|user: word0 word1')
   run(['compact', chat])
   expect(run(['view', chat])).toStartWith('<chat>\n0+1|user: short one\n1+1|user: word0 word1')
@@ -285,7 +308,7 @@ print(lines)
   expect(out.stdout.toString().trim()).toBe('[(2, 0), (2, 1), (1, 4)]')
 })
 
-test('a fresh session starts from the chat: the launcher adds the system prompt file and the zoom and date tools', () => {
+test('a fresh session starts from the chat: the launcher adds the system prompt file with the instruction files, has Claude Code skip its own copy of them, and adds the zoom and date tools', () => {
   writeFileSync(join(home, '.claude-args'), '')
   mkdirSync(join(home, 'fake'))
   writeFileSync(join(home, 'fake/claude'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${home}/.claude-args"\n`)
@@ -295,16 +318,36 @@ test('a fresh session starts from the chat: the launcher adds the system prompt 
   const launch = (settings: object) => {
     Bun.spawnSync([join(home, '.hex/bin/session'), '--bg', '--settings', JSON.stringify(settings)], {
       cwd: home,
-      env: { ...process.env, PATH: `${join(home, 'fake')}:${process.env.PATH}`, HEX_CHAT_CLAUDE: join(home, 'claude') },
+      env: { ...process.env, HOME: home, PATH: `${join(home, 'fake')}:${process.env.PATH}`, HEX_CHAT_CLAUDE: join(home, 'claude') },
     })
     return readFileSync(join(home, '.claude-args'), 'utf8').trim().split('\n')
   }
   const args = launch({ env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: THREAD, HEX_FRESH: '1' } })
   expect(readFileSync(join(args[args.indexOf('--add-dir') + 1]!, 'CLAUDE.md'), 'utf8')).toContain('0+1|user: hello')
-  expect(readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8')).toStartWith('You are hex')
+  const system = readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8')
+  expect(system).toStartWith('You are hex')
+  expect(system).toEndWith('</chat>\n\n' + instructions())
+  expect(JSON.parse(args[args.indexOf('--settings') + 1]!).claudeMdExcludes).toEqual([join(home, '.claude/CLAUDE.md'), join(home, 'AGENTS.md'), join(home, '.hex/HEX.md')])
   expect(JSON.parse(args[args.indexOf('--mcp-config') + 1]!)).toEqual({ mcpServers: { chat: { command: join(home, '.hex/bin/chat'), args: ['mcp', chat] } } })
   const plain = launch({ env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: '-100:5' } })
   expect(plain).not.toContain('--system-prompt-file')
+  expect(JSON.parse(plain[plain.indexOf('--settings') + 1]!).claudeMdExcludes).toBeUndefined()
   expect(plain).not.toContain('--mcp-config')
   expect(plain).not.toContain('--add-dir')
+})
+
+test('a subagent of a chat turn gets the instruction files Claude Code skipped, in hook-sized parts that say their order', () => {
+  writeFileSync(join(home, 'AGENTS.md'), Array.from({ length: 600 }, (_, i) => `- rule ${i} ${'x'.repeat(40)}`).join('\n') + '\n')
+  const part = (n: number, extra: Record<string, string> = {}) => {
+    const result = Bun.spawnSync([join(home, '.hex/bin/instructions'), String(n), ...(n === 6 ? ['last'] : [])], { stdin: Buffer.from(JSON.stringify({ session_id: 's' })), env: env({ TMPDIR: home, ...extra }) })
+    const out = result.stdout.toString()
+    return out ? JSON.parse(out).hookSpecificOutput.additionalContext as string : ''
+  }
+  const parts = [1, 2, 3, 4, 5, 6].map(n => part(n))
+  expect(parts.every(text => text.length < 10_000)).toBe(true)
+  expect(parts[0]).toStartWith('Your instruction files, in 4 parts that may arrive out of order; this is part 1 of 4.')
+  expect(parts.slice(4)).toEqual(['', ''])
+  const whole = Bun.spawnSync([join(home, '.hex/bin/instructions')], { env: env() }).stdout.toString()
+  expect(parts.slice(0, 4).map(text => text.slice(text.indexOf('\n\n') + 2)).join('')).toBe(whole)
+  expect(part(1, { HEX_FRESH: '' })).toBe('')
 })
