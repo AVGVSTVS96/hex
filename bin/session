@@ -22,7 +22,7 @@ for arg; do
     chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
     voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
-    [ -n "${away:-}" ] && arg=$(jq -c --arg home "$home" --argjson hub "$arg" '.permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub' "$home/.claude/settings.json")
+    [ -n "${away:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg home "$home" --slurpfile hex "$home/.claude/settings.json" '. as $hub | $hex[0] | .permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub')
     # A background session gets only the environment its settings give it, so the hooks learn here that memory came as a file.
     [ -n "${woke:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg woke "$woke" '.env.HEX_WAKE = $woke')
     # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.

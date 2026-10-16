@@ -44,7 +44,7 @@ afterEach(() => {
   process.env = { ...saved }
 })
 
-async function launch(channel: string, thread: string, options: Partial<Parameters<typeof startHub>[0]> = {}) {
+async function launch(channel: string, thread: string, options: Partial<Parameters<typeof startHub>[0]> = {}, cwd?: string) {
   hub = startHub({
     stateDir: join(home, 'state'),
     channel,
@@ -59,7 +59,8 @@ async function launch(channel: string, thread: string, options: Partial<Paramete
     },
     ...options,
   })
-  hub.deliver(thread, thread, { content: 'hi', meta: {} })
+  if (cwd) hub.open(thread, thread, 'hi', cwd)
+  else hub.deliver(thread, thread, { content: 'hi', meta: {} })
   for (let i = 0; i < 200 && !existsSync(join(home, 'launched')); i++) await Bun.sleep(25)
   const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
   const file = args[args.indexOf('--settings') + 1]!
@@ -94,4 +95,12 @@ test('a topic session, started by the hub, gets none of the chat or main additio
   expect(args).not.toContain(join(home, '.hex/mods/scheduler'))
   expect(settings.claudeMdExcludes).toBeUndefined()
   expect(settings.env.HEX_THREAD).toBe('-100:5')
+})
+
+test('a session started in another project gets the hex folder\'s settings under the hub\'s, in its file', async () => {
+  writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ model: 'opus', permissions: { deny: ['Read(./.env)'] }, env: { MEMORY_DIR: join(home, 'memory') } }))
+  const project = mkdtempSync(join(tmpdir(), 'project-'))
+  const { args, settings } = await launch('plugin:t3@hex', 't3:1', {}, project)
+  expect(settings).toMatchObject({ model: 'opus', permissions: { deny: [`Read(/${home}/.env)`] }, enabledPlugins: { 't3@hex': true }, env: { MEMORY_DIR: join(home, 'memory'), HEX_THREAD: 't3:1' } })
+  expect(args).toContain('--append-system-prompt')
 })
