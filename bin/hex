@@ -36,8 +36,7 @@ case "${1:-}" in
       done
       bun "$hex/channels/hub/serve.ts" &
       hub=$!
-      wait "$hub" || true
-      sleep 3
+      wait "$hub" || sleep 3
     done
     ;;
   start)
