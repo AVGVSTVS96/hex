@@ -4,6 +4,14 @@ transcript=$(printf '%s' "$input" | jq -r .transcript_path)
 session=$(printf '%s' "$input" | jq -r .session_id)
 [ -f "$transcript" ] || exit 0
 
+if [ "${1:-}" = new ]; then
+  seen="${XDG_RUNTIME_DIR:-/tmp}/hex-log-$session"
+  from=$(cat "$seen" 2>/dev/null || echo 0)
+  size=$(wc -c <"$transcript")
+  echo "$size" >"$seen"
+  tail -c +"$((from + 1))" "$transcript" | grep -q -e '"role":"user","content":"' -e '"type":"queued_command"' -e '__reply","input":' || exit 0
+fi
+
 said=terminal
 case "${HEX_CHANNEL:-}" in plugin:t3@*) said=t3 ;; esac
 started=$(jq -r 'select(.timestamp) | .timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%Y-%m-%d")' "$transcript" | head -n 1)
