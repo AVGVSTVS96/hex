@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from datetime import datetime
+from functools import cache
 from pathlib import Path
 
 home = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path(__file__).resolve().parents[2])
 now = time.time()
+day = 24 * 60 * 60
+header = re.compile(r"^## (.+?) · (\w+) · (\d{4}-\d{2}-\d{2} \d{2}:\d{2})$", re.M)
+speakers = {"me": "user", "assistant": "reply"}
 
 
 def ago(t):
@@ -49,15 +54,49 @@ def one_offs():
     return [line for _, line in sorted(upcoming)]
 
 
+@cache
+def agents():
+    return json.loads(subprocess.run(["claude", "agents", "--json"], capture_output=True, text=True, timeout=2).stdout)
+
+
 def sessions():
-    agents = json.loads(subprocess.run(["claude", "agents", "--json"], capture_output=True,
-                                       text=True, timeout=2).stdout)
     by_state = {}
-    for a in sorted(agents, key=lambda a: -a.get("startedAt", 0)):
+    for a in sorted(agents(), key=lambda a: -a.get("startedAt", 0)):
         if a.get("kind") == "background" and (a.get("cwd", "") + "/").startswith(f"{home}/"):
             by_state.setdefault(a.get("state", "?"), []).append(a.get("name") or a.get("id", "?"))
     return [f"- {state} ({len(names)}): " + ", ".join(names[:8]) + (f", +{len(names) - 8} more" if len(names) > 8 else "")
             for state, names in sorted(by_state.items())]
+
+
+def last_message(log):
+    with log.open("rb") as f:
+        f.seek(max(0, log.stat().st_size - 65536))
+        text = f.read().decode(errors="ignore")
+    heads = list(header.finditer(text))
+    for head, after in reversed(list(zip(heads, heads[1:] + [None]))):
+        who, via, at = head.groups()
+        if (who, via) != ("assistant", "terminal"):
+            said = " ".join(re.sub(r"[*`]", "", text[head.end():after and after.start()]).split())
+            return datetime.strptime(at, "%Y-%m-%d %H:%M").timestamp(), speakers.get(who, who), said
+
+
+def threads():
+    logs = {log.name[11:19]: log for log in [*(home / "log").glob("*.md"), *(home / "log/threads").glob("*.md")]
+            if now - log.stat().st_mtime < day}
+    try:
+        states = {a.get("sessionId"): a.get("state") for a in agents()}
+    except Exception:
+        states = {}
+    rows = []
+    for registry in (home / "state").glob("*/threads.json"):
+        for id, thread in json.loads(registry.read_text()).items():
+            log = logs.get(thread.get("session", "")[:8])
+            if log and (last := last_message(log)) and now - last[0] < day:
+                at, who, said = last
+                where = ", ".join(filter(None, [registry.parent.name, states.get(thread["session"])]))
+                rows.append((at, f"- {thread.get('name', id)} ({where}, {ago(at)}) {who}: "
+                                 f"{said[:100]}{'…' if len(said) > 100 else ''}"))
+    return [line for _, line in sorted(rows, reverse=True)]
 
 
 def section(title, read):
@@ -73,6 +112,7 @@ sections = "".join([
     section("Unmerged hex branches, newest first", lambda: capped(branches(), 8)),
     section("Upcoming one-off jobs in schedules.json", lambda: capped(one_offs(), 6)),
     section("hex background sessions by state (`claude agents`)", sessions),
+    section("Threads active in the last day, newest first, with their last message (log/)", lambda: capped(threads(), 8)),
 ])
 if sections:
     print(f"Live status, read just now ({datetime.now():%a %b %-d %-I:%M%p}). It's read from real state every session start; "

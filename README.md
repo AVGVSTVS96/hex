@@ -122,7 +122,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── log                     saves each conversation to log/ as markdown
     │   ├── chat                        logs a DM, compresses it, and builds what its next session sees
     │   ├── wake                    loads its memory as each session starts
-    │   ├── live-status             shows its branches, upcoming jobs and sessions as each session starts
+    │   ├── live-status             shows its branches, upcoming jobs, sessions and each active thread's last message as each session starts
     │   ├── compacted               puts memory and the last turns back after a compaction
     │   ├── send-gate               holds sends and deletes until you say yes
     │   ├── transcribe              voice notes → text
