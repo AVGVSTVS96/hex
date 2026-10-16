@@ -13,6 +13,8 @@ typist=me
 out="$dir/$started-$(printf '%s' "$session" | cut -c 1-8).md"
 mkdir -p "$dir"
 
+if command -v flock >/dev/null; then exec 9<"$dir"; flock 9; fi
+
 body=$(jq -r --arg typist "$typist" '
     def clock: .timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%Y-%m-%d %H:%M");
     def block($e; $who; $via; $text): "## \($who) · \($via) · \($e | clock)\n\n\($text)\n";
@@ -38,4 +40,4 @@ body=$(jq -r --arg typist "$typist" '
   ' --arg said "$said" "$transcript")
 [ -n "$body" ] || exit 0
 
-printf '# %s · session %s\n\n%s\n' "$started" "$session" "$body" > "$out.tmp" && mv "$out.tmp" "$out"
+printf '# %s · session %s\n\n%s\n' "$started" "$session" "$body" > "$out.$$" && mv "$out.$$" "$out"
