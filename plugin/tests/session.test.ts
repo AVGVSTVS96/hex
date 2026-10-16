@@ -28,7 +28,7 @@ beforeEach(() => {
   mkdirSync(join(home, 'config/jobs/job12345'), { recursive: true })
   writeFileSync(join(home, 'fake/claude'), `#!/bin/sh
 [ "$1 $2" = "agents --json" ] && echo '[]' && exit 0
-jq -cn '$ARGS.positional' --args -- "$@" > "${home}/launched"
+jq -cn '$ARGS.positional' --args -- "$@" > "${home}/launched.tmp" && mv "${home}/launched.tmp" "${home}/launched"
 echo "backgrounded · job12345 · test"
 exit 0
 `)
