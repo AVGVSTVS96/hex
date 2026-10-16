@@ -15,6 +15,9 @@ fi
 for arg; do
   shift
   if [ "${flag:-}" = --settings ]; then
+    # The hub hands its settings over as a file, which keeps its token out of the process list.
+    file=
+    [ -f "$arg" ] && file=$arg && arg=$(cat "$file")
     main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
     chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
     voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
@@ -27,6 +30,7 @@ for arg; do
     [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files | .skillListingBudgetFraction = 0.0001')
     # The caller waits on every turn, so a call runs a fast model. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
     [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c '{model: "claude-sonnet-5-5", effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
+    [ -n "$file" ] && (umask 077 && printf '%s\n' "$arg" > "$file.$$" && mv "$file.$$" "$file") && arg=$file
   fi
   set -- "$@" "$arg"
   flag=$arg
