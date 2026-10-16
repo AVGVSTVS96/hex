@@ -2,5 +2,7 @@
 set -eu
 hex=$(cd "$(dirname "$0")/.." && pwd)
 cd "$hex"
+# The update runs inside a hex session, whose HEX_* variables would steer the hooks under test.
+unset $(env | sed -n 's/^\(HEX_[A-Z_]*\)=.*/\1/p')
 bun test plugin/tests
 channels/scripts/verify
