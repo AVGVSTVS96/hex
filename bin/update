@@ -4,34 +4,43 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 cd "$hex"
 
+# hex and channels ship as one: a hex commit pins the channels commit it was checked with, and only that pair goes live.
 before=$(git rev-parse --short HEAD)
-git pull -q --ff-only
+current=$(git -C channels rev-parse HEAD)
+git fetch -q origin main
+incoming=$(git rev-parse origin/main)
+pin=$(git ls-tree "$incoming" channels | awk '{print $3}')
+
+if [ "$(git rev-parse HEAD)" = "$incoming" ] && [ "$current" = "$pin" ]; then
+  echo "up to date at $before"
+  exit 0
+fi
+
+git -C channels fetch -q origin
+check="$hex/worktrees/check"
+clean() {
+  rm -rf "$check"
+  git worktree prune
+  git -C "$hex/channels" worktree prune
+}
+clean
+trap clean EXIT
+git worktree add -q --detach "$check" "$incoming"
+rmdir "$check/channels"
+git -C channels worktree add -q --detach "$check/channels" "$pin"
+if ! output=$("$check/bin/check" 2>&1); then
+  printf '%s\n' "$output"
+  echo "not updated: hex $(git rev-parse --short "$incoming") with channels $(git -C channels rev-parse --short "$pin") fails bin/check"
+  exit 1
+fi
+
+git merge -q --ff-only "$incoming"
+git -C channels checkout -q --detach "$pin"
 "$hex/bin/optmem"
 
 if [ "$(jq -r '.memory.prompt // empty' "$home/schedules.json")" = 'Nightly memory pass, see "Memory" in .hex/HEX.md' ]; then
   jq 'del(.memory)' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
 fi
 
-git -C channels fetch -q origin main
-current=$(git -C channels rev-parse HEAD)
-incoming=$(git -C channels rev-parse origin/main)
-if [ "$current" != "$incoming" ]; then
-  check=$(mktemp -d)
-  trap 'git -C "$hex/channels" worktree remove --force "$check" 2>/dev/null; rm -rf "$check"' EXIT
-  git -C channels worktree add -q --detach "$check" "$incoming"
-  if ! output=$(PYTHONDONTWRITEBYTECODE=1 "$check/scripts/verify" 2>&1); then
-    printf '%s\n' "$output"
-    echo "channels not updated: $(git -C channels rev-parse --short "$incoming") fails scripts/verify"
-    exit 1
-  fi
-  git -C channels checkout -q --detach "$incoming"
-fi
-
-after=$(git rev-parse --short HEAD)
-if [ "$before" = "$after" ] && [ "$current" = "$incoming" ]; then
-  echo "up to date at $after"
-  exit 0
-fi
-
 "$hex/bin/hex" restart
-echo "updated hex $before..$after, channels $(git -C channels rev-parse --short "$current")..$(git -C channels rev-parse --short HEAD); the hub restarts on it once no call is live, and each session at its next rest"
+echo "updated hex $before..$(git rev-parse --short HEAD), channels $(git -C channels rev-parse --short "$current")..$(git -C channels rev-parse --short HEAD); the hub restarts on it once no call is live, and each session at its next rest"

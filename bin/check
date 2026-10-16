@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+hex=$(cd "$(dirname "$0")/.." && pwd)
+cd "$hex"
+bun test plugin/tests
+channels/scripts/verify
