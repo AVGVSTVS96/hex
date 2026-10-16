@@ -27,6 +27,8 @@ case "${1:-}" in
     set -a; . "$home/.env"; set +a
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
+    # The hooks bin/session's plugins load: a change to them renews sessions at their next rest.
+    export HEX_HOOKS="$hex/plugin/hooks/hooks.json:$hex/mods/scheduler/hooks/hooks.json"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     echo $$ > "$pidfile"
     trap 'kill "${hub:-}" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
