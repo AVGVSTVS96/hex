@@ -46,7 +46,7 @@ import {
 import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from 'fs'
 import { homedir } from 'os'
 import { basename, join, sep } from 'path'
-import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission } from '../../hub/hub.ts'
+import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { Ledger, type Ask, type MessageId } from '../../hub/ledger.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
@@ -402,6 +402,22 @@ function serve(token: string) {
     return { thread: post.id, link: link(post.id) }
   }
 
+  // A webhook posts each line under its speaker's name and avatar: the owner's, or the bot's.
+  async function backfill(thread: string, turns: Turn[]) {
+    const ch = inThread(await threadChannel(thread))
+    const parent = ch.parent
+    if (!isPostable(parent)) throw new Error(`${thread} hangs off no text or forum channel`)
+    const hook = (await parent.fetchWebhooks()).find(hook => hook.owner?.id === client.user!.id && hook.token) ?? (await parent.createWebhook({ name: 'hex' }))
+    const owner = await client.users.fetch(loadAccess().allowFrom[0]!)
+    const as = {
+      me: { username: owner.displayName, avatarURL: owner.displayAvatarURL() },
+      hex: { username: ch.guild.members.me?.displayName ?? client.user!.displayName, avatarURL: client.user!.displayAvatarURL() },
+    }
+    for (const { from, text } of turns) {
+      for (const content of fenced(text, MAX_CHUNK_LIMIT, 'newline')) await hook.send({ content, threadId: ch.id, ...as[from], allowedMentions: { parse: [] } })
+    }
+  }
+
   // A new thread opens with the request that asked for it and what the session said since, when a
   // message from the user started the caller's current turn. A thread's first message is its starter.
   async function origin(from: string, to: string) {
@@ -684,7 +700,7 @@ function serve(token: string) {
     launcher: process.env.HEX_LAUNCHER,
   })
 
-  clients.set('discord', { hub, place: (name, where, about) => place(name, where, about) })
+  clients.set('discord', { hub, place: (name, where, about) => place(name, where, about), backfill })
 
   const allowed = (user: string) => loadAccess().allowFrom.includes(user)
   voiceCalls(client, allowed)

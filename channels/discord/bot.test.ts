@@ -125,7 +125,7 @@ const here = channel('5000', { name: 'desk anchors', type: ChannelType.PublicThr
 const live = (where: Channel) => ({ inGuild: () => true, channel: where, mentions: { has: () => false }, react: async () => {} })
 
 class Client {
-  user = { id: BOT, tag: 'hex#0000' }
+  user = { id: BOT, tag: 'hex#0000', displayName: 'hex', displayAvatarURL: () => 'https://cdn/hex.png' }
   channels = {
     fetch: async (id: string) => {
       if (!channels.has(id)) throw new Error('Unknown Channel')
@@ -604,4 +604,27 @@ test('slash commands set a thread\'s model and effort, and answer only the owner
   ])
   expect(replies.every(reply => reply.flags === MessageFlags.Ephemeral)).toBe(true)
   expect(JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))[desk.id]).toMatchObject({ model: 'claude-opus-5-5', effort: 'max' })
+})
+
+test('a backfill posts each line through one webhook of the channel, as the owner or the bot, split to fit', async () => {
+  const hooked: any[] = []
+  const hook = { owner: { id: BOT }, token: 'secret', send: async (options: any) => void hooked.push(options) }
+  const created: string[] = []
+  const repo = channel('4100', {
+    name: 'repo',
+    type: ChannelType.GuildText,
+    fetchWebhooks: async () => new Collection(created.length ? [['h1', hook]] : [['h0', { owner: { id: '42' }, token: 'theirs' }]]),
+    createWebhook: async ({ name }: { name: string }) => (created.push(name), hook),
+  })
+  const thread = channel('4101', { name: 'Context check', type: ChannelType.PublicThread, parent: repo, guild: { members: { me: { displayName: 'hex' } } } })
+  Object.assign(owner, { displayName: 'Bassim', displayAvatarURL: () => 'https://cdn/owner.png' })
+  const backfill = clients.get('discord')!.backfill!
+  await backfill(thread.id, [{ from: 'me', text: 'how full is your context?' }, { from: 'hex', text: 'a'.repeat(1990) + '\n\n' + 'b'.repeat(100) }])
+  await backfill(thread.id, [{ from: 'me', text: '@everyone thanks' }])
+  expect(created).toEqual(['hex'])
+  const me = { username: 'Bassim', avatarURL: 'https://cdn/owner.png', threadId: thread.id, allowedMentions: { parse: [] } }
+  const hex = { username: 'hex', avatarURL: 'https://cdn/hex.png', threadId: thread.id, allowedMentions: { parse: [] } }
+  expect(hooked.map(({ content, ...rest }) => rest)).toEqual([me, hex, hex, me])
+  expect(hooked.every(({ content }) => content.length <= 2000)).toBe(true)
+  expect(hooked.map(({ content }) => content.replace(/\s/g, '')).join('')).toBe(`howfullisyourcontext?${'a'.repeat(1990)}${'b'.repeat(100)}@everyonethanks`)
 })

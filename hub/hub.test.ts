@@ -3,7 +3,7 @@ import { connect, createServer, type Socket } from 'net'
 import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { begin, clients, free, move, stamp, startHub, tappable, transcribe, type ChannelServer, type Message, type Permission } from './hub.ts'
+import { begin, clients, free, history, mirror, move, stamp, startHub, tappable, transcribe, type ChannelServer, type Message, type Permission } from './hub.ts'
 import { hangUpAll, http as line, port } from './testing.ts'
 import { until } from './until.ts'
 
@@ -1401,9 +1401,99 @@ test('a move that copies forks the session there and leaves the thread here', as
   clients.set('elsewhere', { hub: { fork: (...args: unknown[]) => forked.push(args) } as any, place: async () => ({ thread: 'far:1', link: 'https://far/1' }) })
   try {
     expect(await move(hub, 'chat:7', 'elsewhere', 'Anchors', undefined, true)).toBe('https://far/1')
+    await until(() => forked.length)
     expect(forked).toEqual([['far:1', 'Anchors', SESSION, 'This conversation just moved to elsewhere, into the thread "Anchors". Your elsewhere tools now post there. Carry on where you left off.', undefined]])
     expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
   } finally {
     clients.delete('elsewhere')
   }
+})
+
+// The session's log as bin/log writes it, in the threads folder.
+function logged(body: string, id = SESSION) {
+  mkdirSync(join(dir, 'hex', 'log', 'threads'), { recursive: true })
+  writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${id.slice(0, 8)}.md`), `# 2026-10-06 · session ${id}\n\n${body}`)
+}
+
+test('a session\'s history is what the owner said and hex replied in its apps, headings and all, without the terminal', () => {
+  logged([
+    '## me · buzz · 2026-10-06 10:06\n\nhow full is your context?\n',
+    '## assistant · buzz · 2026-10-06 10:06\n\nRoomy.\n\n## What loads\n\nthe rules\n',
+    '## assistant · terminal · 2026-10-06 10:06\n\nI answered in Buzz.\n',
+    '## hex · voice · 2026-10-06 10:07\n\nA call never connected.\n',
+    '## me · telegram · 10:08\n\nthanks\n',
+  ].join('\n'))
+  expect(history(join(dir, 'hex'), SESSION)).toEqual([
+    { from: 'me', text: 'how full is your context?' },
+    { from: 'hex', text: 'Roomy.\n\n## What loads\n\nthe rules' },
+    { from: 'me', text: 'thanks' },
+  ])
+  expect(history(join(dir, 'hex'), '9f9f9f9f-0000-4000-8000-000000000000')).toEqual([])
+})
+
+test('a move backfills the thread there with its chat before its session resumes there', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
+  logged('## me · buzz · 2026-10-06 10:06\n\nanchors?\n')
+  const steps: unknown[][] = []
+  clients.set('elsewhere', {
+    hub: { fork: (...args: unknown[]) => steps.push(['fork', args[0]]) } as any,
+    place: async () => ({ thread: 'far:1', link: 'https://far/1' }),
+    backfill: async (thread, turns) => void steps.push(['backfill', thread, turns]),
+  })
+  try {
+    await move(hub, 'chat:7', 'elsewhere', 'Anchors', undefined, true)
+    await until(() => steps.length === 2)
+    expect(steps).toEqual([['backfill', 'far:1', [{ from: 'me', text: 'anchors?' }]], ['fork', 'far:1']])
+  } finally {
+    clients.delete('elsewhere')
+  }
+})
+
+test('a mirror opens a backfilled copy that follows the session, and leaves the thread here', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
+  logged('## assistant · buzz · 2026-10-06 10:06\n\nAnchors are in.\n')
+  const steps: unknown[][] = []
+  clients.set('elsewhere', {
+    hub: { follow: (...args: unknown[]) => steps.push(['follow', ...args]) } as any,
+    place: async (name, where) => (steps.push(['place', name, where]), { thread: 'far:1', link: 'https://far/1' }),
+    backfill: async (thread, turns) => void steps.push(['backfill', thread, turns]),
+  })
+  try {
+    expect(await mirror(hub, 'chat:7', 'elsewhere', 'open-source')).toBe('https://far/1')
+    expect(steps).toEqual([
+      ['place', 'Desk anchors', 'open-source'],
+      ['backfill', 'far:1', [{ from: 'hex', text: 'Anchors are in.' }]],
+      ['follow', 'far:1', 'Desk anchors', SESSION, undefined],
+    ])
+    expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
+  } finally {
+    clients.delete('elsewhere')
+  }
+})
+
+test('a mirror asked on hub.sock opens there, by the thread\'s name', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
+  const placed: string[] = []
+  clients.set('elsewhere', { hub: { follow: () => {} } as any, place: async name => (placed.push(name), { thread: 'far:1', link: 'https://far/1' }) })
+  try {
+    hook({ type: 'mirror', thread: 'Desk anchors', to: 'elsewhere' })
+    expect(await until(() => placed[0])).toBe('Desk anchors')
+  } finally {
+    clients.delete('elsewhere')
+  }
+})
+
+test('a thread that follows a session forks it with its first message, then keeps the fork as its own', async () => {
+  const FORKED = '0a1b2c3d-2222-4000-8000-000000000000'
+  start({ agents: [] })
+  hub.follow('chat:7', 'Desk anchors', SESSION)
+  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', from: SESSION })
+  hub.deliver('chat:7', 'Desk anchors', message)
+  const args = await launched()
+  const resume = args.indexOf('--resume')
+  expect(args.slice(resume, resume + 3)).toEqual(['--resume', SESSION, '--fork-session'])
+  saved(FORKED)
+  const { received } = await session('chat:7', FORKED)
+  await until(() => received.length)
+  expect(await until(() => registry()['chat:7'].session === FORKED && registry()['chat:7'])).toEqual({ name: 'Desk anchors', session: FORKED })
 })

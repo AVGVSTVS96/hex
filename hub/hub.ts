@@ -1,6 +1,6 @@
 import { createServer } from 'net'
 import { createHash, randomBytes } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
@@ -58,7 +58,8 @@ export type Hub = ReturnType<typeof startHub>
 // session holds before a new one takes over; with 0, every message that finds it done goes to a new one.
 export type Limits = { idleStop: number; cacheWarm: number; compactAbove: number; reconnect: number; capacity: number }
 
-type Saved = Settings & { name: string; session?: string; cwd?: string; launched?: string }
+// from: the session the thread continues as a fork with its first message, until it has its own.
+type Saved = Settings & { name: string; session?: string; from?: string; cwd?: string; launched?: string }
 type Timer = ReturnType<typeof setTimeout>
 
 // Where a thread's session stands. launching: the hub started or restarted it and waits for its
@@ -95,9 +96,18 @@ export type Held = { hear: (audio: string) => void; hangUp: () => void }
 // The voice app's call engine, once it runs in this process, for a client that holds a line.
 export const engine: { take?: (from: 'discord', greeting: string, line: VoiceLine) => Held } = {}
 
+// One message of a thread's chat as its log keeps it: the owner's, or hex's reply.
+export type Turn = { from: 'me' | 'hex'; text: string }
+
 // Every client running in this process, so a thread can move between them.
 // place() opens a thread on the client, led by its about line if given, and returns its id and a link to it.
-export const clients = new Map<string, { hub: Hub; place: (name: string, where?: string, about?: string) => Promise<{ thread: string; link: string }> }>()
+// backfill() posts a thread's chat so far into a thread it placed, in order.
+export type Client = {
+  hub: Hub
+  place: (name: string, where?: string, about?: string) => Promise<{ thread: string; link: string }>
+  backfill?: (thread: string, turns: Turn[]) => Promise<void>
+}
+export const clients = new Map<string, Client>()
 
 export const PORT = Number(process.env.HEX_PORT ?? 8789)
 
@@ -111,6 +121,24 @@ export function route(request: Request): Promise<Response> {
 // Chat apps only link web addresses, so a buzz:// link goes through a page on hex's site that opens it.
 export function tappable(text: string): string {
   return text.replace(/buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/g, url => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`)
+}
+
+const SAID = /^## (\S+) · (\w+) · (?:\d{4}-\d{2}-\d{2} )?\d{1,2}:\d{2}\n/gm
+
+// A session's chat from its log (bin/log): what the owner said and hex replied in an app, leaving
+// out the terminal, which no chat showed.
+export function history(hexDir: string, session: string): Turn[] {
+  const suffix = `-${session.slice(0, 8)}.md`
+  const file = [join(hexDir, 'log', 'threads'), join(hexDir, 'log')]
+    .flatMap(dir => (existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(suffix)).map(name => join(dir, name)) : []))[0]
+  if (!file) return []
+  const log = readFileSync(file, 'utf8')
+  const heads = [...log.matchAll(SAID)]
+  return heads.flatMap((head, i) => {
+    const [, who, app] = head
+    const text = log.slice(head.index + head[0].length, heads[i + 1]?.index).trim()
+    return app === 'terminal' || !text || (who !== 'me' && who !== 'assistant') ? [] : [{ from: who === 'me' ? 'me' : 'hex', text } as Turn]
+  })
 }
 
 // TRANSCRIBE_URL is any OpenAI-compatible /audio/transcriptions endpoint.
@@ -421,6 +449,11 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     save()
   }
 
+  function follow(thread: string, name: string, session: string, cwd?: string) {
+    threads[thread] = { name, from: session, ...(cwd && { cwd }) }
+    save()
+  }
+
   function register(thread: string, name: string, cwd?: string) {
     return (threads[thread] ??= { name, ...(cwd && { cwd }) })
   }
@@ -507,7 +540,8 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
       known.launched = launched
       save()
     }
-    const resume = fork ? ['--resume', fork, '--fork-session'] : known.session && !fresh(thread) ? ['--resume', known.session] : []
+    const source = fork ?? (known.session ? undefined : known.from)
+    const resume = source ? ['--resume', source, '--fork-session'] : known.session && !fresh(thread) ? ['--resume', known.session] : []
     try {
       watchJob(thread, await claude.start(launcher, ['--channels', channel, '--name', known.name, ...resume, ...launchArgs, '--settings', settingsOf(thread), ...(prompt ? [prompt] : [])], { cwd: known.cwd ?? hexDir, env: inherited }))
     } catch (error) {
@@ -674,6 +708,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     const known = threads[thread]
     if (!run.unsaved || !known || !existsSync(claude.transcript(cwdOf(thread), run.unsaved))) return
     known.session = run.unsaved
+    delete known.from
     run.unsaved = undefined
     save()
   }
@@ -735,6 +770,10 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     if (request.type === 'settle') asks?.settle(request.thread, request.message, request.note)
     if (request.type === 'reopen') asks?.reopen(request.thread, request.message, request.via)
     if (request.type === 'inbound') deliver(request.thread, threads[request.thread]?.name ?? request.thread, { content: request.content, meta: request.meta })
+    if (request.type === 'mirror') void mirror(api, find(request.thread), request.to, request.where).then(
+      link => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
+      error => process.stderr.write(`hub: couldn't mirror ${request.thread} to ${request.to}: ${error}\n`),
+    )
   }
 
   // The main thread is always running: started with the hub, and started again when its session
@@ -759,7 +798,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     })
   }
 
-  return {
+  const api = {
     deliver,
     command: restart,
     configure,
@@ -782,6 +821,11 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     },
     release,
     adopt,
+    follow,
+    history: (thread: string) => {
+      const session = current(thread)
+      return session ? history(hexDir, session) : []
+    },
     retire,
     find,
     rename,
@@ -796,6 +840,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
       }
     },
   }
+  return api
 }
 
 function client(app: string) {
@@ -817,16 +862,35 @@ export async function begin(app: string, name: string, first: string | Message, 
   return opened
 }
 
-// Moves a thread to another client: its session stops here and resumes there, memory intact.
-// The main thread never leaves, and a thread its app owns (copy) stays, so a copy continues instead.
-export async function move(from: Hub, thread: string, to: string, name: string, where?: string, copy = thread === from.main) {
+// Opens the thread on another client and posts its chat so far there; the backfill settles either way.
+async function carry(from: Hub, thread: string, to: string, name: string, where?: string) {
   const target = client(to)
   const session = from.session(thread)
   if (!session) throw new Error('this thread has no session yet')
   const { thread: dest, link } = await target.place(name, where)
+  const filled = Promise.resolve(target.backfill?.(dest, from.history(thread))).catch(error => {
+    process.stderr.write(`hub: couldn't backfill ${to} thread ${dest}: ${error}\n`)
+  })
+  return { target, session, dest, link, filled, cwd: from.cwd(thread) }
+}
+
+// Moves a thread to another client: its session stops here and resumes there, memory intact, once
+// its chat is backfilled. The main thread never leaves, and a thread its app owns (copy) stays, so a
+// copy continues instead.
+export async function move(from: Hub, thread: string, to: string, name: string, where?: string, copy = thread === from.main) {
+  const { target, session, dest, link, filled, cwd } = await carry(from, thread, to, name, where)
   const prompt = `This conversation just moved to ${to}, into the thread "${name}". Your ${to} tools now post there. Carry on where you left off.`
-  const cwd = from.cwd(thread)
-  if (copy) target.hub.fork(dest, name, session, prompt, cwd)
-  else void from.release(thread).then(session => target.hub.adopt(dest, name, session, prompt, cwd))
+  if (copy) void filled.then(() => target.hub.fork(dest, name, session, prompt, cwd))
+  else void Promise.all([from.release(thread), filled]).then(([session]) => target.hub.adopt(dest, name, session, prompt, cwd))
+  return link
+}
+
+// Opens a copy of the thread on another client with its chat so far, and leaves it here. The copy
+// continues the thread's session as a fork with its first message, so the two never share a session.
+export async function mirror(from: Hub, thread: string, to: string, where?: string) {
+  const name = from.name(thread) ?? thread
+  const { target, session, dest, link, filled, cwd } = await carry(from, thread, to, name, where)
+  target.hub.follow(dest, name, session, cwd)
+  await filled
   return link
 }
