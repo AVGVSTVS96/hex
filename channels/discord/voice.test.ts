@@ -4,6 +4,7 @@ import { PassThrough } from 'stream'
 import OpusScript from 'opusscript'
 import * as real from '@discordjs/voice'
 import { engine } from '../../hub/hub.ts'
+import { until } from '../../hub/until.ts'
 
 const OWNER = '2000'
 const joined: { options: any; connection: any }[] = []
@@ -47,14 +48,6 @@ const pcm = (...samples: number[]) => {
 }
 const samples = (buffer: Buffer) => Array.from({ length: buffer.length / 2 }, (_, i) => buffer.readInt16LE(i * 2))
 const tick = (value: number) => pcm(...Array(2400).fill(value)).toString('base64')
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(10)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
-}
 
 test('Discord\'s 48 kHz stereo becomes the engine\'s 24 kHz mono, and back, each new sample halfway to the next', () => {
   expect(samples(narrow(pcm(100, 300, 200, 200, -50, -150, 0, 0)))).toEqual([200, -50])

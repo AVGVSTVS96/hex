@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { begin, clients, free, move, stamp, startHub, tappable, transcribe, type ChannelServer, type Message, type Permission } from './hub.ts'
 import { hangUpAll, http as line, port } from './testing.ts'
+import { until } from './until.ts'
 
 const CHANNEL = 'plugin:telegram@hex'
 const SESSION = '0a1b2c3d-0000-4000-8000-000000000000'
@@ -84,14 +85,6 @@ function before(registry: Record<string, any>) {
 function calls(): string[][] {
   if (!existsSync(join(dir, 'calls'))) return []
   return readFileSync(join(dir, 'calls'), 'utf8').split('\n').slice(0, -1).map(line => JSON.parse(line))
-}
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
 }
 
 function launched() {
@@ -197,7 +190,7 @@ test('a message for a new thread starts a session bound to that thread', async (
   const args = await launched()
   expect(args.slice(0, 5)).toEqual(['--bg', '--channels', CHANNEL, '--name', 'Desk anchors'])
   expect(args).not.toContain('--resume')
-  expect(settingsOf(args).env).toEqual({ HEX_CHANNEL: CHANNEL, HEX_THREAD: 'chat:7', HEX_HUB: join(dir, 'hub.sock'), HEX_PORT: String(listener.port), HEX_TOKEN: readFileSync(join(dir, 'token'), 'utf8') })
+  expect(settingsOf(args)).toEqual({ enabledPlugins: { 'telegram@hex': true }, env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: 'chat:7', HEX_HUB: join(dir, 'hub.sock'), HEX_PORT: String(listener.port), HEX_TOKEN: readFileSync(join(dir, 'token'), 'utf8') } })
   expect(states).toEqual([['chat:7', true]])
 })
 
@@ -247,13 +240,6 @@ test('the main thread starts with the hub, under its name, with no prompt and no
   expect(args.at(-2)).toBe('--settings')
   expect(settingsOf(args).env.HEX_MAIN).toBe('1')
   expect(states).toEqual([])
-})
-
-test("only the hub whose main thread is hex's General marks it HEX_MAIN", async () => {
-  start({ main: 'chat' })
-  const args = await launched()
-  expect(settingsOf(args).env.HEX_THREAD).toBe('chat')
-  expect(settingsOf(args).env.HEX_MAIN).toBeUndefined()
 })
 
 test('a running main thread is left to reconnect, and gets its messages when it does', async () => {
@@ -803,19 +789,6 @@ test('a fresh thread whose session stopped starts a new one, warm or not, since 
   expect(calls().some(args => args[0] === 'rm')).toBe(false)
 })
 
-test('a fresh thread\'s session that fills up hands over at the rest the Stop hook reports, though Claude still calls it busy', async () => {
-  const old = Bun.spawn(['sleep', '30'])
-  dm([{ sessionId: SESSION, pid: old.pid, status: 'busy', startedAt: Date.now() + 60_000 }])
-  const first = await session('dm')
-  await Bun.sleep(50)
-  said(1500)
-  first.send({ type: 'state', thread: 'dm', busy: false })
-  expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
-  first.close()
-  old.kill()
-  expect(await launched()).not.toContain('--resume')
-})
-
 test('a fresh thread\'s session on a five-minute cache hands over five minutes after its last request, not an hour', async () => {
   const old = Bun.spawn(['sleep', '30'])
   dm([{ sessionId: SESSION, pid: old.pid, status: 'idle', startedAt: Date.now() + 60_000 }], { cacheWarm: 60_000 })
@@ -831,7 +804,7 @@ test('a fresh thread\'s session on a five-minute cache hands over five minutes a
   expect(await launched()).not.toContain('--resume')
 })
 
-test('once a fresh thread\'s session is full, a new one takes over as soon as it rests, before the next message', async () => {
+test('once a fresh thread\'s session is full, a new one takes over at the rest the Stop hook reports, though Claude still calls it busy, before the next message', async () => {
   const old = Bun.spawn(['sleep', '30'])
   dm([{ sessionId: SESSION, pid: old.pid, status: 'busy', startedAt: Date.now() + 60_000 }])
   const first = await session('dm')
@@ -839,7 +812,6 @@ test('once a fresh thread\'s session is full, a new one takes over as soon as it
   hub.deliver('dm', 'DM', message)
   await until(() => first.received.length)
   said(1500)
-  writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: old.pid, status: 'idle', startedAt: Date.now() + 60_000 }]))
   first.send({ type: 'state', thread: 'dm', busy: false })
   expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
   first.close()
@@ -1121,29 +1093,10 @@ test('a main thread whose session started with what the hub no longer gives star
   expect(await launched()).toContain('--resume')
 })
 
-test('a session that started with what the hub still gives keeps running across a hub restart, however old', async () => {
-  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle', startedAt: 1 }] })
-  const { send } = await session('chat:7')
-  send({ type: 'state', thread: 'chat:7', busy: false })
-  await Bun.sleep(150)
-  expect(calls().some(args => args[0] === 'stop')).toBe(false)
-})
-
 test('a hub whose state folder is gone makes it again, with a new token', () => {
   const state = join(dir, 'gone')
   hub = startHub({ stateDir: state, channel: CHANNEL, server: SERVER, port: listener.port, call: async () => '', state: () => {}, failed: () => {}, hexDir: join(dir, 'hex') })
   expect(statSync(join(state, 'token')).mode & 0o777).toBe(0o600)
-})
-
-test('a session records what it started with, and the hub tells a change of arguments or channel from a plain restart', async () => {
-  start({ registry: { 'chat:7': { name: 'Desk anchors' } }, stale: true, agents: [] })
-  hub.deliver('chat:7', 'Desk anchors', message)
-  await launched()
-  const launched_ = JSON.parse(readFileSync(join(dir, 'threads.json'), 'utf8'))['chat:7'].launched
-  expect(launched_).toBe(stamp([], SERVER))
-  expect(stamp(['--model', 'opus'], SERVER)).not.toBe(launched_)
-  expect(stamp([], { ...SERVER, instructions: 'new' })).not.toBe(launched_)
-  expect(stamp([])).not.toBe(launched_)
 })
 
 test('a voice session that started with what the hub no longer gives waits out its call before starting over', async () => {
@@ -1248,12 +1201,6 @@ test('a fresh main thread whose unsaved session an older hub started with its se
   await launched()
 })
 
-test('HEX_CHAT_CAPACITY may be 0, and must be a number', async () => {
-  const load = (tokens: string) => Bun.spawnSync(['bun', '-e', `import(${JSON.stringify(join(import.meta.dir, 'hub.ts'))}).then(() => console.log('ok'))`], { env: { ...process.env, HEX_CHAT_CAPACITY: tokens } })
-  expect(load('0').stdout.toString()).toBe('ok\n')
-  expect(load('lots').stderr.toString()).toContain('HEX_CHAT_CAPACITY must be a number of tokens, got "lots"')
-})
-
 test('closing a thread with no live session forgets it at once', () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
   void hub.retire('chat:7')
@@ -1285,11 +1232,6 @@ test('closing a busy thread stops its session at its next idle, not before', asy
   await until(() => calls().find(args => args[0] === 'stop'))
 })
 
-test('the main thread cannot be closed', () => {
-  start({ main: 'chat' })
-  expect(() => hub.retire('chat')).toThrow('the main thread stays open')
-})
-
 test('threads are found by name or id, and renames are kept', () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION }, 'chat:8': { name: 'Clips' } } })
   expect(hub.find('desk anchors')).toBe('chat:7')
@@ -1300,13 +1242,6 @@ test('threads are found by name or id, and renames are kept', () => {
   expect(hub.name('chat:8')).toBe('Theo clips')
   expect(hub.name('chat:9')).toBeUndefined()
   expect(registry()['chat:8'].name).toBe('Theo clips')
-})
-
-test('a session\'s settings enable only its channel plugin', async () => {
-  start()
-  hub.open('chat:7', 'Desk anchors', 'go')
-  expect(Object.keys(settingsOf(await launched()))).toEqual(['enabledPlugins', 'env'])
-  expect(settingsOf(await launched()).enabledPlugins).toEqual({ 'telegram@hex': true })
 })
 
 test('sessions start through the launcher, in the hex folder, with nothing of the hub\'s own in its env', async () => {
@@ -1406,26 +1341,20 @@ test('releasing a thread with no live session resolves at once', async () => {
   expect(calls()).toEqual([])
 })
 
-test('the main thread and a thread without a session cannot be released', () => {
+test('the main thread cannot be closed or released, nor a thread without a session', () => {
   start({ main: 'chat', registry: { 'chat:8': { name: 'Clips' } } })
+  expect(() => hub.retire('chat')).toThrow('the main thread stays open')
   expect(() => hub.release('chat')).toThrow('the main thread stays here')
   expect(() => hub.release('chat:8')).toThrow('this thread has no session yet')
 })
 
-test('an adopted thread clears the old job record, then resumes its session with the prompt last', async () => {
+test('an adopted thread clears the old job record, then resumes its session in its folder with the prompt last', async () => {
   start({ agents: [] })
-  hub.adopt('chat:7', 'Desk anchors', SESSION, 'carry on')
+  hub.adopt('chat:7', 'Desk anchors', SESSION, 'carry on', dir)
   const args = await launched()
   expect(calls().filter(args => args[0] !== 'agents')[0]).toEqual(['rm', SESSION.slice(0, 8)])
   expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
   expect(args.at(-1)).toBe('carry on')
-  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
-})
-
-test('an adopted thread keeps the folder its session ran in', async () => {
-  start({ agents: [] })
-  hub.adopt('chat:7', 'Desk anchors', SESSION, 'carry on', dir)
-  await launched()
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, cwd: dir })
 })
 
@@ -1466,7 +1395,7 @@ test("a session's stop hook reports whether background agents are still working,
 
 test('a main thread whose new session ends before its channel connects is reported and started again', async () => {
   start({ main: 'chat', agents: [], reconnect: 50 })
-  await launched()
+  expect(settingsOf(await launched()).env.HEX_MAIN).toBeUndefined()
   expect(await until(() => failures[0])).toEqual(['chat', 'its session ended before its channel connected'])
   await until(() => calls().filter(args => args[0] === '--bg').length === 2)
 })

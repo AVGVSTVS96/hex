@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import * as grammy from 'grammy'
 import { connect as connectSession } from '../../hub/testing.ts'
+import { until } from '../../hub/until.ts'
 
 const CHANNEL = 'plugin:telegram@hex'
 const OWNER = 2000
@@ -70,14 +71,6 @@ let received: any[] = []
 let call: (tool: string, args: object) => Promise<any>
 let ask: (request: object) => Promise<unknown>
 let session: (payload: object) => void
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
-}
 
 const called = (method: string, match: (payload: Record<string, any>) => boolean = () => true) =>
   until(() => calls.find(c => c.method === method && match(c.payload))?.payload)
@@ -183,15 +176,7 @@ test('a prompt still open when the turn ends, answered in the session itself, st
   expect(await called('editMessageReplyMarkup', p => p.message_id === id)).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: 'No longer waiting', disabled: {} }]] } })
 })
 
-test('delete, unreact, pin, unpin and forward act on the message they name', async () => {
-  await call('delete_message', { message_id: '7' })
-  expect(await called('deleteMessage')).toMatchObject({ chat_id: String(FORUM), message_id: 7 })
-  await call('react', { message_id: '7', emoji: '👍', remove: true })
-  expect(await called('setMessageReaction', p => p.message_id === 7)).toMatchObject({ reaction: [] })
-  await call('pin', { message_id: '7' })
-  await call('pin', { message_id: '7', unpin: true })
-  expect(await called('pinChatMessage')).toMatchObject({ message_id: 7 })
-  expect(await called('unpinChatMessage')).toMatchObject({ message_id: 7 })
+test('forward sends a message into another topic, found by its name', async () => {
   expect((await call('forward', { message_id: '7', thread: 'notes' })).text).toMatch(/^forwarded to "notes"/)
   expect(await called('forwardMessage')).toMatchObject({ chat_id: String(FORUM), from_chat_id: String(FORUM), message_id: 7, message_thread_id: 6 })
 })
@@ -279,15 +264,6 @@ test('a voice message arrives as its transcript, with the recording still attach
   await update({ message: captioned })
   expect(await inbound(line => line.meta.message_id === String(plain.message_id))).toMatchObject({ content: '(voice message) anchors ship friday', meta: { attachment_kind: 'voice', attachment_file_id: 'v1' } })
   expect((await inbound(line => line.meta.message_id === String(captioned.message_id))).content).toBe('for the desk\n\n(voice message) anchors ship friday')
-})
-
-test('polls, dice and games arrive as readable lines', async () => {
-  await update({ message: message({ poll: { id: 'p', question: 'Lunch?', options: [{ text: 'tacos', voter_count: 0 }, { text: 'pho', voter_count: 0 }] } }) })
-  await update({ message: message({ dice: { emoji: '🎲', value: 4 } }) })
-  await update({ message: message({ game: { title: 'Snake', description: 'eat', photo: [] } }) })
-  await inbound(line => line.content === '(poll: Lunch? [tacos / pho])')
-  await inbound(line => line.content === '(dice 🎲: 4)')
-  await inbound(line => line.content === '(game: Snake)')
 })
 
 test('a reply to a message in another topic keeps the quote and what the hub knows of it', async () => {

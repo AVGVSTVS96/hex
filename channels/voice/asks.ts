@@ -296,7 +296,7 @@ export function fromLedger(app: string, asked: Asked): Curated {
   }
 }
 
-export function refId({ app, thread, message }: Ref) {
+function refId({ app, thread, message }: Ref) {
   return `${app}:${thread}:${message}`
 }
 

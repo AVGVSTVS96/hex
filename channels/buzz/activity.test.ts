@@ -8,6 +8,7 @@ import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
 import type { Filter } from 'nostr-tools/filter'
 import { startActivity } from './activity.ts'
 import type { Relay } from './relay.ts'
+import { until } from '../../hub/until.ts'
 
 const SESSION = '0a1b2c3d-0000-4000-8000-000000000000'
 const CHANNEL = '5f0c2b9e-7a1d-4c3e-9b8a-2d6f1e0a4c7b'
@@ -121,14 +122,6 @@ function frames(): any[] {
 
 function updates() {
   return frames().filter(frame => frame.kind === 'acp_read').map(frame => frame.payload.params.update)
-}
-
-async function until<T>(check: () => T | undefined, timeout = 8000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(50)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
 }
 
 function control(payload: object, options: { from?: Uint8Array; created_at?: number } = {}) {

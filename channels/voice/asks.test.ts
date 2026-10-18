@@ -7,6 +7,7 @@ import { join } from 'path'
 import { Asks, fromLedger } from './asks.ts'
 import { vet } from './check.ts'
 import { T3 } from './t3.ts'
+import { until } from '../../hub/until.ts'
 
 const GROUP = '-1001234'
 const DESK = `${GROUP}:5`
@@ -22,14 +23,6 @@ function ledger(asks: object[], pins = {}) {
 
 function asked(message: number, text: string, options: string[], fields = {}) {
   return { thread: DESK, message, text, options, at: `2026-10-13T1${message % 10}:00:00.000Z`, ...fields }
-}
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
 }
 
 beforeEach(async () => {

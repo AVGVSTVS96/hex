@@ -9,6 +9,7 @@ import { matchFilters, type Filter } from 'nostr-tools/filter'
 import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { startMemory } from './memory.ts'
+import { until } from '../../hub/until.ts'
 
 const AGENT_KEY = Buffer.from('0000000000000000000000000000000000000000000000000000000000000001', 'hex')
 const OWNER_KEY = Buffer.from('0000000000000000000000000000000000000000000000000000000000000002', 'hex')
@@ -79,14 +80,6 @@ function write(path: string, content: string | Uint8Array) {
 
 function opened(relay: ReturnType<typeof fakeRelay>, kind: number) {
   return relay.events.filter(event => event.kind === kind).map(event => ({ event, text: decrypt(event.content, KEY), body: JSON.parse(decrypt(event.content, KEY)) }))
-}
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
 }
 
 const sha256 = (data: string | Uint8Array) => createHash('sha256').update(data).digest('hex')

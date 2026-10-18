@@ -11,6 +11,7 @@ import { bytesToHex } from 'nostr-tools/utils'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { connectRelay } from './relay.ts'
 import { connect as connectSession, service } from '../../hub/testing.ts'
+import { until } from '../../hub/until.ts'
 
 type Peer = { challenge: string; pubkey?: string; subs: Map<string, Filter[]> }
 
@@ -134,14 +135,6 @@ const authTag = ['auth', owner, '', 'sig']
 const relay = fakeRelay()
 
 afterAll(() => relay.stop())
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
-}
 
 function signed(key: Uint8Array, kind: number, content: string, tags: string[][] = [], at = Math.floor(Date.now() / 1000)) {
   return finalizeEvent({ kind, content, tags, created_at: at }, key)
@@ -472,23 +465,16 @@ test('!shutdown from the owner takes Hex offline, and nothing reaches it after',
   expect(bot.published(7)).toEqual([])
 })
 
-test('new_thread opens a thread in Buzz, starts its session with the prompt, and links to it', async () => {
+test('new_thread opens a thread in Buzz with its about line under the title, starts its session with the prompt, and links to it', async () => {
   const bot = await startBot()
   const { session } = await threadStarted(bot)
-  const result = await session.call('new_thread', { title: 'Anchors', prompt: 'find better anchors' })
-  const root = await until(() => bot.published(9).find(event => event.content === '**Anchors**'))
+  const result = await session.call('new_thread', { title: 'Anchors', prompt: 'find better anchors', about: 'From #general' })
+  const root = await until(() => bot.published(9).find(event => event.content === '**Anchors**\nFrom #general'))
   expect(root.tags).toEqual([['h', bot.channel], ['p', owner], bot.auth])
   expect(result.text).toBe(`started thread "Anchors": buzz://message?channel=${bot.channel}&id=${root.id}`)
   const args = await until(() => bot.launches()[1])
   expect(args[args.indexOf('--name') + 1]).toBe('Anchors')
   expect(args.at(-1)).toBe('find better anchors')
-})
-
-test('a new thread opens with its about line under the title', async () => {
-  const bot = await startBot()
-  const { session } = await threadStarted(bot)
-  await session.call('new_thread', { title: 'Tests', prompt: 'fix them', about: 'From #general: the hub tests fail on main.' })
-  await until(() => bot.published(9).find(event => event.content === '**Tests**\nFrom #general: the hub tests fail on main.'))
 })
 
 test('reply with buttons lists them numbered and reacts with each keycap; the first tap arrives as a button, the other keycaps come off, later taps are ignored', async () => {

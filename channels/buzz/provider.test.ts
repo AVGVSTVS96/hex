@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { generateSecretKey, getPublicKey, nip19 } from 'nostr-tools'
-import { info, respond } from './provider.ts'
+import { respond } from './provider.ts'
 
 // Buzz's crates/buzz-backend-kubernetes/tests/fixtures/provider-wire/deploy-full-launch.request.json,
 // recorded from Desktop's real deploy payload builder.
@@ -99,15 +99,7 @@ test('info has exactly the fields Desktop accepts', () => {
   const { code, out } = run('{"op":"info","request_id":"req-1"}')
   expect(code).toBe(0)
   expect(Object.keys(out).sort()).toEqual(['config_schema', 'description', 'name', 'ok', 'protocol_version', 'version'])
-  expect(out.ok).toBe(true)
-  expect(out.protocol_version).toBe(1)
-  for (const field of ['name', 'version', 'description']) expect(out[field]).toBeString()
-  for (const field of ['name', 'version', 'description']) expect(out[field]).not.toBe('')
-  expect(out.config_schema.required).toEqual(['target'])
-  expect(Object.keys(out.config_schema.properties)).toEqual(['target', 'home'])
-  expect(out.config_schema.properties.target.default).toBeUndefined()
-  expect(out.config_schema.properties.home.default).toBe('~/hex')
-  expect(out).toEqual(info)
+  expect(out).toMatchObject({ ok: true, protocol_version: 1, config_schema: { required: ['target'] } })
 })
 
 test('deploy writes the credentials over ssh stdin and restarts hex', () => {

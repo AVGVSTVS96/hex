@@ -3,6 +3,7 @@ import { createHmac } from 'crypto'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { until } from '../../hub/until.ts'
 
 const CALLER = '+15550001111'
 const TWILIO_TOKEN = 'twilio-secret'
@@ -141,14 +142,6 @@ test("a phone call's words reach the app as they're heard, and how it ended land
   expect(ended.turns).toHaveLength(2)
   expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBeUndefined()
 }, 20_000)
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
-}
 
 test("a call's words reach the voice session only once the last call's renew is through, in order, and its end lets the session renew", async () => {
   await using call = await phoneCall()

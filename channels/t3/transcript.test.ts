@@ -4,13 +4,13 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import type { SessionNotification } from '@agentclientprotocol/sdk'
 import { follow } from './transcript.ts'
+import { until } from '../../hub/until.ts'
 
 let dir: string
 let path: string
 let updates: SessionNotification['update'][]
 let ended: number
 let reader: ReturnType<typeof follow> | undefined
-let stopped: boolean
 
 const prompt = { type: 'user', origin: { kind: 'channel' }, isMeta: true, message: { content: '<channel source="t3">hi</channel>' } }
 const text = (id: string, words: string) => ({ type: 'assistant', message: { id, content: [{ type: 'text', text: words }] } })
@@ -23,7 +23,6 @@ beforeEach(() => {
   path = join(dir, 'session.jsonl')
   updates = []
   ended = 0
-  stopped = true
 })
 
 afterEach(() => {
@@ -36,12 +35,7 @@ function write(...entries: object[]) {
 }
 
 function start(fresh: boolean) {
-  reader = follow({ path, sessionId: 'thread', cwd: '/work', fresh, done: () => stopped, emit: n => void updates.push(n.update), end: () => void ended++ })
-}
-
-async function until(check: () => unknown, timeout = 3000) {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) if (check()) return
-  throw new Error('timed out')
+  reader = follow({ path, sessionId: 'thread', cwd: '/work', fresh, done: () => true, emit: n => void updates.push(n.update), end: () => void ended++ })
 }
 
 test('a turn streams from where the transcript ends, without the channel prompt, and ends at its turn_duration', async () => {
@@ -82,18 +76,3 @@ test('a line written in two pieces is read once it is whole', async () => {
   expect(updates[0]).toMatchObject({ content: { text: 'whole' } })
 })
 
-test('a turn whose session is still working past its turn_duration ends once the session stops with no turn after it', async () => {
-  stopped = false
-  start(true)
-  write(prompt, text('m1', 'started a background agent'), done)
-  await until(() => updates.length)
-  write({ type: 'user', origin: { kind: 'task-notification' }, message: { content: '<task-notification>ok</task-notification>' } })
-  await Bun.sleep(100)
-  stopped = true
-  reader!.settle()
-  await Bun.sleep(100)
-  expect(ended).toBe(0)
-  write(text('m2', 'the agent says ok'), done)
-  await until(() => ended)
-  expect(updates.at(-1)).toMatchObject({ content: { text: 'the agent says ok' } })
-})

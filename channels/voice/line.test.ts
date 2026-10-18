@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { until } from '../../hub/until.ts'
 
 // A call on a line another client holds (a Discord voice channel), end to end against a stand-in
 // for OpenAI's live API: the engine runs on its own with a hub that takes everything, and the test
@@ -85,14 +86,6 @@ for await (const line of console) {
       rmSync(home, { recursive: true, force: true })
     },
   }
-}
-
-async function until<T>(check: () => T | undefined, timeout = 5000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
 }
 
 test("a call on another client's line is held like a phone call: PCM both ways, the voice session told, a record of its own, and the line ended when the caller hangs up", async () => {

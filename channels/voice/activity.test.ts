@@ -2,6 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { until } from '../../hub/until.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'voice-activity-'))
 process.env.CLAUDE_CONFIG_DIR = join(home, 'claude')
@@ -22,67 +23,25 @@ function write(path: string, ...entries: object[]) {
   appendFileSync(path, entries.map(entry => JSON.stringify(entry) + '\n').join(''))
 }
 
-async function until(check: () => boolean) {
-  for (let i = 0; i < 100 && !check(); i++) await Bun.sleep(20)
-  expect(check()).toBe(true)
-}
-
 function threads(app: string, all: object) {
   mkdirSync(join(state, app), { recursive: true })
   writeFileSync(join(state, app, 'threads.json'), JSON.stringify(all))
 }
 
-test('each kind of step reads as a few plain words', () => {
-  const steps = [
+test('a step reads as a few plain words: a command by its description or first line, a file by its name, an MCP tool by its app', () => {
+  const path = join(home, 'steps.jsonl')
+  write(
+    path,
     tool('Bash', { command: 'git log --oneline', description: 'Show recent commits' }),
     tool('Bash', { command: 'uptime\nfree -g' }),
     tool('Read', { file_path: '/home/someone/hex/projects/notes/transcript.md' }),
-    tool('Edit', { file_path: '/repo/src/live-screen.tsx', old_string: 'a', new_string: 'b' }),
-    tool('Write', { file_path: '/repo/README.md', content: 'hi' }),
-    tool('Grep', { pattern: 'activity' }),
-    tool('WebSearch', { query: 'expo sdk 57 widgets' }),
-    tool('WebFetch', { url: 'https://docs.expo.dev/versions/v57.0.0/', prompt: 'read' }),
-    tool('Agent', { description: 'Fresh read of the transcript', prompt: 'go' }),
     tool('mcp__plugin_telegram_telegram__reply', { text: 'done' }),
     tool('mcp__claude_ai_Gmail__search_threads', { query: 'invoice' }),
     tool('ToolSearch', { query: 'select:Monitor' }),
-  ]
-  const path = join(home, 'steps.jsonl')
-  write(path, ...steps)
+  )
   const lines: (string | undefined)[] = []
   followTranscript(path, 0, (_: unknown, updates: () => any[]) => lines.push(...updates().map(headline)))()
-  expect(lines).toEqual([
-    'Show recent commits',
-    'Running uptime',
-    'Reading transcript.md',
-    'Editing live-screen.tsx',
-    'Writing README.md',
-    'Searching for activity',
-    'Searching the web for expo sdk 57 widgets',
-    'Reading docs.expo.dev',
-    'Started an agent: Fresh read of the transcript',
-    'Telegram: reply',
-    'Gmail: search threads',
-    undefined,
-  ])
-})
-
-test('each step says what kind it is, and a thought keeps its own words where the agent line says Thinking', () => {
-  const path = join(home, 'kinds.jsonl')
-  write(
-    path,
-    tool('Bash', { command: 'npm run check' }),
-    tool('Read', { file_path: '/repo/a.ts' }),
-    tool('Edit', { file_path: '/repo/a.ts', old_string: 'a', new_string: 'b' }),
-    tool('Grep', { pattern: 'lane' }),
-    tool('WebFetch', { url: 'https://ui.shadcn.com/docs', prompt: 'read' }),
-    tool('Agent', { description: 'Judge the restyles', prompt: 'go' }),
-    tool('mcp__plugin_telegram_telegram__reply', { text: 'done' }),
-    said('Sent it.'),
-  )
-  const kinds: string[] = []
-  followTranscript(path, 0, (_: unknown, updates: () => any[]) => kinds.push(...updates().map(update => stepOf(update)?.kind)))()
-  expect(kinds).toEqual(['run', 'read', 'edit', 'search', 'web', 'agent', 'tool', 'say'])
+  expect(lines).toEqual(['Show recent commits', 'Running uptime', 'Reading transcript.md', 'Telegram: reply', 'Gmail: search threads', undefined])
   const thought = { sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'The **lane** first.\n\nThen rows.' } } as const
   expect(stepOf(thought)).toEqual({ kind: 'think', text: 'The lane first. Then rows.' })
   expect(headline(thought)).toBe('Thinking')

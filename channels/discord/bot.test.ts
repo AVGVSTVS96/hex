@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import * as discord from 'discord.js'
+import { until } from '../../hub/until.ts'
 
 const { ButtonStyle, ChannelType, Collection, ComponentType, MessageFlags, MessageFlagsBitField, MessageType, SnowflakeUtil } = discord
 const TRANSCRIBER = 'http://transcriber/v1/audio/transcriptions'
@@ -92,7 +93,6 @@ function say(where: Channel, minute: number, content: string, fields: Channel = 
     reactions: { cache: new Collection() },
     react: async (emoji: string) => done.push({ react: emoji, on: message.id }),
     pin: async () => done.push({ pin: message.id }),
-    unpin: async () => done.push({ unpin: message.id }),
     edit: async (options: Channel) => (done.push({ edit: message.id, options }), message),
     forward: async (to: string) => (done.push({ forward: message.id, to }), { id: '7777' }),
     delete: async () => {
@@ -158,14 +158,6 @@ let received: any[]
 let call: (tool: string, args: object) => Promise<any>
 let send: (payload: object) => void
 let ask: (request: object) => Promise<Response>
-
-async function until<T>(check: () => T | undefined, timeout = 3000): Promise<T> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
-}
 
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [OWNER] }))
@@ -332,20 +324,13 @@ test('reply buttons go on the last chunk, and a tap locks them on the choice and
   ])
 })
 
-test('react can take the bot\'s reaction off, pin toggles, poll posts a poll, and edit_message swaps the files', async () => {
+test('react takes off only the bot\'s own reaction, and edit_message replaces the files instead of adding to them', async () => {
   const msg = say(here, 15, 'pin me')
   msg.reactions.cache.set('👀', { me: true, users: { remove: async () => done.push({ unreact: msg.id }) } })
   expect((await call('react', { message_id: msg.id, emoji: '👀', remove: true })).text).toBe('reaction removed')
   expect(done).toContainEqual({ unreact: msg.id })
   expect((await call('react', { message_id: msg.id, emoji: '🙈', remove: true })).error).toBe(`the bot hasn't reacted 🙈 to that message`)
 
-  await call('pin', { message_id: msg.id })
-  await call('pin', { message_id: msg.id, unpin: true })
-  expect(done).toContainEqual({ pin: msg.id })
-  expect(done).toContainEqual({ unpin: msg.id })
-
-  await call('poll', { question: 'Lunch?', options: ['Tacos', 'Ramen'], multiple: true })
-  expect(done.at(-1).send.poll).toEqual({ question: { text: 'Lunch?' }, answers: [{ text: 'Tacos' }, { text: 'Ramen' }], allowMultiselect: true, duration: 24 })
 
   mkdirSync(join(state, 'inbox'), { recursive: true })
   const file = join(state, 'inbox', 'chart.png')

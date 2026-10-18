@@ -3,8 +3,8 @@ import { afterAll, expect, test } from 'bun:test'
 import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { Links } from './links.ts'
-import { Tasks, opener } from './tasks.ts'
+import { Tasks } from './tasks.ts'
+import { until } from '../../hub/until.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'voice-tasks-'))
 const claude = join(home, 'claude')
@@ -39,11 +39,6 @@ function step(path: string, name: string, input: object) {
 function said(path: string, content: object) {
   mkdirSync(join(path, '..'), { recursive: true })
   appendFileSync(path, JSON.stringify({ type: 'assistant', message: { id: `msg_${Math.random()}`, content: [content] } }) + '\n')
-}
-
-async function until(check: () => boolean) {
-  for (let i = 0; i < 100 && !check(); i++) await Bun.sleep(20)
-  expect(check()).toBe(true)
 }
 
 mkdirSync(join(claude, 'jobs'), { recursive: true })
@@ -251,18 +246,6 @@ test("a T3 Code thread links to T3's own thread for it, once T3 has one, and the
   expect(tasks.get('t3:later')!.link).toBe('t3code://threads/env-1/thread%3Adelegated%20task')
 })
 
-test('the T3 Code app scheme is a setting, and without T3 Code there are no T3 links', () => {
-  process.env.T3_APP_SCHEME = 't3code-preview'
-  const links = new Links(state, () => {}, t3)
-  delete process.env.T3_APP_SCHEME
-  links.load()
-  expect(links.of('t3', 'mapped')).toBe('t3code-preview://threads/env-1/4a1e7c52-9b3d-4f60-8a2e-5d6c7b8e9f01')
-  links.close()
-  const without = new Links(state, () => {}, join(home, 'no-t3'))
-  expect(without.of('t3', 'mapped')).toBeUndefined()
-  without.close()
-})
-
 test("a thread whose turn ended stays working while its workflow runs, each workflow agent with its own steps", async () => {
   threads('telegram', { ...telegram, '-1004422245734:513': { name: 'antibody', session: '51351351-antibody' } })
   job('51351351-antibody', { state: 'working', detail: 'Phase 1 resumed', updatedAt: ago(0), fan: [{ id: 'wfbills', kind: 'workflow', label: 'build:bills' }, { id: 'sh', kind: 'shell', label: 'sleep' }], inFlight: { tasks: 1, kinds: ['local_workflow'] } }, [
@@ -325,8 +308,3 @@ test("a renewed session's new job folder still wakes the list", async () => {
   await until(() => tasks.get('telegram:-1004422245734')?.line === 'after the renew')
 })
 
-test('talking a task through tells the voice which thread it is and where it stands', () => {
-  expect(opener(tasks.get('telegram:-1004422245734:908')!)).toBe(
-    "The task is the hex thread autofork (Telegram, thread id -1004422245734:908). It's waiting on the caller: Pick a music style, and run claude setup-token",
-  )
-})

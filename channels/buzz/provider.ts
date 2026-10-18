@@ -2,7 +2,7 @@
 import { nip19 } from 'nostr-tools'
 import { version } from './package.json'
 
-export const info = {
+const info = {
   ok: true,
   name: 'hex',
   version,

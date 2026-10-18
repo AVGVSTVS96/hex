@@ -7,6 +7,7 @@ import { join } from 'path'
 import type { Subprocess } from 'bun'
 import { client, ndJsonStream, type SessionNotification } from '@agentclientprotocol/sdk'
 import { connect as channel, service } from '../../hub/testing.ts'
+import { until } from '../../hub/until.ts'
 
 const SESSION = '0a1b2c3d-0000-4000-8000-000000000000'
 let PORT = 0
@@ -54,14 +55,6 @@ function script(name: string, body: string) {
 
 function lines(file: string) {
   return existsSync(join(dir, file)) ? readFileSync(join(dir, file), 'utf8').split('\n').slice(0, -1) : []
-}
-
-async function until<T>(check: () => T, timeout = 5000): Promise<NonNullable<T>> {
-  for (const end = Date.now() + timeout; Date.now() < end; await Bun.sleep(20)) {
-    const value = check()
-    if (value) return value
-  }
-  throw new Error('timed out')
 }
 
 async function open(path: string) {
