@@ -348,15 +348,24 @@ test('an edit reaches the thread as the edited message\'s new text', async () =>
   expect(inbound[2].meta.new_thread).toBeUndefined()
 })
 
-test('a bare tag on someone\'s message brings Hex into its thread, with that message as what the tag replies to', async () => {
+test('a bare tag on the owner\'s own message brings Hex into its thread with those words as the message', async () => {
   const bot = await startBot()
   const post = bot.say('gpt-live-1 can i use custom voices')
   bot.say('@Hex', [['e', post.id, '', 'reply'], ['p', bot.me]])
   const args = await until(() => bot.launches()[0])
   expect(args[args.indexOf('--name') + 1]).toBe('gpt-live-1')
   const [inbound] = await (await bot.session(post.id)).inbound(1)
-  expect(inbound.content).toBe('(tagged you)')
+  expect(inbound.content).toBe('gpt-live-1 can i use custom voices')
   expect(inbound.meta).toMatchObject({ chat_id: post.id, new_thread: 'true', reply_to_message_id: post.id, reply_to_user: 'Bassim', reply_to_text: 'gpt-live-1 can i use custom voices' })
+})
+
+test('a bare tag on someone else\'s message keeps their words in reply_to_text only', async () => {
+  const bot = await startBot()
+  const post = bot.say('anyone tried custom voices?', [], generateSecretKey())
+  bot.say('@Hex', [['e', post.id, '', 'reply'], ['p', bot.me]])
+  const [inbound] = await (await bot.session(post.id)).inbound(1)
+  expect(inbound.content).toBe('(tagged you)')
+  expect(inbound.meta).toMatchObject({ reply_to_message_id: post.id, reply_to_text: 'anyone tried custom voices?' })
 })
 
 test('a reaction on a message in Hex\'s thread reaches it, and so does taking it back; one elsewhere doesn\'t', async () => {

@@ -679,17 +679,20 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
 
   // A reply's reply marker is the thread head, unless it answers one message in
   // particular; the head is named too when the reply brings Hex into the thread.
-  async function replyMeta(event: Event, thread: string, joined: boolean): Promise<Record<string, string>> {
+  async function replyMeta(event: Event, thread: string, joined: boolean): Promise<{ meta: Record<string, string>; own?: string }> {
     const parent = marked(event, 'reply')
-    if (!parent || (parent === thread && !joined)) return {}
+    if (!parent || (parent === thread && !joined)) return { meta: {} }
     const [replied] = await relay.query([{ kinds: MESSAGES, ids: [parent] }])
-    if (!replied) return { reply_to_message_id: parent }
+    if (!replied) return { meta: { reply_to_message_id: parent } }
     const atts = listed(replied)
     return {
-      reply_to_message_id: replied.id,
-      reply_to_user: replied.pubkey === me ? 'me' : await nameOf(replied.pubkey),
-      ...(replied.content ? { reply_to_text: replied.content } : {}),
-      ...(atts.length > 0 ? { reply_to_attachments: atts.join('; ') } : {}),
+      meta: {
+        reply_to_message_id: replied.id,
+        reply_to_user: replied.pubkey === me ? 'me' : await nameOf(replied.pubkey),
+        ...(replied.content ? { reply_to_text: replied.content } : {}),
+        ...(atts.length > 0 ? { reply_to_attachments: atts.join('; ') } : {}),
+      },
+      own: replied.pubkey === event.pubkey ? await unmention(replied.content) : undefined,
     }
   }
 
@@ -793,13 +796,14 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     // calls download_attachment when it wants them. The listing goes in meta
     // only, since an in-content annotation is forgeable by the sender.
     const atts = listed(event)
-    const reply = await replyMeta(original, thread, joined)
+    const { meta: reply, own } = await replyMeta(original, thread, joined)
     const words = (text || reply.reply_to_text || '').split(/\s+/).filter(word => word && !word.startsWith('@'))
     const name = isChannel(thread) ? await nameOf(event.pubkey) : words[0] ?? 'Thread'
 
     // A bare tag on someone's message brings Hex in to read it: the message is reply_to_*.
+    // On the sender's own message, those words are what they said, and the thread's log keeps them.
     const message: Message = {
-      content: text || (atts.length > 0 ? '(attachment)' : '(tagged you)'),
+      content: text || (atts.length > 0 ? '(attachment)' : own || '(tagged you)'),
       meta: {
         ...(await about(event, thread, channel)),
         message_id: original.id,
