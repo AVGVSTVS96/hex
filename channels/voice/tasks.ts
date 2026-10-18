@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { backOf, followTranscript, itemStep, past, sizeOf, stepOf, type Did, type Update } from './activity.ts'
+import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, type Did, type Update } from './activity.ts'
 import { Changes } from './changes.ts'
 import { Links, type Delegation } from './links.ts'
 
@@ -58,6 +58,7 @@ type Job = {
 type Fan = { id: string; kind: string; label: string; startedAt?: number; doneAt?: number }
 type Entry = { at: string; state: string; detail?: string; text?: string }
 type Told = { state: Agent['state']; result?: string }
+type Stretch = Pick<HexTask, 'steps' | 'plan' | 'agents'>
 type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string }
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
@@ -101,6 +102,7 @@ export class Tasks extends Changes {
   private watchers = new Map<string, FSWatcher>()
   private appWatchers = new Map<string, () => void>()
   private followers = new Map<string, Follower>()
+  private stretches = new Map<string, Stretch>()
   private pending?: ReturnType<typeof setTimeout>
   private stale = { threads: true, sessions: true }
   private stops: (() => void)[] = []
@@ -171,6 +173,7 @@ export class Tasks extends Changes {
       .filter(task => task.state === 'needs' || task.state === 'working' || task.at > since)
     const tasks = [...threads, ...this.loose().map(thread => this.task(thread)).filter(task => task.state === 'working')]
     this.follow(tasks)
+    for (const task of tasks) this.keep(task)
     tasks.sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at))
     if (JSON.stringify(tasks) === JSON.stringify(this.tasks)) return
     this.tasks = tasks
@@ -179,6 +182,25 @@ export class Tasks extends Changes {
     if (summary.needs === this.summary.needs && summary.working === this.summary.working) return
     this.summary = summary
     this.counts.changed()
+  }
+
+  // A working thread's stretch of work is kept, so once it stops it still shows its last steps,
+  // plan and agents, until it works again: a step still running then just loses its state, and an
+  // agent still working says what T3 Code says of it now.
+  private keep(task: HexTask) {
+    const stretch = this.stretches.get(task.id)
+    if (task.state === 'working') this.stretches.set(task.id, { steps: task.steps, plan: task.plan, agents: task.agents })
+    if (task.state === 'working' || !stretch) return
+    const session = this.threads.find(thread => `${thread.app}:${thread.id}` === task.id)?.session
+    const handed = this.links.delegations(task.app, task.thread)
+    Object.assign(task, {
+      steps: settled(stretch.steps),
+      plan: stretch.plan,
+      agents: stretch.agents.map(agent => {
+        const one = agent.state === 'working' && handed.find(one => one.id === agent.id)
+        return one && session ? this.delegation(session, one, settled(agent.steps)) : { ...agent, steps: settled(agent.steps) }
+      }),
+    })
   }
 
   private readThreads() {
@@ -363,15 +385,17 @@ export class Tasks extends Changes {
 
   // A T3 Code delegation, followed in its own hex thread's transcript when it runs on hex, else in
   // the turn items T3 Code keeps for it.
-  private delegation(session: string, one: Delegation): Agent {
+  private delegation(session: string, one: Delegation, kept?: Step[]): Agent {
     const state = HANDED[one.status] ?? 'working'
     const ended = state !== 'working'
-    const steps = one.hex
-      ? this.steps(`${session} ${one.id}`)
-      : this.links
-          .turns(one.id)
-          .flatMap(item => itemStep(item, id => this.links.name(id)) ?? [])
-          .slice(0, AGENT_STEPS)
+    const steps =
+      kept ??
+      (one.hex
+        ? this.steps(`${session} ${one.id}`)
+        : this.links
+            .turns(one.id)
+            .flatMap(item => itemStep(item, id => this.links.name(id)) ?? [])
+            .slice(0, AGENT_STEPS))
     const agent = { id: one.id, label: one.title, state, via: 't3' as const, who: who(one.model), since: one.since, ...(ended && { end: one.end, result: one.result }), link: one.link }
     return this.agent(`${session} ${one.id}`, agent, steps)
   }
@@ -381,7 +405,7 @@ export class Tasks extends Changes {
   private agent(key: string, agent: Omit<Agent, 'steps'>, steps = this.steps(key)): Agent {
     const follower = this.followers.get(key)
     const result = agent.result && cut(agent.result.trim(), RESULT)
-    const line = agent.state === 'working' ? steps[0]?.text : (result && plain(result.split('\n').find(line => line.trim()) ?? '')) || steps[0]?.text
+    const line = agent.state === 'working' ? steps[0]?.text : (result && firstLine(result)) || steps[0]?.text
     const kind = follower?.type && follower.type !== 'general-purpose' ? follower.type : undefined
     const model = agent.who ?? [kind, who(follower?.model)].filter(Boolean).join(' · ')
     return clean({ ...agent, who: model || undefined, line: line && oneLine(line), result, steps })
@@ -574,6 +598,11 @@ function toldOf(entry: any): [string, Told] | undefined {
   const id = text.match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
   const said = text.match(/<result>([\s\S]*?)(?:<\/result>|$)/)?.[1]?.replace(/^\[harness:[^\]]*\]\s*/, '').trim()
   return id ? [id, { state: TOLD[text.match(/<status>(\w+)<\/status>/)?.[1] ?? ''] ?? 'stopped', ...(said && { result: said }) }] : undefined
+}
+
+// Steps of a stretch that ended: one still running then never said how it went.
+function settled(steps: Step[]) {
+  return steps.map(({ state, ...step }) => (state === 'running' ? step : { ...step, ...(state && { state }) }))
 }
 
 function iso(ms?: number) {

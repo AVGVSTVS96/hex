@@ -283,7 +283,8 @@ function plain(text: string) {
   return text.replace(/\*\*|__|`/g, '').replace(/\s+/g, ' ').trim()
 }
 
-function firstLine(text: string) {
+// A text's first line, without its markdown or a list marker.
+export function firstLine(text: string) {
   const line = text
     .trim()
     .split('\n')[0]

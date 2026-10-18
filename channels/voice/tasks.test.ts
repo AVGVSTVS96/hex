@@ -313,7 +313,7 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
   mapped('kid', 'thread-kid', { title: 'kid: map the hub' })
   handed('task-kid', 'thread-lead', 'thread-kid', { title: 'kid: map the hub', since: kidSince })
   handed('task-sol', 'thread-lead', 'thread-sol', { driver: 'codex', title: 'sol: second opinion', model: 'gpt-6.1-sol', since: ago(3) })
-  handed('task-old', 'thread-lead', 'thread-old', { driver: 'codex', status: 'completed', title: 'old: an earlier pass', model: 'default', since: ago(30), end: oldEnd, result: 'Found **three** gaps.\nDetails follow.' })
+  handed('task-old', 'thread-lead', 'thread-old', { driver: 'codex', status: 'completed', title: 'old: an earlier pass', model: 'default', since: ago(30), end: oldEnd, result: '- Found **three** gaps.\nDetails follow.' })
   handed('task-cut', 'thread-lead', 'thread-cut', { status: 'interrupted', title: 'cut: stopped early', since: ago(20), end: ago(4) })
   handed('task-gone', 'thread-lead', 'thread-gone', { status: 'completed', title: 'gone: before this stretch', since: ago(40), end: ago(10) })
   handed('native', 'thread-lead', 'thread-native', { origin: 'provider_native', title: 'a native subagent' })
@@ -336,7 +336,7 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
     ['run', 'Searched for durable', 'done', "rg -n 'durable' ~/notes"],
   ])
   expect(sol).not.toContainKeys(['end', 'result'])
-  expect(old).toMatchObject({ end: oldEnd, line: 'Found three gaps.', result: 'Found **three** gaps.\nDetails follow.' })
+  expect(old).toMatchObject({ end: oldEnd, line: 'Found three gaps.', result: '- Found **three** gaps.\nDetails follow.' })
   step(join(project, 'e5000002-kid.jsonl'), 'Read', { file_path: '/repo/hub.ts' })
   await until(() => lead()!.agents[1].line === 'Reading hub.ts')
   expect(kid).toMatchObject({ since: kidSince, link: 't3code://threads/env-1/thread-kid' })
@@ -359,8 +359,31 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
   handed('task-kid', 'thread-lead', 'thread-kid', { status: 'completed', title: 'kid: map the hub', since: ago(5), end: ago(0) })
   handed('task-sol', 'thread-lead', 'thread-sol', { driver: 'codex', status: 'failed', title: 'sol: second opinion', since: ago(3), end: ago(0) })
   await until(() => lead()?.state === 'done')
-  expect(lead()!.agents).toEqual([])
   expect(tasks.get('t3:kid')).toBeUndefined()
+})
+
+test("a thread that stops working keeps its last stretch, with nothing left running and its agents as T3 Code has them now, until it works again", async () => {
+  const lead = () => tasks.get('t3:lead')!
+  expect(lead().state).toBe('done')
+  expect(lead().steps.map(step => [step.text, step.state])).toEqual([
+    ['Waiting on agents', undefined],
+    ['Read hex primitives', undefined],
+    ['Wrote to old: an earlier pass', undefined],
+    ['Checked on kid: map the hub', undefined],
+    ['Handed off sol: second opinion', 'done'],
+  ])
+  expect(lead().agents.map(agent => [agent.label, agent.state, agent.line])).toEqual([
+    ['sol: second opinion', 'failed', 'Searching the web for pi-durable github'],
+    ['kid: map the hub', 'done', 'Reading hub.ts'],
+    ['old: an earlier pass', 'done', 'Found three gaps.'],
+    ['cut: stopped early', 'stopped', undefined],
+  ])
+  expect(lead().agents[0]).toMatchObject({ end: expect.any(String), link: 't3code://threads/env-1/thread-sol' })
+  expect(lead().agents[0].steps[0]).not.toContainKey('state')
+  expect(tasks.rows().find(row => row.id === 't3:lead')!.agents[0]).not.toContainKeys(['steps', 'result'])
+  handed('task-new', 'thread-lead', 'thread-new', { driver: 'codex', title: 'new: round two', since: new Date(Date.now() + 1000).toISOString() })
+  await until(() => lead().state === 'working')
+  expect(lead().agents.map(agent => agent.label)).toEqual(['new: round two'])
 })
 
 test("a thread whose turn ended stays working while its workflow runs, each workflow agent with its own steps", async () => {
