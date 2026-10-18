@@ -188,7 +188,7 @@ test("a Claude Code agent shows its type and model, and once it stops, what it h
     { origin: { kind: 'task-notification' } },
   )
   await until(() => !!voiceapp().agents[1].result)
-  expect(voiceapp().agents[1]).toMatchObject({ state: 'done', line: 'The server answers in 40ms.', result: '**The server** answers in 40ms.\nThe rest is fine.' })
+  expect(voiceapp().agents[1]).toMatchObject({ state: 'done', line: 'The server answers in 40ms.', result: 'The server answers in 40ms.\nThe rest is fine.' })
   expect(tasks.rows().find(row => row.name === 'voiceapp')!.agents[1]).not.toContainKey('result')
 })
 
@@ -342,7 +342,7 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
     ['run', 'Searched for durable', 'done', "rg -n 'durable' ~/notes"],
   ])
   expect(sol).not.toContainKeys(['end', 'result'])
-  expect(old).toMatchObject({ end: oldEnd, line: 'Found three gaps in hub.ts:12.', result: '- Found **three** gaps in [hub.ts:12](/repo/hub.ts#L12).\nDetails follow.' })
+  expect(old).toMatchObject({ end: oldEnd, line: 'Found three gaps in hub.ts:12.', result: '- Found three gaps in hub.ts:12.\nDetails follow.' })
   step(join(project, 'e5000002-kid.jsonl'), 'Read', { file_path: '/repo/hub.ts' })
   await until(() => lead()!.agents[1].line === 'Reading hub.ts')
   expect(kid).toMatchObject({ since: kidSince, link: 't3code://threads/env-1/thread-kid' })

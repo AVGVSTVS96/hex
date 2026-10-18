@@ -92,12 +92,13 @@ test("Codex's turn items read like Claude's steps: a command by what it does, wi
     result: 'notes.md:3: durable',
   })
   const words = (input: string) => item('command_execution', { input, exitCode: 0 })!.text
-  expect([`bash -lc 'nl -ba hub.ts | sed -n 1,80p'`, `bash -lc "cat > ~/x/sol.md <<'EOF'\nhi\nEOF"`, 'git log --oneline | head', 'rg --files src', 'cat a.txt 2>/dev/null'].map(words)).toEqual([
+  expect([`bash -lc 'nl -ba hub.ts | sed -n 1,80p'`, `bash -lc "cat > ~/x/sol.md <<'EOF'\nhi\nEOF"`, 'git log --oneline | head', 'rg --files src', 'cat a.txt 2>/dev/null', `bash -lc 'cat AGENTS.md >/dev/null\nnl -ba links.ts'`].map(words)).toEqual([
     'Read hub.ts',
     'Wrote sol.md',
     'Ran git log',
     'Listed src',
     'Read a.txt',
+    'Read links.ts',
   ])
   expect(item('command_execution', { input: 'bun test', output: '1 fail', exitCode: 1 })).toMatchObject({ state: 'failed', result: '1 fail' })
   expect(item('command_execution', { input: 'bun test', completedAt: null }, 'running')).toMatchObject({ text: 'Running bun test', state: 'running' })

@@ -211,12 +211,14 @@ function called(server: string, tool: string, input: Record<string, any>, names:
 }
 
 // A command in a few plain words, for a provider that gives none: the file it reads or writes, what
-// it looks for or lists, or the program it runs, from its first command past any setup like cd.
+// it looks for or lists, or the program it runs, from its first command past any setup like cd or
+// one whose output is thrown away.
 function commandWords(command: string) {
   const tokens = command.match(/'[^']*'|"(?:\\.|[^"\\])*"|&&|\|\||[;|\n]|\d*>>?|[^\s;|&'"<>]+/g) ?? []
   const parts: string[][] = [[]]
   for (const token of tokens) /^(&&|\|\||[;|\n])$/.test(token) ? parts.push([]) : parts.at(-1)!.push(token.replace(/^(['"])([\s\S]*)\1$/, '$2'))
-  const [name, ...args] = parts.find(part => part.length && !SETUP.has(part[0]!)) ?? []
+  const silent = (part: string[]) => part.some((token, i) => /^1?>>?$/.test(token) && part[i + 1] === '/dev/null')
+  const [name, ...args] = parts.find(part => part.length && !SETUP.has(part[0]!) && !silent(part)) ?? []
   if (!name) return `Running ${firstLine(command)}`
   const redirect = (arg = '') => /^\d*>>?$/.test(arg)
   const out = args.findIndex(arg => arg === '>' || arg === '>>')
@@ -285,14 +287,18 @@ function plain(text: string) {
 
 // A text's first line, without its markdown or a list marker.
 export function firstLine(text: string) {
-  const line = text
-    .trim()
-    .split('\n')[0]
-    .replace(/^(#+|[-*>]|\d+\.)\s+/, '')
-    .replace(/\*\*|__|`/g, '')
-    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .trim()
+  const line = unmark(
+    text
+      .trim()
+      .split('\n')[0]
+      .replace(/^(#+|[-*>]|\d+\.)\s+/, ''),
+  ).trim()
   return line ? line.slice(0, 160) : undefined
+}
+
+// Markdown's marks dropped and its links read as their words, for text shown plain.
+export function unmark(text: string) {
+  return text.replace(/\*\*|__|`/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
 }
 
 // Follows one Claude Code transcript as Claude Code writes it (a file change, not a timer), from

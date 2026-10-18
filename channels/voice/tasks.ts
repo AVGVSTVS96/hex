@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, type Did, type Update } from './activity.ts'
+import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
 import { Changes } from './changes.ts'
 import { Links, type Delegation } from './links.ts'
 
@@ -404,7 +404,7 @@ export class Tasks extends Changes {
   // what it handed back once it's done.
   private agent(key: string, agent: Omit<Agent, 'steps'>, steps = this.steps(key)): Agent {
     const follower = this.followers.get(key)
-    const result = agent.result && cut(agent.result.trim(), RESULT)
+    const result = agent.result && cut(unmark(agent.result.trim()), RESULT)
     const line = agent.state === 'working' ? steps[0]?.text : (result && firstLine(result)) || steps[0]?.text
     const kind = follower?.type && follower.type !== 'general-purpose' ? follower.type : undefined
     const model = agent.who ?? [kind, who(follower?.model)].filter(Boolean).join(' · ')
