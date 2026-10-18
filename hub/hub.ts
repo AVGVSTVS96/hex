@@ -100,11 +100,12 @@ export const engine: { take?: (from: 'discord', greeting: string, line: VoiceLin
 export type Turn = { from: 'me' | 'hex'; text: string }
 
 // Every client running in this process, so a thread can move between them.
-// place() opens a thread on the client, led by its about line if given, and returns its id and a link to it.
+// place() opens a thread on the client, led by its about line if given, for a session working in cwd,
+// and returns its id and a link to it.
 // backfill() posts a thread's chat so far into a thread it placed, in order.
 export type Client = {
   hub: Hub
-  place: (name: string, where?: string, about?: string) => Promise<{ thread: string; link: string }>
+  place: (name: string, where?: string, about?: string, cwd?: string) => Promise<{ thread: string; link: string }>
   backfill?: (thread: string, turns: Turn[]) => Promise<void>
 }
 export const clients = new Map<string, Client>()
@@ -137,8 +138,15 @@ export function history(hexDir: string, session: string): Turn[] {
   return heads.flatMap((head, i) => {
     const [, who, app] = head
     const text = log.slice(head.index + head[0].length, heads[i + 1]?.index).trim()
-    return app === 'terminal' || !text || (who !== 'me' && who !== 'assistant') ? [] : [{ from: who === 'me' ? 'me' : 'hex', text } as Turn]
+    const said = app === 't3' ? asked(text) : text
+    return app === 'terminal' || !said || (who !== 'me' && who !== 'assistant') ? [] : [{ from: who === 'me' ? 'me' : 'hex', text: said } as Turn]
   })
+}
+
+// T3 Code sends a message with its own context around it: the owner's words are its user_request,
+// or what's left without T3's blocks.
+function asked(text: string) {
+  return (text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ?? text.replace(/^<([a-z_]+)>[\s\S]*?<\/\1>$/gm, '')).trim()
 }
 
 // TRANSCRIBE_URL is any OpenAI-compatible /audio/transcriptions endpoint.
@@ -867,11 +875,12 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
   const target = client(to)
   const session = from.session(thread)
   if (!session) throw new Error('this thread has no session yet')
-  const { thread: dest, link } = await target.place(name, where)
+  const cwd = from.cwd(thread)
+  const { thread: dest, link } = await target.place(name, where, undefined, cwd)
   const filled = Promise.resolve(target.backfill?.(dest, from.history(thread))).catch(error => {
     process.stderr.write(`hub: couldn't backfill ${to} thread ${dest}: ${error}\n`)
   })
-  return { target, session, dest, link, filled, cwd: from.cwd(thread) }
+  return { target, session, dest, link, filled, cwd }
 }
 
 // Moves a thread to another client: its session stops here and resumes there, memory intact, once

@@ -105,6 +105,15 @@ test('logs relays under their sender and only channel messages with a user_id as
   expect(out).toContain('## hex General · telegram · 2026-10-06 16:02\n\nAda said')
 })
 
+test('a T3 Code message is the owner\'s, since only the owner reaches T3, and a relay into T3 is its sender\'s', () => {
+  const out = hook('turns', transcript([
+    ['me', '<channel source="plugin:t3:t3" ts="2026-10-06T16:00:00Z">ship it</channel>'],
+    ['me', '<channel source="plugin:t3:t3" user="hex General">Ada said, word for word</channel>'],
+  ]), { HEX_THREAD: '42' })
+  expect(out).toContain('## me · t3 · 2026-10-06 16:00\n\nship it')
+  expect(out).toContain('## hex General · t3 · 2026-10-06 16:01\n\nAda said')
+})
+
 test('a thread logs the prompt that opened it as hex, not me', () => {
   const out = hook('turns', transcript([['me', 'You own the input device topic'], ['assistant', 'on it']]), { HEX_THREAD: '42' })
   expect(out).toContain('## hex · terminal · 2026-10-06 16:00\n\nYou own the input device topic')

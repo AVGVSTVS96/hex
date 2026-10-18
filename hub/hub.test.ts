@@ -1431,6 +1431,20 @@ test('a session\'s history is what the owner said and hex replied in its apps, h
   expect(history(join(dir, 'hex'), '9f9f9f9f-0000-4000-8000-000000000000')).toEqual([])
 })
 
+test('a T3 message in a history is the owner\'s request, without the context T3 Code sends around it', () => {
+  const runtime = "<runtime_info>In case you're asked: you are running in T3 Code.</runtime_info>"
+  logged([
+    `## me · t3 · 2026-10-06 10:09\n\n<t3_code_instructions>\n## T3 Code interaction mode: Default\n\nPrefer assumptions.\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n${runtime}\n`,
+    `## me · t3 · 2026-10-06 10:10\n\nand the docs\n\n${runtime}\n\n<pull_request_linking>\nLink every PR.\n</pull_request_linking>\n`,
+    '## assistant · t3 · 2026-10-06 10:10\n\nShipped.\n',
+  ].join('\n'))
+  expect(history(join(dir, 'hex'), SESSION)).toEqual([
+    { from: 'me', text: 'ship it' },
+    { from: 'me', text: 'and the docs' },
+    { from: 'hex', text: 'Shipped.' },
+  ])
+})
+
 test('a move backfills the thread there with its chat before its session resumes there', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
   logged('## me · buzz · 2026-10-06 10:06\n\nanchors?\n')
@@ -1450,22 +1464,22 @@ test('a move backfills the thread there with its chat before its session resumes
 })
 
 test('a mirror opens a backfilled copy that follows the session, and leaves the thread here', async () => {
-  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, cwd: '/work/anchors' } } })
   logged('## assistant · buzz · 2026-10-06 10:06\n\nAnchors are in.\n')
   const steps: unknown[][] = []
   clients.set('elsewhere', {
     hub: { follow: (...args: unknown[]) => steps.push(['follow', ...args]) } as any,
-    place: async (name, where) => (steps.push(['place', name, where]), { thread: 'far:1', link: 'https://far/1' }),
+    place: async (name, where, about, cwd) => (steps.push(['place', name, where, about, cwd]), { thread: 'far:1', link: 'https://far/1' }),
     backfill: async (thread, turns) => void steps.push(['backfill', thread, turns]),
   })
   try {
     expect(await mirror(hub, 'chat:7', 'elsewhere', 'open-source')).toBe('https://far/1')
     expect(steps).toEqual([
-      ['place', 'Desk anchors', 'open-source'],
+      ['place', 'Desk anchors', 'open-source', undefined, '/work/anchors'],
       ['backfill', 'far:1', [{ from: 'hex', text: 'Anchors are in.' }]],
-      ['follow', 'far:1', 'Desk anchors', SESSION, undefined],
+      ['follow', 'far:1', 'Desk anchors', SESSION, '/work/anchors'],
     ])
-    expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
+    expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, cwd: '/work/anchors' })
   } finally {
     clients.delete('elsewhere')
   }

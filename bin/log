@@ -30,8 +30,9 @@ body=$(jq -r --arg typist "$typist" '
     def heard($e; $text):
       if ($text | startswith("<channel")) then
         ($text | capture("^<channel(?<a>[^>]*)>").a) as $tag
-        | block($e; if ($tag | test(" user_id=")) then "me" else [$tag | capture(" user=\"(?<u>[^\"]+)\"").u] | first // "hex" end;
-          ([$text | capture("^<channel source=\"(plugin:)?(?<app>[a-z]+)").app] | first // "chat");
+        | ([$tag | capture("^ source=\"(plugin:)?(?<app>[a-z0-9]+)").app] | first // "chat") as $app
+        | block($e; if ($tag | test(" user_id=")) then "me" else [$tag | capture(" user=\"(?<u>[^\"]+)\"").u] | first // (if $app == "t3" then "me" else "hex" end) end;
+          $app;
           ([$text | capture("^<channel[^>]*>(?<m>[\\s\\S]*)</channel>").m] | first // $text) | gsub("^\\s+|\\s+$"; ""))
       elif ($text | test("^<(local-command|command-|system-reminder|task-notification)")) then empty
       else block($e; $typist; "terminal"; $text) end;
