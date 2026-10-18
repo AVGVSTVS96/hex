@@ -35,19 +35,19 @@
     ],
     "UserPromptSubmit": [
       { "hooks": [
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts busy" },
+        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts busy" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" }
       ] }
     ],
     "Stop": [
       { "hooks": [
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts idle" },
+        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts idle" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat log" }
       ] }
     ],
     "StopFailure": [
-      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../channels/hub/state.ts idle" }] }
+      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts idle" }] }
     ],
     "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" }] }

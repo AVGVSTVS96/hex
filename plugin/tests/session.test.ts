@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { startHub } from '../../channels/hub/hub.ts'
+import { startHub } from '../../hub/hub.ts'
 
 // The hub starts every session through bin/session, so this runs the hub's real launch
 // against the real launcher, with a fake claude at the end that records what it was given.

@@ -1,0 +1,10 @@
+{
+  "name": "claude-channel-t3",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "^0.86.0",
+    "@agentclientprotocol/sdk": "^1.7.0"
+  }
+}

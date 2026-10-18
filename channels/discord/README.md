@@ -1,0 +1,9 @@
+# Discord
+
+A fork of the official Discord channel where every thread in a server is its own Claude Code session, Claude-tag style: tag the bot in a channel and it starts a thread on your message, with a fresh session working inside it. Its intent, invariants and what changed from upstream live in the old fork's [`discord-threads/PATCH.md`](https://github.com/AVGVSTVS96/claude-plugins-official/blob/989adf98ed3ebfeb225b27635853be59d62b0b1f/patches/discord-threads/PATCH.md).
+
+- `bot.ts` holds the one gateway connection. It runs in the hub service (`bun hub/serve.ts`) next to Telegram, so a conversation can move between them. It starts sessions in `HEX_DIR` (the service's folder by default) through `HEX_LAUNCHER` (`claude` by default).
+- `channel.ts` is the channel the hub serves each session over HTTP, so no process runs per session. `.mcp.json` points a session at the hub's port (`HEX_PORT`) with its thread (`HEX_THREAD`) and the hub's token (`HEX_TOKEN`, as `Authorization`) in headers.
+- `voice.ts` takes calls: join one of the server's voice channels and the bot joins you there, on a call with hex through the voice app's call engine, the same as calling hex's phone number. Leave, and it leaves.
+
+The bot token lives in `~/.claude/channels/hex/discord/.env` as `DISCORD_BOT_TOKEN=…`, and `access.json` there holds `allowFrom`, the Discord user ids allowed to talk to it. The bot needs the Message Content intent, and in its server: View Channels, Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Attach Files, Add Reactions, Pin Messages, Send Polls, and Connect and Speak for calls. Its slash commands (`/model`, `/effort`, `/compact`, `/stop`) register on connect.

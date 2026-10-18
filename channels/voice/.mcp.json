@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "voice": {
+      "type": "http",
+      "url": "http://127.0.0.1:${HEX_PORT}/voice",
+      "headers": {
+        "X-Hex-Channel": "${HEX_CHANNEL}",
+        "X-Hex-Thread": "${HEX_THREAD}",
+        "Authorization": "Bearer ${HEX_TOKEN}"
+      }
+    }
+  }
+}

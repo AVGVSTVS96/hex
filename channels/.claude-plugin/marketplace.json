@@ -1,0 +1,40 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "hex",
+  "description": "hex's channels: Telegram, Discord, Buzz, T3 Code and voice, all served by the hex hub",
+  "owner": {
+    "name": "AVGVSTVS96"
+  },
+  "plugins": [
+    {
+      "name": "telegram",
+      "description": "Telegram channel where every forum topic is its own session. Fork of claude-plugins-official/telegram.",
+      "category": "productivity",
+      "source": "./telegram"
+    },
+    {
+      "name": "discord",
+      "description": "Discord channel where every thread is its own session. Fork of claude-plugins-official/discord.",
+      "category": "productivity",
+      "source": "./discord"
+    },
+    {
+      "name": "buzz",
+      "description": "Buzz channel where every thread is its own session.",
+      "category": "productivity",
+      "source": "./buzz"
+    },
+    {
+      "name": "t3",
+      "description": "T3 Code channel: hex as an ACP agent, where every T3 thread is its own session in that thread's project.",
+      "category": "productivity",
+      "source": "./t3"
+    },
+    {
+      "name": "voice",
+      "description": "Live voice calls for Claude Code: OpenAI's gpt-live-1 talks with you in real time and hands the real work to your Claude Code session.",
+      "category": "productivity",
+      "source": "./voice"
+    }
+  ]
+}

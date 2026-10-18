@@ -141,12 +141,13 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     ├── computer/setup              turns a Sprite into its computer
     ├── vault/                      the vault's relay, page and default store
     ├── defaults/                   what `hex init` starts your folder with
-    └── channels/                   the Telegram, Discord, Buzz and T3 Code channels and hub (submodule)
+    ├── hub/                        gives every thread its own session
+    └── channels/                   the Telegram, Discord, Buzz, T3 Code and voice channels
 ```
 
 hex doesn't need systemd or any service manager. `hex start` runs the hub in the background, and the hub keeps General running. To have it come back after a reboot, point whatever your machine uses at `hex run`: a systemd user service, a launchd agent, a Sprite service, or an `@reboot` cron line.
 
-`channels/` is [a fork of Anthropic's official plugin marketplace](https://github.com/AVGVSTVS96/claude-plugins-official). Its patches add one bot connection per app, serving every Telegram topic and Discord thread, a Buzz channel built the same way, and a hub that gives each thread its own session. Every day a GitHub Actions pipeline re-applies the patches onto the latest upstream, Claude fixes any conflicts, and the result is only published once `scripts/verify` passes. Every morning `bin/update` pulls hex and runs `scripts/verify` again before your hub restarts on the new channel.
+`channels/` is hex's own plugin marketplace: one bot connection per app, serving every Telegram topic, Discord thread and Buzz thread, plus T3 Code and voice calls, all through the hub in `hub/`, which gives each thread its own session. Telegram and Discord began as [Anthropic's official plugins](https://github.com/anthropics/claude-plugins-official) and were kept in step by [an auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official), which still has their history; they live here now, and upstream fixes come in by hand. Every morning `bin/update` pulls hex and runs `bin/check` before your hub restarts on it.
 
 ## Fork it
 
@@ -163,8 +164,6 @@ this repo ─────────────────▶ your fork ─�
 2. **Change anything,** by hand or with any coding agent (`AGENTS.md` shows it around). Push to your fork, and your hex picks it up on its next update.
 3. **Pull in what's new here** whenever you want: **Sync fork** on your fork's GitHub page, or `git pull https://github.com/AVGVSTVS96/hex main` and push.
 4. **Send back what works.** Open a pull request that says what it does and the decisions it makes, with screenshots if it shows anything.
-
-Your hex still gets its channels from [the auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official), so they stay current on their own. To change the channels too, fork that repo as well, turn on its Actions, add a `CLAUDE_CODE_OAUTH_TOKEN` secret (`claude setup-token` makes one) so its daily sync can run, then point `.gitmodules` at it and run `git submodule sync`.
 
 ## What's next
 

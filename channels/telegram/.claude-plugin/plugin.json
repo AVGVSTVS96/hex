@@ -1,0 +1,6 @@
+{
+  "name": "telegram",
+  "description": "Telegram channel where every forum topic is its own session. Fork of claude-plugins-official/telegram.",
+  "version": "0.1.0",
+  "keywords": ["telegram", "messaging", "channel", "mcp"]
+}

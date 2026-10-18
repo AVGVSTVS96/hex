@@ -33,10 +33,10 @@ case "${1:-}" in
     echo $$ > "$pidfile"
     trap 'kill "${hub:-}" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
     while :; do
-      for dir in channels/external_plugins/telegram channels/external_plugins/discord channels/external_plugins/buzz channels/external_plugins/t3 channels/external_plugins/voice vault; do
+      for dir in channels/telegram channels/discord channels/buzz channels/t3 channels/voice vault; do
         bun install --no-summary --cwd "$hex/$dir" >/dev/null
       done
-      bun "$hex/channels/hub/serve.ts" &
+      bun "$hex/hub/serve.ts" &
       hub=$!
       wait "$hub" || sleep 3
     done
@@ -53,7 +53,7 @@ case "${1:-}" in
     running && pkill -HUP -P "$(cat "$pidfile")" -f hub/serve.ts || "$0" start
     ;;
   acp)
-    exec bun "$hex/channels/external_plugins/t3/acp.ts" "$home/state/t3/acp.sock"
+    exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
   status)
     if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi

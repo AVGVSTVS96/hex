@@ -4,5 +4,16 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 cd "$hex"
 # The update runs inside a hex session, whose HEX_* variables would steer the hooks under test.
 unset $(env | sed -n 's/^\(HEX_[A-Z_]*\)=.*/\1/p')
-bun test plugin/tests
-channels/scripts/verify
+out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+# Discord's voice (prism-media) requires ffmpeg-static only when it's installed, which a bundle can't tell.
+build="bun build --target bun --external ffmpeg-static"
+for plugin in telegram discord buzz t3 voice; do
+  bun install --cwd "channels/$plugin" --silent
+  $build "channels/$plugin/bot.ts" --outdir "$out/$plugin" >/dev/null
+  jq -e --arg plugin "$plugin" '.mcpServers[$plugin].type == "http"' "channels/$plugin/.mcp.json" >/dev/null
+  jq -e --arg plugin "$plugin" 'any(.plugins[]; .source == "./\($plugin)")' channels/.claude-plugin/marketplace.json >/dev/null
+done
+$build channels/buzz/provider.ts --outdir "$out/provider" >/dev/null
+$build hub/serve.ts --outdir "$out/hub" >/dev/null
+bun test --isolate plugin/tests hub channels

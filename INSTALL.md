@@ -17,7 +17,7 @@ hex runs wherever Claude Code does, on a machine that stays on: a home server, a
 A person's hex is a folder of their own, `~/hex` unless they want another place. hex itself lives inside it, in `.hex/`: a clone of the repo they pointed you to, this one or their fork, and updates pull from there. If the folder already exists, stop and ask.
 
 ```sh
-git clone --recurse-submodules https://github.com/AVGVSTVS96/hex ~/hex/.hex   # or their fork
+git clone https://github.com/AVGVSTVS96/hex ~/hex/.hex   # or their fork
 ~/hex/.hex/bin/hex init
 ```
 
@@ -110,7 +110,7 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
 - **Buzz (optional):** [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels; hex joins as an agent and works like it does in Discord. Buzz Desktop deploys it through a provider that writes hex's Buzz key over SSH, so the computer running Buzz Desktop must reach this machine with `ssh` and a key, no password. Build the provider for that computer (`bun-darwin-arm64` for an Apple silicon Mac, `bun-darwin-x64`, `bun-linux-x64`) and copy it into its `~/.local/bin`:
 
   ```sh
-  bun build --compile --target=bun-darwin-arm64 ~/hex/.hex/channels/external_plugins/buzz/provider.ts --outfile /tmp/buzz-backend-hex
+  bun build --compile --target=bun-darwin-arm64 ~/hex/.hex/channels/buzz/provider.ts --outfile /tmp/buzz-backend-hex
   ```
 
   Run `claude plugin install buzz@hex` and `claude plugin disable buzz@hex` here. Then ask them to create an agent named hex in Buzz Desktop, pick **hex** as where it runs with this machine's SSH destination (like `user@host`), deploy it, and add it to the channels they want it in **(you)**. Deploying writes `~/hex/state/buzz/.env` and restarts the hub. Tag hex in a channel to check it answers.
@@ -128,4 +128,4 @@ Ask them to say hi in General. hex should answer within a few seconds. Then show
 
 ## Updating
 
-`.hex/bin/update` runs every morning from `schedules.json`. It pulls hex, moves the channels to the fork's latest verified version once its `scripts/verify` passes, and restarts the hub and hex's sessions.
+`.hex/bin/update` runs every morning from `schedules.json`. It pulls hex once `bin/check` passes on the new version, and restarts the hub and hex's sessions.
