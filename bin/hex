@@ -33,7 +33,7 @@ case "${1:-}" in
     echo $$ > "$pidfile"
     trap 'kill "${hub:-}" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
     while :; do
-      for dir in channels/telegram channels/discord channels/buzz channels/t3 channels/voice vault; do
+      for dir in channels/telegram channels/discord channels/buzz channels/t3 channels/voice; do
         bun install --no-summary --cwd "$hex/$dir" >/dev/null
       done
       bun "$hex/hub/serve.ts" &
