@@ -209,11 +209,11 @@ export const server: ChannelServer = {
     },
     {
       name: 'handoff',
-      description: 'Move this conversation to another app when the user asks. It opens a thread there, and this session stops here once the turn ends and resumes there with its full memory. The title defaults to this thread\'s name.',
+      description: 'Move this conversation to another app when the user asks. It opens a thread there, and this session stops here once the turn ends and resumes there with its full memory (in T3 Code, with the user\'s next message there). The title defaults to this thread\'s name.',
       inputSchema: {
         type: 'object',
         properties: {
-          to: { type: 'string', enum: ['telegram', 'buzz'] },
+          to: { type: 'string', enum: ['telegram', 'buzz', 't3'] },
           title: titleProperty,
           channel: { type: 'string', description: 'Buzz only: the channel to open it in, by name. Default: its #general.' },
         },

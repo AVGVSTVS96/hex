@@ -1463,6 +1463,25 @@ test('a move backfills the thread there with its chat before its session resumes
   }
 })
 
+test('a move to a client that shows only its own turns hands it the session to resume with the next message there', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION }, 'chat:8': { name: 'Desk bolts', session: '22222222-0000-4000-8000-000000000000' } } })
+  const steps: unknown[][] = []
+  clients.set('elsewhere', {
+    hub: { adopt: (...args: unknown[]) => steps.push(['adopt', ...args]), follow: (...args: unknown[]) => steps.push(['follow', ...args]) } as any,
+    place: async () => ({ thread: 'far:1', link: 'https://far/1' }),
+    waits: true,
+  })
+  try {
+    await move(hub, 'chat:8', 'elsewhere', 'Bolts')
+    await move(hub, 'chat:7', 'elsewhere', 'Anchors', undefined, true)
+    await until(() => steps.length === 2)
+    expect(steps).toContainEqual(['adopt', 'far:1', 'Bolts', '22222222-0000-4000-8000-000000000000', undefined, undefined])
+    expect(steps).toContainEqual(['follow', 'far:1', 'Anchors', SESSION, undefined])
+  } finally {
+    clients.delete('elsewhere')
+  }
+})
+
 test('a mirror opens a backfilled copy that follows the session, and leaves the thread here', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, cwd: '/work/anchors' } } })
   logged('## assistant · buzz · 2026-10-06 10:06\n\nAnchors are in.\n')

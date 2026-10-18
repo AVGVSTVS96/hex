@@ -180,13 +180,13 @@ export const server: ChannelServer = {
     },
     {
       name: 'handoff',
-      description: 'Move this conversation to Discord or Buzz when the user asks. It opens a thread there, and this session stops here once the turn ends and resumes there with its full memory. From General, a copy continues there and you stay. The title defaults to this topic\'s name, and is required from General.',
+      description: 'Move this conversation to Discord, Buzz or T3 Code when the user asks. It opens a thread there, and this session stops here once the turn ends and resumes there with its full memory (in T3 Code, with the user\'s next message there). From General, a copy continues there and you stay. The title defaults to this topic\'s name, and is required from General.',
       inputSchema: {
         type: 'object',
         properties: {
-          to: { type: 'string', enum: ['discord', 'buzz'] },
+          to: { type: 'string', enum: ['discord', 'buzz', 't3'] },
           title: titleProperty,
-          channel: { type: 'string', description: 'Channel to open it in, by name. Default: the server\'s first channel.' },
+          channel: { type: 'string', description: 'Discord or Buzz only: the channel to open it in, by name. Default: Discord\'s system channel, or Buzz\'s #general.' },
         },
         required: ['to'],
       },

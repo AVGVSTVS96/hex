@@ -1,20 +1,24 @@
 #!/usr/bin/env bun
 import { createServer, type Socket } from 'net'
 import { Readable, Writable } from 'stream'
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { basename, join } from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
 import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
-import { startHub, begin, move, title, MODELS, EFFORTS } from '../../hub/hub.ts'
+import { startHub, clients, begin, move, asked, title, MODELS, EFFORTS, type Turn as Said } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
+import { withT3, projectAt, linkTo } from './t3code.ts'
 import { version } from './package.json'
 
 const STATE_DIR = process.env.T3_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 't3')
 const INBOX_DIR = join(STATE_DIR, 'inbox')
 const SOCKET = join(STATE_DIR, 'acp.sock')
+const PLACED_FILE = join(STATE_DIR, 'placed.json')
+// The provider instance T3 Code runs hex as, under providerInstances in its settings.
+const INSTANCE = process.env.T3_INSTANCE ?? 'hex'
 const HEX_DIR = process.env.HEX_DIR ?? process.cwd()
 const HOME = homedir()
 const SCRATCH = join(HOME, '.t3', 'scratch')
@@ -32,6 +36,16 @@ type Turn = {
 
 // One ACP prompt per thread at a time: it is answered when the session's turn ends.
 const turns = new Map<string, Turn>()
+
+// A chat backfilled into a T3 thread, waiting for T3 to send each of the owner's messages back as a
+// prompt, which its replies answer as they were.
+type Replay = { asked: string; replies: string[] }
+const replays = new Map<string, Replay[]>()
+
+// The threads hex opened in T3 for a conversation from another app, which T3 imports as its sessions.
+const placed = new Set<string>(existsSync(PLACED_FILE) ? JSON.parse(readFileSync(PLACED_FILE, 'utf8')) : [])
+// T3's own id for each thread it imported since hex started.
+const imports = new Map<string, string>()
 
 // T3 Code hands each thread its own MCP servers, with tools like html_render, preview
 // and delegate_task. A session loads them as it starts, so it starts again when they change.
@@ -131,6 +145,9 @@ function known(thread: string) {
 // mid-turn (the prompt's request aborts) the session's T3 tools are dead: it stops like a cancel.
 function prompt(thread: string, blocks: ContentBlock[], client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
   const name = hub.name(known(thread))!
+  const replay = replays.get(thread)?.shift()
+  if (replay && asked(render(blocks)) === replay.asked) return replayed(thread, replay, client)
+  replays.delete(thread)
   if (turns.has(thread)) throw RequestError.invalidRequest(undefined, 'this thread is already working on a prompt')
   const session = hub.session(thread)
   // T3 Code follows a command with its own context block, which the command doesn't take.
@@ -148,6 +165,12 @@ function prompt(thread: string, blocks: ContentBlock[], client: AgentContext, si
     compaction(turn, thread, 'in_progress')
     hub.command(thread, '/compact')
   })
+}
+
+async function replayed(thread: string, { replies }: Replay, client: AgentContext): Promise<PromptResponse> {
+  if (!replays.get(thread)?.length) replays.delete(thread)
+  for (const text of replies) await client.notify('session/update', { sessionId: thread, update: { sessionUpdate: 'agent_message_chunk', messageId: randomUUID(), content: { type: 'text', text } } })
+  return { stopReason: 'end_turn' }
 }
 
 // T3 shows these as its model and effort pickers. A thread with no choice of its own
@@ -234,6 +257,53 @@ function folderFor(cwd: string): string | undefined {
   return cwd
 }
 
+// Opens a thread T3 Code imports as one of hex's sessions, in the T3 project of its folder.
+async function place(name: string, _where?: string, _about?: string, cwd?: string) {
+  const root = cwd ?? HEX_DIR
+  const projectId = projectAt(root)
+  if (!projectId) throw new Error(`T3 Code has no project for ${root}`)
+  const thread = randomUUID()
+  hub.register(thread, name, cwd)
+  placed.add(thread)
+  writeFileSync(PLACED_FILE, JSON.stringify([...placed].filter(known => hub.name(known))))
+  const { threadId } = await withT3(call => call('server.importAcpRegistrySession', { instanceId: INSTANCE, projectId, sessionId: thread, title: name }))
+  imports.set(thread, threadId)
+  return { thread, link: linkTo(threadId) }
+}
+
+// T3 shows only what an agent says on a turn, so the chat goes in as turns: each of the owner's
+// messages is sent to the thread, and its replies answer the prompt it comes back as. A chat that
+// opens with hex's own messages gets a first message saying so.
+async function backfill(thread: string, said: Said[]) {
+  const chat = said.reduce<Replay[]>((chat, { from, text }) => {
+    if (from === 'me') chat.push({ asked: text, replies: [] })
+    else (chat.at(-1) ?? chat[chat.push({ asked: '(hex started this thread)', replies: [] }) - 1]!).replies.push(text)
+    return chat
+  }, [])
+  const threadId = imports.get(thread)
+  if (!chat.length || !threadId) return
+  const queue = [...chat]
+  replays.set(thread, queue)
+  await withT3(async call => {
+    for (const [i, { asked: text }] of chat.entries()) {
+      await call('orchestration.dispatchCommand', {
+        type: 'message.dispatch',
+        commandId: randomUUID(),
+        threadId,
+        messageId: `message:hex:${randomUUID()}`,
+        text,
+        attachments: [],
+        createdBy: 'user',
+        creationSource: 'server',
+        dispatchMode: { type: 'queue_after_active' },
+      }).catch(error => {
+        queue.splice(queue.length - (chat.length - i))
+        throw error
+      })
+    }
+  })
+}
+
 function serve(socket: Socket) {
   agent({ name: 'hex' })
     .onRequest('initialize', () => ({
@@ -241,7 +311,8 @@ function serve(socket: Socket) {
       agentInfo: { name: 'hex', title: 'hex', version },
       agentCapabilities: {
         promptCapabilities: { image: true, audio: true, embeddedContext: true },
-        sessionCapabilities: { resume: {} },
+        loadSession: true,
+        sessionCapabilities: { resume: {}, list: {} },
       },
       authMethods: [],
     }))
@@ -258,12 +329,25 @@ function serve(socket: Socket) {
       advertise(client, params.sessionId)
       return { configOptions: options(params.sessionId) }
     })
+    .onRequest('session/list', ({ params }) => ({
+      sessions: [...placed].filter(thread => hub.name(thread) && (!params.cwd || (hub.cwd(thread) ?? HEX_DIR) === params.cwd)).map(thread => ({ sessionId: thread, cwd: hub.cwd(thread) ?? HEX_DIR, title: hub.name(thread) })),
+    }))
+    .onRequest('session/load', async ({ params, client }) => {
+      remember(known(params.sessionId), params.mcpServers)
+      for (const { from, text } of hub.history(params.sessionId)) {
+        await client.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: from === 'me' ? 'user_message_chunk' : 'agent_message_chunk', messageId: randomUUID(), content: { type: 'text', text } } })
+      }
+      advertise(client, params.sessionId)
+      return { configOptions: options(params.sessionId) }
+    })
     .onRequest('session/set_config_option', ({ params }) => configure(params.sessionId, params.configId, params.value))
     .onRequest('session/prompt', ({ params, client, signal }) => prompt(params.sessionId, params.prompt, client, signal))
     .onNotification('session/cancel', ({ params }) => cancel(params.sessionId))
     .connect(ndJsonStream(Writable.toWeb(socket) as WritableStream<Uint8Array>, Readable.toWeb(socket) as ReadableStream<Uint8Array>))
   socket.on('error', () => {})
 }
+
+clients.set('t3', { hub, place, backfill, waits: true })
 
 rmSync(SOCKET, { force: true })
 createServer(serve).listen(SOCKET)

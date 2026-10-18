@@ -107,6 +107,8 @@ export type Client = {
   hub: Hub
   place: (name: string, where?: string, about?: string, cwd?: string) => Promise<{ thread: string; link: string }>
   backfill?: (thread: string, turns: Turn[]) => Promise<void>
+  // The client shows only the turns its own messages start, so a session moved there waits for one.
+  waits?: boolean
 }
 export const clients = new Map<string, Client>()
 
@@ -145,7 +147,7 @@ export function history(hexDir: string, session: string): Turn[] {
 
 // T3 Code sends a message with its own context around it: the owner's words are its user_request,
 // or what's left without T3's blocks.
-function asked(text: string) {
+export function asked(text: string) {
   return (text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ?? text.replace(/^<([a-z_]+)>[\s\S]*?<\/\1>$/gm, '')).trim()
 }
 
@@ -436,10 +438,10 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     run.leaving!(session)
   }
 
-  function adopt(thread: string, name: string, session: string, prompt: string, cwd?: string) {
+  function adopt(thread: string, name: string, session: string, prompt?: string, cwd?: string) {
     threads[thread] = { name, session, ...(cwd && { cwd }) }
     save()
-    void launch(thread, name, { prompt })
+    if (prompt) void launch(thread, name, { prompt })
   }
 
   function find(nameOrThread: string) {
@@ -888,8 +890,8 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
 // copy continues instead.
 export async function move(from: Hub, thread: string, to: string, name: string, where?: string, copy = thread === from.main) {
   const { target, session, dest, link, filled, cwd } = await carry(from, thread, to, name, where)
-  const prompt = `This conversation just moved to ${to}, into the thread "${name}". Your ${to} tools now post there. Carry on where you left off.`
-  if (copy) void filled.then(() => target.hub.fork(dest, name, session, prompt, cwd))
+  const prompt = target.waits ? undefined : `This conversation just moved to ${to}, into the thread "${name}". Your ${to} tools now post there. Carry on where you left off.`
+  if (copy) void filled.then(() => (prompt ? target.hub.fork(dest, name, session, prompt, cwd) : target.hub.follow(dest, name, session, cwd)))
   else void Promise.all([from.release(thread), filled]).then(([session]) => target.hub.adopt(dest, name, session, prompt, cwd))
   return link
 }

@@ -5,6 +5,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFile
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { Subprocess } from 'bun'
+import { Database } from 'bun:sqlite'
 import { client, ndJsonStream, type SessionNotification } from '@agentclientprotocol/sdk'
 import { connect as channel, service } from '../../hub/testing.ts'
 import { until } from '../../hub/until.ts'
@@ -337,4 +338,115 @@ test('images and files reach the session as paths it can read', async () => {
   expect(readFileSync(saved, 'utf8')).toBe('png bytes')
   expect(link).toBe('[notes.md](/work/notes.md)')
   expect(file).toBe('<file path="/work/a.ts">\nexport {}\n</file>')
+})
+
+// T3 Code's own server and CLI, as hex reaches them: a token from `t3 auth session issue`, a
+// websocket ticket for it, and Effect RPC requests over /ws, each answered with what T3 would.
+function t3Server() {
+  const userdata = join(dir, '.t3', 'userdata')
+  mkdirSync(join(dir, '.t3', 'bin'), { recursive: true })
+  mkdirSync(userdata, { recursive: true })
+  writeFileSync(join(dir, '.t3', 'bin', 't3'), `#!/bin/sh\necho "$@" >> "${dir}/t3-cli"\n[ "$3" = issue ] && echo '{"sessionId":"s1","token":"tok"}'\nexit 0\n`)
+  chmodSync(join(dir, '.t3', 'bin', 't3'), 0o755)
+  writeFileSync(join(userdata, 'environment-id'), 'env-1\n')
+  const db = new Database(join(userdata, 'statev2.sqlite'))
+  db.run('create table projection_projects (project_id text, workspace_root text, created_at text, deleted_at text)')
+  db.run("insert into projection_projects values ('project-1', ?, '2026-10-06', null)", [project])
+  db.close()
+  const requests: { tag: string; payload: any }[] = []
+  const listener = Bun.serve({
+    port: 0,
+    fetch: (request, server) => {
+      const url = new URL(request.url)
+      if (url.pathname === '/api/auth/websocket-ticket') return request.headers.get('authorization') === 'Bearer tok' ? Response.json({ ticket: 'tick' }) : new Response(null, { status: 401 })
+      if (url.pathname === '/ws' && url.searchParams.get('wsTicket') === 'tick' && server.upgrade(request)) return
+      return new Response(null, { status: 404 })
+    },
+    websocket: {
+      message: (ws, data) => {
+        const { id, tag, payload } = JSON.parse(String(data))
+        requests.push({ tag, payload })
+        const value = tag === 'server.importAcpRegistrySession' ? { threadId: `thread:imported:${payload.sessionId}`, imported: true } : { sequence: requests.length }
+        ws.send(JSON.stringify([{ _tag: 'Exit', requestId: id, exit: { _tag: 'Success', value } }]))
+      },
+    },
+  })
+  writeFileSync(join(userdata, 'server-runtime.json'), JSON.stringify({ origin: `http://127.0.0.1:${listener.port}` }))
+  return { requests, stop: () => listener.stop(true) }
+}
+
+// A T3 thread whose session has said something, mirrored back into T3 with this log as its history.
+async function mirrored(log: string) {
+  const server = t3Server()
+  const { agent } = await t3()
+  const { sessionId: source } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  const first = agent.request('session/prompt', { sessionId: source, prompt: [{ type: 'text', text: 'hi' }] })
+  await until(() => lines('launched').length)
+  const saved = join(dir, 'config', 'projects', project.replace(/[^a-zA-Z0-9]/g, '-'))
+  mkdirSync(saved, { recursive: true })
+  writeFileSync(join(saved, `${SESSION}.jsonl`), '')
+  const hex = await session(source)
+  await until(() => existsSync(join(dir, 'state', 'threads.json')) && readFileSync(join(dir, 'state', 'threads.json'), 'utf8').includes(SESSION))
+  hex.busy()
+  await Bun.sleep(100)
+  hex.write(prompt, reply, done)
+  hex.idle()
+  await first
+  mkdirSync(join(dir, 'hex', 'log', 'threads'), { recursive: true })
+  writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${SESSION.slice(0, 8)}.md`), log)
+  const sock = await open(join(dir, 'state', 'hub.sock'))
+  sock.write(JSON.stringify({ type: 'mirror', thread: source, to: 't3' }) + '\n')
+  await until(() => server.requests.some(request => request.tag === 'orchestration.dispatchCommand'))
+  return { server, agent, thread: server.requests[0]!.payload.sessionId as string }
+}
+
+test('a thread mirrored into T3 is imported as a hex session in its project, with its chat sent in as turns its replies answer', async () => {
+  const { server, agent, thread } = await mirrored([
+    `# 2026-10-06 · session ${SESSION}\n`,
+    '## assistant · telegram · 2026-10-06 10:05\n\nAnchors are in.\n',
+    '## me · telegram · 2026-10-06 10:06\n\nhow full is your context?\n',
+    '## assistant · telegram · 2026-10-06 10:06\n\nRoomy.\n',
+    '## assistant · telegram · 2026-10-06 10:06\n\nStill roomy.\n',
+    '## me · telegram · 2026-10-06 10:07\n\nthanks\n',
+  ].join('\n'))
+  await until(() => server.requests.filter(request => request.tag === 'orchestration.dispatchCommand').length === 3)
+  const [imported, ...sent] = server.requests
+  expect(imported).toEqual({ tag: 'server.importAcpRegistrySession', payload: { instanceId: 'hex', projectId: 'project-1', sessionId: thread, title: 'project' } })
+  expect(sent.map(({ payload }) => [payload.threadId, payload.text, payload.createdBy, payload.dispatchMode.type])).toEqual([
+    [`thread:imported:${thread}`, '(hex started this thread)', 'user', 'queue_after_active'],
+    [`thread:imported:${thread}`, 'how full is your context?', 'user', 'queue_after_active'],
+    [`thread:imported:${thread}`, 'thanks', 'user', 'queue_after_active'],
+  ])
+  expect(lines('t3-cli').map(line => line.split(' ').slice(0, 3).join(' '))).toEqual(['auth session issue', 'auth session revoke', 'auth session issue', 'auth session revoke'])
+  expect((await agent.request('session/list', { cwd: project })).sessions).toEqual([{ sessionId: thread, cwd: project, title: 'project' }])
+
+  const { agent: importer, updates } = await t3()
+  await importer.request('session/load', { sessionId: thread, cwd: project, mcpServers: [] })
+  const turn = async (text: string) => {
+    updates.splice(0)
+    expect(await importer.request('session/prompt', { sessionId: thread, prompt: [{ type: 'text', text }, { type: 'text', text: '<runtime_info>In T3 Code.</runtime_info>' }] })).toEqual({ stopReason: 'end_turn' })
+    return updates.flatMap(update => (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text' ? [update.content.text] : []))
+  }
+  expect(await turn('<t3_code_instructions>\nBe brief.\n</t3_code_instructions>\n\n<user_request>\n(hex started this thread)\n</user_request>')).toEqual(['Anchors are in.'])
+  expect(await turn('how full is your context?')).toEqual(['Roomy.', 'Still roomy.'])
+  expect(await turn('thanks')).toEqual([])
+  expect(lines('launched')).toHaveLength(1)
+  importer.request('session/prompt', { sessionId: thread, prompt: [{ type: 'text', text: 'and now?' }] }).catch(() => {})
+  await until(() => lines('launched').length === 2)
+  const forked = JSON.parse(lines('launched')[1]!)
+  expect(forked.slice(forked.indexOf('--resume'), forked.indexOf('--resume') + 3)).toEqual(['--resume', SESSION, '--fork-session'])
+  server.stop()
+})
+
+test('a T3 prompt that isn\'t the next message of a backfill drops what is left of it and reaches the session', async () => {
+  const { server, thread } = await mirrored(`# x\n\n## me · telegram · 10:06\n\nanchors?\n\n## assistant · telegram · 10:06\n\nIn.\n`)
+  const { agent: importer, updates } = await t3()
+  await importer.request('session/load', { sessionId: thread, cwd: project, mcpServers: [] })
+  updates.splice(0)
+  importer.request('session/prompt', { sessionId: thread, prompt: [{ type: 'text', text: 'something else' }] }).catch(() => {})
+  await until(() => lines('launched').length === 2)
+  importer.request('session/prompt', { sessionId: thread, prompt: [{ type: 'text', text: 'anchors?' }] }).catch(() => {})
+  await Bun.sleep(200)
+  expect(updates.some(update => update.sessionUpdate === 'agent_message_chunk')).toBe(false)
+  server.stop()
 })
