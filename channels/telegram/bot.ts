@@ -4,7 +4,7 @@ import type { Chat, MessageEntity, MessageOrigin, ReactionTypeEmoji } from 'gram
 import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from 'fs'
 import { homedir } from 'os'
 import { basename, join, extname, sep } from 'path'
-import { startHub, clients, begin, move, preview, tappable, title, transcribe, type Message, type Permission } from '../../hub/hub.ts'
+import { startHub, clients, begin, move, preview, tappable, title, transcribe, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { Ledger } from '../../hub/ledger.ts'
 
@@ -269,6 +269,36 @@ async function place(name: string, _where?: string, about?: string) {
   topicNames.set(thread, name)
   if (about) remember(thread, (await bot.api.sendMessage(chat_id, about, { message_thread_id: topic.message_thread_id })).message_id, { text: about, user: me() })
   return { thread, link: `https://t.me/c/${chat_id.replace(/^-100/, '')}/${topic.message_thread_id}` }
+}
+
+// A backfill is many messages at once, past what Telegram lets a bot send in a minute, so each
+// waits out the limit Telegram names.
+async function paced<T>(send: () => Promise<T>): Promise<T> {
+  for (;;) {
+    try {
+      return await send()
+    } catch (err) {
+      const wait = err instanceof GrammyError && err.error_code === 429 ? err.parameters.retry_after : undefined
+      if (wait == null) throw err
+      await Bun.sleep(wait * 1000)
+    }
+  }
+}
+
+// A bot posts only as itself, so the owner's lines go quoted under their name, and hex's as its
+// own replies, all silently.
+async function backfill(thread: string, turns: Turn[]) {
+  const { chat_id, extra } = target(thread)
+  const owner = (await bot.api.getChatMember(chat_id, Number(loadAccess().allowFrom[0]))).user.first_name
+  const opts = { ...extra, disable_notification: true }
+  for (const { from, text } of turns) {
+    for (const part of from === 'me' ? chunk(text, MAX_CHUNK_LIMIT - owner.length - 1, 'newline') : fenced(text, MAX_RICH_LIMIT, 'newline')) {
+      const sent = from === 'me'
+        ? await paced(() => bot.api.sendMessage(chat_id, `${owner}\n${part}`, { ...opts, entities: [{ type: 'bold', offset: 0, length: owner.length }, { type: 'blockquote', offset: owner.length + 1, length: part.length }] }))
+        : await paced(() => bot.api.sendRichMessage(chat_id, { markdown: part }, opts))
+      remember(thread, sent.message_id, { text: part, user: me() })
+    }
+  }
 }
 
 // A new topic opens with the request that asked for it and what the session
@@ -574,7 +604,7 @@ const hub = startHub({
   },
 })
 
-clients.set('telegram', { hub, place })
+clients.set('telegram', { hub, place, backfill })
 
 bot.on(['message:forum_topic_created', 'message:forum_topic_edited'], ctx => {
   const name = ctx.message.forum_topic_created?.name ?? ctx.message.forum_topic_edited?.name

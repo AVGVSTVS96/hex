@@ -6,7 +6,7 @@ import { basename, join, sep } from 'path'
 import { finalizeEvent, type Event } from 'nostr-tools/pure'
 import { decode } from 'nostr-tools/nip19'
 import { hexToBytes } from 'nostr-tools/utils'
-import { startHub, clients, begin, move, tappable, title, type Message } from '../../hub/hub.ts'
+import { startHub, clients, begin, move, tappable, title, type Message, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { connectRelay } from './relay.ts'
 import { startActivity } from './activity.ts'
@@ -287,6 +287,15 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const root = await relay.publish({ kind: channels.get(channel)!.forum ? POST : 9, content: [`**${name}**`, about].filter(Boolean).join('\n'), tags: [['h', channel], ['p', owner]] })
     home(root.id, channel)
     return { thread: root.id, link: tappable(link(channel, root.id)) }
+  }
+
+  // The relay takes no event dated more than 15 minutes off, and Hex posts only as itself, so the
+  // chat goes in now, the owner's lines quoted under their name.
+  async function backfill(thread: string, turns: Turn[]) {
+    const name = await nameOf(owner)
+    for (const { from, text } of turns) {
+      for (const part of fenced(text, MAX_CHUNK_LIMIT)) await post(thread, from === 'me' ? `> **${name}**\n${part.replace(/^/gm, '> ')}` : part)
+    }
   }
 
   function blossom(action: 'upload' | 'get', sha256?: string) {
@@ -648,7 +657,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     launcher: process.env.HEX_LAUNCHER,
   })
 
-  clients.set('buzz', { hub, place })
+  clients.set('buzz', { hub, place, backfill })
 
   // Desktop writes a mention as "@Name", or "@Name (pubkey)" when two members share a name.
   async function unmention(text: string): Promise<string> {

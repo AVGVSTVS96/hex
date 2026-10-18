@@ -477,6 +477,22 @@ test('new_thread opens a thread in Buzz with its about line under the title, sta
   expect(args.at(-1)).toBe('find better anchors')
 })
 
+test('a mirror backfills the new thread with the chat, the owner\'s lines quoted under their name', async () => {
+  const bot = await startBot()
+  const { root, session } = await threadStarted(bot)
+  mkdirSync(join(bot.state, '..', 'hex', 'log', 'threads'), { recursive: true })
+  writeFileSync(join(bot.state, '..', 'hex', 'log', 'threads', `2026-10-06-${SESSION.slice(0, 8)}.md`), [
+    `# 2026-10-06 · session ${SESSION}\n`,
+    '## me · telegram · 2026-10-06 10:06\n\nhow full is\nyour context?\n',
+    '## assistant · telegram · 2026-10-06 10:06\n\nRoomy.\n',
+  ].join('\n'))
+  session.send({ type: 'mirror', thread: root.id, to: 'buzz' })
+  const head = await until(() => bot.published(9).find(event => event.content === '**desk**'))
+  const posts = await until(() => (posts => posts.length === 2 && posts)(bot.published(9).filter(event => event.tags.some(([tag, id]) => tag === 'e' && id === head.id))))
+  expect(posts.map(event => event.content)).toEqual(['> **Bassim**\n> how full is\n> your context?', 'Roomy.'])
+  expect(posts[0]!.tags).toEqual([['h', bot.channel], ['e', head.id, '', 'reply'], ['p', owner], bot.auth])
+})
+
 test('reply with buttons lists them numbered and reacts with each keycap; the first tap arrives as a button, the other keycaps come off, later taps are ignored', async () => {
   const bot = await startBot()
   const { session } = await threadStarted(bot)

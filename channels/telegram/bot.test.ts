@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import * as grammy from 'grammy'
+import { clients } from '../../hub/hub.ts'
 import { connect as connectSession } from '../../hub/testing.ts'
 import { until } from '../../hub/until.ts'
 
@@ -23,6 +24,7 @@ let bot: grammy.Bot
 let started: Record<string, any> = {}
 let nextMessage = 100
 let nextUpdate = 1
+let throttled = 0
 
 function answer(method: string, payload: Record<string, any>) {
   const message = () => ({ message_id: ++nextMessage, date: 0, chat: { id: payload.chat_id }, from: hex })
@@ -35,6 +37,7 @@ function answer(method: string, payload: Record<string, any>) {
     case 'getForumTopicIconStickers': return [{ emoji: '🔥', custom_emoji_id: '111' }, { emoji: '❤️', custom_emoji_id: '222' }]
     case 'createForumTopic': return { message_thread_id: 9, name: payload.name, icon_color: 0 }
     case 'getChat': return forum
+    case 'getChatMember': return { status: 'creator', user: payload.user_id === OWNER ? owner : hex }
     case 'getFile': return { file_id: payload.file_id, file_unique_id: payload.file_id, file_path: `photos/${payload.file_id}.jpg` }
     default: return method.startsWith('send') || method.startsWith('forward') ? message() : true
   }
@@ -47,6 +50,7 @@ class Bot extends grammy.Bot {
     bot = this
     this.api.config.use(async (_prev, method, payload: any) => {
       calls.push({ method, payload })
+      if (method.startsWith('send') && throttled && throttled--) return { ok: false, error_code: 429, description: 'Too Many Requests: retry after 0', parameters: { retry_after: 0 } } as any
       if (method === 'editMessageText' && captionOnly.has(payload.message_id)) {
         return { ok: false, error_code: 400, description: 'Bad Request: there is no text in the message to edit' } as any
       }
@@ -362,4 +366,21 @@ test('a pinned post keeps its latest text in the ledger', async () => {
 
 test('once polling the bot leaves its name in bot.json, so the voice app can link a DM', () => {
   expect(JSON.parse(readFileSync(join(state, 'bot.json'), 'utf8'))).toEqual({ username: 'hex_bot' })
+})
+
+test('a backfill quotes the owner under their name and posts hex as itself, silently, split to fit and waiting out the rate limit', async () => {
+  const from = calls.length
+  throttled = 1
+  await clients.get('telegram')!.backfill!(`${FORUM}:9`, [{ from: 'me', text: 'how full is your context?' }, { from: 'hex', text: '**Roomy.**' }, { from: 'me', text: 'a'.repeat(5000) }])
+  const sent = calls.slice(from).filter(c => c.method.startsWith('send'))
+  expect(sent.map(c => [c.method, c.payload.message_thread_id, c.payload.disable_notification])).toEqual([
+    ['sendMessage', 9, true],
+    ['sendMessage', 9, true],
+    ['sendRichMessage', 9, true],
+    ['sendMessage', 9, true],
+    ['sendMessage', 9, true],
+  ])
+  expect(sent[1]!.payload).toMatchObject({ text: 'Bassim\nhow full is your context?', entities: [{ type: 'bold', offset: 0, length: 6 }, { type: 'blockquote', offset: 7, length: 25 }] })
+  expect(sent[2]!.payload.rich_message).toEqual({ markdown: '**Roomy.**' })
+  expect(sent.slice(3).map(c => c.payload.text.length)).toEqual([4096, 5000 - 4089 + 7])
 })
