@@ -3,20 +3,44 @@ import { existsSync, readFileSync, watch } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { MessageId } from '../../hub/ledger.ts'
+import type { Item } from './activity.ts'
+
+// Work a hex thread handed to another T3 Code thread with delegate_task: the child thread, the task
+// that runs it, and how it went. hex is the child's own hex thread, when it runs on hex.
+export type Delegation = {
+  id: string
+  task: string
+  parent: string
+  title: string
+  model?: string
+  status: string
+  since?: string
+  end?: string
+  result?: string
+  hex?: string
+  link?: string
+}
 
 const T3_HOME = join(homedir(), '.t3', 'userdata')
 const DATABASE = 'statev2.sqlite'
 const REFRESH = 500
+const ITEMS = 40
+const SHOWN = ['command_execution', 'web_search', 'file_change', 'dynamic_tool', 'reasoning', 'assistant_message', 'subagent', 'error']
 
 // Where a hex thread lives in its own app. Each bot leaves what its links need in its state folder
 // (Discord's server, Telegram's bot name, the channel of every Buzz thread), and T3 Code's own database,
 // read only, says which T3 thread a hex thread is and what it's called there. An app that can't say gives no link.
+// The same database says what each hex T3 thread handed off, and the turns of those that don't run on
+// hex, read when asked and again whenever T3 Code writes.
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
 export class Links {
   private guild?: string
   private bot?: string
   private channels: Record<string, string> = {}
   private threads = new Map<string, { thread: string; title: string }>()
+  private handed: Delegation[] = []
+  private items = new Map<string, Item[]>()
+  private titles = new Map<string, string | undefined>()
   private environment?: string
   private db?: Database
   private watcher?: ReturnType<typeof watch>
@@ -65,16 +89,53 @@ export class Links {
         const channel = word(this.channels[id])
         return channel && `buzz://message?channel=${channel}&id=${id}`
       }
-      case 't3': {
-        const thread = this.threads.get(id)?.thread
-        return thread && this.environment && `${this.scheme}://threads/${this.environment}/${encodeURIComponent(thread)}`
-      }
+      case 't3':
+        return this.deep(this.threads.get(id)?.thread)
     }
   }
 
   // What the thread is called in its own app, where hex knows it by another name: T3 Code's title.
   title(app: string, id: string): string | undefined {
     return app === 't3' ? word(this.threads.get(id)?.title) : undefined
+  }
+
+  // What a hex T3 thread handed off, oldest first.
+  delegations(app: string, id: string) {
+    const thread = app === 't3' ? this.threads.get(id)?.thread : undefined
+    return thread ? this.handed.filter(one => one.parent === thread) : []
+  }
+
+  // Whether a hex T3 thread is work another hex thread handed off, so it shows under that one.
+  delegated(app: string, id: string) {
+    return app === 't3' && this.handed.some(one => one.hex === id)
+  }
+
+  // A T3 task or thread's title, by either id.
+  name(id: string) {
+    const one = this.handed.find(one => one.task === id || one.id === id)
+    if (one) return one.title
+    if (!this.titles.has(id))
+      this.titles.set(id, word(this.db?.query<{ title: string }, [string]>('select title from orchestration_v2_projection_threads where thread_id = ?').get(id)?.title))
+    return this.titles.get(id)
+  }
+
+  // A T3 thread's newest turn items that read as steps, newest first.
+  turns(thread: string) {
+    let items = this.items.get(thread)
+    if (!items) {
+      items = (this.db
+        ?.query<{ id: string; type: string; status: string; payload: string }, [string]>(
+          `select turn_item_id id, type, status, payload_json payload from orchestration_v2_projection_turn_items
+           where thread_id = ? and type in (${SHOWN.map(type => `'${type}'`).join(', ')}) order by ordinal desc limit ${ITEMS}`,
+        )
+        .all(thread) ?? []).map(item => ({ ...item, payload: JSON.parse(item.payload) }))
+      this.items.set(thread, items)
+    }
+    return items
+  }
+
+  private deep(thread?: string) {
+    return thread && this.environment && `${this.scheme}://threads/${this.environment}/${encodeURIComponent(thread)}`
   }
 
   private schedule() {
@@ -85,7 +146,8 @@ export class Links {
     }, REFRESH)
   }
 
-  // A hex thread's key is the session id the T3 Code ACP agent holds as its native thread.
+  // A hex thread's key is the session id the T3 Code ACP agent holds as its native thread. Turns that
+  // were asked for may have moved with any write, so they're read again when next asked.
   private read() {
     try {
       const rows = this.db!
@@ -98,14 +160,43 @@ export class Links {
         )
         .all()
       const threads = new Map(rows.map(({ key, thread, title }) => [key, { thread, title }]))
-      if (JSON.stringify([...threads]) === JSON.stringify([...this.threads])) return false
+      const keys = new Map(rows.map(({ key, thread }) => [thread, key]))
+      const handed = this.db!
+        .query<Omit<Delegation, 'hex' | 'link'> & { driver: string }, []>(
+          `select child_thread_id id, subagent_id task, thread_id parent, driver, status, started_at since, completed_at "end",
+             coalesce(json_extract(payload_json, '$.title'), 'a task') title, json_extract(payload_json, '$.model') model,
+             substr(json_extract(payload_json, '$.result'), 1, 1000) result
+           from orchestration_v2_projection_subagents
+           where origin = 'app_owned' and child_thread_id is not null
+           order by started_at`,
+        )
+        .all()
+        .filter(row => keys.has(row.parent))
+        .map(({ driver, ...row }): Delegation => {
+          const hex = driver === 'acpRegistry' ? keys.get(row.id) : undefined
+          return omit({ ...row, result: handedBack(row.result), hex, link: this.deep(row.id) })
+        })
+      const asked = this.items.size > 0
+      this.items.clear()
+      this.titles.clear()
+      if (!asked && JSON.stringify([[...threads], handed]) === JSON.stringify([[...this.threads], this.handed])) return false
       this.threads = threads
+      this.handed = handed
       return true
     } catch (error) {
       process.stderr.write(`voice: links: couldn't read T3 Code's threads: ${error}\n`)
       return false
     }
   }
+}
+
+// What a delegation handed back; T3 Code fills in a placeholder for one that ended without a word.
+function handedBack(result?: string) {
+  return result && !/^Child task ended with status \w+\.$/.test(result) ? result : undefined
+}
+
+function omit<T extends object>(record: T) {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value != null)) as T
 }
 
 function word(value: unknown) {

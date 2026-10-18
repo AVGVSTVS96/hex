@@ -1,17 +1,29 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { followTranscript, sizeOf, stepOf, type Did } from './activity.ts'
+import { backOf, followTranscript, itemStep, past, sizeOf, stepOf, type Did, type Update } from './activity.ts'
 import { Changes } from './changes.ts'
-import { Links } from './links.ts'
+import { Links, type Delegation } from './links.ts'
 
 export type State = 'working' | 'needs' | 'done' | 'failed' | 'idle'
-export type Step = Did & { at: string }
+export type Step = Did & { at: string; end?: string }
 export type Planned = { text: string; state: 'done' | 'running' | 'pending' }
-export type Agent = { id: string; label: string; state: 'working' | 'done'; line?: string; steps: Step[] }
+export type Agent = {
+  id: string
+  label: string
+  state: 'working' | 'done' | 'failed' | 'stopped'
+  via: 'claude' | 't3'
+  who?: string
+  since?: string
+  end?: string
+  line?: string
+  result?: string
+  link?: string
+  steps: Step[]
+}
 export type Moment = { at: string; state: State; text: string }
 export type Turn = { at: string; state: State }
-export type Row = Omit<HexTask, 'needs' | 'lately' | 'steps' | 'plan' | 'agents'> & { agents: Omit<Agent, 'steps'>[] }
+export type Row = Omit<HexTask, 'needs' | 'lately' | 'steps' | 'plan' | 'agents'> & { agents: Omit<Agent, 'steps' | 'result'>[] }
 export type Summary = { needs: number; working: number }
 export type HexTask = {
   id: string
@@ -33,7 +45,7 @@ export type HexTask = {
   link?: string
 }
 
-type Thread = { app: string; id: string; name: string; session?: string; cwd?: string; link?: string; title?: string }
+type Thread = { app: string; id: string; name: string; session?: string; cwd?: string }
 type Session = { id: string; pid: number; status: string; name?: string; cwd?: string; started: number; at: number; parent?: string }
 type Job = {
   state?: string
@@ -41,15 +53,19 @@ type Job = {
   needs?: string
   cwd?: string
   updatedAt?: string
-  fan?: { id: string; kind: string; label: string; doneAt?: number }[]
+  fan?: Fan[]
 }
+type Fan = { id: string; kind: string; label: string; startedAt?: number; doneAt?: number }
 type Entry = { at: string; state: string; detail?: string; text?: string }
-type Follower = { stop: () => void; steps: Step[]; plan: Planned[] }
+type Told = { state: Agent['state']; result?: string }
+type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string }
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 const TAIL = 256 * 1024
 const LATELY = 5
-const STEPS = 12
+const STEPS = 24
+const AGENT_STEPS = 12
+const RESULT = 600
 const KEEP = 7 * 24 * 60 * 60_000
 const TRACK = 7 * 24 * 60 * 60_000
 const FINE = 60 * 60_000
@@ -61,15 +77,18 @@ const STATES: Record<string, State> = { working: 'working', blocked: 'needs', do
 const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progress: 'running', pending: 'pending' }
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
 const WORK = new Set(['agent', 'workflow'])
+const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped' }
+const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'failed' }
 const BUSY = new Set(['busy', 'shell'])
 
 // Every hex thread as a task, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
 // running, and each app's threads.json for its name and `links.ts` for where its app opens it.
 // A session another one started (a topic's `claude -p` build) counts toward it as one of its
-// agents; a running session nothing holds is a task of its own while it works. It wakes when one
-// of those files changes, follows a working thread's transcript for its newest step, and bumps a
-// version on any change.
+// agents; a running session nothing holds is a task of its own while it works. So does each T3 Code
+// thread a hex T3 thread handed work to, which shows only under it. It wakes when one of those files
+// (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
+// bumps a version on any change.
 // The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
 export class Tasks extends Changes {
   tasks: HexTask[] = []
@@ -96,7 +115,7 @@ export class Tasks extends Changes {
   ) {
     super()
     this.tracks = readJson(join(state, 'voice', 'tracks.json')) ?? {}
-    this.links = new Links(state, () => this.mark('threads'), t3)
+    this.links = new Links(state, () => this.schedule(), t3)
     this.stops.push(watchDir(state, file => file && APPS[file] && this.mark('threads')))
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
     this.stops.push(watchDir(join(claude, 'jobs'), file => this.jobChanged(file, true)))
@@ -108,7 +127,7 @@ export class Tasks extends Changes {
   }
 
   rows(): Row[] {
-    return this.tasks.map(({ needs, lately, steps, plan, agents, ...row }) => ({ ...row, agents: agents.map(({ steps, ...agent }) => agent) }))
+    return this.tasks.map(({ needs, lately, steps, plan, agents, ...row }) => ({ ...row, agents: agents.map(({ steps, result, ...agent }) => agent) }))
   }
 
   close() {
@@ -146,7 +165,10 @@ export class Tasks extends Changes {
     if (this.stale.threads || this.stale.sessions) this.watchJobs()
     this.stale = { threads: false, sessions: false }
     const since = new Date(Date.now() - KEEP).toISOString()
-    const threads = this.threads.map(thread => this.task(thread)).filter(task => task.state === 'needs' || task.state === 'working' || task.at > since)
+    const threads = this.threads
+      .filter(thread => !this.links.delegated(thread.app, thread.id))
+      .map(thread => this.task(thread))
+      .filter(task => task.state === 'needs' || task.state === 'working' || task.at > since)
     const tasks = [...threads, ...this.loose().map(thread => this.task(thread)).filter(task => task.state === 'working')]
     this.follow(tasks)
     tasks.sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at))
@@ -170,8 +192,6 @@ export class Tasks extends Changes {
         name: thread.name ?? id,
         session: typeof thread.session === 'string' ? thread.session : undefined,
         cwd: thread.cwd,
-        link: this.links.of(app, id),
-        title: this.links.title(app, id),
       })),
     )
   }
@@ -251,8 +271,10 @@ export class Tasks extends Changes {
     const { job, timeline } = thread.session ? this.job(thread.session) : { job: undefined, timeline: [] }
     const session = thread.session ? this.sessions.get(thread.session) : undefined
     const started = thread.session ? this.started(thread.session) : []
+    const handed = this.links.delegations(thread.app, thread.id)
+    const out = handed.filter(one => !HANDED[one.status])
     const known = job?.state ? STATES[job.state] : undefined
-    const live = busy(session) || started.length > 0
+    const live = busy(session) || started.length > 0 || out.length > 0
     let state: State = live ? 'working' : (known ?? 'idle')
     if (!live && ((state === 'working' && !session) || job?.detail?.startsWith('(idle'))) state = 'idle'
     const lately = timeline
@@ -263,29 +285,33 @@ export class Tasks extends Changes {
     const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(0).toISOString()
     const needs = state === 'needs' ? plain(job?.needs ?? job?.detail ?? '') || undefined : undefined
     const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
-    const began = Math.min(...started.map(one => one.started), busy(session) ? session!.at : Infinity)
+    const began = Math.min(...started.map(one => one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? session!.at : Infinity)
     const since =
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
+    const link = this.links.of(thread.app, thread.id)
     const steps = state === 'working' ? this.steps(thread.session!) : []
     const plan = state === 'working' ? (this.followers.get(thread.session!)?.plan ?? []) : []
     const line = steps[0]?.text ?? needs ?? detail ?? lately[0]?.text ?? ''
     const agents = (
       state === 'working'
         ? [
-            ...(job?.fan ?? [])
-              .filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since)))
-              .map(({ id, label, doneAt }) => this.agent(thread.session!, id, label, doneAt)),
-            ...started.map(one => this.agent(thread.session!, one.id, one.name ?? short(one.id))),
+            ...(job?.fan ?? []).filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since))).map(fan => this.subagent(thread.session!, fan)),
+            ...started.map(one => this.agent(`${thread.session} ${one.id}`, { id: one.id, label: one.name ?? short(one.id), state: 'working', via: 'claude', since: iso(one.started) })),
+            ...handed.filter(one => !HANDED[one.status] || !one.end || one.end >= since).map(one => this.delegation(thread.session!, one)),
           ]
         : []
-    ).sort((a, b) => Number(a.state === 'done') - Number(b.state === 'done'))
+    ).sort(
+      (a, b) =>
+        Number(a.state !== 'working') - Number(b.state !== 'working') ||
+        (a.state === 'working' ? (b.since ?? '').localeCompare(a.since ?? '') : (b.end ?? '').localeCompare(a.end ?? '')),
+    )
     return {
       id: `${thread.app}:${thread.id}`,
       app: thread.app,
       thread: thread.id,
       name: thread.name,
       where: where(thread),
-      place: thread.app === 'telegram' && !thread.id.includes(':') ? where(thread) : (thread.title ?? thread.name),
+      place: thread.app === 'telegram' && !thread.id.includes(':') ? where(thread) : (this.links.title(thread.app, thread.id) ?? thread.name),
       state,
       line: oneLine(line),
       ...(needs && { needs }),
@@ -296,7 +322,7 @@ export class Tasks extends Changes {
       plan,
       lately: state === 'idle' ? [] : lately,
       track: this.track(`${thread.app}:${thread.id}`, timeline),
-      ...(thread.link && { link: thread.link }),
+      ...(link && { link }),
     }
   }
 
@@ -328,9 +354,37 @@ export class Tasks extends Changes {
     }
   }
 
-  private agent(session: string, id: string, label: string, doneAt?: number): Agent {
-    const steps = this.steps(`${session} ${id}`)
-    return { id, label, state: doneAt ? 'done' : 'working', ...(steps[0] && { line: steps[0].text }), steps }
+  // A Claude Code subagent or workflow agent, with what it handed back when its session heard it stop.
+  private subagent(session: string, { id, label, startedAt, doneAt }: Fan): Agent {
+    const told = this.followers.get(session)?.told.get(id)
+    const state = doneAt ? (told?.state ?? 'done') : 'working'
+    return this.agent(`${session} ${id}`, { id, label, state, via: 'claude', since: iso(startedAt), ...(doneAt && { end: iso(doneAt), result: told?.result }) })
+  }
+
+  // A T3 Code delegation, followed in its own hex thread's transcript when it runs on hex, else in
+  // the turn items T3 Code keeps for it.
+  private delegation(session: string, one: Delegation): Agent {
+    const state = HANDED[one.status] ?? 'working'
+    const ended = state !== 'working'
+    const steps = one.hex
+      ? this.steps(`${session} ${one.id}`)
+      : this.links
+          .turns(one.id)
+          .flatMap(item => itemStep(item, id => this.links.name(id)) ?? [])
+          .slice(0, AGENT_STEPS)
+    const agent = { id: one.id, label: one.title, state, via: 't3' as const, who: who(one.model), since: one.since, ...(ended && { end: one.end, result: one.result }), link: one.link }
+    return this.agent(`${session} ${one.id}`, agent, steps)
+  }
+
+  // An agent with its newest steps, its model in words, and a line: its newest step while it works,
+  // what it handed back once it's done.
+  private agent(key: string, agent: Omit<Agent, 'steps'>, steps = this.steps(key)): Agent {
+    const follower = this.followers.get(key)
+    const result = agent.result && cut(agent.result.trim(), RESULT)
+    const line = agent.state === 'working' ? steps[0]?.text : (result && plain(result.split('\n').find(line => line.trim()) ?? '')) || steps[0]?.text
+    const kind = follower?.type && follower.type !== 'general-purpose' ? follower.type : undefined
+    const model = agent.who ?? [kind, who(follower?.model)].filter(Boolean).join(' · ')
+    return clean({ ...agent, who: model || undefined, line: line && oneLine(line), result, steps })
   }
 
   private project(cwd = this.hexDir) {
@@ -345,7 +399,7 @@ export class Tasks extends Changes {
   // A working thread's transcript, and those of its subagents, workflow agents and the sessions it
   // started from this stretch of work, give its steps.
   private follow(tasks: HexTask[]) {
-    const wanted = new Map<string, (path: (found: string) => () => void) => () => void>()
+    const wanted = new Map<string, [number, (path: (found: string) => () => void) => () => void]>()
     const threads = [...this.threads, ...this.loose()]
     for (const task of tasks) {
       if (task.state !== 'working') continue
@@ -354,16 +408,24 @@ export class Tasks extends Changes {
       const job = this.job(session).job
       const project = this.project(job?.cwd ?? thread.cwd)
       const subagents = join(project, session, 'subagents')
-      wanted.set(session, follow => follow(join(project, `${session}.jsonl`)))
+      const handed = this.links.delegations(thread.app, thread.id)
+      wanted.set(session, [STEPS, follow => follow(join(project, `${session}.jsonl`))])
       for (const agent of task.agents) {
         const started = this.sessions.get(agent.id)
-        wanted.set(`${session} ${agent.id}`, follow =>
-          started
-            ? follow(join(this.project(started.cwd), `${agent.id}.jsonl`))
-            : job?.fan?.find(one => one.id === agent.id)?.kind === 'workflow'
-              ? inRun(join(subagents, 'workflows'), `agent-${agent.id}.jsonl`, follow)
-              : follow(join(subagents, `agent-${agent.id}.jsonl`)),
-        )
+        const hex = handed.find(one => one.id === agent.id)?.hex
+        const child = hex && threads.find(one => one.app === 't3' && one.id === hex)?.session
+        if (agent.via === 't3' && !child) continue
+        wanted.set(`${session} ${agent.id}`, [
+          AGENT_STEPS,
+          follow =>
+            child
+              ? follow(join(this.project(this.job(child).job?.cwd), `${child}.jsonl`))
+              : started
+                ? follow(join(this.project(started.cwd), `${agent.id}.jsonl`))
+                : job?.fan?.find(one => one.id === agent.id)?.kind === 'workflow'
+                  ? inRun(join(subagents, 'workflows'), `agent-${agent.id}.jsonl`, follow)
+                  : follow(join(subagents, `agent-${agent.id}.jsonl`)),
+        ])
       }
     }
     for (const [key, follower] of this.followers) {
@@ -371,23 +433,38 @@ export class Tasks extends Changes {
       follower.stop()
       this.followers.delete(key)
     }
-    for (const [key, start] of wanted) {
+    for (const [key, [keep, start]] of wanted) {
       if (this.followers.has(key)) continue
-      const follower: Follower = { stop: () => {}, steps: [], plan: [] }
+      const follower: Follower = { stop: () => {}, keep, steps: [], plan: [], told: new Map() }
       this.followers.set(key, follower)
-      follower.stop = start(path =>
-        followTranscript(path, Math.max(0, sizeOf(path) - TAIL), (entry, updates) => {
-          for (const update of updates()) {
-            if (update.sessionUpdate === 'plan') follower.plan = update.entries.map(entry => ({ text: oneLine(entry.content), state: PLANNED[entry.status] ?? 'pending' }))
-            const did = stepOf(update)
-            if (!did?.text || did.text === follower.steps.at(-1)?.text) continue
-            follower.steps.push({ at: entry.timestamp ?? new Date().toISOString(), kind: did.kind, text: oneLine(did.text) })
-            if (follower.steps.length > STEPS) follower.steps.shift()
-          }
-          this.schedule()
-        }),
-      )
+      follower.stop = start(path => {
+        follower.type = readJson(path.replace(/\.jsonl$/, '.meta.json'))?.agentType
+        return followTranscript(path, Math.max(0, sizeOf(path) - TAIL), (entry, updates) => this.take(follower, entry, updates()))
+      })
     }
+  }
+
+  // One transcript line: its model, an agent it heard back from, its plan, its new steps, and the
+  // results of steps it started earlier. A tool call is written once its input is whole, so it began
+  // when the line before it was written.
+  private take(follower: Follower, entry: any, updates: Update[]) {
+    const at = entry.timestamp ?? new Date().toISOString()
+    const began = follower.last ?? at
+    if (entry.timestamp) follower.last = entry.timestamp
+    if (entry.type === 'assistant' && who(entry.message?.model)) follower.model = entry.message.model
+    const told = toldOf(entry)
+    if (told) follower.told.set(...told)
+    for (const update of updates) {
+      if (update.sessionUpdate === 'plan') follower.plan = update.entries.map(entry => ({ text: oneLine(entry.content), state: PLANNED[entry.status] ?? 'pending' }))
+      const back = backOf(update)
+      const step = back && follower.steps.find(step => step.id === (update as { toolCallId: string }).toolCallId)
+      if (step) Object.assign(step, back, { end: at, text: past(step.text) })
+      const did = stepOf(update, id => this.links.name(id))
+      if (!did?.text || (did.id ? follower.steps.some(step => step.id === did.id) : did.text === follower.steps.at(-1)?.text)) continue
+      follower.steps.push({ ...did, text: oneLine(did.text), at: did.id ? began : at, ...(did.id && { state: 'running' as const }) })
+      if (follower.steps.length > follower.keep) follower.steps.shift()
+    }
+    this.schedule()
   }
 }
 
@@ -475,6 +552,40 @@ function processParents() {
   } catch {
     return new Map<number, number>()
   }
+}
+
+// A model's name in words: claude-opus-5-5 is Opus 5.5, gpt-6.1-sol is Sol.
+function who(model?: string | null) {
+  const id = (model ?? '').replace(/\[\w+\]$/, '').replace(/-\d{8}$/, '').replace(/^claude-/, '')
+  if (/^gpt-[\d.]+$/.test(id)) return id.toUpperCase()
+  const [name, ...version] = id.replace(/^gpt-[\d.]+-/, '').split('-')
+  return /^[a-z]\w*$/.test(name!) && name !== 'default' ? [name!.replace(/^./, letter => letter.toUpperCase()), version.join('.')].filter(Boolean).join(' ') : undefined
+}
+
+// What a background agent handed back, from the notification its session got when it stopped, or
+// a foreground agent from its Agent call's result.
+function toldOf(entry: any): [string, Told] | undefined {
+  const result = entry.toolUseResult
+  if (entry.type === 'user' && result?.agentId && result.status === 'completed' && Array.isArray(result.content))
+    return [result.agentId, { state: 'done', result: result.content.map((block: any) => block.text ?? '').join('\n') }]
+  if (entry.origin?.kind !== 'task-notification') return
+  const content = entry.message?.content
+  const text: string = typeof content === 'string' ? content : (content ?? []).map((block: any) => block.text ?? '').join('\n')
+  const id = text.match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
+  const said = text.match(/<result>([\s\S]*?)(?:<\/result>|$)/)?.[1]?.replace(/^\[harness:[^\]]*\]\s*/, '').trim()
+  return id ? [id, { state: TOLD[text.match(/<status>(\w+)<\/status>/)?.[1] ?? ''] ?? 'stopped', ...(said && { result: said }) }] : undefined
+}
+
+function iso(ms?: number) {
+  return ms ? new Date(ms).toISOString() : undefined
+}
+
+function cut(text: string, size: number) {
+  return text.length > size ? `${text.slice(0, size - 1)}…` : text
+}
+
+function clean<T extends object>(record: T) {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined && value !== '')) as T
 }
 
 function short(session: string) {

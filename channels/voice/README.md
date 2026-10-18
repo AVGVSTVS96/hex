@@ -190,8 +190,9 @@ same ones `claude agents --json` prints) and wakes when one of them changes.
  ~/.claude/sessions/<pid>.json       which sessions are running
  state/<app>/threads.json            each thread's name and current session
  state/<app>/{guild,bot,channels}.json  what each bot knows of where its threads live
- ~/.t3/userdata/statev2.sqlite       which T3 Code thread a hex thread is
- <session>.jsonl transcripts         a working thread's newest step, its agents' too
+ ~/.t3/userdata/statev2.sqlite       which T3 Code thread a hex thread is, what it handed off,
+                                     and the turns of handed-off threads that don't run on hex
+ <session>.jsonl transcripts         a working thread's newest steps and their results, its agents' too
                     │
                     ▼
         GET /tasks?after=<version> ── the app's Tasks sheet
@@ -215,10 +216,10 @@ order (needs you, working, done, failed, idle), newest change first in each.
 
 | Request | Answers |
 | --- | --- |
-| `GET /tasks` | `{ version, tasks }`: each thread's `id`, `name`, `where` (Telegram, General, Discord...), `state` (`needs`, `working`, `done`, `failed`, `idle`), one `line`, `since` its state began, `at` its last change, its running `agents` with their own lines, its `track` (the last week of its states for its lane: each change, with steps for the last hour only), and a `link` that opens the thread in its own app (Telegram, Discord, Buzz or T3 Code) |
+| `GET /tasks` | `{ version, tasks }`: each thread's `id`, `name`, `where` (Telegram, General, Discord...), `state` (`needs`, `working`, `done`, `failed`, `idle`), one `line`, `since` its state began, `at` its last change, its `agents` (while it works: each Claude Code subagent, session it started, or T3 Code thread it handed work to, working or finished since `since`: `id`, `label`, `state` (`working`, `done`, `failed`, `stopped`), `via` (`claude` or `t3`), `who` (the model in words), `since`, `end`, one `line`, and a T3 `link`), its `track` (the last week of its states for its lane: each change, with steps for the last hour only), and a `link` that opens the thread in its own app (Telegram, Discord, Buzz or T3 Code) |
 | `GET /tasks?after=<version>` | the same, once anything has changed (or after 25 seconds) |
 | `GET /tasks/summary?after=<version>` | `{ version, needs, working }`, once a count changes |
-| `GET /tasks/<id>` | one task, with what it `needs` from you in full and what it did `lately` |
+| `GET /tasks/<id>` | one task, with what it `needs` from you in full, what it did `lately`, its newest `steps` (newest first: `id`, `at`, `end`, `kind`, a few words of `text`, a tool's `state`, `detail` and `result`, and the `agent` it started), its `plan`, and each agent's `result` and own `steps` |
 | `POST /tasks/<id>/talk` | during a call: the voice brings the task up, and Claude hears which thread it is |
 
 An app starting a call with `"about": "<task id>"` in its `/session` body gets

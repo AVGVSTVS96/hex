@@ -32,13 +32,21 @@ function running(session: string, status: 'busy' | 'idle' | 'shell', pid = proce
   writeFileSync(join(claude, 'sessions', `${session.slice(0, 8)}.json`), JSON.stringify({ pid, sessionId: session, status, ...more }))
 }
 
-function step(path: string, name: string, input: object) {
-  said(path, { type: 'tool_use', id: `toolu_${Math.random()}`, name, input })
+function step(path: string, name: string, input: object, id = `toolu_${Math.random()}`) {
+  said(path, { type: 'tool_use', id, name, input })
 }
 
-function said(path: string, content: object) {
+function said(path: string, content: object, more: object = {}) {
   mkdirSync(join(path, '..'), { recursive: true })
-  appendFileSync(path, JSON.stringify({ type: 'assistant', message: { id: `msg_${Math.random()}`, content: [content] } }) + '\n')
+  appendFileSync(path, JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), message: { id: `msg_${Math.random()}`, content: [content] }, ...more }) + '\n')
+}
+
+function heard(path: string, content: unknown, more: object = {}) {
+  appendFileSync(path, JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content }, ...more }) + '\n')
+}
+
+function back(path: string, id: string, content: string, more: object = {}) {
+  heard(path, [{ type: 'tool_result', tool_use_id: id, content, ...more }])
 }
 
 mkdirSync(join(claude, 'jobs'), { recursive: true })
@@ -62,7 +70,8 @@ job('bbbbbbbb-autofork', { state: 'blocked', detail: 'needs music', needs: 'Pick
   { at: asked, state: 'blocked', detail: 'needs music', text: 'Your call' },
   { at: still, state: 'blocked', detail: 'still needs music', text: 'Still yours' },
 ])
-job('cccccccc-voiceapp', { state: 'working', detail: 'building', updatedAt: ago(1), fan: [{ id: 'old', kind: 'agent', label: 'Earlier', doneAt: 1 }, { id: 'agent2', kind: 'agent', label: 'Check the server', doneAt: Date.now() - 60_000 }, { id: 'agent1', kind: 'agent', label: 'Build the Tasks view' }, { id: 'sh', kind: 'shell', label: 'sleep' }] }, [
+const [checking, checked, building] = [Date.now() - 9 * 60_000, Date.now() - 60_000, Date.now() - 5 * 60_000]
+job('cccccccc-voiceapp', { state: 'working', detail: 'building', updatedAt: ago(1), fan: [{ id: 'old', kind: 'agent', label: 'Earlier', doneAt: 1 }, { id: 'agent2', kind: 'agent', label: 'Check the server', startedAt: checking, doneAt: checked }, { id: 'agent1', kind: 'agent', label: 'Build the Tasks view', startedAt: building }, { id: 'sh', kind: 'shell', label: 'sleep' }] }, [
   { at: ago(14), state: 'working', detail: '', text: '' },
 ])
 job('dddddddd-theo', { state: 'stopped', detail: 'stopped', updatedAt: ago(30) }, [{ at: ago(100), state: 'done', detail: 'clips posted', text: 'done' }])
@@ -78,6 +87,10 @@ writeFileSync(join(t3, 'environment-id'), 'env-1\n')
 const t3db = new Database(join(t3, 'statev2.sqlite'))
 t3db.run('create table orchestration_v2_projection_threads (thread_id text primary key, title text, deleted_at text)')
 t3db.run('create table orchestration_v2_projection_provider_threads (provider_thread_id text primary key, driver text, updated_at text, payload_json text)')
+t3db.run(
+  'create table orchestration_v2_projection_subagents (subagent_id text primary key, thread_id text, child_thread_id text, origin text, driver text, status text, started_at text, completed_at text, payload_json text)',
+)
+t3db.run('create table orchestration_v2_projection_turn_items (turn_item_id text primary key, thread_id text, ordinal integer, type text, status text, payload_json text)')
 afterAll(() => t3db.close())
 
 function mapped(key: string, thread: string, { driver = 'acpRegistry', deleted = null as string | null, title = 'T3 thread' } = {}) {
@@ -90,6 +103,16 @@ function mapped(key: string, thread: string, { driver = 'acpRegistry', deleted =
   ])
 }
 
+function handed(task: string, parent: string, child: string, { driver = 'acpRegistry', status = 'running', since = ago(5), end = null as string | null, title = 'a task', model = 'claude-opus-5-5', result = null as string | null, origin = 'app_owned' } = {}) {
+  t3db.run('insert or replace into orchestration_v2_projection_subagents values (?, ?, ?, ?, ?, ?, ?, ?, ?)', [task, parent, child, origin, driver, status, since, end, JSON.stringify({ title, model, result })])
+}
+
+function item(thread: string, ordinal: number, type: string, status: string, payload: object) {
+  t3db.run('insert or replace into orchestration_v2_projection_turn_items values (?, ?, ?, ?, ?, ?)', [`${thread}:${ordinal}`, thread, ordinal, type, status, JSON.stringify({ type, startedAt: ago(1), completedAt: ago(0.5), ...payload })])
+}
+
+mkdirSync(join(project, 'cccccccc-voiceapp', 'subagents'), { recursive: true })
+writeFileSync(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'Build the Tasks view' }))
 const tasks = new Tasks(state, hex, claude, t3)
 afterAll(() => tasks.close())
 
@@ -133,8 +156,8 @@ test("each thread is a task from its session's own records, what needs you first
 test("a working thread's line is its newest step, and each of its agents from this stretch of work shows its own, running ones first", async () => {
   const voiceapp = () => tasks.get('telegram:-1001234567890:2583')!
   expect(voiceapp().agents).toEqual([
-    { id: 'agent1', label: 'Build the Tasks view', state: 'working', steps: [] },
-    { id: 'agent2', label: 'Check the server', state: 'done', steps: [] },
+    { id: 'agent1', label: 'Build the Tasks view', state: 'working', via: 'claude', since: new Date(building).toISOString(), steps: [] },
+    { id: 'agent2', label: 'Check the server', state: 'done', via: 'claude', since: new Date(checking).toISOString(), end: new Date(checked).toISOString(), steps: [] },
   ])
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Read', { file_path: '/repo/src/tasks.ts' })
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Edit', { file_path: '/repo/src/tasks.ts', old_string: 'a', new_string: 'b' })
@@ -147,7 +170,42 @@ test("a working thread's line is its newest step, and each of its agents from th
   await until(() => voiceapp().agents[0].line === 'Reading README.md')
   const row = tasks.rows().find(row => row.name === 'voiceapp')!
   expect(row).not.toContainKey('steps')
-  expect(row.agents[0]).toEqual({ id: 'agent1', label: 'Build the Tasks view', state: 'working', line: 'Reading README.md' })
+  expect(row.agents[0]).toMatchObject({ id: 'agent1', label: 'Build the Tasks view', state: 'working', line: 'Reading README.md' })
+})
+
+test("a Claude Code agent shows its type and model, and once it stops, what it handed back", async () => {
+  const voiceapp = () => tasks.get('telegram:-1001234567890:2583')!
+  said(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.jsonl'), { type: 'text', text: 'Looking.' }, { message: { id: 'm', model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'Looking.' }] } })
+  await until(() => voiceapp().agents[0].who === 'Explore · Haiku 5.5')
+  heard(
+    join(project, 'cccccccc-voiceapp.jsonl'),
+    '<task-notification>\n<task-id>agent2</task-id>\n<status>completed</status>\n<result>[harness: matched a pattern.]\n\n**The server** answers in 40ms.\nThe rest is fine.</result>\n</task-notification>',
+    { origin: { kind: 'task-notification' } },
+  )
+  await until(() => !!voiceapp().agents[1].result)
+  expect(voiceapp().agents[1]).toMatchObject({ state: 'done', line: 'The server answers in 40ms.', result: '**The server** answers in 40ms.\nThe rest is fine.' })
+  expect(tasks.rows().find(row => row.name === 'voiceapp')!.agents[1]).not.toContainKey('result')
+})
+
+test("a step's result comes back on it: when it ended, whether it worked, its first lines, and the agent it started", async () => {
+  const voiceapp = () => tasks.get('telegram:-1001234567890:2583')!
+  const transcript = join(project, 'cccccccc-voiceapp.jsonl')
+  step(transcript, 'Bash', { command: 'bun test', description: 'Run the tests' }, 'toolu_test')
+  await until(() => voiceapp().steps[0]?.id === 'toolu_test')
+  expect(voiceapp().steps[0]).toMatchObject({ kind: 'run', text: 'Run the tests', state: 'running', detail: 'bun test' })
+  back(transcript, 'toolu_test', 'Exit code 1\n2 fail\n9 pass', { is_error: true })
+  await until(() => voiceapp().steps[0].state === 'failed')
+  expect(voiceapp().steps[0]).toMatchObject({ result: 'Exit code 1\n2 fail\n9 pass', end: expect.any(String) })
+  step(transcript, 'Read', { file_path: '/repo/src/big.ts' }, 'toolu_read')
+  back(transcript, 'toolu_read', 'a file body')
+  step(transcript, 'Agent', { description: 'Check the phone', subagent_type: 'Explore', prompt: 'Look at the phone.\nThen report.' }, 'toolu_agent')
+  back(transcript, 'toolu_agent', 'Async agent launched successfully.\nagentId: agent9 (internal ID)')
+  await until(() => voiceapp().steps[0].agent === 'agent9')
+  const [agent, read] = voiceapp().steps
+  expect(agent).toMatchObject({ kind: 'agent', text: 'Started Check the phone', detail: 'Explore\nLook at the phone.', state: 'done' })
+  expect(agent).not.toContainKey('result')
+  expect(read).toMatchObject({ kind: 'read', text: 'Read big.ts', state: 'done', detail: '/repo/src/big.ts' })
+  expect(read).not.toContainKey('result')
 })
 
 test("a working thread's page has its thoughts in their own words and its plan as Claude Code's todo list stands", async () => {
@@ -243,6 +301,66 @@ test("a T3 Code thread links to T3's own thread for it, once T3 has one, and the
   mapped('later', 'thread:delegated task')
   await until(() => !!tasks.get('t3:later')?.link)
   expect(tasks.get('t3:later')!.link).toBe('t3code://threads/env-1/thread%3Adelegated%20task')
+})
+
+test("a hex T3 thread's delegations are its agents, one on hex only under it with its own transcript's steps, and the thread works while any of them does", async () => {
+  threads('t3', { lead: { name: 'hex', session: 'e5000001-lead' }, kid: { name: 'hex', session: 'e5000002-kid' } })
+  job('e5000001-lead', { state: 'done', detail: 'handed it off', updatedAt: ago(6) })
+  job('e5000002-kid', { state: 'working', detail: 'reading', updatedAt: ago(1) })
+  running('e5000001-lead', 'idle')
+  const [kidSince, oldEnd] = [ago(5), ago(2)]
+  mapped('lead', 'thread-lead', { title: 'hex primitives' })
+  mapped('kid', 'thread-kid', { title: 'kid: map the hub' })
+  handed('task-kid', 'thread-lead', 'thread-kid', { title: 'kid: map the hub', since: kidSince })
+  handed('task-sol', 'thread-lead', 'thread-sol', { driver: 'codex', title: 'sol: second opinion', model: 'gpt-6.1-sol', since: ago(3) })
+  handed('task-old', 'thread-lead', 'thread-old', { driver: 'codex', status: 'completed', title: 'old: an earlier pass', model: 'default', since: ago(30), end: oldEnd, result: 'Found **three** gaps.\nDetails follow.' })
+  handed('task-cut', 'thread-lead', 'thread-cut', { status: 'interrupted', title: 'cut: stopped early', since: ago(20), end: ago(4) })
+  handed('task-gone', 'thread-lead', 'thread-gone', { status: 'completed', title: 'gone: before this stretch', since: ago(40), end: ago(10) })
+  handed('native', 'thread-lead', 'thread-native', { origin: 'provider_native', title: 'a native subagent' })
+  item('thread-sol', 1, 'command_execution', 'completed', { input: `/usr/bin/bash -lc "rg -n 'durable' ~/notes"`, output: 'notes.md:3: durable\n', exitCode: 0 })
+  item('thread-sol', 2, 'web_search', 'running', { patterns: ['pi-durable github', 'temporal schedules'], completedAt: null })
+  const lead = () => tasks.get('t3:lead')
+  await until(() => lead()?.agents.length === 4)
+  expect(tasks.get('t3:kid')).toBeUndefined()
+  expect(lead()).toMatchObject({ state: 'working', since: kidSince, place: 'hex primitives' })
+  expect(lead()!.agents.map(agent => [agent.label, agent.state, agent.via, agent.who])).toEqual([
+    ['sol: second opinion', 'working', 't3', 'Sol'],
+    ['kid: map the hub', 'working', 't3', 'Opus 5.5'],
+    ['old: an earlier pass', 'done', 't3', undefined],
+    ['cut: stopped early', 'stopped', 't3', 'Opus 5.5'],
+  ])
+  const [sol, kid, old] = lead()!.agents
+  expect(sol).toMatchObject({ id: 'thread-sol', link: 't3code://threads/env-1/thread-sol', line: 'Searching the web for pi-durable github' })
+  expect(sol.steps.map(step => [step.kind, step.text, step.state, step.detail])).toEqual([
+    ['web', 'Searching the web for pi-durable github', 'running', 'pi-durable github\ntemporal schedules'],
+    ['run', 'Searched for durable', 'done', "rg -n 'durable' ~/notes"],
+  ])
+  expect(sol).not.toContainKeys(['end', 'result'])
+  expect(old).toMatchObject({ end: oldEnd, line: 'Found three gaps.', result: 'Found **three** gaps.\nDetails follow.' })
+  step(join(project, 'e5000002-kid.jsonl'), 'Read', { file_path: '/repo/hub.ts' })
+  await until(() => lead()!.agents[1].line === 'Reading hub.ts')
+  expect(kid).toMatchObject({ since: kidSince, link: 't3code://threads/env-1/thread-kid' })
+  const transcript = join(project, 'e5000001-lead.jsonl')
+  step(transcript, 'mcp__t3-code__delegate_task', { title: 'sol: second opinion', task: 'Act as the reviewer.\nRead the brief.', target: { providerInstanceId: 'codex' } }, 'toolu_hand')
+  back(transcript, 'toolu_hand', JSON.stringify({ taskId: 'task-sol', childThreadId: 'thread-sol', status: 'running' }))
+  step(transcript, 'mcp__t3-code__task_status', { taskId: 'task-kid' })
+  step(transcript, 'mcp__t3-code__t3_thread_send', { threadId: 'thread-old', message: 'Check the siblings.' })
+  step(transcript, 'mcp__t3-code__t3_thread_read', { threadId: 'thread-lead' })
+  step(transcript, 'mcp__t3-code__t3_thread_wait', { threadIds: ['thread-sol'] })
+  await until(() => lead()!.steps.length === 5)
+  expect(lead()!.steps.map(step => [step.kind, step.text, step.detail, step.agent])).toEqual([
+    ['tool', 'Waiting on agents', undefined, undefined],
+    ['tool', 'Read hex primitives', undefined, undefined],
+    ['tool', 'Wrote to old: an earlier pass', 'Check the siblings.', undefined],
+    ['tool', 'Checked on kid: map the hub', undefined, undefined],
+    ['agent', 'Handed off sol: second opinion', 'Act as the reviewer.', 'thread-sol'],
+  ])
+  expect(tasks.rows().find(row => row.id === 't3:lead')!.agents[2]).not.toContainKeys(['steps', 'result'])
+  handed('task-kid', 'thread-lead', 'thread-kid', { status: 'completed', title: 'kid: map the hub', since: ago(5), end: ago(0) })
+  handed('task-sol', 'thread-lead', 'thread-sol', { driver: 'codex', status: 'failed', title: 'sol: second opinion', since: ago(3), end: ago(0) })
+  await until(() => lead()?.state === 'done')
+  expect(lead()!.agents).toEqual([])
+  expect(tasks.get('t3:kid')).toBeUndefined()
 })
 
 test("a thread whose turn ended stays working while its workflow runs, each workflow agent with its own steps", async () => {
