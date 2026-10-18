@@ -101,16 +101,6 @@ export function settingsOf(agent: Agent): Launch | undefined {
   }
 }
 
-// What a session serves. A hub from before the settings file gave a session its settings inline.
-export function envOf(agent: Agent): Launch['env'] {
-  const flag = settingsFlag(agent)
-  try {
-    return (flag.startsWith('{') ? (JSON.parse(flag) as Launch) : settingsOf(agent))?.env
-  } catch {
-    return undefined
-  }
-}
-
 export function transcript(cwd: string, session: string) {
   return join(home(), 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${session}.jsonl`)
 }

@@ -49,7 +49,7 @@ afterEach(() => {
 })
 
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
-function start(options: { main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; bind?: (thread: string) => Record<string, string>; hooks?: string[] } = {}) {
+function start(options: { main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = options
   if (options.registry) writeFileSync(join(dir, 'threads.json'), JSON.stringify(options.stale ? before(options.registry) : options.registry))
   if (options.agents) writeFileSync(join(dir, 'agents'), JSON.stringify(options.agents))
@@ -71,7 +71,6 @@ function start(options: { main?: string; general?: boolean; idleStop?: number; c
     limits: Object.fromEntries(Object.entries({ idleStop, cacheWarm, compactAbove, reconnect, capacity }).filter(([, value]) => value !== undefined)),
     launcher: options.launcher,
     fresh: options.fresh,
-    bind: options.bind,
     hooks: options.hooks,
     mainName: 'hex',
   })
@@ -116,26 +115,6 @@ function hook(payload: object) {
   const socket = connect(join(dir, 'hub.sock'))
   sockets.push(socket)
   socket.on('connect', () => socket.end(JSON.stringify(payload) + '\n'))
-}
-
-// A session whose plugin started before the hub served over HTTP: it says hello on hub.sock, which
-// stays its channel.
-async function older(thread: string, id = SESSION) {
-  const socket = connect(join(dir, 'hub.sock'))
-  sockets.push(socket)
-  const received: any[] = []
-  let buffer = ''
-  socket.setEncoding('utf8')
-  socket.on('data', (chunk: string) => {
-    buffer += chunk
-    const lines = buffer.split('\n')
-    buffer = lines.pop()!
-    received.push(...lines.map(line => JSON.parse(line)))
-  })
-  await new Promise(resolve => socket.on('connect', resolve))
-  const send = (payload: object) => socket.write(JSON.stringify(payload) + '\n')
-  send({ type: 'hello', thread, session: id })
-  return { received, send }
 }
 
 // Claude's record of a background job, with the flags it restarts with: they read the thread's
@@ -1117,7 +1096,7 @@ test('a restart waits for every call to hang up, even while its session\'s chann
   start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, reconnect: 60_000, fresh: () => true, capacity: 0 })
   let freed = false
   await free()
-  const first = await session('voice')
+  await session('voice')
   hub.keep('voice')
   await Bun.sleep(50)
   void free().then(() => (freed = true))
@@ -1171,34 +1150,6 @@ test('a session whose flags read no settings file of the hub stops and resumes o
   const args = await launched()
   expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
   expect(calls().some(args => args[0] === 'respawn')).toBe(false)
-})
-
-test('a session from before the hub served over HTTP keeps its hello line on hub.sock until its rest, then starts over', async () => {
-  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, status: 'busy' }] })
-  const { received, send } = await older('chat:7')
-  send({ type: 'state', thread: 'chat:7', busy: true })
-  await until(() => states.length)
-  hub.deliver('chat:7', 'Desk anchors', message)
-  await until(() => received.length)
-  expect(received[0]).toEqual({ type: 'inbound', ...message })
-  send({ type: 'call', id: 1, tool: 'reply', args: { text: 'hello' } })
-  expect(await until(() => received.find(event => event.type === 'result'))).toEqual({ type: 'result', id: 1, text: 'reply in chat:7' })
-  expect(calls().some(args => args[0] === 'stop')).toBe(false)
-  writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: 42, status: 'idle' }]))
-  send({ type: 'state', thread: 'chat:7', busy: false })
-  expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
-})
-
-test('a fresh main thread whose unsaved session an older hub started with its settings inline is waited for, not started twice, and is stopped rather than respawned once its channel stays gone', async () => {
-  const old = Bun.spawn(['sleep', '30'])
-  const id = '1a2b3c4d-0000-4000-8000-000000000000'
-  mkdirSync(join(dir, 'jobs', id.slice(0, 8)), { recursive: true })
-  writeFileSync(join(dir, 'jobs', id.slice(0, 8), 'state.json'), JSON.stringify({ state: 'working', sessionId: id, respawnFlags: ['--channels', CHANNEL, '--settings', JSON.stringify({ enabledPlugins: {}, env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: 'voice' } })] }))
-  start({ main: 'voice', fresh: () => true, capacity: 0, reconnect: 50, registry: { voice: { name: 'voice' } }, agents: [{ sessionId: id, pid: old.pid, status: 'idle', startedAt: 1 }] })
-  expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', id.slice(0, 8)])
-  expect(calls().some(args => args[0] === '--bg' || args[0] === 'respawn')).toBe(false)
-  old.kill()
-  await launched()
 })
 
 test('closing a thread with no live session forgets it at once', () => {

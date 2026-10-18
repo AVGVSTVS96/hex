@@ -101,19 +101,6 @@ const VECTORS = {
     d: '72d4f9629106451505d7d341ea85bb3ebad4f654fcfd2aad100d5a35f8a85cba',
     body: '{"slug":"mem/example","value":"hello, agent memory"}',
     created_at: 1700000000,
-    nonce: 1,
-    content: 'AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABedgcxyfmpph68LBjCWZsTI5lb0Cbg8dIPVYVe/WVj/l4Yd8HGgzC8awyBi9bn9ClRdtd2IPsmont0jN/cajVSQhahTOwuNNwoJtZIg35aSsUzeCq4tQfd8E+fLoKomdPxjs=',
-    id: 'f4a594177b7aeea4fe99a09efbf74ae85f0126244f322135682c405888a38689',
-    sig: '0a4582f0bc5995b9a010afda5984f568055988ebbe4552b4e0ec6d11aeb2b303af940f3d84726a7edd1763badb284eb3aa8457664ceba85a90d6252ed4b494cb',
-  },
-  notes: {
-    d: '31651571a312780cfdc1f0b706b682ac9f3f51a053e8dca76fe57710bae5a4d4',
-    body: '{"slug":"mem/notes/2026-05-12","value":"meeting note: [[mem/example]]"}',
-    created_at: 1700000001,
-    nonce: 2,
-    content: 'AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACG/JBPvdZxDwAxOG7bY3AW2q1slZqBjQC3NxfPVtfcR+TGjp2GKtjyXyqNwG08GK+00I1u1vUZ4cCjcun9A7ra92rleKKJ5w57pqgFspbv1vClUJY5487A/5phVDHkw6DhRCSMDpEMw5Tapj3Wm1ponAVr5PciPOrTxltEfTVdSKaPA==',
-    id: '1a43298ea1fa9b73462a85b9f16f5f6bd2a7ab18b0b02424e5ec3f3b8a48e030',
-    sig: 'dc9da456db1c89f070edc5f994786f270fc00e8ff19f33d5b0f6cea49421cd727fcd79bb288f3e3dbd5af9ca1ba67f9bd11b02a47c1e6c37cfd32665c17e4a24',
   },
   tombstone: {
     d: '72d4f9629106451505d7d341ea85bb3ebad4f654fcfd2aad100d5a35f8a85cba',
@@ -146,48 +133,20 @@ function expectVector(published: { event: Event; text: string }, vector: (typeof
   expect({ content, id, sig }).toEqual({ content: vector.content, id: vector.id, sig: vector.sig })
 }
 
-test('SOUL.md and MEMORY.md reproduce the NIP-AE test vectors, and a removed section is tombstoned', async () => {
+test('SOUL.md reproduces the NIP-AE core vector, and a memory gone from disk is tombstoned', async () => {
   expect(Buffer.from(getConversationKey(AGENT_KEY, OWNER)).toString('hex')).toBe(VECTORS.conversationKey)
   write('SOUL.md', 'test agent. see [[mem/example]] and [[mem/notes/2026-05-12]].')
-  write('MEMORY.md', '# Memory\n\n## Example\nhello, agent memory\n\n## Notes/2026-05-12\nmeeting note: [[mem/example]]\n')
   const relay = fakeRelay()
+  await relay.relay.publish({ kind: 30174, content: encrypt(VECTORS.example.body, KEY), tags: [['d', VECTORS.example.d], ['p', OWNER]], created_at: VECTORS.example.created_at })
   start(relay, [])
   await until(() => relay.events.length === 3)
-  const [core, example, notes] = opened(relay, 30174)
+  const [example, core, tombstone] = opened(relay, 30174)
   expectVector(core!, VECTORS.core)
-  expectVector(example!, VECTORS.example)
-  expectVector(notes!, VECTORS.notes)
-
-  write('MEMORY.md', '# Memory\n\n## Notes/2026-05-12\nmeeting note: [[mem/example]]\n')
-  await until(() => relay.events.length === 4)
-  const tombstone = opened(relay, 30174)[3]!
-  expectVector(tombstone, VECTORS.tombstone)
-  expect(tombstone.event.created_at).toBeGreaterThan(example!.event.created_at)
+  expectVector(tombstone!, VECTORS.tombstone)
+  expect(tombstone!.event.created_at).toBeGreaterThan(example!.event.created_at)
 })
 
-test('only changed sections are published again, empty ones never, and a restart publishes nothing new', async () => {
-  write('SOUL.md', '# Who you are\n')
-  write('MEMORY.md', '# Memory\n\n## Me\n- Bassim\n\n## Preferences\n\n## Machines\n- server: CachyOS\n')
-  const relay = fakeRelay()
-  start(relay, [])
-  await until(() => relay.events.length === 3)
-  expect(opened(relay, 30174).map(({ body }) => body)).toEqual([
-    { slug: 'core', profile: '# Who you are\n' },
-    { slug: 'mem/me', value: '- Bassim' },
-    { slug: 'mem/machines', value: '- server: CachyOS' },
-  ])
-
-  write('MEMORY.md', '# Memory\n\n## Me\n- Bassim\n\n## Preferences\n\n## Machines\n- server: CachyOS\n- mac: M1 Max\n')
-  await until(() => relay.events.length === 4)
-  expect(opened(relay, 30174)[3]!.body).toEqual({ slug: 'mem/machines', value: '- server: CachyOS\n- mac: M1 Max' })
-
-  running.pop()!.close()
-  start(relay, [])
-  await Bun.sleep(300)
-  expect(relay.events.length).toBe(4)
-})
-
-test("OptMem's notes become one memory per day, and a new note updates only its day", async () => {
+test("OptMem's notes become one memory per day, a new note updates only its day, and a restart publishes nothing new", async () => {
   const note = (n: number, day: string, text: string) => `#${n} ${day} ${text}`.padEnd(80) + '\n'
   write('memory/LOG.txt', note(0, '2026-10-07', 'set up the server') + note(1, '2026-10-08', 'joined Buzz'))
   const relay = fakeRelay()
@@ -201,6 +160,11 @@ test("OptMem's notes become one memory per day, and a new note updates only its 
   write('memory/LOG.txt', note(0, '2026-10-07', 'set up the server') + note(1, '2026-10-08', 'joined Buzz') + note(2, '2026-10-08', 'read the whole channel'))
   await until(() => relay.events.length === 3)
   expect(opened(relay, 30174)[2]!.body).toEqual({ slug: 'mem/notes/2026-10-08', value: '- joined Buzz\n- read the whole channel' })
+
+  running.pop()!.close()
+  start(relay, [])
+  await Bun.sleep(300)
+  expect(relay.events.length).toBe(3)
 })
 
 test('shared files are published with their content, listed when it cannot be inlined, and removed when gone', async () => {
@@ -213,7 +177,7 @@ test('shared files are published with their content, listed when it cannot be in
   write('notes/.hidden', 'secret')
   write('notes/.git/config', 'x')
   const relay = fakeRelay()
-  start(relay, ['AGENTS.md', 'SOUL.md', 'MEMORY.md', 'notes/'])
+  start(relay, ['AGENTS.md', 'SOUL.md', 'schedules.json', 'notes/'])
   await until(() => opened(relay, 30180).length === 6)
   const records = Object.fromEntries(opened(relay, 30180).map(({ event, body }) => [body.path, { d: event.tags, ...body }]))
   expect(Object.keys(records).sort()).toEqual(['AGENTS.md', 'SOUL.md', 'notes/big.txt', 'notes/bom.md', 'notes/photo.bin', 'notes/plan.md'])
@@ -225,7 +189,7 @@ test('shared files are published with their content, listed when it cannot be in
   expect(records['notes/photo.bin']).not.toHaveProperty('content')
 
   running.pop()!.close()
-  start(relay, ['AGENTS.md', 'SOUL.md', 'MEMORY.md', 'notes'])
+  start(relay, ['AGENTS.md', 'SOUL.md', 'schedules.json', 'notes'])
   await Bun.sleep(300)
   expect(opened(relay, 30180).length).toBe(6)
 
@@ -245,7 +209,7 @@ test('an edit request is written, committed, republished and answered', async ()
   execFileSync('git', ['-C', dir, '-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'start'])
   execFileSync('git', ['-C', dir, 'config', 'user.name', 'Hex'])
   execFileSync('git', ['-C', dir, 'config', 'user.email', 'hex@example.com'])
-  write('MEMORY.md', 'not part of the commit\n')
+  write('scratch.md', 'not part of the commit\n')
   const relay = fakeRelay()
   start(relay)
   await until(() => relay.subs.size)
@@ -256,7 +220,7 @@ test('an edit request is written, committed, republished and answered', async ()
   expect(opened(relay, 30180).at(-1)!.body).toMatchObject({ path: 'AGENTS.md', content: '# My rules for you\n- be brief\n' })
   expect(relay.events.findIndex(event => event.kind === 4181)).toBeGreaterThan(relay.events.indexOf(opened(relay, 30180).at(-1)!.event))
   expect(execFileSync('git', ['-C', dir, 'log', '-1', '--format=%s', '--name-only'], { encoding: 'utf8' })).toBe('AGENTS.md: edited in Buzz\n\nAGENTS.md\n')
-  expect(execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' })).toBe('?? MEMORY.md\n')
+  expect(execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' })).toBe('?? scratch.md\n')
 })
 
 test('the file on disk decides: stale edits conflict, unshared, hidden, linked and uninlined files are declined, invalid paths get no answer', async () => {

@@ -128,8 +128,7 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
 
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and
 // compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1,
-// 3, 7 and 15 seconds, then gives up for good, and never restarts a stdio one
-// (anthropics/claude-code#43177).
+// 3, 7 and 15 seconds, then gives up for good.
 const LIMITS: Limits = { idleStop: 30 * 60_000, cacheWarm: 54 * 60_000, compactAbove: 150_000, reconnect: 20_000, capacity: capacity(process.env.HEX_CHAT_CAPACITY) }
 const PRIVATE = /_BOT_TOKEN$|^HEX_|^BUZZ_/
 
@@ -454,7 +453,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
   }
 
   function boundTo(agent: claude.Agent) {
-    const env = claude.envOf(agent)
+    const env = claude.settingsOf(agent)?.env
     return env?.HEX_CHANNEL === channel ? env.HEX_THREAD : undefined
   }
 
@@ -586,22 +585,20 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     void launch(thread, threads[thread]!.name, { prompt, quiet })
   }
 
-  // A session's channel connected: over HTTP (its session is the one the hub started, or the one
-  // Claude reports running for the thread), or through its plugin's hello on hub.sock, which names
-  // it. Only a session started before its plugin served over HTTP says hello, so it starts over on
-  // HTTP at its next rest. One that only reconnects still owes a renew it asked for.
-  function welcome(thread: string, line: Line, session?: string) {
+  // A session's channel connected over HTTP: its session is the one the hub started, or the one
+  // Claude reports running for the thread. One that only reconnects still owes a renew it asked for.
+  function welcome(thread: string, line: Line) {
     const run = runOf(thread)
     const job = run.phase.is === 'launching' ? run.phase.job : undefined
     become(run, { is: 'live', line })
     if (run.renew !== 'asked') run.renew = undefined
     threads[thread] ??= { name: thread }
-    const id = session ?? (job && claude.record(job).sessionId)
+    const id = job && claude.record(job).sessionId
     if (id) note(thread, id)
     for (const message of run.queue.splice(0)) line.send({ type: 'inbound', ...message })
     rest(thread)
     letGo(thread)
-    if (session || stale(thread)) {
+    if (stale(thread)) {
       run.renew = 'stale'
       void renew(thread)
     }
@@ -711,14 +708,10 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
   })
   channels.set(path, serve)
 
-  // Where a session's hooks and hex's own tools reach the hub, one JSON line each. A session whose
-  // plugin started before it served over HTTP says hello here and keeps this line as its channel.
+  // Where a session's hooks and hex's own tools reach the hub, one JSON line each.
   rmSync(socketPath, { force: true })
   const sock = createServer(socket => {
-    let thread = ''
     let buffer = ''
-    const reply = (payload: object) => socket.write(JSON.stringify(payload) + '\n')
-    const line: Line = { send: reply }
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => {
       buffer += chunk
@@ -726,21 +719,12 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
         const raw = buffer.slice(0, end)
         buffer = buffer.slice(end + 1)
         try {
-          const request = JSON.parse(raw)
-          if (request.type === 'hello') welcome((thread = request.thread), line, request.session)
-          else if (request.type === 'permission_request') permission?.(thread, request)
-          else if (request.type === 'call')
-            call(thread, request.tool, request.args ?? {}).then(
-              text => reply({ type: 'result', id: request.id, text }),
-              error => reply({ type: 'result', id: request.id, error: error instanceof Error ? error.message : String(error) }),
-            )
-          else handle(request)
+          handle(JSON.parse(raw))
         } catch (error) {
-          process.stderr.write(`hub: dropped a bad line from ${thread || 'a session'}: ${error}\n`)
+          process.stderr.write(`hub: dropped a bad line: ${error}\n`)
         }
       }
     })
-    socket.on('close', () => drop(thread, line))
     socket.on('error', () => {})
   }).listen(socketPath)
 

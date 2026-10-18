@@ -12,7 +12,7 @@ const FILE = 30180
 const EDIT = 4180
 const RESULT = 4181
 const LIMIT = 65535
-const SHARE = ['AGENTS.md', 'SOUL.md', 'MEMORY.md', 'schedules.json']
+const SHARE = ['AGENTS.md', 'SOUL.md', 'schedules.json']
 const NOTES = 'memory/LOG.txt'
 const SETTLE = 500
 const RESYNC = 10 * 60_000
@@ -26,9 +26,8 @@ const log = (line: string) => process.stderr.write(`buzz hub: ${line}\n`)
 // Readers check content against sha256, and a default TextDecoder drops a leading BOM.
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
-// The memory panel (NIP-AE) shows SOUL.md as the core record, each `## ` section of
-// MEMORY.md as a memory, and each day of OptMem's notes as one more. Agent Files
-// shows the shared files and takes the owner's edits.
+// The memory panel (NIP-AE) shows SOUL.md as the core record and each day of OptMem's
+// notes as a memory. Agent Files shows the shared files and takes the owner's edits.
 export function startMemory({ relay, secretKey, owner, hexDir, share = SHARE }: {
   relay: Relay
   secretKey: Uint8Array
@@ -115,14 +114,6 @@ export function startMemory({ relay, secretKey, owner, hexDir, share = SHARE }: 
     const wanted = new Map<string, object>()
     const soul = read('SOUL.md')
     if (soul !== undefined) wanted.set('core', { slug: 'core', profile: soul })
-    for (const section of (read('MEMORY.md') ?? '').split(/^## /m).slice(1)) {
-      const [heading = '', ...lines] = section.split('\n')
-      const value = lines.join('\n').trim()
-      const base = `mem/${slugify(heading)}`
-      let slug = base
-      for (let n = 2; wanted.has(slug); n++) slug = `${base}-${n}`
-      if (value) wanted.set(slug, { slug, value })
-    }
     const notes = (read(NOTES) ?? '').matchAll(/^#\d+ (\d{4}-\d\d-\d\d) (.+?)\s*$/gm)
     for (const [day, lines] of Map.groupBy(notes, note => note[1]!)) {
       const slug = `mem/notes/${day}`
@@ -227,7 +218,7 @@ export function startMemory({ relay, secretKey, owner, hexDir, share = SHARE }: 
   function arm() {
     for (const watcher of watchers.splice(0)) watcher.close()
     if (closed) return
-    const top = new Set(['SOUL.md', 'MEMORY.md', ...shared.map(entry => entry.split('/')[0])])
+    const top = new Set(['SOUL.md', ...shared.map(entry => entry.split('/')[0])])
     follow('', false, name => top.has(name))
     follow(posix.dirname(NOTES), false, name => name === posix.basename(NOTES))
     for (const dir of shared) follow(dir, true, () => true)
@@ -276,11 +267,6 @@ function recordPath(body: any) {
 
 function editRequest(body: any): body is { path: string; base_sha256: string; content: string } {
   return typeof body?.path === 'string' && valid(body.path) && typeof body.base_sha256 === 'string' && HEX64.test(body.base_sha256) && typeof body.content === 'string'
-}
-
-function slugify(heading: string) {
-  const parts = heading.normalize('NFKD').toLowerCase().split('/').map(part => part.replace(/[^a-z0-9_-]+/g, '-').replace(/^[-_]+|-+$/g, '').slice(0, 64))
-  return parts.filter(Boolean).join('/') || 'section'
 }
 
 function valid(path: string) {
