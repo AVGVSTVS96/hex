@@ -290,6 +290,7 @@ export function firstLine(text: string) {
     .split('\n')[0]
     .replace(/^(#+|[-*>]|\d+\.)\s+/, '')
     .replace(/\*\*|__|`/g, '')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
     .trim()
   return line ? line.slice(0, 160) : undefined
 }
