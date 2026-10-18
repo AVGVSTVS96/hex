@@ -91,6 +91,7 @@ t3db.run(
   'create table orchestration_v2_projection_subagents (subagent_id text primary key, thread_id text, child_thread_id text, origin text, driver text, status text, started_at text, completed_at text, payload_json text)',
 )
 t3db.run('create table orchestration_v2_projection_turn_items (turn_item_id text primary key, thread_id text, ordinal integer, type text, status text, payload_json text)')
+t3db.run('create table orchestration_v2_projection_messages (thread_id text, role text, created_at text, payload_json text)')
 afterAll(() => t3db.close())
 
 function mapped(key: string, thread: string, { driver = 'acpRegistry', deleted = null as string | null, title = 'T3 thread' } = {}) {
@@ -105,6 +106,10 @@ function mapped(key: string, thread: string, { driver = 'acpRegistry', deleted =
 
 function handed(task: string, parent: string, child: string, { driver = 'acpRegistry', status = 'running', since = ago(5), end = null as string | null, title = 'a task', model = 'claude-opus-5-5', result = null as string | null, origin = 'app_owned' } = {}) {
   t3db.run('insert or replace into orchestration_v2_projection_subagents values (?, ?, ?, ?, ?, ?, ?, ?, ?)', [task, parent, child, origin, driver, status, since, end, JSON.stringify({ title, model, result })])
+}
+
+function ask(thread: string, at: string, payload: object = {}) {
+  t3db.run('insert into orchestration_v2_projection_messages values (?, ?, ?, ?)', [thread, 'user', at, JSON.stringify(payload)])
 }
 
 function item(thread: string, ordinal: number, type: string, status: string, payload: object) {
@@ -311,6 +316,7 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
   const [kidSince, oldEnd] = [ago(5), ago(2)]
   mapped('lead', 'thread-lead', { title: 'hex primitives' })
   mapped('kid', 'thread-kid', { title: 'kid: map the hub' })
+  ask('thread-lead', ago(25))
   handed('task-kid', 'thread-lead', 'thread-kid', { title: 'kid: map the hub', since: kidSince })
   handed('task-sol', 'thread-lead', 'thread-sol', { driver: 'codex', title: 'sol: second opinion', model: 'gpt-6.1-sol', since: ago(3) })
   handed('task-old', 'thread-lead', 'thread-old', { driver: 'codex', status: 'completed', title: 'old: an earlier pass', model: 'default', since: ago(30), end: oldEnd, result: '- Found **three** gaps.\nDetails follow.' })
@@ -381,6 +387,7 @@ test("a thread that stops working keeps its last stretch, with nothing left runn
   expect(lead().agents[0]).toMatchObject({ end: expect.any(String), link: 't3code://threads/env-1/thread-sol' })
   expect(lead().agents[0].steps[0]).not.toContainKey('state')
   expect(tasks.rows().find(row => row.id === 't3:lead')!.agents[0]).not.toContainKeys(['steps', 'result'])
+  ask('thread-lead', new Date().toISOString())
   handed('task-new', 'thread-lead', 'thread-new', { driver: 'codex', title: 'new: round two', since: new Date(Date.now() + 1000).toISOString() })
   await until(() => lead().state === 'working')
   expect(lead().agents.map(agent => agent.label)).toEqual(['new: round two'])
@@ -499,3 +506,17 @@ test("a thread's lane outlives its session starting over, kept in the voice fold
   })
 })
 
+test("a T3 thread woken by its delegations finishing still shows what it handed off since it was last asked", async () => {
+  threads('t3', { woken: { name: 'hex', session: 'e5000003-woken' } })
+  job('e5000003-woken', { state: 'working', detail: 'summing up', updatedAt: ago(0.5) }, [{ at: ago(1), state: 'working', detail: '', text: '' }])
+  running('e5000003-woken', 'busy')
+  mapped('woken', 'thread-woken', { title: 'two at once' })
+  ask('thread-woken', ago(30))
+  handed('task-before', 'thread-woken', 'thread-before', { driver: 'codex', status: 'completed', title: 'before: an earlier ask', since: ago(29), end: ago(20) })
+  ask('thread-woken', ago(10))
+  handed('task-files', 'thread-woken', 'thread-files', { driver: 'codex', status: 'completed', title: 'files: one line each', since: ago(9), end: ago(2) })
+  ask('thread-woken', ago(2), { delegatedCompletion: { taskIds: ['task-files'] } })
+  const woken = () => tasks.get('t3:woken')
+  await until(() => woken()?.state === 'working' && woken()!.agents.length > 0)
+  expect(woken()!.agents.map(agent => [agent.label, agent.state])).toEqual([['files: one line each', 'done']])
+})

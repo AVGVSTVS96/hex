@@ -319,7 +319,7 @@ export class Tasks extends Changes {
         ? [
             ...(job?.fan ?? []).filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since))).map(fan => this.subagent(thread.session!, fan)),
             ...started.map(one => this.agent(`${thread.session} ${one.id}`, { id: one.id, label: one.name ?? short(one.id), state: 'working', via: 'claude', since: iso(one.started) })),
-            ...handed.filter(one => !HANDED[one.status] || !one.end || one.end >= since).map(one => this.delegation(thread.session!, one)),
+            ...handed.filter(one => !HANDED[one.status] || one.latest || !one.end || one.end >= since).map(one => this.delegation(thread.session!, one)),
           ]
         : []
     ).sort(

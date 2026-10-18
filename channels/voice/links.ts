@@ -6,7 +6,9 @@ import type { MessageId } from '../../hub/ledger.ts'
 import type { Item } from './activity.ts'
 
 // Work a hex thread handed to another T3 Code thread with delegate_task: the child thread, the task
-// that runs it, and how it went. hex is the child's own hex thread, when it runs on hex.
+// that runs it, and how it went. hex is the child's own hex thread, when it runs on hex; latest, that
+// it was handed off since the thread was last asked something (T3 Code wakes a thread when its
+// delegations finish with a message of its own, which doesn't count).
 export type Delegation = {
   id: string
   task: string
@@ -19,6 +21,7 @@ export type Delegation = {
   result?: string
   hex?: string
   link?: string
+  latest: boolean
 }
 
 const T3_HOME = join(homedir(), '.t3', 'userdata')
@@ -162,19 +165,21 @@ export class Links {
       const threads = new Map(rows.map(({ key, thread, title }) => [key, { thread, title }]))
       const keys = new Map(rows.map(({ key, thread }) => [thread, key]))
       const handed = this.db!
-        .query<Omit<Delegation, 'hex' | 'link'> & { driver: string }, []>(
-          `select child_thread_id id, subagent_id task, thread_id parent, driver, status, started_at since, completed_at "end",
-             coalesce(json_extract(payload_json, '$.title'), 'a task') title, json_extract(payload_json, '$.model') model,
-             substr(json_extract(payload_json, '$.result'), 1, 1000) result
-           from orchestration_v2_projection_subagents
-           where origin = 'app_owned' and child_thread_id is not null
-           order by started_at`,
+        .query<Omit<Delegation, 'hex' | 'link' | 'latest'> & { driver: string; latest: number | null }, []>(
+          `select s.child_thread_id id, s.subagent_id task, s.thread_id parent, s.driver, s.status, s.started_at since, s.completed_at "end",
+             coalesce(json_extract(s.payload_json, '$.title'), 'a task') title, json_extract(s.payload_json, '$.model') model,
+             substr(json_extract(s.payload_json, '$.result'), 1, 1000) result,
+             s.started_at >= (select max(m.created_at) from orchestration_v2_projection_messages m
+               where m.thread_id = s.thread_id and m.role = 'user' and json_extract(m.payload_json, '$.delegatedCompletion') is null) latest
+           from orchestration_v2_projection_subagents s
+           where s.origin = 'app_owned' and s.child_thread_id is not null
+           order by s.started_at`,
         )
         .all()
         .filter(row => keys.has(row.parent))
-        .map(({ driver, ...row }): Delegation => {
+        .map(({ driver, latest, ...row }): Delegation => {
           const hex = driver === 'acpRegistry' ? keys.get(row.id) : undefined
-          return omit({ ...row, result: handedBack(row.result), hex, link: this.deep(row.id) })
+          return omit({ ...row, result: handedBack(row.result), hex, link: this.deep(row.id), latest: latest === 1 })
         })
       const asked = this.items.size > 0
       this.items.clear()
