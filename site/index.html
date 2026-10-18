@@ -86,16 +86,24 @@
 <section class="note" aria-labelledby="note-title">
   <article class="paper">
     <h2 id="note-title" class="sticker">a note from bassim</h2>
-    <p>built in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is <strong><em>my version</em></strong> of the personal assistant</p>
+    <p>bootstrapped in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is <strong><em>my version</em></strong> of the personal assistant</p>
     <ul>
-      <li>as simple, elegant, portable, and modifiable as humanly possible</li>
-      <li>more capable than any other assistant on the market (Dots, Instinct, Grok Bot, Hermes, OpenClaw)</li>
-      <li>clean and solid foundation to build on, claude code updates immediately benefit hex with no modification</li>
-      <li>relies on an <a href="https://github.com/AVGVSTVS96/claude-plugins-official">auto-maintained fork</a> of Anthropic's telegram + discord connectors which support multiple threads per channel</li>
+      <li>as simple, elegant, portable, and modifiable as possible</li>
+      <li>more capable than any other assistant on the market (Dots, Grok Bot, Hermes, OpenClaw)</li>
+      <li>made of pluggable parts, modules that can be interchanged and swapped</li>
+      <li>swappable harness, hex wraps claude code currently, but hex will be portable and able to set itself up on any harness and system with ease</li>
     </ul>
-    <p>collectively, we still have a lot of work to do before we figure out the "right" way to build these products</p>
-    <p>while hex will serve as my sandbox for ongoing experimentation and testing, it's packaged as a complete product and can be installed and iterated on with ease</p>
-    <p>please join me in my quest to build the perfect assistant with as few moving parts as possible!</p>
+    <p>collectively, we still have a lot of work to do before we figure out the "right" way to build these products. there are many opportunities to reduce friction and make the experience more seamless for end users.</p>
+    <p>the most difficult part of building a proper personal assistant appears to be security, and user trust/sentiment. this is tricky, because you never solve it once. every update or improvement made needs to take security and trust implications into account.</p>
+    <p>following security and trust, this is my read on the what the remaining challenges are:</p>
+    <ul>
+      <li>memory and context management</li>
+      <li>instruction/skill management (huge potential for tech debt, and over-constraint; needs constant tuning)</li>
+      <li>harness state and persistent durable architecture</li>
+      <li>portability and modifiability that doesn't threaten the core</li>
+    </ul>
+    <p>hex will serve as my sandbox for ongoing experimentation and testing, but i've tried to package it as an easy install for anyone familiar with claude code</p>
+    <p>please join me in my quest to build the most minimal, capable, safe, and hackable personal assistant :)</p>
     <p class="signed">— bassim</p>
   </article>
 </section>

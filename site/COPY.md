@@ -39,22 +39,30 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 ## A note from bassim
 
-*(Bassim's handwritten note from the top of the README, in his words: lowercase, as written. A ruled paper card in Caveat with a pink "a note from bassim" sticker, a strip of tape, a slight tilt and the hard shadow. The paper stays paper in dark mode. "my version" is bold italic with a yellow marker swipe; "auto-maintained fork" links to https://github.com/AVGVSTVS96/claude-plugins-official.)*
+*(Bassim's handwritten note from the top of the README, in his words: lowercase, as written. A ruled paper card in Caveat with a pink "a note from bassim" sticker, a strip of tape, a slight tilt and the hard shadow. The paper stays paper in dark mode. "my version" is bold italic with a yellow marker swipe.)*
 
 Sticker: a note from bassim
 
-built in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is ***my version*** of the personal assistant
+bootstrapped in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is ***my version*** of the personal assistant
 
-- as simple, elegant, portable, and modifiable as humanly possible
-- more capable than any other assistant on the market (Dots, Instinct, Grok Bot, Hermes, OpenClaw)
-- clean and solid foundation to build on, claude code updates immediately benefit hex with no modification
-- relies on an [auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official) of Anthropic's telegram + discord connectors which support multiple threads per channel
+- as simple, elegant, portable, and modifiable as possible
+- more capable than any other assistant on the market (Dots, Grok Bot, Hermes, OpenClaw)
+- made of pluggable parts, modules that can be interchanged and swapped
+- swappable harness, hex wraps claude code currently, but hex will be portable and able to set itself up on any harness and system with ease
 
-collectively, we still have a lot of work to do before we figure out the "right" way to build these products
+collectively, we still have a lot of work to do before we figure out the "right" way to build these products. there are many opportunities to reduce friction and make the experience more seamless for end users.
 
-while hex will serve as my sandbox for ongoing experimentation and testing, it's packaged as a complete product and can be installed and iterated on with ease
+the most difficult part of building a proper personal assistant appears to be security, and user trust/sentiment. this is tricky, because you never solve it once. every update or improvement made needs to take security and trust implications into account.
 
-please join me in my quest to build the perfect assistant with as few moving parts as possible!
+following security and trust, this is my read on the what the remaining challenges are:
+- memory and context management
+- instruction/skill management (huge potential for tech debt, and over-constraint; needs constant tuning)
+- harness state and persistent durable architecture
+- portability and modifiability that doesn't threaten the core
+
+hex will serve as my sandbox for ongoing experimentation and testing, but i've tried to package it as an easy install for anyone familiar with claude code
+
+please join me in my quest to build the most minimal, capable, safe, and hackable personal assistant :)
 
 — bassim
 
