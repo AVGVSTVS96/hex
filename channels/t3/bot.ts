@@ -29,6 +29,7 @@ type Turn = {
   reader?: ReturnType<typeof follow>
   sent: Promise<unknown>
   done: boolean
+  since: number
   compaction?: string
   resolve: (response: PromptResponse) => void
   reject: (error: Error) => void
@@ -75,7 +76,7 @@ const hub = startHub({
     if (!turn) return
     turn.done = !busy && !background
     const session = hub.session(thread)
-    if (busy && session && !turn.reader) turn.reader = reader(thread, session, turn, true)
+    if (busy && session && !turn.reader) turn.reader = reader(thread, session, turn, turn.since)
     turn.reader?.settle()
   },
   failed: (thread, reason) => {
@@ -106,13 +107,13 @@ function pairs(list: { name: string; value: string }[]) {
   return Object.fromEntries(list.map(({ name, value }) => [name, value]))
 }
 
-function reader(thread: string, session: string, turn: Turn, fresh: boolean) {
+function reader(thread: string, session: string, turn: Turn, since?: number) {
   const cwd = hub.cwd(thread) ?? HEX_DIR
   return follow({
     path: transcriptPath(cwd, session),
     sessionId: thread,
     cwd,
-    fresh,
+    since,
     done: () => turn.done,
     end: error => finish(thread, 'end_turn', error),
     emit: notification => send(turn, notification),
@@ -154,10 +155,10 @@ function prompt(thread: string, blocks: ContentBlock[], client: AgentContext, si
   const compact = blocks[0]?.type === 'text' && blocks[0].text.trim() === '/compact'
   if (compact && !session) throw RequestError.invalidRequest(undefined, 'this thread has nothing to compact yet')
   return new Promise((resolve, reject) => {
-    const turn: Turn = { client, sent: Promise.resolve(), done: false, resolve, reject, ...(compact && { compaction: randomUUID() }) }
+    const turn: Turn = { client, sent: Promise.resolve(), done: false, since: Date.now(), resolve, reject, ...(compact && { compaction: randomUUID() }) }
     turns.set(thread, turn)
     signal.addEventListener('abort', () => turns.get(thread) === turn && cancel(thread), { once: true })
-    if (session) turn.reader = reader(thread, session, turn, false)
+    if (session) turn.reader = reader(thread, session, turn)
     if (!compact) {
       const message = { content: render(blocks), meta: { ts: new Date().toISOString() } }
       return hub.deliver(thread, name, message)
@@ -263,10 +264,10 @@ async function place(name: string, _where?: string, _about?: string, cwd?: strin
   const projectId = projectAt(root)
   if (!projectId) throw new Error(`T3 Code has no project for ${root}`)
   const thread = randomUUID()
+  const { threadId } = await withT3(call => call('server.importAcpRegistrySession', { instanceId: INSTANCE, projectId, sessionId: thread, title: name }))
   hub.register(thread, name, cwd)
   placed.add(thread)
   writeFileSync(PLACED_FILE, JSON.stringify([...placed].filter(known => hub.name(known))))
-  const { threadId } = await withT3(call => call('server.importAcpRegistrySession', { instanceId: INSTANCE, projectId, sessionId: thread, title: name }))
   imports.set(thread, threadId)
   return { thread, link: linkTo(threadId) }
 }

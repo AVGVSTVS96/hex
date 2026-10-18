@@ -34,13 +34,13 @@ function write(...entries: object[]) {
   appendFileSync(path, entries.map(entry => JSON.stringify(entry) + '\n').join(''))
 }
 
-function start(fresh: boolean) {
-  reader = follow({ path, sessionId: 'thread', cwd: '/work', fresh, done: () => true, emit: n => void updates.push(n.update), end: () => void ended++ })
+function start(since?: number) {
+  reader = follow({ path, sessionId: 'thread', cwd: '/work', since, done: () => true, emit: n => void updates.push(n.update), end: () => void ended++ })
 }
 
 test('a turn streams from where the transcript ends, without the channel prompt, and ends at its turn_duration', async () => {
   write(prompt, text('m0', 'an earlier turn'), done)
-  start(false)
+  start()
   write(prompt, bash, result, text('m3', 'you are in /work'), done, text('m4', 'a later turn'))
   await until(() => ended)
   expect(updates.map(update => update.sessionUpdate)).toEqual(['tool_call', 'tool_call_update', 'agent_message_chunk'])
@@ -49,7 +49,7 @@ test('a turn streams from where the transcript ends, without the channel prompt,
 })
 
 test('a new session streams from its start, once its transcript appears', async () => {
-  start(true)
+  start(0)
   write(prompt, text('m1', 'hello'))
   await until(() => updates.length)
   expect(ended).toBe(0)
@@ -58,15 +58,24 @@ test('a new session streams from its start, once its transcript appears', async 
   expect(updates).toEqual([expect.objectContaining({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hello' } })])
 })
 
+test('a forked session streams from its start without the conversation it copied, written before the turn began', async () => {
+  const before = '2026-10-18T23:08:37.604Z'
+  start(Date.parse('2026-10-18T23:11:19.000Z'))
+  write({ ...prompt, timestamp: before }, { ...text('m0', 'anchors are in'), timestamp: before }, { ...done, timestamp: before })
+  write({ ...prompt, timestamp: '2026-10-18T23:11:21.000Z' }, { ...text('m1', 'I said anchors are in'), timestamp: '2026-10-18T23:11:27.000Z' }, done)
+  await until(() => ended)
+  expect(updates).toEqual([expect.objectContaining({ content: { type: 'text', text: 'I said anchors are in' } })])
+})
+
 test('a turn_duration before the prompt is an earlier turn ending, not this one', async () => {
-  start(true)
+  start(0)
   write(done, prompt, text('m1', 'still going'))
   await until(() => updates.length)
   expect(ended).toBe(0)
 })
 
 test('a line written in two pieces is read once it is whole', async () => {
-  start(true)
+  start(0)
   const line = JSON.stringify(text('m1', 'whole')) + '\n'
   writeFileSync(path, JSON.stringify(prompt) + '\n' + line.slice(0, 20))
   await Bun.sleep(100)

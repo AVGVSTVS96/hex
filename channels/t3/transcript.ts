@@ -13,7 +13,8 @@ export function transcriptPath(cwd: string, session: string) {
 }
 
 // Streams one turn of a session's transcript as ACP session/update notifications,
-// from where it ends now, or from its start when the session is new. Channel
+// from where it ends now, or, when the session is new, from its start without what
+// was written before since: a fork's copy of the conversation it continues. Channel
 // prompts and slash commands are skipped: the client already shows what it sent.
 // The turn ends when the session's work does: its Stop hook says no background
 // agent is still working (done), and the transcript has caught up to that stop,
@@ -21,18 +22,18 @@ export function transcriptPath(cwd: string, session: string) {
 // transcript in batches, so the Stop hook can run before the last reply is on disk,
 // and a background agent's result comes back as a turn of its own, streamed here
 // too. A /compact turn ends at its compaction, or with its error.
-export function follow({ path, sessionId, cwd, fresh, done, emit, end }: {
+export function follow({ path, sessionId, cwd, since, done, emit, end }: {
   path: string
   sessionId: string
   cwd: string
-  fresh: boolean
+  since?: number
   done: () => boolean
   emit: (notification: SessionNotification) => void
   end: (error?: string) => void
 }) {
   const tools = {}
   const tasks = new Map()
-  let offset = fresh ? 0 : sizeOf(path)
+  let offset = since == null ? sizeOf(path) : 0
   let rest = Buffer.alloc(0)
   let asked = false
   let open = false
@@ -72,6 +73,7 @@ export function follow({ path, sessionId, cwd, fresh, done, emit, end }: {
     } catch {
       return
     }
+    if (Date.parse(entry.timestamp) < since!) return
     if (entry.type === 'user' && entry.origin?.kind === 'channel') asked = true
     if (entry.type === 'system' && entry.subtype === 'turn_duration') {
       open = false
