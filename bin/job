@@ -64,7 +64,7 @@ if (mode === "--ended") {
   const { app, key } = parts(owner)
   const result = process.env.SERVICE_RESULT ?? "unknown"
   const status = process.env.EXIT_STATUS ?? "?"
-  const content = `[job] ${unit} ended: ${result} (exit ${status}). Check its output, then tell Bassim and update the pin.`
+  const content = `[job] ${unit} ended: ${result} (exit ${status}). Check its output and report it.`
   const socket = await connect({ unix: `${state}${app}/hub.sock`, socket: { data() {} } })
   socket.write(JSON.stringify({ type: "inbound", thread: key, content, meta: { user: "job" } }) + "\n")
   socket.end()

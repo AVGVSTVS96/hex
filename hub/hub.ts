@@ -19,12 +19,13 @@ export type Failed = (thread: string, reason: string) => void
 export type Permission = { request_id: string; tool_name: string; description: string; input_preview: string }
 export type Settings = { model?: string; effort?: string }
 
-// The choices a client offers for a thread's settings.
+// The choices a client offers for a thread's settings. Models are Claude Code's aliases, so a
+// thread runs the newest model of the family it picked.
 export const MODELS = [
-  { value: 'claude-opus-5-5', name: 'Opus 5.5', alias: 'opus' },
-  { value: 'claude-sonnet-5-5', name: 'Sonnet 5.5', alias: 'sonnet' },
-  { value: 'claude-haiku-5-5', name: 'Haiku 5.5', alias: 'haiku' },
-  { value: 'claude-fable-5-1', name: 'Fable 5.1', alias: 'fable' },
+  { value: 'opus', name: 'Opus' },
+  { value: 'sonnet', name: 'Sonnet' },
+  { value: 'haiku', name: 'Haiku' },
+  { value: 'fable', name: 'Fable' },
 ]
 export const EFFORTS = [
   { value: 'low', name: 'Low' },
@@ -33,6 +34,11 @@ export const EFFORTS = [
   { value: 'xhigh', name: 'Extra High' },
   { value: 'max', name: 'Max' },
 ]
+
+// A full model id as its family's alias: claude-opus-5-5 is opus. Anything else stays as it is.
+export function family(model: string) {
+  return MODELS.find(({ value }) => model.startsWith(`claude-${value}-`))?.value ?? model
+}
 
 // A permission prompt's input as one "key: value" line per field, leaving out what its description already says.
 export function preview({ input_preview, description }: Permission): string {
@@ -285,6 +291,7 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
       const entries = Object.entries(JSON.parse(text) ?? {})
       const kept = entries.filter(([, known]: [string, any]) => typeof known?.name === 'string')
       for (const [thread] of entries.filter(entry => !kept.includes(entry))) process.stderr.write(`hub: dropped malformed thread ${thread} from ${registry}\n`)
+      for (const [, known] of kept as [string, Saved][]) if (known.model) known.model = family(known.model)
       return Object.fromEntries(kept) as Record<string, Saved>
     } catch (error) {
       const aside = `${registry}.corrupt-${Date.now()}`

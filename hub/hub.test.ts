@@ -764,15 +764,22 @@ test('a thread\'s model and effort are kept, and a running session takes them by
   hub.deliver('chat:7', 'Desk anchors', message)
   await until(() => received.length)
   fold(received)
-  hub.configure('chat:7', { model: 'claude-fable-5-1', effort: 'xhigh' })
-  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, model: 'claude-fable-5-1', effort: 'xhigh' })
+  hub.configure('chat:7', { model: 'fable', effort: 'xhigh' })
+  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, model: 'fable', effort: 'xhigh' })
   hub.deliver('chat:7', 'Desk anchors', { content: 'again', meta: {} })
   const args = await launched()
-  expect([args[args.indexOf('--model') + 1], args[args.indexOf('--effort') + 1], args[args.indexOf('--resume') + 1]]).toEqual(['claude-fable-5-1', 'xhigh', SESSION])
+  expect([args[args.indexOf('--model') + 1], args[args.indexOf('--effort') + 1], args[args.indexOf('--resume') + 1]]).toEqual(['fable', 'xhigh', SESSION])
   expect(received.map(payload => payload.content)).toEqual(['hi'])
   const fresh = await session('chat:7')
   await until(() => fresh.received.length)
   expect(fresh.received[0]).toMatchObject({ type: 'inbound', content: 'again' })
+})
+
+test('a thread saved with a full model id runs its family\'s alias, so it gets the newest model', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, model: 'claude-opus-5-5' } }, agents: [] })
+  hub.deliver('chat:7', 'Desk anchors', message)
+  const args = await launched()
+  expect(args[args.indexOf('--model') + 1]).toBe('opus')
 })
 
 test('a fresh thread with no capacity starts a new session instead of resuming its last, and says so in its env', async () => {

@@ -37,7 +37,7 @@ case "${1:-}" in
     echo "hex is set up in $home"
     ;;
   run)
-    (. "$home/.env"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]) || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
+    (. "$hex/bin/settings"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]) || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hooks bin/session's plugins load: a change to them renews sessions at their next rest.
     export HEX_HOOKS="$hex/plugin/hooks/hooks.json"
@@ -51,7 +51,7 @@ case "${1:-}" in
         bun install --no-summary --cwd "$hex/$dir" >/dev/null || :
       done
       # Read at every start, so a restart takes the settings as they are now.
-      (set -a; . "$home/.env"; set +a; exec bun "$hex/hub/serve.ts") &
+      (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") &
       hub=$!
       if wait "$hub"; then
         hub=

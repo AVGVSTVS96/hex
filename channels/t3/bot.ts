@@ -7,7 +7,7 @@ import { basename, join } from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
 import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptRequest, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
-import { startHub, clients, begin, move, asked, title, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
+import { startHub, clients, begin, move, asked, title, family, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
 import { withT3, projectAt, linkTo, steering } from './t3code.ts'
@@ -238,7 +238,7 @@ async function replayed(thread: string, { replies }: Replay, client: AgentContex
 function options(thread: string): SessionConfigOption[] {
   const chosen = opened.get(thread)?.settings ?? hub.settings(thread)
   const defaults = settings()
-  const model = chosen.model ?? MODELS.find(model => defaults.model === model.alias || defaults.model?.startsWith(model.value))?.value ?? MODELS[0]!.value
+  const model = chosen.model ?? (defaults.model && family(defaults.model)) ?? MODELS[0]!.value
   const effort = chosen.effort ?? EFFORTS.find(effort => effort.value === defaults.effortLevel)?.value ?? 'medium'
   return [
     { type: 'select', id: 'model', name: 'Model', category: 'model', currentValue: model, options: MODELS.map(({ value, name }) => ({ value, name })) },
@@ -254,8 +254,10 @@ function settings(): { model?: string; effortLevel?: string } {
   }
 }
 
-// The thread's session starts again with the new choice at its next prompt.
-function configure(thread: string, id: string, value: unknown) {
+// The thread's session starts again with the new choice at its next prompt. A model T3 kept
+// from before hex offered aliases comes back as a full id, which is its family's alias now.
+function configure(thread: string, id: string, raw: unknown) {
+  const value = id === 'model' && typeof raw === 'string' ? family(raw) : raw
   const choices = id === 'model' ? MODELS : id === 'effort' ? EFFORTS : undefined
   if (!choices) throw RequestError.invalidParams(undefined, `no option ${id}`)
   if (!choices.some(choice => choice.value === value)) throw RequestError.invalidParams(undefined, `${id} can't be ${value}`)

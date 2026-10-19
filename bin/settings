@@ -1,0 +1,8 @@
+# Sourced, with $home set to the hex folder: exports .env, then the env of .claude/settings.json and
+# settings.local.json, which win, the way Claude Code gives them to every session. A setting lives
+# in a settings file a session can change; .env keeps the secrets.
+[ -f "$home/.env" ] && { set -a; . "$home/.env"; set +a; }
+for settings in "$home/.claude/settings.json" "$home/.claude/settings.local.json"; do
+  [ -f "$settings" ] && eval "$(jq -r '.env // {} | to_entries[] | "export \(.key)=\(.value | tostring | @sh)"' "$settings")"
+done
+:

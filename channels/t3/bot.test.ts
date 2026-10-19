@@ -296,7 +296,7 @@ test('a thread offers T3 model and effort pickers, and its session starts again 
   writeFileSync(join(dir, 'hex', '.claude', 'settings.json'), JSON.stringify({ model: 'opus', effortLevel: 'medium' }))
   const { agent } = await t3()
   const { sessionId, configOptions } = await agent.request('session/new', { cwd: project, mcpServers: [] })
-  expect(configOptions!.map(option => [option.id, option.category, option.type === 'select' && option.currentValue])).toEqual([['model', 'model', 'claude-opus-5-5'], ['effort', 'thought_level', 'medium']])
+  expect(configOptions!.map(option => [option.id, option.category, option.type === 'select' && option.currentValue])).toEqual([['model', 'model', 'opus'], ['effort', 'thought_level', 'medium']])
   await expect(agent.request('session/set_config_option', { sessionId, configId: 'effort', value: 'ludicrous' })).rejects.toThrow()
   const { configOptions: picked } = await agent.request('session/set_config_option', { sessionId, configId: 'effort', value: 'xhigh' })
   expect(picked.find(option => option.id === 'effort')).toMatchObject({ currentValue: 'xhigh' })
@@ -321,12 +321,12 @@ test('a thread offers T3 model and effort pickers, and its session starts again 
   agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'again' }] }).catch(() => {})
   await until(() => lines('launched').length === 2)
   const again = JSON.parse(lines('launched')[1]!)
-  expect([again[again.indexOf('--model') + 1], again[again.indexOf('--effort') + 1], again[again.indexOf('--resume') + 1]]).toEqual(['claude-fable-5-1', 'xhigh', SESSION])
+  expect([again[again.indexOf('--model') + 1], again[again.indexOf('--effort') + 1], again[again.indexOf('--resume') + 1]]).toEqual(['fable', 'xhigh', SESSION])
   expect(lines('calls')).toContain(JSON.stringify(['stop', SESSION.slice(0, 8)]))
   const fresh = await session(sessionId)
   await until(() => fresh.inbound.length)
   expect(fresh.inbound[0]).toMatchObject({ type: 'inbound', content: 'again' })
-  expect(JSON.parse(readFileSync(join(dir, 'state', 'threads.json'), 'utf8'))[sessionId]).toMatchObject({ model: 'claude-fable-5-1', effort: 'xhigh' })
+  expect(JSON.parse(readFileSync(join(dir, 'state', 'threads.json'), 'utf8'))[sessionId]).toMatchObject({ model: 'fable', effort: 'xhigh' })
 })
 
 test('a thread T3 opens is kept only once it sends a prompt, so T3\'s provider check leaves nothing behind', async () => {

@@ -14,6 +14,7 @@ import page from './page.html' with { type: 'text' }
 
 const KEY = env.OPENAI_API_KEY
 const VOICE = env.VOICE
+const MODEL = env.VOICE_MODEL ?? 'gpt-live-1'
 const API = `${env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'}/live/sessions`
 const TWILIO_SID = env.TWILIO_ACCOUNT_SID
 const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN
@@ -796,7 +797,7 @@ function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
 
 function session(extra: object = {}, opening?: string) {
   return {
-    model: 'gpt-live-1',
+    model: MODEL,
     instructions: `${VOICE_PROMPT}\n\nThe call started ${clock()}, the caller's local time.`,
     delegation: { type: 'client' },
     ...(opening && { input: [{ type: 'message', role: 'developer', content: [{ type: 'input_text', text: opening }] }] }),

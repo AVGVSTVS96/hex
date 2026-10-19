@@ -42,7 +42,7 @@ beforeEach(() => {
   mkdirSync(join(hex, 'bin'), { recursive: true })
   mkdirSync(join(hex, 'hub'))
   mkdirSync(join(home, 'state'))
-  for (const script of ['hex', 'update']) copyFileSync(join(BIN, script), join(hex, 'bin', script))
+  for (const script of ['hex', 'settings', 'update']) copyFileSync(join(BIN, script), join(hex, 'bin', script))
   writeFileSync(join(home, '.env'), 'TELEGRAM_BOT_TOKEN=test\nMARK=1\n')
   git('init', '-q', '-b', 'main')
 })
@@ -70,6 +70,15 @@ test('a restart lets the hub finish before the next one starts, on the settings 
   expect(stopped).toBe(`stop ${pid}`)
   expect(next).toMatch(/^start mark=2 loop=2 \d+$/)
   expect(readFileSync(join(home, 'state/hub.pid'), 'utf8').trim()).toBe(String(running.pid))
+})
+
+test('the hub gets the env of the settings files over .env, so a setting changes without touching .env', async () => {
+  mkdirSync(join(home, '.claude'))
+  writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { MARK: 'settings' } }))
+  commit(HUB, 'a hub')
+  run()
+  await until(() => hubs().length === 1)
+  expect(hubs()[0]).toMatch(/^start mark=settings loop=1 \d+$/)
 })
 
 test('a stop waits for the hub to finish', async () => {
