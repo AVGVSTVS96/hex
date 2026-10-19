@@ -1,6 +1,6 @@
 import { readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
-import { statusPost } from './status.ts'
+import { nextLeaving, statusPost } from './status.ts'
 import { open, storeDir, type MessageId, type Question, type Store } from './store.ts'
 
 export type { Answer, MessageId } from './store.ts'
@@ -80,13 +80,23 @@ export class Ledger {
     return next
   }
 
-  // Keeps every status post current: now, and after each change to hex.db from any process.
+  // Keeps every status post current: now, after each change to hex.db from any process, and when
+  // a done task's week is up.
   keep(room: number, edit: Edit, failed: (thread: string, error: unknown) => void): () => void {
+    let timer: ReturnType<typeof setTimeout> | undefined
     const all = () => {
-      for (const thread of this.posts()) this.rewrite(thread, room, edit).catch(error => failed(thread, error))
+      clearTimeout(timer)
+      const threads = this.posts()
+      for (const thread of threads) this.rewrite(thread, room, edit).catch(error => failed(thread, error))
+      const next = Math.min(...threads.map(thread => nextLeaving(this.store, thread)))
+      if (next < Infinity) timer = setTimeout(all, next - Date.now())
     }
     all()
-    return this.store.watch(all)
+    const stop = this.store.watch(all)
+    return () => {
+      clearTimeout(timer)
+      stop()
+    }
   }
 
   find(thread: string, message: MessageId) {

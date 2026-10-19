@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { Ledger } from './ledger.ts'
 import { open } from './store.ts'
 
@@ -91,4 +92,24 @@ test("a pin with a note is the thread's status post: hex rewrites it from hex.db
   }
   await ledger.rewrite('-100:8', 4096, slow, 'Site: example.net')
   expect(ledger.pin('-100:8')).toEqual({ message: 11, text: 'Status: by hand again', at: expect.any(String) })
+})
+
+test("a done task leaves the status post when its week is up, though hex.db stays quiet", async () => {
+  const ledger = new Ledger(file, 'telegram')
+  const store = open(dirname(file))
+  const key = 'telegram:-100:51'
+  store.deliver({ key, to: '-100:8', from: 'telegram', body: 'Blur the logo less', meta: { user: 'owner' } })
+  const task = store.createTask({ message: key, owner: '-100:8' })
+  store.editTask(task.id, { status: 'done', proof: 'shipped in abc123' })
+  const db = new Database(join(dirname(file), 'hex.db'))
+  db.query('update tasks set closed = ?').run(new Date(Date.now() - 7 * 24 * 60 * 60_000 + 150).toISOString())
+  db.close()
+  ledger.pinned('-100:8', 10, 'Site: example.com', 'Site: example.com')
+  const texts: string[] = []
+  const stop = ledger.keep(4096, async (_thread, _message, text) => void texts.push(text), () => {})
+  await Bun.sleep(50)
+  expect(texts.at(-1)).toContain('Blur the logo less')
+  await Bun.sleep(250)
+  stop()
+  expect(texts.at(-1)).toContain('🟢 **Done**\n- nothing')
 })
