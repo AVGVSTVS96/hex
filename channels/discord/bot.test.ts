@@ -49,14 +49,14 @@ function channel(id: string, fields: Channel): Channel {
     fetchStarterMessage: async () => (ch.parent.isThreadOnly() ? ch : ch.parent).messages.fetch(id),
     posted: messages,
     messages: {
-      fetch: async (query: string | { limit: number; before?: string }) => {
+      fetch: async (query: string | { limit: number; before?: string; after?: string }) => {
         if (typeof query === 'string') return messages.find(m => m.id === query) ?? Promise.reject(new Error('Unknown Message'))
-        const { limit, before } = query
-        return new Collection(messages
-          .filter(m => !before || BigInt(m.id) < BigInt(before))
-          .sort((a, b) => Number(BigInt(b.id) - BigInt(a.id)))
-          .slice(0, limit)
-          .map(m => [m.id, m]))
+        const { limit, before, after } = query
+        const newest = (a: Channel, b: Channel) => Number(BigInt(b.id) - BigInt(a.id))
+        const page = after
+          ? messages.filter(m => BigInt(m.id) > BigInt(after)).sort(newest).slice(-limit)
+          : messages.filter(m => !before || BigInt(m.id) < BigInt(before)).sort(newest).slice(0, limit)
+        return new Collection(page.map(m => [m.id, m]))
       },
       edit: async (message: string, options: Channel) => (done.push({ edit: message, options }), messages.find(m => m.id === message)),
     },
@@ -66,7 +66,12 @@ function channel(id: string, fields: Channel): Channel {
         return channel(String(9000 + ++opened), { name, type: ChannelType.PublicThread, parent: ch, parentId: id })
       },
       fetchActive: async () => ({ threads: new Collection([...channels].filter(([, c]) => c.parent === ch && !c.archived)) }),
-      fetchArchived: async () => ({ threads: new Collection([...channels].filter(([, c]) => c.parent === ch && c.archived)) }),
+      // Newest-archived first, as Discord lists them, two to a page so a test can reach the second.
+      fetchArchived: async ({ before, limit = 50 }: { before?: number; limit?: number } = {}) => {
+        const shelf = [...channels.values()].filter(c => c.parent === ch && c.archived && (!before || c.archiveTimestamp < before)).sort((a, b) => b.archiveTimestamp - a.archiveTimestamp)
+        const page = shelf.slice(0, Math.min(limit, 2))
+        return { threads: new Collection(page.map(c => [c.id, c])), hasMore: shelf.length > page.length }
+      },
     },
     ...fields,
   }
@@ -102,6 +107,7 @@ function say(where: Channel, minute: number, content: string, fields: Channel = 
     ...fields,
   }
   where.posted.push(message)
+  where.lastMessageId = message.id
   return message
 }
 
@@ -132,8 +138,11 @@ class Client {
       return channels.get(id)
     },
   }
-  guilds = { cache: new Collection([[GUILD, { id: GUILD, systemChannel: general, channels: { cache: channels, fetch: async () => new Collection([...channels].filter(([, ch]) => ch.guildId === GUILD && !ch.isThread())) } }]]) }
-  users = { fetch: async (id: string) => (id === OWNER ? owner : { id, username: 'someone' }) }
+  guilds = { cache: new Collection([[GUILD, { id: GUILD, systemChannel: general, channels: { cache: channels, fetch: async () => new Collection([...channels].filter(([, ch]) => ch.guildId === GUILD && !ch.isThread())), fetchActiveThreads: async () => ({ threads: new Collection([...channels].filter(([, ch]) => ch.guildId === GUILD && ch.isThread() && !ch.archived)) }) } }]]) }
+  users = {
+    fetch: async (id: string) => (id === OWNER ? owner : { id, username: 'someone' }),
+    createDM: async (id: string) => (id === OWNER ? dm : Promise.reject(new Error('Cannot send messages to this user'))),
+  }
   rest = {
     get: async (route: string, { query }: { query: URLSearchParams }) => (done.push({ get: route, query: query.toString() }), found),
   }
@@ -161,6 +170,7 @@ let ask: (request: object) => Promise<Response>
 
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [OWNER] }))
+  writeFileSync(join(state, 'cursor.json'), JSON.stringify({ id: snowflake(60) }))
   Object.assign(process.env, { DISCORD_STATE_DIR: state, DISCORD_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -627,4 +637,36 @@ test('a backfill posts each line through one webhook of the channel, as the owne
   expect(hooked.map(({ content, ...rest }) => rest)).toEqual([me, hex, hex, me])
   expect(hooked.every(({ content }) => content.length <= 2000)).toBe(true)
   expect(hooked.map(({ content }) => content.replace(/\s/g, '')).join('')).toBe(`howfullisyourcontext?${'a'.repeat(1990)}${'b'.repeat(100)}@everyonethanks`)
+})
+
+test('back online, the bot reads what was said while it was away, archived threads too (past the first page), oldest first, as if live, and each message reaches its session once', async () => {
+  const someone = { id: '8888', username: 'someone', bot: false }
+  const away = { inGuild: () => true, mentions: { has: () => false }, react: async () => {} }
+  const first = say(here, 61, 'did the anchors ship?', away)
+  const tag = say(general, 62, '<@1000> anchors', { ...away, mentions: { has: () => true }, startThread: async () => tagged })
+  const tagged = channel(tag.id, { name: 'anchors', type: ChannelType.PublicThread, parent: general })
+  const opening = await session(tagged.id)
+  const mine = await session(dm.id)
+  const theirs = say(here, 63, 'not for hex', { ...away, author: someone })
+  say(here, 64, 'shipped', { ...away, author: bot })
+  const direct = say(dm, 65, 'and the desk?', { ...away, inGuild: () => false })
+  say(hidden, 66, 'still not for the bot', away)
+  const shelved = channel(snowflake(50), { name: 'old plans', type: ChannelType.PublicThread, parent: general, archived: true, archiveTimestamp: at(69).getTime(), setArchived: async () => {} })
+  for (const minute of [70, 71]) channel(snowflake(minute - 20), { name: `shelved at ${minute}`, type: ChannelType.PublicThread, parent: general, archived: true, archiveTimestamp: at(minute).getTime() })
+  const reopened = await session(shelved.id)
+  const revived = say(shelved, 68, 'back to the old plan', away)
+
+  handlers.get('shardReady')!(0)
+  handlers.get('messageCreate')!(first)
+  const then = { ...say(here, 67, 'one more thing'), ...live(here) }
+  handlers.get('messageCreate')!(then)
+
+  const opened = await inbound(opening.received, line => line.meta.message_id === tag.id)
+  expect(opened).toMatchObject({ content: 'anchors', meta: { channel: 'general', new_thread: 'true' } })
+  expect((await inbound(mine.received, line => line.meta.message_id === direct.id)).content).toBe('and the desk?')
+  expect((await inbound(reopened.received, line => line.meta.message_id === revived.id)).content).toBe('back to the old plan')
+  await inbound(received, line => line.meta.message_id === then.id)
+  const late = [first.id, theirs.id, then.id]
+  expect(received.filter(line => line.type === 'inbound' && late.includes(line.meta.message_id)).map(line => line.content)).toEqual(['did the anchors ship?', 'one more thing'])
+  expect(JSON.parse(readFileSync(join(state, 'cursor.json'), 'utf8'))).toEqual({ id: revived.id })
 })
