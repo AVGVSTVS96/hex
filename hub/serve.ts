@@ -4,9 +4,10 @@ import { PORT, clients, free, route, up } from './hub.ts'
 
 // Before the clients load: Telegram's bot module awaits its polling loop, which never ends.
 // A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign
-// off, and it exits for bin/hex to start the next one, so two never run at once.
+// off, a call that came in while they did hangs up too, and it exits for bin/hex to start the next
+// one, so two never run at once.
 let stopping: Promise<void> | undefined
-const stop = () => (stopping ??= free().then(() => Promise.allSettled([...clients.values()].map(client => client.close?.()))).then(() => process.exit(0)))
+const stop = () => (stopping ??= free().then(() => Promise.allSettled([...clients.values()].map(client => client.close?.()))).then(free).then(() => process.exit(0)))
 for (const signal of ['SIGHUP', 'SIGTERM', 'SIGINT'] as const) process.on(signal, () => void stop())
 Bun.serve({ hostname: '127.0.0.1', port: PORT, idleTimeout: 0, fetch: route })
 
