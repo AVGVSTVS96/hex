@@ -1,0 +1,46 @@
+#!/usr/bin/env bun
+import { readFileSync, realpathSync } from 'fs'
+import { join, relative, resolve } from 'path'
+import { loaded } from './identity'
+
+// The user's AGENTS.md and the files it imports outside .hex/ load into every prompt and every
+// subagent, and each session that hears a rule is tempted to add a line for it. HEX_RULES_WORDS caps
+// them: an edit that would take them past it is refused unless it also makes them shorter, so a new
+// rule has to be worked into an existing line or paid for with a cut.
+
+const home = resolve(import.meta.dir, '../..')
+const budget = Number(process.env.HEX_RULES_WORDS || 2500)
+
+const real = (file: string) => {
+  try {
+    return realpathSync(file)
+  } catch {
+    return resolve(file)
+  }
+}
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length
+const hex = real(join(home, '.hex')) + '/'
+const rules = new Map(loaded(join(home, 'AGENTS.md')).map(([file, text]) => [real(file), text] as const).filter(([file]) => !file.startsWith(hex)))
+const names = [...rules.keys()].map(file => relative(home, file)).join(' and ')
+const now = [...rules.values()].reduce((sum, text) => sum + words(text), 0)
+const fix = `Work the change into the line it belongs to, or cut words that say less, so they stay within ${budget}.`
+
+function replace(text: string, old: string, next: string, all?: boolean) {
+  if (all) return text.split(old).join(next)
+  const at = text.indexOf(old)
+  return at < 0 ? text : text.slice(0, at) + next + text.slice(at + old.length)
+}
+
+const { tool_name, tool_input } = JSON.parse(readFileSync(0, 'utf8'))
+
+if (tool_name === 'Bash') {
+  const touched = [...rules.keys()].some(file => String(tool_input?.command ?? '').includes(relative(home, file)))
+  if (touched && now > budget) console.log(JSON.stringify({ decision: 'block', reason: `${names} are now ${now} words, over the ${budget} set by HEX_RULES_WORDS. ${fix}` }))
+} else {
+  const text = rules.get(real(resolve(home, tool_input?.file_path ?? '')))
+  if (text !== undefined) {
+    const next = tool_name === 'Write' ? tool_input.content : (tool_input.edits ?? [tool_input]).reduce((t: string, e: any) => replace(t, e.old_string, e.new_string, e.replace_all), text)
+    const after = now - words(text) + words(next)
+    if (after > budget && after > now) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `This edit takes ${names} from ${now} to ${after} words, over the ${budget} set by HEX_RULES_WORDS. ${fix}` } }))
+  }
+}
