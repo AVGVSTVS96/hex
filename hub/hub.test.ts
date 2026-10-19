@@ -30,6 +30,7 @@ beforeEach(() => {
   const fake = join(dir, 'claude')
   writeFileSync(fake, `#!/bin/sh
 jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/calls"
+[ "$1 $2" = "agents --json" ] && [ -f "${dir}/unanswering" ] && exit 1
 [ "$1 $2" = "agents --json" ] && [ -f "${dir}/unreadable" ] && rm "${dir}/unreadable" && echo 'Error: connect ECONNREFUSED' && exit 1
 [ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
 [ "$1 $2" = "daemon status" ] && [ -f "${dir}/down" ] && exit 1
@@ -723,6 +724,37 @@ test('stopping a thread ends its session now, and its next message resumes it', 
   const args = await launched()
   expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
+})
+
+test('a message that comes while a stopped session is still exiting waits, even through a second stop, and resumes the thread once it has', async () => {
+  const exiting = Bun.spawn(['sleep', '60'])
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: exiting.pid, status: 'busy' }] })
+  const old = await session('chat:7')
+  hub.stop('chat:7')
+  await until(() => calls().find(args => args[0] === 'stop'))
+  writeFileSync(join(dir, 'unanswering'), '')
+  hub.stop('chat:7')
+  await Bun.sleep(100)
+  rmSync(join(dir, 'unanswering'))
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await Bun.sleep(300)
+  expect(old.received).toEqual([])
+  expect(calls().some(args => args[0] === '--bg')).toBe(false)
+  exiting.kill()
+  const args = await launched()
+  expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
+  const resumed = await session('chat:7')
+  await until(() => resumed.received.length)
+  expect(resumed.received[0]).toMatchObject({ type: 'inbound', content: 'hi' })
+  expect(old.received).toEqual([])
+})
+
+test('a stop goes out while Claude\'s daemon isn\'t answering, without waiting for it to answer', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, status: 'idle' }] })
+  await session('chat:7')
+  writeFileSync(join(dir, 'unanswering'), '')
+  hub.stop('chat:7')
+  await until(() => calls().find(args => args[0] === 'stop'))
 })
 
 test('a thread\'s model and effort are kept, and a running session takes them by starting again with its next message', async () => {

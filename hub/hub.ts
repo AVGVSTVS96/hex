@@ -87,6 +87,8 @@ type Run = {
   renew?: 'asked' | 'stale' | 'underway'
   rest?: Timer
   leaving?: (session: string) => void
+  // The thread's session was told to stop and hasn't exited yet.
+  ending?: Promise<void>
   // A new session whose conversation Claude hasn't saved yet.
   unsaved?: string
   held: (() => void)[]
@@ -421,11 +423,23 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
     else if (thread !== main) stop(thread)
   }
 
-  function stop(thread: string, session = current(thread)) {
+  // `claude stop` returns before the process exits, and the session keeps its channel until it
+  // does, so a message meanwhile waits for the exit (route). Its process is found while Claude
+  // still lists it, before the stop; when Claude can't say, the stop goes ahead without the wait.
+  function stop(thread: string, running?: claude.Agent) {
     const run = runOf(thread)
     clearTimeout(run.rest)
     run.rest = undefined
-    if (session) void claude.stop(session)
+    const session = running?.sessionId ?? current(thread)
+    if (!session) return Promise.resolve()
+    if (run.ending) return run.ending
+    const ending: Promise<void> = (running ? Promise.resolve(running) : claude.listing(session))
+      .then(agent => {
+        void claude.stop(session)
+        return agent && claude.exited(agent.pid)
+      })
+      .finally(() => (run.ending = undefined))
+    return (run.ending = ending)
   }
 
   // Resolves with the thread's session once it has stopped and the thread is forgotten.
@@ -638,6 +652,10 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
 
   function route(thread: string, name: string, message: Message) {
     const run = runOf(thread)
+    if (run.ending) {
+      run.queue.push(message)
+      return void run.ending.then(() => resume(thread, name))
+    }
     if (run.phase.is === 'live') return (stale(thread) && !onCall.has(run)) || spent(thread) ? void refresh(thread, message) : run.phase.line.send({ type: 'inbound', ...message })
     run.queue.push(message)
     void launch(thread, name)
@@ -668,6 +686,15 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
     for (const key of keys) kept(store => store.take(String(key), session), false)
   }
 
+  // Messages that came while the thread's session was stopping resume it once it's gone, unless a
+  // restart already took them.
+  function resume(thread: string, name: string) {
+    const run = runOf(thread)
+    if (!run.queue.length || run.leaving) return
+    if (run.phase.is === 'live' || run.phase.is === 'recovering') become(run, { is: 'stopped' })
+    void launch(thread, name)
+  }
+
   // Claude Code runs a slash command like /compact only as a session's first prompt,
   // and reads its launch arguments only at start, so a running session stops and
   // resumes for either.
@@ -693,14 +720,11 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
     void cycle(thread, running)
   }
 
-  // `claude stop` returns before the process exits, and resuming before then starts a copy, so it
-  // waits for the exit. The stopped session's stream can close after that, so it isn't waited for.
+  // Resuming before the old process exits starts a copy, so it waits for the exit. The stopped
+  // session's stream can close after that, so it isn't waited for.
   async function cycle(thread: string, running?: claude.Agent, prompt?: string, quiet = false) {
     const run = runOf(thread)
-    if (running) {
-      stop(thread, running.sessionId)
-      await claude.exited(running.pid)
-    }
+    if (running) await stop(thread, running)
     if (run.phase.is === 'live' || run.phase.is === 'recovering') become(run, { is: 'stopped' })
     void launch(thread, threads[thread]!.name, { prompt, quiet })
   }

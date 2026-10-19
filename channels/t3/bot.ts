@@ -10,7 +10,7 @@ import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext,
 import { startHub, clients, begin, move, asked, title, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
-import { withT3, projectAt, linkTo } from './t3code.ts'
+import { withT3, projectAt, linkTo, steering } from './t3code.ts'
 import { version } from './package.json'
 
 const STATE_DIR = process.env.T3_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 't3')
@@ -270,10 +270,13 @@ function advertise(client: AgentContext, sessionId: string) {
   setImmediate(() => client.notify('session/update', { sessionId, update: { sessionUpdate: 'available_commands_update', availableCommands: COMMANDS } }).catch(() => {}))
 }
 
-// Stopping the session ends the turn; the next prompt resumes it.
+// T3 Code steers a turn by cancelling it and sending the steer as a new prompt, which reaches the
+// running session the way a message typed into it would, so a steer leaves the session and all it
+// started running. Any other cancel is a Stop: stopping the session ends the turn, and the next
+// prompt resumes it.
 function cancel(thread: string) {
   if (!turns.has(thread)) return
-  hub.stop(thread)
+  if (!steering(thread)) hub.stop(thread)
   finish(thread, 'cancelled')
 }
 

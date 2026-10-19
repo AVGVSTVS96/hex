@@ -73,6 +73,12 @@ export async function agent(session: string, asking?: () => boolean): Promise<Ag
   return (await agents(asking)).find(agent => agent.sessionId === session)
 }
 
+// The session as Claude's daemon lists it in one answer, for a caller that can't wait for a daemon
+// that's down: no answer finds none.
+export async function listing(session: string): Promise<Agent | undefined> {
+  return (await listed())?.find(agent => agent.sessionId === session)
+}
+
 export const stop = (session: string) => run(['stop', short(session)])
 // `claude --bg --resume` copies the conversation to a new id while the old session's job record
 // exists, even once stopped; this clears the record and keeps the conversation.
