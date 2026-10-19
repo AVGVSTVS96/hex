@@ -41,9 +41,10 @@ import {
   type ForumChannel,
   type TextChannel,
   type ThreadChannel,
+  type AnyThreadChannel,
   type DMChannel,
 } from 'discord.js'
-import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync, renameSync } from 'fs'
 import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
@@ -54,6 +55,7 @@ import { voiceCalls } from './voice.ts'
 const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'discord')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const GUILD_FILE = join(STATE_DIR, 'guild.json')
+const CURSOR_FILE = join(STATE_DIR, 'cursor.json')
 const ENV_FILE = join(STATE_DIR, '.env')
 const INBOX_DIR = join(STATE_DIR, 'inbox')
 
@@ -947,9 +949,75 @@ function serve(token: string) {
     else if (interaction.isChatInputCommand()) handleCommand(interaction).catch(failure('handleCommand'))
   })
 
+  // The newest message handled, kept so the bot reads what it missed while it was
+  // down, or while Discord couldn't resume its gateway session.
+  let cursor = (() => {
+    try {
+      return JSON.parse(readFileSync(CURSOR_FILE, 'utf8')).id as string
+    } catch {
+      return keepCursor(SnowflakeUtil.generate().toString())
+    }
+  })()
+
+  function keepCursor(id: string) {
+    writeFileSync(`${CURSOR_FILE}.tmp`, JSON.stringify({ id }) + '\n')
+    renameSync(`${CURSOR_FILE}.tmp`, CURSOR_FILE)
+    return id
+  }
+
+  // Messages are handled one at a time, in order, so a thread's messages reach its
+  // session in order and the cursor never passes one still being handled.
+  let queue: Promise<unknown> = Promise.resolve()
+  let caught = new Set<string>()
+
+  async function take(msg: DiscordMessage) {
+    if (!msg.author.bot) await handleInbound(msg).catch(failure('handleInbound'))
+    if (BigInt(msg.id) > BigInt(cursor)) cursor = keepCursor(msg.id)
+  }
+
+  type Listened = TextChannel | NewsChannel | AnyThreadChannel | DMChannel
+  const listensIn = (ch: Channel | null | undefined): ch is Listened =>
+    ch?.type === ChannelType.DM || ((isText(ch) || !!ch?.isThread()) && !!ch.permissionsFor(client.user!)?.has(READ))
+
+  async function after(ch: Listened, from: string): Promise<DiscordMessage[]> {
+    const found: DiscordMessage[] = []
+    for (let since = from; ;) {
+      const page = [...(await ch.messages.fetch({ after: since, limit: 100 })).values()]
+      found.push(...page)
+      if (page.length < 100) return found
+      since = page.reduce((newest, m) => (BigInt(m.id) > BigInt(newest) ? m.id : newest), since)
+    }
+  }
+
+  // Every text channel, thread and DM whose newest message is past the cursor is read
+  // forward from it, and what it missed is handled oldest first, as if live. A thread
+  // can go quiet long enough to archive again while the bot is away, so each channel's
+  // recently archived threads are read too.
+  async function catchUp() {
+    const from = cursor
+    const g = client.guilds.cache.first()
+    const [channels, active, dms] = await Promise.all([
+      g ? g.channels.fetch().then(found => [...found.values()]) : [],
+      g ? g.channels.fetchActiveThreads().then(found => [...found.threads.values()]) : [],
+      Promise.all(loadAccess().allowFrom.map(id => client.users.createDM(id, { force: true }).catch(err => void failure(`opening the DM with ${id}`)(err)))),
+    ])
+    const parents = channels.flatMap(ch => (isPostable(ch) && ch.permissionsFor(client.user!)?.has(READ) ? [ch] : []))
+    const archived = await Promise.all(parents.map(ch => ch.threads.fetchArchived().then(found => [...found.threads.values()], err => (failure(`listing ${ch.id}'s archived threads`)(err), []))))
+    const places = [...channels, ...active, ...archived.flat(), ...dms].filter(listensIn).filter(ch => !!ch.lastMessageId && BigInt(ch.lastMessageId) > BigInt(from))
+    const missed = (await Promise.all(places.map(ch => after(ch, from).catch(err => (failure(`catching up on ${ch.id}`)(err), [])))))
+      .flat()
+      .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))
+    if (missed.length > 0) process.stderr.write(`discord hub: catching up on ${missed.length} message(s) since ${new Date(SnowflakeUtil.timestampFrom(from)).toISOString()}\n`)
+    caught = new Set(missed.map(m => m.id))
+    for (const msg of missed) await take(msg)
+  }
+
+  client.on('shardReady', () => {
+    queue = queue.then(catchUp).catch(failure('catching up'))
+  })
+
   client.on('messageCreate', msg => {
-    if (msg.author.bot) return
-    handleInbound(msg).catch(failure('handleInbound'))
+    queue = queue.then(() => (caught.has(msg.id) ? undefined : take(msg))).catch(failure('handling a message'))
   })
 
   client.on('messageUpdate', (before, after) => {
