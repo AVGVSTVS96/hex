@@ -725,6 +725,25 @@ test('stopping a thread ends its session now, and its next message resumes it', 
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
 })
 
+test('a message that comes while a stopped session is still exiting waits, and resumes the thread once it has', async () => {
+  const exiting = Bun.spawn(['sleep', '60'])
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: exiting.pid, status: 'busy' }] })
+  const old = await session('chat:7')
+  hub.stop('chat:7')
+  await until(() => calls().find(args => args[0] === 'stop'))
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await Bun.sleep(300)
+  expect(old.received).toEqual([])
+  expect(calls().some(args => args[0] === '--bg')).toBe(false)
+  exiting.kill()
+  const args = await launched()
+  expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
+  const resumed = await session('chat:7')
+  await until(() => resumed.received.length)
+  expect(resumed.received[0]).toMatchObject({ type: 'inbound', content: 'hi' })
+  expect(old.received).toEqual([])
+})
+
 test('a thread\'s model and effort are kept, and a running session takes them by starting again with its next message', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, status: 'idle' }] })
   const { received } = await session('chat:7')

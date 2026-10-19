@@ -474,6 +474,42 @@ test('cancelling stops the session and answers the prompt as cancelled', async (
   expect(lines('calls')).toContain(JSON.stringify(['stop', SESSION.slice(0, 8)]))
 })
 
+// T3's own records while it restarts a turn of this session to steer it.
+function steering(sessionId: string) {
+  const userdata = join(dir, '.t3', 'userdata')
+  mkdirSync(userdata, { recursive: true })
+  const db = new Database(join(userdata, 'statev2.sqlite'))
+  db.run('create table orchestration_v2_effect_outbox (effect_type text, status text, payload_json text)')
+  db.run('create table orchestration_v2_projection_provider_threads (provider_thread_id text, payload_json text)')
+  db.run("insert into orchestration_v2_projection_provider_threads values ('provider-thread:1', ?)", [JSON.stringify({ nativeThreadRef: { nativeId: sessionId } })])
+  db.run("insert into orchestration_v2_effect_outbox values ('provider-turn.restart', 'running', ?)", [JSON.stringify({ providerThreadId: 'provider-thread:1' })])
+  db.close()
+}
+
+test('a steer leaves the session running, its message reaches the session mid-turn, and its turn ends with the session\'s', async () => {
+  const { agent, updates } = await t3()
+  const { sessionId, hex } = await kept(agent)
+  const first = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'run for a while' }] })
+  await until(() => hex.inbound.length === 2)
+  hex.busy()
+  hex.write({ ...prompt, timestamp: now() })
+  steering(sessionId)
+  await agent.notify('session/cancel', { sessionId })
+  expect(await first).toEqual({ stopReason: 'cancelled' })
+  const steered = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'and check the tests' }] })
+  await until(() => hex.inbound.length === 3)
+  expect(hex.inbound[2]).toMatchObject({ type: 'inbound', content: 'and check the tests' })
+  hex.write(
+    { type: 'attachment', timestamp: now(), attachment: { type: 'queued_command', origin: { kind: 'channel' }, prompt: '<channel source="t3">and check the tests</channel>' } },
+    { type: 'assistant', timestamp: now(), message: { id: 'm2', content: [{ type: 'text', text: 'tests pass' }] } },
+    { ...done, timestamp: now() },
+  )
+  hex.idle()
+  expect(await steered).toEqual({ stopReason: 'end_turn' })
+  expect(texts(updates)).toContain('tests pass')
+  expect(lines('calls').filter(line => line.startsWith('["stop"'))).toEqual([])
+})
+
 test('a chat with no project works in hex\'s folder, and a project folder is trusted for good', async () => {
   const { agent } = await t3()
   for (const cwd of [dir, join(dir, '.t3', 'scratch', 'chat'), project]) {

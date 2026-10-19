@@ -21,7 +21,8 @@ export function transcriptPath(cwd: string, session: string) {
 // a turn_duration after the prompt with no turn after it. Claude Code writes the
 // transcript in batches, so the Stop hook can run before the last reply is on disk,
 // and a background agent's result comes back as a turn of its own, streamed here
-// too. A /compact turn ends at its compaction, or with its error.
+// too. A message that reaches the session mid-turn is a queued_command attachment, not a turn of
+// its own. A /compact turn ends at its compaction, or with its error.
 export function follow({ path, sessionId, cwd, since, done, emit, end }: {
   path: string
   sessionId: string
@@ -74,7 +75,7 @@ export function follow({ path, sessionId, cwd, since, done, emit, end }: {
       return
     }
     if (Date.parse(entry.timestamp) < since!) return
-    if (entry.type === 'user' && entry.origin?.kind === 'channel') asked = true
+    if ((entry.type === 'user' && entry.origin?.kind === 'channel') || entry.attachment?.origin?.kind === 'channel') asked = true
     if (entry.type === 'system' && entry.subtype === 'turn_duration') {
       open = false
       return settle()
