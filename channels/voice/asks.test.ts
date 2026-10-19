@@ -292,3 +292,22 @@ test('a check written before places and links were typed still gives each ask it
     ['check:pin', [{ label: 'Done' }], undefined, [{ app: 'telegram', place: 'General', task: `telegram:${GROUP}`, link: 'https://t.me/c/1234/1' }]],
   ])
 })
+
+test("a status post's page is read from hex.db as it opens, and only a new note starts a check, not the lines hex rewrites", async () => {
+  const pin = { message: 7, text: 'Site: example.com\n\n🔴 **Blocked on you**\n- nothing', at: '2026-10-13T10:00:00.000Z', note: 'Site: example.com' }
+  const byHand = { message: 2, text: 'Status: by hand', at: '2026-10-13T10:00:00.000Z' }
+  ledger([asked(1, 'Ship it?', ['Yes', 'No'])], { [DESK]: pin, [GROUP]: byHand })
+  const store = open(state)
+  store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', meta: { user: 'owner' } })
+  const task = store.createTask({ message: 'telegram:-1001234:40', owner: DESK })
+  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(asks.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)
+  expect(asks.of(`telegram:${GROUP}`).pin).toBe('Status: by hand')
+
+  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, text: asks.of(`telegram:${DESK}`).pin }, [GROUP]: byHand } }))
+  await Bun.sleep(150)
+  expect(checks).toEqual([])
+  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, note: 'Site: example.org' }, [GROUP]: byHand } }))
+  await until(() => checks.length)
+  expect(checks).toEqual(['a pinned post changed'])
+})

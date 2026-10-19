@@ -8,6 +8,9 @@ export type Ask = Question
 // A pin with a note is the thread's status post: hex writes it as the note over the thread's
 // questions and tasks (status.ts).
 export type Pin = { message: MessageId; text: string; at: string; note?: string }
+
+// What a pin says in its session's own words: a status post's note, or all of a pin written by hand.
+export const noteOf = (pin: Pin) => pin.note ?? pin.text
 type Book = { pins: Record<string, Pin>; asks?: Omit<Ask, 'app'>[] }
 
 // One app's questions, which hex.db keeps (store.ts) so every reader sees the same answer, and
