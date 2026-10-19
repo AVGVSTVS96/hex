@@ -98,7 +98,7 @@ Then decide what I need to know right now. If something's worth it, message me i
 
 ## Schedules
 
-`schedules.json` holds your jobs: each has a five-field `cron`, or an `at` with one `"YYYY-MM-DD HH:MM"` or a list of them, in my time zone (`TZ` in `.claude/settings.json` if it's set there, otherwise this machine's), and the `prompt` you get as `[name] prompt` when it fires, in General unless its `thread` names another. What a job tells me goes to General, with a link to where its thing lives. The hub reads the file every minute and never stacks a job behind one you haven't taken yet; after it was down, a missed job fires once, marked `late`. To add, change or remove a job, edit that file; take a one-off out once it has fired. Don't use CronCreate: its jobs expire after a week and only live in one session.
+`schedules.json` holds your jobs: each has a five-field `cron`, or an `at` with one `"YYYY-MM-DD HH:MM"` or a list of them, in my time zone (`TZ` in `.claude/settings.json` if it's set there, otherwise this machine's), and the `prompt` you get as `[name] prompt` when it fires, in General unless its `thread` names another. A job with a `task` (like `t-12`) fires only while that task is open, so a nudge about something stops once it's done. What a job tells me goes to General, with a link to where its thing lives. The hub reads the file every minute and never stacks a job behind one you haven't taken yet; after it was down, a missed job fires once, marked `late`. To add, change or remove a job, edit that file; take a one-off out once it has fired. Don't use CronCreate: its jobs expire after a week and only live in one session.
 
 ## Connectors
 

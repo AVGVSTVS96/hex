@@ -1,11 +1,11 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { open } from './store.ts'
+import { open, type Store } from './store.ts'
 
 // A job in schedules.json wakes its thread (the main one, unless it names another) with
 // "[name] prompt" at each minute its five-field cron names and at each "YYYY-MM-DD HH:MM" its at
-// lists, on the owner's clock.
-export type Job = { cron?: string; at?: string | string[]; thread?: string; prompt: string }
+// lists, on the owner's clock. A job with a task fires only while that task is open.
+export type Job = { cron?: string; at?: string | string[]; thread?: string; task?: string; prompt: string }
 
 const FIELDS = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]] as const
 const PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/
@@ -42,6 +42,7 @@ export function parse(text: string): Record<string, Job> {
     if (job.cron !== undefined && !isCron(job.cron)) throw new Error(`${name}: ${JSON.stringify(job.cron)} is not a five-field cron expression`)
     if (![job.at ?? []].flat().every(isAt)) throw new Error(`${name}: at must be "YYYY-MM-DD HH:MM", or a list of them`)
     if (job.thread !== undefined && typeof job.thread !== 'string') throw new Error(`${name}: thread must be a thread's id`)
+    if (job.task !== undefined && !/^t-\d+$/.test(String(job.task))) throw new Error(`${name}: task must be a task's id, like t-12`)
   }
   return jobs
 }
@@ -129,9 +130,16 @@ export function check(storeDir: string, hexDir: string, main: string, now = Math
     }
   }
   store.write(() => {
-    for (const [name, minute] of slots) store.fire(name, minute, jobs[name]!.thread ?? main, `[${name}] ${jobs[name]!.prompt}`, minute < now)
+    for (const [name, minute] of slots) if (!jobs[name]!.task || standing(store, jobs[name]!.task!)) store.fire(name, minute, jobs[name]!.thread ?? main, `[${name}] ${jobs[name]!.prompt}`, minute < now)
     store.check(now)
   })
+}
+
+// The task, or the one it was merged into, is still open.
+function standing(store: Store, id: string) {
+  let task = store.task(id)
+  while (task?.mergedInto) task = store.task(task.mergedInto)
+  return task?.status === 'open'
 }
 
 // The hub's scheduler: a check at its start, then at the top of every minute.
