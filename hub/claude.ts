@@ -21,10 +21,14 @@ export function inherited(): Record<string, string | undefined> {
 // Where systemd runs hex, sessions run in a slice of their own (HEX_SESSIONS_SLICE), so one that
 // runs out of memory can't take the hub down with it. Claude's daemon starts every session as its
 // own child, and several claude commands start the daemon, so every one the hub runs goes there.
+// systemd 254 began expanding ${VARIABLE} in a scope's command, which would rewrite a thread's
+// name or prompt, and added --expand-environment to turn that off; older ones pass it as given.
+let verbatim: string[] | undefined
 function contained(command: string, args: string[]): [string, string[]] {
   const slice = process.env.HEX_SESSIONS_SLICE
   if (!slice) return [command, args]
-  return ['systemd-run', ['--user', '--scope', '--quiet', '--collect', `--slice=${slice}`, '--property=OOMPolicy=continue', command, ...args]]
+  verbatim ??= Bun.spawnSync(['systemd-run', '--help']).stdout.toString().includes('--expand-environment') ? ['--expand-environment=no'] : []
+  return ['systemd-run', ['--user', '--scope', '--quiet', '--collect', `--slice=${slice}`, '--property=OOMPolicy=continue', ...verbatim, command, ...args]]
 }
 
 function run(args: string[]): Promise<string | undefined> {
