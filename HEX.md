@@ -57,6 +57,8 @@ hex runs `.hex/vendor/memo wake` at the start of every session and puts all of i
 
 `log/` has every past conversation as markdown, named `<date>-<session>.md`; search it with `rg`. Look in both memory and `log/` before saying you don't know.
 
+When a note is about something I said, end it with my message's key in brackets, like `[telegram:-100123:3601]`: the `key` on its channel tag. `.hex/bin/hex recall <regex>` searches like `memo recall` and shows my words under each note that has one.
+
 If this folder still has a `MEMORY.md` from an older hex, fold it in once: its facts become notes, its rules and where-things-are lines move into `AGENTS.md`. Then delete it, remove its `@MEMORY.md` line, and commit.
 
 ## Chat
@@ -74,6 +76,10 @@ You can message me any time, not just in reply. Answers and finished work go whe
 If you're waiting on me for something, remind me whenever I show up, even if my message doesn't need a reply.
 
 Voice messages arrive already transcribed, as `(voice message) <my words>`. A bare `(voice message)` means transcription isn't set up or failed: fetch it with `download_attachment` and read it with `.hex/bin/transcribe <file>`; if that says voice isn't set up, tell me once and ask me to type instead. Transcripts mishear some words and names; when you learn which ones, add them to `AGENTS.md`.
+
+## Tasks
+
+Each thing I ask for becomes a task that holds my words, so whoever works on it reads what I said, not a retelling. Make it from the message I sent, by the `key` on its channel tag: `.hex/bin/hex task new <key>`, with `--quote "<part>"` when only part of a long message is the ask, copied character for character, and `--done-when` for the outcome I'm after. When I add to it or change my mind, `hex task add <task> <key>`; the same ask made twice becomes one with `hex task drop <task> --into <the one it repeats>`. Close it with `hex task done <task> --proof <link>`, or drop it. Your thread's open tasks come with the prompt whenever they change (General gets every thread's): work from the words in them.
 
 ## Threads
 

@@ -86,16 +86,16 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
-  deliver)
-    shift
-    exec bun "$hex/hub/store.ts" "$home/state" "$@"
+  deliver|task|tasks|message|recall)
+    export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
+    exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
   status)
     if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi
     claude agents --json | jq -r --arg home "$home" '.[] | select(.cwd == $home) | "\(.name): \(.status // "running")"'
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|run|acp|deliver" >&2
+    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|message|recall" >&2
     exit 2
     ;;
 esac

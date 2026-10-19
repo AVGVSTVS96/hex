@@ -73,7 +73,7 @@ test('a change committed in another process rings the bell, and a write that cha
   expect(open(dir)).toBe(store)
   let rang = 0
   const stop = store.watch(() => rang++)
-  const cli = Bun.spawn(['bun', join(import.meta.dir, 'store.ts'), dir, 'job:build:abc', '--to', 'general', '[job]', 'build', 'ended'])
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'job:build:abc', '--to', 'general', '[job]', 'build', 'ended'])
   expect(await cli.exited).toBe(0)
   await until(() => rang > 0)
   expect(store.message('job:build:abc')).toMatchObject({ to: 'general', from: 'job', body: '[job] build ended', meta: { user: 'job' } })
@@ -85,8 +85,87 @@ test('a change committed in another process rings the bell, and a write that cha
 
 test('hex deliver says how to call it when something is missing', async () => {
   for (const args of [['job:build:abc', 'no thread'], ['build', '--to', 'general', 'no sender']]) {
-    const cli = Bun.spawn(['bun', join(import.meta.dir, 'store.ts'), dir, ...args], { stderr: 'pipe' })
+    const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', ...args], { stderr: 'pipe' })
     expect(await cli.exited).toBe(2)
-    expect(await new Response(cli.stderr).text()).toContain('usage: hex deliver')
+    expect(await new Response(cli.stderr).text()).toContain('hex deliver <from>:<id> --to <thread>')
   }
+})
+
+const ask = { ...message, key: 'telegram:-100:50', body: 'Fix the login page. Also the logo looks blurry on retina.' }
+
+test("a task holds the owner's words as they sent them, quoted whole or in part, and never retyped", () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  const whole = store.createTask({ message: ask.key, owner: '-100:7' })
+  expect(whole).toMatchObject({ id: 't-1', owner: '-100:7', status: 'open', words: [{ message: ask.key, text: ask.body, who: 'bassim' }] })
+  expect(store.createTask({ message: ask.key, quote: 'the logo looks blurry on retina', owner: '-100:7' }).words[0]!.text).toBe('the logo looks blurry on retina')
+  expect(() => store.createTask({ message: ask.key, quote: 'the logo is blurry', owner: '-100:7' })).toThrow("isn't in telegram:-100:50 as written")
+  expect(() => store.createTask({ message: 'telegram:-100:404', owner: '-100:7' })).toThrow('no message')
+  expect(() => store.db.run("insert into words (task, message, text) values (1, 'telegram:-100:50', 'fix it all')")).toThrow('character for character')
+  expect(() => store.db.run("update words set text = 'Fix it' where task = 1")).toThrow('never rewritten')
+  expect(() => store.db.run('delete from words')).toThrow('never taken away')
+  expect(() => store.db.run("update messages set body = 'Fix it'")).toThrow('keeps its words')
+  expect(store.tasks().map(task => task.id)).toEqual(['t-1', 't-2'])
+})
+
+test('follow-ups are added after what was said first, and a repeat changes nothing', () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  store.deliver({ ...message, key: 'telegram:-100:51', body: 'and make it work on mobile' })
+  const task = store.createTask({ message: ask.key, quote: 'Fix the login page.', owner: '-100:7' })
+  store.addWords(task.id, 'telegram:-100:51')
+  store.addWords(task.id, 'telegram:-100:51')
+  expect(store.task(task.id)!.words.map(words => words.text)).toEqual(['Fix the login page.', 'and make it work on mobile'])
+})
+
+test('done needs a proof, and the states are the four a task has', () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  const { id } = store.createTask({ message: ask.key, owner: '-100:7', status: 'idea' })
+  expect(() => store.editTask(id, { status: 'done' })).toThrow()
+  expect(() => store.editTask(id, { status: 'finished' as any })).toThrow()
+  expect(store.editTask(id, { status: 'done', proof: 'https://example.com/pr/1' })).toMatchObject({ status: 'done', proof: 'https://example.com/pr/1' })
+  expect(store.tasks({ status: ['open', 'idea'] })).toEqual([])
+  expect(store.tasks({ status: ['done'] }).map(task => task.id)).toEqual([id])
+})
+
+test("a merge puts the duplicate's words after the task's own, drops it, and its follow-ups go where it went", () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  store.deliver({ ...message, key: 'telegram:-100:60', to: '-100:9', body: 'the login page is broken' })
+  store.deliver({ ...message, key: 'telegram:-100:61', to: '-100:9', body: 'still broken btw' })
+  const kept = store.createTask({ message: ask.key, quote: 'Fix the login page.', owner: '-100:7' })
+  const duplicate = store.createTask({ message: 'telegram:-100:60', owner: '-100:9' })
+  const merged = store.mergeTasks(kept.id, duplicate.id)
+  expect(merged.words.map(words => words.text)).toEqual(['Fix the login page.', 'the login page is broken'])
+  expect(store.task(duplicate.id)).toMatchObject({ status: 'dropped', mergedInto: kept.id })
+  expect(store.addWords(duplicate.id, 'telegram:-100:61').id).toBe(kept.id)
+  expect(store.task(kept.id)!.words).toHaveLength(3)
+  expect(() => store.editTask(duplicate.id, { status: 'open' })).toThrow()
+  expect(() => store.mergeTasks(kept.id, duplicate.id)).toThrow('dropped')
+  expect(() => store.mergeTasks(kept.id, kept.id)).toThrow('itself')
+})
+
+test("a session is shown its list again only once it changed, or after its context lost it", () => {
+  const store = new Store(dir)
+  expect(store.show('session-a', '')).toBe(false)
+  expect(store.show('session-a', 'one')).toBe(true)
+  expect(store.show('session-a', 'one')).toBe(false)
+  expect(store.show('session-b', 'one')).toBe(true)
+  store.unshow('session-a')
+  expect(store.show('session-a', 'one')).toBe(true)
+})
+
+test('hex task makes a task from a message by its key, and the owner is the thread asking', async () => {
+  open(dir).deliver(ask)
+  const hex = async (...args: string[]) => {
+    const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, HEX_THREAD: 'chat:3' } })
+    return { code: await cli.exited, out: await new Response(cli.stdout).text(), err: await new Response(cli.stderr).text() }
+  }
+  expect(await hex('task', 'new', ask.key, '--quote', 'Fix the login page.', '--done-when', 'it signs in')).toMatchObject({ code: 0 })
+  expect(open(dir).task('t-1')).toMatchObject({ owner: 'chat:3', doneWhen: 'it signs in', words: [{ text: 'Fix the login page.' }] })
+  expect((await hex('tasks')).out).toContain('Fix the login page.')
+  expect(await hex('task', 'done', 't-1')).toMatchObject({ code: 1, err: expect.stringContaining('--proof') })
+  expect(await hex('task', 'new', ask.key, '--quote', 'fix login')).toMatchObject({ code: 1, err: expect.stringContaining('as written') })
+  expect((await hex('message', ask.key)).out).toBe(`${ask.body}\n`)
 })
