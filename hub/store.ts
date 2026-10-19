@@ -185,17 +185,17 @@ function retry<T>(fn: () => T): T {
   }
 }
 
-// hex deliver <from>:<id> --to <thread> <words…>, from a shell, a job or any agent: keeps the
-// message, and the hub that serves the thread delivers it.
+// hex deliver <from>:<id> --to <thread> [--user <name>] <words…>, from a shell, a job or any agent:
+// keeps the message, and the hub that serves the thread delivers it.
 if (import.meta.main) {
   const {
-    values: { to },
+    values: { to, user },
     positionals: [dir, key, ...words],
-  } = parseArgs({ options: { to: { type: 'string' } }, allowPositionals: true })
+  } = parseArgs({ options: { to: { type: 'string' }, user: { type: 'string' } }, allowPositionals: true })
   const from = key?.split(':')[0]
   if (!dir || !from || from === key || !to || !words.length) {
-    console.error('usage: hex deliver <from>:<id> --to <thread> <words…>')
+    console.error('usage: hex deliver <from>:<id> --to <thread> [--user <name>] <words…>')
     process.exit(2)
   }
-  open(dir).deliver({ key, to, from, body: words.join(' '), meta: { user: from } })
+  open(dir).deliver({ key, to, from, body: words.join(' '), meta: { user: user ?? from } })
 }

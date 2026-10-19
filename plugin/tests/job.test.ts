@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { createServer } from 'net'
+import { Database } from 'bun:sqlite'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -14,7 +14,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !n
 const session = { HEX_CHANNEL: 'plugin:t3@hex', HEX_THREAD: 'stray-key' }
 
 beforeAll(() => {
-  cpSync(join(HEX, 'bin/job'), job)
+  for (const file of ['bin/job', 'bin/hex', 'hub/store.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
   for (const [app, threads] of Object.entries({
     t3: { 'stray-key': { name: 'hex' } },
     telegram: { 'stray-key': { name: 'stray-key' }, '-100123:908': { name: 'autofork' } },
@@ -61,18 +61,16 @@ test('a job with no owner, or no command, is refused', () => {
   expect(run(['build'], session).code).toBe(2)
 })
 
-test("a job's end wakes its owner through its own app's hub, and an older unit's bare key the one app that has it", async () => {
-  const lines: Record<string, any[]> = { t3: [], discord: [] }
-  const hubs = Object.keys(lines).map(app =>
-    createServer(socket => socket.on('data', chunk => lines[app]!.push(...chunk.toString().trim().split('\n').map(line => JSON.parse(line))))).listen(join(home, 'state', app, 'hub.sock')),
-  )
-  afterAll(() => hubs.forEach(hub => hub.close()))
-  await Promise.all(hubs.map(hub => new Promise(resolve => hub.once('listening', resolve))))
+test("a job's end is kept for its owner's app while no hub runs, and an older unit's bare key goes to the one app that has it", async () => {
   const end = (...args: string[]) => Bun.spawn(['bun', job, '--ended', ...args], { env: { ...env, SERVICE_RESULT: 'success', EXIT_STATUS: '0' }, stderr: 'pipe' }).exited
   expect(await end('round3', 't3:stray-key')).toBe(0)
   expect(await end('older', '555')).toBe(0)
   expect(await end('older', 'stray-key')).toBe(2)
-  while (!lines.t3!.length || !lines.discord!.length) await Bun.sleep(10)
-  expect(lines.t3).toEqual([{ type: 'inbound', thread: 'stray-key', content: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: { user: 'job' } }])
-  expect(lines.discord).toEqual([{ type: 'inbound', thread: '555', content: expect.stringContaining('[job] older ended'), meta: { user: 'job' } }])
+  expect(await end('topic', '-100123:908')).toBe(0)
+  const rows = new Database(join(home, 'state/hex.db')).query('select "to", "from", body, meta from messages where taken_at is null order by rowid').all()
+  expect(rows).toEqual([
+    { to: 'stray-key', from: 't3', body: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: JSON.stringify({ user: 'job' }) },
+    { to: '555', from: 'discord', body: expect.stringContaining('[job] older ended'), meta: JSON.stringify({ user: 'job' }) },
+    { to: '-100123:908', from: 'telegram', body: expect.stringContaining('[job] topic ended'), meta: JSON.stringify({ user: 'job' }) },
+  ])
 })

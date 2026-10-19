@@ -4,7 +4,7 @@
 // or <thread>: a key from one app's state/<app>/threads.json, or <app>:<key>. The job's Claude Code
 // sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them under it, and are
 // named <owner>/<unit> unless they name themselves.
-import { $, connect } from "bun"
+import { $ } from "bun"
 import { readdirSync, readFileSync } from "node:fs"
 import { resolve } from "node:path"
 
@@ -65,9 +65,8 @@ if (mode === "--ended") {
   const result = process.env.SERVICE_RESULT ?? "unknown"
   const status = process.env.EXIT_STATUS ?? "?"
   const content = `[job] ${unit} ended: ${result} (exit ${status}). Check its output and report it.`
-  const socket = await connect({ unix: `${state}${app}/hub.sock`, socket: { data() {} } })
-  socket.write(JSON.stringify({ type: "inbound", thread: key, content, meta: { user: "job" } }) + "\n")
-  socket.end()
+  // Kept as from its owner's app, so only that app's hub delivers it, even to a key two apps share.
+  await $`${import.meta.dir}/hex deliver ${app}:job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to=${key} --user=job ${content}`
 } else {
   const here = caller()
   const given = rest.length > 1 ? named(rest[0]!, here) : undefined
