@@ -114,8 +114,15 @@ export type Client = {
   backfill?: (thread: string, turns: Turn[]) => Promise<void>
   // The client shows only the turns its own messages start, so a session moved there waits for one.
   waits?: boolean
+  // What the client does as the hub stops, once no call is live.
+  close?: () => Promise<void>
 }
 export const clients = new Map<string, Client>()
+
+// Resolves with the hub serving General once General's session first connects to it: from then
+// on, hex works on the code this process runs.
+let reached: (hub: Hub) => void
+export const up = new Promise<Hub>(resolve => (reached = resolve))
 
 export const PORT = Number(process.env.HEX_PORT ?? 8789)
 // The folder whose hex.db keeps the messages of every app's hub (store.ts).
@@ -704,6 +711,7 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
     const run = runOf(thread)
     const job = run.phase.is === 'launching' ? run.phase.job : undefined
     become(run, { is: 'live', line })
+    if (general && thread === main) reached(api)
     if (run.renew !== 'asked') run.renew = undefined
     threads[thread] ??= { name: thread }
     const id = job && claude.record(job).sessionId

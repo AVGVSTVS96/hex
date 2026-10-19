@@ -202,6 +202,7 @@ async function startBot(prepare?: (setup: { state: string; relay: ReturnType<typ
   mkdirSync(join(dir, 'config', 'jobs', 'job12345'), { recursive: true })
   writeFileSync(join(dir, 'claude'), `#!/bin/sh
 jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/calls"
+[ "$1 $2" = "agents --json" ] && echo '[]'
 [ "$1" = "--bg" ] && echo "backgrounded · job12345 · test"
 exit 0
 `)

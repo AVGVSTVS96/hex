@@ -8,6 +8,19 @@ running() {
   [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
+# A hub that exits three times within a minute can't start. If hex changed since General last
+# connected (the hub marks that commit refs/hex/good), hex goes back to it, bin/update won't take
+# the commit that failed again, and General hears why once it's back.
+roll_back() {
+  good=$(git -C "$hex" rev-parse -q --verify refs/hex/good) || return 0
+  bad=$(git -C "$hex" rev-parse HEAD)
+  [ "$good" != "$bad" ] && git -C "$hex" reset -q --keep "$good" || return 0
+  git -C "$hex" update-ref refs/hex/bad "$bad"
+  note="hex $(git -C "$hex" log -1 --format='%h ("%s")' "$bad") couldn't start: its hub exited three times within a minute. So hex went back to $(git -C "$hex" log -1 --format='%h ("%s")' "$good"), the last commit General connected on, and bin/update won't take $(git -C "$hex" rev-parse --short "$bad") again. What the failed starts printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex)."
+  echo "$note" >&2
+  echo "$note" > "$home/state/rollback"
+}
+
 case "${1:-}" in
   init)
     for file in AGENTS.md SOUL.md schedules.json; do
@@ -24,21 +37,35 @@ case "${1:-}" in
     echo "hex is set up in $home"
     ;;
   run)
-    set -a; . "$home/.env"; set +a
-    [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
+    (. "$home/.env"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]) || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hooks bin/session's plugins load: a change to them renews sessions at their next rest.
     export HEX_HOOKS="$hex/plugin/hooks/hooks.json"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     echo $$ > "$pidfile"
-    trap 'kill "${hub:-}" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
+    # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
+    trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
+    first= second= third=
     while :; do
       for dir in channels/telegram channels/discord channels/buzz channels/t3 channels/voice; do
-        bun install --no-summary --cwd "$hex/$dir" >/dev/null
+        bun install --no-summary --cwd "$hex/$dir" >/dev/null || :
       done
-      bun "$hex/hub/serve.ts" &
+      # Read at every start, so a restart takes the settings as they are now.
+      (set -a; . "$home/.env"; set +a; exec bun "$hex/hub/serve.ts") &
       hub=$!
-      wait "$hub" || sleep 3
+      if wait "$hub"; then
+        hub=
+        # A restart: go on as the bin/hex on disk now, which an update may have changed.
+        sh -n "$hex/bin/hex" && exec "$hex/bin/hex" run
+        continue
+      fi
+      hub=
+      first=$second second=$third third=$(date +%s)
+      if [ -n "$first" ] && [ $((third - first)) -le 60 ]; then
+        roll_back
+        first= second= third=
+      fi
+      sleep 3
     done
     ;;
   start)

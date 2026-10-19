@@ -12,6 +12,10 @@ if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   echo "up to date at $before"
   exit 0
 fi
+if [ "$incoming" = "$(git rev-parse -q --verify refs/hex/bad || :)" ]; then
+  echo "not updated: hex $(git rev-parse --short "$incoming") couldn't start here, so hex stays on $before"
+  exit 1
+fi
 
 check="$hex/worktrees/check"
 clean() {

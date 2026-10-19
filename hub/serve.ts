@@ -1,8 +1,26 @@
-import { PORT, free, route } from './hub.ts'
+import { existsSync, readFileSync, rmSync } from 'fs'
+import { join } from 'path'
+import { PORT, clients, free, route, up } from './hub.ts'
 
 // Before the clients load: Telegram's bot module awaits its polling loop, which never ends.
-process.on('SIGHUP', () => void free().then(() => process.exit(0)))
+// A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign
+// off, and it exits for bin/hex to start the next one, so two never run at once.
+let stopping: Promise<void> | undefined
+const stop = () => (stopping ??= free().then(() => Promise.allSettled([...clients.values()].map(client => client.close?.()))).then(() => process.exit(0)))
+for (const signal of ['SIGHUP', 'SIGTERM', 'SIGINT'] as const) process.on(signal, () => void stop())
 Bun.serve({ hostname: '127.0.0.1', port: PORT, idleTimeout: 0, fetch: route })
+
+// Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that
+// can't start back to it. General then hears about a rollback that brought this hub up.
+const hex = join(import.meta.dir, '..')
+const commit = Bun.spawnSync(['git', '-C', hex, 'rev-parse', '-q', '--verify', 'HEAD']).stdout.toString().trim()
+const rollback = join(process.env.HEX_DIR ?? join(hex, '..'), 'state', 'rollback')
+void up.then(general => {
+  if (commit) Bun.spawnSync(['git', '-C', hex, 'update-ref', 'refs/hex/good', commit])
+  if (!existsSync(rollback)) return
+  general.deliver(general.main!, general.name(general.main!) ?? 'hex', { content: readFileSync(rollback, 'utf8').trim(), meta: { user: 'hex' } })
+  rmSync(rollback)
+})
 
 await Promise.all([
   import('../channels/telegram/bot.ts'),
