@@ -199,11 +199,11 @@ function track(thread: string, client: AgentContext, signal: AbortSignal, resolv
 }
 
 // After a hub restart, `hex acp` asks again for the turn T3 was waiting on (acp.ts): it streams
-// from when T3 sent the prompt, and ends like any turn. A prompt the restart lost before its
-// session wrote it down, with the session not working on anything, is delivered again; a
-// /compact that isn't running anymore ended while hex was down. The new hub may not know a
-// session that started just before the restart until its channel reconnects, so the session
-// the turn follows is the one running for the thread.
+// from when T3 sent the prompt, and ends like any turn. A prompt its session hasn't taken yet is
+// still in hex.db, which gives it to the session when its channel connects; a /compact that isn't
+// running anymore ended while hex was down. The new hub may not know a session that started just
+// before the restart until its channel reconnects, so the session the turn follows is the one
+// running for the thread.
 type Rejoin = { sessionId: string; prompt: ContentBlock[]; since: number }
 async function rejoin({ sessionId: thread, prompt: blocks, since }: Rejoin, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
   keep(known(thread))
@@ -214,14 +214,10 @@ async function rejoin({ sessionId: thread, prompt: blocks, since }: Rejoin, clie
   return new Promise((resolve, reject) => {
     const turn = track(thread, client, signal, resolve, reject, since)
     if (session) turn.reader = reader(thread, session, turn, since)
-    if (working || turn.reader?.asked()) {
-      turn.done = !working
-      return turn.reader?.settle()
-    }
-    turn.reader?.close()
-    turn.reader = undefined
-    if (compacting(blocks)) return finish(thread, 'end_turn')
-    hub.deliver(thread, hub.name(thread)!, { content: render(blocks), meta: { ts: new Date(since).toISOString() } })
+    const asked = !!turn.reader?.asked()
+    if (compacting(blocks) && !working && !asked) return finish(thread, 'end_turn')
+    turn.done = asked && !working
+    turn.reader?.settle()
   })
 }
 
