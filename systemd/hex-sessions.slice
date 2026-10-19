@@ -1,0 +1,6 @@
+[Unit]
+Description=hex's Claude sessions, apart from the hub, so one that runs out of memory can't take it down
+
+[Slice]
+MemoryMax=60%
+MemorySwapMax=2G

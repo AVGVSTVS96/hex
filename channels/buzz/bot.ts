@@ -24,7 +24,7 @@ try {
   chmodSync(ENV_FILE, 0o600)
   for (const line of readFileSync(ENV_FILE, 'utf8').split('\n')) {
     const m = line.match(/^(\w+)=(.*)$/)
-    if (m && process.env[m[1]] === undefined) process.env[m[1]] = m[2]
+    if (m) process.env[m[1]] = m[2]
   }
 } catch {}
 
@@ -657,7 +657,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     launcher: process.env.HEX_LAUNCHER,
   })
 
-  clients.set('buzz', { hub, place, backfill })
+  clients.set('buzz', { hub, place, backfill, close: shutdown })
 
   // Desktop writes a mention as "@Name", or "@Name (pubkey)" when two members share a name.
   async function unmention(text: string): Promise<string> {
@@ -898,6 +898,4 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     memory?.close()
     relay.close()
   }
-
-  for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => void shutdown().finally(() => process.exit(0)))
 }

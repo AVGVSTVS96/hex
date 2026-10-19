@@ -11,20 +11,66 @@ export type Usage = { sent: number; at?: number; short?: boolean }
 const home = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 const short = (session: string) => session.slice(0, 8)
 
-function run(args: string[]): Promise<string> {
-  return new Promise(resolve => execFile('claude', args, (_, stdout) => resolve(stdout)))
+// What a Claude process the hub starts never inherits from it: the bots' tokens and hex's own settings.
+const PRIVATE = /_BOT_TOKEN$|^HEX_|^BUZZ_/
+
+export function inherited(): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !PRIVATE.test(name)))
 }
 
-export async function agents(): Promise<Agent[]> {
+// Where systemd runs hex, sessions run in a slice of their own (HEX_SESSIONS_SLICE), so one that
+// runs out of memory can't take the hub down with it. Claude's daemon starts every session as its
+// own child, and several claude commands start the daemon, so every one the hub runs goes there.
+// systemd 254 began expanding ${VARIABLE} in a scope's command, which would rewrite a thread's
+// name or prompt, and added --expand-environment to turn that off; older ones pass it as given.
+let verbatim: string[] | undefined
+function contained(command: string, args: string[]): [string, string[]] {
+  const slice = process.env.HEX_SESSIONS_SLICE
+  if (!slice) return [command, args]
+  verbatim ??= Bun.spawnSync(['systemd-run', '--help']).stdout.toString().includes('--expand-environment') ? ['--expand-environment=no'] : []
+  return ['systemd-run', ['--user', '--scope', '--quiet', '--collect', `--slice=${slice}`, '--property=OOMPolicy=continue', ...verbatim, command, ...args]]
+}
+
+function run(args: string[]): Promise<string | undefined> {
+  const [command, argv] = contained('claude', args)
+  return new Promise(resolve => execFile(command, argv, { env: inherited() }, (error, stdout) => resolve(error ? undefined : stdout)))
+}
+
+async function listed(): Promise<Agent[] | undefined> {
   try {
-    return (JSON.parse(await run(['agents', '--json'])) as Agent[]).filter(agent => agent.pid)
+    const list = JSON.parse((await run(['agents', '--json'])) ?? '')
+    return Array.isArray(list) ? list.filter((agent: Agent) => agent.pid) : undefined
   } catch {
-    return []
+    return undefined
   }
 }
 
-export async function agent(session: string): Promise<Agent | undefined> {
-  return (await agents()).find(agent => agent.sessionId === session)
+// Claude's daemon runs every background session. While it's down it lists none, even with
+// sessions still running, and it comes back only for the next new session; started here instead,
+// it takes the running ones back as it comes up.
+async function awake() {
+  if ((await run(['daemon', 'status'])) !== undefined) return true
+  process.stderr.write("hub: Claude's daemon isn't answering, so the hub starts it\n")
+  const [command, args] = contained('claude', ['daemon', 'run'])
+  spawn(command, args, { detached: true, stdio: 'ignore', env: inherited() }).on('error', () => {}).unref()
+  return false
+}
+
+// Only what Claude's daemon says is running: an answer that failed or can't be read, and an empty
+// list from a daemon that's down, are asked again until it can say, never read as nothing running.
+// A caller that stops asking (a closed hub) gets no answer at all.
+export async function agents(asking = () => true): Promise<Agent[]> {
+  for (let tries = 0; asking(); tries++) {
+    const running = await listed()
+    if (running?.length || (running && (await awake()))) return running
+    if (!running && !tries) process.stderr.write("hub: claude agents didn't answer, so the hub asks again\n")
+    await Bun.sleep(Math.min(1000 * 2 ** tries, 30_000))
+  }
+  return new Promise(() => {})
+}
+
+export async function agent(session: string, asking?: () => boolean): Promise<Agent | undefined> {
+  return (await agents(asking)).find(agent => agent.sessionId === session)
 }
 
 export const stop = (session: string) => run(['stop', short(session)])
@@ -37,7 +83,8 @@ export const respawn = (agent: Agent) => run(['respawn', job(agent)])
 // Resolves with the new session's job once Claude has put it in the background.
 export function start(launcher: string, args: string[], options: { cwd: string; env: Record<string, string | undefined> }): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(launcher, ['--bg', ...args], { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
+    const [command, argv] = contained(launcher, ['--bg', ...args])
+    const child = spawn(command, argv, { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
     child.stdout.on('data', chunk => (output += chunk))
     child.stderr.on('data', chunk => (output += chunk))

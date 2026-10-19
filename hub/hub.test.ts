@@ -30,7 +30,10 @@ beforeEach(() => {
   const fake = join(dir, 'claude')
   writeFileSync(fake, `#!/bin/sh
 jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/calls"
-[ "$1 $2" = "agents --json" ] && cat "${dir}/agents" 2>/dev/null
+[ "$1 $2" = "agents --json" ] && [ -f "${dir}/unreadable" ] && rm "${dir}/unreadable" && echo 'Error: connect ECONNREFUSED' && exit 1
+[ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
+[ "$1 $2" = "daemon status" ] && [ -f "${dir}/down" ] && exit 1
+[ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
 [ "$1" = "--bg" ] && echo "backgrounded · job12345 · test"
 [ "$1" = "stop" ] && [ -f "${dir}/agents" ] && jq -c --arg id "$2" 'map(select(.sessionId | startswith($id) | not))' "${dir}/agents" > "${dir}/agents.next" && mv "${dir}/agents.next" "${dir}/agents"
 exit 0
@@ -207,7 +210,7 @@ test('a stopped thread has its job record cleared, then resumes under the same i
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [] })
   hub.deliver('chat:7', 'Desk anchors', message)
   const args = await launched()
-  expect(calls().filter(args => args[0] !== 'agents')[0]).toEqual(['rm', SESSION.slice(0, 8)])
+  expect(calls().filter(args => args[0] !== 'agents' && args[0] !== 'daemon')[0]).toEqual(['rm', SESSION.slice(0, 8)])
   expect(args).toContain('--resume')
   expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
 })
@@ -221,6 +224,28 @@ test('a thread whose session is still running is never relaunched', async () => 
   const { received } = await session('chat:7')
   await until(() => received.length)
   expect(received[0].content).toBe('hi')
+})
+
+test("an answer Claude couldn't give is asked again, never read as nothing running", async () => {
+  start({ agents: [{ sessionId: SESSION, pid: 42 }] })
+  writeFileSync(join(dir, 'unreadable'), '')
+  hub.adopt('chat:7', 'Desk anchors', SESSION)
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await until(() => calls().length === 2, 3000)
+  await Bun.sleep(100)
+  expect(calls()).toEqual([['agents', '--json'], ['agents', '--json']])
+  const { received } = await session('chat:7')
+  await until(() => received.length)
+  expect(received[0].content).toBe('hi')
+})
+
+test('a daemon that went down while General ran is started, so the hub finds General instead of starting a copy', async () => {
+  start({ main: 'chat', general: true, registry: { chat: { name: 'hex', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
+  writeFileSync(join(dir, 'down'), '')
+  await until(() => calls().some(args => args[0] === 'daemon' && args[1] === 'run'))
+  await until(() => calls().filter(args => args[0] === 'agents').length >= 2, 3000)
+  await Bun.sleep(100)
+  expect(calls().filter(args => args[0] !== 'agents' && args[0] !== 'daemon')).toEqual([])
 })
 
 test('the main thread starts with the hub, under its name, with no prompt and no typing', async () => {
@@ -1317,7 +1342,7 @@ test('an adopted thread clears the old job record, then resumes its session in i
   start({ agents: [] })
   hub.adopt('chat:7', 'Desk anchors', SESSION, 'carry on', dir)
   const args = await launched()
-  expect(calls().filter(args => args[0] !== 'agents')[0]).toEqual(['rm', SESSION.slice(0, 8)])
+  expect(calls().filter(args => args[0] !== 'agents' && args[0] !== 'daemon')[0]).toEqual(['rm', SESSION.slice(0, 8)])
   expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
   expect(args.at(-1)).toBe('carry on')
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, cwd: dir })

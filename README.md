@@ -139,12 +139,13 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     ├── computer/setup              turns a Sprite into its computer
     ├── defaults/                   what `hex init` starts your folder with
     ├── hub/                        gives every thread its own session, keeps every message, runs schedules.json
+    ├── systemd/                    units for running hex under systemd
     └── channels/                   the Telegram, Discord, Buzz, T3 Code and voice channels
 ```
 
-hex doesn't need systemd or any service manager. `hex start` runs the hub in the background, and the hub keeps General running. To have it come back after a reboot, point whatever your machine uses at `hex run`: a systemd user service, a launchd agent, a Sprite service, or an `@reboot` cron line.
+hex doesn't need systemd or any service manager. `hex start` runs the hub in the background, and the hub keeps General running. To have it come back after a reboot, point whatever your machine uses at `hex run`: the systemd units in `systemd/`, which also keep sessions in a memory slice apart from the hub, a launchd agent, a Sprite service, or an `@reboot` cron line.
 
-`channels/` is hex's own plugin marketplace: one bot connection per app, serving every Telegram topic, Discord thread and Buzz thread, plus T3 Code and voice calls, all through the hub in `hub/`, which gives each thread its own session. Telegram and Discord began as [Anthropic's official plugins](https://github.com/anthropics/claude-plugins-official) and were kept in step by [an auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official), which still has their history; they live here now, and upstream fixes come in by hand. Every morning `bin/update` pulls hex and runs `bin/check` before your hub restarts on it.
+`channels/` is hex's own plugin marketplace: one bot connection per app, serving every Telegram topic, Discord thread and Buzz thread, plus T3 Code and voice calls, all through the hub in `hub/`, which gives each thread its own session. Telegram and Discord began as [Anthropic's official plugins](https://github.com/anthropics/claude-plugins-official) and were kept in step by [an auto-maintained fork](https://github.com/AVGVSTVS96/claude-plugins-official), which still has their history; they live here now, and upstream fixes come in by hand. Every morning `bin/update` pulls hex and runs `bin/check` before your hub restarts on it, and a hub that then can't start goes back to the commit it last ran on.
 
 ## Fork it
 
