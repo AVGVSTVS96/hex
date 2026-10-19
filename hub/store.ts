@@ -394,7 +394,8 @@ export class Store {
 const stores = new Map<string, Store>()
 
 // Where an app's hub keeps hex.db: the hex's own state/, or the app's state folder outside a hex.
-export const storeDir = (stateDir: string) => (process.env.HEX_DIR ? join(process.env.HEX_DIR, 'state') : stateDir)
+const hexState = process.env.HEX_DIR && join(process.env.HEX_DIR, 'state')
+export const storeDir = (stateDir: string) => hexState || stateDir
 
 // The store in dir (a hex's state/), one per process.
 export function open(dir: string): Store {
