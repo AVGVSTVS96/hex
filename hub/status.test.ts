@@ -44,7 +44,10 @@ test("a status post is the note over the thread's waiting questions, open tasks 
 test('a status post fits the room the app gives one message, saying how many more there are', () => {
   const store = new Store(dir)
   for (let n = 0; n < 40; n++) store.createTask({ message: said(store, n, `Task number ${n} with enough words to take some room`), owner: '-100:7' })
-  for (const room of [2000, 1990, 1980, 1970]) expect(statusPost(store, '-100:7', 'Note', room).length).toBeLessThanOrEqual(room)
+  for (let room = 300; room <= 2100; room += 7) expect(statusPost(store, '-100:7', 'Note', room).length).toBeLessThanOrEqual(room)
+  const long = statusPost(store, '-100:7', 'x'.repeat(3000), 2000)
+  expect(long.length).toBeLessThanOrEqual(2000)
+  expect(long).toMatch(/^x+…\n\n🔴 \*\*Blocked on you\*\*\n- nothing\n\n🟡 \*\*Pending\*\*\n…and 40 more\n\n🟢 \*\*Done\*\*\n- nothing$/)
   const text = statusPost(store, '-100:7', 'Note', 2000)
   expect(text).toMatch(/\n…and \d+ more\n\n🟢 \*\*Done\*\*\n- nothing$/)
 })

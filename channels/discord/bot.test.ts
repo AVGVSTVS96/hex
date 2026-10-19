@@ -707,4 +707,13 @@ test("a status post is the session's note over lines hex keeps current from the 
   expect(edits()).toHaveLength(count + 1)
   expect(edits().at(-1)).toStartWith('Site: example.org\n\n🔴 **Blocked on you**')
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.org' })
+
+  await call('pin', { message_id: post.id, status: true })
+  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.org' })
+  const file = join(state, 'inbox', 'chart.png')
+  mkdirSync(join(state, 'inbox'), { recursive: true })
+  writeFileSync(file, 'png')
+  await call('edit_message', { message_id: post.id, text: 'Site: example.net', files: [file] })
+  expect(done).toContainEqual({ edit: post.id, options: { files: [file], attachments: [] } })
+  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.net' })
 })

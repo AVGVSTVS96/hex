@@ -14,7 +14,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !n
 const session = { HEX_CHANNEL: 'plugin:t3@hex', HEX_THREAD: 'stray-key' }
 
 beforeAll(() => {
-  for (const file of ['bin/job', 'bin/hex', 'hub/cli.ts', 'hub/profile.ts', 'hub/store.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
+  for (const file of ['bin/job', 'bin/hex', 'hub/cli.ts', 'hub/fit.ts', 'hub/profile.ts', 'hub/store.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
   for (const [app, threads] of Object.entries({
     t3: { 'stray-key': { name: 'hex' } },
     telegram: { 'stray-key': { name: 'stray-key' }, '-100123:908': { name: 'autofork' } },

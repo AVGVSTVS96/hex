@@ -61,16 +61,34 @@ test('a question stays open through an edit and leaves the waiting list only whe
   expect(ledger.pin('-100:7')).toBeUndefined()
 })
 
-test("a pin with a note is the thread's status post, and keeps its note through the bot's rewrites", () => {
+test("a pin with a note is the thread's status post: hex rewrites it from hex.db under its note, and a pin made meanwhile stands", async () => {
   const ledger = new Ledger(file, 'telegram')
+  const edits: [string, unknown, string][] = []
+  const edit = async (thread: string, message: unknown, text: string) => void edits.push([thread, message, text])
   ledger.pinned('-100:7', 9, 'Status: by hand')
+  await ledger.rewrite('-100:7', 4096, edit)
   expect(ledger.posts()).toEqual([])
-  expect(ledger.status('-100:7', 4096)).toBeUndefined()
+  expect(edits).toEqual([])
+
+  ledger.ask('-100:8', 10, 'Ship it?', ['Yes', 'No'])
   ledger.pinned('-100:8', 10, 'Site: example.com', 'Site: example.com')
   expect(ledger.posts()).toEqual(['-100:8'])
-  const text = ledger.status('-100:8', 4096)!
-  expect(text).toStartWith('Site: example.com\n\n🔴 **Blocked on you**')
-  ledger.edited('-100:8', 10, text)
+  await ledger.rewrite('-100:8', 4096, edit)
+  const [[, message, text]] = edits as [[string, unknown, string]]
+  expect(message).toBe(10)
+  expect(text).toStartWith('Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]')
   expect(ledger.pin('-100:8')).toMatchObject({ text, note: 'Site: example.com' })
-  expect(new Ledger(file, 'telegram').status('-100:8', 4096, 'Site: example.org')).toStartWith('Site: example.org\n\n')
+  expect(ledger.find('-100:8', 10)!.text).toBe('Ship it?')
+  await ledger.rewrite('-100:8', 4096, edit)
+  expect(edits).toHaveLength(1)
+
+  await ledger.rewrite('-100:8', 4096, edit, 'Site: example.org')
+  expect(new Ledger(file, 'telegram').pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
+
+  const slow = async (...args: [string, unknown, string]) => {
+    ledger.pinned('-100:8', 11, 'Status: by hand again')
+    await edit(...args)
+  }
+  await ledger.rewrite('-100:8', 4096, slow, 'Site: example.net')
+  expect(ledger.pin('-100:8')).toEqual({ message: 11, text: 'Status: by hand again', at: expect.any(String) })
 })

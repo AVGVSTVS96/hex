@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { basename, join, extname, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
-import { Ledger } from '../../hub/ledger.ts'
+import { Ledger, type MessageId } from '../../hub/ledger.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -166,21 +166,10 @@ type Seen = { text?: string; user: string }
 const seen = new Map<string, Map<number, Seen>>()
 const ledger = new Ledger(join(STATE_DIR, 'ledger.json'), 'telegram')
 
-// A thread's status post, rewritten when what it should say changed: a new note, or the thread's
-// questions and tasks in hex.db. One rewrite at a time per thread, so two changes can't race.
-const posting = new Map<string, Promise<void>>()
-
-function post(thread: string, note?: string): Promise<void> {
-  const next = (posting.get(thread) ?? Promise.resolve()).catch(() => {}).then(async () => {
-    const pin = ledger.pin(thread)
-    const text = ledger.status(thread, MAX_CHUNK_LIMIT, note)
-    if (!pin || text === undefined || (text === pin.text && note === undefined)) return
-    if (text !== pin.text) await bot.api.editMessageText(target(thread).chat_id, Number(pin.message), { markdown: keepLines(text) })
-    remember(thread, Number(pin.message), { text, user: me() })
-    ledger.edited(thread, pin.message, text, note ?? pin.note)
-  })
-  posting.set(thread, next)
-  return next
+// Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
+async function editPost(thread: string, message: MessageId, text: string) {
+  await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) })
+  remember(thread, Number(message), { text, user: me() })
 }
 
 function remember(thread: string, id: number, entry: Seen): void {
@@ -429,8 +418,10 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const text = args.text != null ? tappable(args.text as string) : undefined
       const file = args.file as string | undefined
       const pinned = ledger.pin(thread)
-      if (pinned?.note !== undefined && Number(pinned.message) === id && text != null && !file) {
-        await post(thread, text)
+      if (pinned?.note !== undefined && Number(pinned.message) === id && text != null) {
+        if (file) throw new Error("a status post is text: send the file in its own message")
+        await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost, text)
+        if (args.settled) await settleAsk(thread, id, '✓ Settled')
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
       const parseMode = args.format === 'markdownv2' ? { parse_mode: 'MarkdownV2' as const } : {}
@@ -472,8 +463,10 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       } else {
         await bot.api.pinChatMessage(chat_id, id)
         const text = seen.get(thread)?.get(id)?.text
-        ledger.pinned(thread, id, text, args.status ? (text ?? '') : undefined)
-        if (args.status) await post(thread, text ?? '')
+        const pinned = ledger.pin(thread)
+        const kept = pinned && Number(pinned.message) === id ? pinned.note : undefined
+        ledger.pinned(thread, id, text, args.status ? (kept ?? text ?? '') : undefined)
+        if (args.status) await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost)
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }
@@ -1027,11 +1020,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
   hub.deliver(thread, nameOf(ctx, thread), message)
 }
 
-function statusPosts() {
-  for (const thread of ledger.posts()) void post(thread).catch(err => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
-}
-ledger.watch(statusPosts)
-statusPosts()
+let keeping: (() => void) | undefined
 
 // Without this, any throw in a message handler stops polling permanently
 // (grammy's default error handler calls bot.stop() and rethrows).
@@ -1049,6 +1038,7 @@ for (let attempt = 1; ; attempt++) {
         attempt = 0
         process.stderr.write(`telegram hub: polling as @${info.username}\n`)
         writeFileSync(join(STATE_DIR, 'bot.json'), JSON.stringify({ username: info.username }) + '\n')
+        keeping ??= ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
       },
     })
     break

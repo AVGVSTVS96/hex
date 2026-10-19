@@ -420,6 +420,10 @@ test("a status post is the session's note over lines hex keeps current from the 
   expect(edits().at(-1)).toStartWith('Site: example.org\n\n🔴 **Blocked on you**')
   expect(edits().at(-1)).toContain('Rename the site? [Yes | No]')
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
+
+  await call('pin', { message_id: String(id), status: true })
+  expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
+  expect((await call('edit_message', { message_id: String(id), text: 'Site', file: join(state, 'access.json') })).error).toBe('a status post is text: send the file in its own message')
 })
 
 test('once polling the bot leaves its name in bot.json, so the voice app can link a DM', () => {

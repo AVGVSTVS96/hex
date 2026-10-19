@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
+import { clip, fit } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
 
 // Each thread's name, from every app's threads.json in state.
@@ -25,11 +26,6 @@ function facts(task: Task, named: Record<string, string>) {
   return `${task.id} (${facts.filter(Boolean).join(', ')})`
 }
 
-export function clip(text: string, length: number) {
-  const first = text.trim().split('\n')[0]!
-  return first.length > length ? `${first.slice(0, length - 1)}…` : first
-}
-
 // A task as a session reads it: the facts on one line, then each of the owner's words in full,
 // under the key of the message they came from.
 export function render(task: Task, named: Record<string, string> = {}): string {
@@ -51,25 +47,6 @@ function brief(task: Task, named: Record<string, string>) {
 // A question as a session reads it: where it was asked, its first line, and its buttons.
 export function waiting(question: Question, named: Record<string, string> = {}): string {
   return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
-}
-
-type Section = { header: string; items: string[][]; gap: string; rest?: string }
-
-// Each item in the first of its forms that still fits, and a line for the ones that didn't.
-export function fit(sections: Section[], room = ROOM): string {
-  let text = ''
-  for (const { header, items, gap, rest } of sections) {
-    if (!items.length) continue
-    text += `${text && '\n\n'}${header}`
-    const left = items.findIndex(forms => {
-      const form = forms.find(form => text.length + gap.length + form.length <= room)
-      if (form === undefined) return true
-      text += gap + form
-      return false
-    })
-    if (left >= 0) text += `${gap}…and ${items.length - left} more${rest ? `: ${rest}` : ''}`
-  }
-  return text
 }
 
 // What a session should have before it acts: the open tasks it serves, each in the owner's own
@@ -95,7 +72,7 @@ export function profile(state: string, thread?: string): { text: string; digest:
       rest: '`.hex/bin/hex questions` lists them all',
     },
   ]
-  const text = fit(sections)
+  const text = fit(sections, ROOM)
   return { text, digest: text && Bun.hash(JSON.stringify(sections)).toString(36) }
 }
 
