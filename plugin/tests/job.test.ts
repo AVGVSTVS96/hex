@@ -61,12 +61,18 @@ test('a job with no owner, or no command, is refused', () => {
   expect(run(['build'], session).code).toBe(2)
 })
 
-test("a job's end wakes its owner through its own app's hub", async () => {
-  const lines: any[] = []
-  const hub = createServer(socket => socket.on('data', chunk => lines.push(...chunk.toString().trim().split('\n').map(line => JSON.parse(line))))).listen(join(home, 'state/t3/hub.sock'))
-  afterAll(() => hub.close())
-  await new Promise(resolve => hub.once('listening', resolve))
-  Bun.spawnSync(['bun', job, '--ended', 'round3', 't3:stray-key'], { env: { ...env, SERVICE_RESULT: 'success', EXIT_STATUS: '0' } })
-  while (!lines.length) await Bun.sleep(10)
-  expect(lines).toEqual([{ type: 'inbound', thread: 'stray-key', content: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: { user: 'job' } }])
+test("a job's end wakes its owner through its own app's hub, and an older unit's bare key the one app that has it", async () => {
+  const lines: Record<string, any[]> = { t3: [], discord: [] }
+  const hubs = Object.keys(lines).map(app =>
+    createServer(socket => socket.on('data', chunk => lines[app]!.push(...chunk.toString().trim().split('\n').map(line => JSON.parse(line))))).listen(join(home, 'state', app, 'hub.sock')),
+  )
+  afterAll(() => hubs.forEach(hub => hub.close()))
+  await Promise.all(hubs.map(hub => new Promise(resolve => hub.once('listening', resolve))))
+  const end = (...args: string[]) => Bun.spawn(['bun', job, '--ended', ...args], { env: { ...env, SERVICE_RESULT: 'success', EXIT_STATUS: '0' }, stderr: 'pipe' }).exited
+  expect(await end('round3', 't3:stray-key')).toBe(0)
+  expect(await end('older', '555')).toBe(0)
+  expect(await end('older', 'stray-key')).toBe(2)
+  while (!lines.t3!.length || !lines.discord!.length) await Bun.sleep(10)
+  expect(lines.t3).toEqual([{ type: 'inbound', thread: 'stray-key', content: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: { user: 'job' } }])
+  expect(lines.discord).toEqual([{ type: 'inbound', thread: '555', content: expect.stringContaining('[job] older ended'), meta: { user: 'job' } }])
 })

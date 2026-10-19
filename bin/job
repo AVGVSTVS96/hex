@@ -55,7 +55,12 @@ function parts(owner: string) {
 }
 
 if (mode === "--ended") {
-  const [unit, owner] = rest as [string, string]
+  const [unit, thread] = rest as [string, string]
+  const owner = named(thread)
+  if (!owner) {
+    console.error(`job: ${unit} ended, but no app has the thread ${thread} to wake`)
+    process.exit(1)
+  }
   const { app, key } = parts(owner)
   const result = process.env.SERVICE_RESULT ?? "unknown"
   const status = process.env.EXIT_STATUS ?? "?"
