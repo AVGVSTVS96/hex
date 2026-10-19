@@ -492,14 +492,38 @@ function serve(token: string) {
   // so one answered elsewhere ends instead.
   const ANSWERED_IN: Record<string, string> = { app: 'in the app', call: 'on a call' }
 
-  async function closeAsk(thread: string, ask: Ask, text: string) {
-    const ch = await threadChannel(thread)
-    const msg = await ch.messages.fetch(String(ask.message))
-    await (ask.poll ? msg.poll!.end() : msg.edit({ components: only(text) }))
+  const answeredText = ({ label, via }: { label: string; via: string }) => `✓ Answered ${ANSWERED_IN[via] ?? via}: ${label}`
+
+  // What a question's controls show: the pick its own tap made, where else it was answered, how it
+  // was settled, or its choices again.
+  function controls({ options, multiple, answer, settled }: Ask) {
+    if (settled) return only(settled.note)
+    if (!answer) return choices(options, !!multiple)
+    if (answer.via !== 'discord') return only(answeredText(answer))
+    return multiple ? menu(options, answer.label.split('; ')) : buttons(options, options.indexOf(answer.label))
   }
 
-  // What a question's buttons say once it's answered somewhere other than its own buttons.
-  const answeredText = ({ label, via }: { label: string; via: string }) => `✓ Answered ${ANSWERED_IN[via] ?? via}: ${label}`
+  // A question's controls show where it stands in hex.db as they're drawn, one draw at a time, so an
+  // answer and a quick take-back can't land out of order. An ended poll stays ended.
+  const drawing = new Map<string, Promise<void>>()
+
+  function draw(thread: string, message: MessageId): Promise<void> {
+    const at = `${thread}:${message}`
+    const drawn = (drawing.get(at) ?? Promise.resolve())
+      .then(async () => {
+        const ask = ledger.find(thread, message)
+        if (!ask) return
+        const ch = await threadChannel(thread)
+        if (!ask.poll) return void (await ch.messages.edit(String(message), { components: controls(ask) }))
+        if (ask.settled || (ask.answer && ask.answer.via !== 'discord')) await (await ch.messages.fetch(String(message))).poll!.end()
+      })
+      .catch(err => {
+        process.stderr.write(`discord hub: couldn't draw the buttons on ${thread} ${message}: ${err}\n`)
+      })
+    drawing.set(at, drawn)
+    void drawn.then(() => drawing.get(at) === drawn && drawing.delete(at))
+    return drawn
+  }
 
   async function answerAsk(thread: string, message: MessageId, label: string, via: string) {
     const ask = ledger.find(thread, message)
@@ -519,14 +543,14 @@ function serve(token: string) {
       },
       () => ledger.answered(thread, message, label, via),
     )
-    if (answered) await closeAsk(thread, ask, answeredText({ label, via })).catch(err => process.stderr.write(`discord hub: couldn't close the buttons on ${thread} ${message}: ${err}\n`))
+    if (answered) await draw(thread, message)
   }
 
   async function settleAsk(thread: string, message: MessageId, note: string) {
     const ask = ledger.find(thread, message)
     if (!ask || ask.answer || ask.settled) return
-    await closeAsk(thread, ask, note).catch(err => process.stderr.write(`discord hub: couldn't close the buttons on ${thread} ${message}: ${err}\n`))
     ledger.settled(thread, message, note)
+    await draw(thread, message)
   }
 
   // Takes back an answer given elsewhere, or a settle: the buttons come back, and the thread hears
@@ -546,7 +570,7 @@ function serve(token: string) {
           () => ledger.reopened(thread, message),
         )
       : ledger.reopened(thread, message)
-    if (reopened && !ask.poll) await threadChannel(thread).then(ch => ch.messages.edit(String(message), { components: choices(ask.options, !!ask.multiple) })).catch(err => process.stderr.write(`discord hub: couldn't put the buttons back on ${thread} ${message}: ${err}\n`))
+    if (reopened) await draw(thread, message)
   }
 
   async function call(caller: string, tool: string, args: Record<string, unknown>): Promise<string> {
@@ -890,7 +914,11 @@ function serve(token: string) {
           poll: msg.poll.question.text ?? '',
         },
       },
-      () => (removed ? ledger.find(ch.id, msg.id)?.answer?.label === vote && ledger.reopened(ch.id, msg.id) : ledger.answered(ch.id, msg.id, vote, 'discord', true), true),
+      () => {
+        if (!removed) ledger.answered(ch.id, msg.id, vote, 'discord', true)
+        else if (ledger.find(ch.id, msg.id)?.answer?.label === vote) ledger.reopened(ch.id, msg.id)
+        return true
+      },
     )
   }
 
@@ -912,10 +940,9 @@ function serve(token: string) {
           button_message_id: message,
         },
       },
-      () => !ask || ledger.answered(ch.id, message, label, 'discord'),
+      ask && (() => ledger.answered(ch.id, message, label, 'discord')),
     )
-    const standing = !answered && ledger.find(ch.id, message)?.answer
-    if (standing && standing.label !== label) await closeAsk(ch.id, ask!, answeredText(standing)).catch(err => process.stderr.write(`discord hub: couldn't close the buttons on ${ch.id} ${message}: ${err}\n`))
+    if (!answered && ask) await draw(ch.id, message)
   }
 
   // Discord wants an answer to a tap within three seconds, so the buttons change before anything is fetched.

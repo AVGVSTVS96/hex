@@ -577,11 +577,27 @@ function buttonsOf(options: string[]) {
   return { inline_keyboard: [options.map((label, i) => ({ text: label, callback_data: String(i) }))] }
 }
 
-// A poll can't take a vote from the bot, so one answered elsewhere closes instead.
-async function closeAsk(thread: string, message: number, poll: boolean, text: string) {
-  const { chat_id } = target(thread)
-  const done = poll ? bot.api.stopPoll(chat_id, message) : bot.api.editMessageReplyMarkup(chat_id, message, { reply_markup: only(text) })
-  await done.catch(err => process.stderr.write(`telegram hub: couldn't close the buttons on ${thread} ${message}: ${err}\n`))
+// A question's buttons show where it stands in hex.db as they're drawn, one draw at a time, so an
+// answer and a quick take-back can't land out of order. A poll can't take a vote from the bot, so
+// one answered elsewhere closes instead, and stays closed.
+const drawing = new Map<string, Promise<void>>()
+
+function draw(thread: string, message: number): Promise<void> {
+  const at = `${thread}:${message}`
+  const drawn = (drawing.get(at) ?? Promise.resolve())
+    .then(async () => {
+      const ask = ledger.find(thread, message)
+      if (!ask) return
+      const { chat_id } = target(thread)
+      if (!ask.poll) return void (await bot.api.editMessageReplyMarkup(chat_id, message, { reply_markup: ask.answer ? only(answeredText(ask.answer)) : ask.settled ? only(ask.settled.note) : buttonsOf(ask.options) }))
+      if (ask.settled || (ask.answer && ask.answer.via !== 'telegram')) await bot.api.stopPoll(chat_id, message)
+    })
+    .catch(err => {
+      process.stderr.write(`telegram hub: couldn't draw the buttons on ${thread} ${message}: ${err}\n`)
+    })
+  drawing.set(at, drawn)
+  void drawn.then(() => drawing.get(at) === drawn && drawing.delete(at))
+  return drawn
 }
 
 // What a question's buttons say once it's answered: the tapped one, or where it was answered.
@@ -606,14 +622,14 @@ async function answerAsk(thread: string, message: number, label: string, via: st
     },
     () => ledger.answered(thread, message, label, via),
   )
-  if (answered) await closeAsk(thread, message, !!ask.poll, answeredText({ label, via }))
+  if (answered) await draw(thread, message)
 }
 
 async function settleAsk(thread: string, message: number, note: string) {
   const ask = ledger.find(thread, message)
   if (!ask || ask.answer || ask.settled) return
-  await closeAsk(thread, message, !!ask.poll, note)
   ledger.settled(thread, message, note)
+  await draw(thread, message)
 }
 
 // Takes back an answer given elsewhere, or a settle: the buttons come back, and the thread hears
@@ -634,7 +650,7 @@ async function reopenAsk(thread: string, message: number, via: string) {
         () => ledger.reopened(thread, message),
       )
     : ledger.reopened(thread, message)
-  if (reopened && !ask.poll) await bot.api.editMessageReplyMarkup(chat_id, message, { reply_markup: buttonsOf(ask.options) }).catch(err => process.stderr.write(`telegram hub: couldn't put the buttons back on ${thread} ${message}: ${err}\n`))
+  if (reopened) await draw(thread, message)
 }
 
 const hub = startHub({
@@ -859,10 +875,9 @@ bot.on('callback_query:data', async ctx => {
         button_message_id: String(message.message_id),
       },
     },
-    () => !ask || ledger.answered(thread, message.message_id, label, 'telegram'),
+    ask && (() => ledger.answered(thread, message.message_id, label, 'telegram')),
   )
-  const standing = !answered && ledger.find(thread, message.message_id)?.answer
-  if (standing && standing.label !== label) await closeAsk(thread, message.message_id, false, answeredText(standing))
+  if (!answered && ask && ledger.find(thread, message.message_id)?.answer?.label !== label) await draw(thread, message.message_id)
 })
 
 bot.on('poll_answer', ctx => {
@@ -886,7 +901,11 @@ bot.on('poll_answer', ctx => {
         poll: ask.text,
       },
     },
-    () => (vote ? ledger.answered(ask.thread, ask.message, vote, 'telegram', true) : ledger.reopened(ask.thread, ask.message), true),
+    () => {
+      if (vote) ledger.answered(ask.thread, ask.message, vote, 'telegram', true)
+      else ledger.reopened(ask.thread, ask.message)
+      return true
+    },
   )
 })
 

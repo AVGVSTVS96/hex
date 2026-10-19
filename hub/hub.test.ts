@@ -188,6 +188,17 @@ test('a message for a new thread starts a session bound to that thread', async (
   expect(states).toEqual([['chat:7', true]])
 })
 
+test("a message carrying a change to hex's records is kept and told only with it: a failed or empty change sends nothing", () => {
+  start()
+  const fails = () => {
+    throw new Error('the answer could not be saved')
+  }
+  expect(hub.deliver('chat:7', 'Desk anchors', { ...message, key: 'tap:1' }, fails)).toBe(false)
+  expect(hub.deliver('chat:7', 'Desk anchors', { ...message, key: 'tap:2' }, () => false)).toBe(false)
+  expect(open(dir).db.query('select count(*) as n from messages').get()).toEqual({ n: 0 })
+  expect(states).toEqual([])
+})
+
 test('a new thread prompt comes last, where --channels cannot swallow it', async () => {
   start()
   hub.open('chat:8', 'OpenAI', 'find the latest model')

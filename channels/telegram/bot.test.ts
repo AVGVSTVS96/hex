@@ -21,6 +21,9 @@ const TRANSCRIBER = 'http://transcriber/v1/audio/transcriptions'
 type Call = { method: string; payload: Record<string, any>; result?: any }
 const calls: Call[] = []
 const captionOnly = new Set<number>()
+// Messages whose next button edit reaches Telegram late, and each button edit in the order it landed.
+const slow = new Set<number>()
+const landed: Record<string, any>[] = []
 let bot: grammy.Bot
 let started: Record<string, any> = {}
 let nextMessage = 100
@@ -53,6 +56,8 @@ class Bot extends grammy.Bot {
       const call: Call = { method, payload }
       calls.push(call)
       if (method.startsWith('send') && throttled && throttled--) return { ok: false, error_code: 429, description: 'Too Many Requests: retry after 0', parameters: { retry_after: 0 } } as any
+      if (method === 'editMessageReplyMarkup' && slow.delete(payload.message_id)) await Bun.sleep(200)
+      if (method === 'editMessageReplyMarkup') landed.push(payload)
       if (method === 'editMessageText' && captionOnly.has(payload.message_id)) {
         return { ok: false, error_code: 400, description: 'Bad Request: there is no text in the message to edit' } as any
       }
@@ -362,6 +367,17 @@ test('a question answered in the app reaches its thread like a tap, says so on i
   expect(await called('editMessageReplyMarkup', p => p.message_id === id && p.reply_markup.inline_keyboard[0].length === 2)).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: 'Mint', callback_data: '0' }, { text: 'Coral', callback_data: '1' }]] } })
   expect((await inbound(line => line.meta.took_back === 'Coral')).content).toBe('(took back: Coral)')
   expect(asked(id).answer).toBeUndefined()
+})
+
+test('an answer taken back right away gets its buttons back, even when the answer\'s own edit lands late', async () => {
+  const id = Number((await call('reply', { text: 'Which day?', buttons: ['Mon', 'Tue'] })).text.match(/id: (\d+)/)[1])
+  slow.add(id)
+  session({ type: 'answer', thread: DESK, message: id, label: 'Tue', via: 'app' })
+  await inbound(line => line.meta.button_message_id === String(id) && line.content === 'Tue')
+  session({ type: 'reopen', thread: DESK, message: id, via: 'app' })
+  await inbound(line => line.meta.took_back === 'Tue')
+  await until(() => landed.filter(edit => edit.message_id === id).length === 2)
+  expect(landed.findLast(edit => edit.message_id === id)!.reply_markup).toEqual({ inline_keyboard: [[{ text: 'Mon', callback_data: '0' }, { text: 'Tue', callback_data: '1' }]] })
 })
 
 test('of two taps on one question only the first counts: the thread hears it once, and the later tap\'s buttons go back to it', async () => {
