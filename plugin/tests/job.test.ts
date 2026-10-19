@@ -61,14 +61,16 @@ test('a job with no owner, or no command, is refused', () => {
   expect(run(['build'], session).code).toBe(2)
 })
 
-test("a job's end is kept for its owner while no hub runs, and an older unit's bare key goes to the one app that has it", async () => {
+test("a job's end is kept for its owner's app while no hub runs, and an older unit's bare key goes to the one app that has it", async () => {
   const end = (...args: string[]) => Bun.spawn(['bun', job, '--ended', ...args], { env: { ...env, SERVICE_RESULT: 'success', EXIT_STATUS: '0' }, stderr: 'pipe' }).exited
   expect(await end('round3', 't3:stray-key')).toBe(0)
   expect(await end('older', '555')).toBe(0)
   expect(await end('older', 'stray-key')).toBe(2)
+  expect(await end('topic', '-100123:908')).toBe(0)
   const rows = new Database(join(home, 'state/hex.db')).query('select "to", "from", body, meta from messages where taken_at is null order by rowid').all()
   expect(rows).toEqual([
-    { to: 'stray-key', from: 'job', body: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: JSON.stringify({ user: 'job' }) },
-    { to: '555', from: 'job', body: expect.stringContaining('[job] older ended'), meta: JSON.stringify({ user: 'job' }) },
+    { to: 'stray-key', from: 't3', body: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: JSON.stringify({ user: 'job' }) },
+    { to: '555', from: 'discord', body: expect.stringContaining('[job] older ended'), meta: JSON.stringify({ user: 'job' }) },
+    { to: '-100123:908', from: 'telegram', body: expect.stringContaining('[job] topic ended'), meta: JSON.stringify({ user: 'job' }) },
   ])
 })

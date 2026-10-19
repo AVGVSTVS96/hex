@@ -61,11 +61,12 @@ if (mode === "--ended") {
     console.error(`job: ${unit} ended, but no app has the thread ${thread} to wake`)
     process.exit(1)
   }
-  const { key } = parts(owner)
+  const { app, key } = parts(owner)
   const result = process.env.SERVICE_RESULT ?? "unknown"
   const status = process.env.EXIT_STATUS ?? "?"
   const content = `[job] ${unit} ended: ${result} (exit ${status}). Check its output and report it.`
-  await $`${import.meta.dir}/hex deliver job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to ${key} ${content}`
+  // Kept as from its owner's app, so only that app's hub delivers it, even to a key two apps share.
+  await $`${import.meta.dir}/hex deliver ${app}:job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to=${key} --user=job ${content}`
 } else {
   const here = caller()
   const given = rest.length > 1 ? named(rest[0]!, here) : undefined
