@@ -105,7 +105,12 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   expect(() => store.db.run("update words set text = 'Fix it' where task = 1")).toThrow('never rewritten')
   expect(() => store.db.run('delete from words')).toThrow('never taken away')
   expect(() => store.db.run("update messages set body = 'Fix it'")).toThrow('keeps its words')
+  expect(() => store.createTask({ message: ask.key, quote: '', owner: '-100:7' })).toThrow('needs words')
+  store.db.run("insert or replace into messages (key, \"to\", \"from\", body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'Fix it', '2026-10-19T00:00:00.000Z')")
+  expect(store.message(ask.key)!.body).toBe(ask.body)
+  expect(() => store.db.run("insert or replace into words (rowid, task, message, text) values (1, 1, 'telegram:-100:50', 'Fix the login page.')")).toThrow('never rewritten')
   expect(store.tasks().map(task => task.id)).toEqual(['t-1', 't-2'])
+  expect(store.task('t-1')!.words[0]!.text).toBe(ask.body)
 })
 
 test('follow-ups are added after what was said first, and a repeat changes nothing', () => {

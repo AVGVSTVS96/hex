@@ -56,3 +56,19 @@ test('a session outside hex, or one with no tasks, hears nothing', async () => {
   expect(await new Response(outside.stdout).text()).toBe('')
   expect(await hook({ session_id: 'b' }, { HEX_THREAD: '-100:404' })).toBe('')
 })
+
+test("a list too long for one hook's output gives each task in full while it fits, then in a line that says where its words are", async () => {
+  const store = open(dir)
+  store.deliver({ key: 'telegram:-100:70', to: '-100:7', from: 'telegram', body: `Rewrite the docs.\n${'every page, '.repeat(800)}`, meta: { user: 'bassim' } })
+  store.createTask({ message: 'telegram:-100:70', owner: '-100:7' })
+  for (let n = 0; n < 60; n++) {
+    store.deliver({ key: `telegram:-100:${100 + n}`, to: '-100:7', from: 'telegram', body: `chore ${n}: ${'tidy up the build, '.repeat(6)}`, meta: { user: 'bassim' } })
+    store.createTask({ message: `telegram:-100:${100 + n}`, owner: '-100:7' })
+  }
+  const shown = await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })
+  expect(shown.length).toBeLessThan(10_000)
+  expect(shown).toContain('    Fix the login page.\n    It 500s on submit.')
+  expect(shown).toContain('t-3 (open, Website): Rewrite the docs. (`.hex/bin/hex task t-3` has my words in full)')
+  expect(shown).toContain('    chore 0: tidy up the build')
+  expect(shown).toMatch(/…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/)
+})

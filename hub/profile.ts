@@ -15,11 +15,25 @@ export function names(state: string): Record<string, string> {
   return named
 }
 
+// Claude Code swaps a hook's output past 10,000 characters for a file path and a preview it
+// doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output), so the list
+// stays under it, with room for the lines that say what didn't fit.
+const ROOM = 9_000
+
+function facts(task: Task, named: Record<string, string>) {
+  const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
+  return `${task.id} (${facts.filter(Boolean).join(', ')})`
+}
+
+function clip(text: string, length: number) {
+  const first = text.trim().split('\n')[0]!
+  return first.length > length ? `${first.slice(0, length - 1)}…` : first
+}
+
 // A task as a session reads it: the facts on one line, then each of the owner's words in full,
 // under the key of the message they came from.
 export function render(task: Task, named: Record<string, string> = {}): string {
-  const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`].filter(Boolean)
-  const lines = [`${task.id} (${facts.join(', ')})`]
+  const lines = [facts(task, named)]
   if (task.doneWhen) lines.push(`  done when: ${task.doneWhen}`)
   if (task.proof) lines.push(`  proof: ${task.proof}`)
   for (const words of task.words) {
@@ -29,14 +43,44 @@ export function render(task: Task, named: Record<string, string> = {}): string {
   return lines.join('\n')
 }
 
+// A task in one line, for when its words don't fit, and where to read them.
+function brief(task: Task, named: Record<string, string>) {
+  return `${facts(task, named)}: ${clip(task.words[0]?.text ?? '', 150)} (\`.hex/bin/hex task ${task.id}\` has my words in full)`
+}
+
+type Section = { header: string; items: string[][]; gap: string; rest: string }
+
+// Each item in the first of its forms that still fits, and a line for the ones that didn't.
+function fit(sections: Section[]): string {
+  let text = ''
+  for (const { header, items, gap, rest } of sections) {
+    if (!items.length) continue
+    text += `${text && '\n\n'}${header}`
+    const left = items.findIndex(forms => {
+      const form = forms.find(form => text.length + gap.length + form.length <= ROOM)
+      if (form === undefined) return true
+      text += gap + form
+      return false
+    })
+    if (left >= 0) text += `${gap}…and ${items.length - left} more: ${rest}`
+  }
+  return text
+}
+
 // What a session should have before it acts: the open tasks it serves, each in the owner's own
 // words. Main sees every thread's; a thread sees its own.
 export function profile(state: string, thread?: string): string {
   const tasks = open(state).tasks({ owner: thread, status: ['open'] })
-  if (!tasks.length) return ''
   const named = names(state)
   const whose = thread ? 'This thread' : 'Every thread'
-  return [`${whose}'s open tasks, each with my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`, ...tasks.map(task => render(task, named))].join('\n\n')
+  return fit([
+    {
+      header: `${whose}'s open tasks, each with my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`,
+      items: tasks.map(task => [render(task, named), brief(task, named)]),
+      gap: '\n\n',
+      rest: '`.hex/bin/hex tasks` lists them all',
+    },
+  ])
 }
 
 // The UserPromptSubmit and SessionStart hook: a session gets the list whenever it changed since it

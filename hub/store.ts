@@ -60,6 +60,9 @@ const migrations = [
   );
   create trigger verbatim before insert on words when not exists (select 1 from messages where key = new.message and instr(body, new.text) > 0)
     begin select raise(abort, 'words are quoted from their message character for character'); end;
+  create trigger kept_key before insert on messages when exists (select 1 from messages where key = new.key) begin select raise(ignore); end;
+  create trigger kept_rowid before insert on words when exists (select 1 from words where rowid = new.rowid)
+    begin select raise(abort, 'words are added, never rewritten'); end;
   create trigger kept_words before update on words begin select raise(abort, 'words are added, never rewritten'); end;
   create trigger kept_words_delete before delete on words begin select raise(abort, 'words are added, never taken away'); end;
   create table shown (session text primary key, digest text not null);`,
@@ -258,8 +261,10 @@ export class Store {
   private quote(task: string, message: string, quote?: string) {
     const said = this.message(message)
     if (!said) throw new Error(`no message ${message}`)
-    if (quote !== undefined && !said.body.includes(quote)) throw new Error(`"${quote}" isn't in ${message} as written; quote it character for character, or leave the quote out for the whole message`)
-    this.db.query('insert or ignore into words (task, message, text) values (?, ?, ?)').run(number(task), message, quote ?? said.body)
+    const text = quote ?? said.body
+    if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
+    if (!said.body.includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for the whole message`)
+    this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
   }
 
   // The task id's words belong to: id itself, or the end of the merges it went through.
