@@ -17,7 +17,7 @@ const hex = { id: 1000, is_bot: true, first_name: 'hex', username: 'hex_bot' }
 const forum = { id: FORUM, type: 'supergroup', title: 'hex', is_forum: true }
 const TRANSCRIBER = 'http://transcriber/v1/audio/transcriptions'
 
-type Call = { method: string; payload: Record<string, any> }
+type Call = { method: string; payload: Record<string, any>; result?: any }
 const calls: Call[] = []
 const captionOnly = new Set<number>()
 let bot: grammy.Bot
@@ -49,12 +49,13 @@ class Bot extends grammy.Bot {
     super(token, { botInfo: hex as any })
     bot = this
     this.api.config.use(async (_prev, method, payload: any) => {
-      calls.push({ method, payload })
+      const call: Call = { method, payload }
+      calls.push(call)
       if (method.startsWith('send') && throttled && throttled--) return { ok: false, error_code: 429, description: 'Too Many Requests: retry after 0', parameters: { retry_after: 0 } } as any
       if (method === 'editMessageText' && captionOnly.has(payload.message_id)) {
         return { ok: false, error_code: 400, description: 'Bad Request: there is no text in the message to edit' } as any
       }
-      return { ok: true, result: answer(method, payload) } as any
+      return { ok: true, result: (call.result = answer(method, payload)) } as any
     })
   }
   override async start(options: any) {
@@ -78,6 +79,7 @@ let session: (payload: object) => void
 
 const called = (method: string, match: (payload: Record<string, any>) => boolean = () => true) =>
   until(() => calls.find(c => c.method === method && match(c.payload))?.payload)
+const idOf = (payload: Record<string, any>) => calls.find(c => c.payload === payload)!.result.message_id
 const inbound = (match: (line: any) => boolean) => until(() => received.find(line => line.type === 'inbound' && match(line)))
 
 function message(fields: Record<string, any>) {
@@ -156,7 +158,7 @@ test('a permission prompt asks in its own topic, and the owner\'s tap answers th
   const prompt = await called('sendMessage', p => p.text?.startsWith('🔐'))
   const markup = { inline_keyboard: [[{ text: 'Allow', callback_data: 'perm:allow:abcde' }, { text: 'Deny', callback_data: 'perm:deny:abcde' }]] }
   expect(prompt).toMatchObject({ chat_id: String(FORUM), message_thread_id: 5, text: '🔐 Bash: Delete the build folder\n\ncommand: rm -rf build', reply_markup: markup })
-  const id = nextMessage
+  const id = idOf(prompt)
   const tap = (from: object) => update({ callback_query: { id: 'perm', from, chat_instance: 'x', data: 'perm:deny:abcde', message: message({ message_id: id, from: hex, text: prompt.text, reply_markup: markup }) } })
 
   await tap({ id: 3000, is_bot: false, first_name: 'Someone' })
@@ -173,8 +175,9 @@ test('a permission prompt asks in its own topic, and the owner\'s tap answers th
 
 test('a prompt still open when the turn ends, answered in the session itself, stops offering its buttons', async () => {
   void ask({ request_id: 'fghij', tool_name: 'Write', description: 'Write notes.md', input_preview: '{"file_path":"/tmp/notes.md","content":"hi"}' })
-  expect((await called('sendMessage', p => p.text?.startsWith('🔐 Write'))).text).toBe('🔐 Write: Write notes.md\n\nfile_path: /tmp/notes.md\ncontent: hi')
-  const id = nextMessage
+  const prompt = await called('sendMessage', p => p.text?.startsWith('🔐 Write'))
+  expect(prompt.text).toBe('🔐 Write: Write notes.md\n\nfile_path: /tmp/notes.md\ncontent: hi')
+  const id = idOf(prompt)
   session({ type: 'state', thread: DESK, busy: true })
   session({ type: 'state', thread: DESK, busy: false })
   expect(await called('editMessageReplyMarkup', p => p.message_id === id)).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: 'No longer waiting', disabled: {} }]] } })
