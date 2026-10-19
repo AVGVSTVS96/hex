@@ -124,9 +124,21 @@ export class Links {
     return this.handed.filter(one => one.parent === `${app}:${id}`)
   }
 
-  // Whether a hex T3 thread is work another hex thread handed off, so it shows under that one.
+  // Whether a hex T3 thread is work another hex thread handed off, so it shows under that one, as
+  // long as that one shows: two T3 threads that send each other work would otherwise both hide.
   delegated(app: string, id: string) {
-    return app === 't3' && this.handed.some(one => one.hex === id && (!one.relay || one.latest))
+    return app === 't3' && this.owners(id).some(owner => this.shows(owner, new Set([`t3:${id}`])))
+  }
+
+  private owners(id: string) {
+    return this.handed.filter(one => one.hex === id && (!one.relay || one.latest)).map(one => one.parent)
+  }
+
+  // Whether a thread shows: on its own, or under an owner that does without coming back through it.
+  private shows(thread: string, passed: Set<string>): boolean {
+    if (passed.has(thread)) return false
+    const owners = thread.startsWith('t3:') ? this.owners(thread.slice(3)) : []
+    return !owners.length || owners.some(owner => this.shows(owner, new Set([...passed, thread])))
   }
 
   // A T3 task or thread's title, by either id.

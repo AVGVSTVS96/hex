@@ -598,3 +598,21 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
   await until(() => !!tasks.get('t3:prims'))
   expect(fix()!.state).not.toBe('working')
 })
+
+test("two T3 threads that send each other work each show on their own, the other under it", async () => {
+  threads('t3', { ping: { name: 'ping', session: 'a1a1a1a1-ping' }, pong: { name: 'pong', session: 'b2b2b2b2-pong' } })
+  mapped('ping', 'thread-ping', { title: 'ping' })
+  mapped('pong', 'thread-pong', { title: 'pong' })
+  const toPong = run('thread-pong', 1, { since: ago(3) })
+  const toPing = run('thread-ping', 1, { since: ago(1) })
+  writeFileSync(
+    join(state, 't3', 'relays.jsonl'),
+    [
+      { at: ago(3), from: 'ping', thread: 'thread-pong', run: toPong },
+      { at: ago(1), from: 'pong', thread: 'thread-ping', run: toPing },
+    ].map(line => JSON.stringify(line) + '\n').join(''),
+  )
+  await until(() => tasks.get('t3:ping')?.agents.length && tasks.get('t3:pong')?.agents.length)
+  expect(tasks.get('t3:ping')!.agents.map(agent => [agent.label, agent.state])).toEqual([['pong', 'working']])
+  expect(tasks.get('t3:pong')!.agents.map(agent => [agent.label, agent.state])).toEqual([['ping', 'working']])
+})
