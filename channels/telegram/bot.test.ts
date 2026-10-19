@@ -92,7 +92,7 @@ async function update(fields: Record<string, any>) {
 
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
-  writeFileSync(join(state, 'threads.json'), JSON.stringify({ [DESK]: { name: 'desk' }, [`${FORUM}:6`]: { name: 'notes' } }))
+  writeFileSync(join(state, 'threads.json'), JSON.stringify({ [DESK]: { name: 'desk' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } }))
   Object.assign(process.env, { TELEGRAM_STATE_DIR: state, TELEGRAM_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', HEX_MAIN_THREAD: String(FORUM), TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -109,6 +109,11 @@ beforeAll(async () => {
   const hooks = connect(join(state, 'hub.sock'))
   await new Promise(resolve => hooks.on('connect', resolve))
   session = payload => hooks.write(JSON.stringify(payload) + '\n')
+})
+
+test("closing a thread list entry that isn't a topic forgets it, instead of failing", async () => {
+  expect((await call('close_thread', { thread: 'stray-key' })).text).toBe('forgot "stray": it isn\'t a topic, so there was nothing to close in Telegram')
+  await until(() => !('stray-key' in JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))))
 })
 
 test('the bot asks Telegram for reactions, button taps and poll votes', () => {

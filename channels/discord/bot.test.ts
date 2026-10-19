@@ -134,7 +134,7 @@ class Client {
   user = { id: BOT, tag: 'hex#0000', displayName: 'hex', displayAvatarURL: () => 'https://cdn/hex.png' }
   channels = {
     fetch: async (id: string) => {
-      if (!channels.has(id)) throw new Error('Unknown Channel')
+      if (!channels.has(id)) throw Object.assign(new Error('Unknown Channel'), { code: 10003 })
       return channels.get(id)
     },
   }
@@ -171,6 +171,7 @@ let ask: (request: object) => Promise<Response>
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [OWNER] }))
   writeFileSync(join(state, 'cursor.json'), JSON.stringify({ id: snowflake(60) }))
+  writeFileSync(join(state, 'threads.json'), JSON.stringify({ '7777': { name: 'deleted in Discord' } }))
   Object.assign(process.env, { DISCORD_STATE_DIR: state, DISCORD_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -454,6 +455,11 @@ test('a DM is its own session named DM, a message reaches it while it works, and
   await mine.call('reply', { text: 'on it, from the DM' })
   expect(done).toContainEqual({ send: expect.objectContaining({ content: 'on it, from the DM' }), in: dm.id })
   expect((await mine.call('close_thread', {})).error).toBe('a DM is not a thread')
+})
+
+test('closing a thread Discord no longer has forgets it, instead of failing on the missing channel', async () => {
+  expect((await call('close_thread', { thread: '7777' })).text).toBe('forgot "deleted in Discord": its Discord thread no longer exists')
+  await until(() => !('7777' in JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))))
 })
 
 test('once connected the bot leaves the id of its server in guild.json, so the voice app can link a thread, and registers its slash commands', async () => {

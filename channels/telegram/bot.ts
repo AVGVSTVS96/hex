@@ -488,7 +488,12 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       return download(args.file_id as string, args.file_id as string)
     }
     case 'close_thread': {
-      if (!extra.message_thread_id) throw new Error('only topics can be closed')
+      if (!extra.message_thread_id) {
+        if (thread === MAIN) throw new Error('only topics can be closed')
+        const name = hub.name(thread) ?? thread
+        void retire(thread)
+        return `forgot "${name}": it isn't a topic, so there was nothing to close in Telegram`
+      }
       void retire(thread)
       await bot.api.closeForumTopic(chat_id, extra.message_thread_id).catch(err => {
         if (!gone(err)) throw err
