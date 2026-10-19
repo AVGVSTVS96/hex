@@ -46,7 +46,7 @@ export type HexTask = {
 }
 
 type Thread = { app: string; id: string; name: string; session?: string; cwd?: string }
-type Session = { id: string; pid: number; status: string; name?: string; cwd?: string; started: number; at: number; parent?: string }
+type Session = { id: string; pid: number; status: string; name?: string; cwd?: string; started: number; at: number; parent?: string; owner?: string }
 type Job = {
   state?: string
   detail?: string
@@ -73,20 +73,20 @@ const FINE = 60 * 60_000
 const GRAIN = 50
 const SAVE = 2000
 const ORDER: State[] = ['needs', 'working', 'done', 'failed', 'idle']
-const RECORDS = new Set(['threads.json', 'guild.json', 'bot.json', 'channels.json'])
+const RECORDS = new Set(['threads.json', 'guild.json', 'bot.json', 'channels.json', 'relays.jsonl'])
 const STATES: Record<string, State> = { working: 'working', blocked: 'needs', done: 'done', failed: 'failed' }
 const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progress: 'running', pending: 'pending' }
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
 const WORK = new Set(['agent', 'workflow'])
-const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped' }
+const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped', rolled_back: 'stopped' }
 const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'failed' }
 const BUSY = new Set(['busy', 'shell'])
 
 // Every hex thread as a task, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
 // running, and each app's threads.json for its name and `links.ts` for where its app opens it.
-// A session another one started (a topic's `claude -p` build) counts toward it as one of its
-// agents; a running session nothing holds is a task of its own while it works. So does each T3 Code
+// A session another one started (a topic's `claude -p` build), or a job a thread owns (bin/job),
+// counts toward it as one of its agents; a running session nothing holds is a task of its own while it works. So does each T3 Code
 // thread a hex T3 thread handed work to, which shows only under it. It wakes when one of those files
 // (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
 // bumps a version on any change.
@@ -206,7 +206,7 @@ export class Tasks extends Changes {
   private readThreads() {
     for (const app of apps(this.state))
       if (!this.appWatchers.has(app)) this.appWatchers.set(app, watchDir(join(this.state, app), file => !!file && RECORDS.has(file) && this.mark('threads')))
-    this.links.load()
+    this.links.load(apps(this.state))
     this.threads = apps(this.state).flatMap(app =>
       Object.entries(readJson(join(this.state, app, 'threads.json')) ?? {}).map(([id, thread]: [string, any]) => ({
         app,
@@ -222,19 +222,25 @@ export class Tasks extends Changes {
     return new Set(this.threads.map(thread => thread.session))
   }
 
-  // Running sessions no thread holds and no other session started, named as Claude Code named them.
+  // Running sessions no thread holds, owns, or started, named as Claude Code named them.
   private loose(): Thread[] {
     const held = this.held()
+    const owners = new Set(this.threads.map(thread => `${thread.app}:${thread.id}`))
     return [...this.sessions.values()]
-      .filter(session => !session.parent && !held.has(session.id))
+      .filter(session => !session.parent && !held.has(session.id) && !(session.owner && owners.has(session.owner)))
       .map(session => ({ app: 'claude', id: short(session.id), name: session.name ?? short(session.id), session: session.id, cwd: session.cwd }))
   }
 
-  // The busy sessions whose work counts toward this one: started below it, and not a thread's own.
-  private started(id: string) {
+  // The busy sessions whose work counts toward a thread: started below its session or by a job it
+  // owns, and not another thread's own.
+  private started(thread: Thread) {
     const held = this.held()
-    const owner = (session?: Session): string | undefined => (session?.parent && !held.has(session.id) ? owner(this.sessions.get(session.parent)) : session?.id)
-    return [...this.sessions.values()].filter(session => session.id !== id && busy(session) && owner(session) === id)
+    const task = `${thread.app}:${thread.id}`
+    const root = (session: Session): Session => (session.parent && !held.has(session.id) ? root(this.sessions.get(session.parent)!) : session)
+    return [...this.sessions.values()].filter(session => {
+      const top = root(session)
+      return session.id !== thread.session && busy(session) && (top.id === thread.session || top.owner === task)
+    })
   }
 
   private wanted() {
@@ -261,7 +267,8 @@ export class Tasks extends Changes {
   }
 
   // Running sessions by id, with Claude Code's status; a file whose process is gone doesn't count.
-  // A session's parent is the nearest session above it in the process tree.
+  // A session's owner is the thread its job started for, else its parent is the nearest session
+  // above it in the process tree.
   private readSessions() {
     this.sessions.clear()
     const dir = join(this.claude, 'sessions')
@@ -274,8 +281,11 @@ export class Tasks extends Changes {
     }
     const byPid = new Map([...this.sessions.values()].map(session => [session.pid, session.id]))
     const parents = processParents()
-    for (const session of this.sessions.values())
+    for (const session of this.sessions.values()) {
+      session.owner = ownerOf(session.pid)
+      if (session.owner) continue
       for (let pid = parents.get(session.pid); pid && pid > 1 && !session.parent; pid = parents.get(pid)) session.parent = byPid.get(pid)
+    }
   }
 
   private job(session: string) {
@@ -292,7 +302,7 @@ export class Tasks extends Changes {
   private task(thread: Thread): HexTask {
     const { job, timeline } = thread.session ? this.job(thread.session) : { job: undefined, timeline: [] }
     const session = thread.session ? this.sessions.get(thread.session) : undefined
-    const started = thread.session ? this.started(thread.session) : []
+    const started = thread.session ? this.started(thread) : []
     const handed = this.links.delegations(thread.app, thread.id)
     const out = handed.filter(one => !HANDED[one.status])
     const known = job?.state ? STATES[job.state] : undefined
@@ -567,6 +577,13 @@ function inRun(runs: string, name: string, follow: (path: string) => () => void)
 
 function busy(session?: Session) {
   return !!session && BUSY.has(session.status)
+}
+
+// The thread a job's session works for, which bin/job puts in its environment as <app>:<key>.
+function ownerOf(pid: number) {
+  try {
+    return readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').find(entry => entry.startsWith('HEX_OWNER='))?.slice('HEX_OWNER='.length) || undefined
+  } catch {}
 }
 
 function processParents() {

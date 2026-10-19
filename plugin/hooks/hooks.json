@@ -31,7 +31,8 @@
       { "matcher": "mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }] }
     ],
     "PostToolUse": [
-      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log new", "async": true }] }
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log new", "async": true }] },
+      { "matcher": "mcp__t3.code__t3_thread_(send|launch)", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/relayed.ts", "async": true }] }
     ],
     "UserPromptSubmit": [
       { "hooks": [

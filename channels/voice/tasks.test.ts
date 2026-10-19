@@ -91,7 +91,8 @@ t3db.run(
   'create table orchestration_v2_projection_subagents (subagent_id text primary key, thread_id text, child_thread_id text, origin text, driver text, status text, started_at text, completed_at text, payload_json text)',
 )
 t3db.run('create table orchestration_v2_projection_turn_items (turn_item_id text primary key, thread_id text, ordinal integer, type text, status text, payload_json text)')
-t3db.run('create table orchestration_v2_projection_messages (thread_id text, role text, created_at text, payload_json text)')
+t3db.run('create table orchestration_v2_projection_messages (thread_id text, role text, created_at text, payload_json text, run_id text)')
+t3db.run('create table orchestration_v2_projection_runs (run_id text primary key, thread_id text, ordinal integer, status text, requested_at text, completed_at text)')
 afterAll(() => t3db.close())
 
 function mapped(key: string, thread: string, { driver = 'acpRegistry', deleted = null as string | null, title = 'T3 thread' } = {}) {
@@ -109,7 +110,7 @@ function handed(task: string, parent: string, child: string, { driver = 'acpRegi
 }
 
 function ask(thread: string, at: string, payload: object = {}) {
-  t3db.run('insert into orchestration_v2_projection_messages values (?, ?, ?, ?)', [thread, 'user', at, JSON.stringify(payload)])
+  t3db.run('insert into orchestration_v2_projection_messages (thread_id, role, created_at, payload_json) values (?, ?, ?, ?)', [thread, 'user', at, JSON.stringify(payload)])
 }
 
 function item(thread: string, ordinal: number, type: string, status: string, payload: object) {
@@ -446,6 +447,26 @@ test("a thread stays working while a session it started runs, that session one o
   await until(() => lab()?.state === 'working')
 })
 
+test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a task of its own", async () => {
+  const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:65' } })
+  const orphan = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:404' } })
+  afterAll(() => {
+    owned.kill()
+    orphan.kill()
+  })
+  const theo = () => tasks.get('telegram:-1001234567890:65')
+  job('91919191-clips', { state: 'working', detail: 'cutting clips', updatedAt: ago(0) })
+  job('92929292-lost', { state: 'working', detail: 'lost its thread', updatedAt: ago(0) })
+  running('91919191-clips', 'busy', owned.pid, { kind: 'interactive', name: 'Theo clips/cut', startedAt: Date.now() })
+  running('92929292-lost', 'busy', orphan.pid, { kind: 'interactive', name: 'gone/job', startedAt: Date.now() })
+  await until(() => theo()?.state === 'working' && !!tasks.get('claude:92929292'))
+  expect(theo()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['91919191-clips', 'Theo clips/cut', 'working']])
+  expect(tasks.get('claude:91919191')).toBeUndefined()
+  rmSync(join(claude, 'sessions', '91919191.json'))
+  rmSync(join(claude, 'sessions', '92929292.json'))
+  await until(() => theo()?.state !== 'working' && !tasks.get('claude:92929292'))
+})
+
 test("a renewed session's new job folder still wakes the list", async () => {
   rmSync(join(claude, 'jobs', 'aaaaaaaa'), { recursive: true })
   job('aaaaaaaa-general', { state: 'done', detail: 'renewed', updatedAt: ago(0) })
@@ -519,4 +540,45 @@ test("a T3 thread woken by its delegations finishing still shows what it handed 
   const woken = () => tasks.get('t3:woken')
   await until(() => woken()?.state === 'working' && woken()!.agents.length > 0)
   expect(woken()!.agents.map(agent => [agent.label, agent.state])).toEqual([['files: one line each', 'done']])
+})
+
+function run(thread: string, ordinal: number, { status = 'running', since = ago(2), end = null as string | null, said = null as string | null } = {}) {
+  const id = `run:${thread}:${ordinal}`
+  t3db.run('insert or replace into orchestration_v2_projection_runs values (?, ?, ?, ?, ?, ?)', [id, thread, ordinal, status, since, end])
+  if (said) t3db.run('insert into orchestration_v2_projection_messages values (?, ?, ?, ?, ?)', [thread, 'assistant', end ?? since, JSON.stringify({ text: said }), id])
+  return id
+}
+
+test("a T3 thread another hex thread sent work to shows under the sender while that run is its newest, then on its own again", async () => {
+  threads('discord', { fix: { name: 'fix hex NOW', session: 'f1f1f1f1-fix' } })
+  threads('t3', { prims: { name: 'hex', session: 'f2f2f2f2-prims' } })
+  job('f1f1f1f1-fix', { state: 'done', detail: 'sent it on', updatedAt: ago(3) })
+  job('f2f2f2f2-prims', { state: 'working', detail: 'building', updatedAt: ago(1) })
+  running('f1f1f1f1-fix', 'idle')
+  mapped('prims', 'thread-prims', { title: 'hex primitives + durability' })
+  mapped('codex', 'thread-codex', { driver: 'codex', title: 'sol: a second look' })
+  const first = run('thread-prims', 1, { status: 'completed', since: ago(60), end: ago(50) })
+  const relayed = run('thread-prims', 2, { since: ago(2) })
+  const second = run('thread-codex', 1, { status: 'completed', since: ago(4), end: ago(1), said: 'Looks **sound**.' })
+  writeFileSync(
+    join(state, 'discord', 'relays.jsonl'),
+    [
+      { at: ago(55), from: 'fix', thread: 'thread-prims', run: first },
+      { at: ago(2), from: 'fix', thread: 'thread-prims', run: relayed },
+      { at: ago(4), from: 'fix', thread: 'thread-codex', run: second },
+      'not json',
+    ].map(line => (typeof line === 'string' ? line : JSON.stringify(line)) + '\n').join(''),
+  )
+  const fix = () => tasks.get('discord:fix')
+  await until(() => fix()?.agents.length === 2)
+  expect(fix()!.state).toBe('working')
+  expect(fix()!.agents.map(agent => [agent.label, agent.state, agent.via, agent.line])).toEqual([
+    ['hex primitives + durability', 'working', 't3', undefined],
+    ['sol: a second look', 'done', 't3', 'Looks sound.'],
+  ])
+  expect(tasks.get('t3:prims')).toBeUndefined()
+  run('thread-prims', 2, { status: 'completed', since: ago(2), end: ago(0) })
+  run('thread-prims', 3, { since: ago(0) })
+  await until(() => !!tasks.get('t3:prims'))
+  expect(fix()!.state).not.toBe('working')
 })
