@@ -116,6 +116,26 @@ function fenced(text: string, limit: number, mode: 'length' | 'newline'): string
   return out
 }
 
+// Rich Markdown joins a paragraph's lines into one, as CommonMark does, but a chat reply's newline
+// is a new line, so each line that runs on into the next ends in a hard break: two spaces.
+function keepLines(markdown: string): string {
+  let fence = ''
+  return markdown.split('\n').map((line, i, lines) => {
+    const mark = line.match(/^\s*(`{3,}|~{3,})(.*)$/)
+    if (fence) {
+      if (mark?.[1].startsWith(fence) && !mark[2].trim()) fence = ''
+      return line
+    }
+    if (mark) {
+      fence = mark[1]
+      return line
+    }
+    const next = lines[i + 1]
+    const runsOn = line.trim() && !line.endsWith('\\') && next?.trim() && !/^\s*([-*+]\s|\d+[.)]\s|#{1,6}(\s|$)|>|\||`{3}|~{3})/.test(next)
+    return runsOn ? `${line}  ` : line
+  }).join('\n')
+}
+
 // .jpg/.jpeg/.png/.gif/.webp go as photos (Telegram compresses + shows inline);
 // everything else, and photos over Telegram's 10MB photo cap, go as documents.
 const PHOTO_EXTS = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp'])
@@ -295,7 +315,7 @@ async function backfill(thread: string, turns: Turn[]) {
     for (const part of from === 'me' ? chunk(text, MAX_CHUNK_LIMIT - owner.length - 1, 'newline') : fenced(text, MAX_RICH_LIMIT, 'newline')) {
       const sent = from === 'me'
         ? await paced(() => bot.api.sendMessage(chat_id, `${owner}\n${part}`, { ...opts, entities: [{ type: 'bold', offset: 0, length: owner.length }, { type: 'blockquote', offset: owner.length + 1, length: part.length }] }))
-        : await paced(() => bot.api.sendRichMessage(chat_id, { markdown: part }, opts))
+        : await paced(() => bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts))
       remember(thread, sent.message_id, { text: part, user: me() })
     }
   }
@@ -350,7 +370,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
             ...(i === chunks.length - 1 ? keyboard : {}),
           }
           const sent = markdown
-            ? await bot.api.sendRichMessage(chat_id, { markdown: chunks[i]! }, opts)
+            ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(chunks[i]!) }, opts)
             : await bot.api.sendMessage(chat_id, chunks[i]!, { ...opts, ...parseMode })
           remember(thread, sent.message_id, { text: chunks[i], user: me() })
           sentIds.push(sent.message_id)
@@ -398,7 +418,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       } else {
         if (text == null) throw new Error('edit_message needs text or a file')
         const edit = args.format === 'markdown'
-          ? bot.api.editMessageText(chat_id, id, { markdown: text })
+          ? bot.api.editMessageText(chat_id, id, { markdown: keepLines(text) })
           : bot.api.editMessageText(chat_id, id, text, parseMode)
         await edit.catch(err => {
           if (!/no text in the message/.test(String(err))) throw err

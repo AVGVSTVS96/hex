@@ -218,6 +218,26 @@ test('markdown goes out as Telegram\'s own rich markdown, and a code block cut b
   for (const part of parts) expect(part.match(/```/g)!.length % 2).toBe(0)
 })
 
+test('a newline in markdown stays a new line, where Telegram would join it into the paragraph, and code blocks go as written', async () => {
+  const text = [
+    '**Status**', '• one', '• two', 'ends in a break\\', 'next', '',
+    '- a list', '- runs on', '## Heading', 'under it', '> quoted', '',
+    '```', 'code', 'as is', '```', 'after',
+  ].join('\n')
+  await call('reply', { text, format: 'markdown' })
+  expect((await called('sendRichMessage', p => p.rich_message.markdown.startsWith('**Status**'))).rich_message.markdown).toBe([
+    '**Status**  ', '• one  ', '• two  ', 'ends in a break\\', 'next', '',
+    '- a list', '- runs on', '## Heading  ', 'under it', '> quoted', '',
+    '```', 'code', 'as is', '```', 'after',
+  ].join('\n'))
+
+  await call('edit_message', { message_id: '44', text: 'Done:\n• shipped\n~~~\ntildes\n```\nstill code\n~~~\nafter\nend', format: 'markdown' })
+  expect((await called('editMessageText', p => p.message_id === 44)).rich_message).toEqual({ markdown: 'Done:  \n• shipped\n~~~\ntildes\n```\nstill code\n~~~\nafter  \nend' })
+
+  await clients.get('telegram')!.backfill!(`${FORUM}:9`, [{ from: 'hex', text: 'Backfilled:\n• kept' }])
+  expect((await called('sendRichMessage', p => p.rich_message.markdown.startsWith('Backfilled'))).rich_message).toEqual({ markdown: 'Backfilled:  \n• kept' })
+})
+
 test('files go without an empty message, short text rides as the caption, and a photo over 10MB goes as a document', async () => {
   const small = join(outbox, `small-${Date.now()}.jpg`)
   const big = join(outbox, `big-${Date.now()}.jpg`)
