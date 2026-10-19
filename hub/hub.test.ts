@@ -673,6 +673,16 @@ test('a local inbound request reaches the thread like a message from the app', a
   expect(received).toEqual([inbound(message)])
 })
 
+test('a local inbound request for a thread this hub doesn\'t have opens nothing', async () => {
+  start()
+  connect(join(dir, 'hub.sock')).on('connect', function () {
+    this.end([{ type: 'inbound', thread: 'other-app-key', ...message }, { type: 'open', thread: 'chat:5', name: 'Theo clips' }].map(line => JSON.stringify(line) + '\n').join(''))
+  })
+  await launched()
+  expect(hub.threads()).toEqual(['chat:5'])
+  expect(Object.keys(JSON.parse(readFileSync(join(dir, 'threads.json'), 'utf8')))).toEqual(['chat:5'])
+})
+
 test('a session that fails to start is reported with its reason, and the next message retries', async () => {
   start()
   hub.deliver('chat:7', 'Desk anchors', message)
