@@ -7,6 +7,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import * as discord from 'discord.js'
 import { until } from '../../hub/until.ts'
+import { open } from '../../hub/store.ts'
 
 const { ButtonStyle, ChannelType, Collection, ComponentType, MessageFlags, MessageFlagsBitField, MessageType, SnowflakeUtil } = discord
 const TRANSCRIBER = 'http://transcriber/v1/audio/transcriptions'
@@ -195,6 +196,7 @@ async function session(thread: string) {
 }
 
 const book = () => JSON.parse(readFileSync(join(state, 'ledger.json'), 'utf8'))
+const question = (message: string) => open(state).questions({ app: 'discord' }).find(question => question.message === message)!
 const labels = (components: any[]) => components[0].toJSON().components.map((c: any) => c.label)
 
 test('a message in a thread names the channel the thread is in', async () => {
@@ -505,31 +507,43 @@ test('a permission prompt asks in the thread with Allow and Deny, a tap answers 
 test('a question with buttons goes in the ledger: a tap answers it there, and one answered in hex\'s app closes its buttons, reaches the thread, and can be taken back', async () => {
   await call('reply', { text: 'Which anchors?\nThe left ones are cheaper.', buttons: ['Left', 'Right'] })
   const asked = here.posted.at(-1)
-  expect(book().asks.find((a: any) => a.message === asked.id)).toMatchObject({ thread: here.id, text: 'Which anchors?\nThe left ones are cheaper.', options: ['Left', 'Right'] })
+  expect(question(asked.id)).toMatchObject({ thread: here.id, text: 'Which anchors?\nThe left ones are cheaper.', options: ['Left', 'Right'] })
 
   send({ type: 'answer', thread: here.id, message: asked.id, label: 'Right', via: 'app' })
   const answered = await inbound(received, line => line.meta.answered_in === 'in the app')
   expect(answered).toMatchObject({ content: 'Right', meta: { user: 'hex app', button: 'true', button_message_id: asked.id } })
   expect(labels(done.findLast(d => d.edit === asked.id).options.components)).toEqual(['✓ Answered in the app: Right'])
-  expect(book().asks.find((a: any) => a.message === asked.id).answer).toMatchObject({ label: 'Right', via: 'app' })
+  expect(question(asked.id).answer).toMatchObject({ label: 'Right', via: 'app' })
 
   send({ type: 'reopen', thread: here.id, message: asked.id, via: 'app' })
   expect((await inbound(received, line => line.meta.took_back === 'Right')).content).toBe('(took back: Right)')
   expect(labels(done.findLast(d => d.edit === asked.id).options.components)).toEqual(['Left', 'Right'])
 
   handlers.get('interactionCreate')!({ isButton: () => true, user: owner, customId: '0', channelId: here.id, createdAt: at(44), message: asked, update: async () => {} })
-  await until(() => book().asks.find((a: any) => a.message === asked.id).answer?.via === 'discord')
+  await until(() => question(asked.id).answer?.via === 'discord')
 
   await call('reply', { text: 'Ship today?', buttons: ['Yes', 'No'] })
   const later = here.posted.at(-1)
   await call('edit_message', { message_id: later.id, text: 'Ship today, before five?' })
-  expect(book().asks.find((a: any) => a.message === later.id).settled).toBeUndefined()
+  expect(question(later.id).settled).toBeUndefined()
   await call('pin', { message_id: later.id })
   await call('edit_message', { message_id: later.id, text: 'Status: shipping' })
   expect(book().pins[here.id]).toMatchObject({ message: later.id, text: 'Status: shipping' })
   send({ type: 'settle', thread: here.id, message: later.id, note: 'Settled: shipped' })
-  await until(() => book().asks.find((a: any) => a.message === later.id).settled)
+  await until(() => question(later.id).settled)
   expect(labels(done.findLast(d => d.edit === later.id).options.components)).toEqual(['Settled: shipped'])
+
+  await call('reply', { text: 'Rename it?', buttons: ['Yes', 'No'] })
+  const renamed = here.posted.at(-1)
+  await call('edit_message', { message_id: renamed.id, text: 'Renamed, as you said in the call.', settled: true })
+  expect(question(renamed.id).settled).toMatchObject({ note: '✓ Settled' })
+  expect(labels(done.findLast(d => d.edit === renamed.id).options.components)).toEqual(['✓ Settled'])
+
+  await call('reply', { text: 'Keep the old name?', buttons: ['Yes', 'No'] })
+  const kept = here.posted.at(-1)
+  await call('edit_message', { message_id: kept.id, settled: true })
+  expect(question(kept.id)).toMatchObject({ text: 'Keep the old name?', settled: { note: '✓ Settled' } })
+  expect(labels(done.findLast(d => d.edit === kept.id).options.components)).toEqual(['✓ Settled'])
 })
 
 test('buttons with multiple come as a menu, and a pick of several comes back as their labels and locks the menu on them', async () => {
@@ -537,7 +551,7 @@ test('buttons with multiple come as a menu, and a pick of several comes back as 
   const asked = here.posted.at(-1)
   const select = asked.components[0].components[0]
   expect(select).toMatchObject({ type: ComponentType.StringSelect, custom_id: 'menu', min_values: 1, max_values: 3 })
-  expect(book().asks.find((a: any) => a.message === asked.id)).toMatchObject({ options: ['a.ts', 'b.ts', 'c.ts'], multiple: true })
+  expect(question(asked.id)).toMatchObject({ options: ['a.ts', 'b.ts', 'c.ts'], multiple: true })
 
   let update: any
   handlers.get('interactionCreate')!({ isButton: () => false, isStringSelectMenu: () => true, user: owner, values: ['0', '2'], component: { options: select.options }, channelId: here.id, createdAt: at(45), message: asked, update: async (options: any) => (update = options) })

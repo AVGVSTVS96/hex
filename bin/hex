@@ -86,7 +86,7 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
-  deliver|task|tasks|message|recall)
+  deliver|task|tasks|questions|message|recall)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
@@ -95,7 +95,7 @@ case "${1:-}" in
     claude agents --json | jq -r --arg home "$home" '.[] | select(.cwd == $home) | "\(.name): \(.status // "running")"'
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|message|recall" >&2
+    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|message|recall" >&2
     exit 2
     ;;
 esac

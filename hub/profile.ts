@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { open, type Task } from './store.ts'
+import { open, type Question, type Task } from './store.ts'
 
 // Each thread's name, from every app's threads.json in state.
 export function names(state: string): Record<string, string> {
@@ -48,6 +48,11 @@ function brief(task: Task, named: Record<string, string>) {
   return `${facts(task, named)}: ${clip(task.words[0]?.text ?? '', 150)} (\`.hex/bin/hex task ${task.id}\` has my words in full)`
 }
 
+// A question as a session reads it: where it was asked, its first line, and its buttons.
+export function waiting(question: Question, named: Record<string, string> = {}): string {
+  return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
+}
+
 type Section = { header: string; items: string[][]; gap: string; rest: string }
 
 // Each item in the first of its forms that still fits, and a line for the ones that didn't.
@@ -68,10 +73,12 @@ function fit(sections: Section[]): string {
 }
 
 // What a session should have before it acts: the open tasks it serves, each in the owner's own
-// words, and a digest of all of it, so a change to words that didn't fit still counts. Main sees
+// words, the questions still waiting on the owner, and a digest of all of it, so a change to words that didn't fit still counts. Main sees
 // every thread's; a thread sees its own.
 export function profile(state: string, thread?: string): { text: string; digest: string } {
-  const tasks = open(state).tasks({ owner: thread, status: ['open'] })
+  const store = open(state)
+  const tasks = store.tasks({ owner: thread, status: ['open'] })
+  const questions = store.questions({ thread, waiting: true })
   const named = names(state)
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
@@ -80,6 +87,12 @@ export function profile(state: string, thread?: string): { text: string; digest:
       items: tasks.map(task => [render(task, named), brief(task, named)]),
       gap: '\n\n',
       rest: '`.hex/bin/hex tasks` lists them all',
+    },
+    {
+      header: `${whose}'s questions still waiting on my answer (edit_message with settled: true closes one that no longer stands):`,
+      items: questions.map(question => [waiting(question, named)]),
+      gap: '\n',
+      rest: '`.hex/bin/hex questions` lists them all',
     },
   ]
   const text = fit(sections)
@@ -98,7 +111,7 @@ if (import.meta.main) {
         const store = open(HEX_STORE)
         if (source === 'compact' || source === 'clear') store.unshow(session_id)
         const { text, digest } = profile(HEX_STORE, HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD)
-        if (store.show(session_id, digest)) console.log(text || 'No open tasks now.')
+        if (store.show(session_id, digest)) console.log(text || 'No open tasks or questions waiting on me now.')
       }
     } catch (error) {
       console.error(`hex couldn't read its tasks: ${error}`)

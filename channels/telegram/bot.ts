@@ -164,7 +164,7 @@ const topicNames = new Map<string, string>()
 // until the thread is forgotten.
 type Seen = { text?: string; user: string }
 const seen = new Map<string, Map<number, Seen>>()
-const ledger = new Ledger(join(STATE_DIR, 'ledger.json'))
+const ledger = new Ledger(join(STATE_DIR, 'ledger.json'), 'telegram')
 
 function remember(thread: string, id: number, entry: Seen): void {
   if (!seen.has(thread)) seen.set(thread, new Map())
@@ -412,24 +412,27 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const text = args.text != null ? tappable(args.text as string) : undefined
       const file = args.file as string | undefined
       const parseMode = args.format === 'markdownv2' ? { parse_mode: 'MarkdownV2' as const } : {}
+      // A Telegram edit takes a message's buttons off unless it sends them again, and a question stays open until it's settled.
+      const ask = ledger.find(thread, id)
+      const keep = ask && !ask.poll && !ask.answer && !ask.settled && !args.settled ? { reply_markup: buttonsOf(ask.options) } : {}
       if (file) {
         const caption = text != null ? { caption: text, ...parseMode } : {}
-        await bot.api.editMessageMedia(chat_id, id, { type: asPhoto(file) ? 'photo' : 'document', media: new InputFile(file), ...caption })
-      } else {
-        if (text == null) throw new Error('edit_message needs text or a file')
+        await bot.api.editMessageMedia(chat_id, id, { type: asPhoto(file) ? 'photo' : 'document', media: new InputFile(file), ...caption }, keep)
+      } else if (text != null) {
         const edit = args.format === 'markdown'
-          ? bot.api.editMessageText(chat_id, id, { markdown: keepLines(text) })
-          : bot.api.editMessageText(chat_id, id, text, parseMode)
+          ? bot.api.editMessageText(chat_id, id, { markdown: keepLines(text) }, keep)
+          : bot.api.editMessageText(chat_id, id, text, { ...parseMode, ...keep })
         await edit.catch(err => {
           if (!/no text in the message/.test(String(err))) throw err
           if (args.format === 'markdown') throw new Error("a file's caption can't take format 'markdown'; use 'text' or 'markdownv2'")
-          return bot.api.editMessageCaption(chat_id, id, { caption: text, ...parseMode })
+          return bot.api.editMessageCaption(chat_id, id, { caption: text, ...parseMode, ...keep })
         })
-      }
+      } else if (!args.settled) throw new Error('edit_message needs text, a file, or settled')
       if (text != null) {
         remember(thread, id, { text, user: me() })
         ledger.edited(thread, id, text)
       }
+      if (args.settled) await settleAsk(thread, id, '✓ Settled')
       return `edited (id: ${id})`
     }
     case 'delete_message': {

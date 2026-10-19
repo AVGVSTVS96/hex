@@ -37,7 +37,7 @@ test("a thread's session gets its own open tasks in the owner's words, once, and
   expect(first).not.toContain('power adapter')
   expect(await hook({ session_id: 'a' }, { HEX_THREAD: '-100:7' })).toBe('')
   open(dir).editTask('t-1', { status: 'done', proof: 'https://example.com/pr/1' })
-  expect(await hook({ session_id: 'a' }, { HEX_THREAD: '-100:7' })).toBe('No open tasks now.\n')
+  expect(await hook({ session_id: 'a' }, { HEX_THREAD: '-100:7' })).toBe('No open tasks or questions waiting on me now.\n')
   expect(await hook({ session_id: 'a' }, { HEX_THREAD: '-100:7' })).toBe('')
 })
 
@@ -74,4 +74,15 @@ test("a list too long for one hook's output gives each task in full while it fit
   store.deliver({ key: 'telegram:-100:200', to: '-100:7', from: 'telegram', body: 'and the API reference', meta: { user: 'bassim' } })
   store.addWords('t-3', 'telegram:-100:200')
   expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe(shown)
+})
+
+test('the questions still waiting on the owner come with the tasks, and leave once answered', async () => {
+  open(dir).ask({ app: 'telegram', thread: '-100:7', message: 3935, text: 'Remove the 4 old pages?\nThey are below the cutoff.', options: ['Remove', 'Keep'] })
+  const shown = await hook({ session_id: 'q' }, { HEX_THREAD: '-100:7' })
+  expect(shown).toContain("This thread's questions still waiting on my answer")
+  expect(shown).toContain('- telegram · Website · message 3935 · ')
+  expect(shown).toContain('Remove the 4 old pages? [Remove | Keep]')
+  expect(shown).not.toContain('below the cutoff')
+  open(dir).answered('telegram', '-100:7', 3935, 'Remove', 'telegram')
+  expect(await hook({ session_id: 'q' }, { HEX_THREAD: '-100:7' })).not.toContain('waiting on my answer')
 })

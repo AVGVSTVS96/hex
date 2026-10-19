@@ -89,6 +89,7 @@ export const server: ChannelServer = {
           text: { type: 'string', description: 'New text, or new caption for a file.' },
           file: { type: 'string', description: 'Absolute path of a file to replace the sent one with.' },
           format: formatProperty,
+          settled: { type: 'boolean', description: 'true when the question this message asked with buttons is settled or no longer stands: its buttons come off and it stops waiting on the user. Without it, an edit keeps a question\'s buttons.' },
         },
         required: ['message_id'],
       },

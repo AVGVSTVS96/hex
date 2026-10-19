@@ -4,9 +4,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
-import type { MessageId } from './ledger.ts'
 import { schedule } from './schedule.ts'
-import { open, type Row, type Store } from './store.ts'
+import { open, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
@@ -134,8 +133,6 @@ let reached: (hub: Hub) => void
 export const up = new Promise<Hub>(resolve => (reached = resolve))
 
 export const PORT = Number(process.env.HEX_PORT ?? 8789)
-// The folder whose hex.db keeps the messages of every app's hub (store.ts).
-const STORE = process.env.HEX_DIR && join(process.env.HEX_DIR, 'state')
 // The apps whose hubs run in this process: a message one of them kept is its own to deliver.
 const apps = new Set<string>()
 
@@ -234,7 +231,7 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, storeDir = STORE || stateDir, channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, asks, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
+export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, asks, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
   stateDir: string
   storeDir?: string
   channel: string

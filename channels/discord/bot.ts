@@ -287,7 +287,7 @@ function serve(token: string) {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildMessagePolls, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages, GatewayIntentBits.DirectMessageReactions, GatewayIntentBits.DirectMessagePolls],
     partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User, Partials.Poll, Partials.PollAnswer],
   })
-  const ledger = new Ledger(join(STATE_DIR, 'ledger.json'))
+  const ledger = new Ledger(join(STATE_DIR, 'ledger.json'), 'discord')
 
   // A session talks in a thread, or in a DM, which is one conversation.
   async function threadChannel(thread: string): Promise<ThreadChannel | DMChannel> {
@@ -612,12 +612,14 @@ function serve(token: string) {
       case 'edit_message': {
         const msg = await message(ch, args.message_id as string)
         const files = args.files ? sendable(args.files as string[]) : undefined
-        const edited = await msg.edit({
-          ...(args.text !== undefined ? { content: tappable(args.text as string) } : {}),
-          ...(files ? { files, attachments: [] } : {}),
-        })
-        // Unlike Telegram's, a Discord edit keeps the message's buttons, so only a pinned post's text changes in the ledger.
-        if (args.text !== undefined && ledger.pin(thread)?.message === edited.id) ledger.edited(thread, edited.id, args.text as string)
+        const edited = args.text !== undefined || files
+          ? await msg.edit({
+              ...(args.text !== undefined ? { content: tappable(args.text as string) } : {}),
+              ...(files ? { files, attachments: [] } : {}),
+            })
+          : msg
+        if (args.text !== undefined) ledger.edited(thread, edited.id, args.text as string)
+        if (args.settled) await settleAsk(thread, edited.id, '✓ Settled')
         return `edited (id: ${edited.id})`
       }
       case 'delete_message': {

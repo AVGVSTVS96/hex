@@ -8,6 +8,8 @@ import { Asks, fromLedger } from './asks.ts'
 import { vet } from './check.ts'
 import { T3 } from './t3.ts'
 import { until } from '../../hub/until.ts'
+import type { Ask } from '../../hub/ledger.ts'
+import { open } from '../../hub/store.ts'
 
 const GROUP = '-1001234'
 const DESK = `${GROUP}:5`
@@ -17,11 +19,16 @@ let hub: Server
 let lines: any[]
 let checks: string[]
 
-function ledger(asks: object[], pins = {}) {
-  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ asks, pins }))
+function ledger(asks: Omit<Ask, 'app'>[], pins = {}) {
+  const store = open(state)
+  store.write(() => {
+    store.db.run('delete from questions')
+    for (const ask of asks) store.ask({ app: 'telegram', ...ask })
+  })
+  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins }))
 }
 
-function asked(message: number, text: string, options: string[], fields = {}) {
+function asked(message: number, text: string, options: string[], fields: Partial<Ask> = {}) {
   return { thread: DESK, message, text, options, at: `2026-10-13T1${message % 10}:00:00.000Z`, ...fields }
 }
 
