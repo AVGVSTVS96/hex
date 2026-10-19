@@ -135,7 +135,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── vault                   asks you for secrets by link, signs in with them
     │   └── update                  pulls updates, verified before they go live
     ├── chat/prompt.md              Taelin's OptChat prompt, for DM sessions and their compactions
-    ├── plugin/                     the hooks every session loads
+    ├── plugin/                     the hooks every session loads, and skills it reads when needed
     ├── mods/scheduler/             sends schedules.json jobs to General
     ├── computer/setup              turns a Sprite into its computer
     ├── defaults/                   what `hex init` starts your folder with
