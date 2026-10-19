@@ -68,19 +68,22 @@ function fit(sections: Section[]): string {
 }
 
 // What a session should have before it acts: the open tasks it serves, each in the owner's own
-// words. Main sees every thread's; a thread sees its own.
-export function profile(state: string, thread?: string): string {
+// words, and a digest of all of it, so a change to words that didn't fit still counts. Main sees
+// every thread's; a thread sees its own.
+export function profile(state: string, thread?: string): { text: string; digest: string } {
   const tasks = open(state).tasks({ owner: thread, status: ['open'] })
   const named = names(state)
   const whose = thread ? 'This thread' : 'Every thread'
-  return fit([
+  const sections = [
     {
       header: `${whose}'s open tasks, each with my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`,
       items: tasks.map(task => [render(task, named), brief(task, named)]),
       gap: '\n\n',
       rest: '`.hex/bin/hex tasks` lists them all',
     },
-  ])
+  ]
+  const text = fit(sections)
+  return { text, digest: text && Bun.hash(JSON.stringify(sections)).toString(36) }
 }
 
 // The UserPromptSubmit and SessionStart hook: a session gets the list whenever it changed since it
@@ -94,8 +97,8 @@ if (import.meta.main) {
       if (session_id) {
         const store = open(HEX_STORE)
         if (source === 'compact' || source === 'clear') store.unshow(session_id)
-        const text = profile(HEX_STORE, HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD)
-        if (store.show(session_id, text && Bun.hash(text).toString(36))) console.log(text || 'No open tasks now.')
+        const { text, digest } = profile(HEX_STORE, HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD)
+        if (store.show(session_id, digest)) console.log(text || 'No open tasks now.')
       }
     } catch (error) {
       console.error(`hex couldn't read its tasks: ${error}`)

@@ -71,4 +71,7 @@ test("a list too long for one hook's output gives each task in full while it fit
   expect(shown).toContain('t-3 (open, Website): Rewrite the docs. (`.hex/bin/hex task t-3` has my words in full)')
   expect(shown).toContain('    chore 0: tidy up the build')
   expect(shown).toMatch(/…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/)
+  store.deliver({ key: 'telegram:-100:200', to: '-100:7', from: 'telegram', body: 'and the API reference', meta: { user: 'bassim' } })
+  store.addWords('t-3', 'telegram:-100:200')
+  expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe(shown)
 })
