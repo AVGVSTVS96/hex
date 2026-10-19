@@ -4,9 +4,10 @@ import { createInterface } from 'readline'
 
 // T3 Code starts this as its ACP agent; the agent itself runs in the hub service. A hub restart
 // closes the socket, which T3 would take as its agent dying, so this connects again and opens the
-// new hub the way T3 opened the old one: initialize, then each session T3 started or resumed. Every
-// request T3 still waits on is asked again; a prompt asks its thread to rejoin the turn (bot.ts),
-// which streams it again from when T3 sent it, and the updates T3 already has are dropped.
+// new hub the way T3 opened the old one: initialize, then each session T3 started or resumed, with
+// what T3 picked for it. Every request T3 still waits on is asked again; a prompt asks its thread to
+// rejoin the turn (bot.ts), which streams it again from when T3 sent it, and the updates T3 already
+// has are dropped.
 const path = process.argv[2]
 if (!path) {
   process.stderr.write('usage: acp.ts <path to the t3 hub acp.sock>\n')
@@ -28,6 +29,8 @@ let downSince = 0
 let initialize: unknown
 const held: string[] = []
 const sessions = new Map<string, { cwd: string; mcpServers: unknown[] }>()
+// What T3 picked in each session: a thread hex hasn't kept yet loses it with the old hub.
+const picked = new Map<string, Map<string, unknown>>()
 const waiting = new Map<string | number, Waiting>()
 // Each update T3 has been shown of a turn it waits on, and what a rejoined turn still has to skip.
 const shown = new Map<string, Counts>()
@@ -94,6 +97,10 @@ function answered(response: { id: string | number; result?: any }) {
   const asked = waiting.get(response.id)?.request
   waiting.delete(response.id)
   if (asked?.method === 'session/new' && response.result?.sessionId) sessions.set(response.result.sessionId, { cwd: asked.params.cwd, mcpServers: asked.params.mcpServers })
+  if (asked?.method === 'session/set_config_option' && response.result) {
+    const { sessionId, configId, value } = asked.params
+    picked.set(sessionId, (picked.get(sessionId) ?? new Map()).set(configId, value))
+  }
   if (asked?.method === 'session/prompt') {
     shown.delete(asked.params.sessionId)
     skip.delete(asked.params.sessionId)
@@ -116,7 +123,10 @@ function fresh(sessionId: string, hash: number | bigint) {
 function reopen(next: Socket) {
   const send = (message: object) => next.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`)
   if (initialize) send({ id: `${OWN}initialize`, method: 'initialize', params: initialize })
-  for (const [sessionId, { cwd, mcpServers }] of sessions) send({ id: `${OWN}${sessionId}`, method: 'session/resume', params: { sessionId, cwd, mcpServers } })
+  for (const [sessionId, { cwd, mcpServers }] of sessions) {
+    send({ id: `${OWN}${sessionId}`, method: 'session/resume', params: { sessionId, cwd, mcpServers } })
+    for (const [configId, value] of picked.get(sessionId) ?? []) send({ id: `${OWN}${sessionId}:${configId}`, method: 'session/set_config_option', params: { sessionId, configId, value } })
+  }
   for (const [id, { line, request, at }] of waiting) {
     if (request.method !== 'session/prompt') {
       next.write(`${line}\n`)

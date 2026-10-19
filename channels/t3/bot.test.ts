@@ -400,6 +400,17 @@ test('a turn rejoined after a hub restart follows the session running for its th
   expect(back.inbound).toEqual([])
 })
 
+test('what T3 picked for a thread it hasn\'t prompted yet still holds after a hub restart', async () => {
+  const { agent } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  await agent.request('session/set_config_option', { sessionId, configId: 'effort', value: 'xhigh' })
+  await restart()
+  agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
+  await until(() => lines('launched').length)
+  const launched = JSON.parse(lines('launched')[0]!)
+  expect(launched[launched.indexOf('--effort') + 1]).toBe('xhigh')
+})
+
 test('a prompt a hub restart lost before its session took it reaches the session once hex is back', async () => {
   const { agent } = await t3OverAcp()
   const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
