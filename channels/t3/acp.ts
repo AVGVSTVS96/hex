@@ -32,7 +32,9 @@ const sessions = new Map<string, { cwd: string; mcpServers: unknown[] }>()
 // What T3 picked in each session: a thread hex hasn't kept yet loses it with the old hub.
 const picked = new Map<string, Map<string, unknown>>()
 const waiting = new Map<string | number, Waiting>()
-// Each update T3 has been shown of a turn it waits on, and what a rejoined turn still has to skip.
+// The requests whose updates stream until they're answered: a turn, and a thread's history.
+const STREAMS = new Set(['session/prompt', 'session/load'])
+// Each update T3 has been shown of one it waits on, and what it still has to skip when asked again.
 const shown = new Map<string, Counts>()
 const skip = new Map<string, Counts>()
 
@@ -80,7 +82,7 @@ function fromT3(line: string) {
     waiting.set(message.id, { line, request: message, at: Date.now() })
     if (method === 'initialize') initialize = params
     if (method === 'session/resume' || method === 'session/load') sessions.set(params.sessionId, { cwd: params.cwd, mcpServers: params.mcpServers })
-    if (method === 'session/prompt') shown.set(params.sessionId, new Map())
+    if (STREAMS.has(method)) shown.set(params.sessionId, new Map())
   }
   socket.write(`${line}\n`)
 }
@@ -101,7 +103,7 @@ function answered(response: { id: string | number; result?: any }) {
     const { sessionId, configId, value } = asked.params
     picked.set(sessionId, (picked.get(sessionId) ?? new Map()).set(configId, value))
   }
-  if (asked?.method === 'session/prompt') {
+  if (asked && STREAMS.has(asked.method)) {
     shown.delete(asked.params.sessionId)
     skip.delete(asked.params.sessionId)
   }
@@ -128,12 +130,9 @@ function reopen(next: Socket) {
     for (const [configId, value] of picked.get(sessionId) ?? []) send({ id: `${OWN}${sessionId}:${configId}`, method: 'session/set_config_option', params: { sessionId, configId, value } })
   }
   for (const [id, { line, request, at }] of waiting) {
-    if (request.method !== 'session/prompt') {
-      next.write(`${line}\n`)
-      continue
-    }
-    skip.set(request.params.sessionId, new Map(shown.get(request.params.sessionId)))
-    send({ id, method: '_hex/rejoin', params: { ...request.params, since: at } })
+    if (STREAMS.has(request.method)) skip.set(request.params.sessionId, new Map(shown.get(request.params.sessionId)))
+    if (request.method === 'session/prompt') send({ id, method: '_hex/rejoin', params: { ...request.params, since: at } })
+    else next.write(`${line}\n`)
   }
 }
 

@@ -428,6 +428,21 @@ test('a prompt a hub restart lost before its session took it reaches the session
   expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
 })
 
+test('a thread\'s history loads the same each time, so hex acp can tell what T3 already has when a hub restart cuts a load short', async () => {
+  const { agent, updates } = await t3()
+  const { sessionId } = await kept(agent)
+  mkdirSync(join(dir, 'hex', 'log', 'threads'), { recursive: true })
+  writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${SESSION.slice(0, 8)}.md`), ['## me · t3 · 2026-10-06 10:06\n\nhi\n', '## assistant · t3 · 2026-10-06 10:06\n\nhi from hex\n'].join('\n'))
+  const load = async () => {
+    updates.splice(0)
+    await agent.request('session/load', { sessionId, cwd: project, mcpServers: [] })
+    return updates.filter(update => update.sessionUpdate.endsWith('_message_chunk'))
+  }
+  const loaded = await load()
+  expect(loaded.map(update => update.sessionUpdate)).toEqual(['user_message_chunk', 'agent_message_chunk'])
+  expect(await load()).toEqual(loaded)
+})
+
 test('cancelling stops the session and answers the prompt as cancelled', async () => {
   const { agent } = await t3()
   const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })

@@ -392,8 +392,8 @@ function serve(socket: Socket) {
     }))
     .onRequest('session/load', async ({ params, client }) => {
       remember(reopen(params.sessionId, params.cwd, socket), params.mcpServers)
-      for (const { from, text } of hub.history(params.sessionId)) {
-        await client.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: from === 'me' ? 'user_message_chunk' : 'agent_message_chunk', messageId: randomUUID(), content: { type: 'text', text } } })
+      for (const [i, { from, text }] of hub.history(params.sessionId).entries()) {
+        await client.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: from === 'me' ? 'user_message_chunk' : 'agent_message_chunk', messageId: `${hub.session(params.sessionId)}:${i}`, content: { type: 'text', text } } })
       }
       advertise(client, params.sessionId)
       return { configOptions: options(params.sessionId) }
