@@ -1,10 +1,13 @@
 import { readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
+import { statusPost } from './status.ts'
 import { open, storeDir, type MessageId, type Question, type Store } from './store.ts'
 
 export type { Answer, MessageId } from './store.ts'
 export type Ask = Question
-export type Pin = { message: MessageId; text: string; at: string }
+// A pin with a note is the thread's status post: hex writes it as the note over the thread's
+// questions and tasks (status.ts).
+export type Pin = { message: MessageId; text: string; at: string; note?: string }
 type Book = { pins: Record<string, Pin>; asks?: Omit<Ask, 'app'>[] }
 
 // One app's questions, which hex.db keeps (store.ts) so every reader sees the same answer, and
@@ -45,6 +48,21 @@ export class Ledger {
     return this.book.pins[thread]
   }
 
+  // The threads whose pin is their status post.
+  posts(): string[] {
+    return Object.entries(this.book.pins).flatMap(([thread, pin]) => (pin.note === undefined ? [] : [thread]))
+  }
+
+  // A thread's status post as it should read now, under a new note or the one it keeps.
+  status(thread: string, room: number, note = this.book.pins[thread]?.note): string | undefined {
+    return note === undefined ? undefined : statusPost(this.store, thread, note, room)
+  }
+
+  // Calls back after every change to hex.db, from any process.
+  watch(listener: () => void): () => void {
+    return this.store.watch(listener)
+  }
+
   find(thread: string, message: MessageId) {
     return this.store.question(this.app, thread, message) ?? undefined
   }
@@ -71,15 +89,15 @@ export class Ledger {
 
   // A question's or a pinned post's latest words. A question stays open through an edit: it's
   // settled only by saying so.
-  edited(thread: string, message: MessageId, text: string) {
+  edited(thread: string, message: MessageId, text: string, note = this.book.pins[thread]?.note) {
     this.store.reworded(this.app, thread, message, text)
     if (this.book.pins[thread]?.message !== message) return
-    this.book.pins[thread] = { message, text, at: now() }
+    this.book.pins[thread] = { message, text, at: now(), ...(note !== undefined && { note }) }
     this.save()
   }
 
-  pinned(thread: string, message: MessageId, text = '') {
-    this.book.pins[thread] = { message, text, at: now() }
+  pinned(thread: string, message: MessageId, text = '', note?: string) {
+    this.book.pins[thread] = { message, text, at: now(), ...(note !== undefined && { note }) }
     this.save()
   }
 

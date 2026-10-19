@@ -60,3 +60,17 @@ test('a question stays open through an edit and leaves the waiting list only whe
   expect(ledger.asks).toEqual([])
   expect(ledger.pin('-100:7')).toBeUndefined()
 })
+
+test("a pin with a note is the thread's status post, and keeps its note through the bot's rewrites", () => {
+  const ledger = new Ledger(file, 'telegram')
+  ledger.pinned('-100:7', 9, 'Status: by hand')
+  expect(ledger.posts()).toEqual([])
+  expect(ledger.status('-100:7', 4096)).toBeUndefined()
+  ledger.pinned('-100:8', 10, 'Site: example.com', 'Site: example.com')
+  expect(ledger.posts()).toEqual(['-100:8'])
+  const text = ledger.status('-100:8', 4096)!
+  expect(text).toStartWith('Site: example.com\n\n🔴 **Blocked on you**')
+  ledger.edited('-100:8', 10, text)
+  expect(ledger.pin('-100:8')).toMatchObject({ text, note: 'Site: example.com' })
+  expect(new Ledger(file, 'telegram').status('-100:8', 4096, 'Site: example.org')).toStartWith('Site: example.org\n\n')
+})

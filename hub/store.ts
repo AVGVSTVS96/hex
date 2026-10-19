@@ -14,7 +14,7 @@ type Stored = { key: string; to: string; from: string; body: string; at: string;
 // is dropped, and its words live on in the one it went into.
 export type Status = 'idea' | 'open' | 'done' | 'dropped'
 export type Words = { message: string; text: string; who: string; at: string }
-export type Task = { id: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string }
+export type Task = { id: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
 export type NewTask = { message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
 export type TaskChange = { status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string }
 // A call that's the owner's: a question a thread asked with buttons or a poll, in one app's
@@ -37,7 +37,7 @@ export type Question = {
 }
 export type NewQuestion = Omit<Question, 'at'> & { at?: string }
 type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
-type StoredTask = { n: number; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string }
+type StoredTask = { n: number; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
 
 // Migration n takes the database from user_version n to n + 1. Append; never edit one that has
 // shipped. Times are UTC the way toISOString() writes them, so they sort as text. A key starts with
@@ -106,6 +106,8 @@ const migrations = [
     begin select raise(abort, 'each option is a label'); end;
   create index waiting on questions (thread) where answer is null and settled is null;
   create index polls on questions (app, poll) where poll is not null;`,
+  `alter table tasks add column closed text check (closed ${UTC});
+  update tasks set closed = at where status in ('done', 'dropped');`,
 ]
 
 const now = () => new Date().toISOString()
@@ -248,9 +250,10 @@ export class Store {
       const task = this.task(id)
       if (!task) throw new Error(`no task ${id}`)
       const next = { ...task, ...Object.fromEntries(Object.entries(change).filter(([, value]) => value !== undefined)) }
+      const closed = next.status === 'done' || next.status === 'dropped' ? (next.status === task.status ? task.closed : now()) : undefined
       this.db
-        .query('update tasks set owner = ?, status = ?, project = ?, done_when = ?, proof = ? where n = ?')
-        .run(next.owner, next.status, next.project ?? null, next.doneWhen ?? null, next.proof ?? null, number(id))
+        .query('update tasks set owner = ?, status = ?, project = ?, done_when = ?, proof = ?, closed = ? where n = ?')
+        .run(next.owner, next.status, next.project ?? null, next.doneWhen ?? null, next.proof ?? null, closed ?? null, number(id))
       return this.task(id)!
     })
   }
@@ -265,7 +268,7 @@ export class Store {
         if (status !== 'idea' && status !== 'open') throw new Error(`${id} is ${status}; only idea and open tasks merge`)
       }
       this.db.query('insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid').run(number(into), number(from))
-      this.db.query("update tasks set status = 'dropped', merged_into = ? where n = ?").run(number(into), number(from))
+      this.db.query("update tasks set status = 'dropped', merged_into = ?, closed = ? where n = ?").run(number(into), now(), number(from))
       return this.task(into)!
     })
   }
@@ -388,6 +391,7 @@ export class Store {
       ...(row.done_when && { doneWhen: row.done_when }),
       ...(row.proof && { proof: row.proof }),
       ...(row.merged_into && { mergedInto: `t-${row.merged_into}` }),
+      ...(row.closed && { closed: row.closed }),
     }
   }
 
