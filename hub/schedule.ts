@@ -83,7 +83,7 @@ function minuteOf(at: string, zone = Temporal.Now.timeZoneId()) {
 }
 
 // The owner's time zone: TZ in the hex folder's .claude/settings.json, or else this machine's.
-function zoneOf(hexDir: string): string | undefined {
+export function zoneOf(hexDir: string): string | undefined {
   try {
     return JSON.parse(readFileSync(join(hexDir, '.claude', 'settings.json'), 'utf8')).env?.TZ || undefined
   } catch {

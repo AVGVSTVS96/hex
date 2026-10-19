@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
+import { nightly } from './backup.ts'
 import { PORT, clients, free, route, up } from './hub.ts'
 
 // Before the clients load: Telegram's bot module awaits its polling loop, which never ends.
@@ -12,13 +13,16 @@ for (const signal of ['SIGHUP', 'SIGTERM', 'SIGINT'] as const) process.on(signal
 Bun.serve({ hostname: '127.0.0.1', port: PORT, idleTimeout: 0, fetch: route })
 
 // Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that
-// can't start back to it. General then hears about a rollback that brought this hub up.
+// can't start back to it. General then hears about a rollback that brought this hub up, and this
+// hub backs up hex.db each night (backup.ts).
 const hex = join(import.meta.dir, '..')
 const commit = Bun.spawnSync(['git', '-C', hex, 'rev-parse', '-q', '--verify', 'HEAD']).stdout.toString().trim()
-const state = join(process.env.HEX_DIR ?? join(hex, '..'), 'state')
+const home = process.env.HEX_DIR ?? join(hex, '..')
+const state = join(home, 'state')
 const rollback = join(state, 'rollback')
 void up.then(general => {
   if (commit) writeFileSync(join(state, 'good'), commit + '\n')
+  nightly(state, home, general.main!)
   if (!existsSync(rollback)) return
   general.deliver(general.main!, general.name(general.main!) ?? 'hex', { content: readFileSync(rollback, 'utf8').trim(), meta: { user: 'hex' } })
   rmSync(rollback)
