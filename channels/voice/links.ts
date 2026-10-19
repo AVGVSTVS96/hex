@@ -6,9 +6,13 @@ import type { MessageId } from '../../hub/ledger.ts'
 import type { Item } from './activity.ts'
 
 // Work a hex thread handed to another T3 Code thread with delegate_task: the child thread, the task
-// that runs it, and how it went. hex is the child's own hex thread, when it runs on hex; latest, that
-// it was handed off since the thread was last asked something (T3 Code wakes a thread when its
-// delegations finish with a message of its own, which doesn't count).
+// that runs it, and how it went. parent is the hex thread that handed it off, as <app>:<key>; hex
+// is the child's own hex thread, when it runs on hex; latest, that it was handed off since the
+// thread was last asked something (T3 Code wakes a thread when its delegations finish with a
+// message of its own, which doesn't count).
+// A relay is a message any hex thread sent a T3 thread (hub/relayed.ts keeps them): the task is
+// the run it started, and latest says that run is still the thread's newest, so the thread's work
+// is the relay's until something else asks it.
 export type Delegation = {
   id: string
   task: string
@@ -22,7 +26,10 @@ export type Delegation = {
   hex?: string
   link?: string
   latest: boolean
+  relay?: boolean
 }
+
+type Relay = { from: string; thread: string; run: string }
 
 const T3_HOME = join(homedir(), '.t3', 'userdata')
 const DATABASE = 'statev2.sqlite'
@@ -42,6 +49,7 @@ export class Links {
   private channels: Record<string, string> = {}
   private threads = new Map<string, { thread: string; title: string }>()
   private handed: Delegation[] = []
+  private relays: Relay[] = []
   private items = new Map<string, Item[]>()
   private titles = new Map<string, string | undefined>()
   private environment?: string
@@ -69,11 +77,20 @@ export class Links {
     this.db?.close()
   }
 
-  // The small files the bots keep; read again whenever the threads are.
-  load() {
+  // The small files the bots keep, and each app's relays, newest per thread pair; read again
+  // whenever the threads are.
+  load(apps: string[] = []) {
     this.guild = word(readJson(join(this.state, 'discord', 'guild.json'))?.id)
     this.bot = word(readJson(join(this.state, 'telegram', 'bot.json'))?.username)
     this.channels = readJson(join(this.state, 'buzz', 'channels.json')) ?? {}
+    const relays = new Map<string, Relay>()
+    for (const app of apps)
+      for (const line of readFile(join(this.state, app, 'relays.jsonl'))?.split('\n') ?? []) {
+        const { from, thread, run } = parse(line) ?? {}
+        if (word(from) && word(thread) && word(run)) relays.set(`${app}:${from} ${thread}`, { from: `${app}:${from}`, thread, run })
+      }
+    this.relays = [...relays.values()]
+    if (this.db) this.read()
   }
 
   // A message's own link where its app has one (a Telegram group's, a Discord thread's), else its thread's.
@@ -102,15 +119,26 @@ export class Links {
     return app === 't3' ? word(this.threads.get(id)?.title) : undefined
   }
 
-  // What a hex T3 thread handed off, oldest first.
+  // What a hex thread handed off, oldest first.
   delegations(app: string, id: string) {
-    const thread = app === 't3' ? this.threads.get(id)?.thread : undefined
-    return thread ? this.handed.filter(one => one.parent === thread) : []
+    return this.handed.filter(one => one.parent === `${app}:${id}`)
   }
 
-  // Whether a hex T3 thread is work another hex thread handed off, so it shows under that one.
+  // Whether a hex T3 thread is work another hex thread handed off, so it shows under that one, as
+  // long as that one shows: two T3 threads that send each other work would otherwise both hide.
   delegated(app: string, id: string) {
-    return app === 't3' && this.handed.some(one => one.hex === id)
+    return app === 't3' && this.owners(id).some(owner => this.shows(owner, new Set([`t3:${id}`])))
+  }
+
+  private owners(id: string) {
+    return this.handed.filter(one => one.hex === id && (!one.relay || one.latest)).map(one => one.parent)
+  }
+
+  // Whether a thread shows: on its own, or under an owner that does without coming back through it.
+  private shows(thread: string, passed: Set<string>): boolean {
+    if (passed.has(thread)) return false
+    const owners = thread.startsWith('t3:') ? this.owners(thread.slice(3)) : []
+    return !owners.length || owners.some(owner => this.shows(owner, new Set([...passed, thread])))
   }
 
   // A T3 task or thread's title, by either id.
@@ -177,10 +205,25 @@ export class Links {
         )
         .all()
         .filter(row => keys.has(row.parent))
-        .map(({ driver, latest, ...row }): Delegation => {
+        .map(({ driver, latest, parent, ...row }): Delegation => {
           const hex = driver === 'acpRegistry' ? keys.get(row.id) : undefined
-          return omit({ ...row, result: handedBack(row.result), hex, link: this.deep(row.id), latest: latest === 1 })
+          return omit({ ...row, parent: `t3:${keys.get(parent)}`, result: handedBack(row.result), hex, link: this.deep(row.id), latest: latest === 1 })
         })
+      const run = this.db!.query<Omit<Delegation, 'id' | 'task' | 'parent' | 'hex' | 'link' | 'latest'> & { latest: number }, [string]>(
+        `select t.title, r.status, r.requested_at since, r.completed_at "end",
+           r.ordinal = (select max(o.ordinal) from orchestration_v2_projection_runs o where o.thread_id = r.thread_id) latest,
+           (select substr(json_extract(m.payload_json, '$.text'), 1, 1000) from orchestration_v2_projection_messages m
+             where m.run_id = r.run_id and m.role = 'assistant' order by m.created_at desc limit 1) result
+         from orchestration_v2_projection_runs r join orchestration_v2_projection_threads t on t.thread_id = r.thread_id
+         where r.run_id = ? and t.deleted_at is null`,
+      )
+      const relayed = this.relays.flatMap(({ from, thread, run: task }): Delegation[] => {
+        const ran = run.get(task)
+        const hex = keys.get(thread)
+        if (!ran || from === `t3:${hex}` || handed.some(one => one.parent === from && one.id === thread)) return []
+        return [omit({ ...ran, id: thread, task, parent: from, result: handedBack(ran.result), hex, link: this.deep(thread), latest: ran.latest === 1, relay: true })]
+      })
+      handed.push(...relayed)
       const asked = this.items.size > 0
       this.items.clear()
       this.titles.clear()
@@ -215,7 +258,11 @@ function readFile(path: string) {
 }
 
 function readJson(path: string) {
+  return parse(readFile(path) ?? '')
+}
+
+function parse(text: string) {
   try {
-    return JSON.parse(readFile(path) ?? '')
+    return JSON.parse(text)
   } catch {}
 }

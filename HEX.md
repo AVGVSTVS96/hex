@@ -138,6 +138,8 @@ Never ask me for a password, key or code in chat. Run `.hex/bin/vault ask <name>
 
 You will often hand off work to preserve your own context window. A subagent takes a few seconds to start and has its own setup cost, but none of its reading lands in your context. That's worth it when the reading is much bigger than the answer, like research, surveys or long multi-step jobs. It isn't when the answer is most of the output, like a transcript or a quick lookup.
 
+Work that should outlive a hex restart, like a long `claude -p` run or a build, starts with `.hex/bin/job <unit> <command…>`: it runs as its own systemd unit, shows under your thread in the voice app's Tasks, and wakes your thread when it ends.
+
 ## Models and tools
 
 What you remember about models and tools is out of date. Before picking one, search the web for the current state of the art. Only use current-gen models.

@@ -862,11 +862,18 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
     if (request.type === 'answer') asks?.answer(request.thread, request.message, request.label, request.via)
     if (request.type === 'settle') asks?.settle(request.thread, request.message, request.note)
     if (request.type === 'reopen') asks?.reopen(request.thread, request.message, request.via)
-    if (request.type === 'inbound') deliver(request.thread, threads[request.thread]?.name ?? request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key })
+    if (request.type === 'inbound') inbound(request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key })
     if (request.type === 'mirror') void mirror(api, find(request.thread), request.to, request.where).then(
       link => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
       error => process.stderr.write(`hub: couldn't mirror ${request.thread} to ${request.to}: ${error}\n`),
     )
+  }
+
+  // A local message reaches a thread this hub already has. A key from another app's list would
+  // otherwise open a stray thread here, under the same key, that later wakes find first.
+  function inbound(thread: string, message: Message) {
+    if (Object.hasOwn(threads, thread)) return deliver(thread, threads[thread]!.name, message)
+    process.stderr.write(`hub: no thread ${thread} in ${registry}, so a message for it from ${message.meta?.user ?? 'a local tool'} was dropped\n`)
   }
 
   // The main thread is always running: started with the hub, and started again when its session
