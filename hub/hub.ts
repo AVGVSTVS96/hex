@@ -61,7 +61,8 @@ export type Asks = {
 export type Hub = ReturnType<typeof startHub>
 
 // idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main
-// thread rests before it compacts, while its cache is still warm. compactAbove: the context above
+// thread rests before it compacts, while its cache is still warm. Both sit just inside Claude
+// Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above
 // which a session compacts before it rests. reconnect: how long a running session's channel may be
 // gone before the session restarts to get it back. capacity: how much context a fresh thread's
 // session holds before a new one takes over; with 0, every message that finds it done goes to a new one.
@@ -191,7 +192,7 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and
 // compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1,
 // 3, 7 and 15 seconds, then gives up for good.
-const LIMITS: Limits = { idleStop: 30 * 60_000, cacheWarm: 54 * 60_000, compactAbove: 150_000, reconnect: 20_000, capacity: capacity(process.env.HEX_CHAT_CAPACITY) }
+const LIMITS: Limits = { idleStop: 54 * 60_000, cacheWarm: 54 * 60_000, compactAbove: 150_000, reconnect: 20_000, capacity: capacity(process.env.HEX_CHAT_CAPACITY) }
 
 function capacity(tokens?: string) {
   if (!tokens) return 350_000
