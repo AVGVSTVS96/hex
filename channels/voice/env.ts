@@ -4,8 +4,9 @@ import { join } from 'path'
 
 export const STATE_DIR = join(homedir(), '.claude', 'channels', 'voice')
 
-// The plugin's own settings, its OpenAI and Twilio keys among them, under what the service's
-// environment sets. They stay here: the hub service's sessions inherit its environment.
+// The plugin's own settings, its OpenAI and Twilio keys among them, over whatever the hub's
+// environment carries: that comes from wherever the hub started, and a key rotated since stays
+// there stale. They stay here: the hub's sessions inherit its environment.
 function settings(): Record<string, string | undefined> {
   const file: Record<string, string> = {}
   try {
@@ -14,7 +15,7 @@ function settings(): Record<string, string | undefined> {
       if (match) file[match[1]!] = match[2]!
     }
   } catch {}
-  return { ...file, ...process.env }
+  return { ...process.env, ...file }
 }
 
 export const env = settings()
