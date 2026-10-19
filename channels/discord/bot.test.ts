@@ -66,7 +66,12 @@ function channel(id: string, fields: Channel): Channel {
         return channel(String(9000 + ++opened), { name, type: ChannelType.PublicThread, parent: ch, parentId: id })
       },
       fetchActive: async () => ({ threads: new Collection([...channels].filter(([, c]) => c.parent === ch && !c.archived)) }),
-      fetchArchived: async () => ({ threads: new Collection([...channels].filter(([, c]) => c.parent === ch && c.archived)) }),
+      // Newest-archived first, as Discord lists them, two to a page so a test can reach the second.
+      fetchArchived: async ({ before, limit = 50 }: { before?: number; limit?: number } = {}) => {
+        const shelf = [...channels.values()].filter(c => c.parent === ch && c.archived && (!before || c.archiveTimestamp < before)).sort((a, b) => b.archiveTimestamp - a.archiveTimestamp)
+        const page = shelf.slice(0, Math.min(limit, 2))
+        return { threads: new Collection(page.map(c => [c.id, c])), hasMore: shelf.length > page.length }
+      },
     },
     ...fields,
   }
@@ -634,7 +639,7 @@ test('a backfill posts each line through one webhook of the channel, as the owne
   expect(hooked.map(({ content }) => content.replace(/\s/g, '')).join('')).toBe(`howfullisyourcontext?${'a'.repeat(1990)}${'b'.repeat(100)}@everyonethanks`)
 })
 
-test('back online, the bot reads what was said while it was away, archived threads too, oldest first, as if live, and each message reaches its session once', async () => {
+test('back online, the bot reads what was said while it was away, archived threads too (past the first page), oldest first, as if live, and each message reaches its session once', async () => {
   const someone = { id: '8888', username: 'someone', bot: false }
   const away = { inGuild: () => true, mentions: { has: () => false }, react: async () => {} }
   const first = say(here, 61, 'did the anchors ship?', away)
@@ -646,7 +651,8 @@ test('back online, the bot reads what was said while it was away, archived threa
   say(here, 64, 'shipped', { ...away, author: bot })
   const direct = say(dm, 65, 'and the desk?', { ...away, inGuild: () => false })
   say(hidden, 66, 'still not for the bot', away)
-  const shelved = channel(snowflake(50), { name: 'old plans', type: ChannelType.PublicThread, parent: general, archived: true, setArchived: async () => {} })
+  const shelved = channel(snowflake(50), { name: 'old plans', type: ChannelType.PublicThread, parent: general, archived: true, archiveTimestamp: at(69).getTime(), setArchived: async () => {} })
+  for (const minute of [70, 71]) channel(snowflake(minute - 20), { name: `shelved at ${minute}`, type: ChannelType.PublicThread, parent: general, archived: true, archiveTimestamp: at(minute).getTime() })
   const reopened = await session(shelved.id)
   const revived = say(shelved, 68, 'back to the old plan', away)
 

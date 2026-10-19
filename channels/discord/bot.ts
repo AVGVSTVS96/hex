@@ -989,6 +989,21 @@ function serve(token: string) {
     }
   }
 
+  // Discord lists archived threads newest-archived first, and a thread that got a message
+  // after the cursor was archived after it, so paging stops at the first older archive.
+  async function archivedSince(ch: TextChannel | NewsChannel | ForumChannel, from: string): Promise<AnyThreadChannel[]> {
+    const since = SnowflakeUtil.timestampFrom(from)
+    const found: AnyThreadChannel[] = []
+    for (let before: number | undefined; ;) {
+      const page = await ch.threads.fetchArchived({ before, limit: 100 })
+      const threads = [...page.threads.values()]
+      found.push(...threads)
+      const oldest = Math.min(...threads.map(t => t.archiveTimestamp ?? 0))
+      if (!page.hasMore || threads.length === 0 || oldest < since) return found
+      before = oldest
+    }
+  }
+
   // Every text channel, thread and DM whose newest message is past the cursor is read
   // forward from it, and what it missed is handled oldest first, as if live. A thread
   // can go quiet long enough to archive again while the bot is away, so each channel's
@@ -1002,7 +1017,7 @@ function serve(token: string) {
       Promise.all(loadAccess().allowFrom.map(id => client.users.createDM(id, { force: true }).catch(err => void failure(`opening the DM with ${id}`)(err)))),
     ])
     const parents = channels.flatMap(ch => (isPostable(ch) && ch.permissionsFor(client.user!)?.has(READ) ? [ch] : []))
-    const archived = await Promise.all(parents.map(ch => ch.threads.fetchArchived().then(found => [...found.threads.values()], err => (failure(`listing ${ch.id}'s archived threads`)(err), []))))
+    const archived = await Promise.all(parents.map(ch => archivedSince(ch, from).catch(err => (failure(`listing ${ch.id}'s archived threads`)(err), []))))
     const places = [...channels, ...active, ...archived.flat(), ...dms].filter(listensIn).filter(ch => !!ch.lastMessageId && BigInt(ch.lastMessageId) > BigInt(from))
     const missed = (await Promise.all(places.map(ch => after(ch, from).catch(err => (failure(`catching up on ${ch.id}`)(err), [])))))
       .flat()
