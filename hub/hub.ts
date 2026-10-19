@@ -907,6 +907,7 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
     keep,
     renew: renewAsked,
     session: current,
+    running: sessionOf,
     threads: () => Object.keys(threads),
     name: (thread: string) => threads[thread]?.name,
     cwd: (thread: string) => threads[thread]?.cwd,

@@ -58,9 +58,10 @@ async function start() {
 }
 
 // The hub service stops and starts again on the same state, as a hex restart does.
-async function restart() {
+async function restart(down = () => {}) {
   bot.kill()
   await bot.exited
+  down()
   rmSync(join(dir, 'state', 'acp.sock'), { force: true })
   await start()
 }
@@ -375,6 +376,28 @@ test('hex acp keeps T3 connected through a hub restart, and the turn T3 waits on
   expect(back.inbound).toEqual([])
   expect(lines('launched')).toHaveLength(1)
   expect(proxy.exitCode).toBeNull()
+})
+
+test('a turn rejoined after a hub restart follows the session running for its thread, not the one it saved before', async () => {
+  const { agent, updates } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+  await until(() => lines('launched').length)
+  const hex = await session(sessionId)
+  hex.busy()
+  hex.write({ ...prompt, timestamp: now() }, { type: 'assistant', timestamp: now(), message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } })
+  await until(() => texts(updates).length)
+  const pid = Number(Bun.spawnSync(['sh', '-c', 'sleep 60 >/dev/null 2>&1 & echo $!']).stdout.toString())
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ id: 'job12345', sessionId: SESSION, pid, status: 'busy' }]))
+  const threads = join(dir, 'state', 'threads.json')
+  await restart(() => writeFileSync(threads, JSON.stringify({ [sessionId]: { ...JSON.parse(readFileSync(threads, 'utf8'))[sessionId], session: 'f0e1d2c3-0000-4000-8000-000000000000' } })))
+  await Bun.sleep(600)
+  const back = await session(sessionId)
+  back.write({ type: 'assistant', timestamp: now(), message: { id: 'm2', content: [{ type: 'text', text: 'two' }] } }, done)
+  back.idle()
+  expect(await answer).toEqual({ stopReason: 'end_turn' })
+  expect(texts(updates)).toEqual(['one', 'two'])
+  expect(back.inbound).toEqual([])
 })
 
 test('a prompt a hub restart lost before its session took it reaches the session once hex is back', async () => {

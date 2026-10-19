@@ -8,7 +8,6 @@ import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
 import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
 import { startHub, clients, begin, move, asked, title, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
-import * as claude from '../../hub/claude.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
 import { withT3, projectAt, linkTo } from './t3code.ts'
@@ -204,14 +203,13 @@ function track(thread: string, client: AgentContext, signal: AbortSignal, resolv
 // session wrote it down, with the session not working on anything, is delivered again; a
 // /compact that isn't running anymore ended while hex was down. The new hub may not know a
 // session that started just before the restart until its channel reconnects, so the session
-// is found the way the hub finds it, by the thread its settings name.
+// the turn follows is the one running for the thread.
 type Rejoin = { sessionId: string; prompt: ContentBlock[]; since: number }
 async function rejoin({ sessionId: thread, prompt: blocks, since }: Rejoin, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
   keep(known(thread))
-  const saved = hub.session(thread)
-  const running = (await claude.agents()).find(agent => agent.sessionId === saved || claude.settingsOf(agent)?.env?.HEX_THREAD === thread)
+  const running = await hub.running(thread)
   if (turns.has(thread)) throw RequestError.invalidRequest(undefined, 'this thread is already working on a prompt')
-  const session = saved ?? running?.sessionId
+  const session = running?.sessionId ?? hub.session(thread)
   const working = running?.status === 'busy'
   return new Promise((resolve, reject) => {
     const turn = track(thread, client, signal, resolve, reject, since)
