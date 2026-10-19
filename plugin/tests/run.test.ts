@@ -83,6 +83,16 @@ test('a stop waits for the hub to finish', async () => {
   expect(existsSync(join(home, 'state/hub.pid'))).toBe(false)
 })
 
+test('hex stop returns once the hub has finished, so whatever starts hex next never runs two', async () => {
+  commit(HUB, 'a hub')
+  run()
+  await until(() => hubs().length === 1)
+  expect(await Bun.spawn([join(hex, 'bin/hex'), 'stop']).exited).toBe(0)
+  const pid = hubs()[0]!.split(' ').at(-1)
+  expect(hubs()).toEqual([`start mark=1 loop=1 ${pid}`, `stop ${pid}`])
+  expect(existsSync(join(home, 'state/hub.pid'))).toBe(false)
+})
+
 test("a commit whose hub can't start goes back to the last one General connected on, and bin/update won't take it again", async () => {
   const good = commit(HUB, 'a hub')
   writeFileSync(join(home, 'state/good'), good + '\n')

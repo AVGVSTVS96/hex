@@ -74,7 +74,11 @@ case "${1:-}" in
     echo "hex started; its log is state/hub.log"
     ;;
   stop)
-    running && kill "$(cat "$pidfile")"
+    running || exit 0
+    pid=$(cat "$pidfile")
+    kill "$pid"
+    # The hub finishes a live call first; whatever starts hex next waits for it to be gone.
+    while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
     ;;
   restart)
     running && pkill -HUP -P "$(cat "$pidfile")" -f hub/serve.ts || "$0" start
