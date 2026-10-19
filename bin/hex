@@ -9,13 +9,13 @@ running() {
 }
 
 # A hub that exits three times within a minute can't start. If hex changed since General last
-# connected (the hub marks that commit refs/hex/good), hex goes back to it, bin/update won't take
-# the commit that failed again, and General hears why once it's back.
+# connected (the hub writes that commit to state/good), hex goes back to it, bin/update won't take
+# the commit that failed (state/bad) again, and General hears why once it's back.
 roll_back() {
-  good=$(git -C "$hex" rev-parse -q --verify refs/hex/good) || return 0
+  good=$(cat "$home/state/good" 2>/dev/null) || return 0
   bad=$(git -C "$hex" rev-parse HEAD)
-  [ "$good" != "$bad" ] && git -C "$hex" reset -q --keep "$good" || return 0
-  git -C "$hex" update-ref refs/hex/bad "$bad"
+  [ -n "$good" ] && [ "$good" != "$bad" ] && git -C "$hex" reset -q --keep "$good" || return 0
+  echo "$bad" > "$home/state/bad"
   note="hex $(git -C "$hex" log -1 --format='%h ("%s")' "$bad") couldn't start: its hub exited three times within a minute. So hex went back to $(git -C "$hex" log -1 --format='%h ("%s")' "$good"), the last commit General connected on, and bin/update won't take $(git -C "$hex" rev-parse --short "$bad") again. What the failed starts printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex)."
   echo "$note" >&2
   echo "$note" > "$home/state/rollback"

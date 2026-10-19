@@ -85,7 +85,7 @@ test('a stop waits for the hub to finish', async () => {
 
 test("a commit whose hub can't start goes back to the last one General connected on, and bin/update won't take it again", async () => {
   const good = commit(HUB, 'a hub')
-  git('update-ref', 'refs/hex/good', good)
+  writeFileSync(join(home, 'state/good'), good + '\n')
   const bad = commit('process.exit(1)\n', 'a hub that crashes')
   Bun.spawnSync(['git', 'init', '-q', '--bare', '-b', 'main', join(home, 'origin')])
   git('remote', 'add', 'origin', join(home, 'origin'))
@@ -93,7 +93,7 @@ test("a commit whose hub can't start goes back to the last one General connected
   run()
   await until(() => hubs().length === 1, 20_000)
   expect(git('rev-parse', 'HEAD')).toBe(good)
-  expect(git('rev-parse', 'refs/hex/bad')).toBe(bad)
+  expect(readFileSync(join(home, 'state/bad'), 'utf8').trim()).toBe(bad)
   expect(readFileSync(join(home, 'state/rollback'), 'utf8')).toContain(`hex ${bad.slice(0, 7)} ("a hub that crashes") couldn't start`)
   const update = Bun.spawnSync([join(hex, 'bin/update')])
   expect(update.exitCode).toBe(1)

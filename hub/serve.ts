@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync } from 'fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { PORT, clients, free, route, up } from './hub.ts'
 
@@ -14,9 +14,10 @@ Bun.serve({ hostname: '127.0.0.1', port: PORT, idleTimeout: 0, fetch: route })
 // can't start back to it. General then hears about a rollback that brought this hub up.
 const hex = join(import.meta.dir, '..')
 const commit = Bun.spawnSync(['git', '-C', hex, 'rev-parse', '-q', '--verify', 'HEAD']).stdout.toString().trim()
-const rollback = join(process.env.HEX_DIR ?? join(hex, '..'), 'state', 'rollback')
+const state = join(process.env.HEX_DIR ?? join(hex, '..'), 'state')
+const rollback = join(state, 'rollback')
 void up.then(general => {
-  if (commit) Bun.spawnSync(['git', '-C', hex, 'update-ref', 'refs/hex/good', commit])
+  if (commit) writeFileSync(join(state, 'good'), commit + '\n')
   if (!existsSync(rollback)) return
   general.deliver(general.main!, general.name(general.main!) ?? 'hex', { content: readFileSync(rollback, 'utf8').trim(), meta: { user: 'hex' } })
   rmSync(rollback)
