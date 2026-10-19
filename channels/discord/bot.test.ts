@@ -538,6 +538,12 @@ test('a question with buttons goes in the ledger: a tap answers it there, and on
   await call('edit_message', { message_id: renamed.id, text: 'Renamed, as you said in the call.', settled: true })
   expect(question(renamed.id).settled).toMatchObject({ note: '✓ Settled' })
   expect(labels(done.findLast(d => d.edit === renamed.id).options.components)).toEqual(['✓ Settled'])
+
+  await call('reply', { text: 'Keep the old name?', buttons: ['Yes', 'No'] })
+  const kept = here.posted.at(-1)
+  await call('edit_message', { message_id: kept.id, settled: true })
+  expect(question(kept.id)).toMatchObject({ text: 'Keep the old name?', settled: { note: '✓ Settled' } })
+  expect(labels(done.findLast(d => d.edit === kept.id).options.components)).toEqual(['✓ Settled'])
 })
 
 test('buttons with multiple come as a menu, and a pick of several comes back as their labels and locks the menu on them', async () => {

@@ -612,10 +612,12 @@ function serve(token: string) {
       case 'edit_message': {
         const msg = await message(ch, args.message_id as string)
         const files = args.files ? sendable(args.files as string[]) : undefined
-        const edited = await msg.edit({
-          ...(args.text !== undefined ? { content: tappable(args.text as string) } : {}),
-          ...(files ? { files, attachments: [] } : {}),
-        })
+        const edited = args.text !== undefined || files
+          ? await msg.edit({
+              ...(args.text !== undefined ? { content: tappable(args.text as string) } : {}),
+              ...(files ? { files, attachments: [] } : {}),
+            })
+          : msg
         if (args.text !== undefined) ledger.edited(thread, edited.id, args.text as string)
         if (args.settled) await settleAsk(thread, edited.id, '✓ Settled')
         return `edited (id: ${edited.id})`

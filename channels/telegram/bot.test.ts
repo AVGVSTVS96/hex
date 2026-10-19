@@ -380,6 +380,12 @@ test('a settled question loses its buttons without reaching its thread, and an e
   expect(await called('editMessageText', p => p.message_id === second && p.text === 'Renamed, as you said in the call.')).not.toHaveProperty('reply_markup')
   expect(await called('editMessageReplyMarkup', p => p.message_id === second)).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: '✓ Settled', disabled: {} }]] } })
   expect(asked(second).settled).toMatchObject({ note: '✓ Settled' })
+
+  const third = Number((await call('reply', { text: 'Keep the old name?', buttons: ['Yes', 'No'] })).text.match(/id: (\d+)/)[1])
+  await call('edit_message', { message_id: String(third), settled: true })
+  expect(await called('editMessageReplyMarkup', p => p.message_id === third)).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: '✓ Settled', disabled: {} }]] } })
+  expect(asked(third)).toMatchObject({ text: 'Keep the old name?', settled: { note: '✓ Settled' } })
+  expect((await call('edit_message', { message_id: String(third) })).error).toBe('edit_message needs text, a file, or settled')
 })
 
 test('a poll answered in the app closes, and its vote reaches the thread', async () => {
