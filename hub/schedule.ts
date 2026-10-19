@@ -8,19 +8,39 @@ import { open } from './store.ts'
 export type Job = { cron?: string; at?: string | string[]; thread?: string; prompt: string }
 
 const FIELDS = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]] as const
-const PART = /^(\*|\d+(-\d+)?)(\/\d+)?$/
+const PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/
 const AT = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d$/
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 const MINUTE = 60_000
+
+// A part of a cron field names values inside the field's bounds, low to high, every step of one or more.
+function fits(part: string, [min, max]: readonly [number, number]) {
+  const match = PART.exec(part)
+  if (!match) return false
+  const [, from = String(min), to = from, step = '1'] = match
+  return Number(from) >= min && Number(to) <= max && Number(from) <= Number(to) && Number(step) > 0
+}
+
+function isCron(cron: unknown) {
+  const fields = typeof cron === 'string' ? cron.trim().split(/\s+/) : []
+  return fields.length === 5 && fields.every((field, index) => field.split(',').every(part => fits(part, FIELDS[index]!)))
+}
+
+function isAt(at: unknown) {
+  try {
+    return typeof at === 'string' && AT.test(at) && !!Temporal.PlainDateTime.from(at)
+  } catch {
+    return false
+  }
+}
 
 export function parse(text: string): Record<string, Job> {
   const jobs: Record<string, Job> = JSON.parse(text)
   for (const [name, job] of Object.entries(jobs)) {
     if (typeof job?.prompt !== 'string' || job.prompt === '') throw new Error(`${name}: prompt is missing`)
     if (job.cron === undefined && job.at === undefined) throw new Error(`${name}: it needs a cron or an at`)
-    const fields = String(job.cron ?? '* * * * *').trim().split(/\s+/)
-    if (fields.length !== 5 || !fields.every(field => field.split(',').every(part => PART.test(part)))) throw new Error(`${name}: "${job.cron}" is not a five-field cron expression`)
-    if (![job.at ?? []].flat().every(at => typeof at === 'string' && AT.test(at))) throw new Error(`${name}: at must be "YYYY-MM-DD HH:MM", or a list of them`)
+    if (job.cron !== undefined && !isCron(job.cron)) throw new Error(`${name}: ${JSON.stringify(job.cron)} is not a five-field cron expression`)
+    if (![job.at ?? []].flat().every(isAt)) throw new Error(`${name}: at must be "YYYY-MM-DD HH:MM", or a list of them`)
     if (job.thread !== undefined && typeof job.thread !== 'string') throw new Error(`${name}: thread must be a thread's id`)
   }
   return jobs
@@ -74,7 +94,8 @@ function zoneOf(hexDir: string): string | undefined {
 // One check at minute now (since the epoch): each job's newest slot since the last check fires,
 // which after the hub was down is the newest one it missed, marked late. The first check ever fires
 // nothing, and a schedules.json that doesn't load fires nothing until it does, telling the main
-// thread once what's wrong with it.
+// thread once what's wrong with it. An at is its own minute; only a cron is looked for minute by
+// minute, back from now, before the store is held for the write.
 export function check(storeDir: string, hexDir: string, main: string, now = Math.floor(Date.now() / MINUTE)) {
   const store = open(storeDir)
   let text: string
@@ -92,18 +113,23 @@ export function check(storeDir: string, hexDir: string, main: string, now = Math
     return
   }
   const zone = zoneOf(hexDir)
-  const ats = new Map(Object.entries(jobs).map(([name, job]) => [name, new Set([job.at ?? []].flat().map(at => minuteOf(at, zone)))]))
-  store.write(() => {
-    const since = store.checked() ?? now
-    const left = new Map(Object.entries(jobs))
-    for (let minute = now; minute > since && left.size; minute--) {
-      const at = wall(minute, zone)
-      for (const [name, job] of left) {
-        if (!ats.get(name)!.has(minute) && !(job.cron !== undefined && onCron(job.cron, at))) continue
-        left.delete(name)
-        store.fire(name, minute, job.thread ?? main, `[${name}] ${job.prompt}`, minute < now)
-      }
+  const since = store.checked() ?? now
+  const slots = new Map<string, number>()
+  const found = (name: string, minute: number) => {
+    if (minute > since && minute <= now && minute > (slots.get(name) ?? -Infinity)) slots.set(name, minute)
+  }
+  for (const [name, job] of Object.entries(jobs)) for (const at of [job.at ?? []].flat()) found(name, minuteOf(at, zone))
+  const left = new Map(Object.entries(jobs).filter(([, job]) => job.cron !== undefined))
+  for (let minute = now; minute > since && left.size; minute--) {
+    const at = wall(minute, zone)
+    for (const [name, job] of left) {
+      if (!onCron(job.cron!, at)) continue
+      left.delete(name)
+      found(name, minute)
     }
+  }
+  store.write(() => {
+    for (const [name, minute] of slots) store.fire(name, minute, jobs[name]!.thread ?? main, `[${name}] ${jobs[name]!.prompt}`, minute < now)
     store.check(now)
   })
 }
