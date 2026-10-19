@@ -286,6 +286,12 @@ export class Store {
     return rows.map(row => this.toTask(row))
   }
 
+  // The earliest time one of the owner's tasks in this status was closed, after a time.
+  firstClosed(owner: string, status: Status, after: string): string | null {
+    const row = this.db.query('select min(closed) as closed from tasks where owner = ? and status = ? and closed > ?').get(owner, status, after) as { closed: string | null }
+    return row.closed
+  }
+
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
   ask({ app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {
     this.write(() =>

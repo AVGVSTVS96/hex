@@ -21,6 +21,7 @@ export class Ledger {
   private book: Book
   private readonly store: Store
   private rewriting = new Map<string, Promise<void>>()
+  private arm?: () => void
 
   constructor(
     private file: string,
@@ -85,16 +86,19 @@ export class Ledger {
   keep(room: number, edit: Edit, failed: (thread: string, error: unknown) => void): () => void {
     let timer: ReturnType<typeof setTimeout> | undefined
     const all = () => {
+      for (const thread of this.posts()) this.rewrite(thread, room, edit).catch(error => failed(thread, error))
+      this.arm?.()
+    }
+    this.arm = () => {
       clearTimeout(timer)
-      const threads = this.posts()
-      for (const thread of threads) this.rewrite(thread, room, edit).catch(error => failed(thread, error))
-      const next = Math.min(...threads.map(thread => nextLeaving(this.store, thread)))
+      const next = Math.min(...this.posts().map(thread => nextLeaving(this.store, thread)))
       if (next < Infinity) timer = setTimeout(all, next - Date.now())
     }
     all()
     const stop = this.store.watch(all)
     return () => {
       clearTimeout(timer)
+      this.arm = undefined
       stop()
     }
   }
@@ -136,6 +140,7 @@ export class Ledger {
   pinned(thread: string, message: MessageId, text = '', note?: string) {
     this.book.pins[thread] = { message, text, at: now(), ...(note !== undefined && { note }) }
     this.save()
+    if (note !== undefined) this.arm?.()
   }
 
   unpinned(thread: string, message: MessageId) {

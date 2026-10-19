@@ -113,3 +113,24 @@ test("a done task leaves the status post when its week is up, though hex.db stay
   stop()
   expect(texts.at(-1)).toContain('🟢 **Done**\n- nothing')
 })
+
+test('a status post pinned while hex runs drops its done task when the week is up, too', async () => {
+  const ledger = new Ledger(file, 'telegram')
+  const store = open(dirname(file))
+  const key = 'telegram:-100:52'
+  store.deliver({ key, to: '-100:9', from: 'telegram', body: 'Rename the repo', meta: { user: 'owner' } })
+  const task = store.createTask({ message: key, owner: '-100:9' })
+  store.editTask(task.id, { status: 'done', proof: 'gh repo rename' })
+  const db = new Database(join(dirname(file), 'hex.db'))
+  db.query('update tasks set closed = ?').run(new Date(Date.now() - 7 * 24 * 60 * 60_000 + 150).toISOString())
+  db.close()
+  const texts: string[] = []
+  const edit = async (_thread: string, _message: unknown, text: string) => void texts.push(text)
+  const stop = ledger.keep(4096, edit, () => {})
+  ledger.pinned('-100:9', 10, 'Site: example.com', 'Site: example.com')
+  await ledger.rewrite('-100:9', 4096, edit)
+  expect(texts.at(-1)).toContain('Rename the repo')
+  await Bun.sleep(300)
+  stop()
+  expect(texts.at(-1)).toContain('🟢 **Done**\n- nothing')
+})
