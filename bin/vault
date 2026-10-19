@@ -2,7 +2,7 @@
 # hex's vault is enclave (github.com/AVGVSTVS96/enclave). This adds typing on hex's computer.
 set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
-[ -f "$home/.env" ] && { set -a; . "$home/.env"; set +a; }
+. "$(dirname "$0")/settings"
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
 if command -v enclave >/dev/null; then enclave=enclave; else enclave="bunx enclave-link"; fi
 
@@ -18,7 +18,7 @@ EOF
 }
 
 computer() {
-  [ -n "${HEX_COMPUTER:-}" ] || { echo "set HEX_COMPUTER in .env to your computer's Sprite name" >&2; exit 1; }
+  [ -n "${HEX_COMPUTER:-}" ] || { echo "set HEX_COMPUTER in .claude/settings.json's env to your computer's Sprite name" >&2; exit 1; }
 }
 
 case ${1:-} in
