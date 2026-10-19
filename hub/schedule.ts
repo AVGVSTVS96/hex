@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs'
 import { join } from 'path'
-import { open, type Store } from './store.ts'
+import { open } from './store.ts'
 
 // A job in schedules.json wakes its thread (the main one, unless it names another) with
 // "[name] prompt" at each minute its five-field cron names and at each "YYYY-MM-DD HH:MM" its at
@@ -130,17 +130,12 @@ export function check(storeDir: string, hexDir: string, main: string, now = Math
     }
   }
   store.write(() => {
-    for (const [name, minute] of slots) if (!jobs[name]!.task || standing(store, jobs[name]!.task!)) store.fire(name, minute, jobs[name]!.thread ?? main, `[${name}] ${jobs[name]!.prompt}`, minute < now)
+    for (const [name, minute] of slots) if (!jobs[name]!.task || store.live(jobs[name]!.task!)?.status === 'open') store.fire(name, minute, jobs[name]!.thread ?? main, `[${name}] ${jobs[name]!.prompt}`, minute < now)
     store.check(now)
   })
 }
 
 // The task, or the one it was merged into, is still open.
-function standing(store: Store, id: string) {
-  let task = store.task(id)
-  while (task?.mergedInto) task = store.task(task.mergedInto)
-  return task?.status === 'open'
-}
 
 // The hub's scheduler: a check at its start, then at the top of every minute.
 export function schedule(storeDir: string, hexDir: string, main: string): () => void {

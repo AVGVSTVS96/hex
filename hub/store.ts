@@ -238,8 +238,9 @@ export class Store {
   addWords(id: string, message: string, quote?: string): Task {
     return this.write(() => {
       const live = this.live(id)
-      this.quote(live, message, quote)
-      return this.task(live)!
+      if (!live) throw new Error(`no task ${id}`)
+      this.quote(live.id, message, quote)
+      return this.task(live.id)!
     })
   }
 
@@ -356,8 +357,8 @@ export class Store {
     this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
   }
 
-  // The task id's words belong to: id itself, or the end of the merges it went through.
-  private live(id: string): string {
+  // The task an id stands for now: itself, or the end of the merges it went through.
+  live(id: string): Task | null {
     const row = this.db
       .query(
         `with recursive chain (n, next) as (
@@ -367,8 +368,7 @@ export class Store {
          select n from chain where next is null`,
       )
       .get(number(id)) as { n: number } | null
-    if (!row) throw new Error(`no task ${id}`)
-    return `t-${row.n}`
+    return row && this.task(`t-${row.n}`)
   }
 
   private toTask(row: StoredTask): Task {
