@@ -16,7 +16,9 @@ let PORT = 0
 let dir: string
 let project: string
 let bot: Subprocess
+let env: Record<string, string | undefined>
 const sockets: Socket[] = []
+const proxies: Subprocess[] = []
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 't3-bot-'))
@@ -31,7 +33,7 @@ exit 0`)
 jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/launched"
 [ -f "${dir}/broken" ] && { echo "Workspace not trusted." >&2; exit 1; }
 echo "backgrounded · job12345 · test"`)
-  ;({ process: bot, port: PORT } = await service(join(import.meta.dir, 'bot.ts'), {
+  env = {
     ...process.env,
     HOME: dir,
     PATH: `${dir}:${process.env.PATH}`,
@@ -39,15 +41,30 @@ echo "backgrounded · job12345 · test"`)
     HEX_DIR: join(dir, 'hex'),
     HEX_LAUNCHER: join(dir, 'launch'),
     CLAUDE_CONFIG_DIR: join(dir, 'config'),
-  }))
-  await until(() => existsSync(join(dir, 'state', 'acp.sock')))
+  }
+  await start()
 })
 
 afterEach(() => {
   for (const socket of sockets.splice(0)) socket.destroy()
+  for (const proxy of proxies.splice(0)) proxy.kill()
   bot.kill()
   rmSync(dir, { recursive: true, force: true })
 })
+
+async function start() {
+  ;({ process: bot, port: PORT } = await service(join(import.meta.dir, 'bot.ts'), env))
+  await until(() => existsSync(join(dir, 'state', 'acp.sock')))
+}
+
+// The hub service stops and starts again on the same state, as a hex restart does.
+async function restart(down = () => {}) {
+  bot.kill()
+  await bot.exited
+  down()
+  rmSync(join(dir, 'state', 'acp.sock'), { force: true })
+  await start()
+}
 
 function script(name: string, body: string) {
   writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`)
@@ -68,13 +85,34 @@ async function open(path: string) {
 // T3 Code's side: an ACP client on the agent's socket.
 async function t3() {
   const socket = await open(join(dir, 'state', 'acp.sock'))
+  return { ...(await acp(Writable.toWeb(socket) as WritableStream<Uint8Array>, Readable.toWeb(socket) as ReadableStream<Uint8Array>)), socket }
+}
+
+// T3 Code's side as T3 runs it: `hex acp` on its stdio, relaying to the agent's socket.
+async function t3OverAcp() {
+  const proxy = Bun.spawn(['bun', join(import.meta.dir, 'acp.ts'), join(dir, 'state', 'acp.sock')], { stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
+  proxies.push(proxy)
+  const stdin = new WritableStream<Uint8Array>({
+    write: chunk => {
+      proxy.stdin.write(chunk)
+      proxy.stdin.flush()
+    },
+  })
+  return { ...(await acp(stdin, proxy.stdout)), proxy }
+}
+
+async function acp(output: WritableStream<Uint8Array>, input: ReadableStream<Uint8Array>) {
   const updates: SessionNotification['update'][] = []
   const connection = client({ name: 't3' })
     .onNotification('session/update', ({ params }) => void updates.push(params.update))
-    .connect(ndJsonStream(Writable.toWeb(socket) as WritableStream<Uint8Array>, Readable.toWeb(socket) as ReadableStream<Uint8Array>))
+    .connect(ndJsonStream(output, input))
   const agent = connection.agent
   await agent.request('initialize', { protocolVersion: 1, clientCapabilities: {} })
-  return { agent, updates, socket }
+  return { agent, updates }
+}
+
+function texts(updates: SessionNotification['update'][]) {
+  return updates.flatMap(update => (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text' ? [update.content.text] : []))
 }
 
 // The hex session's side: its channel over HTTP, its Claude job record, and its hooks.
@@ -101,6 +139,21 @@ async function session(thread: string) {
 const prompt = { type: 'user', origin: { kind: 'channel' }, isMeta: true, message: { content: '<channel source="t3">hi</channel>' } }
 const reply = { type: 'assistant', message: { id: 'm1', content: [{ type: 'text', text: 'hi from hex' }] } }
 const done = { type: 'system', subtype: 'turn_duration' }
+const now = () => new Date().toISOString()
+
+// A thread hex keeps: T3 opened it in the project, and its session answered the first prompt.
+async function kept(agent: Awaited<ReturnType<typeof t3>>['agent']) {
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  const first = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+  await until(() => lines('launched').length)
+  const hex = await session(sessionId)
+  hex.busy()
+  await Bun.sleep(100)
+  hex.write(prompt, reply, done)
+  hex.idle()
+  await first
+  return { sessionId, hex }
+}
 
 test('a new thread starts its hex session in its project on the first prompt, which streams the turn until the transcript ends it', async () => {
   const { agent, updates } = await t3()
@@ -153,12 +206,7 @@ test('a session advertises /compact once T3 knows it', async () => {
 
 test('/compact stops a running session, resumes it with the command once it has exited, and ends at the compaction', async () => {
   const { agent, updates } = await t3()
-  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
-  const hex = await session(sessionId)
-  hex.write(prompt, reply, done)
-  const running = Bun.spawn(['sleep', '60'])
-  writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: running.pid, status: 'idle' }]))
-  await until(() => updates.length)
+  const { sessionId, hex } = await kept(agent)
   updates.length = 0
   const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: '/compact' }, { type: 'text', text: 'T3 context' }] })
   await until(() => lines('launched').some(line => line.includes('"/compact"')))
@@ -169,14 +217,13 @@ test('/compact stops a running session, resumes it with the command once it has 
     { type: 'system', subtype: 'compact_boundary', compactMetadata: { trigger: 'manual' } },
   )
   expect(await answer).toEqual({ stopReason: 'end_turn' })
-  expect(hex.inbound).toEqual([])
+  expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
   expect(updates.map(update => update.sessionUpdate === 'compaction_update' && update.status)).toEqual(['in_progress', 'completed'])
 })
 
 test('a /compact that fails fails the prompt with the command\'s error', async () => {
   const { agent, updates } = await t3()
-  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
-  const hex = await session(sessionId)
+  const { sessionId, hex } = await kept(agent)
   const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: '/compact' }] })
   await until(() => lines('launched').some(line => line.includes('"/compact"')))
   hex.write({ type: 'system', subtype: 'local_command', content: '<local-command-stderr>Error: No messages to compact</local-command-stderr>' })
@@ -282,11 +329,137 @@ test('a thread offers T3 model and effort pickers, and its session starts again 
   expect(JSON.parse(readFileSync(join(dir, 'state', 'threads.json'), 'utf8'))[sessionId]).toMatchObject({ model: 'claude-fable-5-1', effort: 'xhigh' })
 })
 
-test('a known thread resumes and an unknown one is not found', async () => {
+test('a thread T3 opens is kept only once it sends a prompt, so T3\'s provider check leaves nothing behind', async () => {
+  const check = await t3()
+  await check.agent.request('session/new', { cwd: project, mcpServers: [] })
+  await until(() => check.updates.length)
+  check.socket.destroy()
+  await Bun.sleep(100)
+  expect(existsSync(join(dir, 'state', 'threads.json'))).toBe(false)
+  expect(JSON.parse(readFileSync(join(dir, '.claude.json'), 'utf8')).projects).toEqual({})
+  expect(lines('launched')).toEqual([])
+})
+
+test('a known thread resumes, an unprompted one T3 opened before resumes as new, and a prompt to an unknown one is not found', async () => {
+  const first = await t3()
+  const { sessionId } = await kept(first.agent)
+  const { sessionId: unprompted } = await first.agent.request('session/new', { cwd: project, mcpServers: [] })
+  first.socket.destroy()
   const { agent } = await t3()
-  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
   expect(await agent.request('session/resume', { sessionId, cwd: project, mcpServers: [] })).toMatchObject({ configOptions: [{ id: 'model' }, { id: 'effort' }] })
-  expect(agent.request('session/resume', { sessionId: 'nope', cwd: project, mcpServers: [] })).rejects.toThrow('Resource not found')
+  await agent.request('session/resume', { sessionId: unprompted, cwd: project, mcpServers: [] })
+  agent.request('session/prompt', { sessionId: unprompted, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
+  await until(() => lines('launched').length === 2)
+  expect(lines('cwd')).toEqual([project, project])
+  expect(JSON.parse(readFileSync(join(dir, 'state', 'threads.json'), 'utf8'))[unprompted]).toMatchObject({ name: 'project', cwd: project })
+  expect(agent.request('session/prompt', { sessionId: 'nope', prompt: [{ type: 'text', text: 'hi' }] })).rejects.toThrow('Resource not found')
+})
+
+test('hex acp keeps T3 connected through a hub restart, and the turn T3 waits on carries on without repeating what T3 has', async () => {
+  const { agent, updates, proxy } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+  await until(() => lines('launched').length)
+  const hex = await session(sessionId)
+  hex.busy()
+  hex.write({ ...prompt, timestamp: now() }, { type: 'assistant', timestamp: now(), message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } })
+  await until(() => texts(updates).length)
+  const pid = Number(Bun.spawnSync(['sh', '-c', 'sleep 60 >/dev/null 2>&1 & echo $!']).stdout.toString())
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ id: 'job12345', sessionId: SESSION, pid, status: 'busy' }]))
+  await restart()
+  const back = await session(sessionId)
+  await Bun.sleep(300)
+  back.write({ type: 'assistant', timestamp: now(), message: { id: 'm2', content: [{ type: 'text', text: 'two' }] } }, done)
+  back.idle()
+  expect(await answer).toEqual({ stopReason: 'end_turn' })
+  expect(texts(updates)).toEqual(['one', 'two'])
+  expect(back.inbound).toEqual([])
+  expect(lines('launched')).toHaveLength(1)
+  expect(proxy.exitCode).toBeNull()
+})
+
+test('a turn rejoined after a hub restart follows the session running for its thread, not the one it saved before', async () => {
+  const { agent, updates } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+  await until(() => lines('launched').length)
+  const hex = await session(sessionId)
+  hex.busy()
+  hex.write({ ...prompt, timestamp: now() }, { type: 'assistant', timestamp: now(), message: { id: 'm1', content: [{ type: 'text', text: 'one' }] } })
+  await until(() => texts(updates).length)
+  const pid = Number(Bun.spawnSync(['sh', '-c', 'sleep 60 >/dev/null 2>&1 & echo $!']).stdout.toString())
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ id: 'job12345', sessionId: SESSION, pid, status: 'busy' }]))
+  const threads = join(dir, 'state', 'threads.json')
+  await restart(() => writeFileSync(threads, JSON.stringify({ [sessionId]: { ...JSON.parse(readFileSync(threads, 'utf8'))[sessionId], session: 'f0e1d2c3-0000-4000-8000-000000000000' } })))
+  await Bun.sleep(600)
+  const back = await session(sessionId)
+  back.write({ type: 'assistant', timestamp: now(), message: { id: 'm2', content: [{ type: 'text', text: 'two' }] } }, done)
+  back.idle()
+  expect(await answer).toEqual({ stopReason: 'end_turn' })
+  expect(texts(updates)).toEqual(['one', 'two'])
+  expect(back.inbound).toEqual([])
+})
+
+test('what T3 picked for a thread it hasn\'t prompted yet still holds after a hub restart', async () => {
+  const { agent } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  await agent.request('session/set_config_option', { sessionId, configId: 'effort', value: 'xhigh' })
+  await restart()
+  agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
+  await until(() => lines('launched').length)
+  const launched = JSON.parse(lines('launched')[0]!)
+  expect(launched[launched.indexOf('--effort') + 1]).toBe('xhigh')
+})
+
+test('a prompt a hub restart lost before its session took it reaches the session once hex is back', async () => {
+  const { agent } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+  await until(() => lines('launched').length)
+  await restart()
+  await until(() => lines('launched').length === 2)
+  const hex = await session(sessionId)
+  await until(() => hex.inbound.length)
+  hex.busy()
+  await Bun.sleep(100)
+  hex.write({ ...prompt, timestamp: now() }, { ...reply, timestamp: now() }, done)
+  hex.idle()
+  expect(await answer).toEqual({ stopReason: 'end_turn' })
+  expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
+  expect(new Database(join(dir, 'hex', 'state', 'hex.db')).query('select count(*) as n from messages').get()).toEqual({ n: 1 })
+})
+
+test('a prompt the old hub never read before a restart reaches the session once hex is back', async () => {
+  const { agent } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  bot.kill('SIGSTOP')
+  const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+  await Bun.sleep(100)
+  bot.kill('SIGKILL')
+  await restart()
+  await until(() => lines('launched').length)
+  const hex = await session(sessionId)
+  await until(() => hex.inbound.length)
+  hex.busy()
+  hex.write({ ...prompt, timestamp: now() }, { ...reply, timestamp: now() }, done)
+  hex.idle()
+  expect(await answer).toEqual({ stopReason: 'end_turn' })
+  expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
+})
+
+test('a thread\'s history loads the same each time, so hex acp can tell what T3 already has when a hub restart cuts a load short', async () => {
+  const { agent, updates } = await t3()
+  const { sessionId } = await kept(agent)
+  mkdirSync(join(dir, 'hex', 'log', 'threads'), { recursive: true })
+  writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${SESSION.slice(0, 8)}.md`), ['## me · t3 · 2026-10-06 10:06\n\nhi\n', '## assistant · t3 · 2026-10-06 10:06\n\nhi from hex\n'].join('\n'))
+  const load = async () => {
+    updates.splice(0)
+    await agent.request('session/load', { sessionId, cwd: project, mcpServers: [] })
+    return updates.filter(update => update.sessionUpdate.endsWith('_message_chunk'))
+  }
+  const loaded = await load()
+  expect(loaded.map(update => update.sessionUpdate)).toEqual(['user_message_chunk', 'agent_message_chunk'])
+  expect(await load()).toEqual(loaded)
 })
 
 test('cancelling stops the session and answers the prompt as cancelled', async () => {

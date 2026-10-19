@@ -6,8 +6,8 @@ import { homedir } from 'os'
 import { basename, join } from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
-import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
-import { startHub, clients, begin, move, asked, title, MODELS, EFFORTS, type Turn as Said } from '../../hub/hub.ts'
+import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptRequest, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
+import { startHub, clients, begin, move, asked, title, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
 import { withT3, projectAt, linkTo } from './t3code.ts'
@@ -37,6 +37,12 @@ type Turn = {
 
 // One ACP prompt per thread at a time: it is answered when the session's turn ends.
 const turns = new Map<string, Turn>()
+
+// A thread T3 opened that has had no prompt yet, and what its pickers chose. T3's provider check
+// opens a session it never uses, so a thread is only kept once its first prompt arrives; until
+// then it lasts as long as the connection that opened it.
+type Opened = { cwd: string; settings: Settings; socket: Socket }
+const opened = new Map<string, Opened>()
 
 // A chat backfilled into a T3 thread, waiting for T3 to send each of the owner's messages back as a
 // prompt, which its replies answer as they were.
@@ -138,33 +144,86 @@ function finish(thread: string, stopReason: StopReason, error?: string) {
 }
 
 function known(thread: string) {
-  if (!hub.name(thread)) throw RequestError.resourceNotFound(thread)
+  if (!hub.name(thread) && !opened.has(thread)) throw RequestError.resourceNotFound(thread)
   return thread
+}
+
+// T3 resumes a thread it opened and never prompted as a new one, since hex never kept it.
+function reopen(thread: string, cwd: string, socket: Socket) {
+  const waiting = opened.get(thread)
+  if (waiting) waiting.socket = socket
+  else if (!hub.name(thread)) opened.set(thread, { cwd, settings: {}, socket })
+  return thread
+}
+
+function keep(thread: string) {
+  const waiting = opened.get(thread)
+  if (!waiting) return
+  opened.delete(thread)
+  const folder = folderFor(waiting.cwd)
+  hub.register(thread, basename(folder ?? HEX_DIR), folder)
+  hub.configure(thread, waiting.settings)
 }
 
 // T3's MCP credentials live only in its running server, so when T3 quits or restarts
 // mid-turn (the prompt's request aborts) the session's T3 tools are dead: it stops like a cancel.
-function prompt(thread: string, blocks: ContentBlock[], client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
-  const name = hub.name(known(thread))!
+function prompt({ sessionId: thread, prompt: blocks, _meta }: PromptRequest, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
+  keep(known(thread))
+  const name = hub.name(thread)!
   const replay = replays.get(thread)?.shift()
   if (replay && asked(render(blocks)) === replay.asked) return replayed(thread, replay, client)
   replays.delete(thread)
   if (turns.has(thread)) throw RequestError.invalidRequest(undefined, 'this thread is already working on a prompt')
   const session = hub.session(thread)
-  // T3 Code follows a command with its own context block, which the command doesn't take.
-  const compact = blocks[0]?.type === 'text' && blocks[0].text.trim() === '/compact'
+  const compact = compacting(blocks)
   if (compact && !session) throw RequestError.invalidRequest(undefined, 'this thread has nothing to compact yet')
   return new Promise((resolve, reject) => {
-    const turn: Turn = { client, sent: Promise.resolve(), done: false, since: Date.now(), resolve, reject, ...(compact && { compaction: randomUUID() }) }
-    turns.set(thread, turn)
-    signal.addEventListener('abort', () => turns.get(thread) === turn && cancel(thread), { once: true })
+    const turn = track(thread, client, signal, resolve, reject, Date.now(), compact)
     if (session) turn.reader = reader(thread, session, turn)
-    if (!compact) {
-      const message = { content: render(blocks), meta: { ts: new Date().toISOString() } }
-      return hub.deliver(thread, name, message)
-    }
+    if (!compact) return hub.deliver(thread, name, message(blocks, turn.since, _meta))
     compaction(turn, thread, 'in_progress')
     hub.command(thread, '/compact')
+  })
+}
+
+// T3 Code follows a command with its own context block, which the command doesn't take.
+function compacting(blocks: ContentBlock[]) {
+  return blocks[0]?.type === 'text' && blocks[0].text.trim() === '/compact'
+}
+
+function track(thread: string, client: AgentContext, signal: AbortSignal, resolve: Turn['resolve'], reject: Turn['reject'], since: number, compact = false) {
+  const turn: Turn = { client, sent: Promise.resolve(), done: false, since, resolve, reject, ...(compact && { compaction: randomUUID() }) }
+  turns.set(thread, turn)
+  signal.addEventListener('abort', () => turns.get(thread) === turn && cancel(thread), { once: true })
+  return turn
+}
+
+// The key `hex acp` gives a prompt (acp.ts) keeps it one message in hex.db however often it's sent.
+function message(blocks: ContentBlock[], since: number, meta: PromptRequest['_meta']) {
+  return { content: render(blocks), meta: { ts: new Date(since).toISOString() }, key: meta?.['hex/key'] as string | undefined }
+}
+
+// After a hub restart, `hex acp` asks again for the turn T3 was waiting on (acp.ts): it streams
+// from when T3 sent the prompt, and ends like any turn. The prompt is delivered again under its
+// key, which reaches the session only if the old hub never kept it; a /compact that isn't running
+// anymore ended while hex was down. The new hub may not know a session that started just
+// before the restart until its channel reconnects, so the session the turn follows is the one
+// running for the thread.
+type Rejoin = PromptRequest & { since: number }
+async function rejoin({ sessionId: thread, prompt: blocks, since, _meta }: Rejoin, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
+  keep(known(thread))
+  const running = await hub.running(thread)
+  if (turns.has(thread)) throw RequestError.invalidRequest(undefined, 'this thread is already working on a prompt')
+  const session = running?.sessionId ?? hub.session(thread)
+  const working = running?.status === 'busy'
+  return new Promise((resolve, reject) => {
+    const turn = track(thread, client, signal, resolve, reject, since)
+    if (session) turn.reader = reader(thread, session, turn, since)
+    const asked = !!turn.reader?.asked()
+    if (!compacting(blocks)) hub.deliver(thread, hub.name(thread)!, message(blocks, since, _meta))
+    else if (!working && !asked) return finish(thread, 'end_turn')
+    turn.done = asked && !working
+    turn.reader?.settle()
   })
 }
 
@@ -177,7 +236,7 @@ async function replayed(thread: string, { replies }: Replay, client: AgentContex
 // T3 shows these as its model and effort pickers. A thread with no choice of its own
 // runs on what hex's settings say, so that's what they show.
 function options(thread: string): SessionConfigOption[] {
-  const chosen = hub.settings(thread)
+  const chosen = opened.get(thread)?.settings ?? hub.settings(thread)
   const defaults = settings()
   const model = chosen.model ?? MODELS.find(model => defaults.model === model.alias || defaults.model?.startsWith(model.value))?.value ?? MODELS[0]!.value
   const effort = chosen.effort ?? EFFORTS.find(effort => effort.value === defaults.effortLevel)?.value ?? 'medium'
@@ -200,7 +259,9 @@ function configure(thread: string, id: string, value: unknown) {
   const choices = id === 'model' ? MODELS : id === 'effort' ? EFFORTS : undefined
   if (!choices) throw RequestError.invalidParams(undefined, `no option ${id}`)
   if (!choices.some(choice => choice.value === value)) throw RequestError.invalidParams(undefined, `${id} can't be ${value}`)
-  hub.configure(known(thread), { [id]: value as string })
+  const waiting = opened.get(known(thread))
+  if (waiting) waiting.settings[id as keyof Settings] = value as string
+  else hub.configure(thread, { [id]: value as string })
   return { configOptions: options(thread) }
 }
 
@@ -318,15 +379,13 @@ function serve(socket: Socket) {
       authMethods: [],
     }))
     .onRequest('session/new', ({ params, client }) => {
-      const thread = randomUUID()
-      const folder = folderFor(params.cwd)
+      const thread = reopen(randomUUID(), params.cwd, socket)
       remember(thread, params.mcpServers)
-      hub.register(thread, basename(folder ?? HEX_DIR), folder)
       advertise(client, thread)
       return { sessionId: thread, configOptions: options(thread) }
     })
     .onRequest('session/resume', ({ params, client }) => {
-      remember(known(params.sessionId), params.mcpServers)
+      remember(reopen(params.sessionId, params.cwd, socket), params.mcpServers)
       advertise(client, params.sessionId)
       return { configOptions: options(params.sessionId) }
     })
@@ -334,18 +393,26 @@ function serve(socket: Socket) {
       sessions: [...placed].filter(thread => hub.name(thread) && (!params.cwd || (hub.cwd(thread) ?? HEX_DIR) === params.cwd)).map(thread => ({ sessionId: thread, cwd: hub.cwd(thread) ?? HEX_DIR, title: hub.name(thread) })),
     }))
     .onRequest('session/load', async ({ params, client }) => {
-      remember(known(params.sessionId), params.mcpServers)
-      for (const { from, text } of hub.history(params.sessionId)) {
-        await client.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: from === 'me' ? 'user_message_chunk' : 'agent_message_chunk', messageId: randomUUID(), content: { type: 'text', text } } })
+      remember(reopen(params.sessionId, params.cwd, socket), params.mcpServers)
+      for (const [i, { from, text }] of hub.history(params.sessionId).entries()) {
+        await client.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: from === 'me' ? 'user_message_chunk' : 'agent_message_chunk', messageId: `${hub.session(params.sessionId)}:${i}`, content: { type: 'text', text } } })
       }
       advertise(client, params.sessionId)
       return { configOptions: options(params.sessionId) }
     })
     .onRequest('session/set_config_option', ({ params }) => configure(params.sessionId, params.configId, params.value))
-    .onRequest('session/prompt', ({ params, client, signal }) => prompt(params.sessionId, params.prompt, client, signal))
+    .onRequest('session/prompt', ({ params, client, signal }) => prompt(params, client, signal))
+    .onRequest('_hex/rejoin', { parse: params => params as Rejoin }, ({ params, client, signal }) => rejoin(params, client, signal))
     .onNotification('session/cancel', ({ params }) => cancel(params.sessionId))
     .connect(ndJsonStream(Writable.toWeb(socket) as WritableStream<Uint8Array>, Readable.toWeb(socket) as ReadableStream<Uint8Array>))
   socket.on('error', () => {})
+  socket.on('close', () => {
+    for (const [thread, waiting] of opened) {
+      if (waiting.socket !== socket) continue
+      opened.delete(thread)
+      servers.delete(thread)
+    }
+  })
 }
 
 clients.set('t3', { hub, place, backfill, waits: true })
