@@ -872,8 +872,7 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
   // A local message reaches a thread this hub already has. A key from another app's list would
   // otherwise open a stray thread here, under the same key, that later wakes find first.
   function inbound(thread: string, message: Message) {
-    const known = threads[thread]
-    if (known) return deliver(thread, known.name, message)
+    if (Object.hasOwn(threads, thread)) return deliver(thread, threads[thread]!.name, message)
     process.stderr.write(`hub: no thread ${thread} in ${registry}, so a message for it from ${message.meta?.user ?? 'a local tool'} was dropped\n`)
   }
 
