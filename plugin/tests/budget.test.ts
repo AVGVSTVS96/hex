@@ -46,6 +46,16 @@ test('imported files count, and hex\'s own files under .hex/ do not', () => {
   expect(hook('Edit', { file_path: join(home, '.hex/HEX.md'), old_string: '# How', new_string: `# How ${'more '.repeat(100)}` })).toBeNull()
 })
 
+test('a new import counts the words of the file it brings in', () => {
+  writeFileSync(join(home, 'prefs.md'), `${'- rule\n'.repeat(10)}`)
+  expect(edit('- Keep it short.', '- Keep it short.\n@prefs.md').hookSpecificOutput.permissionDecisionReason).toContain('AGENTS.md, SOUL.md, and prefs.md from 13 to 34 words')
+})
+
+test('writing a file AGENTS.md already imports counts it', () => {
+  writeFileSync(join(home, 'AGENTS.md'), '@.hex/HEX.md\n@SOUL.md\n@prefs.md\n')
+  expect(hook('Write', { file_path: join(home, 'prefs.md'), content: `${'- rule\n'.repeat(20)}` }).hookSpecificOutput.permissionDecision).toBe('deny')
+})
+
 test('files already over the budget can always get shorter', () => {
   expect(hook('Edit', { file_path: join(home, 'AGENTS.md'), old_string: '- Keep it short.', new_string: '- Short.' }, '5')).toBeNull()
   expect(hook('Edit', { file_path: join(home, 'AGENTS.md'), old_string: '- Keep it short.', new_string: '- Keep it short, please.' }, '5').hookSpecificOutput.permissionDecision).toBe('deny')
