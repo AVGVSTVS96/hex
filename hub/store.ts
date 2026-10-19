@@ -204,7 +204,7 @@ export class Store {
     return this.write(() => {
       const task = this.task(id)
       if (!task) throw new Error(`no task ${id}`)
-      const next = { ...task, ...change }
+      const next = { ...task, ...Object.fromEntries(Object.entries(change).filter(([, value]) => value !== undefined)) }
       this.db
         .query('update tasks set owner = ?, status = ?, project = ?, done_when = ?, proof = ? where n = ?')
         .run(next.owner, next.status, next.project ?? null, next.doneWhen ?? null, next.proof ?? null, number(id))

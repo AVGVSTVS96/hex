@@ -124,6 +124,8 @@ test('done needs a proof, and the states are the four a task has', () => {
   const { id } = store.createTask({ message: ask.key, owner: '-100:7', status: 'idea' })
   expect(() => store.editTask(id, { status: 'done' })).toThrow()
   expect(() => store.editTask(id, { status: 'finished' as any })).toThrow()
+  store.editTask(id, { project: 'site', doneWhen: 'it signs in' })
+  expect(store.editTask(id, { owner: '-100:9', project: undefined })).toMatchObject({ owner: '-100:9', project: 'site', doneWhen: 'it signs in' })
   expect(store.editTask(id, { status: 'done', proof: 'https://example.com/pr/1' })).toMatchObject({ status: 'done', proof: 'https://example.com/pr/1' })
   expect(store.tasks({ status: ['open', 'idea'] })).toEqual([])
   expect(store.tasks({ status: ['done'] }).map(task => task.id)).toEqual([id])
