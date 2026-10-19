@@ -42,7 +42,7 @@ export function parse(text: string): Record<string, Job> {
     if (job.cron !== undefined && !isCron(job.cron)) throw new Error(`${name}: ${JSON.stringify(job.cron)} is not a five-field cron expression`)
     if (![job.at ?? []].flat().every(isAt)) throw new Error(`${name}: at must be "YYYY-MM-DD HH:MM", or a list of them`)
     if (job.thread !== undefined && typeof job.thread !== 'string') throw new Error(`${name}: thread must be a thread's id`)
-    if (job.task !== undefined && !/^t-\d+$/.test(String(job.task))) throw new Error(`${name}: task must be a task's id, like t-12`)
+    if (job.task !== undefined && (typeof job.task !== 'string' || !/^t-\d+$/.test(job.task))) throw new Error(`${name}: task must be a task's id, like t-12`)
   }
   return jobs
 }

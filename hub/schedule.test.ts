@@ -152,6 +152,7 @@ test('a job needs a prompt and a cron or an at it can read', () => {
   expect(parse(JSON.stringify({ a: { cron: '5/15 0-23/2 1,15 */3 0-7', prompt: 'x' } }))).toEqual({ a: { cron: '5/15 0-23/2 1,15 */3 0-7', prompt: 'x' } })
   expect(parse(JSON.stringify({ a: { at: '2026-10-20 16:00', prompt: 'x' } }))).toEqual({ a: { at: '2026-10-20 16:00', prompt: 'x' } })
   expect(() => parse(JSON.stringify({ a: { cron: '* * * * *', task: '12', prompt: 'x' } }))).toThrow('a: task must be a task\'s id, like t-12')
+  expect(() => parse(JSON.stringify({ a: { cron: '* * * * *', task: ['t-12'], prompt: 'x' } }))).toThrow('a: task must be a task\'s id, like t-12')
 })
 
 test('a job with a task fires only while the task is open, or the task it was merged into is', () => {
