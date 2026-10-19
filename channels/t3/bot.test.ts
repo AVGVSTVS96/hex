@@ -479,10 +479,12 @@ function steering(sessionId: string) {
   const userdata = join(dir, '.t3', 'userdata')
   mkdirSync(userdata, { recursive: true })
   const db = new Database(join(userdata, 'statev2.sqlite'))
-  db.run('create table orchestration_v2_effect_outbox (effect_type text, status text, payload_json text)')
+  db.run('create table orchestration_v2_projection_runs (status text, payload_json text)')
+  db.run('create table orchestration_v2_projection_run_attempts (attempt_id text, provider_thread_id text, payload_json text)')
   db.run('create table orchestration_v2_projection_provider_threads (provider_thread_id text, payload_json text)')
+  db.run("insert into orchestration_v2_projection_runs values ('starting', ?)", [JSON.stringify({ activeAttemptId: 'attempt:2' })])
+  db.run("insert into orchestration_v2_projection_run_attempts values ('attempt:2', 'provider-thread:1', ?)", [JSON.stringify({ reason: 'steering_restart' })])
   db.run("insert into orchestration_v2_projection_provider_threads values ('provider-thread:1', ?)", [JSON.stringify({ nativeThreadRef: { nativeId: sessionId } })])
-  db.run("insert into orchestration_v2_effect_outbox values ('provider-turn.restart', 'running', ?)", [JSON.stringify({ providerThreadId: 'provider-thread:1' })])
   db.close()
 }
 

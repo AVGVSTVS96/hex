@@ -77,18 +77,21 @@ export function projectAt(root: string): string | undefined {
   }
 }
 
-// Whether T3 is restarting a turn of this session to steer it, from T3's own records, read only.
-// T3 steers an ACP agent by cancelling the turn and prompting again with the steer, so the cancel
-// alone looks like a Stop; the restart it runs for the steer stays running until the new turn starts.
+// Whether T3 is restarting this session's turn to steer it, from T3's own records, read only. T3
+// steers an ACP agent by cancelling the turn and prompting again with the steer, and ACP has no way
+// to tell the agent which, so the cancel alone looks like a Stop. Before it cancels, T3 records the
+// run as starting again on a steering_restart attempt, in the run and attempt shapes of its
+// contracts. If the read fails, the cancel is a Stop, and the steer resumes the session.
 export function steering(session: string) {
   const file = join(USERDATA, 'statev2.sqlite')
   if (!existsSync(file)) return false
   const db = new Database(file, { readonly: true })
   try {
     return !!db
-      .query(`select 1 from orchestration_v2_effect_outbox effect
-        join orchestration_v2_projection_provider_threads thread on thread.provider_thread_id = json_extract(effect.payload_json, '$.providerThreadId')
-        where effect.effect_type = 'provider-turn.restart' and effect.status = 'running' and json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ?`)
+      .query(`select 1 from orchestration_v2_projection_runs run
+        join orchestration_v2_projection_run_attempts attempt on attempt.attempt_id = json_extract(run.payload_json, '$.activeAttemptId')
+        join orchestration_v2_projection_provider_threads thread on thread.provider_thread_id = attempt.provider_thread_id
+        where run.status = 'starting' and json_extract(attempt.payload_json, '$.reason') = 'steering_restart' and json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ?`)
       .get(session)
   } catch (error) {
     process.stderr.write(`t3: can't read whether T3 is steering ${session}, so its cancel stops it: ${error}\n`)

@@ -432,14 +432,13 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
     run.rest = undefined
     const session = running?.sessionId ?? current(thread)
     if (!session) return Promise.resolve()
+    if (run.ending) return run.ending
     const ending: Promise<void> = (running ? Promise.resolve(running) : claude.listing(session))
       .then(agent => {
         void claude.stop(session)
         return agent && claude.exited(agent.pid)
       })
-      .finally(() => {
-        if (run.ending === ending) run.ending = undefined
-      })
+      .finally(() => (run.ending = undefined))
     return (run.ending = ending)
   }
 

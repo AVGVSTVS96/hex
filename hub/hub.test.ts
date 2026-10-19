@@ -726,12 +726,16 @@ test('stopping a thread ends its session now, and its next message resumes it', 
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
 })
 
-test('a message that comes while a stopped session is still exiting waits, and resumes the thread once it has', async () => {
+test('a message that comes while a stopped session is still exiting waits, even through a second stop, and resumes the thread once it has', async () => {
   const exiting = Bun.spawn(['sleep', '60'])
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: exiting.pid, status: 'busy' }] })
   const old = await session('chat:7')
   hub.stop('chat:7')
   await until(() => calls().find(args => args[0] === 'stop'))
+  writeFileSync(join(dir, 'unanswering'), '')
+  hub.stop('chat:7')
+  await Bun.sleep(100)
+  rmSync(join(dir, 'unanswering'))
   hub.deliver('chat:7', 'Desk anchors', message)
   await Bun.sleep(300)
   expect(old.received).toEqual([])
