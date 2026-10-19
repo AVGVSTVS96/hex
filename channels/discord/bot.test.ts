@@ -595,7 +595,7 @@ test('slash commands set a thread\'s model and effort, and answer only the owner
   const replies: any[] = []
   const command = (commandName: string, value?: string, user = owner, channelId = desk.id) =>
     handlers.get('interactionCreate')!({ isButton: () => false, isStringSelectMenu: () => false, isChatInputCommand: () => true, commandName, user, channelId, options: { getString: () => value }, reply: async (options: any) => replies.push(options) })
-  command('model', 'claude-opus-5-5')
+  command('model', 'opus')
   command('effort', 'max')
   command('stop', undefined, owner, general.id)
   command('stop', undefined, { id: '8888', username: 'someone', partial: false })
@@ -606,14 +606,14 @@ test('slash commands set a thread\'s model and effort, and answer only the owner
   await until(() => replies.length === 5)
   send({ type: 'state', thread: here.id, busy: false })
   expect(replies.map(reply => reply.content)).toEqual([
-    "Model: Opus 5.5, from this thread's next message.",
+    "Model: Opus, from this thread's next message.",
     "Effort: Max, from this thread's next message.",
     "This channel has no session: use it in one of hex's threads or the DM.",
     'hex only answers its owner.',
     "This thread is working; compact it once it's done.",
   ])
   expect(replies.every(reply => reply.flags === MessageFlags.Ephemeral)).toBe(true)
-  expect(JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))[desk.id]).toMatchObject({ model: 'claude-opus-5-5', effort: 'max' })
+  expect(JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))[desk.id]).toMatchObject({ model: 'opus', effort: 'max' })
 })
 
 test('a backfill posts each line through one webhook of the channel, as the owner or the bot, split to fit', async () => {

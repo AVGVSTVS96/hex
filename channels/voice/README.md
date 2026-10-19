@@ -316,6 +316,7 @@ them with hex) gets Claude walking the list in order.
    OPENAI_API_KEY=sk-...
    # optional
    VOICE=marin        # one of OpenAI's built-in voices; OpenAI's default if unset
+   VOICE_MODEL=...    # the OpenAI live model that talks; gpt-live-1 if unset
    VOICE_PORT=8790    # the call page's local port
    VOICE_TOKEN=...    # if set, /session, /calls and /phone need "Authorization: Bearer <token>"
    T3_APP_SCHEME=...  # the T3 Code app's URL scheme for task links; t3code if unset

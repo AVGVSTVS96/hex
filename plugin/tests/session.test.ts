@@ -86,7 +86,7 @@ test('General, started by the hub, runs the main model', async () => {
 
 test('a voice session, started by the hub, runs the fast model on the 1-hour cache', async () => {
   const { settings } = await launch('plugin:voice@hex', 'voice', { main: 'voice', fresh: () => true, limits: { capacity: 0 } })
-  expect(settings).toMatchObject({ model: 'claude-sonnet-5-5', effortLevel: 'low', env: { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' } })
+  expect(settings).toMatchObject({ model: 'sonnet', effortLevel: 'low', env: { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' } })
 })
 
 test('a topic session, started by the hub, gets none of the chat or main additions', async () => {

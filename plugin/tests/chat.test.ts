@@ -333,7 +333,7 @@ test('a fresh session starts from the chat: the launcher adds the system prompt 
   expect(JSON.parse(args[args.indexOf('--settings') + 1]!)).toMatchObject({ skillListingBudgetFraction: 0.0001 })
   expect(JSON.parse(args[args.indexOf('--settings') + 1]!).model).toBeUndefined()
   const call = launch({ env: { HEX_CHANNEL: 'plugin:voice@hex', HEX_THREAD: 'voice', HEX_FRESH: '1' } })
-  expect(JSON.parse(call[call.indexOf('--settings') + 1]!)).toMatchObject({ model: 'claude-sonnet-5-5', effortLevel: 'low', env: { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' } })
+  expect(JSON.parse(call[call.indexOf('--settings') + 1]!)).toMatchObject({ model: 'sonnet', effortLevel: 'low', env: { CLAUDE_CODE_PROMPT_CACHE_TTL: '1h' } })
   const plain = launch({ env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: '-100:5' } })
   expect(plain).not.toContain('--system-prompt-file')
   expect(JSON.parse(plain[plain.indexOf('--settings') + 1]!).claudeMdExcludes).toBeUndefined()
