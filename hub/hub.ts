@@ -1,14 +1,17 @@
 import { createServer } from 'net'
-import { createHash, randomBytes } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import type { MessageId } from './ledger.ts'
+import { schedule } from './schedule.ts'
+import { open, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
-export type Message = { content: string; meta: Record<string, string> }
+// key: the app's own id for what the message is, so the app sending it again changes nothing.
+export type Message = { content: string; meta: Record<string, string>; key?: string }
 export type Call = (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>
 // background: the session's turn ended with background agents still working.
 export type State = (thread: string, busy: boolean, background: boolean) => void
@@ -75,6 +78,8 @@ type Phase =
 type Run = {
   phase: Phase
   queue: Message[]
+  // The kept messages the hub has passed on since its session's channel last connected.
+  handed: Set<string>
   // From the session's hooks; background: its turn ended with agents still working.
   turn: 'busy' | 'background' | 'done'
   // asked: the session asked to start over (a call ended). stale: it started with what the hub no
@@ -113,6 +118,10 @@ export type Client = {
 export const clients = new Map<string, Client>()
 
 export const PORT = Number(process.env.HEX_PORT ?? 8789)
+// The folder whose hex.db keeps the messages of every app's hub (store.ts).
+const STORE = process.env.HEX_DIR && join(process.env.HEX_DIR, 'state')
+// The apps whose hubs run in this process: a message one of them kept is its own to deliver.
+const apps = new Set<string>()
 
 // Each hub's channel under its plugin's name, behind the one HTTP listener serve.ts opens.
 const channels = new Map<string, (request: Request) => Promise<Response>>()
@@ -210,8 +219,9 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, asks, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
+export function startHub({ stateDir, storeDir = STORE || stateDir, channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, asks, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
   stateDir: string
+  storeDir?: string
   channel: string
   // What the channel serves its sessions over HTTP.
   server: ChannelServer
@@ -219,7 +229,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
   port?: number
   main?: string
   mainName?: string
-  // The main thread is hex's General: its settings env says HEX_MAIN.
+  // The main thread is hex's General: its settings env says HEX_MAIN, and the hub runs schedules.json.
   general?: boolean
   call: Call
   state: State
@@ -247,6 +257,9 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
   const runs = new Map<string, Run>()
   const plugin = channel.replace(/^plugin:/, '')
   const path = `/${plugin.split('@')[0]}`
+  const app = path.slice(1)
+  let store: Store | undefined
+  apps.add(app)
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 })
   const token = tokenOf(stateDir)
   const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !PRIVATE.test(name)))
@@ -279,7 +292,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
 
   function runOf(thread: string): Run {
     let run = runs.get(thread)
-    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], turn: 'done', held: [] }))
+    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], handed: new Set(), turn: 'done', held: [] }))
     return run
   }
 
@@ -535,6 +548,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
       HEX_HUB: socketPath,
       HEX_PORT: String(port),
       HEX_TOKEN: token,
+      HEX_STORE: storeDir,
       ...(general && thread === main ? { HEX_MAIN: '1' } : {}),
       ...(fresh(thread) ? { HEX_FRESH: '1' } : {}),
     }
@@ -585,11 +599,66 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     setState(thread, false)
   }
 
+  // The store while it opens and writes; without it the hub goes on from memory, as it did before
+  // it had one, so a failing disk never leaves hex deaf.
+  function kept<T>(use: (store: Store) => T, otherwise: T): T {
+    try {
+      return use((store ??= open(storeDir)))
+    } catch (error) {
+      process.stderr.write(`hub: ${join(storeDir, 'hex.db')} failed, so the hub goes on from memory: ${error}\n`)
+      return otherwise
+    }
+  }
+
+  // A message is kept before anything else happens to it, so once this returns the app can be told
+  // it arrived: a crash from then on leaves it with hex, for whichever session serves the thread
+  // next. A key kept already is the app sending it again.
   function deliver(thread: string, name: string, message: Message) {
+    const key = `${app}:${message.key ?? randomUUID()}`
+    const { content, meta } = message
+    const added = kept(store => store.deliver({ key, to: thread, from: app, body: content, meta }), undefined)
+    if (added === false) return
+    pass(thread, name, added ? { content, meta: { key, ...meta } } : { content, meta })
+  }
+
+  function pass(thread: string, name: string, message: Message) {
+    const { handed } = runOf(thread)
+    const { key } = message.meta
+    if (key && handed.has(key)) return
+    if (key) handed.add(key)
+    route(thread, name, message)
+  }
+
+  function route(thread: string, name: string, message: Message) {
     const run = runOf(thread)
     if (run.phase.is === 'live') return (stale(thread) && !onCall.has(run)) || spent(thread) ? void refresh(thread, message) : run.phase.line.send({ type: 'inbound', ...message })
     run.queue.push(message)
     void launch(thread, name)
+  }
+
+  // A message another app's hub kept is that hub's to deliver; one kept by anything else (a job, a
+  // schedule, the hex command) goes to the hub that serves its thread.
+  const mine = (row: Row) => row.from === app || !apps.has(row.from)
+  // The key goes first on the channel tag, where the session's hook reads it (state.ts).
+  const toMessage = (row: Row): Message => ({ content: row.body, meta: { key: row.key, ...row.meta } })
+
+  // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
+  function waiting(thread: string): Message[] {
+    const rows = kept(store => store.untaken(thread), [])
+    return [...rows.filter(mine).map(toMessage), ...runOf(thread).queue.filter(message => !message.meta.key)]
+  }
+
+  // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any
+  // that no session took before the hub stopped.
+  function wake() {
+    if (closed) return
+    for (const row of kept(store => store.untaken(), [])) if (threads[row.to] && mine(row)) pass(row.to, threads[row.to]!.name, toMessage(row))
+  }
+
+  // A session that started before hex kept messages can't mark one taken itself, so its hook says so here.
+  function took(keys: unknown, session: unknown) {
+    if (!Array.isArray(keys) || typeof session !== 'string') return
+    for (const key of keys) kept(store => store.take(String(key), session), false)
   }
 
   // Claude Code runs a slash command like /compact only as a session's first prompt,
@@ -610,7 +679,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     const run = runOf(thread)
     const phase = run.phase
     const running = await claude.agent(current(thread) ?? '')
-    if (run.phase !== phase || phase.is !== 'live') return deliver(thread, threads[thread]!.name, message)
+    if (run.phase !== phase || phase.is !== 'live') return route(thread, threads[thread]!.name, message)
     const working = fresh(thread) ? run.turn === 'busy' || (running && running.status !== 'idle') : running?.status === 'busy'
     if (working && !run.queue.length) return phase.line.send({ type: 'inbound', ...message })
     run.queue.push(message)
@@ -639,7 +708,10 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     threads[thread] ??= { name: thread }
     const id = job && claude.record(job).sessionId
     if (id) note(thread, id)
-    for (const message of run.queue.splice(0)) line.send({ type: 'inbound', ...message })
+    const given = waiting(thread)
+    for (const message of given) line.send({ type: 'inbound', ...message })
+    run.handed = new Set(given.flatMap(message => message.meta.key ?? []))
+    run.queue.length = 0
     rest(thread)
     letGo(thread)
     if (stale(thread)) {
@@ -692,7 +764,7 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     if (started) fail(thread, 'its session ended before its channel connected')
     else become(run, { is: 'stopped' })
     if (thread === main) revive()
-    else if (!started && run.queue.length) void launch(thread, threads[thread]?.name ?? thread)
+    else if (!started && waiting(thread).length) void launch(thread, threads[thread]?.name ?? thread)
   }
 
   async function respawn(thread: string, running: claude.Agent) {
@@ -774,12 +846,15 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
   }).listen(socketPath)
 
   function handle(request: any) {
-    if (request.type === 'state') setState(request.thread, request.busy, request.background === true)
+    if (request.type === 'state') {
+      took(request.taken, request.session)
+      setState(request.thread, request.busy, request.background === true)
+    }
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
     if (request.type === 'answer') asks?.answer(request.thread, request.message, request.label, request.via)
     if (request.type === 'settle') asks?.settle(request.thread, request.message, request.note)
     if (request.type === 'reopen') asks?.reopen(request.thread, request.message, request.via)
-    if (request.type === 'inbound') deliver(request.thread, threads[request.thread]?.name ?? request.thread, { content: request.content, meta: request.meta })
+    if (request.type === 'inbound') deliver(request.thread, threads[request.thread]?.name ?? request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key })
     if (request.type === 'mirror') void mirror(api, find(request.thread), request.to, request.where).then(
       link => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
       error => process.stderr.write(`hub: couldn't mirror ${request.thread} to ${request.to}: ${error}\n`),
@@ -805,8 +880,11 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
         recover(thread)
       }
       if (main && !(fresh(main) && serving.has(main))) revive()
+      wake()
     })
   }
+  const unwatch = kept(store => store.watch(wake), () => {})
+  const unschedule = general && main ? schedule(storeDir, hexDir, main) : () => {}
 
   const api = {
     deliver,
@@ -841,6 +919,9 @@ export function startHub({ stateDir, channel, server, port = PORT, main, mainNam
     rename,
     close: () => {
       closed = true
+      unwatch()
+      unschedule()
+      apps.delete(app)
       sock.close()
       if (channels.get(path) === serve) channels.delete(path)
       for (const run of runs.values()) {

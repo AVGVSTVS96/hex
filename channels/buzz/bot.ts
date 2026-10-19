@@ -739,6 +739,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     }
     reactions.set(event.id, { thread, emoji: event.content, meta })
     hub.deliver(thread, hub.name(thread) ?? await nameOf(event.pubkey), {
+      key: event.id,
       content: `(reaction: ${event.content})`,
       meta: { ...(await about(event, thread, tag(target, 'h'))), reaction: event.content, ...meta },
     })
@@ -754,6 +755,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     }
     const meta = await about(event, asked.thread, await channelOf(asked.thread))
     hub.deliver(asked.thread, hub.name(asked.thread) ?? meta.user!, {
+      key: event.id,
       content: asked.choices[index]!.label,
       meta: { ...meta, button: 'true', button_message_id: id },
     })
@@ -769,8 +771,8 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     texts.delete(id)
     const meta = await about(event, thread)
     hub.deliver(thread, hub.name(thread) ?? meta.user!, reaction
-      ? { content: `(reaction removed: ${reaction.emoji})`, meta: { ...meta, reaction: reaction.emoji, reaction_removed: 'true', ...reaction.meta } }
-      : { content: '(deleted a message)', meta: { ...meta, deleted: 'true', message_id: id, ...(said?.text ? { deleted_text: said.text } : {}) } })
+      ? { key: event.id, content: `(reaction removed: ${reaction.emoji})`, meta: { ...meta, reaction: reaction.emoji, reaction_removed: 'true', ...reaction.meta } }
+      : { key: event.id, content: '(deleted a message)', meta: { ...meta, deleted: 'true', message_id: id, ...(said?.text ? { deleted_text: said.text } : {}) } })
   }
 
   async function handleInbound(event: Event): Promise<void> {
@@ -803,6 +805,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     // A bare tag on someone's message brings Hex in to read it: the message is reply_to_*.
     // On the sender's own message, those words are what they said, and the thread's log keeps them.
     const message: Message = {
+      key: event.id,
       content: text || (atts.length > 0 ? '(attachment)' : own || '(tagged you)'),
       meta: {
         ...(await about(event, thread, channel)),

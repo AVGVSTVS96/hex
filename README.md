@@ -123,7 +123,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 └── .hex/                           hex itself: this repo
     ├── HEX.md                      how it works
     ├── bin/
-    │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code
+    │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code; deliver wakes a thread
     │   ├── session                 how the hub starts each session
     │   ├── log                     saves each conversation to log/ as markdown
     │   ├── chat                        logs a DM, compresses it, and builds what its next session sees
@@ -136,10 +136,9 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   └── update                  pulls updates, verified before they go live
     ├── chat/prompt.md              Taelin's OptChat prompt, for DM sessions and their compactions
     ├── plugin/                     the hooks every session loads, and skills it reads when needed
-    ├── mods/scheduler/             sends schedules.json jobs to General
     ├── computer/setup              turns a Sprite into its computer
     ├── defaults/                   what `hex init` starts your folder with
-    ├── hub/                        gives every thread its own session
+    ├── hub/                        gives every thread its own session, keeps every message, runs schedules.json
     └── channels/                   the Telegram, Discord, Buzz, T3 Code and voice channels
 ```
 

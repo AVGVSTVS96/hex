@@ -28,7 +28,7 @@ case "${1:-}" in
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hooks bin/session's plugins load: a change to them renews sessions at their next rest.
-    export HEX_HOOKS="$hex/plugin/hooks/hooks.json:$hex/mods/scheduler/hooks/hooks.json"
+    export HEX_HOOKS="$hex/plugin/hooks/hooks.json"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     echo $$ > "$pidfile"
     trap 'kill "${hub:-}" 2>/dev/null; rm -f "$pidfile"; exit 0' INT TERM
@@ -55,12 +55,16 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
+  deliver)
+    shift
+    exec bun "$hex/hub/store.ts" "$home/state" "$@"
+    ;;
   status)
     if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi
     claude agents --json | jq -r --arg home "$home" '.[] | select(.cwd == $home) | "\(.name): \(.status // "running")"'
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|run|acp" >&2
+    echo "usage: hex init|start|stop|restart|status|run|acp|deliver" >&2
     exit 2
     ;;
 esac

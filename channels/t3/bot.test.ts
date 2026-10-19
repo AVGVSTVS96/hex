@@ -91,7 +91,8 @@ async function session(thread: string) {
   mkdirSync(join(transcript, '..'), { recursive: true })
   return {
     inbound,
-    busy: () => socket.write(JSON.stringify({ type: 'state', thread, busy: true }) + '\n'),
+    // As the prompt hook does for a session started before hex kept messages: it takes what reached it.
+    busy: () => socket.write(JSON.stringify({ type: 'state', thread, busy: true, taken: inbound.map(message => message.meta.key), session: SESSION }) + '\n'),
     idle: (background = false) => socket.write(JSON.stringify({ type: 'state', thread, busy: false, ...(background && { background }) }) + '\n'),
     write: (...entries: object[]) => appendFileSync(transcript, entries.map(entry => JSON.stringify(entry) + '\n').join('')),
   }

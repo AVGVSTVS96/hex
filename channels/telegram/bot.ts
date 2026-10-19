@@ -780,8 +780,9 @@ bot.on('message_reaction', ctx => {
     ...(known ? { reaction_to_user: known[1].user } : {}),
     ...(known?.[1].text ? { reaction_to_text: known[1].text } : {}),
   }
-  for (const emoji of emojiAdded) hub.deliver(thread, nameOf(ctx, thread), { content: `(reaction: ${emoji})`, meta: { ...meta, reaction: emoji } })
-  for (const emoji of emojiRemoved) hub.deliver(thread, nameOf(ctx, thread), { content: `(reaction removed: ${emoji})`, meta: { ...meta, reaction: emoji, reaction_removed: 'true' } })
+  const key = `${chat.id}:${message_id}:${ctx.update.update_id}`
+  for (const emoji of emojiAdded) hub.deliver(thread, nameOf(ctx, thread), { key: `${key}+${emoji}`, content: `(reaction: ${emoji})`, meta: { ...meta, reaction: emoji } })
+  for (const emoji of emojiRemoved) hub.deliver(thread, nameOf(ctx, thread), { key: `${key}-${emoji}`, content: `(reaction removed: ${emoji})`, meta: { ...meta, reaction: emoji, reaction_removed: 'true' } })
 })
 
 // Outside a forum a chat, a DM included, is one thread; a forum's topic is only
@@ -806,6 +807,7 @@ bot.on('callback_query:data', async ctx => {
   }
   ledger.answered(thread, message.message_id, label, 'telegram')
   hub.deliver(thread, nameOf(ctx, thread), {
+    key: `tap:${ctx.callbackQuery.id}`,
     content: label,
     meta: {
       chat_id: String(message.chat.id),
@@ -826,6 +828,7 @@ bot.on('poll_answer', ctx => {
   if (vote) ledger.answered(ask.thread, ask.message, vote, 'telegram')
   else ledger.reopened(ask.thread, ask.message)
   hub.deliver(ask.thread, nameOf(ctx, ask.thread), {
+    key: `poll:${poll_id}:${ctx.update.update_id}`,
     content: vote ? `(vote: ${vote})` : '(vote removed)',
     meta: {
       chat_id: target(ask.thread).chat_id,
@@ -970,6 +973,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
   // annotation is forgeable by any allowlisted sender typing that string.
   const message: Message = {
+    ...(msgId != null && { key: `${ctx.msg!.chat.id}:${msgId}${ctx.editedMessage ? `@${ctx.editedMessage.edit_date}` : ''}` }),
     content,
     meta: {
       chat_id,
