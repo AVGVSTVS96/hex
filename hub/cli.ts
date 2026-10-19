@@ -1,6 +1,6 @@
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
-import { names, render } from './profile.ts'
+import { names, render, waiting } from './profile.ts'
 import { open, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
@@ -13,6 +13,7 @@ const USAGE = `usage:
   hex task edit <task> [--owner <thread>] [--project <name>] [--done-when <outcome>]
   hex task <task> [--json]
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
+  hex questions [--thread <thread> | --all] [--json]
   hex message <key>
   hex recall <regex>`
 
@@ -23,6 +24,7 @@ const { values: flags, positionals } = parseArgs({
     user: { type: 'string' },
     quote: { type: 'string' },
     owner: { type: 'string' },
+    thread: { type: 'string' },
     project: { type: 'string' },
     'done-when': { type: 'string' },
     idea: { type: 'boolean' },
@@ -107,6 +109,12 @@ try {
     case 'tasks':
       show(store.tasks({ owner: flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), status: (flags.status?.split(',') ?? ['open']) as Status[] }))
       break
+    case 'questions': {
+      const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
+      if (flags.json) console.log(JSON.stringify(questions, null, 1))
+      else console.log(questions.map(question => waiting(question, names(state!))).join('\n') || 'no questions waiting')
+      break
+    }
     case 'message': {
       const said = args[0] && store.message(args[0])
       if (!said) throw new Error(`no message ${args[0] ?? ''}`)

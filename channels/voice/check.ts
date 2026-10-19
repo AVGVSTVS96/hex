@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
 import type { Ask as Asked } from '../../hub/ledger.ts'
+import { open as store } from '../../hub/store.ts'
 import type { CheckResult, Curated, Ref, Source } from './asks.ts'
 import { relay } from './relay.ts'
 import { T3, type Stuck } from './t3.ts'
@@ -105,10 +106,11 @@ function gather(state: string) {
   const names: Record<string, string> = {}
   const ledgers: Record<string, Asked[]> = {}
   const pins: { pin: Ref; topic: string; text: string }[] = []
+  const questions = store(state).questions()
   for (const app of readdirSync(state).filter(app => app !== 'voice')) {
     for (const [thread, known] of Object.entries<any>(json(join(state, app, 'threads.json')) ?? {})) names[`${app}:${thread}`] = known.name ?? thread
     const book = json(join(state, app, 'ledger.json'))
-    ledgers[app] = book?.asks ?? []
+    ledgers[app] = questions.filter(question => question.app === app)
     for (const [thread, pin] of Object.entries<any>(book?.pins ?? {})) if (pin.text) pins.push({ pin: { app, thread, message: pin.message }, topic: names[`${app}:${thread}`] ?? thread, text: clip(pin.text, LONG) })
   }
   const shown = (app: string, ask: Asked) => ({

@@ -17,6 +17,26 @@ export type Words = { message: string; text: string; who: string; at: string }
 export type Task = { id: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string }
 export type NewTask = { message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
 export type TaskChange = { status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string }
+// A call that's the owner's: a question a thread asked with buttons or a poll, in one app's
+// thread, under that app's id for the message. via: where the answer came from (the chat app's own
+// buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
+export type MessageId = number | string
+export type Answer = { label: string; at: string; via: string }
+export type Question = {
+  app: string
+  thread: string
+  message: MessageId
+  text: string
+  options: string[]
+  at: string
+  poll?: string
+  // Asked with a menu where any number of options can be picked, so a reopen puts the menu back.
+  multiple?: boolean
+  answer?: Answer
+  settled?: { note: string; at: string }
+}
+export type NewQuestion = Omit<Question, 'at'> & { at?: string }
+type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
 type StoredTask = { n: number; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string }
 
 // Migration n takes the database from user_version n to n + 1. Append; never edit one that has
@@ -66,6 +86,22 @@ const migrations = [
   create trigger kept_words before update on words begin select raise(abort, 'words are added, never rewritten'); end;
   create trigger kept_words_delete before delete on words begin select raise(abort, 'words are added, never taken away'); end;
   create table shown (session text primary key, digest text not null);`,
+  `create table questions (
+    n integer primary key autoincrement,
+    app text not null,
+    thread text not null,
+    message not null,
+    text text not null,
+    options text not null check (json_valid(options) and json_type(options) = 'array'),
+    poll text,
+    multiple integer not null default 0 check (multiple in (0, 1)),
+    answer text check (json_valid(answer)),
+    settled text check (json_valid(settled)),
+    at text not null check (at ${UTC}),
+    unique (app, thread, message)
+  );
+  create index waiting on questions (thread) where answer is null and settled is null;
+  create index polls on questions (app, poll) where poll is not null;`,
 ]
 
 const now = () => new Date().toISOString()
@@ -243,6 +279,50 @@ export class Store {
     return rows.map(row => this.toTask(row))
   }
 
+  // A new question; at, answer and settled come only with one an older hex kept elsewhere.
+  ask({ app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {
+    this.write(() =>
+      this.db
+        .query('insert into questions (app, thread, message, text, options, poll, multiple, answer, settled, at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing')
+        .run(app, thread, message, text, JSON.stringify(options), poll ?? null, multiple ? 1 : 0, answer ? JSON.stringify(answer) : null, settled ? JSON.stringify(settled) : null, at),
+    )
+  }
+
+  question(app: string, thread: string, message: MessageId): Question | null {
+    const row = this.db.query('select * from questions where app = ? and thread = ? and message = ?').get(app, thread, message) as StoredQuestion | null
+    return row && toQuestion(row)
+  }
+
+  poll(app: string, poll: string): Question | null {
+    const row = this.db.query('select * from questions where app = ? and poll = ?').get(app, poll) as StoredQuestion | null
+    return row && toQuestion(row)
+  }
+
+  // Oldest first: every app's, or one app's or thread's, and only those still waiting on an answer.
+  questions({ app, thread, waiting }: { app?: string; thread?: string; waiting?: boolean } = {}): Question[] {
+    const rows = this.db
+      .query('select * from questions where (?1 is null or app = ?1) and (?2 is null or thread = ?2) and (?3 is null or (answer is null and settled is null)) order by n')
+      .all(app ?? null, thread ?? null, waiting ? 1 : null) as StoredQuestion[]
+    return rows.map(toQuestion)
+  }
+
+  answered(app: string, thread: string, message: MessageId, label: string, via: string) {
+    this.write(() => this.db.query('update questions set answer = ?, settled = null where app = ? and thread = ? and message = ?').run(JSON.stringify({ label, at: now(), via }), app, thread, message))
+  }
+
+  settled(app: string, thread: string, message: MessageId, note: string) {
+    this.write(() => this.db.query('update questions set settled = ? where app = ? and thread = ? and message = ?').run(JSON.stringify({ note, at: now() }), app, thread, message))
+  }
+
+  reopened(app: string, thread: string, message: MessageId) {
+    this.write(() => this.db.query('update questions set answer = null, settled = null where app = ? and thread = ? and message = ?').run(app, thread, message))
+  }
+
+  // The message that asked it is gone: one message's question, or a whole thread's.
+  unask(app: string, thread: string, message?: MessageId) {
+    this.write(() => this.db.query('delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
+  }
+
   // Whether what a session was last shown differs from digest, noting digest as shown.
   show(session: string, digest: string): boolean {
     return this.write(() => {
@@ -313,6 +393,9 @@ export class Store {
 
 const stores = new Map<string, Store>()
 
+// Where an app's hub keeps hex.db: the hex's own state/, or the app's state folder outside a hex.
+export const storeDir = (stateDir: string) => (process.env.HEX_DIR ? join(process.env.HEX_DIR, 'state') : stateDir)
+
 // The store in dir (a hex's state/), one per process.
 export function open(dir: string): Store {
   let store = stores.get(dir)
@@ -324,6 +407,21 @@ function number(id: string): number {
   const n = Number(id.replace(/^t-/, ''))
   if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`)
   return n
+}
+
+function toQuestion(row: StoredQuestion): Question {
+  return {
+    app: row.app,
+    thread: row.thread,
+    message: row.message,
+    text: row.text,
+    options: JSON.parse(row.options),
+    at: row.at,
+    ...(row.poll && { poll: row.poll }),
+    ...(row.multiple && { multiple: true }),
+    ...(row.answer && { answer: JSON.parse(row.answer) }),
+    ...(row.settled && { settled: JSON.parse(row.settled) }),
+  }
 }
 
 function toRow(row: Stored): Row {

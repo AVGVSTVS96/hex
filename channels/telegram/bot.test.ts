@@ -7,6 +7,7 @@ import * as grammy from 'grammy'
 import { clients } from '../../hub/hub.ts'
 import { connect as connectSession } from '../../hub/testing.ts'
 import { until } from '../../hub/until.ts'
+import { open } from '../../hub/store.ts'
 
 const CHANNEL = 'plugin:telegram@hex'
 const OWNER = 2000
@@ -336,7 +337,7 @@ test('a DM is its own thread: it reaches the DM session, not the group, and repl
 })
 
 const ledger = () => JSON.parse(readFileSync(join(state, 'ledger.json'), 'utf8'))
-const asked = (id: number) => ledger().asks.find((ask: any) => ask.message === id)
+const asked = (id: number) => open(state).question('telegram', DESK, id)!
 
 test('a question with buttons goes in the ledger, and a tap there answers it', async () => {
   const sent = await call('reply', { text: 'Deploy now?', buttons: ['Deploy', 'Wait'] })
@@ -363,7 +364,7 @@ test('a question answered in the app reaches its thread like a tap, says so on i
   expect(asked(id).answer).toBeUndefined()
 })
 
-test('a settled question loses its buttons without reaching its thread, and an edit that drops the buttons settles one too', async () => {
+test('a settled question loses its buttons without reaching its thread, and an edit keeps a question open with its buttons until it says it settled', async () => {
   const first = Number((await call('reply', { text: 'Buy the domain?', buttons: ['Buy', 'Skip'] })).text.match(/id: (\d+)/)[1])
   const before = received.length
   session({ type: 'settle', thread: DESK, message: first, note: 'Settled: bought on Oct 12' })
@@ -372,8 +373,13 @@ test('a settled question loses its buttons without reaching its thread, and an e
   expect(received.slice(before).filter(line => line.type === 'inbound')).toEqual([])
 
   const second = Number((await call('reply', { text: 'Rename it?', buttons: ['Yes', 'No'] })).text.match(/id: (\d+)/)[1])
-  await call('edit_message', { message_id: String(second), text: 'Renamed, as you said in the call.' })
-  expect(asked(second).settled).toMatchObject({ note: 'Edited' })
+  await call('edit_message', { message_id: String(second), text: 'Rename it? It reads better.' })
+  expect(await called('editMessageText', p => p.message_id === second)).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: 'Yes', callback_data: '0' }, { text: 'No', callback_data: '1' }]] } })
+  expect(asked(second).settled).toBeUndefined()
+  await call('edit_message', { message_id: String(second), text: 'Renamed, as you said in the call.', settled: true })
+  expect(await called('editMessageText', p => p.message_id === second && p.text === 'Renamed, as you said in the call.')).not.toHaveProperty('reply_markup')
+  expect(await called('editMessageReplyMarkup', p => p.message_id === second)).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: '✓ Settled', disabled: {} }]] } })
+  expect(asked(second).settled).toMatchObject({ note: '✓ Settled' })
 })
 
 test('a poll answered in the app closes, and its vote reaches the thread', async () => {

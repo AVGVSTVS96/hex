@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, renameSync, watch, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { Ask as Asked, MessageId, Pin } from '../../hub/ledger.ts'
+import { open as store } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
 import { Check } from './check.ts'
 import { Links } from './links.ts'
@@ -99,6 +100,7 @@ export class Asks extends Changes {
     this.marks = readMarks(join(state, 'voice', 'marks.json'))
     this.t3 = new T3(() => this.schedule(), t3Database)
     for (const app of apps(state)) this.stops.push(watchDir(join(state, app), file => (file === 'ledger.json' || file === 'threads.json') && this.schedule()))
+    this.stops.push(store(state).watch(() => this.schedule()))
     this.stops.push(watchDir(join(state, 'voice'), file => file === 'check.json' && this.schedule()))
     this.build()
   }
@@ -223,9 +225,10 @@ export class Asks extends Changes {
   private build() {
     this.names.clear()
     this.pins.clear()
+    const questions = store(this.state).questions()
     for (const app of apps(this.state)) {
       const book = readJson(join(this.state, app, 'ledger.json'))
-      this.ledgers.set(app, book?.asks ?? [])
+      this.ledgers.set(app, questions.filter(question => question.app === app))
       for (const [thread, pin] of Object.entries<any>(book?.pins ?? {})) if (pin.text) this.pins.set(`${app}:${thread}`, pin)
       for (const [thread, known] of Object.entries<any>(readJson(join(this.state, app, 'threads.json')) ?? {})) this.names.set(`${app}:${thread}`, known.name ?? thread)
     }
