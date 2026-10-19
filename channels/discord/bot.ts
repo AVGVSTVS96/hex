@@ -498,21 +498,28 @@ function serve(token: string) {
     await (ask.poll ? msg.poll!.end() : msg.edit({ components: only(text) }))
   }
 
+  // What a question's buttons say once it's answered somewhere other than its own buttons.
+  const answeredText = ({ label, via }: { label: string; via: string }) => `✓ Answered ${ANSWERED_IN[via] ?? via}: ${label}`
+
   async function answerAsk(thread: string, message: MessageId, label: string, via: string) {
     const ask = ledger.find(thread, message)
     if (!ask || ask.answer) return
-    await closeAsk(thread, ask, `✓ Answered ${ANSWERED_IN[via] ?? via}: ${label}`).catch(err => process.stderr.write(`discord hub: couldn't close the buttons on ${thread} ${message}: ${err}\n`))
-    ledger.answered(thread, message, label, via)
-    hub.deliver(thread, hub.name(thread) ?? thread, {
-      content: ask.poll ? `(vote: ${label})` : label,
-      meta: {
-        chat_id: thread,
-        user: `hex ${via}`,
-        ts: new Date().toISOString(),
-        ...(ask.poll ? { vote: label, poll_message_id: String(message), poll: ask.text } : { button: 'true', button_message_id: String(message) }),
-        answered_in: ANSWERED_IN[via] ?? via,
+    const answered = hub.deliver(
+      thread,
+      hub.name(thread) ?? thread,
+      {
+        content: ask.poll ? `(vote: ${label})` : label,
+        meta: {
+          chat_id: thread,
+          user: `hex ${via}`,
+          ts: new Date().toISOString(),
+          ...(ask.poll ? { vote: label, poll_message_id: String(message), poll: ask.text } : { button: 'true', button_message_id: String(message) }),
+          answered_in: ANSWERED_IN[via] ?? via,
+        },
       },
-    })
+      () => ledger.answered(thread, message, label, via),
+    )
+    if (answered) await closeAsk(thread, ask, answeredText({ label, via })).catch(err => process.stderr.write(`discord hub: couldn't close the buttons on ${thread} ${message}: ${err}\n`))
   }
 
   async function settleAsk(thread: string, message: MessageId, note: string) {
@@ -527,14 +534,19 @@ function serve(token: string) {
   async function reopenAsk(thread: string, message: MessageId, via: string) {
     const ask = ledger.find(thread, message)
     if (!ask || !(ask.answer || ask.settled)) return
-    if (!ask.poll) await threadChannel(thread).then(ch => ch.messages.edit(String(message), { components: choices(ask.options, !!ask.multiple) })).catch(err => process.stderr.write(`discord hub: couldn't put the buttons back on ${thread} ${message}: ${err}\n`))
     const taken = ask.answer?.label
-    ledger.reopened(thread, message)
-    if (!taken) return
-    hub.deliver(thread, hub.name(thread) ?? thread, {
-      content: `(took back: ${taken})`,
-      meta: { chat_id: thread, user: `hex ${via}`, ts: new Date().toISOString(), took_back: taken, [ask.poll ? 'poll_message_id' : 'button_message_id']: String(message) },
-    })
+    const reopened = taken
+      ? hub.deliver(
+          thread,
+          hub.name(thread) ?? thread,
+          {
+            content: `(took back: ${taken})`,
+            meta: { chat_id: thread, user: `hex ${via}`, ts: new Date().toISOString(), took_back: taken, [ask.poll ? 'poll_message_id' : 'button_message_id']: String(message) },
+          },
+          () => ledger.reopened(thread, message),
+        )
+      : ledger.reopened(thread, message)
+    if (reopened && !ask.poll) await threadChannel(thread).then(ch => ch.messages.edit(String(message), { components: choices(ask.options, !!ask.multiple) })).catch(err => process.stderr.write(`discord hub: couldn't put the buttons back on ${thread} ${message}: ${err}\n`))
   }
 
   async function call(caller: string, tool: string, args: Record<string, unknown>): Promise<string> {
@@ -862,36 +874,48 @@ function serve(token: string) {
     if (msg.author.id !== client.user!.id || !msg.poll) return
     const vote = msg.poll.answers.get(answer.id)?.text ?? ''
     const who = await client.users.fetch(userId)
-    if (!removed) ledger.answered(ch.id, msg.id, vote, 'discord')
-    else if (ledger.find(ch.id, msg.id)?.answer?.label === vote) ledger.reopened(ch.id, msg.id)
-    hub.deliver(ch.id, nameOf(ch), {
-      content: `(${removed ? 'vote removed' : 'vote'}: ${vote})`,
-      meta: {
-        chat_id: ch.id,
-        user: who.username,
-        user_id: who.id,
-        ts: new Date().toISOString(),
-        vote,
-        ...(removed ? { vote_removed: 'true' } : {}),
-        poll_message_id: msg.id,
-        poll: msg.poll.question.text ?? '',
+    hub.deliver(
+      ch.id,
+      nameOf(ch),
+      {
+        content: `(${removed ? 'vote removed' : 'vote'}: ${vote})`,
+        meta: {
+          chat_id: ch.id,
+          user: who.username,
+          user_id: who.id,
+          ts: new Date().toISOString(),
+          vote,
+          ...(removed ? { vote_removed: 'true' } : {}),
+          poll_message_id: msg.id,
+          poll: msg.poll.question.text ?? '',
+        },
       },
-    })
+      () => (removed ? ledger.find(ch.id, msg.id)?.answer?.label === vote && ledger.reopened(ch.id, msg.id) : ledger.answered(ch.id, msg.id, vote, 'discord', true), true),
+    )
   }
 
-  function picked(ch: ThreadChannel | DMChannel, label: string, at: Date, user: { id: string; username: string }, message: string) {
-    ledger.answered(ch.id, message, label, 'discord')
-    hub.deliver(ch.id, nameOf(ch), {
-      content: label,
-      meta: {
-        chat_id: ch.id,
-        user: user.username,
-        user_id: user.id,
-        ts: at.toISOString(),
-        button: 'true',
-        button_message_id: message,
+  // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does,
+  // and a later tap's buttons go back to saying which one stands.
+  async function picked(ch: ThreadChannel | DMChannel, label: string, at: Date, user: { id: string; username: string }, message: string) {
+    const ask = ledger.find(ch.id, message)
+    const answered = hub.deliver(
+      ch.id,
+      nameOf(ch),
+      {
+        content: label,
+        meta: {
+          chat_id: ch.id,
+          user: user.username,
+          user_id: user.id,
+          ts: at.toISOString(),
+          button: 'true',
+          button_message_id: message,
+        },
       },
-    })
+      () => !ask || ledger.answered(ch.id, message, label, 'discord'),
+    )
+    const standing = !answered && ledger.find(ch.id, message)?.answer
+    if (standing && standing.label !== label) await closeAsk(ch.id, ask!, answeredText(standing)).catch(err => process.stderr.write(`discord hub: couldn't close the buttons on ${ch.id} ${message}: ${err}\n`))
   }
 
   // Discord wants an answer to a tap within three seconds, so the buttons change before anything is fetched.
@@ -906,7 +930,7 @@ function serve(token: string) {
     const labels = (tap.message.components as ActionRow<ButtonComponent>[]).flatMap(row => row.components.map(button => button.label!))
     const chosen = Number(tap.customId)
     await tap.update({ components: buttons(labels, chosen) })
-    picked(await threadChannel(tap.channelId), labels[chosen]!, tap.createdAt, tap.user, tap.message.id)
+    await picked(await threadChannel(tap.channelId), labels[chosen]!, tap.createdAt, tap.user, tap.message.id)
   }
 
   async function handleMenu(pick: StringSelectMenuInteraction): Promise<void> {
@@ -914,7 +938,7 @@ function serve(token: string) {
     const labels = (pick.component as StringSelectMenuComponent).options.map(option => option.label)
     const chosen = pick.values.map(value => labels[Number(value)]!)
     await pick.update({ components: menu(labels, chosen) })
-    picked(await threadChannel(pick.channelId), chosen.join('; '), pick.createdAt, pick.user, pick.message.id)
+    await picked(await threadChannel(pick.channelId), chosen.join('; '), pick.createdAt, pick.user, pick.message.id)
   }
 
   // A thread's own controls, outside its conversation: its session never sees them.

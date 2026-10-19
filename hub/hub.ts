@@ -645,13 +645,16 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   // A message is kept before anything else happens to it, so once this returns the app can be told
   // it arrived: a crash from then on leaves it with hex, for whichever session serves the thread
-  // next. A key kept already is the app sending it again.
-  function deliver(thread: string, name: string, message: Message) {
+  // next. A key kept already is the app sending it again. along: the change to hex's records the
+  // message tells of, like the answer a tap gives, made in the same write so both land or neither
+  // does; when it changes nothing, there's nothing to tell. Whether the thread is told.
+  function deliver(thread: string, name: string, message: Message, along?: () => boolean): boolean {
     const key = `${app}:${message.key ?? randomUUID()}`
     const { content, meta } = message
-    const added = kept(store => store.deliver({ key, to: thread, from: app, body: content, meta }), undefined)
-    if (added === false) return
+    const added = kept(store => store.write(() => (!along || along()) && store.deliver({ key, to: thread, from: app, body: content, meta })), undefined)
+    if (added === false) return false
     pass(thread, name, added ? { content, meta: { key, ...meta } } : { content, meta })
+    return true
   }
 
   function pass(thread: string, name: string, message: Message) {

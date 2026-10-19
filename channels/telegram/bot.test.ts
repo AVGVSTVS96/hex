@@ -364,6 +364,20 @@ test('a question answered in the app reaches its thread like a tap, says so on i
   expect(asked(id).answer).toBeUndefined()
 })
 
+test('of two taps on one question only the first counts: the thread hears it once, and the later tap\'s buttons go back to it', async () => {
+  const id = Number((await call('reply', { text: 'Ship tonight?', buttons: ['Ship', 'Hold'] })).text.match(/id: (\d+)/)[1])
+  const markup = { inline_keyboard: [[{ text: 'Ship', callback_data: '0' }, { text: 'Hold', callback_data: '1' }]] }
+  const tap = (callback: string, data: string) =>
+    update({ callback_query: { id: callback, from: owner, chat_instance: 'x', data, message: message({ message_id: id, from: hex, text: 'Ship tonight?', reply_markup: markup }) } })
+  await Promise.all([tap('ship', '0'), tap('hold', '1')])
+  const { label } = asked(id).answer!
+  const shown = () => calls.findLast(c => c.method === 'editMessageReplyMarkup' && c.payload.message_id === id)?.payload.reply_markup.inline_keyboard[0][0].text
+  await until(() => shown() === `✓ ${label}`)
+  await inbound(line => line.meta.button_message_id === String(id))
+  expect(received.filter(line => line.type === 'inbound' && line.meta.button_message_id === String(id)).map(line => line.content)).toEqual([label])
+  expect(open(state).db.query("select count(*) as n from messages where json_extract(meta, '$.button_message_id') = ?").get(String(id))).toEqual({ n: 1 })
+})
+
 test('a settled question loses its buttons without reaching its thread, and an edit keeps a question open with its buttons until it says it settled', async () => {
   const first = Number((await call('reply', { text: 'Buy the domain?', buttons: ['Buy', 'Skip'] })).text.match(/id: (\d+)/)[1])
   const before = received.length
