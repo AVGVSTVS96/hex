@@ -30,6 +30,7 @@ beforeEach(() => {
   const fake = join(dir, 'claude')
   writeFileSync(fake, `#!/bin/sh
 jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/calls"
+[ "$1 $2" = "agents --json" ] && [ -f "${dir}/unanswering" ] && exit 1
 [ "$1 $2" = "agents --json" ] && [ -f "${dir}/unreadable" ] && rm "${dir}/unreadable" && echo 'Error: connect ECONNREFUSED' && exit 1
 [ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
 [ "$1 $2" = "daemon status" ] && [ -f "${dir}/down" ] && exit 1
@@ -742,6 +743,14 @@ test('a message that comes while a stopped session is still exiting waits, and r
   await until(() => resumed.received.length)
   expect(resumed.received[0]).toMatchObject({ type: 'inbound', content: 'hi' })
   expect(old.received).toEqual([])
+})
+
+test('a stop goes out while Claude\'s daemon isn\'t answering, without waiting for it to answer', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, status: 'idle' }] })
+  await session('chat:7')
+  writeFileSync(join(dir, 'unanswering'), '')
+  hub.stop('chat:7')
+  await until(() => calls().find(args => args[0] === 'stop'))
 })
 
 test('a thread\'s model and effort are kept, and a running session takes them by starting again with its next message', async () => {

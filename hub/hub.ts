@@ -424,15 +424,15 @@ export function startHub({ stateDir, storeDir = STORE || stateDir, channel, serv
   }
 
   // `claude stop` returns before the process exits, and the session keeps its channel until it
-  // does, so a message meanwhile waits for the exit (deliver). Its process is found while Claude
-  // still lists it, before the stop.
+  // does, so a message meanwhile waits for the exit (route). Its process is found while Claude
+  // still lists it, before the stop; when Claude can't say, the stop goes ahead without the wait.
   function stop(thread: string, running?: claude.Agent) {
     const run = runOf(thread)
     clearTimeout(run.rest)
     run.rest = undefined
     const session = running?.sessionId ?? current(thread)
     if (!session) return Promise.resolve()
-    const ending: Promise<void> = (running ? Promise.resolve(running) : claude.agent(session))
+    const ending: Promise<void> = (running ? Promise.resolve(running) : claude.listing(session))
       .then(agent => {
         void claude.stop(session)
         return agent && claude.exited(agent.pid)
