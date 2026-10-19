@@ -66,7 +66,7 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 - **Works with any Claude connector.** Every connector on your Claude account works in every hex session, with nothing to set up on the machine: Gmail, your calendar, [Executor](https://executor.sh) for many accounts behind one sign-in, [AgentMail](https://agentmail.to) for an inbox of its own. Sending, replying or deleting through any of them waits for your yes.
 - **It speaks up when it matters.** Every hour while you're up it checks your mail, the work it started, threads waiting on you, and anything it said it would follow up on, and only messages you if something's worth it. Other jobs are lines in `schedules.json`, a cron line and a prompt each.
 - **A computer of its own (optional).** A cloud desktop with Chrome that hex drives with [cua-driver](https://cua.ai), for anything that needs a real browser, on whatever provider you like. You can watch its screen. `computer/setup` builds one on a [Fly.io Sprite](https://sprites.dev) in one command.
-- **A vault of its own.** When hex needs a password, it sends you a link. What you type there is encrypted in your browser and only hex can open it, so it never passes through chat or the model. hex signs in with it on its computer without ever seeing it.
+- **A vault of its own.** hex's vault is [enclave](https://github.com/AVGVSTVS96/enclave). When hex needs a password, it sends you a link. What you type there is encrypted in your browser and only hex can open it, so it never passes through chat or the model. hex signs in with it on its computer without ever seeing it, 2FA codes and passkeys included, and it can copy in your whole Proton Pass vault.
 - **Voice notes** work with any OpenAI-compatible speech-to-text endpoint, hosted or local.
 
 ## Works with your client
@@ -119,8 +119,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 ├── schedules.json                  recurring jobs, the hourly check included
 ├── memory/  log/                   its OptMem memory, every conversation as markdown
 ├── chat/                           each DM's chat that never ends: its log, summary tree and view
-├── vault/                          its saved secrets, encrypted
-├── .env  state/                    bot tokens, thread lists, the vault key (never committed)
+├── .env  state/                    bot tokens, thread lists (never committed)
 └── .hex/                           hex itself: this repo
     ├── HEX.md                      how it works
     ├── bin/
@@ -136,10 +135,9 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── vault                   asks you for secrets by link, signs in with them
     │   └── update                  pulls updates, verified before they go live
     ├── chat/prompt.md              Taelin's OptChat prompt, for DM sessions and their compactions
-    ├── plugin/                     the hooks every session loads
+    ├── plugin/                     the hooks every session loads, and skills it reads when needed
     ├── mods/scheduler/             sends schedules.json jobs to General
     ├── computer/setup              turns a Sprite into its computer
-    ├── vault/                      the vault's relay, page and default store
     ├── defaults/                   what `hex init` starts your folder with
     ├── hub/                        gives every thread its own session
     └── channels/                   the Telegram, Discord, Buzz, T3 Code and voice channels

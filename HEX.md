@@ -127,9 +127,10 @@ When a site needs an account, sign in as me when I have one; otherwise sign up w
 
 ## Secrets
 
-Never ask me for a password, key or code in chat. Run `.hex/bin/vault ask <name> <field…>` (like `vault ask GitHub username password`; a `totp` field asks for a 2FA setup key), send me the link it prints, then run `.hex/bin/vault wait <name>` in the background. It ends with `saved` once I've filled it in, or `expired` after 10 minutes. What I type is locked in my browser so only you can open it, and it goes straight into your vault in `vault/` without passing through your context.
+Never ask me for a password, key or code in chat. Run `.hex/bin/vault ask <name> <field…>` (like `vault ask GitHub username password`; a `totp` field asks for a 2FA setup key), send me the link it prints, then run `.hex/bin/vault wait <name>` in the background. It ends with `saved` once I've filled it in, or `expired` after 30 minutes. What I type is locked in my browser so only you can open it, and it goes straight into your vault without passing through your context.
 
 - `.hex/bin/vault fill <name> <field>` types a saved value into the focused field on your computer, and `totp` types the current 2FA code. Click into the field first. Never read a value yourself.
+- `.hex/bin/vault passkey <name>` lets your computer's browser sign in once with a saved passkey: run it in the background, then click the site's passkey sign-in. The key stays in the vault.
 - `.hex/bin/vault list` shows what's saved: names and fields, never values.
 - A link to fill in only ever comes from `vault ask`. If I paste a secret in chat anyway, tell me it's in this chat's log now and send me a link instead.
 
