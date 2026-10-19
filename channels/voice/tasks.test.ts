@@ -467,6 +467,22 @@ test("a job's session works under the thread that owns it, wherever it runs, and
   await until(() => theo()?.state !== 'working' && !tasks.get('claude:92929292'))
 })
 
+test("a job's session works under the thread that owns it while that thread has no session of its own", async () => {
+  const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:3675' } })
+  afterAll(() => owned.kill())
+  threads('telegram', { ...telegram, '-1001234567890:3675': { name: 'unemployment' } })
+  const claim = () => tasks.get('telegram:-1001234567890:3675')
+  job('93939393-claim', { state: 'working', detail: 'filling the claim', updatedAt: ago(0) })
+  running('93939393-claim', 'busy', owned.pid, { kind: 'interactive', name: 'unemployment/claim', cwd: '/scratch/claim', startedAt: Date.now() })
+  await until(() => claim()?.state === 'working')
+  expect(claim()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['93939393-claim', 'unemployment/claim', 'working']])
+  expect(tasks.get('claude:93939393')).toBeUndefined()
+  step(join(claude, 'projects', '-scratch-claim', '93939393-claim.jsonl'), 'Read', { file_path: '/scratch/claim/form.md' })
+  await until(() => claim()?.agents[0]?.line === 'Reading form.md')
+  rmSync(join(claude, 'sessions', '93939393.json'))
+  await until(() => !claim())
+})
+
 test("a renewed session's new job folder still wakes the list", async () => {
   rmSync(join(claude, 'jobs', 'aaaaaaaa'), { recursive: true })
   job('aaaaaaaa-general', { state: 'done', detail: 'renewed', updatedAt: ago(0) })
