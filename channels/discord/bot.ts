@@ -16,6 +16,7 @@ import {
   ApplicationIntegrationType,
   InteractionContextType,
   DiscordjsErrorCodes,
+  RESTJSONErrorCodes,
   Routes,
   parseEmoji,
   type Message as DiscordMessage,
@@ -555,6 +556,11 @@ function serve(token: string) {
       return `forwarded (id: ${sent.id})`
     }
     const thread = args.thread ? hub.find(args.thread as string) : caller
+    if (tool === 'close_thread' && (await client.channels.fetch(thread).then(() => false, err => err?.code === RESTJSONErrorCodes.UnknownChannel))) {
+      const name = hub.name(thread) ?? thread
+      void hub.retire(thread)
+      return `forgot "${name}": its Discord thread no longer exists`
+    }
     const ch = await threadChannel(thread)
     const access = loadAccess()
     switch (tool) {
