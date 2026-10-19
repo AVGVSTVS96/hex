@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { connect, type Socket } from 'net'
 import { createInterface } from 'readline'
+import { randomUUID } from 'crypto'
 
 // T3 Code starts this as its ACP agent; the agent itself runs in the hub service. A hub restart
 // closes the socket, which T3 would take as its agent dying, so this connects again and opens the
@@ -18,6 +19,8 @@ if (!path) {
 const DOWN = 120_000
 // Ids of the requests this sends itself, whose answers T3 never asked for.
 const OWN = 'hex-acp:'
+// Each prompt's own id, which hex keeps it under, so asking again after a restart never makes a second copy.
+const KEY = 'hex/key'
 
 type Request = { jsonrpc: '2.0'; id: string | number; method: string; params: any }
 type Waiting = { line: string; request: Request; at: number }
@@ -51,12 +54,12 @@ function reach(again = false) {
   const next = connect(path)
   next.on('connect', () => {
     socket = next
-    createInterface({ input: next, crlfDelay: Infinity }).on('line', fromHex)
+    createInterface({ input: next, crlfDelay: Infinity }).on('line', fromHex).on('error', () => {})
     if (again) reopen(next)
     for (const line of held.splice(0)) fromT3(line)
   })
   next.on('error', error => {
-    if (again) return
+    if (again || socket === next) return
     process.stderr.write(`hex acp: can't reach hex at ${path} (${error.message}). Is hex running?\n`)
     process.exit(1)
   })
@@ -77,6 +80,10 @@ function reach(again = false) {
 function fromT3(line: string) {
   if (!socket) return void held.push(line)
   const message = parse(line)
+  if (message?.method === 'session/prompt') {
+    message.params._meta = { ...message.params._meta, [KEY]: randomUUID() }
+    line = JSON.stringify(message)
+  }
   if (message?.method && message.id != null) {
     const { method, params } = message
     waiting.set(message.id, { line, request: message, at: Date.now() })

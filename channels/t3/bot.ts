@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { basename, join } from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
-import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
+import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptRequest, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
 import { startHub, clients, begin, move, asked, title, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
@@ -167,7 +167,7 @@ function keep(thread: string) {
 
 // T3's MCP credentials live only in its running server, so when T3 quits or restarts
 // mid-turn (the prompt's request aborts) the session's T3 tools are dead: it stops like a cancel.
-function prompt(thread: string, blocks: ContentBlock[], client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
+function prompt({ sessionId: thread, prompt: blocks, _meta }: PromptRequest, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
   keep(known(thread))
   const name = hub.name(thread)!
   const replay = replays.get(thread)?.shift()
@@ -180,7 +180,7 @@ function prompt(thread: string, blocks: ContentBlock[], client: AgentContext, si
   return new Promise((resolve, reject) => {
     const turn = track(thread, client, signal, resolve, reject, Date.now(), compact)
     if (session) turn.reader = reader(thread, session, turn)
-    if (!compact) return hub.deliver(thread, name, { content: render(blocks), meta: { ts: new Date(turn.since).toISOString() } })
+    if (!compact) return hub.deliver(thread, name, message(blocks, turn.since, _meta))
     compaction(turn, thread, 'in_progress')
     hub.command(thread, '/compact')
   })
@@ -198,14 +198,19 @@ function track(thread: string, client: AgentContext, signal: AbortSignal, resolv
   return turn
 }
 
+// The key `hex acp` gives a prompt (acp.ts) keeps it one message in hex.db however often it's sent.
+function message(blocks: ContentBlock[], since: number, meta: PromptRequest['_meta']) {
+  return { content: render(blocks), meta: { ts: new Date(since).toISOString() }, key: meta?.['hex/key'] as string | undefined }
+}
+
 // After a hub restart, `hex acp` asks again for the turn T3 was waiting on (acp.ts): it streams
-// from when T3 sent the prompt, and ends like any turn. A prompt its session hasn't taken yet is
-// still in hex.db, which gives it to the session when its channel connects; a /compact that isn't
-// running anymore ended while hex was down. The new hub may not know a session that started just
+// from when T3 sent the prompt, and ends like any turn. The prompt is delivered again under its
+// key, which reaches the session only if the old hub never kept it; a /compact that isn't running
+// anymore ended while hex was down. The new hub may not know a session that started just
 // before the restart until its channel reconnects, so the session the turn follows is the one
 // running for the thread.
-type Rejoin = { sessionId: string; prompt: ContentBlock[]; since: number }
-async function rejoin({ sessionId: thread, prompt: blocks, since }: Rejoin, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
+type Rejoin = PromptRequest & { since: number }
+async function rejoin({ sessionId: thread, prompt: blocks, since, _meta }: Rejoin, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
   keep(known(thread))
   const running = await hub.running(thread)
   if (turns.has(thread)) throw RequestError.invalidRequest(undefined, 'this thread is already working on a prompt')
@@ -215,7 +220,8 @@ async function rejoin({ sessionId: thread, prompt: blocks, since }: Rejoin, clie
     const turn = track(thread, client, signal, resolve, reject, since)
     if (session) turn.reader = reader(thread, session, turn, since)
     const asked = !!turn.reader?.asked()
-    if (compacting(blocks) && !working && !asked) return finish(thread, 'end_turn')
+    if (!compacting(blocks)) hub.deliver(thread, hub.name(thread)!, message(blocks, since, _meta))
+    else if (!working && !asked) return finish(thread, 'end_turn')
     turn.done = asked && !working
     turn.reader?.settle()
   })
@@ -395,7 +401,7 @@ function serve(socket: Socket) {
       return { configOptions: options(params.sessionId) }
     })
     .onRequest('session/set_config_option', ({ params }) => configure(params.sessionId, params.configId, params.value))
-    .onRequest('session/prompt', ({ params, client, signal }) => prompt(params.sessionId, params.prompt, client, signal))
+    .onRequest('session/prompt', ({ params, client, signal }) => prompt(params, client, signal))
     .onRequest('_hex/rejoin', { parse: params => params as Rejoin }, ({ params, client, signal }) => rejoin(params, client, signal))
     .onNotification('session/cancel', ({ params }) => cancel(params.sessionId))
     .connect(ndJsonStream(Writable.toWeb(socket) as WritableStream<Uint8Array>, Readable.toWeb(socket) as ReadableStream<Uint8Array>))

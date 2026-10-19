@@ -426,6 +426,25 @@ test('a prompt a hub restart lost before its session took it reaches the session
   hex.idle()
   expect(await answer).toEqual({ stopReason: 'end_turn' })
   expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
+  expect(new Database(join(dir, 'hex', 'state', 'hex.db')).query('select count(*) as n from messages').get()).toEqual({ n: 1 })
+})
+
+test('a prompt the old hub never read before a restart reaches the session once hex is back', async () => {
+  const { agent } = await t3OverAcp()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  bot.kill('SIGSTOP')
+  const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
+  await Bun.sleep(100)
+  bot.kill('SIGKILL')
+  await restart()
+  await until(() => lines('launched').length)
+  const hex = await session(sessionId)
+  await until(() => hex.inbound.length)
+  hex.busy()
+  hex.write({ ...prompt, timestamp: now() }, { ...reply, timestamp: now() }, done)
+  hex.idle()
+  expect(await answer).toEqual({ stopReason: 'end_turn' })
+  expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
 })
 
 test('a thread\'s history loads the same each time, so hex acp can tell what T3 already has when a hub restart cuts a load short', async () => {
