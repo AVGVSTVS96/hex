@@ -25,7 +25,8 @@ case ${1:-} in
 fill)
   [ $# -eq 3 ] || usage
   computer
-  $enclave get "$2" "$3" |
+  value=$($enclave get "$2" "$3")
+  printf %s "$value" |
     sprite exec -s "$HEX_COMPUTER" -- sh -c 'jq -Rsc "{scope: \"desktop\", text: .}" | DISPLAY=:1 ~/.local/bin/cua-driver call type_text >/dev/null'
   echo "typed $2's $3 on $HEX_COMPUTER"
   ;;
