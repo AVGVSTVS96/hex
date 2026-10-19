@@ -132,6 +132,16 @@ test('a broken schedules.json fires nothing, says why once, and its jobs catch u
   expect(open(dir).message('schedule:heartbeat@2026-10-18T16:45Z')!.meta!.late).toBe('true')
 })
 
+test('a schedules.json gone for a while leaves its jobs to catch up once it is back', () => {
+  jobs({ heartbeat: { cron: '45 * * * *', prompt: 'Hourly check' } })
+  check(dir, hexDir, 'general', at(18, 9))
+  rmSync(join(hexDir, 'schedules.json'))
+  run(at(18, 9, 40), at(18, 9, 50))
+  jobs({ heartbeat: { cron: '45 * * * *', prompt: 'Hourly check' } })
+  check(dir, hexDir, 'general', at(18, 9, 51))
+  expect(fired()).toEqual(['schedule:heartbeat@2026-10-18T16:45Z'])
+})
+
 test('a job needs a prompt and a cron or an at it can read', () => {
   expect(() => parse(JSON.stringify({ a: { cron: '* * * * *' } }))).toThrow('a: prompt is missing')
   expect(() => parse(JSON.stringify({ a: { prompt: 'x' } }))).toThrow('a: it needs a cron or an at')

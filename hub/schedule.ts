@@ -93,16 +93,16 @@ function zoneOf(hexDir: string): string | undefined {
 
 // One check at minute now (since the epoch): each job's newest slot since the last check fires,
 // which after the hub was down is the newest one it missed, marked late. The first check ever fires
-// nothing, and a schedules.json that doesn't load fires nothing until it does, telling the main
-// thread once what's wrong with it. An at is its own minute; only a cron is looked for minute by
-// minute, back from now, before the store is held for the write.
+// nothing, and a schedules.json that can't be read or doesn't load fires nothing until it does,
+// telling the main thread once what's wrong with one that doesn't load. An at is its own minute;
+// only a cron is looked for minute by minute, back from now, before the store is held for the write.
 export function check(storeDir: string, hexDir: string, main: string, now = Math.floor(Date.now() / MINUTE)) {
   const store = open(storeDir)
   let text: string
   try {
     text = readFileSync(join(hexDir, 'schedules.json'), 'utf8')
   } catch {
-    return store.check(now)
+    return
   }
   let jobs: Record<string, Job>
   try {

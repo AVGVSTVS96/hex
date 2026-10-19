@@ -1624,6 +1624,7 @@ test('a message another process keeps, like a job ending, reaches its thread as 
 })
 
 test("only General's hub runs schedules.json", async () => {
+  writeFileSync(join(dir, 'hex', 'schedules.json'), '{}')
   start()
   expect(open(dir).checked()).toBeUndefined()
   hub.close()
