@@ -1690,7 +1690,7 @@ test('a session started before hex kept messages has the hub take them for it', 
 test('a message another process keeps, like a job ending, reaches its thread as the bell rings, and one for a thread the hub does not serve waits', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
   const { received } = await session('chat:7')
-  const cli = Bun.spawn(['bun', join(import.meta.dir, 'store.ts'), dir, 'job:build:1', '--to', 'chat:7', '[job]', 'build', 'ended'])
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'job:build:1', '--to', 'chat:7', '[job]', 'build', 'ended'])
   expect(await cli.exited).toBe(0)
   await until(() => received.length)
   expect(received).toEqual([{ type: 'inbound', content: '[job] build ended', meta: { key: 'job:build:1', user: 'job' } }])
