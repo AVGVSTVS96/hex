@@ -1,0 +1,16 @@
+[Unit]
+Description=hex: the hub, which keeps General running and starts a session per thread
+
+[Service]
+Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
+Environment=HEX_SESSIONS_SLICE=hex-sessions.slice
+ExecStart=%h/hex/.hex/bin/hex run
+Restart=always
+RestartSec=3
+# A stop waits for a live call to end, the way a restart does.
+TimeoutStopSec=30min
+MemoryMax=2G
+OOMPolicy=continue
+
+[Install]
+WantedBy=default.target

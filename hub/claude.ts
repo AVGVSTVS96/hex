@@ -20,7 +20,7 @@ export function inherited(): Record<string, string | undefined> {
 
 // Where systemd runs hex, sessions run in a slice of their own (HEX_SESSIONS_SLICE), so one that
 // runs out of memory can't take the hub down with it. Claude's daemon starts every session as its
-// own child, so the daemon goes there too, whichever of these starts it.
+// own child, and several claude commands start the daemon, so every one the hub runs goes there.
 function contained(command: string, args: string[]): [string, string[]] {
   const slice = process.env.HEX_SESSIONS_SLICE
   if (!slice) return [command, args]
@@ -28,7 +28,8 @@ function contained(command: string, args: string[]): [string, string[]] {
 }
 
 function run(args: string[]): Promise<string | undefined> {
-  return new Promise(resolve => execFile('claude', args, (error, stdout) => resolve(error ? undefined : stdout)))
+  const [command, argv] = contained('claude', args)
+  return new Promise(resolve => execFile(command, argv, { env: inherited() }, (error, stdout) => resolve(error ? undefined : stdout)))
 }
 
 async function listed(): Promise<Agent[] | undefined> {

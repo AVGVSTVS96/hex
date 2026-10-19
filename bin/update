@@ -38,5 +38,11 @@ if [ "$(jq -r '.memory.prompt // empty' "$home/schedules.json")" = 'Nightly memo
   jq 'del(.memory)' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
 fi
 
-"$hex/bin/hex" restart
+unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null || :)
+if [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] && ! git diff --quiet "$before" HEAD -- systemd; then
+  systemctl --user daemon-reload
+  systemctl --user restart --no-block hex.service
+else
+  "$hex/bin/hex" restart
+fi
 echo "updated hex $before..$(git rev-parse --short HEAD); the hub restarts on it once no call is live, and each session at its next rest"
