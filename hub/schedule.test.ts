@@ -78,6 +78,20 @@ test('an at fires once at each time it lists, and never again after', () => {
   expect(open(dir).message(keys[0]!)!.to).toBe('topic')
 })
 
+test('an at fires once when clocks go back, and as far past the jump as it was set when they skip it', () => {
+  jobs({ back: { at: '2026-11-01 01:30', prompt: 'Back' }, ahead: { at: '2027-03-14 02:30', prompt: 'Ahead' } })
+  const keys: string[] = []
+  const utc = (year: number, month: number, day: number, hour: number) => Date.UTC(year, month - 1, day, hour) / 60_000
+  for (const [from, to] of [[utc(2026, 11, 1, 7), utc(2026, 11, 1, 11)], [utc(2027, 3, 14, 8), utc(2027, 3, 14, 12)]]) {
+    for (let minute = from!; minute <= to!; minute++) {
+      check(dir, hexDir, 'general', minute)
+      keys.push(...fired())
+      takeAll()
+    }
+  }
+  expect(keys).toEqual(['schedule:back@2026-11-01T08:30Z', 'schedule:ahead@2027-03-14T10:30Z'])
+})
+
 test('after the hub was down, each job fires its newest missed slot once, marked late', () => {
   jobs({ heartbeat: { cron: '45 * * * *', prompt: 'Hourly check' }, nightly: { cron: '0 3 * * *', prompt: 'Nightly' } })
   check(dir, hexDir, 'general', at(18, 9))

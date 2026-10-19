@@ -27,15 +27,15 @@ export function parse(text: string): Record<string, Job> {
 }
 
 // A minute as a clock in the zone reads it.
-type Wall = { minute: number; hour: number; day: number; month: number; weekday: number; at: string }
+type Wall = { minute: number; hour: number; day: number; month: number; weekday: number }
 
 const clocks = new Map<string | undefined, Intl.DateTimeFormat>()
 
 function wall(minute: number, zone?: string): Wall {
   let clock = clocks.get(zone)
-  if (!clock) clocks.set(zone, (clock = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', weekday: 'short', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })))
+  if (!clock) clocks.set(zone, (clock = new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', weekday: 'short', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })))
   const part = Object.fromEntries(clock.formatToParts(minute * MINUTE).map(({ type, value }) => [type, value]))
-  return { minute: Number(part.minute), hour: Number(part.hour), day: Number(part.day), month: Number(part.month), weekday: DAYS.indexOf(part.weekday!), at: `${part.year}-${part.month}-${part.day}T${part.hour}:${part.minute}` }
+  return { minute: Number(part.minute), hour: Number(part.hour), day: Number(part.day), month: Number(part.month), weekday: DAYS.indexOf(part.weekday!) }
 }
 
 function inField(spec: string, [min, max]: readonly [number, number], value: number) {
@@ -56,8 +56,10 @@ function onCron(cron: string, at: Wall) {
   return onDay && inField(minute, FIELDS[0], at.minute) && inField(hour, FIELDS[1], at.hour) && inField(month, FIELDS[3], at.month)
 }
 
-function due(job: Job, at: Wall) {
-  return (job.cron !== undefined && onCron(job.cron, at)) || [job.at ?? []].flat().some(when => when.replace(' ', 'T') === at.at)
+// The minute an at comes on the owner's clock, read as Temporal reads a wall time: the first of
+// the two when clocks go back, and as far past the jump as it was set when they skip it.
+function minuteOf(at: string, zone = Temporal.Now.timeZoneId()) {
+  return Temporal.PlainDateTime.from(at).toZonedDateTime(zone).epochMilliseconds / MINUTE
 }
 
 // The owner's time zone: TZ in the hex folder's .claude/settings.json, or else this machine's.
@@ -90,13 +92,14 @@ export function check(storeDir: string, hexDir: string, main: string, now = Math
     return
   }
   const zone = zoneOf(hexDir)
+  const ats = new Map(Object.entries(jobs).map(([name, job]) => [name, new Set([job.at ?? []].flat().map(at => minuteOf(at, zone)))]))
   store.write(() => {
     const since = store.checked() ?? now
     const left = new Map(Object.entries(jobs))
     for (let minute = now; minute > since && left.size; minute--) {
       const at = wall(minute, zone)
       for (const [name, job] of left) {
-        if (!due(job, at)) continue
+        if (!ats.get(name)!.has(minute) && !(job.cron !== undefined && onCron(job.cron, at))) continue
         left.delete(name)
         store.fire(name, minute, job.thread ?? main, `[${name}] ${job.prompt}`, minute < now)
       }
