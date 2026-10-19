@@ -110,6 +110,7 @@ export function follow({ path, sessionId, cwd, since, done, emit, end }: {
 
   return {
     settle,
+    asked: () => asked,
     close() {
       ended = true
       watcher.close()
