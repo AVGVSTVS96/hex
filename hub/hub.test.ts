@@ -4,6 +4,7 @@ import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSy
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { begin, clients, free, history, mirror, move, stamp, startHub, tappable, transcribe, type ChannelServer, type Message, type Permission } from './hub.ts'
+import { open } from './store.ts'
 import { hangUpAll, http as line, port } from './testing.ts'
 import { until } from './until.ts'
 
@@ -47,6 +48,16 @@ afterEach(() => {
   delete process.env.CLAUDE_CONFIG_DIR
   rmSync(dir, { recursive: true, force: true })
 })
+
+// What a session's channel gets: the message, under the key hex keeps it by.
+function inbound(sent: Message) {
+  return { type: 'inbound', content: sent.content, meta: { key: expect.stringMatching(/^telegram:/), ...sent.meta } }
+}
+
+// The session's hook taking each message it was given, as Claude Code adds it to the conversation.
+function fold(received: { meta: { key: string } }[]) {
+  for (const payload of received) open(dir).take(payload.meta.key, SESSION)
+}
 
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
 function start(options: { main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
@@ -169,7 +180,7 @@ test('a message for a new thread starts a session bound to that thread', async (
   const args = await launched()
   expect(args.slice(0, 5)).toEqual(['--bg', '--channels', CHANNEL, '--name', 'Desk anchors'])
   expect(args).not.toContain('--resume')
-  expect(settingsOf(args)).toEqual({ enabledPlugins: { 'telegram@hex': true }, env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: 'chat:7', HEX_HUB: join(dir, 'hub.sock'), HEX_PORT: String(listener.port), HEX_TOKEN: readFileSync(join(dir, 'token'), 'utf8') } })
+  expect(settingsOf(args)).toEqual({ enabledPlugins: { 'telegram@hex': true }, env: { HEX_CHANNEL: CHANNEL, HEX_THREAD: 'chat:7', HEX_HUB: join(dir, 'hub.sock'), HEX_PORT: String(listener.port), HEX_TOKEN: readFileSync(join(dir, 'token'), 'utf8'), HEX_STORE: dir } })
   expect(states).toEqual([['chat:7', true]])
 })
 
@@ -188,7 +199,7 @@ test('queued messages reach the session when it connects, and its id is kept', a
   saved()
   const { received } = await session('chat:7')
   await until(() => received.length)
-  expect(received).toEqual([{ type: 'inbound', ...message }])
+  expect(received).toEqual([inbound(message)])
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
 })
 
@@ -394,7 +405,7 @@ test("a new session's channel opens once it lists the tools again after hearing 
   await line.rpc('tools/list')
   await until(() => line.listed() === 2)
   await until(() => line.received.length)
-  expect(line.received).toEqual([{ type: 'inbound', ...message }])
+  expect(line.received).toEqual([inbound(message)])
 })
 
 test('a session starting cold that drops the first tools/list_changed is told again until it lists the tools', async () => {
@@ -410,7 +421,7 @@ test('a session starting cold that drops the first tools/list_changed is told ag
   expect(line.received).toEqual([])
   await until(() => line.received.length)
   expect(line.listed()).toBe(2)
-  expect(line.received).toEqual([{ type: 'inbound', ...message }])
+  expect(line.received).toEqual([inbound(message)])
 })
 
 test('a session that lists the tools before opening its stream hears they changed once the stream opens', async () => {
@@ -424,7 +435,7 @@ test('a session that lists the tools before opening its stream hears they change
   await line.open()
   await until(() => line.listed() === 2)
   await until(() => line.received.length)
-  expect(line.received).toEqual([{ type: 'inbound', ...message }])
+  expect(line.received).toEqual([inbound(message)])
 })
 
 test('a stream back from before the hub restarted carries on under its old id, without initializing again', async () => {
@@ -592,7 +603,7 @@ test('a bad line on hub.sock is dropped, and the lines after it still work', asy
   sockets.push(socket)
   socket.on('connect', () => socket.end('not json\nnull\n' + JSON.stringify({ type: 'inbound', thread: 'chat:9', content: 'still here', meta: {} }) + '\n'))
   await until(() => received.length)
-  expect(received[0]).toEqual({ type: 'inbound', content: 'still here', meta: {} })
+  expect(received[0]).toEqual(inbound({ content: 'still here', meta: {} }))
 })
 
 test('an unreadable threads.json is moved aside instead of overwritten, and a malformed thread is dropped', async () => {
@@ -634,7 +645,7 @@ test('a local inbound request reaches the thread like a message from the app', a
     this.end(JSON.stringify({ type: 'inbound', thread: 'chat:7', ...message }) + '\n')
   })
   await until(() => received.length)
-  expect(received).toEqual([{ type: 'inbound', ...message }])
+  expect(received).toEqual([inbound(message)])
 })
 
 test('a session that fails to start is reported with its reason, and the next message retries', async () => {
@@ -683,6 +694,7 @@ test('a thread\'s model and effort are kept, and a running session takes them by
   await Bun.sleep(50)
   hub.deliver('chat:7', 'Desk anchors', message)
   await until(() => received.length)
+  fold(received)
   hub.configure('chat:7', { model: 'claude-fable-5-1', effort: 'xhigh' })
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, model: 'claude-fable-5-1', effort: 'xhigh' })
   hub.deliver('chat:7', 'Desk anchors', { content: 'again', meta: {} })
@@ -700,7 +712,7 @@ test('a fresh thread with no capacity starts a new session instead of resuming i
   const args = await launched()
   expect(args).not.toContain('--resume')
   expect(calls().some(args => args[0] === 'rm')).toBe(false)
-  expect(settingsOf(args).env).toEqual({ HEX_CHANNEL: CHANNEL, HEX_THREAD: 'dm', HEX_HUB: join(dir, 'hub.sock'), HEX_PORT: String(listener.port), HEX_TOKEN: readFileSync(join(dir, 'token'), 'utf8'), HEX_FRESH: '1' })
+  expect(settingsOf(args).env).toEqual({ HEX_CHANNEL: CHANNEL, HEX_THREAD: 'dm', HEX_HUB: join(dir, 'hub.sock'), HEX_PORT: String(listener.port), HEX_TOKEN: readFileSync(join(dir, 'token'), 'utf8'), HEX_STORE: dir, HEX_FRESH: '1' })
   saved(NEXT)
   const { received } = await session('dm', NEXT)
   await until(() => received.length)
@@ -713,7 +725,8 @@ test('a message to a fresh thread with no capacity steers its session while Clau
   await Bun.sleep(50)
   hub.deliver('dm', 'DM', message)
   await until(() => received.length)
-  expect(received).toEqual([{ type: 'inbound', ...message }])
+  expect(received).toEqual([inbound(message)])
+  fold(received)
   said(50_000)
   writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: 999999, status: 'idle' }]))
   send({ type: 'state', thread: 'dm', busy: false })
@@ -790,6 +803,7 @@ test('once a fresh thread\'s session is full, a new one takes over at the rest t
   await Bun.sleep(50)
   hub.deliver('dm', 'DM', message)
   await until(() => first.received.length)
+  fold(first.received)
   said(1500)
   first.send({ type: 'state', thread: 'dm', busy: false })
   expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
@@ -1529,4 +1543,79 @@ test('a thread that follows a session forks it with its first message, then keep
   const { received } = await session('chat:7', FORKED)
   await until(() => received.length)
   expect(await until(() => registry()['chat:7'].session === FORKED && registry()['chat:7'])).toEqual({ name: 'Desk anchors', session: FORKED })
+})
+
+test('a message is in hex.db once deliver returns, its key first on the tag, and the app sending it again changes nothing', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
+  const { received } = await session('chat:7')
+  hub.deliver('chat:7', 'Desk anchors', { ...message, key: '1:42' })
+  expect(open(dir).message('telegram:1:42')).toMatchObject({ to: 'chat:7', from: 'telegram', body: 'hi', meta: { chat_id: '1' } })
+  hub.deliver('chat:7', 'Desk anchors', { ...message, key: '1:42' })
+  await until(() => received.length)
+  await Bun.sleep(50)
+  expect(received).toEqual([{ type: 'inbound', content: 'hi', meta: { key: 'telegram:1:42', chat_id: '1' } }])
+  expect(Object.keys(received[0].meta)[0]).toBe('key')
+})
+
+test('after the hub restarts, a session gets again what it was given but never took, and not what it took', async () => {
+  start()
+  const first = http('chat:7')
+  await first.open(crypto.randomUUID())
+  await Bun.sleep(20)
+  hub.deliver('chat:7', 'Desk anchors', { ...message, key: '1:42' })
+  hub.deliver('chat:7', 'Desk anchors', { content: 'and this', meta: {}, key: '1:43' })
+  await until(() => first.received.length === 2)
+  open(dir).take('telegram:1:42', SESSION)
+  first.close()
+  hub.close()
+  start()
+  const back = http('chat:7')
+  await back.open(crypto.randomUUID())
+  await until(() => back.received.length)
+  await Bun.sleep(50)
+  expect(back.received.map(payload => payload.content)).toEqual(['and this'])
+})
+
+test("a session's hook takes what its prompt brings in, and drops a copy of one taken already", async () => {
+  const store = open(dir)
+  store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', body: 'hi' })
+  const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>'
+  const fold = () => Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]), stderr: 'pipe' })
+  const first = fold()
+  expect(await first.exited).toBe(0)
+  expect(store.message('telegram:1:42')!.taken!.by).toBe(SESSION)
+  const copy = fold()
+  expect(await copy.exited).toBe(2)
+  expect(await new Response(copy.stderr).text()).toContain('telegram:1:42')
+})
+
+test('a session started before hex kept messages has the hub take them for it', async () => {
+  start()
+  open(dir).deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', body: 'hi' })
+  const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>'
+  const { HEX_STORE, ...env } = process.env
+  const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...env, HEX_HUB: join(dir, 'hub.sock'), HEX_THREAD: 'chat:7' }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]) })
+  expect(await hook.exited).toBe(0)
+  expect((await until(() => open(dir).message('telegram:1:42')!.taken)).by).toBe(SESSION)
+  expect(states).toEqual([['chat:7', true]])
+})
+
+test('a message another process keeps, like a job ending, reaches its thread as the bell rings, and one for a thread the hub does not serve waits', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
+  const { received } = await session('chat:7')
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'store.ts'), dir, 'job:build:1', '--to', 'chat:7', '[job]', 'build', 'ended'])
+  expect(await cli.exited).toBe(0)
+  await until(() => received.length)
+  expect(received).toEqual([{ type: 'inbound', content: '[job] build ended', meta: { key: 'job:build:1', user: 'job' } }])
+  open(dir).deliver({ key: 'job:other:1', to: 'chat:99', from: 'job', body: 'nobody here' })
+  await Bun.sleep(100)
+  expect(received).toHaveLength(1)
+})
+
+test("only General's hub runs schedules.json", async () => {
+  start()
+  expect(open(dir).checked()).toBeUndefined()
+  hub.close()
+  start({ main: 'general', general: true })
+  expect(open(dir).checked()).toBe(Math.floor(Date.now() / 60_000))
 })

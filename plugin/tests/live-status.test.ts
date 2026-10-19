@@ -42,6 +42,7 @@ test('finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
   writeFileSync(join(home, 'schedules.json'), JSON.stringify({
     heartbeat: { cron: '45 * * * *', prompt: 'x' },
     dentist: { cron: '30 9 14 3 *', prompt: 'x' },
+    treat: { at: ['2020-10-20 16:00', '2999-10-20 16:00'], prompt: 'x' },
   }))
   claude([
     { kind: 'background', state: 'working', name: 'General', cwd: home, startedAt: 2 },
@@ -53,6 +54,8 @@ test('finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
   expect(out).toContain('- idea (0m ago): Try an idea')
   expect(out).not.toContain('shipped')
   expect(out).toMatch(/- \w{3} Mar 14 9:30AM: dentist/)
+  expect(out).toMatch(/- \w{3} Oct 20 4:00PM: treat\n/)
+  expect(out.match(/: treat/g)).toHaveLength(1)
   expect(out).not.toContain('heartbeat')
   expect(out).toContain('- working (2): Topic, General')
   expect(out).not.toContain('Elsewhere')

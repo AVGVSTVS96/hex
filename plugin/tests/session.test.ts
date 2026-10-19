@@ -16,7 +16,7 @@ let listener: ReturnType<typeof Bun.serve>
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'session-'))
-  for (const dir of ['bin', 'chat', 'mods/scheduler']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true })
+  for (const dir of ['bin', 'chat']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true })
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_MAIN_MODEL: 'claude-opus-5-5', MEMORY_DIR: join(home, 'memory') } }))
   mkdirSync(join(home, '.hex/vendor'))
@@ -77,9 +77,8 @@ test('a DM session the hub starts gets the chat prompt, and its settings, token 
   expect(statSync(file).mode & 0o777).toBe(0o600)
 })
 
-test('General, started by the hub, runs the scheduler and the main model', async () => {
+test('General, started by the hub, runs the main model', async () => {
   const { args } = await launch('plugin:telegram@hex', '-100:1', { main: '-100:1', general: true })
-  expect(args).toContain(join(home, '.hex/mods/scheduler'))
   expect(args[args.indexOf('--model') + 1]).toBe('claude-opus-5-5')
   expect(args).not.toContain('--system-prompt-file')
 })
@@ -92,7 +91,6 @@ test('a voice session, started by the hub, runs the fast model on the 1-hour cac
 test('a topic session, started by the hub, gets none of the chat or main additions', async () => {
   const { args, settings } = await launch('plugin:telegram@hex', '-100:5', { fresh: () => false })
   expect(args).not.toContain('--system-prompt-file')
-  expect(args).not.toContain(join(home, '.hex/mods/scheduler'))
   expect(settings.claudeMdExcludes).toBeUndefined()
   expect(settings.env.HEX_THREAD).toBe('-100:5')
 })

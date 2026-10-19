@@ -44,7 +44,11 @@ def one_offs():
         return []
     upcoming = []
     for name, job in jobs.items():
-        minute, hour, day, month, _ = job["cron"].split()
+        at = job.get("at", [])
+        for when in [datetime.fromisoformat(a) for a in ([at] if isinstance(at, str) else at)]:
+            if when.timestamp() >= now:
+                upcoming.append((when, f"- {when:%a %b %-d %-I:%M%p}: {name}"))
+        minute, hour, day, month, _ = job.get("cron", "* * * * *").split()
         if not all(f.isdigit() for f in (minute, hour, day, month)):
             continue
         when = datetime(datetime.now().year, int(month), int(day), int(hour), int(minute))

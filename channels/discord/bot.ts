@@ -757,6 +757,7 @@ function serve(token: string) {
     const shots = edited || voiced ? [] : await images(source.attachments)
 
     const message: Message = {
+      key: edited ? `${msg.id}@${msg.editedTimestamp}` : msg.id,
       content: heard ? `(voice message) ${heard}` : source.content.replace(/<@[!&]?\d+>/g, '').trim() || (atts.length > 0 ? '(attachment)' : stickers.length > 0 ? '(sticker)' : poll ? '(poll)' : ''),
       meta: {
         chat_id: ch.id,
