@@ -69,9 +69,10 @@ export class Ledger {
     this.store.reopened(this.app, thread, message)
   }
 
-  // A pinned post's latest status. A question stays open through an edit: it's settled only by
-  // saying so.
+  // A question's or a pinned post's latest words. A question stays open through an edit: it's
+  // settled only by saying so.
   edited(thread: string, message: MessageId, text: string) {
+    this.store.reworded(this.app, thread, message, text)
     if (this.book.pins[thread]?.message !== message) return
     this.book.pins[thread] = { message, text, at: now() }
     this.save()

@@ -91,7 +91,7 @@ const migrations = [
     app text not null,
     thread text not null,
     message not null,
-    text text not null,
+    text text not null check (typeof(text) = 'text'),
     options text not null check (json_valid(options) and json_type(options) = 'array'),
     poll text,
     multiple integer not null default 0 check (multiple in (0, 1)),
@@ -100,6 +100,10 @@ const migrations = [
     at text not null check (at ${UTC}),
     unique (app, thread, message)
   );
+  create trigger labels before insert on questions when exists (select 1 from json_each(new.options) where type <> 'text')
+    begin select raise(abort, 'each option is a label'); end;
+  create trigger kept_labels before update of options on questions when exists (select 1 from json_each(new.options) where type <> 'text')
+    begin select raise(abort, 'each option is a label'); end;
   create index waiting on questions (thread) where answer is null and settled is null;
   create index polls on questions (app, poll) where poll is not null;`,
 ]
@@ -308,6 +312,11 @@ export class Store {
 
   answered(app: string, thread: string, message: MessageId, label: string, via: string) {
     this.write(() => this.db.query('update questions set answer = ?, settled = null where app = ? and thread = ? and message = ?').run(JSON.stringify({ label, at: now(), via }), app, thread, message))
+  }
+
+  // The message asking it was edited: the question is what it says now.
+  reworded(app: string, thread: string, message: MessageId, text: string) {
+    this.write(() => this.db.query('update questions set text = ? where app = ? and thread = ? and message = ?').run(text, app, thread, message))
   }
 
   settled(app: string, thread: string, message: MessageId, note: string) {

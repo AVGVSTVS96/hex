@@ -27,6 +27,7 @@ test("an older hex's questions move from ledger.json into hex.db once, answers a
         { thread: '-100:7', message: 41, text: 'Deploy now?', options: ['Deploy', 'Wait'], at: '2026-10-18T08:00:00.000Z' },
         { thread: '-100:7', message: 42, text: 'Which take?', options: ['A', 'B'], at: '2026-10-18T08:05:00.000Z', poll: 'p-42', answer: { label: 'B', at: '2026-10-18T08:06:00.000Z', via: 'telegram' } },
         { thread: '-100:7', message: 43, text: 'Broken', options: 'not a list', at: '2026-10-18T08:07:00.000Z' },
+        { thread: '-100:7', message: 44, text: 'Blank buttons', options: [null], at: '2026-10-18T08:08:00.000Z' },
       ],
       pins: { '-100:7': pin },
     }),
@@ -35,6 +36,7 @@ test("an older hex's questions move from ledger.json into hex.db once, answers a
   expect(ledger.find('-100:7', 41)).toMatchObject({ app: 'telegram', text: 'Deploy now?', options: ['Deploy', 'Wait'], at: '2026-10-18T08:00:00.000Z' })
   expect(ledger.byPoll('p-42')!.answer).toMatchObject({ label: 'B', via: 'telegram' })
   expect(ledger.find('-100:7', 43)).toBeUndefined()
+  expect(ledger.find('-100:7', 44)).toBeUndefined()
   expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ pins: { '-100:7': pin } })
   expect(new Ledger(file, 'telegram').asks).toHaveLength(2)
 })
@@ -44,7 +46,7 @@ test('a question stays open through an edit and leaves the waiting list only whe
   const store = open(join(dir, 'telegram'))
   ledger.ask('-100:7', 41, 'Deploy now?', ['Deploy', 'Wait'])
   ledger.edited('-100:7', 41, 'Deploy now? CI is green.')
-  expect(store.questions({ waiting: true })).toHaveLength(1)
+  expect(store.questions({ waiting: true })).toMatchObject([{ text: 'Deploy now? CI is green.' }])
   ledger.settled('-100:7', 41, '✓ Settled')
   expect(store.questions({ waiting: true })).toEqual([])
   ledger.reopened('-100:7', 41)

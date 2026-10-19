@@ -426,7 +426,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         await edit.catch(err => {
           if (!/no text in the message/.test(String(err))) throw err
           if (args.format === 'markdown') throw new Error("a file's caption can't take format 'markdown'; use 'text' or 'markdownv2'")
-          return bot.api.editMessageCaption(chat_id, id, { caption: text, ...parseMode })
+          return bot.api.editMessageCaption(chat_id, id, { caption: text, ...parseMode, ...keep })
         })
       }
       if (text != null) {
