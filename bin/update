@@ -20,23 +20,16 @@ if [ "$incoming" = "$(cat "$home/state/bad" 2>/dev/null || :)" ]; then
 fi
 
 # From a hex session, which is busy itself until its turn ends, the update goes on as a job that wakes
-# the session when it ends; run by hand, it goes on here. One update at a time ships whatever is newest.
-pidfile="$home/state/update.pid"
-if [ "$mode" != --when-quiet ] && kill -0 "$(cat "$pidfile" 2>/dev/null)" 2>/dev/null; then
-  echo "an update is already on its way; it ships the newest main"
-  exit 0
-fi
-if [ -z "$mode" ] && [ -n "${HEX_THREAD:-}${HEX_OWNER:-}" ]; then
-  if command -v systemd-run >/dev/null; then
+# the session when it ends, one at a time; run by hand, it goes on here.
+if [ -z "$mode" ] && [ -n "${HEX_THREAD:-}${HEX_OWNER:-}" ] && command -v systemd-run >/dev/null; then
+  if systemctl --user -q is-active hex-update; then
+    echo "an update is already on its way; it ships the newest main"
+  else
     "$hex/bin/job" hex-update "$hex/bin/update" --when-quiet 2>&1 >/dev/null
     echo "hex $(git rev-parse --short "$incoming") ships once it passes bin/check and no hex session is busy; this thread hears when it has"
-  else
-    nohup "$hex/bin/update" --when-quiet >> "$home/state/update.log" 2>&1 &
-    echo "hex $(git rev-parse --short "$incoming") ships once it passes bin/check and no hex session is busy; state/update.log says when it has"
   fi
   exit 0
 fi
-echo $$ > "$pidfile"
 
 check="$hex/worktrees/check"
 clean() {
