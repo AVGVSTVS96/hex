@@ -53,14 +53,42 @@ test("a note that misquotes the owner, names no message, or doesn't fit isn't wr
   expect(noted()).toHaveLength(1)
 })
 
-test('a pass that fails hands its messages to the next one', async () => {
+test('a pass that fails hands its messages to the next one, and one that died does once its lease runs out', async () => {
   const fail = async (): Promise<string[]> => {
     throw new Error('limit')
   }
   expect(await observe(dir, 's', '', { ask: fail, memo })).toEqual([])
   let asked = 0
-  await observe(dir, 's', '', { ask: async () => (asked++, []), memo })
+  const count = async () => (asked++, [])
+  await observe(dir, 's', '', { ask: count, memo })
   expect(asked).toBe(1)
+
+  const store = open(dir)
+  store.deliver({ key: 'telegram:-100:60', to: '-100:7', from: 'telegram', body: 'move standup to 10', meta: { user_id: '1' } })
+  store.take('telegram:-100:60', 's')
+  expect(store.observe('s', new Date().toISOString()).map(row => row.key)).toEqual(['telegram:-100:60'])
+  expect(store.observe('s', new Date().toISOString())).toEqual([])
+  await Bun.sleep(2)
+  expect(store.observe('s', new Date().toISOString(), 0).map(row => row.key)).toEqual(['telegram:-100:60'])
+})
+
+test("a pass takes what the session had taken when its turn ended, not the next turn's message", async () => {
+  const by = new Date().toISOString()
+  await Bun.sleep(2)
+  const store = open(dir)
+  store.deliver({ key: 'telegram:-100:70', to: '-100:7', from: 'telegram', body: 'and add a dark mode', meta: { user_id: '1' } })
+  store.take('telegram:-100:70', 's')
+  const seen: string[] = []
+  await observe(dir, 's', '', { ask: async input => (seen.push(input), []), memo, by })
+  expect(seen[0]).toContain('[telegram:-100:50]')
+  expect(seen[0]).not.toContain('dark mode')
+  await observe(dir, 's', '', { ask: async input => (seen.push(input), []), memo })
+  expect(seen[1]).toContain('and add a dark mode')
+})
+
+test("a note may only name this pass's messages", async () => {
+  const ask = async () => ['Oct 19: "get the login page fixed first" [telegram:-100:40]', 'Oct 19: "run the backup" [schedule:nightly:1]']
+  expect(await observe(dir, 's', '', { ask, memo })).toEqual([])
 })
 
 test('a time reads the way notes write it, on the owner’s clock', () => {

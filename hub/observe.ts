@@ -1,6 +1,7 @@
+import { spawn } from 'child_process'
 import { existsSync, readdirSync } from 'fs'
 import { join, resolve } from 'path'
-import { holds, owners, verdict } from './notes.ts'
+import { holds, keysOf, owners, verdict } from './notes.ts'
 import { names } from './profile.ts'
 import { zoneOf } from './schedule.ts'
 import { open, type Row } from './store.ts'
@@ -14,6 +15,7 @@ import { open, type Row } from './store.ts'
 
 const MODEL = 'sonnet'
 const BYTES = 280
+const NEWEST = 40
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
@@ -28,43 +30,44 @@ If you need what a message answers, the whole conversation is in the log file na
 const SCHEMA = { type: 'object', properties: { notes: { type: 'array', items: { type: 'string' } } }, required: ['notes'] }
 
 type Hook = { session_id?: string; last_assistant_message?: string }
+type Pass = { session: string; reply: string; by: string }
 
-if (import.meta.main) {
-  const { HEX_STORE, MEMORY_DIR } = process.env
-  const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
-  if (HEX_STORE && MEMORY_DIR && hook.session_id && existsSync(MEMO)) await observe(HEX_STORE, hook.session_id, hook.last_assistant_message ?? '')
-}
-
-export async function observe(state: string, session: string, reply: string, { ask = claude, memo = MEMO } = {}) {
+export async function observe(state: string, session: string, reply: string, { ask = claude, memo = MEMO, by = new Date().toISOString() } = {}) {
   const recall = (pattern: string) => Bun.spawnSync([memo, 'recall', pattern], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
   const store = open(state)
-  const rows = owners(store.observe(session))
-  if (!rows.length) return []
+  const taken = store.observe(session, by)
+  const rows = owners(taken)
   try {
-    const named = recall(rows.map(row => `\\[${escape(row.key)}\\]`).join('|'))
+    const named = rows.length ? recall(rows.map(row => `\\[${escape(row.key)}\\]`).join('|')) : ''
     const fresh = rows.filter(row => !named.includes(`[${row.key}]`))
-    if (!fresh.length) return []
-    const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
-    const threads = names(state)
-    const turn = [
-      `<turn thread="${threads[fresh[0]!.to] ?? fresh[0]!.to}" log="${logOf(session) ?? 'none'}">`,
-      ...fresh.map(row => said(row, zone)),
-      `The session's reply:\n${reply.trim() || '(none)'}`,
-      '</turn>',
-    ]
-    const input = `<newest memories>\n${recall('.').trim()}\n</newest memories>\n\n${turn.join('\n\n')}`
-    const written = []
-    for (const note of (await ask(input)).map(line).filter(Boolean)) {
-      if (Buffer.byteLength(note) > BYTES || !holds(verdict(note, store))) continue
-      if (Bun.spawnSync([memo, 'note', note], { stdout: 'ignore', stderr: 'ignore' }).exitCode === 0) written.push(note)
+    const written: string[] = []
+    if (fresh.length) {
+      const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
+      const threads = names(state)
+      const turn = [
+        `<turn thread="${threads[fresh[0]!.to] ?? fresh[0]!.to}" log="${logOf(session) ?? 'none'}">`,
+        ...fresh.map(row => said(row, zone)),
+        `The session's reply:\n${reply.trim() || '(none)'}`,
+        '</turn>',
+      ]
+      const input = `<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn.join('\n\n')}`
+      const ours = new Set(fresh.map(row => row.key))
+      for (const note of (await ask(input)).map(line).filter(Boolean)) {
+        if (Buffer.byteLength(note) > BYTES || !keysOf(note).every(key => ours.has(key)) || !holds(verdict(note, store))) continue
+        if (Bun.spawnSync([memo, 'note', note], { stdout: 'ignore', stderr: 'ignore' }).exitCode === 0) written.push(note)
+      }
     }
+    store.observed(taken.map(row => row.key))
     return written
   } catch (error) {
-    store.unobserve(rows.map(row => row.key))
+    store.observed(taken.map(row => row.key), false)
     console.error(`hex couldn't look over this turn for memories: ${error}`)
     return []
   }
 }
+
+// The newest notes, enough to show what memory already says and how its lines read.
+const newest = (recalled: string) => recalled.split('\n').filter(line => line.startsWith('#')).slice(-NEWEST).join('\n')
 
 // A note as memo takes it: one line, without the number and date memo puts in front of it itself.
 const line = (note: string) => note.replace(/\s+/g, ' ').trim().replace(/^(#\d+ )?\d{4}-\d\d-\d\d /, '')
@@ -104,4 +107,20 @@ async function claude(input: string): Promise<string[]> {
   const result = JSON.parse(out || '{}')
   if (code !== 0 || result.is_error || !result.structured_output) throw new Error(`claude exited ${code}: ${result.result ?? err.slice(-500)}`)
   return result.structured_output.notes
+}
+
+// The Stop hook hands the turn to a pass of its own and returns, since Claude Code ends a hook still
+// running when its session exits, and a hex session often exits right after a turn (a restart, an
+// update, a call that ended). The pass takes only what the session had taken by then, not the
+// next turn's message.
+if (import.meta.main) {
+  const { HEX_STORE, MEMORY_DIR, HEX_PASS } = process.env
+  if (HEX_PASS) {
+    const { session, reply, by } = JSON.parse(HEX_PASS) as Pass
+    await observe(HEX_STORE!, session, reply, { by })
+  } else if (HEX_STORE && MEMORY_DIR && existsSync(MEMO)) {
+    const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
+    const pass: Pass = { session: hook.session_id ?? '', reply: hook.last_assistant_message ?? '', by: new Date().toISOString() }
+    if (pass.session) spawn(process.execPath, [import.meta.path], { detached: true, stdio: 'ignore', env: { ...process.env, HEX_PASS: JSON.stringify(pass) } }).unref()
+  }
 }
