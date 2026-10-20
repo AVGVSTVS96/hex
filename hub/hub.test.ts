@@ -844,6 +844,55 @@ exec claude "$@"
   await until(() => failures.length === 2)
 })
 
+test('a thread whose messages keep failing to start gets a retry for each, so it starts once starts go through', async () => {
+  const launcher = join(dir, 'launch')
+  writeFileSync(join(dir, 'broken'), '')
+  writeFileSync(launcher, `#!/bin/sh
+case "$*" in *chat%3A7*) if [ -e "${dir}/broken" ]; then echo try >> "${dir}/tries"; echo 'its folder is gone'; exit 1; fi;; esac
+exec claude "$@"
+`)
+  chmodSync(launcher, 0o755)
+  start({ launcher })
+  const tries = () => (existsSync(join(dir, 'tries')) ? readFileSync(join(dir, 'tries'), 'utf8').split('\n').length - 1 : 0)
+  const desk = () => calls().filter(args => args[0] === '--bg' && args.join(' ').includes('chat%3A7'))
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await until(() => failures.length)
+  hub.open('chat:8', 'OpenAI')
+  await launched()
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => tries() === 2)
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'again' })
+  await until(() => failures.length === 2)
+  rmSync(join(dir, 'broken'))
+  hub.open('chat:9', 'Theo clips')
+  await until(() => calls().filter(args => args[0] === '--bg').length === 2)
+  await session('chat:9', '2c3d4e5f-0000-4000-8000-000000000000')
+  await until(() => desk().length === 1)
+  expect(tries()).toBe(3)
+})
+
+test("a message that arrives while a retry starts makes the retry its own, so its chat hears if that start fails", async () => {
+  const launcher = join(dir, 'launch')
+  writeFileSync(launcher, `#!/bin/sh
+case "$*" in *chat%3A7*) echo try >> "${dir}/tries"; if [ "$(wc -l < "${dir}/tries")" -ge 2 ]; then while [ ! -e "${dir}/go" ]; do sleep 0.02; done; fi; echo 'its folder is gone'; exit 1;; esac
+exec claude "$@"
+`)
+  chmodSync(launcher, 0o755)
+  start({ launcher })
+  const tries = () => (existsSync(join(dir, 'tries')) ? readFileSync(join(dir, 'tries'), 'utf8').split('\n').length - 1 : 0)
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await until(() => failures.length)
+  hub.open('chat:8', 'OpenAI')
+  await launched()
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => tries() === 2)
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'again' })
+  writeFileSync(join(dir, 'go'), '')
+  await until(() => failures.length === 2)
+  expect(failures).toEqual([['chat:7', 'its folder is gone'], ['chat:7', 'its folder is gone']])
+  expect(tries()).toBe(2)
+})
+
 test('a fork whose session runs without its channel starts again into that session, not a second copy', async () => {
   const FORKED = '2c3d4e5f-0000-4000-8000-000000000000'
   bound('chat:10', FORKED)

@@ -100,7 +100,7 @@ type Run = {
   unsaved?: string
   held: (() => void)[]
   // The starts that failed in a row since the thread's session last connected; retried: another
-  // session's start set one off, told: General heard.
+  // session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean }
   opening?: Opening
 }
@@ -675,6 +675,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (run.renew === 'underway') run.renew = undefined
     const failing = (run.failing ??= { count: 0 })
     failing.count++
+    if (!phase.again) failing.retried = false
     process.stderr.write(`hub: ${thread}'s session failed to start, ${failing.count} in a row: ${reason}\n`)
     if (!phase.again || failing.count === 1) failed(thread, reason)
     if (failing.count >= TELL_AFTER && !failing.told && generalHub && !(general && thread === main)) {
@@ -727,6 +728,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     }
     if (run.phase.is === 'live') return (stale(thread) && !onCall.has(run)) || spent(thread) ? void refresh(thread, message) : run.phase.line.send({ type: 'inbound', ...message })
     run.queue.push(message)
+    if (run.phase.is === 'launching') run.phase.again = false
     void launch(thread, name)
   }
 
@@ -750,8 +752,9 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
 
   // A thread whose session failed to start keeps its prompt and the messages it was handed waiting,
-  // and the main thread is always running, so each starts again once starts go through. Once per
-  // run of failures: one that fails even then has a problem of its own, and waits for its next message.
+  // and the main thread is always running, so each starts again once starts go through. Once for
+  // each failed start a message set off: one that fails even then has a problem of its own, and
+  // waits for its next message.
   function retry() {
     for (const [thread, run] of runs) {
       if (!run.failing || run.failing.retried || run.phase.is !== 'stopped' || !(thread === main || run.opening || waiting(thread).length)) continue
@@ -983,10 +986,12 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     process.stderr.write(`hub: no thread ${thread} in ${registry}, so a message for it from ${message.meta?.user ?? 'a local tool'} was dropped\n`)
   }
 
-  // The owner's stop ends a run of failed starts too, so only the thread's next message starts it again.
+  // After the owner's stop only the thread's next message starts it again, without the prompt it
+  // was opened with, though a moved copy still starts from the conversation it forks.
   function halt(thread: string) {
     const run = runs.get(thread)
-    if (run) run.failing = run.opening = undefined
+    if (run?.failing) run.failing.retried = true
+    if (run?.opening) run.opening = run.opening.fork ? { fork: run.opening.fork } : undefined
     return stop(thread)
   }
 
