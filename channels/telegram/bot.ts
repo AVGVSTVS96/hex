@@ -850,13 +850,13 @@ bot.on('callback_query:data', async ctx => {
   const label = message && 'reply_markup' in message ? message.reply_markup?.inline_keyboard.flat().find(button => 'callback_data' in button && button.callback_data === data)?.text : undefined
   if (!message || !label || !allowed(ctx.from)) return
   const thread = threadOf(ctx)
+  const verdict = data.match(/^perm:(allow|deny):([a-km-z]{5})$/)
   // A question's buttons are drawn from where it stands once the tap is in; any others show the tap at once.
-  const ask = ledger.find(thread, message.message_id)
+  const ask = verdict ? undefined : ledger.find(thread, message.message_id)
   if (!ask)
     await bot.api.editMessageReplyMarkup(message.chat.id, message.message_id, {
       reply_markup: { inline_keyboard: [[{ text: `✓ ${label}`, disabled: {} }]] },
     }).catch(err => process.stderr.write(`telegram hub: couldn't mark the tapped button: ${err}\n`))
-  const verdict = data.match(/^perm:(allow|deny):([a-km-z]{5})$/)
   if (verdict) {
     asking.get(thread)?.delete(message.message_id)
     return hub.answer(thread, verdict[2]!, verdict[1] as 'allow' | 'deny')
