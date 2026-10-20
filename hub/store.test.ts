@@ -100,8 +100,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   expect(() => store.createTask({ message: ask.key, quote: 'the logo is blurry', owner: '-100:7' })).toThrow("isn't in telegram:-100:50 as written")
   expect(() => store.createTask({ message: 'telegram:-100:404', owner: '-100:7' })).toThrow('no message')
   expect(() => store.db.run("insert into words (task, message, text) values (1, 'telegram:-100:50', 'fix it all')")).toThrow('character for character')
-  expect(() => store.db.run("update words set text = 'Fix it' where task = 1")).toThrow('never rewritten')
-  expect(() => store.db.run('delete from words')).toThrow('never taken away')
+  expect(() => store.db.run("update words set text = 'Fix it' where task = 1")).toThrow('only ever cut down')
   expect(() => store.db.run("update messages set body = 'Fix it'")).toThrow('keeps its words')
   expect(() => store.createTask({ message: ask.key, quote: '', owner: '-100:7' })).toThrow('needs words')
   store.db.run("insert or replace into messages (key, \"to\", \"from\", body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'Fix it', '2026-10-19T00:00:00.000Z')")
@@ -109,6 +108,79 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   expect(() => store.db.run("insert or replace into words (rowid, task, message, text) values (1, 1, 'telegram:-100:50', 'Fix the login page.')")).toThrow('never rewritten')
   expect(store.tasks().map(task => task.id)).toEqual(['t-1', 't-2'])
   expect(store.task('t-1')!.words[0]!.text).toBe(ask.body)
+})
+
+test('a task can be cut down to the words that ask, still quoted as written', () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  store.createTask({ message: ask.key, owner: '-100:7' })
+  expect(store.requote('t-1', ask.key, 'Fix the login page.').words.map(words => words.text)).toEqual(['Fix the login page.'])
+  expect(() => store.requote('t-1', ask.key, 'fix it all')).toThrow('holds no whole message')
+  expect(store.requote('t-1', ask.key, 'Fix the login page.').words.map(words => words.text)).toEqual(['Fix the login page.'])
+  expect(store.task('t-1')!.words.map(words => words.text)).toEqual(['Fix the login page.'])
+  expect(() => store.db.run("update words set text = 'Fix it all' where task = 1")).toThrow('only ever cut down')
+  expect(() => store.db.run('delete from words')).toThrow('never taken away')
+})
+
+test('cutting a whole message down keeps the other asks quoted from it', () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  store.createTask({ message: ask.key, owner: '-100:7' })
+  store.addWords('t-1', ask.key, 'the logo looks blurry on retina')
+  store.requote('t-1', ask.key, 'Fix the login page.')
+  expect(store.task('t-1')!.words.map(words => words.text)).toEqual(['Fix the login page.', 'the logo looks blurry on retina'])
+})
+
+test('a task already holding the ask folds its whole copy of the message into it', () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  store.createTask({ message: ask.key, owner: '-100:7' })
+  store.addWords('t-1', ask.key, 'Fix the login page.')
+  expect(store.requote('t-1', ask.key, 'Fix the login page.').words.map(words => words.text)).toEqual(['Fix the login page.'])
+  expect(store.requote('t-1', ask.key, 'Fix the login page.').words.map(words => words.text)).toEqual(['Fix the login page.'])
+  expect(() => store.db.run('update words set rowid = 99 where task = 1')).toThrow('only ever cut down')
+})
+
+test('cutting takes the whole message and leaves quotes picked on purpose alone', () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  store.createTask({ message: ask.key, owner: '-100:7' })
+  store.deliver({ ...ask, key: 'telegram:-100:51', body: 'Also the docs.' })
+  store.addWords('t-1', 'telegram:-100:51')
+  store.addWords('t-1', ask.key, 'Fix the login page.')
+  store.requote('t-1', ask.key, 'Fix the login page.')
+  expect(store.task('t-1')!.words.map(words => words.text)).toEqual(['Fix the login page.', 'Also the docs.'])
+  store.addWords('t-1', ask.key, 'the logo looks blurry on retina')
+  expect(() => store.requote('t-1', ask.key, 'blurry')).toThrow('holds no whole message')
+  expect(store.task('t-1')!.words.map(words => words.text)).toEqual(['Fix the login page.', 'Also the docs.', 'the logo looks blurry on retina'])
+  expect(() => store.db.run("delete from words where text = 'Also the docs.'")).toThrow('never taken away')
+})
+
+test("a task from a T3 Code prompt holds what was asked, not T3's instructions around it", () => {
+  const store = new Store(dir)
+  const body = '<t3_code_instructions>\n## T3 Code interaction mode: Default\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n<runtime_info>opus</runtime_info>'
+  store.deliver({ key: 't3:1', to: 'thread-1', from: 't3', body, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  expect(store.createTask({ message: 't3:1', owner: 'thread-1' }).words[0]!.text).toBe('ship it')
+  store.addWords('t-1', 't3:1', body)
+  expect(store.addWords('t-1', 't3:1').words.map(words => words.text)).toEqual(['ship it', body])
+  expect(store.requote('t-1', 't3:1', 'ship').words.map(words => words.text)).toEqual(['ship'])
+  expect(store.requote('t-1', 't3:1', 'ship').words.map(words => words.text)).toEqual(['ship'])
+  const shot = `${body}\n\n[image: /inbox/1.png]`
+  store.deliver({ key: 't3:2', to: 'thread-1', from: 't3', body: shot, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  expect(store.createTask({ message: 't3:2', owner: 'thread-1' }).words.map(words => words.text)).toEqual(['ship it', '[image: /inbox/1.png]'])
+  expect(store.requote('t-2', 't3:2', 'ship').words.map(words => words.text)).toEqual(['ship', '[image: /inbox/1.png]'])
+  store.addWords('t-2', 't3:2')
+  expect(store.task('t-2')!.words.map(words => words.text)).toEqual(['ship', '[image: /inbox/1.png]'])
+  const attached = '<t3_code_instructions>\nx\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n[image: /inbox/2.png]'
+  store.deliver({ key: 't3:5', to: 'thread-1', from: 't3', body: attached, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  expect(store.createTask({ message: 't3:5', owner: 'thread-1' }).words.map(words => words.text)).toEqual(['ship it', '[image: /inbox/2.png]'])
+  const tagged = '<user_request>\nmake the header say\n<title>Hello</title>\n</user_request>\n\n<runtime_info>opus</runtime_info>'
+  store.deliver({ key: 't3:4', to: 'thread-1', from: 't3', body: tagged, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  expect(store.createTask({ message: 't3:4', owner: 'thread-1' }).words[0]!.text).toBe('make the header say\n<title>Hello</title>')
+  store.deliver({ key: 't3:3', to: 'thread-1', from: 't3', body: 'and the docs\n\n<runtime_info>opus</runtime_info>', meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  expect(store.createTask({ message: 't3:3', owner: 'thread-1' }).words[0]!.text).toBe('and the docs')
+  store.deliver({ ...ask, key: 'telegram:-100:51', body: 'paste: <user_request>x</user_request>' })
+  expect(store.createTask({ message: 'telegram:-100:51', owner: '-100:7' }).words[0]!.text).toBe('paste: <user_request>x</user_request>')
 })
 
 test('follow-ups are added after what was said first, and a repeat changes nothing', () => {
