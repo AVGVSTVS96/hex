@@ -265,17 +265,16 @@ test('files go without an empty message, short text rides as the caption, and a 
   expect(sent[1]!.payload.caption).toBeUndefined()
 })
 
-test('new_thread opens a topic with a random icon, forwarding the request and the reply since; rename_thread renames it and changes its icon', async () => {
+test('new_thread opens a topic with a random icon and only the prompt, forwarding nothing; rename_thread renames it and changes its icon', async () => {
   const asked = message({ text: 'open a topic for the desk anchors' })
   await update({ message: asked })
   await inbound(line => line.meta.message_id === String(asked.message_id))
   session({ type: 'state', thread: DESK, busy: true })
   await until(() => calls.find(c => c.method === 'sendChatAction'))
-  const sent = await call('reply', { text: 'on it' })
-  const replyId = Number(sent.text.match(/id: (\d+)/)[1])
+  await call('reply', { text: 'on it' })
   expect((await call('new_thread', { title: 'Desk', prompt: 'research desk anchors' })).text).toMatch(/^started thread "Desk" in telegram/)
   expect((await called('createForumTopic')).icon_custom_emoji_id).toMatch(/^(111|222)$/)
-  expect(await called('forwardMessages')).toMatchObject({ chat_id: String(FORUM), from_chat_id: String(FORUM), message_ids: [asked.message_id, replyId], message_thread_id: 9 })
+  expect(calls.find(c => c.method === 'forwardMessages')).toBeUndefined()
   session({ type: 'state', thread: DESK, busy: false })
 
   await call('rename_thread', { title: 'Anchors', icon: '❤' })

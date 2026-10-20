@@ -5,12 +5,11 @@
 // sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them under it, and are
 // named <owner>/<unit> unless they name themselves. A job whose command is claude runs as a hex
 // session: in the hex folder, through the launcher the hub starts sessions with, so it has hex's
-// rules, memory and hooks, and with the conversation behind it, as bin/handoff gives any other agent.
+// rules, memory and hooks.
 // One started in another folder gets that folder too, with its CLAUDE.md.
 import { $ } from "bun"
 import { readdirSync, readFileSync, realpathSync } from "node:fs"
-import { homedir } from "node:os"
-import { basename, join, resolve } from "node:path"
+import { basename, resolve } from "node:path"
 
 const home = resolve(import.meta.dir, "../..")
 const state = `${home}/state/`
@@ -55,22 +54,6 @@ function caller() {
   return process.env.HEX_OWNER?.includes(":") ? parts(process.env.HEX_OWNER) : undefined
 }
 
-// What bin/handoff adds to the prompt of an agent the calling session hands work to.
-function pointer() {
-  const session = process.env.CLAUDE_CODE_SESSION_ID
-  if (!session) return ""
-  try {
-    const projects = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects")
-    const [transcript] = new Bun.Glob(`*/${session}.jsonl`).scanSync(projects)
-    if (!transcript) return ""
-    const hook = { session_id: session, transcript_path: join(projects, transcript), tool_name: "Agent", tool_input: { prompt: "job" } }
-    const out = Bun.spawnSync([`${import.meta.dir}/handoff`], { stdin: Buffer.from(JSON.stringify(hook)) }).stdout.toString()
-    return out ? String(JSON.parse(out).hookSpecificOutput.updatedInput.prompt).slice("job".length) : ""
-  } catch {
-    return ""
-  }
-}
-
 function parts(owner: string) {
   const split = owner.indexOf(":")
   return { app: owner.slice(0, split), key: owner.slice(split + 1) }
@@ -110,7 +93,7 @@ if (mode === "--ended") {
   const run = agent ? [`${import.meta.dir}/session`, ...command.slice(1), ...(away ? ["--add-dir", folder] : [])] : command
   // Like claude -p, the job reads what comes on stdin after its prompt.
   const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
-  const told = agent ? piped + (away ? `\n\nThis work is in ${folder}: run its commands there.` : "") + pointer() : ""
+  const told = agent ? piped + (away ? `\n\nThis work is in ${folder}: run its commands there.` : "") : ""
   const input = told ? ["-p", `StandardInputData=${Buffer.from(told).toString("base64")}`] : []
   await $`systemd-run --user --unit=${mode} ${agent ? `--working-directory=${home}` : "--same-dir"} ${input} --collect -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`} -- ${run}`
 }

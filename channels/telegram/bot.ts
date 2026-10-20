@@ -327,19 +327,6 @@ async function backfill(thread: string, turns: Turn[]) {
   }
 }
 
-// A new topic opens with the request that asked for it and what the session
-// said since, when a message from the user started the caller's current turn.
-async function origin(from: string, to: string): Promise<void> {
-  if (!typing.has(from)) return
-  const messages = [...(seen.get(from) ?? [])]
-  const asked = messages.findLastIndex(([, message]) => message.user !== me())
-  if (asked < 0) return
-  const picked = messages.slice(asked).filter(([, message], i) => i === 0 || message.user === me())
-  const { chat_id, extra } = target(to)
-  const copies = await bot.api.forwardMessages(chat_id, target(from).chat_id, picked.map(([id]) => id), extra)
-  copies.forEach((copy, i) => remember(to, copy.message_id, { text: picked[i]![1].text, user: me() }))
-}
-
 async function call(caller: string, tool: string, args: Record<string, unknown>): Promise<string> {
   const thread = args.thread ? hub.find(args.thread as string) : caller
   const { chat_id, extra } = target(thread)
@@ -526,7 +513,6 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const about = args.about as string | undefined
       if (app !== 'telegram') return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt as string, { about, where: args.channel as string | undefined })).link}`
       const opened = await place(name, undefined, about)
-      await origin(caller, opened.thread).catch(err => process.stderr.write(`telegram hub: couldn't forward where "${name}" came from: ${err}\n`))
       hub.open(opened.thread, name, args.prompt as string)
       return `started thread "${name}" in telegram: ${opened.link}`
     }
