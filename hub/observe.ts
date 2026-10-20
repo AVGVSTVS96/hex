@@ -111,7 +111,7 @@ function misquoted(profile: string | null, store: Store): string[] {
 }
 
 const retry = (bad: string[]) =>
-  `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}`
+  `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters (one that ran long comes back near 5,000 by merging lines and dropping what's done or settled), and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}`
 
 // Puts the profile in place only if it's still the one this pass read, inside the store's write
 // lock so two passes never both pass that check, and whole, so a session never reads half a profile.
