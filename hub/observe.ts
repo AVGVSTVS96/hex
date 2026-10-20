@@ -20,9 +20,9 @@ const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
-const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the messages the session took that turn, the owner's and others' (jobs, schedules, other sessions), with the reply it gave; an owner's message a memory already names is marked so. You keep two things.
+const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the messages the session took that turn, the owner's and others' (jobs, schedules, other sessions), with the reply it gave; an owner's message a memory already names is marked so. A turn with no messages was typed in the terminal or ran on its own: its log has what was said. You keep two things.
 
-Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
+Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages, and name anything else in plain words, without double quotes. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
 The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it near 5,000 characters, never over ${PROFILE}. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
 
@@ -51,11 +51,12 @@ export async function observe(state: string, session: string, reply: string, { a
     const written: string[] = []
     let wanted = false
     let wrong = ''
-    if (taken.length) {
+    if (taken.length || reply.trim()) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = names(state)
+      const place = taken[0]?.to ?? thread
       const turn = [
-        `<turn thread="${threads[taken[0]!.to] ?? taken[0]!.to}" log="${logOf(session) ?? 'none'}">`,
+        `<turn thread="${place ? (threads[place] ?? place) : 'none'}" log="${logOf(session) ?? 'none'}">`,
         ...rows.map(row => `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`),
         ...others.map(row => `From ${row.meta?.user || row.from}, not the owner, ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`),
         `The session's reply:\n${reply.trim() || '(none)'}`,
@@ -68,7 +69,7 @@ export async function observe(state: string, session: string, reply: string, { a
         const before = profileOf(state)
         const answer = await ask(`<profile>\n${before || '(none yet)'}\n</profile>\n\n<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn}${wrong}`)
         const now = named(fresh)
-        for (const note of answer.notes.map(line).filter(Boolean)) {
+        for (const note of tries ? [] : answer.notes.map(line).filter(Boolean)) {
           const keys = keysOf(note)
           const kept = keys.length ? keys.every(key => ours.has(key) && !now.includes(`[${key}]`)) && holds(verdict(note, store)) : !quotesOf(note).length
           if (Buffer.byteLength(note) > BYTES || !kept) continue
@@ -174,11 +175,11 @@ async function claude(input: string): Promise<Answer> {
 // next turn's message, and what an earlier pass in its thread left unfinished. Its errors go to
 // state/observe.log.
 if (import.meta.main) {
-  const { HEX_STORE, MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
+  const { HEX_STORE = join(hexDir, 'state'), MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
   if (HEX_PASS) {
     const { session, reply, by, thread } = JSON.parse(await Bun.stdin.text()) as Pass
-    await observe(HEX_STORE!, session, reply, { by, thread })
-  } else if (HEX_STORE && MEMORY_DIR && existsSync(MEMO)) {
+    await observe(HEX_STORE, session, reply, { by, thread })
+  } else if (MEMORY_DIR && existsSync(MEMO)) {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
     const pass: Pass = { session: hook.session_id ?? '', reply: hook.last_assistant_message ?? '', by: new Date().toISOString(), thread: HEX_THREAD }
     if (pass.session) {

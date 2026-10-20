@@ -154,3 +154,12 @@ test('a time reads the way notes write it, on the owner’s clock', () => {
   expect(clock('2026-10-20T06:31:00.000Z', 'America/Los_Angeles')).toBe('Oct 19 11:31pm')
   expect(clock('2026-10-20T19:05:00.000Z', 'America/Los_Angeles')).toBe('Oct 20 12:05pm')
 })
+
+test('a turn that took no message still gets a pass from its reply, and a retry writes no note twice', async () => {
+  await observe(dir, 's', '', { ask: async () => none, memo })
+  let asked = 0
+  const ask = async (): Promise<Answer> => (asked++, { notes: ['Oct 20: deck redo shipped'], profile: '- Wants "whatever" [telegram:-100:50]' })
+  expect(await observe(dir, 's', 'Shipped the deck redo.', { ask, memo })).toEqual(['Oct 20: deck redo shipped'])
+  expect(asked).toBe(3)
+  expect(noted()).toEqual(['Oct 20: deck redo shipped'])
+})
