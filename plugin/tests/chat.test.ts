@@ -48,8 +48,7 @@ for line in sys.stdin:
 
 // A turn's end starts the compactor in its own session, so it can outlive the test that set it off.
 afterEach(async () => {
-  Bun.spawnSync(['pkill', '-KILL', '-f', `${home}/`])
-  await until(() => !Bun.spawnSync(['pgrep', '-f', `${home}/`]).success)
+  await until(() => !Bun.spawnSync(['pkill', '-KILL', '-f', `${home}/`]).success)
   rmSync(home, { recursive: true, force: true })
 })
 
