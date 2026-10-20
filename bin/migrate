@@ -1,0 +1,12 @@
+#!/bin/sh
+# Runs from bin/update after the merge, as its own process, so a release's migrations run on the update that brings them.
+set -eu
+hex=$(cd "$(dirname "$0")/.." && pwd)
+home=$(cd "$hex/.." && pwd)
+
+if [ "$(jq -r '.memory.prompt // empty' "$home/schedules.json")" = 'Nightly memory pass, see "Memory" in .hex/HEX.md' ]; then
+  jq 'del(.memory)' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
+fi
+if jq -e '.heartbeat.prompt // "" | contains("\"Heartbeat\" in .hex/HEX.md")' "$home/schedules.json" > /dev/null; then
+  jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt = $defaults[0].heartbeat.prompt' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
+fi

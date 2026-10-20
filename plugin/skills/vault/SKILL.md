@@ -1,11 +1,20 @@
 ---
 name: vault
-description: Set up hex's vault for the person and bring in the passwords, 2FA codes and passkeys they already keep in a password manager, so hex can sign in for them on its computer. Use when setting hex up, when they mention their password manager, or when a sign-in needs a login the vault doesn't have yet.
+description: Get a password, key, 2FA code or passkey from the vault, type one into a sign-in on hex's computer, or ask the person for one by link; and set the vault up from their password manager. Use whenever a task needs a secret or a login, when setting hex up, or when they mention their password manager.
 ---
 
-# Setting up the vault
+# The vault
 
-hex's vault is [enclave](https://github.com/AVGVSTVS96/enclave): `.hex/bin/vault` runs it and adds typing on hex's computer. HEX.md's Secrets section is how to use it day to day; this is how to fill it.
+hex's vault is [enclave](https://github.com/AVGVSTVS96/enclave): `.hex/bin/vault` runs it and adds typing on hex's computer.
+
+## Every day
+
+To get a password, key or code from me, run `.hex/bin/vault ask <name> <field…>` (a `totp` field asks for a 2FA setup key), send me the link it prints, and run `.hex/bin/vault wait <name>` in the background until it says `saved`. What I type goes straight into your vault, never through chat or your context.
+
+- `.hex/bin/vault fill <name> <field>` types a saved value (`totp`: the current code) into the focused field on your computer, so you never read it.
+- `.hex/bin/vault passkey <name>`, run in the background, signs your computer's browser in once with a saved passkey.
+- `.hex/bin/vault list` shows names and fields.
+- If I paste a secret in chat, tell me it's in this chat's log now and send me a link instead.
 
 ## Bring in their password manager
 
