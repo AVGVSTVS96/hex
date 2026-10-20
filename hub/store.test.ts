@@ -47,17 +47,15 @@ test('the first session to take a message has it, and it leaves what waits', () 
   expect(store.untaken().map(row => row.key)).toEqual(['telegram:-100:43', 'telegram:-100:44'])
 })
 
-test("a schedule's slot fires once, and not again while its last message still waits", () => {
+test("a schedule's slot fires once, and its next slot fires whether or not the last was taken", () => {
   const store = new Store(dir)
   const minute = Date.UTC(2026, 9, 18, 21, 45) / 60_000
   expect(store.fire('heartbeat', minute, 'general', '[heartbeat] Hourly check')).toBe(true)
   expect(store.fire('heartbeat', minute, 'general', '[heartbeat] Hourly check')).toBe(false)
-  expect(store.fire('heartbeat', minute + 60, 'general', '[heartbeat] Hourly check')).toBe(false)
+  expect(store.fire('heartbeat', minute + 60, 'general', '[heartbeat] Hourly check')).toBe(true)
   expect(store.fire('call', minute, 'general', '[call] Ring if needed', true)).toBe(true)
   expect(store.message('schedule:heartbeat@2026-10-18T21:45Z')).toMatchObject({ to: 'general', from: 'schedule', meta: { user: 'schedule', schedule: 'heartbeat' } })
   expect(store.message('schedule:call@2026-10-18T21:45Z')!.meta!.late).toBe('true')
-  store.take('schedule:heartbeat@2026-10-18T21:45Z', 'session-a')
-  expect(store.fire('heartbeat', minute + 60, 'general', '[heartbeat] Hourly check')).toBe(true)
 })
 
 test('the scheduler keeps the last minute it checked', () => {

@@ -108,13 +108,10 @@ test('the first check ever fires nothing from before it', () => {
   expect(fired()).toEqual(['schedule:heartbeat@2026-10-18T16:01Z'])
 })
 
-test('a job whose last message still waits to be taken fires no more until it is', () => {
+test('a job fires every time it comes due, even while its last message waits to be taken', () => {
   jobs({ heartbeat: { cron: '45 * * * *', prompt: 'Hourly check' } })
   run(at(18, 9), at(18, 12))
-  expect(fired()).toEqual(['schedule:heartbeat@2026-10-18T16:45Z'])
-  takeAll()
-  run(at(18, 12, 1), at(18, 13, 50))
-  expect(fired()).toEqual(['schedule:heartbeat@2026-10-18T19:45Z'])
+  expect(fired()).toEqual(['schedule:heartbeat@2026-10-18T16:45Z', 'schedule:heartbeat@2026-10-18T17:45Z', 'schedule:heartbeat@2026-10-18T18:45Z'])
 })
 
 test('a broken schedules.json fires nothing, says why once, and its jobs catch up once it loads', () => {
