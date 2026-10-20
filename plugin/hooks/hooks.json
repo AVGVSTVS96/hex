@@ -33,7 +33,8 @@
     "PreToolUse": [
       { "matcher": "mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }] },
       { "matcher": "^(Edit|Write|MultiEdit)$", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
-      { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*memo note*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/quoted" }] }
+      { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*memo note*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/quoted" }] },
+      { "matcher": "^(Agent|SendMessage|mcp__t3.code__(t3_thread_launch|t3_thread_send|t3_thread_send_attachments|delegate_task|create_threads)|mcp__plugin_[a-z0-9]+_[a-z0-9]+__new_thread)$", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/handoff" }] }
     ],
     "PostToolUse": [
       { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*.md*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
