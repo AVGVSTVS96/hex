@@ -38,7 +38,7 @@ case "${1:-}" in
     [ -e "$home/.claude/settings.json" ] || jq --arg memory "$home/memory" '.env.MEMORY_DIR = $memory' "$hex/defaults/settings.json" > "$home/.claude/settings.json"
     # Claude Code runs a background session in bypassPermissions only with consent in the user's own settings.
     if [ "$(jq -r '.permissions.defaultMode' "$home/.claude/settings.json")" = bypassPermissions ]; then
-      user="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+      user=$(. "$hex/bin/settings"; echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json")
       if ! grep -q '[^[:space:]]' "$user" 2>/dev/null; then
         mkdir -p "$(dirname "$user")"
         echo '{ "skipDangerousModePermissionPrompt": true }' > "$user"
