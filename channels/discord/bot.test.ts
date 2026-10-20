@@ -393,6 +393,19 @@ test('a thread the owner opens on his message starts from that message, kept in 
   expect(heard().at(-1)).toEqual(['audit every hex worker', asked.id, undefined])
 })
 
+test("a thread someone else opens on the owner's message stays theirs: his edit to it reaches no session", async () => {
+  const someone = { id: '8888', username: 'someone', bot: false }
+  const asked = say(general, 20, 'thinking out loud', live(general))
+  const thread = channel(asked.id, { name: 'their thread', type: ChannelType.PublicThread, parent: general, ownerId: someone.id })
+  asked.thread = thread
+  handlers.get('messageCreate')!({ ...say(thread, 21, '', { author: someone }), ...live(thread), type: MessageType.ThreadStarterMessage, fetchReference: async () => asked })
+  handlers.get('messageUpdate')!({ ...asked, partial: false }, { ...asked, content: 'thinking out loud, edited' })
+  const then = { ...say(here, 28, 'back to work'), ...live(here) }
+  handlers.get('messageCreate')!(then)
+  await inbound(received, line => line.meta.message_id === then.id)
+  expect(open(state).untaken(thread.id)).toEqual([])
+})
+
 test('search_messages searches the whole server and says where each match is', async () => {
   found = {
     total_results: 2,
