@@ -274,11 +274,12 @@ test("an answer Claude couldn't give is asked again, never read as nothing runni
 })
 
 test('a daemon that went down while General ran is started, so the hub finds General instead of starting a copy', async () => {
-  start({ main: 'chat', general: true, registry: { chat: { name: 'hex', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
   writeFileSync(join(dir, 'down'), '')
+  start({ main: 'chat', general: true, registry: { chat: { name: 'hex', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
   await until(() => calls().some(args => args[0] === 'daemon' && args[1] === 'run'))
-  await until(() => calls().filter(args => args[0] === 'agents').length >= 2)
-  await settled()
+  await time.lapse(1000)
+  const run = calls().findIndex(args => args[0] === 'daemon' && args[1] === 'run')
+  expect(calls().slice(run + 1)).toContainEqual(['agents', '--json'])
   expect(calls().filter(args => args[0] !== 'agents' && args[0] !== 'daemon')).toEqual([])
 })
 
@@ -1512,11 +1513,14 @@ test('a session whose flags read no settings file of the hub stops and resumes o
   expect(calls().some(args => args[0] === 'respawn')).toBe(false)
 })
 
-test('closing a thread with no live session forgets it at once', () => {
+test('closing a thread with no live session forgets it at once', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
+  await settled()
+  const before = calls().length
   void hub.retire('chat:7')
   expect(registry()['chat:7']).toBeUndefined()
-  expect(calls()).toEqual([])
+  await settled()
+  expect(calls().slice(before)).toEqual([])
 })
 
 test('closing a thread whose session Claude reports busy waits for its next idle', async () => {

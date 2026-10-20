@@ -86,6 +86,7 @@ export async function agents(asking = () => true): Promise<Agent[]> {
     const running = await listed()
     if (!asking()) break
     if (running?.length || (running && (await awake(asking)) && asking())) return running
+    if (!asking()) break
     if (!running && !tries) process.stderr.write("hub: claude agents didn't answer, so the hub asks again\n")
     await sleep(Math.min(1000 * 2 ** tries, 30_000))
   }
