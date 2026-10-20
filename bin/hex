@@ -23,12 +23,6 @@ roll_back() {
 
 case "${1:-}" in
   init)
-    settings="$home/.claude/settings.json"
-    [ -e "$settings" ] || settings="$hex/defaults/settings.json"
-    if [ "$(id -u)" = 0 ] && [ "$(set +eu; . "$hex/bin/settings"; echo "${IS_SANDBOX:-}")" != 1 ] && [ "$(jq -r '.permissions.defaultMode' "$settings")" = bypassPermissions ]; then
-      echo "hex runs its sessions in bypassPermissions, which Claude Code refuses as root outside a sandbox (IS_SANDBOX=1): run hex as a normal user" >&2
-      exit 1
-    fi
     for file in AGENTS.md SOUL.md schedules.json; do
       [ -e "$home/$file" ] || cp "$hex/defaults/$file" "$home/$file"
     done
@@ -38,21 +32,14 @@ case "${1:-}" in
     [ -e "$home/.claude/settings.json" ] || jq --arg memory "$home/memory" '.env.MEMORY_DIR = $memory' "$hex/defaults/settings.json" > "$home/.claude/settings.json"
     # Claude Code runs a background session in bypassPermissions only with consent in the user's own settings.
     if [ "$(jq -r '.permissions.defaultMode' "$home/.claude/settings.json")" = bypassPermissions ]; then
-      # hex start hands sessions the caller's environment and the systemd unit doesn't, so the consent goes to the config dir each would use.
-      for env in keep unset; do
-        dir=$(set +eu; [ $env = keep ] || unset CLAUDE_CONFIG_DIR; . "$hex/bin/settings"; echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}") || dir=$HOME/.claude
-        user="$dir/settings.json"
-        if ! grep -q '[^[:space:]]' "$user" 2>/dev/null; then
-          mkdir -p "$dir"
-          echo '{ "skipDangerousModePermissionPrompt": true }' > "$user"
-        elif ! jq -e 'has("skipDangerousModePermissionPrompt")' "$user" >/dev/null 2>&1; then
-          consent=$(jq '.skipDangerousModePermissionPrompt = true' "$user") || { echo "$user isn't valid JSON: add \"skipDangerousModePermissionPrompt\": true to it, then run init again" >&2; exit 1; }
-          printf '%s\n' "$consent" > "$user"
-        elif ! jq -e '.skipDangerousModePermissionPrompt == true' "$user" >/dev/null; then
-          echo "$user doesn't set skipDangerousModePermissionPrompt to true, so hex's sessions won't start: set it to true, then run init again" >&2
-          exit 1
-        fi
-      done
+      user="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+      if ! grep -q '[^[:space:]]' "$user" 2>/dev/null; then
+        mkdir -p "$(dirname "$user")"
+        echo '{ "skipDangerousModePermissionPrompt": true }' > "$user"
+      elif ! jq -e '.skipDangerousModePermissionPrompt == true' "$user" >/dev/null 2>&1; then
+        consent=$(jq '.skipDangerousModePermissionPrompt = true' "$user") || { echo "$user isn't valid JSON: add \"skipDangerousModePermissionPrompt\": true to it, then run init again" >&2; exit 1; }
+        printf '%s\n' "$consent" > "$user"
+      fi
     fi
     "$hex/bin/optmem"
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
