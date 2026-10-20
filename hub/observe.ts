@@ -45,10 +45,10 @@ export async function observe(state: string, session: string, reply: string, { a
   const taken = store.observe(session, by, thread, 4 * CALL)
   const rows = owners(taken)
   const others = taken.filter(row => !rows.includes(row))
+  const written: string[] = []
   try {
     const noted = named(rows)
     const fresh = rows.filter(row => !noted.includes(`[${row.key}]`))
-    const written: string[] = []
     let wanted = false
     let wrong = ''
     if (taken.length || reply.trim()) {
@@ -83,16 +83,16 @@ export async function observe(state: string, session: string, reply: string, { a
         wanted = false
         break
       }
-      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it, so the thread\'s next pass looks at this turn again'}`)
+      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it'}`)
     }
-    // A pass that lost to other passes leaves its turn for the next; one that kept misquoting would
-    // again, so its turn is done.
-    store.observed(taken.map(row => row.key), !wanted || !!wrong)
+    // A pass that lost to other passes leaves its turn for the next, unless it wrote notes, which a
+    // second look could write again; one that kept misquoting would again, so its turn is done.
+    store.observed(taken.map(row => row.key), !wanted || !!wrong || written.length > 0)
     return written
   } catch (error) {
-    store.observed(taken.map(row => row.key), false)
+    store.observed(taken.map(row => row.key), written.length > 0)
     console.error(`hex couldn't look over this turn for memories: ${error}`)
-    return []
+    return written
   }
 }
 
