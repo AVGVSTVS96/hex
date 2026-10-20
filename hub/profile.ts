@@ -108,9 +108,10 @@ if (import.meta.main) {
         const now = profileOf(HEX_STORE).slice(0, PROFILE)
         const before = store.seen(mine)
         const told = store.show(mine, now) ? about(before, now) : ''
-        const { text, digest } = profile(HEX_STORE, HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD, Math.max(0, ROOM - told.length))
+        const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
+        const { text, digest } = profile(HEX_STORE, thread, Math.max(0, ROOM - told.length))
         const lists = store.show(session_id, digest) ? text || 'No open tasks or questions waiting on me now.' : ''
-        if (told && lists) store.unshow(session_id)
+        if (told && lists && text !== profile(HEX_STORE, thread).text) store.unshow(session_id)
         const out = [told, lists].filter(Boolean).join('\n\n')
         if (out) console.log(out)
       }
