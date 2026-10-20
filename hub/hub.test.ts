@@ -727,6 +727,52 @@ test('a session that fails to start is reported with its reason, and the next me
   await until(() => calls().filter(args => args[0] === '--bg').length === 2)
 })
 
+test('a thread whose session failed to start starts again once another session connects, and gets the message that waited', async () => {
+  start()
+  const starts = () => calls().filter(args => args[0] === '--bg')
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await launched()
+  await Bun.sleep(50)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'daemon binary was deleted (upgrade in progress)' }))
+  await until(() => failures.length)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'working' }))
+  hub.open('chat:8', 'OpenAI')
+  await until(() => starts().length === 2)
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  expect(settingsOf(await until(() => starts()[2])).env.HEX_THREAD).toBe('chat:7')
+  const { received } = await session('chat:7')
+  await until(() => received.length)
+  expect(received).toEqual([inbound(message)])
+})
+
+test("a thread whose starts keep failing says so in its chat once, and General hears of it once, at the third", async () => {
+  start({ main: 'general', general: true })
+  await launched()
+  const general = await session('general')
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  for (const n of [1, 2, 3, 4]) {
+    hub.deliver('chat:7', 'Desk anchors', { ...message, content: `try ${n}` })
+    await until(() => states.filter(([thread, busy]) => thread === 'chat:7' && !busy).length === n)
+  }
+  expect(failures).toEqual([['chat:7', 'exit 1 before init']])
+  await until(() => general.received.length)
+  await Bun.sleep(50)
+  expect(general.received.map(said => said.content)).toEqual(['[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 3 times in a row: exit 1 before init. It starts again when another session connects.'])
+})
+
+test("General whose starts keep failing says so once, straight in its chat, and leaves itself no message", async () => {
+  start({ main: 'general', general: true })
+  await launched()
+  await Bun.sleep(50)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  for (const n of [1, 2, 3]) {
+    if (n > 1) hub.deliver('general', 'hex', { ...message, content: `try ${n}` })
+    await until(() => states.filter(([thread, busy]) => thread === 'general' && !busy).length === n)
+  }
+  expect(failures).toEqual([['general', 'exit 1 before init']])
+  expect(open(dir).untaken('general').map(row => row.body)).toEqual(['try 2', 'try 3'])
+})
+
 test('a session that connects ends the watch, so a later failed state is ignored', async () => {
   start()
   hub.deliver('chat:7', 'Desk anchors', message)

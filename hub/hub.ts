@@ -98,6 +98,8 @@ type Run = {
   // A new session whose conversation Claude hasn't saved yet.
   unsaved?: string
   held: (() => void)[]
+  // The starts that failed in a row since the thread's session last connected.
+  failures: number
 }
 
 // A call on a line a client holds, like a Discord voice channel: the line plays the voice's audio
@@ -126,6 +128,14 @@ export type Client = {
   close?: () => Promise<void>
 }
 export const clients = new Map<string, Client>()
+
+// Each hub's restart of its threads whose session failed to start, run whenever a session in this
+// process connects: a start just went through, so theirs can too.
+const retries = new Set<() => void>()
+
+// The hub serving General, which hears of a thread once this many of its starts fail in a row.
+let generalHub: Hub | undefined
+const TELL_AFTER = 3
 
 // Resolves with the hub serving General once General's session first connects to it: from then
 // on, hex works on the code this process runs.
@@ -331,7 +341,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   function runOf(thread: string): Run {
     let run = runs.get(thread)
-    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], handed: new Set(), turn: 'done', held: [] }))
+    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], handed: new Set(), turn: 'done', held: [], failures: 0 }))
     return run
   }
 
@@ -641,12 +651,21 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     }
   }
 
+  // A run of failed starts, which ends when the thread's session connects, is told once in the
+  // thread's chat and, at its third, to General. General's own reach only its chat, which needs no
+  // session to read them.
   function fail(thread: string, reason: string) {
     const run = runOf(thread)
     if (run.phase.is !== 'launching') return
     become(run, { is: 'stopped' })
     if (run.renew === 'underway') run.renew = undefined
-    failed(thread, reason)
+    run.failures++
+    process.stderr.write(`hub: ${thread}'s session failed to start, ${run.failures} in a row: ${reason}\n`)
+    if (run.failures === 1) failed(thread, reason)
+    if (run.failures === TELL_AFTER && generalHub && !(general && thread === main)) {
+      const content = `[hub] hex couldn't start the session of ${app} thread "${threads[thread]?.name ?? thread}" ${TELL_AFTER} times in a row: ${reason}. It starts again when another session connects.`
+      generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? 'hex', { content, meta: { user: 'hub' } })
+    }
     setState(thread, false)
   }
 
@@ -714,6 +733,12 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     for (const row of kept(store => store.untaken(), [])) if (threads[row.to] && mine(row)) pass(row.to, threads[row.to]!.name, toMessage(row))
   }
 
+  // A thread whose session failed to start keeps the messages it was handed waiting, and the main
+  // thread is always running, so either starts again once starts go through.
+  function retry() {
+    for (const [thread, run] of runs) if (run.failures && run.phase.is === 'stopped' && (thread === main || waiting(thread).length)) void launch(thread, threads[thread]?.name ?? thread)
+  }
+
   // A session that started before hex kept messages can't mark one taken itself, so its hook says so here.
   function took(keys: unknown, session: unknown) {
     if (!Array.isArray(keys) || typeof session !== 'string') return
@@ -769,6 +794,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const run = runOf(thread)
     const job = run.phase.is === 'launching' ? run.phase.job : undefined
     become(run, { is: 'live', line })
+    run.failures = 0
     if (general && thread === main) reached(api)
     if (run.renew !== 'asked') run.renew = undefined
     threads[thread] ??= { name: thread }
@@ -787,6 +813,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     void sessionOf(thread).then(running => {
       if (running && run.phase.is === 'live' && run.phase.line === line) note(thread, running.sessionId)
     })
+    for (const each of retries) each()
   }
 
   function note(thread: string, session: string) {
@@ -995,6 +1022,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       closed = true
       unwatch()
       unschedule()
+      retries.delete(retry)
+      if (generalHub === api) generalHub = undefined
       apps.delete(app)
       sock.close()
       if (channels.get(path) === serve) channels.delete(path)
@@ -1005,6 +1034,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       }
     },
   }
+  retries.add(retry)
+  if (general && main) generalHub = api
   return api
 }
 
