@@ -1,5 +1,5 @@
-import { beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'fs'
+import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -20,6 +20,11 @@ beforeEach(() => {
   sh('git', 'switch', '-q', '-c', 'idea')
   commit('Try an idea')
   sh('git', 'switch', '-q', 'trunk')
+})
+
+afterEach(() => {
+  rmSync(home, { recursive: true, force: true })
+  rmSync(bin, { recursive: true, force: true })
 })
 
 function claude(agents: object[] | string) {
@@ -91,7 +96,8 @@ test('drops a section it cannot read, and says none for one that is empty', () =
 })
 
 test('stays quiet and exits 0 when neither git nor claude can run', () => {
-  const only = mkdtempSync(join(tmpdir(), 'live-status-path-'))
+  const only = join(bin, 'only')
+  mkdirSync(only)
   symlinkSync(Bun.which('python3')!, join(only, 'python3'))
   const run = Bun.spawnSync([join(home, '.hex/bin/live-status')], {
     stdin: Buffer.from('{}'),

@@ -5,6 +5,7 @@ cd "$hex"
 # The update runs inside a hex session, whose HEX_* variables would steer the hooks under test.
 unset $(env | sed -n 's/^\(HEX_[A-Z_]*\)=.*/\1/p')
 out=$(mktemp -d)
+export TMPDIR="$out"
 trap 'rm -rf "$out"' EXIT
 # Discord's voice (prism-media) requires ffmpeg-static only when it's installed, which a bundle can't tell.
 build="bun build --target bun --external ffmpeg-static"
