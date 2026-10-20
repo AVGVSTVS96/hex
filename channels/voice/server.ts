@@ -863,11 +863,13 @@ function allowed(request: Request) {
   return !TOKEN || same(request.headers.get('authorization') ?? '', `Bearer ${TOKEN}`)
 }
 
-// Without a token, only this keeps a page on another site, open in the owner's browser, from
-// posting here.
-function crossSite(request: Request) {
+// A page on another site, open in the owner's browser, can post here, or point its own name at this
+// machine to read and post here as if it were this page. Without a token, only this stops it.
+function foreign(request: Request) {
+  const host = new URL(request.url).hostname
   const site = request.headers.get('sec-fetch-site')
-  return request.method !== 'GET' && !!site && site !== 'same-origin' && site !== 'none'
+  const named = ['localhost', '127.0.0.1', '[::1]', PUBLIC_HOST?.split(':')[0]].includes(host) || host.endsWith('.ts.net')
+  return !named || (request.method !== 'GET' && !!site && site !== 'same-origin' && site !== 'none')
 }
 
 function home(request: Request) {
@@ -1063,8 +1065,8 @@ export function serve(voiceHub: Hub, state: string) {
       if (token) trace(`Twilio ${request.method} ${twimlPath ? 'TwiML' : 'stream'}, ${dialed ? 'known' : 'unknown'} token`)
       if (dialed && twimlPath) return stream(token)
       if (dialed && dials.delete(token)) return server.upgrade(request, { data: { ...dialed } }) ? undefined : new Response('upgrade failed', { status: 400 })
+      if (foreign(request)) return new Response('Forbidden', { status: 403 })
       if (pathname === '/') return home(request)
-      if (crossSite(request)) return new Response('Forbidden', { status: 403 })
       if (!allowed(request)) return new Response('Unauthorized', { status: 401, headers: { 'www-authenticate': 'Bearer' } })
       return routes(request) ?? new Response('404', { status: 404 })
     },
