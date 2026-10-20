@@ -864,11 +864,12 @@ function allowed(request: Request) {
 }
 
 // A page on another site, open in the owner's browser, can post here, or point its own name at this
-// machine to read and post here as if it were this page. Without a token, only this stops it.
+// machine to read and post here as if it were this page, which would hand it the token too. A
+// request carrying the token is from someone who has it.
 function foreign(request: Request) {
   const host = new URL(request.url).hostname
   const site = request.headers.get('sec-fetch-site')
-  const named = ['localhost', '127.0.0.1', '[::1]', PUBLIC_HOST?.split(':')[0]].includes(host) || host.endsWith('.ts.net')
+  const named = ['localhost', '127.0.0.1', '[::1]', PUBLIC_HOST?.split(':')[0]].includes(host) || host.endsWith('.ts.net') || (!!TOKEN && allowed(request))
   return !named || (request.method !== 'GET' && !!site && site !== 'same-origin' && site !== 'none')
 }
 
