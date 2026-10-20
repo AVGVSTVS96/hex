@@ -1,7 +1,8 @@
-import { beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'fs'
+import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { until } from '../../hub/until.ts'
 
 const HEX = join(import.meta.dir, '../..')
 const THREAD = '6296842341'
@@ -43,6 +44,13 @@ for line in sys.stdin:
     print(json.dumps({"type": "result", "result": reply, "is_error": False}), flush=True)
 `)
   chmodSync(join(home, 'claude'), 0o755)
+})
+
+// A turn's end starts the compactor in its own session, so it can outlive the test that set it off.
+afterEach(async () => {
+  Bun.spawnSync(['pkill', '-KILL', '-f', `${home}/`])
+  await until(() => !Bun.spawnSync(['pgrep', '-f', `${home}/`]).success)
+  rmSync(home, { recursive: true, force: true })
 })
 
 const env = (extra: Record<string, string> = {}) => ({
