@@ -373,6 +373,39 @@ test('the message a thread was started from is found in the channel it hangs off
   expect((await s.call('download_attachment', { message_id: shot.id })).text).toBe('message has no attachments')
 })
 
+test('a thread the owner opens on his message starts from that message, kept in hex.db, and keeps the name he gave it', async () => {
+  const asked = say(general, 18, 'audit the hex workers', live(general))
+  handlers.get('messageCreate')!({ ...asked })
+  const thread = channel(asked.id, { name: 'audit hex workers, keep on track', type: ChannelType.PublicThread, parent: general, ownerId: OWNER })
+  asked.thread = thread
+  const s = await session(thread.id)
+  const starter = { ...say(thread, 19, ''), ...live(thread), type: MessageType.ThreadStarterMessage, fetchReference: async () => asked }
+  handlers.get('messageCreate')!(starter)
+  const then = { ...say(thread, 19, 'and keep them on track'), ...live(thread) }
+  handlers.get('messageCreate')!(then)
+  await inbound(s.received, line => line.meta.message_id === then.id)
+  const heard = () => s.received.filter(line => line.type === 'inbound').map(line => [line.content, line.meta.message_id, line.meta.new_thread])
+  expect(heard()).toEqual([['audit the hex workers', asked.id, undefined], ['and keep them on track', then.id, undefined]])
+  expect(open(state).message(`discord:${asked.id}`)).toMatchObject({ to: thread.id, body: 'audit the hex workers', meta: { ts: at(18).toISOString() } })
+
+  handlers.get('messageUpdate')!({ ...asked, partial: false }, { ...asked, content: 'audit every hex worker' })
+  await inbound(s.received, line => line.meta.edited === 'true')
+  expect(heard().at(-1)).toEqual(['audit every hex worker', asked.id, undefined])
+})
+
+test("a thread someone else opens on the owner's message stays theirs: his edit to it reaches no session", async () => {
+  const someone = { id: '8888', username: 'someone', bot: false }
+  const asked = say(general, 20, 'thinking out loud', live(general))
+  const thread = channel(asked.id, { name: 'their thread', type: ChannelType.PublicThread, parent: general, ownerId: someone.id })
+  asked.thread = thread
+  handlers.get('messageCreate')!({ ...say(thread, 21, '', { author: someone }), ...live(thread), type: MessageType.ThreadStarterMessage, fetchReference: async () => asked })
+  handlers.get('messageUpdate')!({ ...asked, partial: false }, { ...asked, content: 'thinking out loud, edited' })
+  const then = { ...say(here, 28, 'back to work'), ...live(here) }
+  handlers.get('messageCreate')!(then)
+  await inbound(received, line => line.meta.message_id === then.id)
+  expect(open(state).untaken(thread.id)).toEqual([])
+})
+
 test('search_messages searches the whole server and says where each match is', async () => {
   found = {
     total_results: 2,
@@ -417,7 +450,7 @@ test('stickers and polls arrive described, and a new forum post carries its titl
 })
 
 test('a tag in an announcement channel starts a thread like in a text channel', async () => {
-  const thread = channel('7000', { name: 'launch post', type: ChannelType.AnnouncementThread, parent: news })
+  const thread = channel('7000', { name: 'launch post', type: ChannelType.AnnouncementThread, parent: news, ownerId: BOT })
   const s = await session(thread.id)
   const tag = { ...say(news, 25, '<@1000> launch post review'), inGuild: () => true, channel: news, mentions: { has: () => true }, react: async () => {}, startThread: async () => thread, id: thread.id }
   handlers.get('messageCreate')!(tag)
@@ -664,7 +697,7 @@ test('back online, the bot reads what was said while it was away, archived threa
   const away = { inGuild: () => true, mentions: { has: () => false }, react: async () => {} }
   const first = say(here, 61, 'did the anchors ship?', away)
   const tag = say(general, 62, '<@1000> anchors', { ...away, mentions: { has: () => true }, startThread: async () => tagged })
-  const tagged = channel(tag.id, { name: 'anchors', type: ChannelType.PublicThread, parent: general })
+  const tagged = channel(tag.id, { name: 'anchors', type: ChannelType.PublicThread, parent: general, ownerId: BOT })
   const opening = await session(tagged.id)
   const mine = await session(dm.id)
   const theirs = say(here, 63, 'not for hex', { ...away, author: someone })

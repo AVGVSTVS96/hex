@@ -768,15 +768,17 @@ function serve(token: string) {
   const allowed = (user: string) => loadAccess().allowFrom.includes(user)
   voiceCalls(client, allowed)
 
-  // A tag in a channel starts a thread on that message, Claude-tag style;
-  // inside a thread every message reaches its session without one.
+  // A tag in a channel starts a thread on that message, Claude-tag style; inside a thread
+  // every message reaches its session without one, and so does the message it hangs off
+  // once the hub serves that thread.
   async function threadOf(msg: DiscordMessage): Promise<ThreadChannel | DMChannel | undefined> {
     if (msg.channel.isDMBased()) dms.add(msg.channelId)
     if (msg.channel.isThread() || msg.channel.isDMBased()) return msg.channel as ThreadChannel | DMChannel
-    if (!isText(msg.channel) || !client.user || !msg.mentions.has(client.user)) return
-    if (msg.thread) return msg.thread
+    if (!isText(msg.channel)) return
+    if (msg.thread && hub.name(msg.thread.id)) return msg.thread
+    if (!client.user || !msg.mentions.has(client.user)) return
     const words = msg.content.replace(/<@[!&]?\d+>/g, '').trim().split(/\s+/).filter(Boolean)
-    return msg.startThread({ name: words[0] ?? 'Thread' })
+    return msg.thread ?? msg.startThread({ name: words[0] ?? 'Thread' })
   }
 
   async function replyMeta(msg: DiscordMessage): Promise<Record<string, string>> {
@@ -792,13 +794,16 @@ function serve(token: string) {
     }
   }
 
-  async function handleInbound(msg: DiscordMessage, edited = false): Promise<void> {
+  async function handleInbound(msg: DiscordMessage, edited = false, thread?: ThreadChannel): Promise<void> {
     const access = loadAccess()
     if (!access.allowFrom.includes(msg.author.id)) return
+    // A thread opened on a message begins with an empty starter pointing at it: that message is what opens the thread.
+    if (msg.type === MessageType.ThreadStarterMessage) return handleInbound(await msg.fetchReference(), edited, msg.channel as ThreadChannel)
 
-    const ch = await threadOf(msg)
+    const ch = thread ?? (await threadOf(msg))
     if (!ch) return
     const opened = !edited && ch.id === msg.id
+    const tagged = opened && ch.isThread() && ch.ownerId === client.user!.id
     const forum = ch.isThread() && !!ch.parent?.isThreadOnly()
     if (ch.isThread() && ch.archived) await ch.setArchived(false).catch(() => {})
 
@@ -827,7 +832,7 @@ function serve(token: string) {
         user_id: msg.author.id,
         ts: msg.createdAt.toISOString(),
         ...(ch.isThread() && ch.parent ? { channel: ch.parent.name } : {}),
-        ...(opened && !forum ? { new_thread: 'true' } : {}),
+        ...(tagged ? { new_thread: 'true' } : {}),
         ...(opened && forum ? { post_title: nameOf(ch) } : {}),
         ...(shots.length > 0 ? { image_path: shots.join('; ') } : {}),
         ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
