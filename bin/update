@@ -3,6 +3,7 @@ set -eu
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 cd "$hex"
+[ -f "$home/MEMORY.md" ] && echo "This folder still has a MEMORY.md from an older hex: fold it in once (its facts become notes, its rules and where-things-are lines move into AGENTS.md), then delete it, remove its @MEMORY.md line, and commit."
 
 before=$(git rev-parse --short HEAD)
 git fetch -q origin main
@@ -36,6 +37,9 @@ git merge -q --ff-only "$incoming"
 
 if [ "$(jq -r '.memory.prompt // empty' "$home/schedules.json")" = 'Nightly memory pass, see "Memory" in .hex/HEX.md' ]; then
   jq 'del(.memory)' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
+fi
+if jq -e '.heartbeat.prompt // "" | contains("\"Heartbeat\" in .hex/HEX.md")' "$home/schedules.json" > /dev/null; then
+  jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt = $defaults[0].heartbeat.prompt' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
 fi
 
 unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null || :)
