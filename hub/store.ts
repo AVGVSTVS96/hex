@@ -286,6 +286,12 @@ export class Store {
     return rows.map(row => this.toTask(row))
   }
 
+  // The owner's last finished tasks, newest first.
+  lastDone(owner: string, count: number): Task[] {
+    const rows = this.db.query("select * from tasks where owner = ? and status = 'done' order by closed desc, n desc limit ?").all(owner, count) as StoredTask[]
+    return rows.map(row => this.toTask(row))
+  }
+
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
   ask({ app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {
     this.write(() =>

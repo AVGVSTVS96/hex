@@ -7,11 +7,7 @@ import type { Store } from './store.ts'
 export function statusPost(store: Store, thread: string, note: string, room: number): string {
   const waiting = store.questions({ thread, waiting: true }).map((question, n) => `${n + 1}. ${clip(question.text, 120)} [${question.options.join(' | ')}]`)
   const open = store.tasks({ owner: thread, status: ['open'] }).map(task => `- ${clip(task.words[0]?.text ?? '', 120)} (${task.id})`)
-  const done = store
-    .tasks({ owner: thread, status: ['done'] })
-    .sort((a, b) => b.closed!.localeCompare(a.closed!))
-    .slice(0, 5)
-    .map(task => `- ${clip(task.words[0]?.text ?? '', 120)} (${task.id}) · ${clip(task.proof!, 80)}`)
+  const done = store.lastDone(thread, 5).map(task => `- ${clip(task.words[0]?.text ?? '', 120)} (${task.id}) · ${clip(task.proof!, 80)}`)
   const section = (header: string, lines: string[]) => ({ header, items: (lines.length ? lines : ['- nothing']).map(line => [line]), gap: '\n' })
   const sections = [section('🔴 **Blocked on you**', waiting), section('🟡 **Pending**', open), section('🟢 **Done**', done)]
   const space = room - fit(sections, 0).length - 2
