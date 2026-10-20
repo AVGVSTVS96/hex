@@ -88,7 +88,6 @@ Every hour at :45 while I'm up (its hours are in `schedules.json`) you get `[hea
 - my email, if a mail connector is set up
 - your own inbox, if you have one
 - background agents and tasks you started
-- threads waiting on me (their ends in `log/threads/`)
 - anything you said you'd follow up on
 
 If something's worth telling me now, message me in General, a line and a link each. If not, answer with exactly `HEARTBEAT_OK`.
