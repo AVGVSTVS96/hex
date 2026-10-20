@@ -39,7 +39,7 @@ case "${1:-}" in
     # Claude Code runs a background session in bypassPermissions only with consent in the user's own settings.
     if [ "$(jq -r '.permissions.defaultMode' "$home/.claude/settings.json")" = bypassPermissions ]; then
       user="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
-      if [ ! -s "$user" ]; then
+      if ! grep -q '[^[:space:]]' "$user" 2>/dev/null; then
         mkdir -p "$(dirname "$user")"
         echo '{ "skipDangerousModePermissionPrompt": true }' > "$user"
       elif ! jq -e 'has("skipDangerousModePermissionPrompt")' "$user" >/dev/null 2>&1; then
