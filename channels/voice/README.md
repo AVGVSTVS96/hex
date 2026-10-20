@@ -354,9 +354,9 @@ With `VOICE_TOKEN` set, every request except the page itself and Twilio's
 other devices on the same tailnet can't read or delete calls. The page gets it
 filled in when opened on `127.0.0.1` directly; through a proxy like
 `tailscale serve`, open it once as `https://<host>:8790/#token=<token>` and
-the browser keeps it. Either way, it answers only under `localhost`, a
-`.ts.net` name, the host in `VOICE_PUBLIC_URL` or with the token, and takes no
-post another site's page sends.
+the browser keeps it. Either way, it answers only under an IP, a
+short name, `localhost`, a `.ts.net` name or the host in `VOICE_PUBLIC_URL`, and
+takes posts only from pages under those names.
 
 An app can hold the same call: POST its WebRTC offer to `/session` as
 `{ "sdp": "...", "voice": "marin", "from": "app" }` (the voice is optional; `from`

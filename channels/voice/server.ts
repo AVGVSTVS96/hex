@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import { readFileSync } from 'fs'
+import { isIP } from 'net'
 import { dirname, join } from 'path'
 import { findThread, followAgent, followThread, type Step, type Thread } from './activity.ts'
 import { Call, transcript, type Mark, type Speaker, type Task } from './call.ts'
@@ -22,6 +23,7 @@ const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN
 const TWILIO_NUMBER = env.TWILIO_NUMBER
 const CALLER_NUMBER = env.CALLER_NUMBER
 const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//, '')
+const PUBLIC_HOSTNAME = PUBLIC_HOST && URL.parse(`https://${PUBLIC_HOST}`)?.hostname
 const TOKEN = env.VOICE_TOKEN
 const calls = new CallLog(join(STATE_DIR, 'calls'))
 const activity = new Changes()
@@ -864,13 +866,16 @@ function allowed(request: Request) {
 }
 
 // A page on another site, open in the owner's browser, can post here, or point its own name at this
-// machine to read and post here as if it were this page, which would hand it the token too. A
-// request carrying the token is from someone who has it.
+// machine to read and post here as if it were this page, which would hand it the token too.
 function foreign(request: Request) {
-  const host = new URL(request.url).hostname
-  const site = request.headers.get('sec-fetch-site')
-  const named = ['localhost', '127.0.0.1', '[::1]', PUBLIC_HOST?.split(':')[0]].includes(host) || host.endsWith('.ts.net') || (!!TOKEN && allowed(request))
-  return !named || (request.method !== 'GET' && !!site && site !== 'same-origin' && site !== 'none')
+  const origin = request.headers.get('origin')
+  return !ours(new URL(request.url).hostname) || (request.method !== 'GET' && origin !== null && !ours(URL.parse(origin)?.hostname))
+}
+
+// Names only this machine's owner answers to: IPs, short names, localhost, the tailnet's, and the
+// public one. A site's own name could be pointed here.
+function ours(host = '') {
+  return isIP(host.replace(/^\[|\]$/g, '')) > 0 || /^[^.]+$|(^|\.)localhost$|\.ts\.net$/.test(host) || host === PUBLIC_HOSTNAME
 }
 
 function home(request: Request) {
