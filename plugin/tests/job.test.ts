@@ -29,18 +29,19 @@ beforeAll(() => {
 })
 afterAll(() => rmSync(home, { recursive: true }))
 
-function run(args: string[], more: Record<string, string> = {}, cwd = home) {
+function run(args: string[], more: Record<string, string> = {}, cwd = home, stdin = '') {
   rmSync(ran, { force: true })
-  const done = Bun.spawnSync(['bun', job, ...args], { cwd, env: { ...env, PATH: `${join(home, 'fake')}:${env.PATH}`, ...more }, stderr: 'pipe' })
+  const done = Bun.spawnSync(['bun', job, ...args], { cwd, stdin: Buffer.from(stdin), env: { ...env, PATH: `${join(home, 'fake')}:${env.PATH}`, ...more }, stderr: 'pipe' })
   return { code: done.exitCode, error: done.stderr.toString(), args: done.exitCode ? [] : (JSON.parse(readFileSync(ran, 'utf8')) as string[]) }
 }
 
 const value = (args: string[], name: string) => args.find(arg => arg.startsWith(`${name}=`))?.slice(name.length + 1)
 
 test("a job a hex session starts is its thread's, in that session's own app, and its sessions are named for it", () => {
-  const { args } = run(['round3', 'make', 'all'], session)
+  const { args, error } = run(['round3', 'make', 'all'], session)
   expect(args.slice(args.indexOf('--'))).toEqual(['--', 'make', 'all'])
   expect(args).toContain('--same-dir')
+  expect(error).toBe('')
   expect(value(args, 'HEX_OWNER')).toBe('t3:stray-key')
   expect(value(args, 'CLAUDE_CODE_SESSION_NAME')).toBe('hex/round3')
   expect(value(args, 'ExecStopPost')).toEndWith('job --ended round3 t3:stray-key')
@@ -56,6 +57,19 @@ test('an agent job runs as a hex session in the hex folder, with the folder it w
   const away = run(['deck', 'claude', '-p', 'build it'], session, project)
   expect(away.args).toContain(`--working-directory=${home}`)
   expect(away.args.slice(away.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/session'), '-p', 'build it', '--add-dir', project])
+  expect(Buffer.from(value(away.args, 'StandardInputData')!, 'base64').toString()).toBe(`\n\nThis work is in ${project}: run its commands there.`)
+  const piped = run(['deck', 'claude', '-p'], session, home, 'Build the Usage tab.\n')
+  expect(Buffer.from(value(piped.args, 'StandardInputData')!, 'base64').toString()).toBe('Build the Usage tab.\n')
+})
+
+test('Claude started any other way still runs, with how to start it as a hex session', () => {
+  const { args, error } = run(['deck', 'sh', '-c', 'cd deck && claude -p go'], session)
+  expect(args.slice(args.indexOf('--'))).toEqual(['--', 'sh', '-c', 'cd deck && claude -p go'])
+  expect(error).toContain('job deck claude -p "<prompt>"')
+})
+
+test("a job a job session starts is its owner's too", () => {
+  expect(value(run(['inner', 'make'], { HEX_OWNER: 'discord:555' }).args, 'HEX_OWNER')).toBe('discord:555')
 })
 
 test('an agent job gets the conversation behind it after its prompt, as any other agent a session hands work to', () => {
