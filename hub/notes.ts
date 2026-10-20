@@ -46,7 +46,8 @@ export function problems(v: Verdict, withWords = true): string[] {
   ]
 }
 
-// A call's transcript is the one owner message without a user id: it carries the call's delegation_id.
+// The owner's messages: from a chat app with their user id, typed or answered in the hex app or on a
+// call, and a call's transcript, which carries the call's delegation_id.
 export const owners = (rows: Row[]) =>
   rows.filter(row => row.meta?.user_id || /^hex (app|call)$/.test(row.meta?.user ?? '') || (row.from === 'voice' && row.meta?.delegation_id))
 
