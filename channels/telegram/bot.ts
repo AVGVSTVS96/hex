@@ -4,7 +4,7 @@ import type { Chat, MessageEntity, MessageOrigin, ReactionTypeEmoji } from 'gram
 import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from 'fs'
 import { homedir } from 'os'
 import { basename, join, extname, sep } from 'path'
-import { startHub, clients, begin, move, preview, tappable, title, transcribe, type Message, type Permission, type Turn } from '../../hub/hub.ts'
+import { startHub, clients, begin, move, preview, tappable, title, transcribe, EFFORTS, MODELS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { Ledger, type MessageId } from '../../hub/ledger.ts'
 
@@ -673,8 +673,31 @@ bot.on(['message:forum_topic_created', 'message:forum_topic_edited'], ctx => {
 })
 
 bot.on('message:text', async ctx => {
+  if (allowed(ctx.from) && (await slash(threadOf(ctx), ctx.message.text))) return
   await handleInbound(ctx, ctx.message.text, undefined)
 })
+
+// A thread's controls, like Discord's: /model and /effort set what its next message starts
+// with, and any other /command runs in its session as Claude Code's slash command. A DM starts a
+// new session for that, losing its conversation, so there it stays a message, like Telegram's own /start.
+async function slash(thread: string, text: string): Promise<boolean> {
+  const [, command, to, rest = ''] = text.match(/^\/([a-z][\w:-]*)(?:@(\w+))?(?:\s+([\s\S]*))?$/i) ?? []
+  const name = command?.toLowerCase()
+  if (!name || (to && to.toLowerCase() !== me().toLowerCase()) || !hub.name(thread)) return false
+  const { chat_id, extra } = target(thread)
+  const answer = (reply: string) => bot.api.sendMessage(chat_id, reply, extra).then(() => true)
+  if (name === 'model' || name === 'effort') {
+    const choices = name === 'model' ? MODELS : EFFORTS
+    const choice = choices.find(({ value }) => value === rest.trim().toLowerCase())
+    if (!choice) return answer(`/${name} takes one of: ${choices.map(({ value }) => value).join(', ')}`)
+    hub.configure(thread, { [name]: choice.value })
+    return answer(`${name === 'model' ? 'Model' : 'Effort'}: ${choice.name}, from this thread's next message.`)
+  }
+  if (name === 'start' || !thread.startsWith('-')) return false
+  if (typing.has(thread)) return answer(`This thread is working; send /${name} again once it's done.`)
+  void hub.command(thread, `/${name}${rest ? ` ${rest}` : ''}`)
+  return answer(`Running /${name} in this thread's session.`)
+}
 
 bot.on('edited_message', async ctx => {
   const text = ctx.editedMessage.text ?? ctx.editedMessage.caption

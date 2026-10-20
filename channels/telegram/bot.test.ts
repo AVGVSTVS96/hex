@@ -475,3 +475,17 @@ test('a backfill quotes the owner under their name and posts hex as itself, sile
   expect(sent[2]!.payload.rich_message).toEqual({ markdown: '**Roomy.**' })
   expect(sent.slice(3).map(c => c.payload.text.length)).toEqual([4096, 5000 - 4089 + 7])
 })
+
+test('/effort and /model set what the thread\'s next message starts with, and never reach its session, unlike a path', async () => {
+  const before = received.length
+  await update({ message: message({ text: '/tmp/cache is full' }) })
+  await inbound(line => line.content === '/tmp/cache is full')
+  await update({ message: message({ text: '/model@other_bot opus' }) })
+  await inbound(line => line.content === '/model@other_bot opus')
+  await update({ message: message({ text: '/Model@hex_bot gpt' }) })
+  await called('sendMessage', p => p.text === '/model takes one of: opus, sonnet, haiku, fable')
+  await update({ message: message({ text: '/effort high' }) })
+  expect(await called('sendMessage', p => p.text === "Effort: High, from this thread's next message.")).toMatchObject({ message_thread_id: 5 })
+  expect(JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))[DESK].effort).toBe('high')
+  expect(received.slice(before).filter(line => line.type === 'inbound').map(line => line.content)).toEqual(['/tmp/cache is full', '/model@other_bot opus'])
+})
