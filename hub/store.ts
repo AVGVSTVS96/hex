@@ -396,6 +396,11 @@ export class Store {
     this.write(() => this.db.query('delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
   }
 
+  // What a session was last shown, or '' when nothing yet.
+  seen(session: string): string {
+    return (this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null)?.digest ?? ''
+  }
+
   // Whether what a session was last shown differs from digest, noting digest as shown.
   show(session: string, digest: string): boolean {
     return this.write(() => {

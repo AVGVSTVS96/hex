@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { clock, observe, type Answer } from './observe.ts'
-import { profile, profileOf } from './profile.ts'
+import { about, profile, profileOf } from './profile.ts'
 import { open } from './store.ts'
 
 let dir: string
@@ -121,12 +121,18 @@ test('the profile is rewritten to the current truth, and one that misquotes the 
   expect(profileOf(dir)).toBe('# Always\n- Ships "any day now" [telegram:-100:80]')
 })
 
-test('every session gets the profile with its tasks, and again whenever it changes', async () => {
-  const before = profile(dir).digest
-  await observe(dir, 's', '', { ask: async () => ({ notes: [], profile: '# Always\n- Ships "on fridays only" [telegram:-100:50]' }), memo })
-  const after = profile(dir)
-  expect(after.text).toContain('- Ships "on fridays only" [telegram:-100:50]')
-  expect(after.digest).not.toBe(before)
+test("a profile line may only quote the owner, by the key of the message it quotes", async () => {
+  const answers = ['# Always\n- Wants "the login page fixed first"', '# Now\n- "run the backup" [schedule:nightly:1]', '# Always\n- Ships "on fridays only" [telegram:-100:50]']
+  const asked: string[] = []
+  await observe(dir, 's', '', { ask: async input => (asked.push(input), { notes: [], profile: answers.shift()! }), memo })
+  expect(asked[1]).toContain("names no message of the owner's for its quote")
+  expect(asked[2]).toContain("[schedule:nightly:1] isn't the owner's message")
+  expect(profileOf(dir)).toBe('# Always\n- Ships "on fridays only" [telegram:-100:50]')
+})
+
+test('a session sees the whole profile once, then only the lines that changed', () => {
+  expect(about('', '# Always\n- a')).toContain('# Always\n- a')
+  expect(about('# Always\n- a\n- b', '# Always\n- a\n- c')).toBe("My profile changed, as the memory agent keeps it current from my own words:\n- c\nNo longer in it:\n- b")
 })
 
 test('a time reads the way notes write it, on the owner’s clock', () => {

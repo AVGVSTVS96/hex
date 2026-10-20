@@ -1,7 +1,7 @@
 import { spawn } from 'child_process'
 import { existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join, resolve } from 'path'
-import { holds, keysOf, owners, problems, verdict } from './notes.ts'
+import { holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { names, PROFILE, profileOf, profilePath } from './profile.ts'
 import { zoneOf } from './schedule.ts'
 import { open, type Row, type Store } from './store.ts'
@@ -34,7 +34,7 @@ const SCHEMA = {
   properties: { notes: { type: 'array', items: { type: 'string' } }, profile: { type: ['string', 'null'] } },
   required: ['notes', 'profile'],
 }
-type Answer = { notes: string[]; profile: string | null }
+export type Answer = { notes: string[]; profile: string | null }
 
 type Hook = { session_id?: string; last_assistant_message?: string }
 type Pass = { session: string; reply: string; by: string; thread?: string }
@@ -43,7 +43,7 @@ export async function observe(state: string, session: string, reply: string, { a
   const recall = (pattern: string) => Bun.spawnSync([memo, 'recall', pattern], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
   const named = (rows: Row[]) => (rows.length ? recall(rows.map(row => `\\[${escape(row.key)}\\]`).join('|')) : '')
   const store = open(state)
-  const taken = store.observe(session, by, thread)
+  const taken = store.observe(session, by, thread, 4 * CALL)
   const rows = owners(taken)
   try {
     const noted = named(rows)
@@ -60,9 +60,10 @@ export async function observe(state: string, session: string, reply: string, { a
       ].join('\n\n')
       const ours = new Set(fresh.map(row => row.key))
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
-      // rewrite the profile while this one thinks: either way it thinks again, so no change is lost.
+      // rewrite the profile while this one thinks: either way it thinks again.
       let wrong = ''
-      for (let tries = 0; tries < 3; tries++) {
+      let kept = false
+      for (let tries = 0; tries < 3 && !kept; tries++) {
         const before = profileOf(state)
         const answer = await ask(`<profile>\n${before || '(none yet)'}\n</profile>\n\n<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn}${wrong}`)
         const now = named(fresh)
@@ -73,12 +74,12 @@ export async function observe(state: string, session: string, reply: string, { a
         }
         if (answer.profile === null) break
         const bad = misquoted(answer.profile, store)
-        wrong = bad.length ? `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that names a message must quote it as written:\n${bad.join('\n')}` : ''
+        wrong = bad.length ? retry(bad) : ''
         if (wrong || profileOf(state) !== before) continue
-        writeFileSync(`${profilePath(state)}.new`, `${answer.profile.trim()}\n`)
-        renameSync(`${profilePath(state)}.new`, profilePath(state))
-        break
+        keep(state, answer.profile)
+        kept = true
       }
+      if (wrong) console.error(`hex left the profile as it was after 3 tries:${wrong}`)
     }
     store.observed(taken.map(row => row.key))
     return written
@@ -101,25 +102,36 @@ export async function seed(state: string, { ask = (input: string) => claude(inpu
   for (let tries = 0; tries < 3; tries++) {
     const { profile } = await ask(input + wrong)
     const bad = misquoted(profile, store)
-    if (!bad.length) {
-      writeFileSync(profilePath(state), `${profile!.trim()}\n`)
-      return profile!
-    }
-    wrong = `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that names a message must quote it as written:\n${bad.join('\n')}`
+    if (!bad.length) return keep(state, profile!)
+    wrong = retry(bad)
   }
   throw new Error(`the first profile wasn't kept:${wrong}`)
 }
 
 
-// What keeps a profile from being kept: too long, empty, or a line that names a message without
-// quoting it as written.
+// What keeps a profile from being kept: too long, empty, or a line that quotes someone without
+// naming the owner's message it quotes, or misquotes it.
 function misquoted(profile: string | null, store: Store): string[] {
   if (!profile?.trim()) return ['(empty)']
   if (profile.length > PROFILE) return [`(${profile.length} characters)`]
+  return profile.split('\n').flatMap(each => {
+    if (!keysOf(each).length) return quotesOf(each).length ? [`${each}\n  names no message of the owner's for its quote`] : []
+    const found = verdict(each, store)
+    if (!holds(found)) return [`${each}\n  ${problems(found, false).join('\n  ')}`]
+    const foreign = found.keys.filter(row => !owners([row]).length)
+    return foreign.length ? [`${each}\n  ${foreign.map(row => `[${row.key}]`).join(', ')} isn't the owner's message`] : []
+  })
+}
+
+const retry = (bad: string[]) =>
+  `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}`
+
+// Written whole and swapped in, so a session never reads half a profile.
+function keep(state: string, profile: string) {
+  const next = `${profilePath(state)}.${process.pid}.new`
+  writeFileSync(next, `${profile.trim()}\n`)
+  renameSync(next, profilePath(state))
   return profile
-    .split('\n')
-    .filter(each => keysOf(each).length && !holds(verdict(each, store)))
-    .map(each => `${each}\n  ${problems(verdict(each, store), false).join('\n  ')}`)
 }
 
 // The newest notes, enough to show what memory already says and how its lines read.
@@ -153,7 +165,7 @@ function logOf(session: string) {
 }
 
 // One read-only call: the model may open the turn's log, and its only effect is what it returns.
-// It ends well inside the pass's lease, so a hung call fails rather than racing the next pass.
+// Its three tries end inside the pass's lease (4 calls long), so a hung call fails rather than racing the next pass.
 async function claude(input: string, model = MODEL): Promise<Answer> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
   const run = Bun.spawn(
