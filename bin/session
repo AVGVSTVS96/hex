@@ -11,10 +11,12 @@ if [ -s "$wake/CLAUDE.md.$$" ]; then
   woke="$wake/CLAUDE.md"
 else
   rm -f "$wake/CLAUDE.md.$$"
+  unset HEX_WAKE
 fi
 for arg; do
   shift
   if [ "${flag:-}" = --settings ]; then
+    given=1
     # The hub hands its settings over as a file, which keeps its token out of the process list.
     file=
     [ -f "$arg" ] && file=$arg && arg=$(cat "$file")
@@ -42,6 +44,7 @@ mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2
 main_model=$(jq -r '.env.HEX_MAIN_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "${main:-}" ] && [ -n "$main_model" ] && set -- --model "$main_model" "$@"
 [ -n "${woke:-}" ] && set -- --add-dir "$wake" "$@"
+[ -n "${woke:-}" ] && [ -z "${given:-}" ] && export HEX_WAKE="$woke"
 if [ -n "${chat:-}" ]; then
   # The chat's prompt replaces Claude Code's, which names each background job's own folder and so would end the cache before the view.
   system=$(env $chat "$hex/bin/chat" turn) || exit

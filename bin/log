@@ -17,7 +17,7 @@ case "${HEX_CHANNEL:-}" in plugin:t3@*) said=t3 ;; esac
 started=$(jq -r 'select(.timestamp) | .timestamp | sub("\\.[0-9]+Z$"; "Z") | fromdate | strflocaltime("%Y-%m-%d")' "$transcript" | head -n 1)
 dir="$(cd "$(dirname "$0")/../.." && pwd)/log"
 typist=me
-[ -n "${HEX_THREAD:-}" ] && [ -z "${HEX_MAIN:-}" ] && dir="$dir/threads" typist=hex
+[ -n "${HEX_THREAD:-}${HEX_OWNER:-}" ] && [ -z "${HEX_MAIN:-}" ] && dir="$dir/threads" typist=hex
 out="$dir/$started-$(printf '%s' "$session" | cut -c 1-8).md"
 mkdir -p "$dir"
 

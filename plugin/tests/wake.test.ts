@@ -98,17 +98,17 @@ test('the hooks say nothing in a session the launcher already handed its wake', 
   expect(run.stdout.toString()).toBe('')
 })
 
-test('the launcher writes the whole wake where Claude Code loads it at startup, and tells the hooks so', () => {
+test('the launcher writes the whole wake where Claude Code loads it at startup, and tells the hooks so, in the foreground too', () => {
   copyFileSync(join(BIN, 'session'), join(home, '.hex/bin/session'))
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { MEMORY_DIR: join(home, 'memory') } }))
   mkdirSync(join(home, 'fake'))
   writeFileSync(join(home, 'fake/claude'), `#!/bin/sh\nprintf '%s\\n' "$@" > "${home}/args"\nenv > "${home}/env"\n`)
   chmodSync(join(home, 'fake/claude'), 0o755)
-  const launch = () => {
-    Bun.spawnSync([join(home, '.hex/bin/session'), '--bg', '--settings', JSON.stringify({ env: { HEX_THREAD: '-100:5' } })], {
+  const launch = (...args: string[]) => {
+    Bun.spawnSync([join(home, '.hex/bin/session'), ...(args.length ? args : ['--bg', '--settings', JSON.stringify({ env: { HEX_THREAD: '-100:5' } })])], {
       cwd: home,
-      env: { ...process.env, PATH: `${join(home, 'fake')}:${process.env.PATH}` },
+      env: { ...process.env, PATH: `${join(home, 'fake')}:${process.env.PATH}`, HEX_WAKE: 'stale' },
     })
     return { args: readFileSync(join(home, 'args'), 'utf8').trim().split('\n'), env: readFileSync(join(home, 'env'), 'utf8') }
   }
@@ -121,8 +121,11 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
   expect(settings(args).env).toEqual({ HEX_THREAD: '-100:5', HEX_WAKE: join(dir, 'CLAUDE.md') })
   expect(env).toContain('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1')
+  expect(env).toContain('HEX_WAKE=stale')
+  expect(launch('-p', 'go').env).toContain(`HEX_WAKE=${join(dir, 'CLAUDE.md')}\n`)
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\nexit 1\n')
   const without = launch()
   expect(without.args).not.toContain(join(home, 'state/wake'))
   expect(settings(without.args).env).toEqual({ HEX_THREAD: '-100:5' })
+  expect(without.env).not.toContain('HEX_WAKE=')
 })
