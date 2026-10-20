@@ -1,7 +1,31 @@
 #!/bin/sh
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
-[ "$(pwd -P)" = "$(cd "$home" && pwd -P)" ] || away=1
+# Under a job, `claude` on PATH is hex's shim (shim/claude); the session and what it runs get the real one.
+PATH=$(set -f; IFS=:; for dir in $PATH; do [ "$dir/claude" -ef "$hex/shim/claude" ] || printf '%s:' "$dir"; done)
+PATH=${PATH%:}
+# Trusting a folder trusts every folder under it, so a session started in the home folder or above it works in the hex folder, and hex never trusts one.
+above() { case "$(cd && pwd -P)/" in "$(pwd -P | sed 's:/*$::')/"*) ;; *) return 1 ;; esac; }
+above && cd "$home"
+here=$(pwd -P)
+[ "$here" = "$(cd "$home" && pwd -P)" ] || away=1
+# A session started in the background has nobody to accept Claude Code's trust prompt, so hex trusts the folder it starts in; a -p run never asks.
+# Claude Code rewrites this file as it runs, holding the lock directory next to it, so hex takes that lock too, and checks the write until it holds; the copy keeps the file's mode.
+config=$(readlink -f "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json")
+for arg; do
+  case $arg in --) break ;; -p | --print) print=1 && break ;; esac
+done
+untrusted() { [ -z "${print:-}" ] && ! above && [ -s "$config" ] && ! jq -e --arg here "$here" '.projects[$here].hasTrustDialogAccepted' "$config" >/dev/null 2>&1; }
+for try in 1 2 3 4 5; do
+  untrusted || break
+  if mkdir "$config.lock" 2>/dev/null; then
+    trusted=$(jq --arg here "$here" '.projects[$here].hasTrustDialogAccepted = true' "$config") && [ -n "$trusted" ] &&
+      cp -p "$config" "$config.hex.$$" && printf '%s\n' "$trusted" > "$config.hex.$$" && mv "$config.hex.$$" "$config" || rm -f "$config.hex.$$"
+    rmdir "$config.lock"
+  fi
+  sleep 0.2
+done
+untrusted && echo "hex couldn't mark $here trusted in $config" >&2
 # Memory goes in whole as a file Claude Code loads at startup and again after compacting, since a hook's output is cut past 10,000 characters.
 wake="$home/state/wake"
 mkdir -p "$wake"
@@ -13,6 +37,8 @@ else
   rm -f "$wake/CLAUDE.md.$$"
   unset HEX_WAKE
 fi
+# Outside the hex folder, hex's settings come only through --settings.
+[ -n "${away:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 for arg; do
   shift
   if [ "${flag:-}" = --settings ]; then
@@ -32,7 +58,8 @@ for arg; do
     [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files | .skillListingBudgetFraction = 0.0001')
     # The caller waits on every turn, so a call runs a fast model. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
     [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c '{model: "sonnet", effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
-    [ -n "$file" ] && (umask 077 && printf '%s\n' "$arg" > "$file.$$" && mv "$file.$$" "$file") && arg=$file
+    # Only hex's own settings files are written back; anyone else's goes in as the merged text.
+    case $file in "$home/state/"*) (umask 077 && printf '%s\n' "$arg" > "$file.$$" && mv "$file.$$" "$file") && arg=$file ;; esac
   fi
   set -- "$@" "$arg"
   flag=$arg

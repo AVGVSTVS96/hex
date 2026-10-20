@@ -16,7 +16,7 @@ let listener: ReturnType<typeof Bun.serve>
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'session-'))
-  for (const dir of ['bin', 'chat']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true })
+  for (const dir of ['bin', 'chat', 'shim']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true, verbatimSymlinks: true })
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_MAIN_MODEL: 'claude-opus-5-5', MEMORY_DIR: join(home, 'memory') } }))
   mkdirSync(join(home, '.hex/vendor'))
@@ -105,4 +105,36 @@ test('a session started in another project gets the hex folder\'s settings under
   const { args, settings } = await launch('plugin:t3@hex', 't3:1', {}, project)
   expect(settings).toMatchObject({ model: 'opus', permissions: { deny: [`Read(/${home}/.env)`] }, enabledPlugins: { 't3@hex': true }, env: { MEMORY_DIR: join(home, 'memory'), HEX_THREAD: 't3:1' } })
   expect(args).toContain('--append-system-prompt')
+})
+
+test('every folder a background session starts in is trusted (a -p run never asks), one started in the home folder works in the hex folder, and one started by hand still gets the hex folder\'s settings', () => {
+  writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ model: 'opus', permissions: { deny: ['Read(./.env)'] } }))
+  writeFileSync(join(home, 'config/.claude.json'), JSON.stringify({ numStartups: 3 }))
+  const project = join(home, 'project')
+  mkdirSync(project)
+  chmodSync(join(home, 'config/.claude.json'), 0o600)
+  for (const cwd of [project, home, '/']) Bun.spawnSync([join(home, '.hex/bin/session'), '--bg', 'build it'], { cwd, env: process.env })
+  expect(JSON.parse(readFileSync(join(home, 'config/.claude.json'), 'utf8'))).toEqual({ numStartups: 3, projects: { [project]: { hasTrustDialogAccepted: true } } })
+  const other = join(home, 'other')
+  mkdirSync(other)
+  Bun.spawnSync([join(home, '.hex/bin/session'), '-p', 'build it'], { cwd: other, env: process.env })
+  expect(JSON.parse(readFileSync(join(home, 'config/.claude.json'), 'utf8')).projects[other]).toBeUndefined()
+  expect(statSync(join(home, 'config/.claude.json')).mode & 0o777).toBe(0o600)
+  Bun.spawnSync([join(home, '.hex/bin/session'), '-p', 'build it'], { cwd: project, env: process.env })
+  const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
+  expect(JSON.parse(args[args.indexOf('--settings') + 1]!)).toMatchObject({ model: 'opus', permissions: { deny: [`Read(/${home}/.env)`] } })
+})
+
+test('under a job, claude started any way, from any folder, is a hex session in that folder', () => {
+  const project = join(home, 'deck')
+  mkdirSync(project)
+  writeFileSync(join(home, 'config/.claude.json'), '{}')
+  const path = `${join(home, '.hex/shim')}:${process.env.PATH}`
+  Bun.spawnSync(['bash', '-lc', 'cd deck && timeout 60 claude -p go'], { cwd: home, env: { ...process.env, PATH: path } })
+  const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
+  expect(args.slice(0, 2)).toEqual(['--plugin-dir', join(home, '.hex/plugin')])
+  expect(args).toContain('--add-dir')
+  expect(args.slice(-2)).toEqual(['-p', 'go'])
+  Bun.spawnSync(['sh', '-c', 'cd deck && claude mcp list'], { cwd: home, env: { ...process.env, PATH: path } })
+  expect(JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))).toEqual(['mcp', 'list'])
 })

@@ -1,0 +1,9 @@
+#!/bin/sh
+# First on a job's PATH: a claude that runs a prompt is a hex session in its folder; anything else (claude agents, mcp, --version) is plain Claude Code.
+hex=$(cd "$(dirname "$0")/.." && pwd)
+for arg; do
+  case $arg in --) break ;; -p | --print) exec "$hex/bin/session" "$@" ;; esac
+done
+PATH=$(set -f; IFS=:; for dir in $PATH; do [ "$dir/claude" -ef "$hex/shim/claude" ] || printf '%s:' "$dir"; done)
+PATH=${PATH%:}
+exec claude "$@"

@@ -48,27 +48,22 @@ test("a job a hex session starts is its thread's, in that session's own app, and
   expect(run(['round3', 'stray-key', 'claude'], session).args).toContain('HEX_OWNER=t3:stray-key')
 })
 
-test('an agent job runs as a hex session in the hex folder, with the folder it was started from added', () => {
-  const here = run(['deck', 'claude', '-p', 'build it', '--model', 'opus'], session)
-  expect(here.args).toContain(`--working-directory=${home}`)
-  expect(here.args).not.toContain('--same-dir')
-  expect(here.args.slice(here.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/session'), '-n', 'hex/deck', '-p', 'build it', '--model', 'opus'])
+test('an agent job runs as a hex session in the folder it was started from', () => {
   const priced = run(['deck', 'claude', '-p', 'cost $5 in $HOME'], session).args
   expect(priced.at(-1)).toBe('cost $$5 in $$HOME')
   const project = mkdtempSync(join(home, 'deck-'))
-  const away = run(['deck', 'claude', '-p', 'build it'], session, project)
-  expect(away.args).toContain(`--working-directory=${home}`)
-  expect(away.args.slice(away.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/session'), '-n', 'hex/deck', '-p', 'build it', '--add-dir', project])
-  expect(Buffer.from(value(away.args, 'StandardInputData')!, 'base64').toString()).toBe(`\n\nThis work is in ${project}: run its commands there.`)
+  const away = run(['deck', 'claude', '-p', 'build it', '--model', 'opus'], session, project)
+  expect(away.args).toContain('--same-dir')
+  expect(away.args.slice(away.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/session'), '-n', 'hex/deck', '-p', 'build it', '--model', 'opus'])
+  expect(value(away.args, 'StandardInputData')).toBeUndefined()
   const piped = run(['deck', 'claude', '-p'], session, home, 'Build the Usage tab.\n')
   expect(Buffer.from(value(piped.args, 'StandardInputData')!, 'base64').toString()).toBe('Build the Usage tab.\n')
 })
 
-test('Claude started any other way still runs, with how to start it as a hex session', () => {
-  const { args, error } = run(['deck', 'sh', '-c', 'cd deck && claude -p go'], session)
+test("a job finds hex's claude first on its PATH, so Claude it starts any way is a hex session", () => {
+  const { args } = run(['deck', 'sh', '-c', 'cd deck && claude -p go'], session)
+  expect(value(args, 'PATH')).toStartWith(`${join(home, '.hex/shim')}:`)
   expect(args.slice(args.indexOf('--'))).toEqual(['--', 'sh', '-c', 'cd deck && claude -p go'])
-  expect(error).toContain('job deck claude -p "<prompt>"')
-  expect(run(['build', 'rm', '-rf', '.claude/worktrees/old'], session).error).toBe('')
 })
 
 test("a job a job session starts is its owner's too", () => {
