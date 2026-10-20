@@ -195,6 +195,11 @@ export class Store {
     return row && toRow(row)
   }
 
+  // What one session took into its conversation after a time, oldest first.
+  took(session: string, after = ''): Row[] {
+    return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)
+  }
+
   // What no session has taken yet, oldest first: every thread's, or one thread's.
   untaken(thread?: string): Row[] {
     const rows =

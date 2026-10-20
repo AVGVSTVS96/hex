@@ -1,5 +1,6 @@
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
+import { holds, keysOf, problems, verdict } from './notes.ts'
 import { names, render, waiting } from './profile.ts'
 import { open, type Status, type Task } from './store.ts'
 
@@ -51,16 +52,23 @@ function show(tasks: Task[]) {
   console.log(tasks.map(task => render(task, named)).join('\n\n') || 'no tasks')
 }
 
-// Every line memo recalls, with the words of each message a note names by its [key] under it.
+// Every line memo recalls, with the words of each message a note names by its [key] under it, what
+// doesn't hold when the note misquotes them, and a count of how many notes keep the owner's words.
 async function recall(pattern: string) {
   const memo = Bun.spawn([join(dirname(import.meta.dir), 'vendor', 'memo'), 'recall', pattern], { stdout: 'pipe', stderr: 'inherit' })
+  let notes = 0, keyed = 0, kept = 0
   for (const line of (await new Response(memo.stdout).text()).split('\n')) {
     console.log(line)
-    for (const [, key] of line.matchAll(/\[([a-z0-9]+:[^\]\s]+)\]/g)) {
-      const said = store.message(key!)
-      if (said) console.log(said.body.split('\n').map(words => `    ${words}`).join('\n'))
-    }
+    if (!/^#\d+ /.test(line)) continue
+    notes++
+    const v = verdict(line, store)
+    if (!keysOf(line).length) continue
+    keyed++
+    if (holds(v)) kept++
+    else console.log(problems(v, false).map(why => `    ✗ ${why}`).join('\n'))
+    for (const said of v.keys) console.log(said.body.split('\n').map(words => `    ${words}`).join('\n'))
   }
+  if (notes) console.log(`${notes} notes: ${keyed} name a message, ${kept} quote it as written.`)
   process.exitCode = await memo.exited
 }
 
