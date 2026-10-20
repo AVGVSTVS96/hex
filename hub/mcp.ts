@@ -31,7 +31,7 @@ type Handshake = { is: 'initialized' } | { is: 'listed' } | { is: 'streaming'; n
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here
 // with their binding and the hub's token in headers. Every session id is taken as it comes, so a
 // session that connected before the hub restarted carries on where it was without initializing again.
-export function endpoint(name: string, channel: string, token: string, server: ChannelServer, hooks: Hooks, zone = Temporal.Now.timeZoneId()) {
+export function endpoint(name: string, channel: string, token: string, server: ChannelServer, hooks: Hooks, zone = () => Temporal.Now.timeZoneId()) {
   const starting = new Map<string, Handshake>()
 
   function threadOf(request: Request) {
@@ -94,7 +94,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       cancel: gone,
     })
     if (thread) {
-      line = { send: payload => event(notification(payload, zone)) }
+      line = { send: payload => event(notification(payload, zone())) }
       keepAlive = setInterval(write, 15_000, ': keepalive\n\n')
       const open = () => line && hooks.open(thread, line)
       const nudge = () => {
@@ -160,5 +160,9 @@ function notification(payload: Payload, zone: string) {
 export function local(meta: Record<string, string>, zone: string): Record<string, string> {
   const at = meta.ts ? Date.parse(meta.ts) : NaN
   if (Number.isNaN(at)) return meta
-  return { ...meta, ts: Temporal.Instant.fromEpochMilliseconds(at).toZonedDateTimeISO(zone).toString({ timeZoneName: 'never', smallestUnit: 'second' }) }
+  try {
+    return { ...meta, ts: Temporal.Instant.fromEpochMilliseconds(at).toZonedDateTimeISO(zone).toString({ timeZoneName: 'never', smallestUnit: 'second' }) }
+  } catch {
+    return meta
+  }
 }

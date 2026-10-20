@@ -942,7 +942,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     permission: (thread, request) => permission?.(thread, request),
     open: welcome,
     close: drop,
-  }, zoneOf(hexDir))
+  }, () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId())
   channels.set(path, serve)
 
   // Where a session's hooks and hex's own tools reach the hub, one JSON line each.
