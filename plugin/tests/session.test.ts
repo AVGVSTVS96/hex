@@ -16,7 +16,7 @@ let listener: ReturnType<typeof Bun.serve>
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'session-'))
-  for (const dir of ['bin', 'chat', 'shim']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true, verbatimSymlinks: true })
+  for (const dir of ['bin', 'chat']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true })
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_MAIN_MODEL: 'claude-opus-5-5', MEMORY_DIR: join(home, 'memory') } }))
   mkdirSync(join(home, '.hex/vendor'))
@@ -123,18 +123,4 @@ test('every folder a background session starts in is trusted (a -p run never ask
   Bun.spawnSync([join(home, '.hex/bin/session'), '-p', 'build it'], { cwd: project, env: process.env })
   const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
   expect(JSON.parse(args[args.indexOf('--settings') + 1]!)).toMatchObject({ model: 'opus', permissions: { deny: [`Read(/${home}/.env)`] } })
-})
-
-test('under a job, claude started any way, from any folder, is a hex session in that folder', () => {
-  const project = join(home, 'deck')
-  mkdirSync(project)
-  writeFileSync(join(home, 'config/.claude.json'), '{}')
-  const path = `${join(home, '.hex/shim')}:${process.env.PATH}`
-  Bun.spawnSync(['sh', '-c', 'cd deck && timeout 60 claude -p go'], { cwd: home, env: { ...process.env, PATH: path } })
-  const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
-  expect(args.slice(0, 2)).toEqual(['--plugin-dir', join(home, '.hex/plugin')])
-  expect(args).toContain('--add-dir')
-  expect(args.slice(-2)).toEqual(['-p', 'go'])
-  Bun.spawnSync(['sh', '-c', 'cd deck && claude mcp list'], { cwd: home, env: { ...process.env, PATH: path } })
-  expect(JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))).toEqual(['mcp', 'list'])
 })

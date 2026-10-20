@@ -60,10 +60,9 @@ test('an agent job runs as a hex session in the folder it was started from', () 
   expect(Buffer.from(value(piped.args, 'StandardInputData')!, 'base64').toString()).toBe('Build the Usage tab.\n')
 })
 
-test("a job finds hex's claude first on its PATH, so Claude it starts any way is a hex session", () => {
-  const { args } = run(['deck', 'sh', '-c', 'cd deck && claude -p go'], session)
-  expect(value(args, 'PATH')).toStartWith(`${join(home, '.hex/shim')}:`)
-  expect(args.slice(args.indexOf('--'))).toEqual(['--', 'sh', '-c', 'cd deck && claude -p go'])
+test('a shell that would run Claude is told how to start it as a hex session', () => {
+  expect(run(['deck', 'sh', '-c', 'cd deck && claude -p go'], session).error).toContain('job deck claude -p "<prompt>"')
+  expect(run(['build', 'rm', '-rf', '.claude/worktrees/old'], session).error).toBe('')
 })
 
 test("a job a job session starts is its owner's too", () => {

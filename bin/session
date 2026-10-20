@@ -1,9 +1,6 @@
 #!/bin/sh
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
-# Under a job, `claude` on PATH is hex's shim (shim/claude); the session and what it runs get the real one.
-PATH=$(set -f; IFS=:; for dir in $PATH; do [ "$dir/claude" -ef "$hex/shim/claude" ] || printf '%s:' "$dir"; done)
-PATH=${PATH%:}
 # Trusting a folder trusts every folder under it, so a session started in the home folder or above it works in the hex folder, and hex never trusts one.
 above() { case "$(cd && pwd -P)/" in "$(pwd -P | sed 's:/*$::')/"*) ;; *) return 1 ;; esac; }
 above && cd "$home"
@@ -17,7 +14,7 @@ untrusted() { [ "$bg" = --bg ] && ! above && [ -s "$config" ] && ! jq -e --arg h
 for try in 1 2 3 4 5; do
   untrusted || break
   if mkdir "$config.lock" 2>/dev/null; then
-    trap 'rmdir "$config.lock" 2>/dev/null' EXIT
+    trap 'rm -f "$config.hex.$$"; rmdir "$config.lock" 2>/dev/null' EXIT
     trap 'exit 1' INT TERM
     trusted=$(jq --arg here "$here" '.projects[$here].hasTrustDialogAccepted = true' "$config") && [ -n "$trusted" ] &&
       cp -p "$config" "$config.hex.$$" && printf '%s\n' "$trusted" > "$config.hex.$$" && mv "$config.hex.$$" "$config" || rm -f "$config.hex.$$"

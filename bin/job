@@ -3,12 +3,12 @@
 // stop it, and wake the thread that owns it when it ends. The owner is the hex session that runs it,
 // or <thread>: a key from one app's state/<app>/threads.json, or <app>:<key>. The job's Claude Code
 // sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them under it, and are
-// named <owner>/<unit> unless they name themselves. Claude a job starts, as its command or from a
-// script, runs as a hex session in its folder: `claude` on the job's PATH is shim/claude, which
-// starts a prompt through the launcher the hub starts sessions with, so it has hex's rules, memory and hooks.
+// named <owner>/<unit> unless they name themselves. A job whose command is claude runs as a hex
+// session in the folder it was started from, through the launcher the hub starts sessions with,
+// so it has hex's rules, memory and hooks.
 import { $ } from "bun"
 import { readdirSync, readFileSync } from "node:fs"
-import { basename, dirname, resolve } from "node:path"
+import { basename, resolve } from "node:path"
 
 const home = resolve(import.meta.dir, "../..")
 const state = `${home}/state/`
@@ -85,14 +85,14 @@ if (mode === "--ended") {
     process.exit(2)
   }
   const name = `${threadsOf(parts(owner).app)[parts(owner).key]?.name ?? parts(owner).key}/${mode}`
-  const flags = command.slice(1, command.includes("--") ? command.indexOf("--") : undefined)
-  const agent = basename(command[0]!) === "claude" && (flags.includes("-p") || flags.includes("--print"))
+  const agent = basename(command[0]!) === "claude"
+  if (!agent && /(^|[\s;&|(/])claude(\s|$)/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it from its folder as: job ${mode} claude -p "<prompt>"`)
   const run = agent ? [`${import.meta.dir}/session`, "-n", name, ...command.slice(1)] : command
   // Like claude -p, the job reads what comes on stdin after its prompt.
   const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
   const input = piped ? ["-p", `StandardInputData=${Buffer.from(piped).toString("base64")}`] : []
-  const env = ["CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`])
-  await $`systemd-run --user --unit=${mode} --same-dir ${input} --collect ${env} -E PATH=${`${dirname(import.meta.dir)}/shim:${process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin"}`} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
+  const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`])
+  await $`systemd-run --user --unit=${mode} --same-dir ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
 }
 
 // systemd expands $VARIABLE in a unit's command lines, which would rewrite a thread's name or prompt;
