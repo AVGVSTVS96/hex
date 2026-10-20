@@ -684,7 +684,7 @@ function tail(path: string): Entry[] {
   }
 }
 
-function watchDir(dir: string, changed: (file: string | null) => void) {
+export function watchDir(dir: string, changed: (file: string | null) => void) {
   try {
     const watcher = watch(dir, (_, file) => changed(file))
     return () => watcher.close()

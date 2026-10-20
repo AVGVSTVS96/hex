@@ -200,6 +200,11 @@ export class Store {
     return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)
   }
 
+  // Every session that took a thread's messages, in the order each first did.
+  sessions(thread: string): string[] {
+    return (this.db.query('select taken_by from messages where "to" = ? and taken_by is not null group by taken_by order by min(taken_at)').all(thread) as { taken_by: string }[]).map(row => row.taken_by)
+  }
+
   // What no session has taken yet, oldest first: every thread's, or one thread's.
   untaken(thread?: string): Row[] {
     const rows =

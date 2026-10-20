@@ -962,25 +962,32 @@ function taskRoutes(request: Request, url: URL) {
   if (verb === 'talk' && request.method === 'POST') return talkAbout(taskTopic(task))
   if (verb === 'chat' && request.method === 'GET') return showChat(url, task)
   if (verb === 'chat' && request.method === 'POST') return sendChat(request, task)
-  if (verb === 'stop' && request.method === 'POST') return chats.stop(task.app, task.thread).then(() => new Response(null, { status: 204 }), refused)
+  if (verb === 'stop' && request.method === 'POST') return done(() => chats.stop(task))
   if (!verb && request.method === 'GET') return Response.json({ ...task, ...yours.of(task.id) })
 }
 
 // A thread's chat, and with after, the next time it changes.
 async function showChat(url: URL, task: HexTask) {
+  const where = { ...task, session: board.session(task.id) }
   const after = url.searchParams.get('after')
-  if (after) await chats.changes(Number(after), 25_000)
-  return Response.json(chats.of(task.thread, board.session(task.id)))
+  return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where))
 }
 
 async function sendChat(request: Request, task: HexTask) {
-  const { text } = (await request.json().catch(() => ({}))) as { text?: unknown }
+  const { text, key } = (await request.json().catch(() => ({}))) as { text?: unknown; key?: unknown }
   if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
-  return chats.send(task.app, task.thread, text.trim()).then(key => Response.json({ key }), refused)
+  if (typeof key !== 'string' || !/^[\w-]{8,64}$/.test(key)) return new Response('Name the message with a key', { status: 400 })
+  return done(() => chats.send(task, text.trim(), key))
 }
 
-function refused(error: Error) {
-  return new Response(error.message, { status: 502 })
+// No content once act is through, or why it couldn't be.
+function done(act: () => void) {
+  try {
+    act()
+    return new Response(null, { status: 204 })
+  } catch (error) {
+    return new Response((error as Error).message, { status: 409 })
+  }
 }
 
 // A live call's record is read from the call itself, so it has every word heard so far, and a

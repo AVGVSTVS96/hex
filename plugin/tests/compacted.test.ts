@@ -96,15 +96,17 @@ test('brings back the last whole turns of a long conversation, and points to the
   expect(out).not.toContain('turn 20 ')
 })
 
-test('logs relays under their sender and only channel messages with a user_id as me', () => {
+test('logs relays under their sender, and as me only channel messages with a user_id or typed in the hex app', () => {
   const out = hook('turns', transcript([
     ['me', '<channel source="plugin:telegram:telegram" chat_id="1" user="ada" user_id="1001">ping me every minute</channel>'],
     ['me', '<channel source="plugin:telegram:telegram" user="watcher">Verified problems, fix them</channel>'],
     ['me', '<channel source="plugin:telegram:telegram" user="hex General">Ada said, word for word</channel>'],
+    ['me', '<channel source="plugin:telegram:telegram" user="hex app" ts="2026-10-06T16:03:00Z">and the docs</channel>'],
   ]))
   expect(out).toContain('## me · telegram · 2026-10-06 16:00\n\nping me every minute')
   expect(out).toContain('## watcher · telegram · 2026-10-06 16:01\n\nVerified problems')
   expect(out).toContain('## hex General · telegram · 2026-10-06 16:02\n\nAda said')
+  expect(out).toContain('## me · telegram · 2026-10-06 16:03\n\nand the docs')
 })
 
 test('a T3 Code message is the owner\'s, since only the owner reaches T3, and a relay into T3 is its sender\'s', () => {

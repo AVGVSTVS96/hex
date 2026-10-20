@@ -1,46 +1,77 @@
-import { randomUUID } from 'crypto'
-import { watch } from 'fs'
+import { mkdirSync, statSync } from 'fs'
 import { join } from 'path'
-import { history, type Turn } from '../../hub/hub.ts'
+import { clients, history, logOf, type Turn } from '../../hub/hub.ts'
+import { owners } from '../../hub/notes.ts'
 import { open as store } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
-import { relay } from './relay.ts'
+import { watchDir } from './tasks.ts'
 
 export type Sent = { key: string; text: string; at: string }
-export type Chat = { version: number; turns: Turn[]; waiting: Sent[] }
+// sends: whether words typed in the app reach this thread. T3 Code shows only turns it starts, and
+// a session no app holds has no chat to send through.
+export type Chat = { version: number; sends: boolean; turns: Turn[]; waiting: Sent[] }
+export type Where = { app: string; thread: string; session?: string }
 
-// A thread's chat as the app shows it: what the owner said and hex replied, read from the
-// session's log (bin/log), and what the owner sent that the session hasn't taken in yet. It
-// changes when a log is written or a session takes a message.
-export class Chats extends Changes {
+// A thread's chat as the app shows it: what the owner said and hex replied across every session the
+// thread has had, from their logs (bin/log); what the owner said that its session took in but
+// hasn't logged yet; and what the owner sent that no session has taken in yet. A wait for it ends
+// when that chat changes, which a log write or a message taken anywhere may mean.
+export class Chats {
+  private changes = new Changes()
+  private seen = new Map<string, { said: string; version: number }>()
   private stops: (() => void)[]
 
   constructor(
     private state: string,
     private hexDir: string,
   ) {
-    super()
-    const changed = () => this.changed()
-    this.stops = [watchDir(join(hexDir, 'log'), changed), watchDir(join(hexDir, 'log', 'threads'), changed), store(state).watch(changed)]
+    const changed = () => this.changes.changed()
+    const logs = [join(hexDir, 'log'), join(hexDir, 'log', 'threads')]
+    for (const dir of logs) mkdirSync(dir, { recursive: true })
+    this.stops = [...logs.map(dir => watchDir(dir, changed)), store(state).watch(changed)]
   }
 
-  of(thread: string, session: string | undefined): Chat {
-    const waiting = store(this.state)
-      .untaken(thread)
-      .map(({ key, body, at }) => ({ key, text: body, at }))
-    return { version: this.version, turns: session ? history(this.hexDir, session) : [], waiting }
+  of(where: Where): Chat {
+    const kept = store(this.state)
+    const current = where.session ?? kept.sessions(where.thread).at(-1)
+    const sessions = [...kept.sessions(where.thread).filter(session => session !== current), ...(current ? [current] : [])]
+    const log = current && logOf(this.hexDir, current)
+    const unlogged = current ? owners(kept.took(current, log ? statSync(log).mtime.toISOString() : '')).filter(row => row.to === where.thread) : []
+    const turns: Turn[] = [...sessions.flatMap(session => history(this.hexDir, session)), ...unlogged.map(row => ({ from: 'me' as const, text: row.body }))]
+    const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at }) => ({ key, text: body, at }))
+    const chat = { sends: !!sendsThrough(where.app), turns, waiting }
+    const said = JSON.stringify(chat)
+    const id = `${where.app}:${where.thread}`
+    const seen = this.seen.get(id)
+    const version = seen?.said === said ? seen.version : Math.max((seen?.version ?? 0) + 1, Date.now())
+    this.seen.set(id, { said, version })
+    return { version, ...chat }
   }
 
-  // The owner's words, typed in the app, go to the thread the way a chat app's would.
-  async send(app: string, thread: string, text: string) {
-    const key = `app-${randomUUID()}`
-    await relay(this.state, app, { type: 'inbound', thread, key, content: text, meta: { user_id: 'owner', via: 'hex app' } })
-    return `${app}:${key}`
+  async next(where: Where, after: number, wait: number) {
+    const end = Date.now() + wait
+    let chat = this.of(where)
+    while (chat.version === after && Date.now() < end) {
+      await this.changes.changes(this.changes.version, end - Date.now())
+      chat = this.of(where)
+    }
+    return chat
   }
 
-  // The owner's stop, as their chat app's stop would.
-  stop(app: string, thread: string) {
-    return relay(this.state, app, { type: 'stop', thread })
+  // The owner's words, typed in the app, go to the thread's session the way its app's would. The
+  // app names each message, so sending it again after a lost answer delivers it once.
+  send(where: Where, text: string, key: string) {
+    const client = sendsThrough(where.app)
+    const name = client?.hub.name(where.thread)
+    if (!client || !name) throw new Error(`Words typed here can't reach this thread; write to it in its own app.`)
+    client.hub.deliver(where.thread, name, { content: text, key, meta: { user: 'hex app', ts: new Date().toISOString() } })
+  }
+
+  // The owner's stop, as the thread's own app does it.
+  stop(where: Where) {
+    const client = clients.get(where.app)
+    if (!client) throw new Error(`No app here holds this thread, so there's nothing to stop.`)
+    ;(client.stop ?? client.hub.stop)(where.thread)
   }
 
   close() {
@@ -48,11 +79,7 @@ export class Chats extends Changes {
   }
 }
 
-function watchDir(dir: string, changed: () => void) {
-  try {
-    const watcher = watch(dir, changed)
-    return () => watcher.close()
-  } catch {
-    return () => {}
-  }
+const sendsThrough = (app: string) => {
+  const client = clients.get(app)
+  return client && !client.waits ? client : undefined
 }

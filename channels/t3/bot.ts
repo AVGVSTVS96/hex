@@ -420,7 +420,7 @@ function serve(socket: Socket) {
   })
 }
 
-clients.set('t3', { hub, place, backfill, waits: true })
+clients.set('t3', { hub, place, backfill, waits: true, stop: cancel })
 
 rmSync(SOCKET, { force: true })
 createServer(serve).listen(SOCKET)
