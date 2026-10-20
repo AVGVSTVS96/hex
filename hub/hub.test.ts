@@ -734,6 +734,16 @@ test('a local inbound request reaches the thread like a message from the app', a
   expect(received).toEqual([inbound(message)])
 })
 
+test("a local stop request is the owner's stop, for a thread this hub has", async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
+  await session('chat:7')
+  connect(join(dir, 'hub.sock')).on('connect', function () {
+    this.end([{ type: 'stop', thread: 'other-app-key' }, { type: 'stop', thread: 'chat:7' }].map(line => JSON.stringify(line) + '\n').join(''))
+  })
+  expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
+  expect(calls().filter(args => args[0] === 'stop')).toHaveLength(1)
+})
+
 test('a local inbound request for a thread this hub doesn\'t have opens nothing', async () => {
   start()
   connect(join(dir, 'hub.sock')).on('connect', function () {

@@ -5,6 +5,7 @@ import { findThread, followAgent, followThread, type Step, type Thread } from '.
 import { Call, transcript, type Mark, type Speaker, type Task } from './call.ts'
 import { CallLog, ending, usage, type CallRecord, type Ending, type Source } from './calls.ts'
 import { Changes } from './changes.ts'
+import { Chats } from './chat.ts'
 import { PORT, STATE_DIR, env } from './env.ts'
 import { Asks, type Ask } from './asks.ts'
 import { relay } from './relay.ts'
@@ -27,6 +28,7 @@ const activity = new Changes()
 const follows = new Map<string, () => void>()
 let board: Tasks
 let yours: Asks
+let chats: Chats
 
 const IDENTITY = (() => {
   try {
@@ -954,11 +956,31 @@ function taskRoutes(request: Request, url: URL) {
   const tasks = board
   if (url.pathname === '/tasks' && request.method === 'GET') return showTasks(url, tasks)
   if (url.pathname === '/tasks/summary' && request.method === 'GET') return showSummary(url, tasks, yours)
-  const [, id, talking] = url.pathname.match(/^\/tasks\/([^/]+)(\/talk)?$/) ?? []
+  const [, id, verb] = url.pathname.match(/^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/) ?? []
   const task = id && tasks.get(decodeURIComponent(id))
   if (!task) return new Response('404', { status: 404 })
-  if (talking && request.method === 'POST') return talkAbout(taskTopic(task))
-  if (!talking && request.method === 'GET') return Response.json({ ...task, ...yours.of(task.id) })
+  if (verb === 'talk' && request.method === 'POST') return talkAbout(taskTopic(task))
+  if (verb === 'chat' && request.method === 'GET') return showChat(url, task)
+  if (verb === 'chat' && request.method === 'POST') return sendChat(request, task)
+  if (verb === 'stop' && request.method === 'POST') return chats.stop(task.app, task.thread).then(() => new Response(null, { status: 204 }), refused)
+  if (!verb && request.method === 'GET') return Response.json({ ...task, ...yours.of(task.id) })
+}
+
+// A thread's chat, and with after, the next time it changes.
+async function showChat(url: URL, task: HexTask) {
+  const after = url.searchParams.get('after')
+  if (after) await chats.changes(Number(after), 25_000)
+  return Response.json(chats.of(task.thread, board.session(task.id)))
+}
+
+async function sendChat(request: Request, task: HexTask) {
+  const { text } = (await request.json().catch(() => ({}))) as { text?: unknown }
+  if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
+  return chats.send(task.app, task.thread, text.trim()).then(key => Response.json({ key }), refused)
+}
+
+function refused(error: Error) {
+  return new Response(error.message, { status: 502 })
 }
 
 // A live call's record is read from the call itself, so it has every word heard so far, and a
@@ -1007,6 +1029,7 @@ export function serve(voiceHub: Hub, state: string) {
   board = new Tasks(state, dirname(state))
   board.listen(() => activity.changed())
   yours = new Asks(state)
+  chats = new Chats(state, dirname(state))
   recover()
   resume()
   return Bun.serve<Phone>({

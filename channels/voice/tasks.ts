@@ -128,6 +128,11 @@ export class Tasks extends Changes {
     return this.tasks.find(task => task.id === id)
   }
 
+  // The Claude Code session a task's thread runs in, whose log holds its chat.
+  session(id: string) {
+    return [...this.threads, ...this.loose()].find(thread => `${thread.app}:${thread.id}` === id)?.session
+  }
+
   rows(): Row[] {
     return this.tasks.map(({ needs, lately, steps, plan, agents, ...row }) => ({ ...row, agents: agents.map(({ steps, result, ...agent }) => agent) }))
   }

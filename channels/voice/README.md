@@ -221,6 +221,10 @@ order (needs you, working, done, failed, idle), newest change first in each.
 | `GET /tasks/summary?after=<version>` | `{ version, needs, working }`, once a count changes |
 | `GET /tasks/<id>` | one task, with what it `needs` from you in full, what it did `lately`, its newest `steps` (newest first: `id`, `at`, `end`, `kind`, a few words of `text`, a tool's `state`, `detail` and `result`, and the `agent` it started), its `plan`, and each agent's `result` and own `steps` |
 | `POST /tasks/<id>/talk` | during a call: the voice brings the task up, and Claude hears which thread it is |
+| `GET /tasks/<id>/chat` | `{ version, turns, waiting }`: the thread's chat from its session's log (`turns`, each `from` `me` or `hex` with its `text`), and what you sent that its session hasn't taken in yet (`waiting`: `key`, `text`, `at`) |
+| `GET /tasks/<id>/chat?after=<version>` | the same, once a log is written or a session takes a message (or after 25 seconds) |
+| `POST /tasks/<id>/chat` | `{ text }`: your words to the thread, as if typed in its own app; answers `{ key }` |
+| `POST /tasks/<id>/stop` | your stop, as the thread's own app's stop |
 
 An app starting a call with `"about": "<task id>"` in its `/session` body gets
 the same: the voice opens with the task, and Claude's "call started" message

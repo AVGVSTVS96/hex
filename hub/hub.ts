@@ -975,6 +975,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (request.type === 'settle') asks?.settle(request.thread, request.message, request.note)
     if (request.type === 'reopen') asks?.reopen(request.thread, request.message, request.via)
     if (request.type === 'inbound') inbound(request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key })
+    if (request.type === 'stop' && Object.hasOwn(threads, request.thread)) void halt(request.thread)
     if (request.type === 'mirror') void mirror(api, find(request.thread), request.to, request.where).then(
       link => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
       error => process.stderr.write(`hub: couldn't mirror ${request.thread} to ${request.to}: ${error}\n`),
