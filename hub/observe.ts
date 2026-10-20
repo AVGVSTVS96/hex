@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join, resolve } from 'path'
 import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { names, PROFILE, profileOf, profilePath } from './profile.ts'
@@ -170,21 +170,16 @@ async function claude(input: string): Promise<Answer> {
 }
 
 // Passes run one at a time, so each reads the notes and profile the last one left: two never write
-// the same note or race for the profile. A lock older than a pass's lease was left by one that died.
-export async function alone<T>(lock: string, run: () => Promise<T>) {
-  for (;;) {
-    try {
-      mkdirSync(lock)
-      break
-    } catch {
-      if (Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now()) > 4 * CALL) rmSync(lock, { recursive: true, force: true })
-      await Bun.sleep(1000)
-    }
-  }
+// the same note or race for the profile. One that waits longer than a pass can take leaves its
+// messages to the thread's next pass.
+export async function alone(store: Store, run: () => Promise<unknown>) {
+  const holder = crypto.randomUUID()
+  for (const until = Date.now() + 4 * CALL; !store.lease('observe', holder, 4 * CALL); await Bun.sleep(1000))
+    if (Date.now() > until) return console.error("hex skipped a turn's memories: other passes held the memory agent too long")
   try {
-    return await run()
+    await run()
   } finally {
-    rmSync(lock, { recursive: true, force: true })
+    store.release('observe', holder)
   }
 }
 
@@ -197,7 +192,7 @@ if (import.meta.main) {
   const { HEX_STORE = join(hexDir, 'state'), MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
   if (HEX_PASS) {
     const { session, reply, by, thread } = JSON.parse(await Bun.stdin.text()) as Pass
-    await alone(join(HEX_STORE, 'observe.lock'), () => observe(HEX_STORE, session, reply, { by, thread }))
+    await alone(open(HEX_STORE), () => observe(HEX_STORE, session, reply, { by, thread }))
   } else if (MEMORY_DIR && existsSync(MEMO)) {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
     const pass: Pass = { session: hook.session_id ?? '', reply: hook.last_assistant_message ?? '', by: new Date().toISOString(), thread: HEX_THREAD }
