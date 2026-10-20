@@ -198,6 +198,11 @@ export class Store {
     return row && toRow(row)
   }
 
+  // Every message kept after a time, oldest first.
+  since(after: string): Row[] {
+    return (this.db.query('select * from messages where at > ? order by at').all(after) as Stored[]).map(toRow)
+  }
+
   // What one session took into its conversation after a time, oldest first.
   took(session: string, after = ''): Row[] {
     return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)
@@ -394,6 +399,11 @@ export class Store {
   // The message that asked it is gone: one message's question, or a whole thread's.
   unask(app: string, thread: string, message?: MessageId) {
     this.write(() => this.db.query('delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
+  }
+
+  // What a session was last shown, or '' when nothing yet.
+  seen(session: string): string {
+    return (this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null)?.digest ?? ''
   }
 
   // Whether what a session was last shown differs from digest, noting digest as shown.
