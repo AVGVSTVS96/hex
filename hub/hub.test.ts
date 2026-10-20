@@ -727,6 +727,227 @@ test('a session that fails to start is reported with its reason, and the next me
   await until(() => calls().filter(args => args[0] === '--bg').length === 2)
 })
 
+test('a thread whose session failed to start starts again once another session connects, and gets the message that waited', async () => {
+  start()
+  const starts = () => calls().filter(args => args[0] === '--bg')
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await launched()
+  await Bun.sleep(50)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'daemon binary was deleted (upgrade in progress)' }))
+  await until(() => failures.length)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'working' }))
+  hub.open('chat:8', 'OpenAI')
+  await until(() => starts().length === 2)
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  expect(settingsOf(await until(() => starts()[2])).env.HEX_THREAD).toBe('chat:7')
+  const { received } = await session('chat:7')
+  await until(() => received.length)
+  expect(received).toEqual([inbound(message)])
+})
+
+test('a thread opened with a prompt, or as a fork, whose start failed starts again with it once another session connects', async () => {
+  start()
+  const starts = () => calls().filter(args => args[0] === '--bg')
+  mkdirSync(join(dir, 'work'))
+  hub.open('chat:8', 'OpenAI', 'find the latest model', join(dir, 'work'))
+  hub.fork('chat:10', 'Copy', SESSION, 'carry on')
+  await until(() => starts().length === 2)
+  await Bun.sleep(50)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  await until(() => failures.length === 2)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'working' }))
+  hub.open('chat:9', 'Theo clips')
+  await until(() => starts().length === 3)
+  await session('chat:9', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => starts().length === 5)
+  const again = (thread: string) => starts().slice(3).find(args => settingsOf(args).env.HEX_THREAD === thread)!
+  expect(again('chat:8').at(-1)).toBe('find the latest model')
+  expect(hub.cwd('chat:8')).toBe(join(dir, 'work'))
+  expect(again('chat:10').slice(5, 8)).toEqual(['--resume', SESSION, '--fork-session'])
+  expect(again('chat:10').at(-1)).toBe('carry on')
+})
+
+test("a thread whose starts keep failing says so in its chat with each message, and General hears of it once, at the third", async () => {
+  start({ main: 'general', general: true })
+  await launched()
+  const general = await session('general')
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  for (const n of [1, 2, 3, 4]) {
+    hub.deliver('chat:7', 'Desk anchors', { ...message, content: `try ${n}` })
+    await until(() => states.filter(([thread, busy]) => thread === 'chat:7' && !busy).length === n)
+  }
+  expect(failures).toEqual(Array(4).fill(['chat:7', 'exit 1 before init']))
+  await until(() => general.received.length)
+  await Bun.sleep(50)
+  expect(general.received.map(said => said.content)).toEqual(['[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 3 times in a row: exit 1 before init. Its next message starts it again.'])
+})
+
+test("General hears of a thread that keeps failing once its hub is there, even when that's after the third", async () => {
+  start()
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  const tries = (n: number) => until(() => states.filter(([thread, busy]) => thread === 'chat:7' && !busy).length === n)
+  for (const n of [1, 2, 3]) {
+    hub.deliver('chat:7', 'Desk anchors', { ...message, content: `try ${n}` })
+    await tries(n)
+  }
+  mkdirSync(join(dir, 'general'))
+  const general = startHub({ stateDir: join(dir, 'general'), storeDir: dir, channel: 'plugin:discord@hex', server: SERVER, port: listener.port, main: 'general', general: true, call: async () => '', state: () => {}, failed: () => {}, hexDir: join(dir, 'hex') })
+  try {
+    hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'try 4' })
+    await tries(4)
+    await until(() => open(dir).untaken('general').length)
+    expect(open(dir).untaken('general').map(row => row.body)).toEqual(['[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 4 times in a row: exit 1 before init. Its next message starts it again.'])
+  } finally {
+    general.close()
+  }
+})
+
+test("General whose start failed starts again with each next message, as its heartbeat, says so in its chat each time, and leaves itself no message", async () => {
+  start({ main: 'general', general: true })
+  await launched()
+  await Bun.sleep(50)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  for (const n of [1, 2, 3]) {
+    if (n > 1) hub.deliver('general', 'hex', { ...message, content: `try ${n}` })
+    await until(() => states.filter(([thread, busy]) => thread === 'general' && !busy).length === n)
+    expect(calls().filter(args => args[0] === '--bg')).toHaveLength(n)
+  }
+  expect(failures).toEqual(Array(3).fill(['general', 'exit 1 before init']))
+  expect(open(dir).untaken('general').map(row => row.body)).toEqual(['try 2', 'try 3'])
+})
+
+test('a thread whose start fails even once another session started is left to its own next message, and its chat hears only of that', async () => {
+  const launcher = join(dir, 'launch')
+  writeFileSync(launcher, `#!/bin/sh
+case "$*" in *chat%3A7*) echo try >> "${dir}/tries"; echo 'its folder is gone'; exit 1;; esac
+exec claude "$@"
+`)
+  chmodSync(launcher, 0o755)
+  start({ launcher })
+  const tries = () => (existsSync(join(dir, 'tries')) ? readFileSync(join(dir, 'tries'), 'utf8').split('\n').length - 1 : 0)
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await until(() => failures.length)
+  hub.open('chat:8', 'OpenAI')
+  await launched()
+  const openai = await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => tries() === 2)
+  openai.close()
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  hub.open('chat:9', 'Theo clips')
+  await until(() => calls().filter(args => args[0] === '--bg').length === 2)
+  await session('chat:9', '2c3d4e5f-0000-4000-8000-000000000000')
+  await Bun.sleep(100)
+  expect(tries()).toBe(2)
+  expect(failures).toEqual([['chat:7', 'its folder is gone']])
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'again' })
+  await until(() => tries() === 3)
+  await until(() => failures.length === 2)
+})
+
+test('a thread whose messages keep failing to start gets a retry for each, so it starts once starts go through', async () => {
+  const launcher = join(dir, 'launch')
+  writeFileSync(join(dir, 'broken'), '')
+  writeFileSync(launcher, `#!/bin/sh
+case "$*" in *chat%3A7*) if [ -e "${dir}/broken" ]; then echo try >> "${dir}/tries"; echo 'its folder is gone'; exit 1; fi;; esac
+exec claude "$@"
+`)
+  chmodSync(launcher, 0o755)
+  start({ launcher })
+  const tries = () => (existsSync(join(dir, 'tries')) ? readFileSync(join(dir, 'tries'), 'utf8').split('\n').length - 1 : 0)
+  const desk = () => calls().filter(args => args[0] === '--bg' && args.join(' ').includes('chat%3A7'))
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await until(() => failures.length)
+  hub.open('chat:8', 'OpenAI')
+  await launched()
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => tries() === 2)
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'again' })
+  await until(() => failures.length === 2)
+  rmSync(join(dir, 'broken'))
+  hub.open('chat:9', 'Theo clips')
+  await until(() => calls().filter(args => args[0] === '--bg').length === 2)
+  await session('chat:9', '2c3d4e5f-0000-4000-8000-000000000000')
+  await until(() => desk().length === 1)
+  expect(tries()).toBe(3)
+})
+
+test("a message that arrives while a retry starts makes the retry its own, so its chat hears if that start fails", async () => {
+  const launcher = join(dir, 'launch')
+  writeFileSync(launcher, `#!/bin/sh
+case "$*" in *chat%3A7*) echo try >> "${dir}/tries"; if [ "$(wc -l < "${dir}/tries")" -ge 2 ]; then while [ ! -e "${dir}/go" ]; do sleep 0.02; done; fi; echo 'its folder is gone'; exit 1;; esac
+exec claude "$@"
+`)
+  chmodSync(launcher, 0o755)
+  start({ launcher })
+  const tries = () => (existsSync(join(dir, 'tries')) ? readFileSync(join(dir, 'tries'), 'utf8').split('\n').length - 1 : 0)
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await until(() => failures.length)
+  hub.open('chat:8', 'OpenAI')
+  await launched()
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => tries() === 2)
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'again' })
+  writeFileSync(join(dir, 'go'), '')
+  await until(() => failures.length === 2)
+  expect(failures).toEqual([['chat:7', 'its folder is gone'], ['chat:7', 'its folder is gone']])
+  expect(tries()).toBe(2)
+})
+
+test('a fork whose session runs without its channel starts again into that session, not a second copy', async () => {
+  const FORKED = '2c3d4e5f-0000-4000-8000-000000000000'
+  bound('chat:10', FORKED)
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: FORKED, pid: 42, startedAt: 1 }]))
+  start({ reconnect: 50 })
+  const starts = () => calls().filter(args => args[0] === '--bg')
+  hub.fork('chat:10', 'Copy', SESSION, 'carry on')
+  expect(await until(() => failures[0])).toEqual(['chat:10', 'its session runs, but its channel never connects'])
+  hub.open('chat:9', 'Theo clips')
+  await until(() => starts().length === 2)
+  await session('chat:9', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => states.filter(([thread, busy]) => thread === 'chat:10' && !busy).length === 2)
+  expect(starts()).toHaveLength(2)
+  expect(calls().filter(args => args[0] === 'respawn')).toHaveLength(2)
+})
+
+test('a thread whose session runs without its channel is retried once, not each time another session starts', async () => {
+  const STUCK = '2c3d4e5f-0000-4000-8000-000000000000'
+  bound('chat:10', STUCK)
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: STUCK, pid: 42, startedAt: 1 }]))
+  start({ reconnect: 50 })
+  const respawns = () => calls().filter(args => args[0] === 'respawn')
+  hub.deliver('chat:10', 'Stuck', message)
+  expect(await until(() => failures[0])).toEqual(['chat:10', 'its session runs, but its channel never connects'])
+  hub.open('chat:8', 'OpenAI')
+  await until(() => calls().filter(args => args[0] === '--bg').length === 1)
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => states.filter(([thread, busy]) => thread === 'chat:10' && !busy).length === 2)
+  for (const [thread, id] of [['chat:9', '3d4e5f60-0000-4000-8000-000000000000'], ['chat:11', '4e5f6071-0000-4000-8000-000000000000']]) {
+    hub.open(thread, thread)
+    await until(() => calls().some(args => args[0] === '--bg' && args.join(' ').includes(encodeURIComponent(thread))))
+    await session(thread, id)
+  }
+  await Bun.sleep(300)
+  expect(respawns()).toHaveLength(2)
+  expect(failures).toHaveLength(1)
+})
+
+test("the owner's stop ends a thread's run of failed starts, so another session connecting doesn't start it again", async () => {
+  start()
+  const starts = () => calls().filter(args => args[0] === '--bg')
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await launched()
+  await Bun.sleep(50)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  await until(() => failures.length)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'working' }))
+  await hub.stop('chat:7')
+  hub.open('chat:8', 'OpenAI')
+  await until(() => starts().length === 2)
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await Bun.sleep(100)
+  expect(starts()).toHaveLength(2)
+})
+
 test('a session that connects ends the watch, so a later failed state is ignored', async () => {
   start()
   hub.deliver('chat:7', 'Desk anchors', message)
