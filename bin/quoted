@@ -1,0 +1,75 @@
+#!/usr/bin/env bun
+import { existsSync, readFileSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join, resolve } from 'path'
+import { clip, holds, keysOf, owners, problems, verdict } from '../hub/notes.ts'
+import { open } from '../hub/store.ts'
+
+// A `memo note` about something the owner said has to keep their words. One that names a message
+// by its key is checked against it in hex.db; one without a key, written after the session took
+// messages of theirs no note has answered to yet, is sent back once with those messages, so the
+// session decides with the words in front of it.
+
+const state = process.env.HEX_STORE || resolve(import.meta.dir, '../../state')
+const { tool_input, session_id } = JSON.parse(readFileSync(0, 'utf8'))
+const notes = notesIn(String(tool_input?.command ?? ''))
+if (!notes.length || !session_id || !existsSync(join(state, 'hex.db'))) process.exit(0)
+
+const store = open(state)
+const seen = join(process.env.TMPDIR || tmpdir(), `hex-noted-${session_id}`)
+let since = existsSync(seen) ? readFileSync(seen, 'utf8') : ''
+const mark = (at: string) => at > since && writeFileSync(seen, (since = at))
+const deny = (reason: string) => {
+  console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }))
+  process.exit(0)
+}
+
+for (const note of notes) {
+  if (keysOf(note).length) {
+    const v = verdict(note, store)
+    if (!holds(v)) deny(`This note doesn't keep the owner's words. ${problems(v).join('\n\n')}\n\nQuote the words the note rests on in double quotes, as they wrote them ("…" skips a part), and end with the key.`)
+    for (const row of v.keys) if (row.taken) mark(row.taken.at)
+    continue
+  }
+  const unanswered = owners(store.took(session_id, since))
+  if (!unanswered.length) continue
+  mark(unanswered.at(-1)!.taken!.at)
+  deny(
+    `This note names no message, and since the last one this session took these from the owner:\n\n${unanswered.slice(-3).map(row => `[${row.key}] ${clip(row.body, 300)}`).join('\n\n')}\n\nIf the note is about what they said, quote the words it rests on in double quotes, as they wrote them, and end with that key, like: Correction: the borrow is "just the app layout and agent design" [telegram:-100123:3601]. If it's about something else, run it again as it is.`,
+  )
+}
+
+// Each note a shell command records: the word after `memo note`, as the shell would pass it. A word
+// built at run time ($var, $(…), `…`) can't be read here, so it's left alone.
+function notesIn(command: string): string[] {
+  const found: string[] = []
+  for (const match of command.matchAll(/memo\s+note\s+/g)) {
+    const word = shellWord(command, match.index + match[0].length)
+    if (word) found.push(word)
+  }
+  return found
+}
+
+function shellWord(text: string, at: number): string | undefined {
+  let word = ''
+  for (let i = at; i < text.length; i++) {
+    const c = text[i]!
+    if (/[\s;&|<>()]/.test(c)) break
+    if (c === '$' || c === '`') return
+    if (c === '\\') word += text[++i] ?? ''
+    else if (c === "'") {
+      const end = text.indexOf("'", i + 1)
+      if (end < 0) return
+      word += text.slice(i + 1, end)
+      i = end
+    } else if (c === '"') {
+      for (i++; i < text.length && text[i] !== '"'; i++) {
+        if (text[i] === '$' || text[i] === '`') return
+        if (text[i] === '\\' && '$`"\\\n'.includes(text[i + 1] ?? '')) i++
+        word += text[i]
+      }
+      if (i >= text.length) return
+    } else word += c
+  }
+  return word || undefined
+}
