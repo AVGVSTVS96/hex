@@ -198,6 +198,11 @@ export class Store {
     return row && toRow(row)
   }
 
+  // Every message kept after a time, oldest first.
+  since(after: string): Row[] {
+    return (this.db.query('select * from messages where at > ? order by at').all(after) as Stored[]).map(toRow)
+  }
+
   // What one session took into its conversation after a time, oldest first.
   took(session: string, after = ''): Row[] {
     return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)

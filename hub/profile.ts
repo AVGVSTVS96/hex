@@ -1,5 +1,11 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { clip, fit } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
+
+// The owner's profile, which the memory agent keeps current after every turn.
+export const profilePath = (state: string) => join(state, 'profile.md')
+export const profileOf = (state: string) => (existsSync(profilePath(state)) ? readFileSync(profilePath(state), 'utf8').trim() : '')
 
 // Each thread's name, as hex.db keeps it after the thread closes.
 export function names(state: string): Record<string, string> {
@@ -10,6 +16,9 @@ export function names(state: string): Record<string, string> {
 // doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output), so the list
 // stays under it, with room for the lines that say what didn't fit.
 const ROOM = 9_000
+
+// The profile takes most of that room, leaving the rest for tasks and questions.
+export const PROFILE = 6_500
 
 function facts(task: Task, named: Record<string, string>) {
   const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
@@ -62,8 +71,10 @@ export function profile(state: string, thread?: string): { text: string; digest:
       rest: '`.hex/bin/hex questions` lists them all',
     },
   ]
-  const text = fit(sections, ROOM)
-  return { text, digest: text && Bun.hash(JSON.stringify(sections)).toString(36) }
+  const about = profileOf(state).slice(0, PROFILE)
+  const lists = fit(sections, ROOM - about.length)
+  const text = [about && `Who I am and what's going on now, kept current by the memory agent from my own words:\n\n${about}`, lists].filter(Boolean).join('\n\n')
+  return { text, digest: text && Bun.hash(JSON.stringify([about, sections])).toString(36) }
 }
 
 // The UserPromptSubmit and SessionStart hook: a session gets the list whenever it changed since it
