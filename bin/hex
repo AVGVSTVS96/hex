@@ -94,9 +94,12 @@ case "${1:-}" in
     if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi
     claude agents --json | jq -r --arg home "$home" '.[] | "\(.name): \(.status // "running")\(if .cwd == $home then "" else " in \(.cwd)" end)"'
     units=$(systemctl --user list-units --type=service --state=running --no-legend --plain | awk '{print $1}')
-    [ -n "$units" ] && systemctl --user show $units -p Id,ActiveEnterTimestamp,ExecStopPost | awk -F= '
-      /^Id=/ { id = $2 } /^ActiveEnterTimestamp=/ { since = $2 }
-      /^ExecStopPost=.*bin\/job --ended/ { print "job " substr(id, 1, length(id) - 8) ": running since " since }'
+    if [ -n "$units" ]; then
+      systemctl --user show $units -p Id,ActiveEnterTimestamp,ExecStopPost | awk -F= '
+        function done() { if (job) print "job " substr(id, 1, length(id) - 8) ": running since " since; job = 0 }
+        /^$/ { done() } /^Id=/ { id = $2 } /^ActiveEnterTimestamp=/ { since = $2 } /^ExecStopPost=.*bin\/job --ended/ { job = 1 }
+        END { done() }'
+    fi
     ;;
   *)
     echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|threads|message|recall" >&2
