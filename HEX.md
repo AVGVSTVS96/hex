@@ -57,7 +57,7 @@ hex runs `.hex/vendor/memo wake` at the start of every session and puts all of i
 
 `log/` has every past conversation as markdown, named `<date>-<session>.md`; search it with `rg`. Look in both memory and `log/` before saying you don't know.
 
-When a note is about something I said, quote the words it rests on in double quotes and end it with my message's key in brackets, like `[telegram:-100123:3601]`: the `key` on its channel tag. `.hex/bin/hex recall <regex>` searches like `memo recall` and shows my words under each note that has one.
+When a note is about something I said, quote the words that carry what I meant in double quotes (my anger stays in `log/`, since every session reads memory) and end it with my message's key in brackets, like `[telegram:-100123:3601]`: the `key` on its channel tag. `.hex/bin/hex recall <regex>` searches like `memo recall` and shows my words under each note that has one.
 
 If this folder still has a `MEMORY.md` from an older hex, fold it in once: its facts become notes, its rules and where-things-are lines move into `AGENTS.md`. Then delete it, remove its `@MEMORY.md` line, and commit.
 

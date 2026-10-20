@@ -109,6 +109,8 @@ const migrations = [
   `alter table tasks add column closed text check (closed ${UTC});
   update tasks set closed = at where status in ('done', 'dropped');`,
   `create table threads (app text not null, thread text not null, name text not null, primary key (app, thread));`,
+  `alter table messages add column observed_at text check (observed_at ${UTC});
+  update messages set observed_at = coalesce(taken_at, at);`,
 ]
 
 const now = () => new Date().toISOString()
@@ -198,6 +200,21 @@ export class Store {
   // What one session took into its conversation after a time, oldest first.
   took(session: string, after = ''): Row[] {
     return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)
+  }
+
+  // What a session took that no pass has looked over for memories yet, oldest first, claimed for
+  // the pass that asks, so two passes never write about the same message.
+  observe(session: string): Row[] {
+    return this.write(() => {
+      const rows = this.db.query('select * from messages where taken_by = ? and observed_at is null order by taken_at').all(session) as Stored[]
+      this.db.query('update messages set observed_at = ? where taken_by = ? and observed_at is null').run(now(), session)
+      return rows.map(toRow)
+    })
+  }
+
+  // A pass that failed hands its messages back to the next one.
+  unobserve(keys: string[]) {
+    this.write(() => this.db.query('update messages set observed_at = null where key in (select value from json_each(?))').run(JSON.stringify(keys)))
   }
 
   // What no session has taken yet, oldest first: every thread's, or one thread's.
