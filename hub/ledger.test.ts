@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { dirname, join } from 'path'
+import { join } from 'path'
 import { Ledger } from './ledger.ts'
 import { open } from './store.ts'
 
@@ -92,45 +91,4 @@ test("a pin with a note is the thread's status post: hex rewrites it from hex.db
   }
   await ledger.rewrite('-100:8', 4096, slow, 'Site: example.net')
   expect(ledger.pin('-100:8')).toEqual({ message: 11, text: 'Status: by hand again', at: expect.any(String) })
-})
-
-test("a done task leaves the status post when its week is up, though hex.db stays quiet", async () => {
-  const ledger = new Ledger(file, 'telegram')
-  const store = open(dirname(file))
-  const key = 'telegram:-100:51'
-  store.deliver({ key, to: '-100:8', from: 'telegram', body: 'Blur the logo less', meta: { user: 'owner' } })
-  const task = store.createTask({ message: key, owner: '-100:8' })
-  store.editTask(task.id, { status: 'done', proof: 'shipped in abc123' })
-  const db = new Database(join(dirname(file), 'hex.db'))
-  db.query('update tasks set closed = ?').run(new Date(Date.now() - 7 * 24 * 60 * 60_000 + 150).toISOString())
-  db.close()
-  ledger.pinned('-100:8', 10, 'Site: example.com', 'Site: example.com')
-  const texts: string[] = []
-  const stop = ledger.keep(4096, async (_thread, _message, text) => void texts.push(text), () => {})
-  await Bun.sleep(50)
-  expect(texts.at(-1)).toContain('Blur the logo less')
-  await Bun.sleep(250)
-  stop()
-  expect(texts.at(-1)).toContain('🟢 **Done**\n- nothing')
-})
-
-test('a status post pinned while hex runs drops its done task when the week is up, too', async () => {
-  const ledger = new Ledger(file, 'telegram')
-  const store = open(dirname(file))
-  const key = 'telegram:-100:52'
-  store.deliver({ key, to: '-100:9', from: 'telegram', body: 'Rename the repo', meta: { user: 'owner' } })
-  const task = store.createTask({ message: key, owner: '-100:9' })
-  store.editTask(task.id, { status: 'done', proof: 'gh repo rename' })
-  const db = new Database(join(dirname(file), 'hex.db'))
-  db.query('update tasks set closed = ?').run(new Date(Date.now() - 7 * 24 * 60 * 60_000 + 150).toISOString())
-  db.close()
-  const texts: string[] = []
-  const edit = async (_thread: string, _message: unknown, text: string) => void texts.push(text)
-  const stop = ledger.keep(4096, edit, () => {})
-  ledger.pinned('-100:9', 10, 'Site: example.com', 'Site: example.com')
-  await ledger.rewrite('-100:9', 4096, edit)
-  expect(texts.at(-1)).toContain('Rename the repo')
-  await Bun.sleep(300)
-  stop()
-  expect(texts.at(-1)).toContain('🟢 **Done**\n- nothing')
 })

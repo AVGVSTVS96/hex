@@ -21,7 +21,7 @@ const said = (store: Store, n: number, body: string) => {
   return key
 }
 
-test("a status post is the note over the thread's waiting questions, open tasks and this week's done ones", () => {
+test("a status post is the note over the thread's waiting questions, open tasks and the last five done", () => {
   const store = new Store(dir)
   const note = 'Site: https://example.com'
   expect(statusPost(store, '-100:7', note, 4096)).toBe(`${note}\n\n🔴 **Blocked on you**\n- nothing\n\n🟡 **Pending**\n- nothing\n\n🟢 **Done**\n- nothing`)
@@ -32,13 +32,17 @@ test("a status post is the note over the thread's waiting questions, open tasks 
   const done = store.createTask({ message: said(store, 51, 'Blur the logo less'), owner: '-100:7' })
   const old = store.createTask({ message: said(store, 52, 'Rename the repo'), owner: '-100:7' })
   store.createTask({ message: said(store, 53, 'Not this thread'), owner: '-100:8' })
-  const closed = Date.parse(store.editTask(old.id, { status: 'done', proof: 'gh repo rename' }).closed!)
+  store.editTask(old.id, { status: 'done', proof: 'gh repo rename' })
   store.editTask(done.id, { status: 'done', proof: 'shipped in abc123' })
 
-  expect(statusPost(store, '-100:7', note, 4096, closed + 60_000)).toBe(
+  expect(statusPost(store, '-100:7', note, 4096)).toBe(
     [note, '🔴 **Blocked on you**\n1. Ship today? [Yes | No]', `🟡 **Pending**\n- Fix the login page (${open.id})`, `🟢 **Done**\n- Blur the logo less (${done.id}) · shipped in abc123\n- Rename the repo (${old.id}) · gh repo rename`].join('\n\n'),
   )
-  expect(statusPost(store, '-100:7', note, 4096, closed + 8 * 24 * 60 * 60_000)).toEndWith('🟢 **Done**\n- nothing')
+
+  for (let n = 54; n < 58; n++) store.editTask(store.createTask({ message: said(store, n, `Later ${n}`), owner: '-100:7' }).id, { status: 'done', proof: 'ok' })
+  const latest = statusPost(store, '-100:7', note, 4096)
+  expect(latest).toContain(`- Blur the logo less (${done.id})`)
+  expect(latest).not.toContain('Rename the repo')
 })
 
 test('a status post fits the room the app gives one message, saying how many more there are', () => {

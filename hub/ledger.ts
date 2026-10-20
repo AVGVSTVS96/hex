@@ -1,6 +1,6 @@
 import { readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
-import { nextLeaving, statusPost } from './status.ts'
+import { statusPost } from './status.ts'
 import { open, storeDir, type MessageId, type Question, type Store } from './store.ts'
 
 export type { Answer, MessageId } from './store.ts'
@@ -21,7 +21,6 @@ export class Ledger {
   private book: Book
   private readonly store: Store
   private rewriting = new Map<string, Promise<void>>()
-  private arm?: () => void
 
   constructor(
     private file: string,
@@ -81,26 +80,13 @@ export class Ledger {
     return next
   }
 
-  // Keeps every status post current: now, after each change to hex.db from any process, and when
-  // a done task's week is up.
+  // Keeps every status post current: now, and after each change to hex.db from any process.
   keep(room: number, edit: Edit, failed: (thread: string, error: unknown) => void): () => void {
-    let timer: ReturnType<typeof setTimeout> | undefined
     const all = () => {
       for (const thread of this.posts()) this.rewrite(thread, room, edit).catch(error => failed(thread, error))
-      this.arm?.()
-    }
-    this.arm = () => {
-      clearTimeout(timer)
-      const next = Math.min(...this.posts().map(thread => nextLeaving(this.store, thread)))
-      if (next < Infinity) timer = setTimeout(all, next - Date.now())
     }
     all()
-    const stop = this.store.watch(all)
-    return () => {
-      clearTimeout(timer)
-      this.arm = undefined
-      stop()
-    }
+    return this.store.watch(all)
   }
 
   find(thread: string, message: MessageId) {
@@ -140,7 +126,6 @@ export class Ledger {
   pinned(thread: string, message: MessageId, text = '', note?: string) {
     this.book.pins[thread] = { message, text, at: now(), ...(note !== undefined && { note }) }
     this.save()
-    if (note !== undefined) this.arm?.()
   }
 
   unpinned(thread: string, message: MessageId) {
