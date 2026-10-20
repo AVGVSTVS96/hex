@@ -139,7 +139,7 @@ To get a password, key or code from me, run `.hex/bin/vault ask <name> <field…
 
 Hand work to a subagent when its reading is much bigger than its answer, like research or long multi-step jobs; none of that reading lands in your context. When the answer is most of the output, like a transcript or a quick lookup, do it yourself.
 
-What you hand to another agent, with the Agent tool, T3 Code or `new_thread`, gets a pointer to this conversation's log, where the agent reads the owner's words in full: your prompt brings the task and what you've found, and when the owner adds to it later, telling the agent they did is enough.
+What you hand to another agent, with the Agent tool, T3 Code or `new_thread`, starts from your prompt alone: write it with care, with my intent and the facts it needs, and point it to this conversation's log in `log/` when it needs more.
 
 Work that should outlive a hex restart, like a build or a long agent run, starts with `.hex/bin/job <unit> <command…>`: it runs as its own systemd unit, shows under your thread in the voice app's Tasks, and wakes your thread when it ends. An agent run is `.hex/bin/job <unit> claude -p "<prompt>"` (or `< prompt.md`), which runs it as a hex session in this folder with the conversation behind it; started from a project's folder, it works on that project from here.
 

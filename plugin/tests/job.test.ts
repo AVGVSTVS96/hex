@@ -14,7 +14,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !n
 const session = { HEX_CHANNEL: 'plugin:t3@hex', HEX_THREAD: 'stray-key' }
 
 beforeAll(() => {
-  for (const file of ['bin/job', 'bin/hex', 'bin/handoff', 'bin/log', 'bin/session', 'hub/cli.ts', 'hub/fit.ts', 'hub/notes.ts', 'hub/profile.ts', 'hub/store.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
+  for (const file of ['bin/job', 'bin/hex', 'bin/log', 'bin/session', 'hub/cli.ts', 'hub/fit.ts', 'hub/notes.ts', 'hub/profile.ts', 'hub/store.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
   for (const [app, threads] of Object.entries({
     t3: { 'stray-key': { name: 'hex' } },
     telegram: { 'stray-key': { name: 'stray-key' }, '-100123:908': { name: 'autofork' } },
@@ -71,22 +71,6 @@ test('Claude started any other way still runs, with how to start it as a hex ses
 
 test("a job a job session starts is its owner's too", () => {
   expect(value(run(['inner', 'make'], { HEX_OWNER: 'discord:555' }).args, 'HEX_OWNER')).toBe('discord:555')
-})
-
-test('an agent job gets the conversation behind it after its prompt, as any other agent a session hands work to', () => {
-  const id = 'a4d76227-0000-4000-8000-000000000000'
-  const config = join(home, 'config')
-  mkdirSync(join(config, 'projects/-home-hex'), { recursive: true })
-  const said = { type: 'user', message: { content: '<channel source="plugin:t3:t3" user="me" user_id="1">run it as a hex session</channel>' }, timestamp: new Date(Date.UTC(2026, 9, 20, 7, 17)).toISOString() }
-  writeFileSync(join(config, `projects/-home-hex/${id}.jsonl`), JSON.stringify(said) + '\n')
-  const caller = { ...session, CLAUDE_CODE_SESSION_ID: id, CLAUDE_CONFIG_DIR: config, HEX_STORE: join(home, 'state'), TZ: 'UTC' }
-  const told = Buffer.from(value(run(['deck', 'claude', '-p', 'go'], caller).args, 'StandardInputData')!, 'base64').toString()
-  const log = join(home, 'log/threads/2026-10-20-a4d76227.md')
-  expect(told).toStartWith('\n\n---\nThis work comes from a conversation in hex.')
-  expect(told).toContain(`is in ${log}, kept current`)
-  expect(readFileSync(log, 'utf8')).toContain('run it as a hex session')
-  expect(value(run(['build', 'make'], caller).args, 'StandardInputData')).toBeUndefined()
-  expect(value(run(['deck', 'claude', '-p', 'go'], session).args, 'StandardInputData')).toBeUndefined()
 })
 
 test("a job session's log is hex's words, kept with the threads, not the owner's", () => {

@@ -428,17 +428,6 @@ function serve(token: string) {
 
   // A new thread opens with the request that asked for it and what the session said since, when a
   // message from the user started the caller's current turn. A thread's first message is its starter.
-  async function origin(from: string, to: string) {
-    if (!typing.has(from)) return
-    const ch = await threadChannel(from)
-    const recent = [...(await ch.messages.fetch({ limit: 50 })).values()].reverse()
-    const asked = recent.findLastIndex(m => !m.author.bot)
-    if (asked < 0) return
-    const picked = recent.slice(asked).filter((m, i) => i === 0 || m.author.id === client.user!.id)
-    if (picked[0]!.type === MessageType.ThreadStarterMessage && ch.isThread()) picked[0] = (await ch.fetchStarterMessage())!
-    for (const m of picked) await m.forward(to)
-  }
-
   // A thread's starter message lives in the channel it hangs off, under the thread's own id.
   async function message(ch: ThreadChannel | DMChannel, id: string): Promise<DiscordMessage> {
     const msg = ch.isThread() && id === ch.id ? await ch.fetchStarterMessage() : await ch.messages.fetch(id)
@@ -583,7 +572,6 @@ function serve(token: string) {
       const here = await threadChannel(caller)
       const parent = where ?? (here.isThread() ? here.parent?.name : undefined)
       const { thread, link } = await place(name, parent, about, args.tags as string[] | undefined)
-      await origin(caller, thread).catch(err => process.stderr.write(`discord hub: couldn't forward where "${name}" came from: ${err}\n`))
       hub.open(thread, name, args.prompt as string)
       return `started thread "${name}": ${link}`
     }
