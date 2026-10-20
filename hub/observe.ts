@@ -49,6 +49,7 @@ export async function observe(state: string, session: string, reply: string, { a
     const noted = named(rows)
     const fresh = rows.filter(row => !noted.includes(`[${row.key}]`))
     const written: string[] = []
+    let wanted = false
     if (rows.length) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = names(state)
@@ -62,7 +63,6 @@ export async function observe(state: string, session: string, reply: string, { a
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
       // rewrite the profile while this one thinks: either way it thinks again.
       let wrong = ''
-      let wanted = false
       for (let tries = 0; tries < 3; tries++) {
         const before = profileOf(state)
         const answer = await ask(`<profile>\n${before || '(none yet)'}\n</profile>\n\n<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn}${wrong}`)
@@ -80,9 +80,9 @@ export async function observe(state: string, session: string, reply: string, { a
         wanted = false
         break
       }
-      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it'}`)
+      if (wanted) console.error(`hex left the profile as it was after 3 tries, so the thread's next pass looks at this turn again:${wrong || ' another pass kept rewriting it'}`)
     }
-    store.observed(taken.map(row => row.key))
+    store.observed(taken.map(row => row.key), !wanted)
     return written
   } catch (error) {
     store.observed(taken.map(row => row.key), false)
@@ -152,11 +152,11 @@ function logOf(session: string) {
 
 // One read-only call: the model may open the turn's log, and its only effect is what it returns.
 // Its three tries end inside the pass's lease (4 calls long), so a hung call fails rather than racing the next pass.
-async function claude(input: string, model = MODEL, timeout = CALL): Promise<Answer> {
+async function claude(input: string): Promise<Answer> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
   const run = Bun.spawn(
-    ['claude', '-p', '--safe-mode', '--model', model, '--effort', 'high', '--tools', 'Read,Grep', '--system-prompt', SYSTEM, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--no-session-persistence'],
-    { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout },
+    ['claude', '-p', '--safe-mode', '--model', MODEL, '--effort', 'high', '--tools', 'Read,Grep', '--system-prompt', SYSTEM, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--no-session-persistence'],
+    { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
   )
   const [out, err, code] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited])
   const result = JSON.parse(out || '{}')

@@ -140,6 +140,14 @@ test('a session sees the whole profile once, then only the lines that changed', 
   expect(about('# Always\n- b', '# Always\n- c')).toBe("Who I am and what's going on now, kept current by the memory agent from my own words:\n\n# Always\n- c")
 })
 
+test('a profile change no try could keep leaves the turn for the next pass', async () => {
+  await observe(dir, 's', '', { ask: async () => ({ notes: [], profile: '# Always\n- Wants "whatever" [telegram:-100:50]' }), memo })
+  expect(profileOf(dir)).toBe('')
+  const asked: string[] = []
+  await observe(dir, 's', '', { ask: async input => (asked.push(input), none), memo })
+  expect(asked[0]).toContain('ship it on fridays only')
+})
+
 test('a time reads the way notes write it, on the owner’s clock', () => {
   expect(clock('2026-10-20T06:31:00.000Z', 'America/Los_Angeles')).toBe('Oct 19 11:31pm')
   expect(clock('2026-10-20T19:05:00.000Z', 'America/Los_Angeles')).toBe('Oct 20 12:05pm')
