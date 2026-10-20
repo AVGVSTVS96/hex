@@ -78,7 +78,12 @@ for await (const line of console) {
     }
   })()
   const exited = plugin.exited.then(code => Promise.reject(new Error(`the engine exited (${code}) before it listened`)))
-  const base = `http://127.0.0.1:${await Promise.race([port, exited])}`
+  const listened = await Promise.race([port, exited]).catch(error => {
+    openai.stop(true)
+    rmSync(home, { recursive: true, force: true })
+    throw error
+  })
+  const base = `http://127.0.0.1:${listened}`
   return {
     base,
     heard,
