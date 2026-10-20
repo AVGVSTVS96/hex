@@ -733,7 +733,7 @@ async function hear(file_id: string, uniqueId: string): Promise<string | undefin
 bot.on('message:voice', async ctx => {
   const voice = ctx.message.voice
   const heard = allowed(ctx.from) ? await hear(voice.file_id, voice.file_unique_id) : undefined
-  const said = heard ? `(voice message) ${heard}` : '(voice message)'
+  const said = heard ? `(voice message) ${heard}` : "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)"
   const text = ctx.message.caption ? `${ctx.message.caption}\n\n${said}` : said
   await handleInbound(ctx, text, undefined, {
     kind: 'voice',
