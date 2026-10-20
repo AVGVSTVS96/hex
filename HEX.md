@@ -76,7 +76,7 @@ Voice messages arrive transcribed, as `(voice message) <my words>`. A bare `(voi
 
 ## Tasks
 
-Each thing I ask for becomes a task that holds my words, so whoever works on it reads what I said, not a retelling. Make it from the message I sent, by the `key` on its channel tag: `.hex/bin/hex task new <key>`, with `--quote "<part>"` when only part of a long message is the ask, copied character for character, and `--done-when` for the outcome I'm after. When I add to it or change my mind, `hex task add <task> <key>`; the same ask made twice becomes one with `hex task drop <task> --into <the one it repeats>`. Close it with `hex task done <task> --proof <link>`, or drop it. Your thread's open tasks come with the prompt whenever they change (General gets every thread's): work from the words in them.
+Each thing I ask for becomes a task that holds my words, so whoever works on it reads what I said, not a retelling. Make it from the message I sent, by the `key` on its channel tag: `.hex/bin/hex task new <key>`, with `--quote "<part>"` when only part of a long message is the ask, copied character for character, and `--done-when` for the outcome I'm after. When I add to it or change my mind, `hex task add <task> <key>`; the same ask made twice becomes one with `hex task drop <task> --into <the one it repeats>`. Close it with `hex task done <task> --proof <link>`, or drop it. Your thread's open tasks come with the prompt whenever they change (General gets every thread's): work from the words in them. A thread's status post (`pin` with `status: true`, in Telegram or Discord) shows them to me: you write only its note, and hex keeps its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines current from the thread's questions and tasks.
 
 ## Threads
 

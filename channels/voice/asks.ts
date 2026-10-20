@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, renameSync, watch, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import type { Ask as Asked, MessageId, Pin } from '../../hub/ledger.ts'
+import { noteOf, type Ask as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
+import { statusPost } from '../../hub/status.ts'
 import { open as store } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
 import { Check } from './check.ts'
@@ -130,9 +131,13 @@ export class Asks extends Changes {
     return this.view.asks.find(ask => ask.id === id)
   }
 
-  // The thread's own questions and its pinned status post, for its page.
+  // The thread's own questions and its pinned status post, for its page: one hex keeps is read
+  // from hex.db as the page opens, in full.
   of(task: string) {
-    return { asks: this.view.asks.filter(ask => ask.task === task), ...(this.pins.has(task) && { pin: this.pins.get(task)!.text }) }
+    const pin = this.pins.get(task)
+    const thread = task.slice(task.indexOf(':') + 1)
+    const text = pin && (pin.note === undefined ? pin.text : statusPost(store(this.state), thread, pin.note, Infinity))
+    return { asks: this.view.asks.filter(ask => ask.task === task), ...(text && { pin: text }) }
   }
 
   async answer(id: string, label: string, via: string) {
@@ -226,11 +231,11 @@ export class Asks extends Changes {
     this.names.clear()
     this.pins.clear()
     const questions = store(this.state).questions()
+    for (const { app, thread, name } of store(this.state).threads()) this.names.set(`${app}:${thread}`, name)
     for (const app of apps(this.state)) {
       const book = readJson(join(this.state, app, 'ledger.json'))
       this.ledgers.set(app, questions.filter(question => question.app === app))
       for (const [thread, pin] of Object.entries<any>(book?.pins ?? {})) if (pin.text) this.pins.set(`${app}:${thread}`, pin)
-      for (const [thread, known] of Object.entries<any>(readJson(join(this.state, app, 'threads.json')) ?? {})) this.names.set(`${app}:${thread}`, known.name ?? thread)
     }
     this.links.load()
     this.result = readJson(join(this.state, 'voice', 'check.json'))
@@ -265,7 +270,7 @@ export class Asks extends Changes {
   // A pinned post that changed or a T3 run that ended starts a check; the first read only takes note.
   private notice() {
     const now = {
-      pins: JSON.stringify([...this.pins].map(([task, pin]) => [task, pin.text])),
+      pins: JSON.stringify([...this.pins].map(([task, pin]) => [task, noteOf(pin)])),
       t3: JSON.stringify([this.t3.stuck, this.t3.fresh].map(items => items.map(item => item.id))),
     }
     const why = !this.seen ? undefined : now.pins !== this.seen.pins ? 'a pinned post changed' : now.t3 !== this.seen.t3 ? 'a T3 run ended' : undefined

@@ -136,6 +136,20 @@ test('done needs a proof, and the states are the four a task has', () => {
   expect(store.tasks({ status: ['done'] }).map(task => task.id)).toEqual([id])
 })
 
+test('a task keeps when it was closed: set when it ends, kept through later edits, cleared if it opens again', () => {
+  const store = new Store(dir)
+  store.deliver(ask)
+  const { id } = store.createTask({ message: ask.key, owner: '-100:7' })
+  expect(store.task(id)!.closed).toBeUndefined()
+  const { closed } = store.editTask(id, { status: 'done', proof: 'https://example.com/pr/1' })
+  expect(closed).toBeString()
+  expect(store.editTask(id, { proof: 'https://example.com/pr/2' }).closed).toBe(closed)
+  expect(store.editTask(id, { status: 'open' }).closed).toBeUndefined()
+  const duplicate = store.createTask({ message: ask.key, quote: 'Fix the login page.', owner: '-100:7' })
+  expect(store.mergeTasks(id, duplicate.id)).toMatchObject({ status: 'open' })
+  expect(store.task(duplicate.id)!.closed).toBeString()
+})
+
 test("a merge puts the duplicate's words after the task's own, drops it, and its follow-ups go where it went", () => {
   const store = new Store(dir)
   store.deliver(ask)
@@ -151,6 +165,18 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
   expect(() => store.editTask(duplicate.id, { status: 'open' })).toThrow()
   expect(() => store.mergeTasks(kept.id, duplicate.id)).toThrow('dropped')
   expect(() => store.mergeTasks(kept.id, kept.id)).toThrow('itself')
+})
+
+test("a thread keeps its name after it leaves its app's threads.json, and takes a new one when renamed", () => {
+  const store = new Store(dir)
+  store.named('telegram', { '-100:7': 'tokenhub', '-100:8': 'portfolio' })
+  store.named('telegram', { '-100:7': 'tokenhub and deck' })
+  store.named('discord', { '1561': 'Fixhex' })
+  expect(store.threads()).toEqual([
+    { app: 'discord', thread: '1561', name: 'Fixhex' },
+    { app: 'telegram', thread: '-100:7', name: 'tokenhub and deck' },
+    { app: 'telegram', thread: '-100:8', name: 'portfolio' },
+  ])
 })
 
 test("a session is shown its list again only once it changed, or after its context lost it", () => {

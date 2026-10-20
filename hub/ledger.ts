@@ -1,11 +1,18 @@
 import { readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
+import { statusPost } from './status.ts'
 import { open, storeDir, type MessageId, type Question, type Store } from './store.ts'
 
 export type { Answer, MessageId } from './store.ts'
 export type Ask = Question
-export type Pin = { message: MessageId; text: string; at: string }
+// A pin with a note is the thread's status post: hex writes it as the note over the thread's
+// questions and tasks (status.ts).
+export type Pin = { message: MessageId; text: string; at: string; note?: string }
+
+// What a pin says in its session's own words: a status post's note, or all of a pin written by hand.
+export const noteOf = (pin: Pin) => pin.note ?? pin.text
 type Book = { pins: Record<string, Pin>; asks?: Omit<Ask, 'app'>[] }
+type Edit = (thread: string, message: MessageId, text: string) => Promise<unknown>
 
 // One app's questions, which hex.db keeps (store.ts) so every reader sees the same answer, and
 // each thread's pinned status post as last written, in the app's ledger.json. The client that
@@ -13,6 +20,7 @@ type Book = { pins: Record<string, Pin>; asks?: Omit<Ask, 'app'>[] }
 export class Ledger {
   private book: Book
   private readonly store: Store
+  private rewriting = new Map<string, Promise<void>>()
 
   constructor(
     private file: string,
@@ -45,6 +53,42 @@ export class Ledger {
     return this.book.pins[thread]
   }
 
+  // The threads whose pin is their status post.
+  posts(): string[] {
+    return Object.entries(this.book.pins).flatMap(([thread, pin]) => (pin.note === undefined ? [] : [thread]))
+  }
+
+  // Rewrites the thread's status post if what it should say changed: a new note, or its questions
+  // and tasks in hex.db. One rewrite at a time per thread, so two changes can't race, and a pin
+  // made while the app was editing stands.
+  rewrite(thread: string, room: number, edit: Edit, note?: string): Promise<void> {
+    const next = (this.rewriting.get(thread) ?? Promise.resolve())
+      .catch(() => {})
+      .then(async () => {
+        const pin = this.book.pins[thread]
+        const said = note ?? pin?.note
+        if (!pin || said === undefined) return
+        const text = statusPost(this.store, thread, said, room)
+        if (text === pin.text && said === pin.note) return
+        if (text !== pin.text) await edit(thread, pin.message, text)
+        const still = this.book.pins[thread]
+        if (still?.message !== pin.message || still.note !== pin.note) return
+        this.book.pins[thread] = { message: pin.message, text, at: now(), note: said }
+        this.save()
+      })
+    this.rewriting.set(thread, next)
+    return next
+  }
+
+  // Keeps every status post current: now, and after each change to hex.db from any process.
+  keep(room: number, edit: Edit, failed: (thread: string, error: unknown) => void): () => void {
+    const all = () => {
+      for (const thread of this.posts()) this.rewrite(thread, room, edit).catch(error => failed(thread, error))
+    }
+    all()
+    return this.store.watch(all)
+  }
+
   find(thread: string, message: MessageId) {
     return this.store.question(this.app, thread, message) ?? undefined
   }
@@ -73,13 +117,14 @@ export class Ledger {
   // settled only by saying so.
   edited(thread: string, message: MessageId, text: string) {
     this.store.reworded(this.app, thread, message, text)
-    if (this.book.pins[thread]?.message !== message) return
-    this.book.pins[thread] = { message, text, at: now() }
+    const pin = this.book.pins[thread]
+    if (pin?.message !== message) return
+    this.book.pins[thread] = { ...pin, text, at: now() }
     this.save()
   }
 
-  pinned(thread: string, message: MessageId, text = '') {
-    this.book.pins[thread] = { message, text, at: now() }
+  pinned(thread: string, message: MessageId, text = '', note?: string) {
+    this.book.pins[thread] = { message, text, at: now(), ...(note !== undefined && { note }) }
     this.save()
   }
 

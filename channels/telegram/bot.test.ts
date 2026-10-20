@@ -404,6 +404,28 @@ test('a pinned post keeps its latest text in the ledger', async () => {
   expect(ledger().pins[DESK]).toMatchObject({ message: id, text: 'Status: shipped' })
 })
 
+test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
+  const id = Number((await call('reply', { text: 'Site: example.com' })).text.match(/id: (\d+)/)[1])
+  await call('pin', { message_id: String(id), status: true })
+  const edits = () => calls.filter(c => c.method === 'editMessageText' && c.payload.message_id === id).map(c => c.payload.rich_message.markdown as string)
+  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n🔴 **Blocked on you**'))
+  expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.com' })
+
+  await call('reply', { text: 'Rename the site?', buttons: ['Yes', 'No'] })
+  await until(() => edits().at(-1)?.includes('. Rename the site? [Yes | No]'))
+
+  const count = edits().length
+  expect((await call('edit_message', { message_id: String(id), text: 'Site: example.org' })).text).toStartWith("edited the status post's note")
+  expect(edits()).toHaveLength(count + 1)
+  expect(edits().at(-1)).toStartWith('Site: example.org\n\n🔴 **Blocked on you**')
+  expect(edits().at(-1)).toContain('Rename the site? [Yes | No]')
+  expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
+
+  await call('pin', { message_id: String(id), status: true })
+  expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
+  expect((await call('edit_message', { message_id: String(id), text: 'Site', file: join(state, 'access.json') })).error).toBe('a status post is text: send the file in its own message')
+})
+
 test('once polling the bot leaves its name in bot.json, so the voice app can link a DM', () => {
   expect(JSON.parse(readFileSync(join(state, 'bot.json'), 'utf8'))).toEqual({ username: 'hex_bot' })
 })

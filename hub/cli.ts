@@ -14,6 +14,7 @@ const USAGE = `usage:
   hex task <task> [--json]
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
   hex questions [--thread <thread> | --all] [--json]
+  hex threads [--json]
   hex message <key>
   hex recall <regex>`
 
@@ -113,6 +114,11 @@ try {
       const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
       if (flags.json) console.log(JSON.stringify(questions, null, 1))
       else console.log(questions.map(question => waiting(question, names(state!))).join('\n') || 'no questions waiting')
+      break
+    }
+    case 'threads': {
+      const threads = store.threads()
+      console.log(flags.json ? JSON.stringify(threads, null, 1) : threads.map(({ app, thread, name }) => `${app} ${thread} ${name}`).join('\n'))
       break
     }
     case 'message': {

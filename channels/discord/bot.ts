@@ -298,6 +298,11 @@ function serve(token: string) {
 
   const nameOf = (ch: ThreadChannel | DMChannel) => ch.isThread() ? ch.name : 'DM'
 
+  // Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
+  async function editPost(thread: string, id: MessageId, text: string) {
+    await (await message(await threadChannel(thread), String(id))).edit({ content: text })
+  }
+
   function inThread(ch: ThreadChannel | DMChannel): ThreadChannel {
     if (!ch.isThread()) throw new Error('a DM is not a thread')
     return ch
@@ -610,6 +615,13 @@ function serve(token: string) {
         return 'reaction removed'
       }
       case 'edit_message': {
+        const pinned = ledger.pin(thread)
+        if (pinned?.note !== undefined && pinned.message === args.message_id && args.text !== undefined) {
+          if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
+          await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost, tappable(args.text as string))
+          if (args.settled) await settleAsk(thread, pinned.message, '✓ Settled')
+          return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
+        }
         const msg = await message(ch, args.message_id as string)
         const files = args.files ? sendable(args.files as string[]) : undefined
         const edited = args.text !== undefined || files
@@ -637,7 +649,12 @@ function serve(token: string) {
         const msg = await message(ch, args.message_id as string)
         await (args.unpin ? msg.unpin() : msg.pin())
         if (args.unpin) ledger.unpinned(thread, msg.id)
-        else ledger.pinned(thread, msg.id, msg.content)
+        else {
+          const pinned = ledger.pin(thread)
+          const kept = pinned?.message === msg.id ? pinned.note : undefined
+          ledger.pinned(thread, msg.id, msg.content, args.status ? (kept ?? msg.content) : undefined)
+          if (args.status) await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost)
+        }
         return args.unpin ? 'unpinned' : 'pinned'
       }
       case 'poll': {
@@ -1068,6 +1085,7 @@ function serve(token: string) {
     const id = client.guilds.cache.first()?.id
     if (id) writeFileSync(GUILD_FILE, JSON.stringify({ id }) + '\n')
     void c.application?.commands.set(COMMANDS).catch(failure('registering slash commands'))
+    ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
   })
 
   // discord.js reconnects a session it has, but not a first login that fails, as when the

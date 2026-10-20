@@ -1,18 +1,9 @@
-import { readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { clip, fit } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
 
-// Each thread's name, from every app's threads.json in state.
+// Each thread's name, as hex.db keeps it after the thread closes.
 export function names(state: string): Record<string, string> {
-  const named: Record<string, string> = {}
-  for (const app of readdirSync(state, { withFileTypes: true })) {
-    if (!app.isDirectory()) continue
-    try {
-      const threads = JSON.parse(readFileSync(join(state, app.name, 'threads.json'), 'utf8')) as Record<string, { name?: string }>
-      for (const [key, { name }] of Object.entries(threads)) named[key] = name ?? key
-    } catch {}
-  }
-  return named
+  return Object.fromEntries(open(state).threads().map(({ thread, name }) => [thread, name]))
 }
 
 // Claude Code swaps a hook's output past 10,000 characters for a file path and a preview it
@@ -23,11 +14,6 @@ const ROOM = 9_000
 function facts(task: Task, named: Record<string, string>) {
   const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
   return `${task.id} (${facts.filter(Boolean).join(', ')})`
-}
-
-function clip(text: string, length: number) {
-  const first = text.trim().split('\n')[0]!
-  return first.length > length ? `${first.slice(0, length - 1)}…` : first
 }
 
 // A task as a session reads it: the facts on one line, then each of the owner's words in full,
@@ -53,25 +39,6 @@ export function waiting(question: Question, named: Record<string, string> = {}):
   return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
 }
 
-type Section = { header: string; items: string[][]; gap: string; rest: string }
-
-// Each item in the first of its forms that still fits, and a line for the ones that didn't.
-function fit(sections: Section[]): string {
-  let text = ''
-  for (const { header, items, gap, rest } of sections) {
-    if (!items.length) continue
-    text += `${text && '\n\n'}${header}`
-    const left = items.findIndex(forms => {
-      const form = forms.find(form => text.length + gap.length + form.length <= ROOM)
-      if (form === undefined) return true
-      text += gap + form
-      return false
-    })
-    if (left >= 0) text += `${gap}…and ${items.length - left} more: ${rest}`
-  }
-  return text
-}
-
 // What a session should have before it acts: the open tasks it serves, each in the owner's own
 // words, the questions still waiting on the owner, and a digest of all of it, so a change to words that didn't fit still counts. Main sees
 // every thread's; a thread sees its own.
@@ -95,7 +62,7 @@ export function profile(state: string, thread?: string): { text: string; digest:
       rest: '`.hex/bin/hex questions` lists them all',
     },
   ]
-  const text = fit(sections)
+  const text = fit(sections, ROOM)
   return { text, digest: text && Bun.hash(JSON.stringify(sections)).toString(36) }
 }
 

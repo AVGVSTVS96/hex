@@ -690,3 +690,30 @@ test('back online, the bot reads what was said while it was away, archived threa
   expect(received.filter(line => line.type === 'inbound' && late.includes(line.meta.message_id)).map(line => line.content)).toEqual(['did the anchors ship?', 'one more thing'])
   expect(JSON.parse(readFileSync(join(state, 'cursor.json'), 'utf8'))).toEqual({ id: revived.id })
 })
+
+test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
+  await call('reply', { text: 'Site: example.com' })
+  const post = here.posted.at(-1)
+  await call('pin', { message_id: post.id, status: true })
+  const edits = () => done.filter(d => d.edit === post.id).map(d => d.options.content as string)
+  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n🔴 **Blocked on you**'))
+  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.com' })
+
+  await call('reply', { text: 'Rename the site?', buttons: ['Yes', 'No'] })
+  await until(() => edits().at(-1)?.includes('. Rename the site? [Yes | No]'))
+
+  const count = edits().length
+  expect((await call('edit_message', { message_id: post.id, text: 'Site: example.org' })).text).toStartWith("edited the status post's note")
+  expect(edits()).toHaveLength(count + 1)
+  expect(edits().at(-1)).toStartWith('Site: example.org\n\n🔴 **Blocked on you**')
+  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.org' })
+
+  await call('pin', { message_id: post.id, status: true })
+  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.org' })
+  const file = join(state, 'inbox', 'chart.png')
+  mkdirSync(join(state, 'inbox'), { recursive: true })
+  writeFileSync(file, 'png')
+  await call('edit_message', { message_id: post.id, text: 'Site: example.net', files: [file] })
+  expect(done).toContainEqual({ edit: post.id, options: { files: [file], attachments: [] } })
+  expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.net' })
+})

@@ -36,7 +36,7 @@ beforeEach(async () => {
   state = mkdtempSync(join(tmpdir(), 'asks-'))
   mkdirSync(join(state, 'telegram'))
   mkdirSync(join(state, 'voice'))
-  writeFileSync(join(state, 'telegram', 'threads.json'), JSON.stringify({ [GROUP]: { name: 'hex' }, [DESK]: { name: 'desk' } }))
+  open(state).named('telegram', { [GROUP]: 'hex', [DESK]: 'desk' })
   lines = []
   checks = []
   hub = createServer(socket => {
@@ -224,11 +224,11 @@ test('a check’s verdict is held to the ledger: real open refs and buttons only
 test('an ask names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers', () => {
   const DM = '777'
   const THREAD = '1560277464146644992'
-  writeFileSync(join(state, 'telegram', 'threads.json'), JSON.stringify({ [GROUP]: { name: 'hex' }, [DESK]: { name: 'desk' }, [DM]: { name: 'DM' } }))
+  open(state).named('telegram', { [DM]: 'DM' })
   writeFileSync(join(state, 'telegram', 'bot.json'), JSON.stringify({ username: 'hexbot' }))
   mkdirSync(join(state, 'discord'))
   writeFileSync(join(state, 'discord', 'guild.json'), JSON.stringify({ id: '42' }))
-  writeFileSync(join(state, 'discord', 'threads.json'), JSON.stringify({ [THREAD]: { name: 'fix hex NOW' } }))
+  open(state).named('discord', { [THREAD]: 'fix hex NOW' })
   const calls = join(state, 'calls')
   mkdirSync(calls)
   writeFileSync(join(calls, 'live_1.json'), JSON.stringify({ id: 'live_1', title: 'Apple charges', started: '2026-10-13T18:00:00.000Z' }))
@@ -291,4 +291,23 @@ test('a check written before places and links were typed still gives each ask it
     ['check:review', [{ label: 'Done', value: 'Done' }], [{ label: 'Open PR #2', url: 'https://github.com/x/pull/2' }], [{ app: 'telegram', place: 'desk', task: `telegram:${DESK}`, link: 'https://t.me/c/1234/5/1' }]],
     ['check:pin', [{ label: 'Done' }], undefined, [{ app: 'telegram', place: 'General', task: `telegram:${GROUP}`, link: 'https://t.me/c/1234/1' }]],
   ])
+})
+
+test("a status post's page is read from hex.db as it opens, and only a new note starts a check, not the lines hex rewrites", async () => {
+  const pin = { message: 7, text: 'Site: example.com\n\n🔴 **Blocked on you**\n- nothing', at: '2026-10-13T10:00:00.000Z', note: 'Site: example.com' }
+  const byHand = { message: 2, text: 'Status: by hand', at: '2026-10-13T10:00:00.000Z' }
+  ledger([asked(1, 'Ship it?', ['Yes', 'No'])], { [DESK]: pin, [GROUP]: byHand })
+  const store = open(state)
+  store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', meta: { user: 'owner' } })
+  const task = store.createTask({ message: 'telegram:-1001234:40', owner: DESK })
+  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(asks.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)
+  expect(asks.of(`telegram:${GROUP}`).pin).toBe('Status: by hand')
+
+  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, text: asks.of(`telegram:${DESK}`).pin }, [GROUP]: byHand } }))
+  await Bun.sleep(150)
+  expect(checks).toEqual([])
+  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, note: 'Site: example.org' }, [GROUP]: byHand } }))
+  await until(() => checks.length)
+  expect(checks).toEqual(['a pinned post changed'])
 })
