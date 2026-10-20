@@ -7,6 +7,6 @@ home=$(cd "$hex/.." && pwd)
 if [ "$(jq -r '.memory.prompt // empty' "$home/schedules.json")" = 'Nightly memory pass, see "Memory" in .hex/HEX.md' ]; then
   jq 'del(.memory)' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
 fi
-if jq -e '.heartbeat.prompt // "" | contains("\"Heartbeat\" in .hex/HEX.md")' "$home/schedules.json" > /dev/null; then
-  jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt |= ($defaults[0].heartbeat.prompt + (sub("(Hourly check, )?see \"Heartbeat\" in .hex/HEX.md[,;.]?\\s*"; "") | if . == "" then "" else "\n\n" + . end))' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
+if [ "$(jq -r '.heartbeat.prompt // empty' "$home/schedules.json")" = 'Hourly check, see "Heartbeat" in .hex/HEX.md' ]; then
+  jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt = $defaults[0].heartbeat.prompt' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
 fi
