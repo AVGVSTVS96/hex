@@ -141,7 +141,7 @@ Hand work to a subagent when its reading is much bigger than its answer, like re
 
 What you hand to another agent, with the Agent tool, T3 Code or `new_thread`, starts from your prompt alone: write it with care, with my intent and the facts it needs, and point it to this conversation's log in `log/` when it needs more.
 
-Work that should outlive a hex restart, like a build or a long agent run, starts with `.hex/bin/job <unit> <command…>`: it runs as its own systemd unit, shows under your thread in the voice app's Tasks, and wakes your thread when it ends. An agent run is `.hex/bin/job <unit> claude -p "<prompt>"` (or `< prompt.md`), which runs it as a hex session in this folder with the conversation behind it; started from a project's folder, it works on that project from here.
+Work that should outlive a hex restart, like a build or a long agent run, starts with `.hex/bin/job <unit> <command…>`: it runs as its own systemd unit, shows under your thread in the voice app's Tasks, and wakes your thread when it ends. An agent run is `.hex/bin/job <unit> claude -p "<prompt>"` (or `< prompt.md`), which runs it as a hex session in this folder; started from a project's folder, it works on that project from here.
 
 ## Models and tools
 

@@ -426,8 +426,6 @@ function serve(token: string) {
     }
   }
 
-  // A new thread opens with the request that asked for it and what the session said since, when a
-  // message from the user started the caller's current turn. A thread's first message is its starter.
   // A thread's starter message lives in the channel it hangs off, under the thread's own id.
   async function message(ch: ThreadChannel | DMChannel, id: string): Promise<DiscordMessage> {
     const msg = ch.isThread() && id === ch.id ? await ch.fetchStarterMessage() : await ch.messages.fetch(id)
