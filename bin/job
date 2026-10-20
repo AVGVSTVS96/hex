@@ -104,7 +104,7 @@ if (mode === "--ended") {
   }
   const name = `${threadsOf(parts(owner).app)[parts(owner).key]?.name ?? parts(owner).key}/${mode}`
   const agent = basename(command[0]!) === "claude"
-  if (!agent && /\bclaude\b/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it as: job ${mode} claude -p "<prompt>"`)
+  if (!agent && /(^|[\s;&|(/])claude(\s|$)/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it as: job ${mode} claude -p "<prompt>"`)
   const folder = process.cwd()
   const away = realpathSync(folder) !== realpathSync(home)
   const run = agent ? [`${import.meta.dir}/session`, ...command.slice(1), ...(away ? ["--add-dir", folder] : [])] : command

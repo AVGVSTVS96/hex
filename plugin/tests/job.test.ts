@@ -66,6 +66,7 @@ test('Claude started any other way still runs, with how to start it as a hex ses
   const { args, error } = run(['deck', 'sh', '-c', 'cd deck && claude -p go'], session)
   expect(args.slice(args.indexOf('--'))).toEqual(['--', 'sh', '-c', 'cd deck && claude -p go'])
   expect(error).toContain('job deck claude -p "<prompt>"')
+  expect(run(['build', 'rm', '-rf', '.claude/worktrees/old'], session).error).toBe('')
 })
 
 test("a job a job session starts is its owner's too", () => {
