@@ -172,16 +172,17 @@ async function claude(input: string): Promise<Answer> {
 // Turns wait in hex.db, oldest first, and one process at a time works through them, so each pass
 // reads the notes and profile the last one left: two never write the same note or race for the
 // profile, and a turn outlives a pass that died. A drainer that died holds the lease only until it
-// runs out; each turn renews it. One that finds the lease taken leaves its turn to the holder,
+// runs out; each turn renews it, and one whose lease ran out mid-turn stops. One that finds the lease taken leaves its turn to the holder,
 // which looks again after letting go.
 export async function drain(state: string, run: (pass: Pass) => Promise<unknown> = pass => observe(state, pass.session, pass.reply, pass)) {
   const store = open(state)
   const holder = crypto.randomUUID()
   while (store.waiting() && store.lease('observe', holder, 4 * CALL)) {
     try {
-      for (let next; (next = store.waiting()); store.lease('observe', holder, 4 * CALL)) {
-        await run(next.pass as Pass)
+      for (let next; (next = store.waiting()); ) {
+        await run(next.pass as Pass).catch(error => console.error(`hex couldn't look over a turn for memories: ${error}`))
         store.passed(next.n)
+        if (!store.lease('observe', holder, 4 * CALL)) return
       }
     } finally {
       store.release('observe', holder)

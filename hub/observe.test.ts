@@ -183,3 +183,18 @@ test('turns wait in hex.db and one drainer works through them oldest first, whil
   await drain(dir, async pass => void seen.push(pass.session))
   expect(seen).toEqual(['a', 'b', 'c'])
 })
+
+test('a holder renews its own lease, and a turn that throws leaves the queue to the next', async () => {
+  const store = open(dir)
+  expect(store.lease('observe', 'me', 0)).toBe(true)
+  expect(store.lease('observe', 'me', 60_000)).toBe(true)
+  await Bun.sleep(2)
+  expect(store.lease('observe', 'other', 60_000)).toBe(false)
+  store.release('observe', 'me')
+  store.wait({ session: 'bad', reply: '', by: '' })
+  store.wait({ session: 'good', reply: '', by: '' })
+  const seen: string[] = []
+  await drain(dir, async pass => { if (pass.session === 'bad') throw new Error('boom'); seen.push(pass.session) })
+  expect(seen).toEqual(['good'])
+  expect(store.waiting()).toBeUndefined()
+})

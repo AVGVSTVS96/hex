@@ -121,7 +121,7 @@ const migrations = [
   create trigger kept_words_delete before delete on words when not exists (select 1 from words w join messages m on m.key = w.message where w.task = old.task and w.message = old.message and w.rowid <> old.rowid and w.text = m.body and instr(w.text, old.text) > 0)
     begin select raise(abort, 'words are added, never taken away'); end;`,
   `create table leases (name text primary key, holder text not null, until text not null check (until ${UTC}));
-  create table passes (n integer primary key, pass text not null check (json_valid(pass)));`,
+  create table passes (n integer primary key autoincrement, pass text not null check (json_valid(pass)));`,
 ]
 
 const now = () => new Date().toISOString()
@@ -256,7 +256,7 @@ export class Store {
     return this.write(() => {
       this.db.query('delete from leases where name = ? and until < ?').run(name, now())
       const until = new Date(Date.now() + ms).toISOString()
-      this.db.query('insert into leases (name, holder, until) values (?, ?, ?) on conflict (name) do nothing').run(name, holder, until)
+      this.db.query('insert into leases (name, holder, until) values (?, ?, ?) on conflict (name) do update set until = excluded.until where holder = excluded.holder').run(name, holder, until)
       return (this.db.query('select holder from leases where name = ?').get(name) as { holder: string }).holder === holder
     })
   }
