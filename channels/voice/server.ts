@@ -23,7 +23,7 @@ const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN
 const TWILIO_NUMBER = env.TWILIO_NUMBER
 const CALLER_NUMBER = env.CALLER_NUMBER
 const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//, '')
-const PUBLIC_HOSTNAME = PUBLIC_HOST && URL.parse(`https://${PUBLIC_HOST}`)?.hostname
+const PUBLIC_HOSTNAME = PUBLIC_HOST ? URL.parse(`https://${PUBLIC_HOST}`)?.hostname : undefined
 const TOKEN = env.VOICE_TOKEN
 const calls = new CallLog(join(STATE_DIR, 'calls'))
 const activity = new Changes()
@@ -866,15 +866,17 @@ function allowed(request: Request) {
 }
 
 // A page on another site, open in the owner's browser, can post here, or point its own name at this
-// machine to read and post here as if it were this page, which would hand it the token too.
+// machine to read and post here as if it were this page, which would hand it the token too. A post
+// comes from this page when its origin is the host it was sent to, here or at the proxy in front.
 function foreign(request: Request) {
+  const url = new URL(request.url)
   const origin = request.headers.get('origin')
-  return !ours(new URL(request.url).hostname) || (request.method !== 'GET' && origin !== null && !ours(URL.parse(origin)?.hostname))
+  const sentTo = [url.host, request.headers.get('x-forwarded-host')]
+  return !ours(url.hostname) || (request.method !== 'GET' && origin !== null && !sentTo.includes(URL.parse(origin)?.host ?? ''))
 }
 
-// Names only this machine's owner answers to: IPs, short names, localhost, the tailnet's, and the
-// public one. A site's own name could be pointed here.
-function ours(host = '') {
+// Names a site can't point here: IPs, short names, localhost, tailnet names, and the public one.
+function ours(host: string) {
   return isIP(host.replace(/^\[|\]$/g, '')) > 0 || /^[^.]+$|(^|\.)localhost$|\.ts\.net$/.test(host) || host === PUBLIC_HOSTNAME
 }
 
