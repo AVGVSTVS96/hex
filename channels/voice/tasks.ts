@@ -33,6 +33,7 @@ export type HexTask = {
   where: string
   place: string
   state: State
+  running: boolean
   line: string
   needs?: string
   since: string
@@ -351,6 +352,7 @@ export class Tasks extends Changes {
       where: where(thread),
       place: thread.app === 'telegram' && !thread.id.includes(':') ? where(thread) : (this.links.title(thread.app, thread.id) ?? thread.name),
       state,
+      running: session?.status === 'busy',
       line: oneLine(line),
       ...(needs && { needs }),
       since,
