@@ -1,6 +1,6 @@
 import { createServer } from 'net'
 import { createHash, randomBytes, randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { clock } from './clock.ts'
@@ -187,11 +187,30 @@ export function tappable(text: string): string {
 }
 
 const SAID = /^## (.+?) · (\w+) · (?:\d{4}-\d{2}-\d{2} )?\d{1,2}:\d{2}\n/gm
-// Who the owner is in a log: themself, or the hex app they answered or typed in.
-const OWNER = new Set(['me', 'hex app'])
+// Who the owner is in a log: themself, or the hex app they answered, typed or spoke in.
+const OWNER = new Set(['me', 'hex app', 'hex call'])
 
-// Where bin/log keeps a session's log.
-export function logOf(hexDir: string, session: string): string | undefined {
+// Where bin/log keeps each session's log, and each log's chat as last read: a chat open in the app
+// asks for them on every change anywhere.
+const logs = new Map<string, string>()
+const read = new Map<string, { stamp: string; turns: Turn[] }>()
+
+// A session's log (bin/log): where it is, when it was last written, and its chat.
+export function logged(hexDir: string, session: string): { mtime: Date; turns: Turn[] } | undefined {
+  const id = join(hexDir, session)
+  const known = logs.get(id)
+  const file = known && existsSync(known) ? known : logOf(hexDir, session)
+  if (!file) return
+  logs.set(id, file)
+  const { mtime, mtimeMs, size } = statSync(file)
+  const stamp = `${mtimeMs}:${size}`
+  const last = read.get(file)
+  const turns = last?.stamp === stamp ? last.turns : chatOf(readFileSync(file, 'utf8'))
+  read.set(file, { stamp, turns })
+  return { mtime, turns }
+}
+
+function logOf(hexDir: string, session: string): string | undefined {
   const suffix = `-${session.slice(0, 8)}.md`
   return [join(hexDir, 'log', 'threads'), join(hexDir, 'log')]
     .flatMap(dir => (existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(suffix)).map(name => join(dir, name)) : []))[0]
@@ -200,9 +219,10 @@ export function logOf(hexDir: string, session: string): string | undefined {
 // A session's chat from its log (bin/log): what the owner said and hex replied in an app, leaving
 // out the terminal, which no chat showed, and what other threads and tools sent it.
 export function history(hexDir: string, session: string): Turn[] {
-  const file = logOf(hexDir, session)
-  if (!file) return []
-  const log = readFileSync(file, 'utf8')
+  return logged(hexDir, session)?.turns ?? []
+}
+
+function chatOf(log: string): Turn[] {
   const heads = [...log.matchAll(SAID)]
   return heads.flatMap((head, i) => {
     const [, who, app] = head

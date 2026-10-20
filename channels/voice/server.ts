@@ -863,6 +863,13 @@ function allowed(request: Request) {
   return !TOKEN || same(request.headers.get('authorization') ?? '', `Bearer ${TOKEN}`)
 }
 
+// Without a token, only this keeps a page on another site, open in the owner's browser, from
+// posting here.
+function crossSite(request: Request) {
+  const site = request.headers.get('sec-fetch-site')
+  return request.method !== 'GET' && !!site && site !== 'same-origin' && site !== 'none'
+}
+
 function home(request: Request) {
   const local = !request.headers.get('x-forwarded-for')
   return new Response(String(page).replace('__VOICE_TOKEN__', local && TOKEN ? TOKEN : ''), { headers: { 'content-type': 'text/html; charset=utf-8' } })
@@ -968,13 +975,13 @@ function taskRoutes(request: Request, url: URL) {
 
 // A thread's chat, and with after, the next time it changes.
 async function showChat(url: URL, task: HexTask) {
-  const where = { ...task, session: board.session(task.id) }
+  const where = () => ({ ...task, session: board.session(task.id) })
   const after = url.searchParams.get('after')
-  return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where))
+  return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where()))
 }
 
 async function sendChat(request: Request, task: HexTask) {
-  const { text, key } = (await request.json().catch(() => ({}))) as { text?: unknown; key?: unknown }
+  const { text, key } = ((await request.json().catch(() => null)) ?? {}) as { text?: unknown; key?: unknown }
   if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
   if (typeof key !== 'string' || !/^app-[\w-]{8,60}$/.test(key)) return new Response('Name the message with a key starting app-', { status: 400 })
   return done(() => chats.send(task, text.trim(), key))
@@ -1034,9 +1041,12 @@ export function serve(voiceHub: Hub, state: string) {
   hub = voiceHub
   HEX_STATE = state
   board = new Tasks(state, dirname(state))
-  board.listen(() => activity.changed())
-  yours = new Asks(state)
   chats = new Chats(state, dirname(state))
+  board.listen(() => {
+    activity.changed()
+    chats.changed()
+  })
+  yours = new Asks(state)
   recover()
   resume()
   return Bun.serve<Phone>({
@@ -1054,6 +1064,7 @@ export function serve(voiceHub: Hub, state: string) {
       if (dialed && twimlPath) return stream(token)
       if (dialed && dials.delete(token)) return server.upgrade(request, { data: { ...dialed } }) ? undefined : new Response('upgrade failed', { status: 400 })
       if (pathname === '/') return home(request)
+      if (crossSite(request)) return new Response('Forbidden', { status: 403 })
       if (!allowed(request)) return new Response('Unauthorized', { status: 401, headers: { 'www-authenticate': 'Bearer' } })
       return routes(request) ?? new Response('404', { status: 404 })
     },
