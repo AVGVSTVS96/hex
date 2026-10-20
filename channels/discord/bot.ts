@@ -810,7 +810,7 @@ function serve(token: string) {
 
     const message: Message = {
       key: edited ? `${msg.id}@${msg.editedTimestamp}` : msg.id,
-      content: heard ? `(voice message) ${heard}` : source.content.replace(/<@[!&]?\d+>/g, '').trim() || (atts.length > 0 ? '(attachment)' : stickers.length > 0 ? '(sticker)' : poll ? '(poll)' : ''),
+      content: heard ? `(voice message) ${heard}` : voiced ? "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)" : source.content.replace(/<@[!&]?\d+>/g, '').trim() || (atts.length > 0 ? '(attachment)' : stickers.length > 0 ? '(sticker)' : poll ? '(poll)' : ''),
       meta: {
         chat_id: ch.id,
         message_id: msg.id,
