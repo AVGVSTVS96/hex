@@ -98,7 +98,7 @@ test('the hooks say nothing in a session the launcher already handed its wake', 
   expect(run.stdout.toString()).toBe('')
 })
 
-test('the launcher writes the whole wake where Claude Code loads it at startup, and tells the hooks so', () => {
+test('the launcher writes the whole wake where Claude Code loads it at startup, and tells the hooks so, in the foreground too', () => {
   copyFileSync(join(BIN, 'session'), join(home, '.hex/bin/session'))
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { MEMORY_DIR: join(home, 'memory') } }))
@@ -121,6 +121,7 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
   expect(settings(args).env).toEqual({ HEX_THREAD: '-100:5', HEX_WAKE: join(dir, 'CLAUDE.md') })
   expect(env).toContain('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1')
+  expect(env).toContain(`HEX_WAKE=${join(dir, 'CLAUDE.md')}\n`)
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\nexit 1\n')
   const without = launch()
   expect(without.args).not.toContain(join(home, 'state/wake'))

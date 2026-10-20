@@ -9,6 +9,8 @@ MEMORY_DIR=$(jq -r '.env.MEMORY_DIR // empty' "$home/.claude/settings.json" 2>/d
 if [ -s "$wake/CLAUDE.md.$$" ]; then
   mv "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
   woke="$wake/CLAUDE.md"
+  # The hooks learn that memory came as a file from here in a session that runs in the foreground, and from its settings in a background one.
+  export HEX_WAKE="$woke"
 else
   rm -f "$wake/CLAUDE.md.$$"
 fi
@@ -23,7 +25,6 @@ for arg; do
     voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
     [ -n "${away:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg home "$home" --slurpfile hex "$home/.claude/settings.json" '. as $hub | $hex[0] | .permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub')
-    # A background session gets only the environment its settings give it, so the hooks learn here that memory came as a file.
     [ -n "${woke:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg woke "$woke" '.env.HEX_WAKE = $woke')
     # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.
     # A chat turn lists skills by name only; the Skill tool still loads any of them.
