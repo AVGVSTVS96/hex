@@ -146,11 +146,17 @@ test('a profile still misquoting after its last try is kept without the lines th
   expect(profileOf(dir)).toBe('# Always\n- Ships "on fridays only" [telegram:-100:50]')
 })
 
-test('a second seed leaves the profile the memory agent keeps', async () => {
-  writeFileSync(join(dir, 'profile.md'), '# Always\n- kept')
-  expect(seed(dir, { ask: async () => none, wake: '#1 a memory' })).rejects.toThrow('already holds a profile')
-  rmSync(join(dir, 'profile.md'))
+test('a seed rebuilds the profile, and fails on an empty wake', async () => {
+  writeFileSync(join(dir, 'profile.md'), '# Always\n- old')
+  const fresh = '# Always\n- Ships "on fridays only" [telegram:-100:50]'
+  expect(await seed(dir, { ask: async () => ({ notes: [], profile: fresh }), wake: '#1 a memory' })).toBe(fresh)
+  expect(profileOf(dir)).toBe(fresh)
   expect(seed(dir, { ask: async () => none, wake: '' })).rejects.toThrow('the wake came back empty')
+})
+
+test('a profile whose every line fails is not kept as bare headers', async () => {
+  await observe(dir, 's', '', { ask: async () => ({ notes: [], profile: '# Always\n- Wants "whatever" [telegram:-100:50]\n# Now' }), memo })
+  expect(profileOf(dir)).toBe('')
 })
 
 test('a time reads the way notes write it, on the owner’s clock', () => {

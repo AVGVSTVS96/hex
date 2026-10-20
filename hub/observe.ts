@@ -25,7 +25,7 @@ const SYSTEM = `You are the memory agent of hex, the owner's personal assistant.
 
 Memories: one line each, appended forever. Write the ones worth keeping from the messages no memory names yet: what the owner decided, asked for, corrected, taught, or said about their life, their work or how they want things done, and anything of lasting effect that happened. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words, the words it rests on quoted in double quotes exactly as the owner wrote them ("…" skips a part), and the message's key in brackets at the end. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
-The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it under ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
+The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it near 5,000 characters, never over ${PROFILE}. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
 
 In both, quote the words that carry what the owner meant; anger and curses stay in the log. If you need what a message answers, the whole conversation is in the log file named with the turn.`
 
@@ -94,31 +94,25 @@ export async function observe(state: string, session: string, reply: string, { a
   }
 }
 
-// The first profile, built once from the whole wake and the owner's messages of the last two
-// weeks, by the strongest model, since every later pass starts from it.
+// The profile built from the whole wake and the owner's messages of the last two weeks, by the
+// strongest model: run once when hex starts remembering, or again to rebuild it, replacing what's there.
 export async function seed(state: string, { ask = (input: string) => claude(input, 'opus', 4 * CALL), wake = '' } = {}) {
-  if (profileOf(state)) throw new Error(`${profilePath(state)} already holds a profile, which the memory agent keeps current; remove it to seed a new one`)
   if (!wake.trim()) throw new Error('the wake came back empty, so a profile built now would know nothing')
   const store = open(state)
   const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
   const since = new Date(Date.now() - 14 * 86_400_000).toISOString()
   const said = owners(store.since(since)).map(row => `[${row.key}] ${clock(row.meta?.ts ?? row.at, zone)}: ${row.body.replace(/\s+/g, ' ').slice(0, 600)}`)
-  const input = `<profile>\n(none yet: build the first one from all of the below)\n</profile>\n\n<memories>\n${wake}\n</memories>\n\n<the owner's messages of the last two weeks>\n${said.join('\n').slice(-120_000)}\n</the owner's messages of the last two weeks>`
+  const input = `<profile>\n(build it anew from all of the below)\n</profile>\n\n<memories>\n${wake}\n</memories>\n\n<the owner's messages of the last two weeks>\n${said.join('\n').slice(-120_000)}\n</the owner's messages of the last two weeks>`
   let wrong = ''
   for (let tries = 0; tries < 3; tries++) {
-    const answer = await ask(input + wrong).catch(error => (console.error(`the seed call failed: ${error}`), null))
+    const answer = await ask(input + wrong).catch(error => ((wrong = `\n\n(the last call failed: ${error})`), null))
     if (!answer) continue
     const bad = misquoted(answer.profile, store)
-    if (bad.length) {
-      wrong = retry(bad)
-      continue
-    }
-    if (swap(state, store, '', answer.profile!)) return answer.profile!
-    throw new Error(`a memory pass wrote ${profilePath(state)} while the seed ran, so it keeps that one`)
+    if (!bad.length) return store.write(() => (put(state, answer.profile!), answer.profile!))
+    wrong = retry(bad)
   }
-  throw new Error(`the first profile wasn't kept:${wrong}`)
+  throw new Error(`the profile wasn't kept:${wrong}`)
 }
-
 
 // What keeps a profile from being kept: too long, empty, or a line that quotes someone without
 // naming the owner's message it quotes, or misquotes it.
@@ -140,19 +134,20 @@ const retry = (bad: string[]) =>
 // The profile with the lines that don't hold taken out, or null when nothing worth keeping is left.
 function held(profile: string, store: Store) {
   const kept = profile.split('\n').filter(each => !misquoted(each, store).length || !each.trim()).join('\n')
-  return kept.trim() && kept.length <= PROFILE && !misquoted(kept, store).length ? kept : null
+  const content = kept.split('\n').some(each => each.trim() && !/^#{1,6}\s/.test(each))
+  return content && kept.length <= PROFILE && !misquoted(kept, store).length ? kept : null
 }
 
 // Puts the profile in place only if it's still the one this pass read, inside the store's write
 // lock so two passes never both pass that check, and whole, so a session never reads half a profile.
 function swap(state: string, store: Store, before: string, profile: string) {
-  return store.write(() => {
-    if (profileOf(state) !== before.trim()) return false
-    const next = `${profilePath(state)}.${process.pid}.new`
-    writeFileSync(next, `${profile.trim()}\n`)
-    renameSync(next, profilePath(state))
-    return true
-  })
+  return store.write(() => profileOf(state) === before.trim() && (put(state, profile), true))
+}
+
+function put(state: string, profile: string) {
+  const next = `${profilePath(state)}.${process.pid}.new`
+  writeFileSync(next, `${profile.trim()}\n`)
+  renameSync(next, profilePath(state))
 }
 
 // The newest notes, enough to show what memory already says and how its lines read.
