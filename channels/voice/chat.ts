@@ -7,9 +7,13 @@ import { Changes } from './changes.ts'
 import { watchDir } from './tasks.ts'
 
 export type Sent = { key: string; text: string; at: string }
-// sends: whether words typed in the app reach this thread. T3 Code shows only turns it starts, and
-// a session no app holds has no chat to send through.
-export type Chat = { version: number; sends: boolean; turns: Turn[]; waiting: Sent[] }
+// turns: the chat's latest turns, out of all it has (total). sends: whether words typed in the app
+// reach this thread. T3 Code shows only turns it starts, and a session no app holds has no chat to
+// send through.
+export type Chat = { version: number; sends: boolean; total: number; turns: Turn[]; waiting: Sent[] }
+// How many of a chat's latest turns the app gets: a long thread's whole history would go to the
+// phone on every change.
+const SHOWN = 100
 export type Where = { app: string; thread: string; session?: string }
 
 // A thread's chat as the app shows it: what the owner said and hex replied across every session the
@@ -39,7 +43,7 @@ export class Chats {
     const unlogged = current ? owners(kept.took(current, log ? statSync(log).mtime.toISOString() : '')).filter(row => row.to === where.thread) : []
     const turns: Turn[] = [...sessions.flatMap(session => history(this.hexDir, session)), ...unlogged.map(row => ({ from: 'me' as const, text: row.body }))]
     const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at }) => ({ key, text: body, at }))
-    const chat = { sends: !!sendsThrough(where.app), turns, waiting }
+    const chat = { sends: !!sendsThrough(where), total: turns.length, turns: turns.slice(-SHOWN), waiting }
     const said = JSON.stringify(chat)
     const id = `${where.app}:${where.thread}`
     const seen = this.seen.get(id)
@@ -61,9 +65,9 @@ export class Chats {
   // The owner's words, typed in the app, go to the thread's session the way its app's would. The
   // app names each message, so sending it again after a lost answer delivers it once.
   send(where: Where, text: string, key: string) {
-    const client = sendsThrough(where.app)
+    const client = sendsThrough(where)
     const name = client?.hub.name(where.thread)
-    if (!client || !name) throw new Error(`Words typed here can't reach this thread; write to it in its own app.`)
+    if (!name) throw new Error(`Words typed here can't reach this thread; write to it in its own app.`)
     client.hub.deliver(where.thread, name, { content: text, key, meta: { user: 'hex app', ts: new Date().toISOString() } })
   }
 
@@ -79,7 +83,8 @@ export class Chats {
   }
 }
 
-const sendsThrough = (app: string) => {
+// The app holding the thread, when words typed in the hex app can reach it through it.
+const sendsThrough = ({ app, thread }: Where) => {
   const client = clients.get(app)
-  return client && !client.waits ? client : undefined
+  return client && !client.waits && client.hub.name(thread) ? client : undefined
 }

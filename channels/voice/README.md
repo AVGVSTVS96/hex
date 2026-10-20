@@ -221,9 +221,9 @@ order (needs you, working, done, failed, idle), newest change first in each.
 | `GET /tasks/summary?after=<version>` | `{ version, needs, working }`, once a count changes |
 | `GET /tasks/<id>` | one task, with what it `needs` from you in full, what it did `lately`, its newest `steps` (newest first: `id`, `at`, `end`, `kind`, a few words of `text`, a tool's `state`, `detail` and `result`, and the `agent` it started), its `plan`, and each agent's `result` and own `steps` |
 | `POST /tasks/<id>/talk` | during a call: the voice brings the task up, and Claude hears which thread it is |
-| `GET /tasks/<id>/chat` | `{ version, sends, turns, waiting }`: the thread's chat across every session it has had, from their logs (`turns`, each `from` `me` or `hex` with its `text`); what you sent that its session hasn't taken in yet (`waiting`: `key`, `text`, `at`); and whether words typed here reach it (`sends`: false for T3 Code threads and sessions no app holds) |
+| `GET /tasks/<id>/chat` | `{ version, sends, total, turns, waiting }`: the thread's chat across every session it has had, from their logs (`turns`: its latest 100 of `total`, each `from` `me` or `hex` with its `text`); what you sent that its session hasn't taken in yet (`waiting`: `key`, `text`, `at`); and whether words typed here reach it (`sends`: false for T3 Code threads and sessions no app holds) |
 | `GET /tasks/<id>/chat?after=<version>` | the same, once the chat changes (or after 25 seconds) |
-| `POST /tasks/<id>/chat` | `{ text, key }`: your words to the thread, as if typed in its own app; `key` names the message, so sending it again delivers it once. 409 when `sends` is false |
+| `POST /tasks/<id>/chat` | `{ text, key }`: your words to the thread, as if typed in its own app; `key` (`app-` and 8 to 60 letters, digits, `-` or `_`) names the message, so sending it again delivers it once. 409 when `sends` is false |
 | `POST /tasks/<id>/stop` | your stop, as the thread's own app's Stop does it. 409 when no app holds the thread |
 
 An app starting a call with `"about": "<task id>"` in its `/session` body gets

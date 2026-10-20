@@ -52,6 +52,7 @@ test("a thread's chat runs through every session it had, then what it took but h
   store.deliver({ key: 'schedule:4', to: DESK, from: 'schedule', body: 'heartbeat', meta: { user: 'schedule' } })
   expect(chats.of(where)).toMatchObject({
     sends: true,
+    total: 5,
     turns: [
       { from: 'me', text: 'ship it' },
       { from: 'hex', text: 'Shipped.' },
@@ -64,8 +65,8 @@ test("a thread's chat runs through every session it had, then what it took but h
 })
 
 test('words typed in the app reach the thread as the owner, under the key the app named them', () => {
-  chats.send(where, 'and the docs', 'app-0001')
-  expect(calls).toMatchObject([['deliver', DESK, 'Desk', { content: 'and the docs', key: 'app-0001', meta: { user: 'hex app' } }]])
+  chats.send(where, 'and the docs', 'app-00000001')
+  expect(calls).toMatchObject([['deliver', DESK, 'Desk', { content: 'and the docs', key: 'app-00000001', meta: { user: 'hex app' } }]])
 })
 
 test("a stop goes through the app's own stop when it has one", () => {
@@ -78,7 +79,10 @@ test("a stop goes through the app's own stop when it has one", () => {
   ])
 })
 
-test("an app that shows only turns it starts, or none at all, can't take words from here", () => {
+test("an app that shows only turns it starts, doesn't hold the thread, or isn't here can't take words from here", () => {
+  clients.get('telegram')!.hub.name = () => undefined
+  expect(chats.of(where).sends).toBe(false)
+  clients.get('telegram')!.hub.name = () => 'Desk'
   clients.get('telegram')!.waits = true
   expect(chats.of(where).sends).toBe(false)
   expect(() => chats.send(where, 'hi', 'app-0002')).toThrow()

@@ -976,7 +976,7 @@ async function showChat(url: URL, task: HexTask) {
 async function sendChat(request: Request, task: HexTask) {
   const { text, key } = (await request.json().catch(() => ({}))) as { text?: unknown; key?: unknown }
   if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
-  if (typeof key !== 'string' || !/^[\w-]{8,64}$/.test(key)) return new Response('Name the message with a key', { status: 400 })
+  if (typeof key !== 'string' || !/^app-[\w-]{8,60}$/.test(key)) return new Response('Name the message with a key starting app-', { status: 400 })
   return done(() => chats.send(task, text.trim(), key))
 }
 
