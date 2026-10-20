@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, observe, type Answer } from './observe.ts'
+import { clock, observe, seed, type Answer } from './observe.ts'
 import { about, profile, profileOf } from './profile.ts'
 import { open } from './store.ts'
 
@@ -28,7 +28,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("the owner's messages no note names reach the pass, which writes the notes that keep their words", async () => {
+test("the owner's messages reach the pass, which writes notes for those no note names yet", async () => {
   const seen: string[] = []
   const ask = async (input: string) => {
     seen.push(input)
@@ -37,7 +37,7 @@ test("the owner's messages no note names reach the pass, which writes the notes 
   expect(await observe(dir, 's', 'Done, Friday deploys only.', { ask, memo })).toHaveLength(1)
   expect(seen[0]).toContain('[telegram:-100:50]')
   expect(seen[0]).toContain("The session's reply:\nDone, Friday deploys only.")
-  expect(seen[0]).not.toContain('get the login page fixed first')
+  expect(seen[0]).toContain('get the login page fixed first\n(a note already names this message: write no note for it)')
   expect(seen[0]).not.toContain('run the backup')
   expect(noted()).toEqual(['Oct 19 11:31pm: ships "on fridays only, my team reviews thursdays" [telegram:-100:50]'])
   expect(await observe(dir, 's', '', { ask, memo })).toEqual([])
@@ -133,8 +133,24 @@ test("a profile line may only quote the owner, by the key of the message it quot
 test('a session sees the whole profile once, then only the lines that changed', () => {
   expect(about('', '# Always\n- a')).toContain('# Always\n- a')
   const kept = `- ${'a'.repeat(200)}`
-  expect(about(`# Always\n${kept}\n- b`, `# Always\n${kept}\n- c`)).toBe("My profile changed, as the memory agent keeps it current from my own words:\n- c\nNo longer in it:\n- b")
+  expect(about(`# Always\n${kept}\n- b`, `# Always\n${kept}\n- c`)).toBe("My profile changed, as the memory agent keeps it current from my own words:\n# Always\n- c\nNo longer in it:\n# Always\n- b")
+  expect(about(`# Always\n${kept}\n# Now\n- b`, `# Always\n${kept}\n- b\n# Now`)).toContain('# Always\n- b\nNo longer in it:\n# Now\n- b')
+  expect(about(`# Always\n${kept}\n- b`, `# Always\n- b\n${kept}`)).toBe('')
+  expect(about('# Always\n- b', '')).toBe('My profile was cleared: what it said no longer stands.')
   expect(about('# Always\n- b', '# Always\n- c')).toBe("Who I am and what's going on now, kept current by the memory agent from my own words:\n\n# Always\n- c")
+})
+
+test('a profile still misquoting after its last try is kept without the lines that fail', async () => {
+  const bad = '# Always\n- Ships "on fridays only" [telegram:-100:50]\n- Wants "whatever" [telegram:-100:50]'
+  await observe(dir, 's', '', { ask: async () => ({ notes: [], profile: bad }), memo })
+  expect(profileOf(dir)).toBe('# Always\n- Ships "on fridays only" [telegram:-100:50]')
+})
+
+test('a second seed leaves the profile the memory agent keeps', async () => {
+  writeFileSync(join(dir, 'profile.md'), '# Always\n- kept')
+  expect(seed(dir, { ask: async () => none, wake: '#1 a memory' })).rejects.toThrow('already holds a profile')
+  rmSync(join(dir, 'profile.md'))
+  expect(seed(dir, { ask: async () => none, wake: '' })).rejects.toThrow('the wake came back empty')
 })
 
 test('a time reads the way notes write it, on the owner’s clock', () => {

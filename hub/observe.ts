@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join, resolve } from 'path'
 import { holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { names, PROFILE, profileOf, profilePath } from './profile.ts'
@@ -49,12 +49,12 @@ export async function observe(state: string, session: string, reply: string, { a
     const noted = named(rows)
     const fresh = rows.filter(row => !noted.includes(`[${row.key}]`))
     const written: string[] = []
-    if (fresh.length) {
+    if (rows.length) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = names(state)
       const turn = [
-        `<turn thread="${threads[fresh[0]!.to] ?? fresh[0]!.to}" log="${logOf(session) ?? 'none'}">`,
-        ...fresh.map(row => said(row, zone)),
+        `<turn thread="${threads[rows[0]!.to] ?? rows[0]!.to}" log="${logOf(session) ?? 'none'}">`,
+        ...rows.map(row => `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`),
         `The session's reply:\n${reply.trim() || '(none)'}`,
         '</turn>',
       ].join('\n\n')
@@ -76,8 +76,10 @@ export async function observe(state: string, session: string, reply: string, { a
         if (answer.profile === null) break
         const bad = misquoted(answer.profile, store)
         wrong = bad.length ? retry(bad) : ''
-        if (wrong || profileOf(state) !== before) continue
-        keep(state, answer.profile)
+        const last = tries === 2
+        const kept = wrong && last ? held(answer.profile, store) : answer.profile
+        if ((wrong && !last) || !kept || !swap(state, before, kept)) continue
+        if (wrong) console.error(`hex kept the profile without the lines it couldn't fix:${wrong}`)
         wanted = false
         break
       }
@@ -94,7 +96,9 @@ export async function observe(state: string, session: string, reply: string, { a
 
 // The first profile, built once from the whole wake and the owner's messages of the last two
 // weeks, by the strongest model, since every later pass starts from it.
-export async function seed(state: string, { ask = (input: string) => claude(input, 'opus'), wake = '' } = {}) {
+export async function seed(state: string, { ask = (input: string) => claude(input, 'opus', 4 * CALL), wake = '' } = {}) {
+  if (profileOf(state)) throw new Error(`${profilePath(state)} already holds a profile, which the memory agent keeps current; remove it to seed a new one`)
+  if (!wake.trim()) throw new Error('the wake came back empty, so a profile built now would know nothing')
   const store = open(state)
   const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
   const since = new Date(Date.now() - 14 * 86_400_000).toISOString()
@@ -102,9 +106,10 @@ export async function seed(state: string, { ask = (input: string) => claude(inpu
   const input = `<profile>\n(none yet: build the first one from all of the below)\n</profile>\n\n<memories>\n${wake}\n</memories>\n\n<the owner's messages of the last two weeks>\n${said.join('\n').slice(-120_000)}\n</the owner's messages of the last two weeks>`
   let wrong = ''
   for (let tries = 0; tries < 3; tries++) {
-    const { profile } = await ask(input + wrong)
-    const bad = misquoted(profile, store)
-    if (!bad.length) return keep(state, profile!)
+    const answer = await ask(input + wrong).catch(error => (console.error(`the seed call failed: ${error}`), null))
+    if (!answer) continue
+    const bad = misquoted(answer.profile, store)
+    if (!bad.length && swap(state, '', answer.profile!)) return answer.profile!
     wrong = retry(bad)
   }
   throw new Error(`the first profile wasn't kept:${wrong}`)
@@ -128,12 +133,35 @@ function misquoted(profile: string | null, store: Store): string[] {
 const retry = (bad: string[]) =>
   `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}`
 
-// Written whole and swapped in, so a session never reads half a profile.
-function keep(state: string, profile: string) {
-  const next = `${profilePath(state)}.${process.pid}.new`
-  writeFileSync(next, `${profile.trim()}\n`)
-  renameSync(next, profilePath(state))
-  return profile
+// The profile with the lines that don't hold taken out, or null when nothing worth keeping is left.
+function held(profile: string, store: Store) {
+  const kept = profile.split('\n').filter(each => !misquoted(each, store).length || !each.trim()).join('\n')
+  return kept.trim() && kept.length <= PROFILE && !misquoted(kept, store).length ? kept : null
+}
+
+// Puts the profile in place only if it's still the one this pass read, under a lock so two passes
+// never both pass that check, and whole, so a session never reads half a profile.
+function swap(state: string, before: string, profile: string) {
+  const lock = `${profilePath(state)}.lock`
+  for (let wait = 0; ; wait++) {
+    try {
+      closeSync(openSync(lock, 'wx'))
+      break
+    } catch {
+      const age = Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now())
+      if (wait > 50 || age > 10_000) rmSync(lock, { force: true })
+      Bun.sleepSync(100)
+    }
+  }
+  try {
+    if (profileOf(state) !== before.trim()) return false
+    const next = `${profilePath(state)}.${process.pid}.new`
+    writeFileSync(next, `${profile.trim()}\n`)
+    renameSync(next, profilePath(state))
+    return true
+  } finally {
+    rmSync(lock, { force: true })
+  }
 }
 
 // The newest notes, enough to show what memory already says and how its lines read.
@@ -168,11 +196,11 @@ function logOf(session: string) {
 
 // One read-only call: the model may open the turn's log, and its only effect is what it returns.
 // Its three tries end inside the pass's lease (4 calls long), so a hung call fails rather than racing the next pass.
-async function claude(input: string, model = MODEL): Promise<Answer> {
+async function claude(input: string, model = MODEL, timeout = CALL): Promise<Answer> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
   const run = Bun.spawn(
     ['claude', '-p', '--safe-mode', '--model', model, '--effort', 'high', '--tools', 'Read,Grep', '--system-prompt', SYSTEM, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--no-session-persistence'],
-    { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
+    { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout },
   )
   const [out, err, code] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited])
   const result = JSON.parse(out || '{}')
@@ -188,7 +216,7 @@ async function claude(input: string, model = MODEL): Promise<Answer> {
 if (import.meta.main) {
   const { HEX_STORE, MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
   if (process.argv[2] === 'seed') {
-    const wake = Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake'), 'all'], { stdout: 'pipe' }).stdout.toString()
+    const wake = Bun.spawnSync([MEMO, 'wake', 'all'], { stdout: 'pipe' }).stdout.toString()
     console.log(await seed(HEX_STORE ?? join(hexDir, 'state'), { wake }))
   } else if (HEX_PASS) {
     const { session, reply, by, thread } = JSON.parse(await Bun.stdin.text()) as Pass

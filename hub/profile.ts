@@ -78,18 +78,19 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
 // The profile as a session should see it: whole the first time, then only the lines that changed
 // since the version it saw, so a rewrite after every turn costs a line or two, not the whole file.
 export function about(before: string, now: string): string {
-  if (!now) return ''
+  if (!now) return before ? 'My profile was cleared: what it said no longer stands.' : ''
   if (!before) return `Who I am and what's going on now, kept current by the memory agent from my own words:\n\n${now}`
-  const lines = (text: string) => new Set(text.split('\n').filter(each => each.trim()))
-  const was = lines(before)
-  const is = lines(now)
-  const added = [...is].filter(each => !was.has(each))
-  const gone = [...was].filter(each => !is.has(each))
-  const changed = [
-    "My profile changed, as the memory agent keeps it current from my own words:",
-    ...added,
-    ...(gone.length ? ['No longer in it:', ...gone] : []),
-  ].join('\n')
+  const placed = (text: string) => {
+    let section = ''
+    return new Map(text.split('\n').filter(each => each.trim()).flatMap(each => (each.startsWith('#') ? ((section = each), []) : [[`${section}\n${each}`, [section, each]] as const])))
+  }
+  const was = placed(before)
+  const is = placed(now)
+  const grouped = (lines: (readonly [string, string])[]) => lines.flatMap(([section, each], at) => [...(section !== lines[at - 1]?.[0] ? [section] : []), each]).filter(Boolean)
+  const added = grouped([...is].filter(([key]) => !was.has(key)).map(([, place]) => place))
+  const gone = grouped([...was].filter(([key]) => !is.has(key)).map(([, place]) => place))
+  if (!added.length && !gone.length) return ''
+  const changed = ["My profile changed, as the memory agent keeps it current from my own words:", ...added, ...(gone.length ? ['No longer in it:', ...gone] : [])].join('\n')
   return changed.length < now.length ? changed : about('', now)
 }
 
@@ -106,8 +107,8 @@ if (import.meta.main) {
         const mine = `${session_id}:profile`
         if (source === 'compact' || source === 'clear') for (const each of [session_id, mine]) store.unshow(each)
         const now = profileOf(HEX_STORE).slice(0, PROFILE)
-        const before = store.seen(mine)
-        const told = store.show(mine, now) ? about(before, now) : ''
+        const before = store.swap(mine, now)
+        const told = before === null ? '' : about(before, now)
         const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
         const { text, digest } = profile(HEX_STORE, thread, Math.max(0, ROOM - told.length))
         const lists = store.show(session_id, digest) ? text || 'No open tasks or questions waiting on me now.' : ''
