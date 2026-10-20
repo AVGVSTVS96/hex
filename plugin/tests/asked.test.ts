@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
+import { createServer } from 'net'
 import { join } from 'path'
 import { open, type Store } from '../../hub/store.ts'
 
@@ -88,4 +89,26 @@ test('a failed turn and a call\'s handoffs need nothing', () => {
 test('the commands it gives run from any folder', () => {
   said('telegram:-100:1', 'make the deck load faster')
   expect(stop()?.reason).toContain(`\`${join(import.meta.dir, '../../bin/hex')} task new <key>\``)
+})
+
+test('the hub hears the session is idle only once the tasks are made', async () => {
+  said('telegram:-100:1', 'make the deck load faster')
+  const socket = join(dir, 'hub.sock')
+  const received: object[] = []
+  const server = createServer(client => client.on('data', chunk => received.push(JSON.parse(String(chunk))))).listen(socket)
+  const idle = async (again: boolean) => {
+    const run = Bun.spawn(['bun', STATE, 'idle'], {
+      env: { ...env, HEX_STORE: dir, TMPDIR: dir, HEX_HUB: socket, HEX_THREAD: 'chat:1' },
+      stdin: new Blob([JSON.stringify({ hook_event_name: 'Stop', session_id: 'session-1', stop_hook_active: again })]),
+      stdout: 'pipe',
+    })
+    await run.exited
+    return (await new Response(run.stdout).text()) !== ''
+  }
+  expect(await idle(false)).toBe(true)
+  expect(await idle(true)).toBe(false)
+  for (let i = 0; i < 100 && !received.length; i++) await Bun.sleep(10)
+  await Bun.sleep(50)
+  server.close()
+  expect(received).toEqual([{ type: 'state', thread: 'chat:1', busy: false }])
 })
