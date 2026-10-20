@@ -420,8 +420,18 @@ function serve(socket: Socket) {
   })
 }
 
-// A turn T3 Code didn't start, like a schedule's, has no prompt of T3's to finish, so the hub stops it.
-clients.set('t3', { hub, place, backfill, waits: true, stop: thread => (turns.has(thread) ? cancel(thread) : hub.stop(thread)) })
+// The owner's Stop from another app is never a steer, so it stops the session even while T3 Code
+// is steering, and finishes T3's prompt when one is running.
+clients.set('t3', {
+  hub,
+  place,
+  backfill,
+  waits: true,
+  stop: thread => {
+    hub.stop(thread)
+    finish(thread, 'cancelled')
+  },
+})
 
 rmSync(SOCKET, { force: true })
 createServer(serve).listen(SOCKET)

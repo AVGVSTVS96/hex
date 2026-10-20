@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto'
 import { readFileSync } from 'fs'
+import { isIP } from 'net'
 import { dirname, join } from 'path'
 import { findThread, followAgent, followThread, type Step, type Thread } from './activity.ts'
 import { Call, transcript, type Mark, type Speaker, type Task } from './call.ts'
@@ -22,6 +23,7 @@ const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN
 const TWILIO_NUMBER = env.TWILIO_NUMBER
 const CALLER_NUMBER = env.CALLER_NUMBER
 const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//, '')
+const PUBLIC_HOSTNAME = PUBLIC_HOST ? URL.parse(`https://${PUBLIC_HOST}`)?.hostname : undefined
 const TOKEN = env.VOICE_TOKEN
 const calls = new CallLog(join(STATE_DIR, 'calls'))
 const activity = new Changes()
@@ -863,6 +865,19 @@ function allowed(request: Request) {
   return !TOKEN || same(request.headers.get('authorization') ?? '', `Bearer ${TOKEN}`)
 }
 
+// A page on another site, open in the owner's browser, can post here, or point its own name at this
+// machine to read and post here as if it were this page, which would hand it the token too.
+function foreign(request: Request) {
+  const url = new URL(request.url)
+  const origin = request.headers.get('origin')
+  return !ours(url.hostname) || (request.method !== 'GET' && origin !== null && URL.parse(origin)?.host !== url.host)
+}
+
+// Names a site can't point here: IPs, short names, localhost, tailnet names, and the public one.
+function ours(host: string) {
+  return isIP(host.replace(/^\[|\]$/g, '')) > 0 || /^[^.]+$|(^|\.)localhost$|\.ts\.net$/.test(host) || host === PUBLIC_HOSTNAME
+}
+
 function home(request: Request) {
   const local = !request.headers.get('x-forwarded-for')
   return new Response(String(page).replace('__VOICE_TOKEN__', local && TOKEN ? TOKEN : ''), { headers: { 'content-type': 'text/html; charset=utf-8' } })
@@ -968,13 +983,13 @@ function taskRoutes(request: Request, url: URL) {
 
 // A thread's chat, and with after, the next time it changes.
 async function showChat(url: URL, task: HexTask) {
-  const where = { ...task, session: board.session(task.id) }
+  const where = () => ({ ...task, session: board.session(task.id) })
   const after = url.searchParams.get('after')
-  return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where))
+  return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where()))
 }
 
 async function sendChat(request: Request, task: HexTask) {
-  const { text, key } = (await request.json().catch(() => ({}))) as { text?: unknown; key?: unknown }
+  const { text, key } = ((await request.json().catch(() => null)) ?? {}) as { text?: unknown; key?: unknown }
   if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
   if (typeof key !== 'string' || !/^app-[\w-]{8,60}$/.test(key)) return new Response('Name the message with a key starting app-', { status: 400 })
   return done(() => chats.send(task, text.trim(), key))
@@ -1034,9 +1049,12 @@ export function serve(voiceHub: Hub, state: string) {
   hub = voiceHub
   HEX_STATE = state
   board = new Tasks(state, dirname(state))
-  board.listen(() => activity.changed())
-  yours = new Asks(state)
   chats = new Chats(state, dirname(state))
+  board.listen(() => {
+    activity.changed()
+    chats.changed()
+  })
+  yours = new Asks(state)
   recover()
   resume()
   return Bun.serve<Phone>({
@@ -1053,6 +1071,7 @@ export function serve(voiceHub: Hub, state: string) {
       if (token) trace(`Twilio ${request.method} ${twimlPath ? 'TwiML' : 'stream'}, ${dialed ? 'known' : 'unknown'} token`)
       if (dialed && twimlPath) return stream(token)
       if (dialed && dials.delete(token)) return server.upgrade(request, { data: { ...dialed } }) ? undefined : new Response('upgrade failed', { status: 400 })
+      if (foreign(request)) return new Response('Forbidden', { status: 403 })
       if (pathname === '/') return home(request)
       if (!allowed(request)) return new Response('Unauthorized', { status: 401, headers: { 'www-authenticate': 'Bearer' } })
       return routes(request) ?? new Response('404', { status: 404 })

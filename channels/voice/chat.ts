@@ -1,6 +1,6 @@
-import { mkdirSync, statSync } from 'fs'
+import { mkdirSync } from 'fs'
 import { join } from 'path'
-import { clients, history, logOf, type Turn } from '../../hub/hub.ts'
+import { clients, logged, type Turn } from '../../hub/hub.ts'
 import { owners } from '../../hub/notes.ts'
 import { open as store } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
@@ -17,9 +17,9 @@ const SHOWN = 100
 export type Where = { app: string; thread: string; session?: string }
 
 // A thread's chat as the app shows it: what the owner said and hex replied across every session the
-// thread has had, from their logs (bin/log); what the owner said that its session took in but
-// hasn't logged yet; and what the owner sent that no session has taken in yet. A wait for it ends
-// when that chat changes, which a log write or a message taken anywhere may mean.
+// thread has had, from their logs (bin/log), each followed by what the owner said that it took in
+// but hasn't logged; and what the owner sent that no session has taken in yet. A wait for it ends
+// when that chat changes, which a log write, a message taken or a thread moved anywhere may mean.
 export class Chats {
   private changes = new Changes()
   private seen = new Map<string, { said: string; version: number }>()
@@ -37,11 +37,14 @@ export class Chats {
 
   of(where: Where): Chat {
     const kept = store(this.state)
-    const current = where.session ?? kept.sessions(where.thread).at(-1)
-    const sessions = [...kept.sessions(where.thread).filter(session => session !== current), ...(current ? [current] : [])]
-    const log = current && logOf(this.hexDir, current)
-    const unlogged = current ? owners(kept.took(current, log ? statSync(log).mtime.toISOString() : '')).filter(row => row.to === where.thread) : []
-    const turns: Turn[] = [...sessions.flatMap(session => history(this.hexDir, session)), ...unlogged.map(row => ({ from: 'me' as const, text: row.body }))]
+    const all = kept.sessions(where.thread)
+    const current = where.session ?? all.at(-1)
+    const sessions = [...all.filter(session => session !== current), ...(current ? [current] : [])]
+    const turns = sessions.flatMap(session => {
+      const log = logged(this.hexDir, session)
+      const unlogged = owners(kept.took(session, log?.mtime.toISOString())).filter(row => row.to === where.thread)
+      return [...(log?.turns ?? []), ...unlogged.map(row => ({ from: 'me', text: row.body }) as Turn)]
+    })
     const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at }) => ({ key, text: body, at }))
     const chat = { sends: !!sendsThrough(where), total: turns.length, turns: turns.slice(-SHOWN), waiting }
     const said = JSON.stringify(chat)
@@ -52,14 +55,18 @@ export class Chats {
     return { version, ...chat }
   }
 
-  async next(where: Where, after: number, wait: number) {
+  async next(where: () => Where, after: number, wait: number) {
     const end = Date.now() + wait
-    let chat = this.of(where)
+    let chat = this.of(where())
     while (chat.version === after && Date.now() < end) {
       await this.changes.changes(this.changes.version, end - Date.now())
-      chat = this.of(where)
+      chat = this.of(where())
     }
     return chat
+  }
+
+  changed() {
+    this.changes.changed()
   }
 
   // The owner's words, typed in the app, go to the thread's session the way its app's would. The
@@ -74,7 +81,7 @@ export class Chats {
   // The owner's stop, as the thread's own app does it.
   stop(where: Where) {
     const client = clients.get(where.app)
-    if (!client) throw new Error(`No app here holds this thread, so there's nothing to stop.`)
+    if (!client?.hub.name(where.thread)) throw new Error(`No app here holds this thread, so there's nothing to stop.`)
     ;(client.stop ?? client.hub.stop)(where.thread)
   }
 

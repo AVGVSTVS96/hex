@@ -112,6 +112,8 @@ const migrations = [
   `alter table messages add column observing_at text check (observing_at ${UTC});
   alter table messages add column observed_at text check (observed_at ${UTC});
   update messages set observed_at = coalesce(taken_at, at);`,
+  `create index taken on messages (taken_by, taken_at) where taken_by is not null;
+  create index sessions on messages ("to", taken_by) where taken_by is not null;`,
 ]
 
 const now = () => new Date().toISOString()
