@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { existsSync, readdirSync } from 'fs'
+import { existsSync, openSync, readdirSync } from 'fs'
 import { join, resolve } from 'path'
 import { holds, keysOf, owners, verdict } from './notes.ts'
 import { names } from './profile.ts'
@@ -16,6 +16,7 @@ import { open, type Row } from './store.ts'
 const MODEL = 'sonnet'
 const BYTES = 280
 const NEWEST = 40
+const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
@@ -30,12 +31,12 @@ If you need what a message answers, the whole conversation is in the log file na
 const SCHEMA = { type: 'object', properties: { notes: { type: 'array', items: { type: 'string' } } }, required: ['notes'] }
 
 type Hook = { session_id?: string; last_assistant_message?: string }
-type Pass = { session: string; reply: string; by: string }
+type Pass = { session: string; reply: string; by: string; thread?: string }
 
-export async function observe(state: string, session: string, reply: string, { ask = claude, memo = MEMO, by = new Date().toISOString() } = {}) {
+export async function observe(state: string, session: string, reply: string, { ask = claude, memo = MEMO, by = new Date().toISOString(), thread = undefined as string | undefined } = {}) {
   const recall = (pattern: string) => Bun.spawnSync([memo, 'recall', pattern], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
   const store = open(state)
-  const taken = store.observe(session, by)
+  const taken = store.observe(session, by, thread)
   const rows = owners(taken)
   try {
     const named = rows.length ? recall(rows.map(row => `\\[${escape(row.key)}\\]`).join('|')) : ''
@@ -97,11 +98,12 @@ function logOf(session: string) {
 }
 
 // One read-only call: the model may open the turn's log, and its only effect is the notes it returns.
+// It ends well inside the pass's lease, so a hung call fails rather than racing the next pass.
 async function claude(input: string): Promise<string[]> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
   const run = Bun.spawn(
     ['claude', '-p', '--safe-mode', '--model', MODEL, '--effort', 'high', '--tools', 'Read,Grep', '--system-prompt', SYSTEM, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--no-session-persistence'],
-    { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe' },
+    { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
   )
   const [out, err, code] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited])
   const result = JSON.parse(out || '{}')
@@ -112,15 +114,21 @@ async function claude(input: string): Promise<string[]> {
 // The Stop hook hands the turn to a pass of its own and returns, since Claude Code ends a hook still
 // running when its session exits, and a hex session often exits right after a turn (a restart, an
 // update, a call that ended). The pass takes only what the session had taken by then, not the
-// next turn's message.
+// next turn's message, and what an earlier pass in its thread left unfinished. Its errors go to
+// state/observe.log.
 if (import.meta.main) {
-  const { HEX_STORE, MEMORY_DIR, HEX_PASS } = process.env
+  const { HEX_STORE, MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
   if (HEX_PASS) {
-    const { session, reply, by } = JSON.parse(HEX_PASS) as Pass
-    await observe(HEX_STORE!, session, reply, { by })
+    const { session, reply, by, thread } = JSON.parse(await Bun.stdin.text()) as Pass
+    await observe(HEX_STORE!, session, reply, { by, thread })
   } else if (HEX_STORE && MEMORY_DIR && existsSync(MEMO)) {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
-    const pass: Pass = { session: hook.session_id ?? '', reply: hook.last_assistant_message ?? '', by: new Date().toISOString() }
-    if (pass.session) spawn(process.execPath, [import.meta.path], { detached: true, stdio: 'ignore', env: { ...process.env, HEX_PASS: JSON.stringify(pass) } }).unref()
+    const pass: Pass = { session: hook.session_id ?? '', reply: hook.last_assistant_message ?? '', by: new Date().toISOString(), thread: HEX_THREAD }
+    if (pass.session) {
+      const log = openSync(join(HEX_STORE, 'observe.log'), 'a')
+      const child = spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['pipe', 'ignore', log], env: { ...process.env, HEX_PASS: '1' } })
+      child.stdin!.end(JSON.stringify(pass))
+      child.unref()
+    }
   }
 }

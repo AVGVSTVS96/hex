@@ -203,14 +203,14 @@ export class Store {
     return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)
   }
 
-  // What a session took by a time that no pass has looked over for memories yet, oldest first,
-  // leased to the pass that asks: two passes never write about the same message, and one that died
-  // midway hands its messages to the next once its lease runs out.
-  observe(session: string, by: string, lease = 10 * 60_000): Row[] {
+  // What a session, or another in its thread, took by a time that no pass has looked over for
+  // memories yet, oldest first, leased to the pass that asks: two passes never write about the same
+  // message, and one that failed or died midway hands its messages to the next in the thread.
+  observe(session: string, by: string, thread?: string, lease = 10 * 60_000): Row[] {
     return this.write(() => {
       const rows = this.db
-        .query('select * from messages where taken_by = ? and taken_at <= ? and observed_at is null and (observing_at is null or observing_at < ?) order by taken_at')
-        .all(session, by, new Date(Date.now() - lease).toISOString()) as Stored[]
+        .query('select * from messages where (taken_by = ? or "to" = ?) and taken_at <= ? and observed_at is null and (observing_at is null or observing_at < ?) order by taken_at')
+        .all(session, thread ?? null, by, new Date(Date.now() - lease).toISOString()) as Stored[]
       this.db.query('update messages set observing_at = ? where key in (select value from json_each(?))').run(now(), JSON.stringify(rows.map(row => row.key)))
       return rows.map(toRow)
     })

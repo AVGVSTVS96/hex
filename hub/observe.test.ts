@@ -69,7 +69,7 @@ test('a pass that fails hands its messages to the next one, and one that died do
   expect(store.observe('s', new Date().toISOString()).map(row => row.key)).toEqual(['telegram:-100:60'])
   expect(store.observe('s', new Date().toISOString())).toEqual([])
   await Bun.sleep(2)
-  expect(store.observe('s', new Date().toISOString(), 0).map(row => row.key)).toEqual(['telegram:-100:60'])
+  expect(store.observe('s', new Date().toISOString(), undefined, 0).map(row => row.key)).toEqual(['telegram:-100:60'])
 })
 
 test("a pass takes what the session had taken when its turn ended, not the next turn's message", async () => {
@@ -84,6 +84,16 @@ test("a pass takes what the session had taken when its turn ended, not the next 
   expect(seen[0]).not.toContain('dark mode')
   await observe(dir, 's', '', { ask: async input => (seen.push(input), []), memo })
   expect(seen[1]).toContain('and add a dark mode')
+})
+
+test("a later session in the thread takes what an earlier one's pass left", async () => {
+  const fail = async (): Promise<string[]> => {
+    throw new Error('limit')
+  }
+  await observe(dir, 's', '', { ask: fail, memo })
+  const seen: string[] = []
+  await observe(dir, 't', '', { ask: async input => (seen.push(input), []), memo, thread: '-100:7' })
+  expect(seen[0]).toContain('[telegram:-100:50]')
 })
 
 test("a note may only name this pass's messages", async () => {
