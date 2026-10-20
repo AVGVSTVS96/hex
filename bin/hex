@@ -30,10 +30,17 @@ case "${1:-}" in
     [ -e "$home/.env" ] || (umask 077 && cp "$hex/defaults/env" "$home/.env")
     mkdir -p "$home/.claude" "$home/log" "$home/state/telegram" "$home/state/discord" "$home/state/buzz" "$home/state/t3"
     [ -e "$home/.claude/settings.json" ] || jq --arg memory "$home/memory" '.env.MEMORY_DIR = $memory' "$hex/defaults/settings.json" > "$home/.claude/settings.json"
-    # hex's sessions run in the background with bypassPermissions, which Claude Code allows there only with consent in the user's own settings.
+    # Claude Code runs a background session in bypassPermissions only with consent in the user's own settings.
     user="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
-    mkdir -p "$(dirname "$user")"
-    { cat "$user" 2>/dev/null || echo '{}'; } | jq '.skipDangerousModePermissionPrompt = true' > "$user.hex.$$" && mv "$user.hex.$$" "$user"
+    if [ "$(jq -r '.permissions.defaultMode' "$home/.claude/settings.json")" = bypassPermissions ] && ! jq -e '.skipDangerousModePermissionPrompt' "$user" >/dev/null 2>&1; then
+      if [ -e "$user" ]; then
+        consent=$(jq '.skipDangerousModePermissionPrompt = true' "$user") || { echo "$user isn't valid JSON: add \"skipDangerousModePermissionPrompt\": true to it, then run init again" >&2; exit 1; }
+      else
+        mkdir -p "$(dirname "$user")"
+        consent='{ "skipDangerousModePermissionPrompt": true }'
+      fi
+      printf '%s\n' "$consent" > "$user"
+    fi
     "$hex/bin/optmem"
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
     chmod 700 "$home" "$home/state"
