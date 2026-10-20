@@ -99,7 +99,9 @@ export function follow({ path, sessionId, cwd, since, done, emit, end }: {
     for (const notification of notifications) emit(notification)
   }
 
+  // The Stop hook can arrive before the watch has seen what the transcript already holds.
   function settle() {
+    read()
     if (!ended && asked && !open && done()) stop()
   }
 

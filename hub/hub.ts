@@ -3,6 +3,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
+import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { schedule } from './schedule.ts'
 import { open, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
@@ -355,7 +356,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   function become(run: Run, phase: Phase) {
     const was = run.phase
     if (was.is === 'launching') was.watch?.close()
-    if (was.is === 'launching' || was.is === 'recovering') clearTimeout(was.deadline)
+    if (was.is === 'launching' || was.is === 'recovering') clock.clearTimeout(was.deadline)
     run.phase = phase
   }
 
@@ -415,16 +416,16 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // The main thread keeps running, and compacts before its cache goes cold.
   function rest(thread: string, rested = false) {
     const run = runOf(thread)
-    clearTimeout(run.rest)
+    clock.clearTimeout(run.rest)
     run.rest = undefined
     if (run.turn === 'busy' || run.phase.is !== 'live') return
-    if (thread === main) run.rest = setTimeout(stopIfIdle, cacheWarm, thread)
+    if (thread === main) run.rest = clock.setTimeout(stopIfIdle, cacheWarm, thread)
     else if (run.leaving) stop(thread)
     else if (fresh(thread)) {
       const left = warmFor(thread)
       if (left === 0 && rested) void handOff(thread, true)
-      else if (left !== undefined) run.rest = setTimeout(handOff, left, thread)
-    } else run.rest = setTimeout(stopIfIdle, idleStop, thread)
+      else if (left !== undefined) run.rest = clock.setTimeout(handOff, left, thread)
+    } else run.rest = clock.setTimeout(stopIfIdle, idleStop, thread)
   }
 
   // A fresh thread keeps one session running, which takes its messages while its context has
@@ -438,7 +439,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const session = current(thread)
     const { sent, at, short } = session ? claude.usage(cwdOf(thread), session) : { sent: 0 }
     if (!sent) return
-    return sent >= capacity ? 0 : Math.max(0, (at ?? Date.now()) + (short ? cacheWarm / 12 : cacheWarm) - Date.now())
+    return sent >= capacity ? 0 : Math.max(0, (at ?? clock.now()) + (short ? cacheWarm / 12 : cacheWarm) - clock.now())
   }
 
   // A session on a call takes every message of the call, so a call never changes sessions midway.
@@ -475,13 +476,14 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // still lists it, before the stop; when Claude can't say, the stop goes ahead without the wait.
   function stop(thread: string, running?: claude.Agent) {
     const run = runOf(thread)
-    clearTimeout(run.rest)
+    clock.clearTimeout(run.rest)
     run.rest = undefined
     const session = running?.sessionId ?? current(thread)
     if (!session) return Promise.resolve()
     if (run.ending) return run.ending
     const ending: Promise<void> = (running ? Promise.resolve(running) : claude.listing(session))
       .then(agent => {
+        if (closed) return
         void claude.stop(session)
         return agent && claude.exited(agent.pid)
       })
@@ -513,7 +515,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     delete threads[thread]
     save()
     become(run, { is: 'stopped' })
-    clearTimeout(run.rest)
+    clock.clearTimeout(run.rest)
     runs.delete(thread)
     rmSync(settingsOf(thread), { force: true })
     run.leaving!(session)
@@ -859,11 +861,11 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // still running restarts in place (a turn it was on runs again) if it started before the wait
   // did, or else gets another window; a start that ended is reported, a gone main thread starts
   // again, and a thread whose messages waited on a session that has since ended resumes.
-  function recover(thread: string, since = Date.now()) {
+  function recover(thread: string, since = clock.now()) {
     const run = runOf(thread)
     const phase = run.phase
     if (closed || phase.is === 'stopped' || phase.is === 'live' || phase.deadline) return
-    phase.deadline = setTimeout(async () => {
+    phase.deadline = clock.setTimeout(async () => {
       phase.deadline = undefined
       const running = await sessionOf(thread)
       if (run.phase !== phase) return
@@ -1063,7 +1065,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       if (channels.get(path) === serve) channels.delete(path)
       for (const run of runs.values()) {
         become(run, { is: 'stopped' })
-        clearTimeout(run.rest)
+        clock.clearTimeout(run.rest)
         hangUp(run)
       }
     },

@@ -185,12 +185,15 @@ beforeAll(async () => {
   ;({ received, call, send, ask } = await session(here.id))
 })
 
-// A session bound to thread, connected once the hub has registered it, with its hooks on hub.sock.
+// A session bound to thread, connected once the hub has registered it. Its hooks go to hub.sock,
+// which handles a line as it reads it, so a hook has taken effect once the hub closes its socket.
 async function session(thread: string) {
   const line = await connect({ stateDir: state, path: '/discord', channel: 'plugin:discord@hex', thread })
-  const hooks = netConnect(join(state, 'hub.sock'))
-  await new Promise(resolve => hooks.on('connect', resolve))
-  const send = (payload: object) => hooks.write(JSON.stringify(payload) + '\n')
+  const send = async (payload: object) => {
+    const hook = netConnect(join(state, 'hub.sock'))
+    hook.end(JSON.stringify(payload) + '\n')
+    await new Promise(resolve => hook.on('close', resolve))
+  }
   await line.call('list_channels', {})
   return { received: line.received, call: line.call, send, ask: line.ask }
 }
@@ -481,7 +484,7 @@ test('a vote on the bot\'s poll reaches its thread as the answer, a retracted vo
 
 test('a DM is its own session named DM, a message reaches it while it works, and replies go back to the DM', async () => {
   const mine = await session(dm.id)
-  mine.send({ type: 'state', thread: dm.id, busy: true })
+  await mine.send({ type: 'state', thread: dm.id, busy: true })
   const message = { ...say(dm, 30, 'quick one'), inGuild: () => false, channel: dm, mentions: { has: () => false }, react: async () => {} }
   handlers.get('messageCreate')!(message)
   const inbound = await until(() => mine.received.find(line => line.type === 'inbound' && line.content === 'quick one'))
@@ -529,10 +532,10 @@ test('a permission prompt asks in the thread with Allow and Deny, a tap answers 
 
   await ask(prompt('fghij'))
   const open = await until(() => here.posted.findLast((m: any) => m.content.startsWith('🔐') && m !== asked))
-  send({ type: 'state', thread: here.id, busy: false, background: true })
+  await send({ type: 'state', thread: here.id, busy: false, background: true })
   await Bun.sleep(100)
   expect(done.some(d => d.edit === open.id)).toBe(false)
-  send({ type: 'state', thread: here.id, busy: false })
+  await send({ type: 'state', thread: here.id, busy: false })
   const moot = await until(() => done.find(d => d.edit === open.id))
   expect(labels(moot.options.components)).toEqual(['No longer waiting'])
 })
@@ -542,13 +545,13 @@ test('a question with buttons goes in the ledger: a tap answers it there, and on
   const asked = here.posted.at(-1)
   expect(question(asked.id)).toMatchObject({ thread: here.id, text: 'Which anchors?\nThe left ones are cheaper.', options: ['Left', 'Right'] })
 
-  send({ type: 'answer', thread: here.id, message: asked.id, label: 'Right', via: 'app' })
+  await send({ type: 'answer', thread: here.id, message: asked.id, label: 'Right', via: 'app' })
   const answered = await inbound(received, line => line.meta.answered_in === 'in the app')
   expect(answered).toMatchObject({ content: 'Right', meta: { user: 'hex app', button: 'true', button_message_id: asked.id } })
   expect(labels(done.findLast(d => d.edit === asked.id).options.components)).toEqual(['✓ Answered in the app: Right'])
   expect(question(asked.id).answer).toMatchObject({ label: 'Right', via: 'app' })
 
-  send({ type: 'reopen', thread: here.id, message: asked.id, via: 'app' })
+  await send({ type: 'reopen', thread: here.id, message: asked.id, via: 'app' })
   expect((await inbound(received, line => line.meta.took_back === 'Right')).content).toBe('(took back: Right)')
   expect(labels(done.findLast(d => d.edit === asked.id).options.components)).toEqual(['Left', 'Right'])
 
@@ -562,7 +565,7 @@ test('a question with buttons goes in the ledger: a tap answers it there, and on
   await call('pin', { message_id: later.id })
   await call('edit_message', { message_id: later.id, text: 'Status: shipping' })
   expect(book().pins[here.id]).toMatchObject({ message: later.id, text: 'Status: shipping' })
-  send({ type: 'settle', thread: here.id, message: later.id, note: 'Settled: shipped' })
+  await send({ type: 'settle', thread: here.id, message: later.id, note: 'Settled: shipped' })
   await until(() => question(later.id).settled)
   expect(labels(done.findLast(d => d.edit === later.id).options.components)).toEqual(['Settled: shipped'])
 
@@ -612,10 +615,9 @@ test('new_thread opens with the request that asked for it and the replies since,
   say(desk, 32, 'old answer', { author: bot })
   const asked = say(desk, 33, 'spin off the anchors work')
   const reply = say(desk, 34, 'on it', { author: bot })
-  s.send({ type: 'state', thread: desk.id, busy: true })
-  await Bun.sleep(50)
+  await s.send({ type: 'state', thread: desk.id, busy: true })
   const result = await s.call('new_thread', { title: 'Anchors', prompt: 'work on the anchors', about: 'Spun off from desk' })
-  s.send({ type: 'state', thread: desk.id, busy: false })
+  await s.send({ type: 'state', thread: desk.id, busy: false })
   const thread = [...channels.values()].find(ch => ch.name === 'Anchors')!
   await session(thread.id)
   expect(result.text).toBe(`started thread "Anchors": https://discord.com/channels/${GUILD}/${thread.id}`)
@@ -653,11 +655,10 @@ test('slash commands set a thread\'s model and effort, and answer only the owner
   command('stop', undefined, owner, general.id)
   command('stop', undefined, { id: '8888', username: 'someone', partial: false })
   await until(() => replies.length === 4)
-  send({ type: 'state', thread: here.id, busy: true })
-  await Bun.sleep(50)
+  await send({ type: 'state', thread: here.id, busy: true })
   command('compact', undefined, owner, here.id)
   await until(() => replies.length === 5)
-  send({ type: 'state', thread: here.id, busy: false })
+  await send({ type: 'state', thread: here.id, busy: false })
   expect(replies.map(reply => reply.content)).toEqual([
     "Model: Opus, from this thread's next message.",
     "Effort: Max, from this thread's next message.",

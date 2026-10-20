@@ -1,3 +1,5 @@
+import { clock } from './clock.ts'
+
 export type Tool = { name: string; description: string; inputSchema: object; _meta?: object }
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = { title: string; instructions: string; tools: Tool[]; permission?: boolean }
@@ -97,7 +99,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       const open = () => line && hooks.open(thread, line)
       const nudge = () => {
         event({ method: 'notifications/tools/list_changed' })
-        setTimeout(() => line && starting.get(session!)?.is === 'nudged' && nudge(), NUDGE)
+        clock.setTimeout(() => line && starting.get(session!)?.is === 'nudged' && nudge(), NUDGE)
       }
       const step = session ? starting.get(session) : undefined
       if (!step) open()

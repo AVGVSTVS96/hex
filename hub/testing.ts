@@ -52,9 +52,11 @@ export function http({ stateDir, path, channel, thread, extra = {}, deaf = 0, at
   let mcp = ''
   let lists = 0
   const post = (body: object) => fetch(url, { method: 'POST', headers: { ...headers, ...(mcp && { 'mcp-session-id': mcp }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }) })
+  // A list counts once the hub has answered it, so whatever the list set off on its side is done.
   const rpc = async (method: string, params: object = {}) => {
+    const reply = await (await post({ id: ++ids, method, params })).json()
     if (method === 'tools/list') lists++
-    return (await post({ id: ++ids, method, params })).json() as Promise<any>
+    return reply as any
   }
   return {
     received,

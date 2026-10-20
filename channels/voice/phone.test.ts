@@ -105,6 +105,15 @@ async function live(base: string) {
   throw new Error('the phone call never went live')
 }
 
+// Waits on the call's own changes until it holds what the test is looking for.
+async function listen(base: string, id: string, version: number, done: (call: any) => boolean) {
+  for (;;) {
+    const call = await fetch(`${base}/calls/${id}?after=${version}`).then(r => r.json())
+    if (done(call)) return call
+    version = call.version
+  }
+}
+
 test("a phone call's words reach the app as they're heard, and how it ended lands in its record", async () => {
   await using call = await phoneCall()
   const phone = await dialIn(call.base)
@@ -125,13 +134,12 @@ test("a phone call's words reach the app as they're heard, and how it ended land
 
   call.say('you', 'green?', 1300)
   call.say('voice', 'One sec.', 2500)
-  await Bun.sleep(100)
-  const later = await fetch(`${call.base}/calls/${id}?after=${heard.version}`).then(r => r.json())
+  const later = await listen(call.base, id, heard.version, call => call.turns.some((turn: any) => turn.who === 'voice'))
   expect(later.turns).toEqual([
     { who: 'you', at: 1000, text: 'is the build green?' },
     { who: 'voice', at: 2500, text: 'One sec.' },
   ])
-  expect(call.audio).toEqual(['f39/fw=='])
+  expect(await until(() => call.audio.length && call.audio)).toEqual(['f39/fw=='])
 
   const ending = fetch(`${call.base}/calls/${id}?after=${later.version}`).then(r => r.json())
   phone.send(JSON.stringify({ event: 'stop' }))
