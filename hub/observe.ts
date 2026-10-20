@@ -50,6 +50,7 @@ export async function observe(state: string, session: string, reply: string, { a
     const fresh = rows.filter(row => !noted.includes(`[${row.key}]`))
     const written: string[] = []
     let wanted = false
+    let wrong = ''
     if (rows.length) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = names(state)
@@ -62,7 +63,6 @@ export async function observe(state: string, session: string, reply: string, { a
       const ours = new Set(fresh.map(row => row.key))
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
       // rewrite the profile while this one thinks: either way it thinks again.
-      let wrong = ''
       for (let tries = 0; tries < 3; tries++) {
         const before = profileOf(state)
         const answer = await ask(`<profile>\n${before || '(none yet)'}\n</profile>\n\n<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn}${wrong}`)
@@ -80,9 +80,11 @@ export async function observe(state: string, session: string, reply: string, { a
         wanted = false
         break
       }
-      if (wanted) console.error(`hex left the profile as it was after 3 tries, so the thread's next pass looks at this turn again:${wrong || ' another pass kept rewriting it'}`)
+      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it, so the thread\'s next pass looks at this turn again'}`)
     }
-    store.observed(taken.map(row => row.key), !wanted)
+    // A pass that lost to other passes leaves its turn for the next; one that kept misquoting would
+    // again, so its turn is done.
+    store.observed(taken.map(row => row.key), !wanted || !!wrong)
     return written
   } catch (error) {
     store.observed(taken.map(row => row.key), false)
