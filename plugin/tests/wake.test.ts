@@ -7,6 +7,8 @@ const BIN = join(import.meta.dir, '../../bin')
 const SESSION = 'addfa113-0000-4000-8000-000000000000'
 const LIMIT = 10_000
 const SLOTS = 6
+// A hex session running these would steer the hooks under test with its own HEX_* variables.
+const clean = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_')))
 
 let home: string
 
@@ -29,7 +31,7 @@ function hook(chunk: number) {
   const run = Bun.spawnSync([join(home, '.hex/bin/wake'), String(chunk), ...(chunk === SLOTS ? ['last'] : [])], {
     cwd: home,
     stdin: Buffer.from(JSON.stringify({ session_id: SESSION, source: 'startup' })),
-    env: { ...process.env, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home },
+    env: { ...clean, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home },
   })
   expect(run.exitCode).toBe(0)
   const out = run.stdout.toString()
@@ -81,7 +83,7 @@ test('`wake all` prints every part in order, as long as it runs, for the launche
     'Your memory, part 2 of 2\n' + notes(200, 200) + 'You are awake.\n',
   ]
   memo(wake)
-  const run = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...process.env, MEMORY_DIR: join(home, 'memory') } })
+  const run = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } })
   const out = run.stdout.toString()
   expect(out.length).toBeGreaterThan(LIMIT * 6)
   expect(out).toStartWith('This is your memory: `.hex/vendor/memo wake`, run in full for you')
@@ -93,7 +95,7 @@ test('the hooks say nothing in a session the launcher already handed its wake', 
   const run = Bun.spawnSync([join(home, '.hex/bin/wake'), '1'], {
     cwd: home,
     stdin: Buffer.from(JSON.stringify({ session_id: SESSION, source: 'startup' })),
-    env: { ...process.env, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, HEX_WAKE: join(home, 'state/wake/CLAUDE.md') },
+    env: { ...clean, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, HEX_WAKE: join(home, 'state/wake/CLAUDE.md') },
   })
   expect(run.stdout.toString()).toBe('')
 })
@@ -108,7 +110,7 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   const launch = (...args: string[]) => {
     Bun.spawnSync([join(home, '.hex/bin/session'), ...(args.length ? args : ['--bg', '--settings', JSON.stringify({ env: { HEX_THREAD: '-100:5' } })])], {
       cwd: home,
-      env: { ...process.env, PATH: `${join(home, 'fake')}:${process.env.PATH}`, HEX_WAKE: 'stale' },
+      env: { ...clean, PATH: `${join(home, 'fake')}:${process.env.PATH}`, HEX_WAKE: 'stale' },
     })
     return { args: readFileSync(join(home, 'args'), 'utf8').trim().split('\n'), env: readFileSync(join(home, 'env'), 'utf8') }
   }
