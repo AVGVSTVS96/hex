@@ -101,8 +101,8 @@ export class Ledger {
     this.store.ask({ app: this.app, thread, message, text, options, poll, multiple })
   }
 
-  answered(thread: string, message: MessageId, label: string, via: string) {
-    this.store.answered(this.app, thread, message, label, via)
+  answered(thread: string, message: MessageId, label: string, via: string, again = false) {
+    return this.store.answered(this.app, thread, message, label, via, again)
   }
 
   settled(thread: string, message: MessageId, note: string) {
@@ -110,7 +110,7 @@ export class Ledger {
   }
 
   reopened(thread: string, message: MessageId) {
-    this.store.reopened(this.app, thread, message)
+    return this.store.reopened(this.app, thread, message)
   }
 
   // A question's or a pinned post's latest words. A question stays open through an edit: it's

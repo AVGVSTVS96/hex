@@ -332,8 +332,15 @@ export class Store {
     return rows.map(toQuestion)
   }
 
-  answered(app: string, thread: string, message: MessageId, label: string, via: string) {
-    this.write(() => this.db.query('update questions set answer = ?, settled = null where app = ? and thread = ? and message = ?').run(JSON.stringify({ label, at: now(), via }), app, thread, message))
+  // The owner's answer, unless one stands already: the first tap wins, and a later one changes
+  // nothing. again: a poll vote, which replaces the one before it. Whether this answer stands now.
+  answered(app: string, thread: string, message: MessageId, label: string, via: string, again = false): boolean {
+    return this.write(
+      () =>
+        this.db
+          .query('update questions set answer = ?, settled = null where app = ? and thread = ? and message = ? and (? or answer is null)')
+          .run(JSON.stringify({ label, at: now(), via }), app, thread, message, again).changes === 1,
+    )
   }
 
   // The message asking it was edited: the question is what it says now.
@@ -345,8 +352,14 @@ export class Store {
     this.write(() => this.db.query('update questions set settled = ? where app = ? and thread = ? and message = ?').run(JSON.stringify({ note, at: now() }), app, thread, message))
   }
 
-  reopened(app: string, thread: string, message: MessageId) {
-    this.write(() => this.db.query('update questions set answer = null, settled = null where app = ? and thread = ? and message = ?').run(app, thread, message))
+  // Whether the question had an answer or a settle to take back.
+  reopened(app: string, thread: string, message: MessageId): boolean {
+    return this.write(
+      () =>
+        this.db
+          .query('update questions set answer = null, settled = null where app = ? and thread = ? and message = ? and (answer is not null or settled is not null)')
+          .run(app, thread, message).changes === 1,
+    )
   }
 
   // The message that asked it is gone: one message's question, or a whole thread's.

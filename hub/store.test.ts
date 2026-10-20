@@ -202,3 +202,33 @@ test('hex task makes a task from a message by its key, and the owner is the thre
   expect(await hex('task', 'new', ask.key, '--quote', 'fix login')).toMatchObject({ code: 1, err: expect.stringContaining('as written') })
   expect((await hex('message', ask.key)).out).toBe(`${ask.body}\n`)
 })
+
+test("a question keeps its first answer, a poll's vote replaces the one before, and taking one back says whether there was one", () => {
+  const store = new Store(dir)
+  const question = { app: 'telegram', thread: '-100:7', message: 41, text: 'Deploy now?', options: ['Deploy', 'Wait'] }
+  store.ask(question)
+  expect(store.answered('telegram', '-100:7', 41, 'Wait', 'telegram')).toBe(true)
+  expect(store.answered('telegram', '-100:7', 41, 'Deploy', 'app')).toBe(false)
+  expect(store.question('telegram', '-100:7', 41)!.answer).toMatchObject({ label: 'Wait', via: 'telegram' })
+  expect(store.answered('telegram', '-100:7', 41, 'Deploy', 'telegram', true)).toBe(true)
+  expect(store.question('telegram', '-100:7', 41)!.answer).toMatchObject({ label: 'Deploy' })
+  expect(store.reopened('telegram', '-100:7', 41)).toBe(true)
+  expect(store.reopened('telegram', '-100:7', 41)).toBe(false)
+  expect(store.answered('telegram', '-100:7', 99, 'Wait', 'telegram')).toBe(false)
+})
+
+test('an answer and the message that wakes its thread with it land together or not at all', () => {
+  const store = new Store(dir)
+  store.ask({ app: 'telegram', thread: '-100:7', message: 41, text: 'Deploy now?', options: ['Deploy', 'Wait'] })
+  const wake = { key: 'telegram:tap:1', to: '-100:7', from: 'telegram', body: 'Wait' }
+  expect(() =>
+    store.write(() => {
+      store.answered('telegram', '-100:7', 41, 'Wait', 'telegram')
+      throw new Error('killed before the wake was kept')
+    }),
+  ).toThrow('killed')
+  expect(store.question('telegram', '-100:7', 41)!.answer).toBeUndefined()
+  expect(store.write(() => store.answered('telegram', '-100:7', 41, 'Wait', 'telegram') && store.deliver(wake))).toBe(true)
+  expect(store.write(() => store.answered('telegram', '-100:7', 41, 'Deploy', 'telegram') && store.deliver({ ...wake, key: 'telegram:tap:2', body: 'Deploy' }))).toBe(false)
+  expect(store.message('telegram:tap:2')).toBeNull()
+})
