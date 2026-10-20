@@ -50,3 +50,4 @@ body=$(jq -r --arg typist "$typist" '
 [ -n "$body" ] || exit 0
 
 printf '# %s · session %s\n\n%s\n' "$started" "$session" "$body" > "$out.$$" && mv "$out.$$" "$out"
+if [ "${1:-}" = path ]; then echo "$out"; fi

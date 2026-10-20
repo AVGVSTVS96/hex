@@ -1,0 +1,37 @@
+#!/usr/bin/env bun
+import { existsSync } from 'fs'
+import { join, resolve } from 'path'
+import { open } from '../hub/store.ts'
+
+// Work a session hands to another agent carries a pointer to the conversation behind it, the
+// thread's log, so the agent reads the owner's words in full instead of the session's pick of them,
+// and a later message to it can say what's new by time instead of retelling it.
+
+const input = await Bun.stdin.text()
+const { tool_name, tool_input } = JSON.parse(input)
+const state = process.env.HEX_STORE || resolve(import.meta.dir, '../../state')
+
+const prompts: Record<string, string> = { Agent: 'prompt', t3_thread_launch: 'message', t3_thread_send: 'message', delegate_task: 'task', new_thread: 'prompt' }
+const tool = String(tool_name).replace(/^mcp__.*__/, '')
+const field = prompts[tool]
+const handed = tool === 'create_threads' ? tool_input.threads?.some((thread: { prompt?: string }) => thread.prompt) : typeof tool_input[field!] === 'string'
+if (!handed || tool_input.subagent_type === 'fork') process.exit(0)
+
+const log = Bun.spawnSync([join(import.meta.dir, 'log'), 'path'], { stdin: Buffer.from(input) }).stdout.toString().trim()
+if (!log) process.exit(0)
+
+const newest = [...(await Bun.file(log).text()).matchAll(/^## me · \w+ · (.+)$/gm)].at(-1)?.[1]
+const { HEX_THREAD } = process.env
+const tasks = HEX_THREAD && existsSync(join(state, 'hex.db')) ? open(state).tasks({ owner: HEX_THREAD, status: ['open'] }) : []
+const pointer = [
+  `\n\n---\nThis work comes from a conversation in hex. All of it, the owner's messages (headed "me") and hex's replies, is in ${log}, kept current as they say more${newest ? `; their newest message there is from ${newest}` : ''}. It holds the full picture and the intent behind this work in the owner's own words, which count over any retelling of them above.`,
+  tasks.length && `Its open tasks, each with the owner's words: ${tasks.map(task => task.id).join(', ')} (\`${resolve(import.meta.dir, 'hex')} task <id>\`).`,
+]
+  .filter(Boolean)
+  .join('\n')
+
+const updatedInput =
+  tool === 'create_threads'
+    ? { ...tool_input, threads: tool_input.threads.map((thread: { prompt?: string }) => (thread.prompt ? { ...thread, prompt: thread.prompt + pointer } : thread)) }
+    : { ...tool_input, [field!]: tool_input[field!] + pointer }
+console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput } }))
