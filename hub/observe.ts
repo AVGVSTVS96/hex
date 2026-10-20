@@ -62,8 +62,8 @@ export async function observe(state: string, session: string, reply: string, { a
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
       // rewrite the profile while this one thinks: either way it thinks again.
       let wrong = ''
-      let kept = false
-      for (let tries = 0; tries < 3 && !kept; tries++) {
+      let wanted = false
+      for (let tries = 0; tries < 3; tries++) {
         const before = profileOf(state)
         const answer = await ask(`<profile>\n${before || '(none yet)'}\n</profile>\n\n<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn}${wrong}`)
         const now = named(fresh)
@@ -72,14 +72,16 @@ export async function observe(state: string, session: string, reply: string, { a
           if (Buffer.byteLength(note) > BYTES || !keys.every(key => ours.has(key) && !now.includes(`[${key}]`)) || !holds(verdict(note, store))) continue
           if (Bun.spawnSync([memo, 'note', note], { stdout: 'ignore', stderr: 'ignore' }).exitCode === 0) written.push(note)
         }
+        wanted = answer.profile !== null
         if (answer.profile === null) break
         const bad = misquoted(answer.profile, store)
         wrong = bad.length ? retry(bad) : ''
         if (wrong || profileOf(state) !== before) continue
         keep(state, answer.profile)
-        kept = true
+        wanted = false
+        break
       }
-      if (wrong) console.error(`hex left the profile as it was after 3 tries:${wrong}`)
+      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it'}`)
     }
     store.observed(taken.map(row => row.key))
     return written

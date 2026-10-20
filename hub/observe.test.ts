@@ -132,7 +132,9 @@ test("a profile line may only quote the owner, by the key of the message it quot
 
 test('a session sees the whole profile once, then only the lines that changed', () => {
   expect(about('', '# Always\n- a')).toContain('# Always\n- a')
-  expect(about('# Always\n- a\n- b', '# Always\n- a\n- c')).toBe("My profile changed, as the memory agent keeps it current from my own words:\n- c\nNo longer in it:\n- b")
+  const kept = `- ${'a'.repeat(200)}`
+  expect(about(`# Always\n${kept}\n- b`, `# Always\n${kept}\n- c`)).toBe("My profile changed, as the memory agent keeps it current from my own words:\n- c\nNo longer in it:\n- b")
+  expect(about('# Always\n- b', '# Always\n- c')).toBe("Who I am and what's going on now, kept current by the memory agent from my own words:\n\n# Always\n- c")
 })
 
 test('a time reads the way notes write it, on the owner’s clock', () => {

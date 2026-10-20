@@ -85,11 +85,12 @@ export function about(before: string, now: string): string {
   const is = lines(now)
   const added = [...is].filter(each => !was.has(each))
   const gone = [...was].filter(each => !is.has(each))
-  return [
+  const changed = [
     "My profile changed, as the memory agent keeps it current from my own words:",
     ...added,
     ...(gone.length ? ['No longer in it:', ...gone] : []),
   ].join('\n')
+  return changed.length < now.length ? changed : about('', now)
 }
 
 // The UserPromptSubmit and SessionStart hook: a session gets the profile and the list whenever they
@@ -107,7 +108,8 @@ if (import.meta.main) {
         const now = profileOf(HEX_STORE).slice(0, PROFILE)
         const before = store.seen(mine)
         const told = store.show(mine, now) ? about(before, now) : ''
-        const { text, digest } = profile(HEX_STORE, HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD, ROOM - told.length)
+        const { text, digest } = profile(HEX_STORE, HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD, Math.max(0, ROOM - told.length))
+        if (told) store.unshow(session_id)
         const lists = store.show(session_id, digest) ? text || 'No open tasks or questions waiting on me now.' : ''
         const out = [told, lists].filter(Boolean).join('\n\n')
         if (out) console.log(out)
