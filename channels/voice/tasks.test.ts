@@ -446,6 +446,7 @@ test("a thread stays working while a session it started runs, that session one o
   await until(() => lab()?.state === 'done')
   running('32753275-lab', 'shell', shell.pid)
   await until(() => lab()?.state === 'working')
+  expect(lab()!.running).toBe(false)
 })
 
 test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a task of its own", async () => {

@@ -352,7 +352,7 @@ export class Tasks extends Changes {
       where: where(thread),
       place: thread.app === 'telegram' && !thread.id.includes(':') ? where(thread) : (this.links.title(thread.app, thread.id) ?? thread.name),
       state,
-      running: busy(session),
+      running: session?.status === 'busy',
       line: oneLine(line),
       ...(needs && { needs }),
       since,
