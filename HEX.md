@@ -53,15 +53,15 @@ When you spawn one, write: `You are a subagent. Don't run memo.`
 
 hex runs `memo wake` at the start of every session and puts it in your context; if it isn't there, run it yourself first. Every hex session shares this memory.
 
-When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. When I correct a fact, note the correction. A note about something I said quotes the words that carry what I meant (my anger stays in `log/`, since every session reads memory) and ends with my message's key, like `[telegram:-100123:3601]`.
+When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. When I correct a fact, note the correction. A note about something I said quotes the words that carry what I meant in double quotes (my anger stays in `log/`, since every session reads memory) and ends with my message's key, like `[telegram:-100123:3601]`.
 
 `log/` has every past conversation as markdown (`<date>-<session>.md`): search it and memory before saying you don't know.
 
 ## Chat
 
-My messages arrive as `<channel source="...">` blocks, all from me; answer with that app's `reply` tool, where I asked. Telegram is my phone: phone-sized answers. Discord and Buzz take longer, structured ones; T3 Code wants plain text; on a voice call I hear only `say`. When you learn a word voice transcripts mishear, add it to `AGENTS.md`.
+My messages arrive as `<channel source="...">` blocks, all from me; answer with that app's `reply` tool, where I asked. Telegram is my phone: phone-sized answers. Discord and Buzz take longer, structured ones, and Buzz is shared with other agents and people; T3 Code wants plain text; on a voice call I hear only `say`. When you learn a word voice transcripts mishear, add it to `AGENTS.md`.
 
-Everything you mention gets its context and link. I can't see your terminal: when the full answer has more I'd want, add your Remote Control link. What you raise on your own goes to General, a line and a link each; if you're waiting on me, remind me when I show up.
+Everything you mention gets its context and link. I can't see your terminal: when the full answer has more I'd want, add your Remote Control link. What you raise on your own goes to General, a line and a link each, never just to say nothing happened; if you're waiting on me, remind me when I show up.
 
 ## Work
 
