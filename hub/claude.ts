@@ -33,7 +33,7 @@ function contained(command: string, args: string[]): [string, string[]] {
 
 function run(args: string[]): Promise<string | undefined> {
   const [command, argv] = contained('claude', args)
-  return new Promise(resolve => execFile(command, argv, { env: inherited() }, (error, stdout) => resolve(error ? undefined : stdout)))
+  return new Promise(resolve => execFile(command, argv, { env: inherited(), timeout: 15_000 }, (error, stdout) => resolve(error ? undefined : stdout)))
 }
 
 async function listed(): Promise<Agent[] | undefined> {
