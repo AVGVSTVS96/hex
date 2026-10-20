@@ -53,6 +53,8 @@ test('an agent job runs as a hex session in the hex folder, with the folder it w
   expect(here.args).toContain(`--working-directory=${home}`)
   expect(here.args).not.toContain('--same-dir')
   expect(here.args.slice(here.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/session'), '-n', 'hex/deck', '-p', 'build it', '--model', 'opus'])
+  const priced = run(['deck', 'claude', '-p', 'cost $5 in $HOME'], session).args
+  expect(priced.at(-1)).toBe('cost $$5 in $$HOME')
   const project = mkdtempSync(join(home, 'deck-'))
   const away = run(['deck', 'claude', '-p', 'build it'], session, project)
   expect(away.args).toContain(`--working-directory=${home}`)
