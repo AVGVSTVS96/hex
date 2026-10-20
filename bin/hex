@@ -30,16 +30,17 @@ case "${1:-}" in
     [ -e "$home/.env" ] || (umask 077 && cp "$hex/defaults/env" "$home/.env")
     mkdir -p "$home/.claude" "$home/log" "$home/state/telegram" "$home/state/discord" "$home/state/buzz" "$home/state/t3"
     [ -e "$home/.claude/settings.json" ] || jq --arg memory "$home/memory" '.env.MEMORY_DIR = $memory' "$hex/defaults/settings.json" > "$home/.claude/settings.json"
-    # Claude Code runs a background session in bypassPermissions only with consent in the user's own settings.
-    user="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
-    if [ "$(jq -r '.permissions.defaultMode' "$home/.claude/settings.json")" = bypassPermissions ] && ! jq -e '.skipDangerousModePermissionPrompt' "$user" >/dev/null 2>&1; then
-      if [ -e "$user" ]; then
-        consent=$(jq '.skipDangerousModePermissionPrompt = true' "$user") || { echo "$user isn't valid JSON: add \"skipDangerousModePermissionPrompt\": true to it, then run init again" >&2; exit 1; }
-      else
+    # Claude Code runs a background session in bypassPermissions only with consent in the user's own settings, and never as root.
+    if [ "$(jq -r '.permissions.defaultMode' "$home/.claude/settings.json")" = bypassPermissions ]; then
+      [ "$(id -u)" = 0 ] && { echo "hex runs its sessions in bypassPermissions, which Claude Code refuses as root: run hex as a normal user" >&2; exit 1; }
+      user="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+      if [ ! -s "$user" ]; then
         mkdir -p "$(dirname "$user")"
-        consent='{ "skipDangerousModePermissionPrompt": true }'
+        echo '{ "skipDangerousModePermissionPrompt": true }' > "$user"
+      elif ! jq -e 'has("skipDangerousModePermissionPrompt")' "$user" >/dev/null 2>&1; then
+        consent=$(jq '.skipDangerousModePermissionPrompt = true' "$user") || { echo "$user isn't valid JSON: add \"skipDangerousModePermissionPrompt\": true to it, then run init again" >&2; exit 1; }
+        printf '%s\n' "$consent" > "$user"
       fi
-      printf '%s\n' "$consent" > "$user"
     fi
     "$hex/bin/optmem"
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
