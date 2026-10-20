@@ -221,6 +221,16 @@ test('a check’s verdict is held to the ledger: real open refs and buttons only
   expect(verdict.stuck[0]!.id).toBe('check-disk')
 })
 
+test("a closed thread's open question stays a check's ref, so answering the ask settles it", () => {
+  const closed = { app: 'telegram', thread: `${GROUP}:7`, message: 4 }
+  const verdict = vet(
+    { asks: [{ id: 'music', kind: 'pick', task: `telegram:${GROUP}:7`, at: '', question: 'Music?', options: [{ label: 'A', value: 'A' }], from: [closed] }], settle: [], fixed: [], flagged: [], stuck: [] },
+    { telegram: [asked(4, 'Music?', ['A', 'B'], { thread: closed.thread })] },
+    { threads: {}, calls: [] },
+  )
+  expect(verdict.asks[0]).toMatchObject({ refs: [closed], from: [closed], options: [{ label: 'A', value: 'A' }] })
+})
+
 test('an ask names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers', () => {
   const DM = '777'
   const THREAD = '1560277464146644992'

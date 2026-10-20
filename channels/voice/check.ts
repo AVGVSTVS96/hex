@@ -231,16 +231,17 @@ function claude(input: string, hexDir: string) {
   })
 }
 
-// What the pass returned, held to the records: its places are real threads and calls, the open
-// questions among them are the ask's refs, a value is a real button, and a question it settles isn't
-// also one it lists.
+// What the pass returned, held to the records: its places are real threads, questions and calls (a
+// closed thread's question still is), the open questions among them are the ask's refs, a value is a
+// real button, and a question it settles isn't also one it lists.
 export function vet(verdict: Verdict, ledgers: Record<string, Asked[]>, { threads, calls }: Known): Verdict {
   const find = (ref: Ref) => ledgers[ref.app]?.find(ask => ask.thread === ref.thread && String(ask.message) === String(ref.message))
   const open = (ref: Ref) => {
     const ask = find(ref)
     return !!ask && !ask.answer && !ask.settled
   }
-  const real = (source: Source) => (source.call ? calls.some(call => call.id === source.call) : !!source.thread && `${source.app}:${source.thread}` in threads)
+  const real = (source: Source) =>
+    source.call ? calls.some(call => call.id === source.call) : !!source.thread && (`${source.app}:${source.thread}` in threads || !!find(source as Ref))
   const asks: Curated[] = verdict.asks.map(({ from = [], ...ask }) => {
     const places: Source[] = from.filter(real).map(({ app, thread, message, call }) => (call ? { app: 'voice', call } : { app, thread, ...(message !== undefined && { message }) }))
     const refs: Ref[] = places.flatMap(({ app, thread, message }) => (thread && message !== undefined && open({ app, thread, message }) ? [{ app, thread, message }] : []))
