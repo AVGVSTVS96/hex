@@ -305,7 +305,7 @@ export class Store {
       }
       if (whole === held) return this.task(live)!
       if (!whole.text.includes(quote)) throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`)
-      if (held && whole.text !== said.body) throw new Error(`${live} already holds "${quote}" from ${message}`)
+      if (held && whole.text !== said.body) return this.task(live)!
       const others = whole.text === said.body ? rows.filter(row => row === held || (pieces.includes(row.text) && row.text.includes(quote))) : []
       for (const row of others.filter(row => row !== whole)) this.db.query('delete from words where rowid = ?').run(row.rowid)
       this.db.query('update words set text = ? where rowid = ?').run(quote, whole.rowid)
@@ -459,7 +459,7 @@ export class Store {
     const said = this.message(message)
     if (!said) throw new Error(`no message ${message}`)
     const pieces = quote === undefined && said.from === 't3' ? sent(said.body) : []
-    if (pieces.length && this.db.query('select 1 from words where task = ? and message = ? and text = ?').get(number(task), message, said.body)) return
+    if (quote === undefined && this.db.query('select 1 from words where task = ? and message = ?').get(number(task), message)) return
     const texts = quote !== undefined ? [quote] : said.from === 't3' ? pieces : [said.body]
     if (!texts.length) throw new Error(`${message} has no words to quote`)
     for (const text of texts) {
@@ -558,7 +558,7 @@ export function asked(text: string) {
 // request unwrapped, and anything sent with it, like an attachment, as a piece of its own.
 function sent(body: string) {
   return body
-    .split(/^<(?!user_request>)([a-z0-9_]+)>[\s\S]*?<\/\1>$/m)
+    .split(/^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/m)
     .filter((_, i) => i % 2 === 0)
     .map(piece => piece.trim())
     .map(piece => piece.match(/^<user_request>\n?([\s\S]*?)\n?<\/user_request>$/)?.[1] ?? piece)
