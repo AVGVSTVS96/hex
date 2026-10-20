@@ -35,8 +35,7 @@ async function lineCall({ hold = false, refuse = false } = {}) {
       },
     },
   })
-  const port = 20000 + Math.floor(Math.random() * 20000)
-  writeFileSync(join(state, '.env'), [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=${port}`].join('\n'))
+  writeFileSync(join(state, '.env'), [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`].join('\n'))
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
   const hex = join(home, 'hex', 'state')
   mkdirSync(join(hex, 'discord'), { recursive: true })
@@ -47,13 +46,14 @@ clients.set('discord', {
   hub: { register: () => {}, deliver: (thread, name, message) => step('delivered', { thread, name, message }) },
   place: async (name, where, about) => (step('placed', { name, where, about }), { thread: '9001', link: 'https://discord.com/channels/1/9001' }),
 })
-serve({
+const server = serve({
   deliver: (content, meta) => step('deliver', { content, meta }),
   keep: () => step('keep'),
   renew: () => step('renew'),
   renewal: async () => {},
   session: () => 'brain',
 }, ${JSON.stringify(hex)})
+step('listening', { port: server.port })
 const held = take('discord', 'They joined you in a Discord voice channel.', { play: audio => step('play', { audio }), end: () => step('end') })
 for await (const line of console) {
   const [verb, audio] = line.split(' ')
@@ -63,17 +63,24 @@ for await (const line of console) {
 }`
   const plugin = Bun.spawn(['bun', '-e', engine], { env: { ...env, HOME: home }, stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
   const steps: any[] = []
+  let listening!: (port: number) => void
+  const port = new Promise<number>(resolve => (listening = resolve))
   void (async () => {
     let buffer = ''
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk)
       const lines = buffer.split('\n')
       buffer = lines.pop()!
-      steps.push(...lines.map(line => JSON.parse(line)))
+      for (const step of lines.map(line => JSON.parse(line))) {
+        if (step.step === 'listening') listening(step.port)
+        else steps.push(step)
+      }
     }
   })()
+  const exited = plugin.exited.then(code => Promise.reject(new Error(`the engine exited (${code}) before it listened`)))
+  const base = `http://127.0.0.1:${await Promise.race([port, exited])}`
   return {
-    base: `http://127.0.0.1:${port}`,
+    base,
     heard,
     started,
     steps,

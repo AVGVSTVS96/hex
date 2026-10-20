@@ -33,10 +33,9 @@ async function phoneCall() {
       },
     },
   })
-  const port = 20000 + Math.floor(Math.random() * 20000)
   writeFileSync(
     join(state, '.env'),
-    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=${port}`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`].join('\n'),
+    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`].join('\n'),
   )
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
   const hex = join(home, 'hex', 'state')
@@ -45,29 +44,32 @@ async function phoneCall() {
   const engine = `import { serve } from ${JSON.stringify(join(import.meta.dir, 'server.ts'))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 const lines = console[Symbol.asyncIterator]()
-serve({
+const server = serve({
   deliver: (content, meta) => step('deliver', { content, meta }),
   keep: () => step('keep'),
   renew: () => step('renew'),
   renewal: async () => (step('renewal'), await lines.next()),
   session: () => 'brain',
-}, ${JSON.stringify(hex)})`
+}, ${JSON.stringify(hex)})
+step('listening', { port: server.port })`
   const plugin = Bun.spawn(['bun', '-e', engine], { env: { ...env, HOME: home }, stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
   const steps: any[] = []
+  let listening!: (port: number) => void
+  const port = new Promise<number>(resolve => (listening = resolve))
   void (async () => {
     let buffer = ''
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk)
       const lines = buffer.split('\n')
       buffer = lines.pop()!
-      steps.push(...lines.map(line => JSON.parse(line)))
+      for (const step of lines.map(line => JSON.parse(line))) {
+        if (step.step === 'listening') listening(step.port)
+        else steps.push(step)
+      }
     }
   })()
-  const base = `http://127.0.0.1:${port}`
-  for (let i = 0; i < 100; i++) {
-    if (await fetch(`${base}/calls`).then(r => r.ok, () => false)) break
-    await Bun.sleep(50)
-  }
+  const exited = plugin.exited.then(code => Promise.reject(new Error(`the engine exited (${code}) before it listened`)))
+  const base = `http://127.0.0.1:${await Promise.race([port, exited])}`
   return {
     base,
     audio,

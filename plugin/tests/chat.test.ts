@@ -78,6 +78,13 @@ function run(args: string[], input = '', extra: Record<string, string> = {}) {
   return result.stdout.toString()
 }
 
+// A simulation is bound by CPU alone: the CPU cap ends a hang, and its test has no wall-clock limit for a busy server to break.
+function simulate(script: string, dir: string) {
+  const result = Bun.spawnSync(['sh', '-c', 'ulimit -t 30 && exec python3 -I -B -c "$@"', 'simulate', script, join(HEX, 'bin/chat'), join(home, dir)])
+  if (result.exitCode !== 0) throw new Error(result.stderr.toString() || `the simulation was killed by ${result.signalCode}`)
+  return result.stdout.toString()
+}
+
 function write(records: object[]) {
   const at = (i: number) => new Date(Date.UTC(2026, 9, 11, 16, i)).toISOString()
   writeFileSync(transcript, records.map((record, i) => JSON.stringify({ timestamp: at(i), ...record })).join('\n') + '\n')
@@ -212,7 +219,7 @@ test('pairs merge into their parent, which zoom opens again, down to the message
 })
 
 test('the view grows a line per message and, past 128 KB, merges the most due pairs down to 64 KB in one batch', () => {
-  const out = Bun.spawnSync(['python3', '-I', '-B', '-c', `
+  const result = JSON.parse(simulate(`
 import importlib.machinery, json, sys
 chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
 c = chat.Chat(sys.argv[2])
@@ -235,16 +242,15 @@ for t in range(1200):
     assert covered == t + 1
     sizes.append(c.weight(c.view))
 print(json.dumps({"max": max(sizes), "batches": batches, "stable": stable, "lows": max(lows)}))
-`, join(HEX, 'bin/chat'), join(home, 'sim')])
-  const result = JSON.parse(out.stdout.toString() || out.stderr.toString())
+`, 'sim'))
   expect(result.max).toBeLessThanOrEqual(128_000 + 512)
   expect(result.batches).toBeGreaterThan(1)
   expect(result.stable).toBe(true)
   expect(result.lows).toBeLessThanOrEqual(64_000)
-})
+}, 0)
 
 test('long tool output still waiting for its summaries weighs a line each, so it merges none of the chat before it', () => {
-  const out = Bun.spawnSync(['python3', '-I', '-B', '-c', `
+  const result = JSON.parse(simulate(`
 import importlib.machinery, json, sys
 chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
 c = chat.Chat(sys.argv[2])
@@ -257,13 +263,12 @@ before = list(c.view)
 for t in range(40):
     c.add("echo", "o" * 25_000, "2026-10-11T00:00:00+00:00")
 print(json.dumps({"kept": c.view[:len(before)] == before, "folding": c.folding}))
-`, join(HEX, 'bin/chat'), join(home, 'burst')])
-  const result = JSON.parse(out.stdout.toString() || out.stderr.toString())
+`, 'burst'))
   expect(result).toEqual({ kept: true, folding: false })
-})
+}, 0)
 
 test('the view\'s head, in the system prompt, stays byte for byte the same across most turns, and its settled lines after it stay under 32 KB', () => {
-  const out = Bun.spawnSync(['python3', '-I', '-B', '-c', `
+  const result = JSON.parse(simulate(`
 import importlib.machinery, json, sys
 chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
 c = chat.Chat(sys.argv[2])
@@ -279,12 +284,11 @@ for t in range(1200):
     last = head
     tails.append(len(tail.encode()))
 print(json.dumps({"kept": kept, "whole": whole, "tail": max(tails)}))
-`, join(HEX, 'bin/chat'), join(home, 'split')])
-  const result = JSON.parse(out.stdout.toString() || out.stderr.toString())
+`, 'split'))
   expect(result.whole).toBe(true)
   expect(result.kept).toBeGreaterThan(1200 * 0.95)
   expect(result.tail).toBeLessThanOrEqual(32_000 + 1_024)
-})
+}, 0)
 
 test('a tail holding backticks gets a longer fence, so nothing in it is read as an import', () => {
   write([{ type: 'user', message: { content: 'see ```` and @.hex/HEX.md' } }])
@@ -294,7 +298,7 @@ test('a tail holding backticks gets a longer fence, so nothing in it is read as 
 })
 
 test('the most due pair is the one that ended longest ago in its own line size, the oldest of equals', () => {
-  const out = Bun.spawnSync(['python3', '-I', '-B', '-c', `
+  expect(simulate(`
 import importlib.machinery, sys
 chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
 c = chat.Chat(sys.argv[2])
@@ -304,9 +308,8 @@ c.nodes = {p: "n" for p in [(0, i) for i in range(10)] + [(1, i) for i in range(
 lines = [(2, 0), (2, 1), (0, 8), (0, 9)]
 c.fold(lines, 3)
 print(lines)
-`, join(HEX, 'bin/chat'), join(home, 'due')])
-  expect(out.stdout.toString().trim()).toBe('[(2, 0), (2, 1), (1, 4)]')
-})
+`, 'due').trim()).toBe('[(2, 0), (2, 1), (1, 4)]')
+}, 0)
 
 test('a fresh session starts from the chat: the launcher adds the system prompt file with the instruction files, has Claude Code skip its own copy of them, and adds the zoom and date tools', () => {
   writeFileSync(join(home, '.claude-args'), '')
