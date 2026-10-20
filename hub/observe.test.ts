@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, observe, type Answer } from './observe.ts'
+import { alone, clock, observe, type Answer } from './observe.ts'
 import { about, profile, profileOf } from './profile.ts'
 import { open } from './store.ts'
 
@@ -162,4 +162,16 @@ test('a turn that took no message still gets a pass from its reply, and a retry 
   expect(await observe(dir, 's', 'Shipped the deck redo.', { ask, memo })).toEqual(['Oct 20: deck redo shipped'])
   expect(asked).toBe(3)
   expect(noted()).toEqual(['Oct 20: deck redo shipped'])
+})
+
+test('passes run one at a time, and a lock left by a dead pass is taken over', async () => {
+  const lock = join(dir, 'observe.lock')
+  const order: string[] = []
+  const pass = (name: string) => alone(lock, async () => (order.push(`${name} in`), await Bun.sleep(30), order.push(`${name} out`)))
+  await Promise.all([pass('a'), pass('b')])
+  expect(order).toEqual(['a in', 'a out', 'b in', 'b out'])
+  mkdirSync(lock)
+  utimesSync(lock, new Date(0), new Date(0))
+  expect(await alone(lock, async () => 'ran')).toBe('ran')
+  expect(existsSync(lock)).toBe(false)
 })
