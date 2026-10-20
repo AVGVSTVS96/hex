@@ -21,11 +21,11 @@ const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
-const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the owner's messages from that turn that no memory names yet, with the reply the session gave. You keep two things.
+const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the owner's messages from that turn, with the reply the session gave; a message a memory already names is marked so. You keep two things.
 
-Memories: one line each, appended forever. Write the ones worth keeping from those messages: what the owner decided, asked for, corrected, taught, or said about their life, their work or how they want things done, and anything of lasting effect that happened. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words, the words it rests on quoted in double quotes exactly as the owner wrote them ("…" skips a part), and the message's key in brackets at the end. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
+Memories: one line each, appended forever. Write the ones worth keeping from the messages no memory names yet: what the owner decided, asked for, corrected, taught, or said about their life, their work or how they want things done, and anything of lasting effect that happened. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words, the words it rests on quoted in double quotes exactly as the owner wrote them ("…" skips a part), and the message's key in brackets at the end. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
-The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it under ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
+The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it near 5,000 characters, never over ${PROFILE}. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
 
 In both, quote the words that carry what the owner meant; anger and curses stay in the log. If you need what a message answers, the whole conversation is in the log file named with the turn.`
 
@@ -49,20 +49,20 @@ export async function observe(state: string, session: string, reply: string, { a
     const noted = named(rows)
     const fresh = rows.filter(row => !noted.includes(`[${row.key}]`))
     const written: string[] = []
-    if (fresh.length) {
+    let wanted = false
+    let wrong = ''
+    if (rows.length) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = names(state)
       const turn = [
-        `<turn thread="${threads[fresh[0]!.to] ?? fresh[0]!.to}" log="${logOf(session) ?? 'none'}">`,
-        ...fresh.map(row => said(row, zone)),
+        `<turn thread="${threads[rows[0]!.to] ?? rows[0]!.to}" log="${logOf(session) ?? 'none'}">`,
+        ...rows.map(row => `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`),
         `The session's reply:\n${reply.trim() || '(none)'}`,
         '</turn>',
       ].join('\n\n')
       const ours = new Set(fresh.map(row => row.key))
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
       // rewrite the profile while this one thinks: either way it thinks again.
-      let wrong = ''
-      let wanted = false
       for (let tries = 0; tries < 3; tries++) {
         const before = profileOf(state)
         const answer = await ask(`<profile>\n${before || '(none yet)'}\n</profile>\n\n<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn}${wrong}`)
@@ -76,14 +76,15 @@ export async function observe(state: string, session: string, reply: string, { a
         if (answer.profile === null) break
         const bad = misquoted(answer.profile, store)
         wrong = bad.length ? retry(bad) : ''
-        if (wrong || profileOf(state) !== before) continue
-        keep(state, answer.profile)
+        if (wrong || !swap(state, store, before, answer.profile)) continue
         wanted = false
         break
       }
-      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it'}`)
+      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it, so the thread\'s next pass looks at this turn again'}`)
     }
-    store.observed(taken.map(row => row.key))
+    // A pass that lost to other passes leaves its turn for the next; one that kept misquoting would
+    // again, so its turn is done.
+    store.observed(taken.map(row => row.key), !wanted || !!wrong)
     return written
   } catch (error) {
     store.observed(taken.map(row => row.key), false)
@@ -91,25 +92,6 @@ export async function observe(state: string, session: string, reply: string, { a
     return []
   }
 }
-
-// The first profile, built once from the whole wake and the owner's messages of the last two
-// weeks, by the strongest model, since every later pass starts from it.
-export async function seed(state: string, { ask = (input: string) => claude(input, 'opus'), wake = '' } = {}) {
-  const store = open(state)
-  const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
-  const since = new Date(Date.now() - 14 * 86_400_000).toISOString()
-  const said = owners(store.since(since)).map(row => `[${row.key}] ${clock(row.meta?.ts ?? row.at, zone)}: ${row.body.replace(/\s+/g, ' ').slice(0, 600)}`)
-  const input = `<profile>\n(none yet: build the first one from all of the below)\n</profile>\n\n<memories>\n${wake}\n</memories>\n\n<the owner's messages of the last two weeks>\n${said.join('\n').slice(-120_000)}\n</the owner's messages of the last two weeks>`
-  let wrong = ''
-  for (let tries = 0; tries < 3; tries++) {
-    const { profile } = await ask(input + wrong)
-    const bad = misquoted(profile, store)
-    if (!bad.length) return keep(state, profile!)
-    wrong = retry(bad)
-  }
-  throw new Error(`the first profile wasn't kept:${wrong}`)
-}
-
 
 // What keeps a profile from being kept: too long, empty, or a line that quotes someone without
 // naming the owner's message it quotes, or misquotes it.
@@ -128,12 +110,16 @@ function misquoted(profile: string | null, store: Store): string[] {
 const retry = (bad: string[]) =>
   `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}`
 
-// Written whole and swapped in, so a session never reads half a profile.
-function keep(state: string, profile: string) {
-  const next = `${profilePath(state)}.${process.pid}.new`
-  writeFileSync(next, `${profile.trim()}\n`)
-  renameSync(next, profilePath(state))
-  return profile
+// Puts the profile in place only if it's still the one this pass read, inside the store's write
+// lock so two passes never both pass that check, and whole, so a session never reads half a profile.
+function swap(state: string, store: Store, before: string, profile: string) {
+  return store.write(() => {
+    if (profileOf(state) !== before.trim()) return false
+    const next = `${profilePath(state)}.${process.pid}.new`
+    writeFileSync(next, `${profile.trim()}\n`)
+    renameSync(next, profilePath(state))
+    return true
+  })
 }
 
 // The newest notes, enough to show what memory already says and how its lines read.
@@ -168,10 +154,10 @@ function logOf(session: string) {
 
 // One read-only call: the model may open the turn's log, and its only effect is what it returns.
 // Its three tries end inside the pass's lease (4 calls long), so a hung call fails rather than racing the next pass.
-async function claude(input: string, model = MODEL): Promise<Answer> {
+async function claude(input: string): Promise<Answer> {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
   const run = Bun.spawn(
-    ['claude', '-p', '--safe-mode', '--model', model, '--effort', 'high', '--tools', 'Read,Grep', '--system-prompt', SYSTEM, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--no-session-persistence'],
+    ['claude', '-p', '--safe-mode', '--model', MODEL, '--effort', 'high', '--tools', 'Read,Grep', '--system-prompt', SYSTEM, '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--no-session-persistence'],
     { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
   )
   const [out, err, code] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited])
@@ -187,10 +173,7 @@ async function claude(input: string, model = MODEL): Promise<Answer> {
 // state/observe.log.
 if (import.meta.main) {
   const { HEX_STORE, MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
-  if (process.argv[2] === 'seed') {
-    const wake = Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake'), 'all'], { stdout: 'pipe' }).stdout.toString()
-    console.log(await seed(HEX_STORE ?? join(hexDir, 'state'), { wake }))
-  } else if (HEX_PASS) {
+  if (HEX_PASS) {
     const { session, reply, by, thread } = JSON.parse(await Bun.stdin.text()) as Pass
     await observe(HEX_STORE!, session, reply, { by, thread })
   } else if (HEX_STORE && MEMORY_DIR && existsSync(MEMO)) {

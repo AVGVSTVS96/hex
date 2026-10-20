@@ -401,19 +401,20 @@ export class Store {
     this.write(() => this.db.query('delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
   }
 
-  // What a session was last shown, or '' when nothing yet.
-  seen(session: string): string {
-    return (this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null)?.digest ?? ''
+  // What a session was last shown ('' when nothing yet) when it differs from digest, noting digest
+  // as shown, or null when it's the same: one step, so two hooks never diff against a stale record.
+  swap(session: string, digest: string): string | null {
+    return this.write(() => {
+      const was = (this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null)?.digest ?? ''
+      if (was === digest) return null
+      this.db.query('insert into shown (session, digest) values (?, ?) on conflict (session) do update set digest = excluded.digest').run(session, digest)
+      return was
+    })
   }
 
   // Whether what a session was last shown differs from digest, noting digest as shown.
   show(session: string, digest: string): boolean {
-    return this.write(() => {
-      const shown = this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null
-      if ((shown?.digest ?? '') === digest) return false
-      this.db.query('insert into shown (session, digest) values (?, ?) on conflict (session) do update set digest = excluded.digest').run(session, digest)
-      return true
-    })
+    return this.swap(session, digest) !== null
   }
 
   // The session's context lost what it was shown (a compaction, a clear), so its next show is in full.
