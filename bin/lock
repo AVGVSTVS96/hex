@@ -1,0 +1,69 @@
+#!/bin/sh
+# Rule and settings files are locked below the agent (chattr +i), so no session can change them by
+# hand, through a tool or a shell. A change gets in through here, naming the owner's message it comes
+# from: bin/budget weighs it, the root helper (bin/hex-lock) checks hex.db that the owner sent that
+# message, and the change is committed and shown before and after.
+set -eu
+hex=$(cd "$(dirname "$0")/.." && pwd)
+home=$(dirname "$hex")
+helper=/usr/local/libexec/hex-lock
+. "$hex/bin/settings"
+
+usage() {
+  cat >&2 <<'USAGE'
+usage:
+  lock <file> --because <message key> < new-version   change a locked file
+  lock list                                          the locked files
+  lock setup                                         install the lock (asks for sudo once) and lock the files
+USAGE
+  exit 1
+}
+
+# AGENTS.md and SOUL.md, hex's settings, and what
+# HEX_LOCKED in those settings adds (paths from this folder or ~).
+files() {
+  for file in AGENTS.md SOUL.md .claude/settings.json .claude/settings.local.json ${HEX_LOCKED:-}; do
+    case $file in "~/"*) file=$HOME/${file#"~/"} ;; /*) ;; *) file=$home/$file ;; esac
+    [ -f "$file" ] && realpath -- "$file"
+  done
+}
+
+locked() { lsattr -d -- "$1" 2>/dev/null | cut -d' ' -f1 | grep -q i; }
+
+case ${1:-} in
+  setup)
+    sudo install -D -o root -g root -m 755 "$hex/bin/hex-lock" "$helper"
+    [ -f "$home/.claude/settings.local.json" ] || echo '{}' > "$home/.claude/settings.local.json"
+    { printf 'state %s\n' "$home/state"; files | sed 's/^/file /'; } | sudo install -o root -g root -m 644 /dev/stdin /etc/hex-lock
+    rule=$(mktemp)
+    printf '%s ALL=(root) NOPASSWD: %s\n' "$(id -un)" "$helper" > "$rule"
+    sudo visudo -cqf "$rule"
+    sudo install -o root -g root -m 440 "$rule" /etc/sudoers.d/hex-lock
+    rm -f "$rule"
+    files | while read -r file; do sudo -n "$helper" add "$file" && echo "locked $file"; done
+    ;;
+  list) files | while read -r file; do locked "$file" && echo "$file"; done ;;
+  '' | -*) usage ;;
+  *)
+    [ "${2:-}" = --because ] && [ -n "${3:-}" ] || usage
+    file=$(realpath -e -- "$1")
+    key=$3
+    locked "$file" || { echo "$file isn't locked; edit it as usual" >&2; exit 1; }
+    next=$(mktemp)
+    trap 'rm -f "$next"' EXIT
+    cat > "$next"
+    weighed=$(jq -n --arg file "$file" --rawfile content "$next" '{tool_name: "Write", tool_input: {file_path: $file, content: $content}}' | "$hex/bin/budget")
+    [ -z "$weighed" ] || { printf '%s' "$weighed" | jq -r '.hookSpecificOutput.permissionDecisionReason' >&2; exit 1; }
+    before=$(mktemp)
+    trap 'rm -f "$next" "$before"' EXIT
+    cp "$file" "$before"
+    sudo -n "$helper" write "$file" "$key" < "$next"
+    diff -u --label "$file (before)" --label "$file (after)" "$before" "$file" || :
+    dir=$(dirname "$file")
+    if git -C "$dir" ls-files --error-unmatch -- "$file" >/dev/null 2>&1; then
+      git -C "$dir" commit -q -m "$(basename "$file"): changed for the owner's message $key" -- "$file" ||
+        { echo "$file changed, but git couldn't commit it: commit it by hand" >&2; exit 1; }
+      echo "committed $(git -C "$dir" rev-parse --short HEAD)"
+    fi
+    ;;
+esac

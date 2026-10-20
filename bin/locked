@@ -1,0 +1,11 @@
+#!/bin/sh
+# A locked file (bin/lock) refuses every write, so an edit to one says where its changes go instead.
+file=$(jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')
+[ -n "$file" ] && [ -e "$file" ] || exit 0
+lsattr -d -- "$file" 2>/dev/null | cut -d' ' -f1 | grep -q i || exit 0
+hex=$(cd "$(dirname "$0")/.." && pwd)
+jq -n --arg file "$file" --arg lock "$hex/bin/lock" '{hookSpecificOutput: {
+  hookEventName: "PreToolUse",
+  permissionDecision: "deny",
+  permissionDecisionReason: "\($file) is locked, so only a change I asked for gets in. Write its whole new version to a scratch file and run `\($lock) \($file) --because <the key of my message it comes from> < <that file>`."
+}}'

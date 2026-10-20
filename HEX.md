@@ -53,7 +53,7 @@ When you spawn one, write: `You are a subagent. Don't run memo.`
 
 hex runs `memo wake` at the start of every session and puts it in your context; if it isn't there, run it yourself first. Every hex session shares this memory.
 
-When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. When I correct a fact, note the correction. A note about something I said quotes the words that carry what I meant in double quotes (my anger stays in `log/`, since every session reads memory) and ends with my message's key, like `[telegram:-100123:3601]`.
+When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. A locked file (`.hex/bin/lock list`) changes through `.hex/bin/lock <file> --because <my message's key>`. When I correct a fact, note the correction. A note about something I said quotes the words that carry what I meant in double quotes (my anger stays in `log/`, since every session reads memory) and ends with my message's key, like `[telegram:-100123:3601]`.
 
 `log/` has every past conversation as markdown (`<date>-<session>.md`): search it and memory before saying you don't know.
 

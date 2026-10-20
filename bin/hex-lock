@@ -1,0 +1,56 @@
+#!/bin/sh
+# The one way a locked file changes. `.hex/bin/lock setup` installs this root-owned, with a sudo
+# rule that runs it without a password, so a session can't change a locked file by hand but can
+# through here: it locks only the files setup listed in /etc/hex-lock, and writes only a file that is
+# already locked and belongs to whoever ran it, for a message hex.db holds from the owner, sent from an
+# account their channel allows.
+set -eu
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+fail() { echo "hex-lock: $*" >&2; exit 1; }
+uid=${SUDO_UID:-}
+gid=${SUDO_GID:-}
+[ -n "$uid" ] && [ -n "$gid" ] || fail 'run it through sudo'
+state=$(sed -n 's/^state //p' /etc/hex-lock)
+
+command=${1:-}
+path=$(realpath -e -- "${2:?usage: hex-lock add|write <file> [message key]}")
+name=$(basename -- "$path")
+# Working from inside the folder pins it, so swapping a folder on the path for a link can't move a write.
+cd -P -- "$(dirname -- "$path")"
+[ "$(stat -c %u .)" = "$uid" ] || fail "$path isn't in a folder of yours"
+[ -f "./$name" ] && [ ! -L "./$name" ] || fail "$path isn't a file"
+[ "$(stat -c %u -- "./$name")" = "$uid" ] || fail "$path isn't yours"
+locked() { lsattr -d -- "./$name" | cut -d' ' -f1 | grep -q i; }
+
+case $command in
+  add)
+    grep -Fxq -- "file $path" /etc/hex-lock || fail "$path isn't one of the files setup locks"
+    chattr +i -- "./$name"
+    ;;
+  write)
+    key=${3:-}
+    case $key in *:?*) ;; *) key= ;; esac
+    case $key in '' | *[!A-Za-z0-9_.:-]*) fail 'name the message the change comes from by its key' ;; esac
+    locked || fail "$path isn't locked"
+    said=$(setpriv --reuid="$uid" --regid="$gid" --clear-groups sqlite3 -safe -readonly -json "$state/hex.db" "select \"from\" as app, json_extract(meta, '\$.user_id') as id, json_extract(meta, '\$.user') as user from messages where key = '$key'")
+    app=$(printf '%s' "${said:-[]}" | jq -r '.[0].app // empty')
+    id=$(printf '%s' "${said:-[]}" | jq -r '.[0].id // empty')
+    user=$(printf '%s' "${said:-[]}" | jq -r '.[0].user // empty')
+    case $app in
+      telegram | discord | buzz) [ -n "$id" ] && jq -e --arg id "$id" '.allowFrom | index($id)' "$state/$app/access.json" >/dev/null ;;
+      t3 | voice) [ -z "$user" ] ;;
+      *) false ;;
+    esac || fail "hex.db has no message $key from the owner"
+    next=$(mktemp ./.hex-lock.XXXXXX)
+    trap 'rm -f -- "$next"; chattr +i -- "./$name"' EXIT
+    head -c 1048577 > "$next"
+    [ -s "$next" ] || fail "the new version of $path is empty; pipe it in on stdin"
+    [ "$(stat -c %s -- "$next")" -le 1048576 ] || fail "the new version of $path is over 1 MB"
+    chown --reference="./$name" -- "$next"
+    chmod --reference="./$name" -- "$next"
+    chattr -i -- "./$name"
+    mv -f -- "$next" "./$name"
+    chattr +i -- "./$name"
+    ;;
+  *) fail 'usage: hex-lock add|write <file> [message key]' ;;
+esac
