@@ -14,14 +14,13 @@ beforeEach(() => {
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-test("a session's end removes the files its hooks kept for it, and keeps what a resume still needs and other sessions' files", () => {
+test("a session's end removes the files its hooks kept for it and keeps other sessions' files", () => {
   const names = (id: string) => [`hex-rules-${id}.json`, `hex-wake-${id}.txt`, `hex-instructions-${id}.md`, `hex-log-${id}`]
-  const noted = `hex-noted-${SESSION}`
-  for (const name of [...names(SESSION), ...names(OTHER), noted]) writeFileSync(join(dir, name), '')
+  for (const name of [...names(SESSION), ...names(OTHER), `hex-noted-${SESSION}`]) writeFileSync(join(dir, name), '')
   const run = Bun.spawnSync([join(import.meta.dir, '../../bin/ended')], {
     stdin: Buffer.from(JSON.stringify({ session_id: SESSION, hook_event_name: 'SessionEnd' })),
     env: { ...process.env, TMPDIR: dir, XDG_RUNTIME_DIR: dir },
   })
   expect(run.exitCode).toBe(0)
-  expect(readdirSync(dir).sort()).toEqual([...names(OTHER), noted].sort())
+  expect(readdirSync(dir).sort()).toEqual([...names(OTHER)].sort())
 })

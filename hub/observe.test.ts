@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, observe, type Answer } from './observe.ts'
+import { clock, drain, observe, type Answer } from './observe.ts'
 import { about, profile, profileOf } from './profile.ts'
 import { open } from './store.ts'
 
@@ -28,7 +28,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("the owner's messages reach the pass, which writes notes for those no note names yet", async () => {
+test("the turn's messages reach the pass, which writes notes for the owner's no note names yet", async () => {
   const seen: string[] = []
   const ask = async (input: string) => {
     seen.push(input)
@@ -38,21 +38,23 @@ test("the owner's messages reach the pass, which writes notes for those no note 
   expect(seen[0]).toContain('[telegram:-100:50]')
   expect(seen[0]).toContain("The session's reply:\nDone, Friday deploys only.")
   expect(seen[0]).toContain('get the login page fixed first\n(a note already names this message: write no note for it)')
-  expect(seen[0]).not.toContain('run the backup')
+  expect(seen[0]).toContain('From schedule, not the owner,')
+  expect(seen[0]).toContain('[nightly] run the backup')
   expect(noted()).toEqual(['Oct 19 11:31pm: ships "on fridays only, my team reviews thursdays" [telegram:-100:50]'])
   expect(await observe(dir, 's', '', { ask, memo })).toEqual([])
   expect(seen).toHaveLength(1)
 })
 
-test("a note that misquotes the owner, names no message, or doesn't fit isn't written, and one is written without the date memo adds", async () => {
+test("a note that misquotes the owner, quotes without naming the message, or doesn't fit isn't written, one about what happened needs neither, and one is written without the date memo adds", async () => {
   const ask = async () => ({ profile: null, notes: [
     'Oct 19: ships "only on fridays" [telegram:-100:50]',
-    'Oct 19: ships on fridays only',
+    'Oct 19: ships "on fridays only"',
+    'Oct 19: the nightly backup ran',
     `Oct 19: "ship it on fridays only" ${'x'.repeat(280)} [telegram:-100:50]`,
     '2026-10-19 Oct 19: "ship it on fridays only" [telegram:-100:50]',
   ] })
-  expect(await observe(dir, 's', '', { ask, memo })).toEqual(['Oct 19: "ship it on fridays only" [telegram:-100:50]'])
-  expect(noted()).toHaveLength(1)
+  expect(await observe(dir, 's', '', { ask, memo })).toEqual(['Oct 19: the nightly backup ran', 'Oct 19: "ship it on fridays only" [telegram:-100:50]'])
+  expect(noted()).toHaveLength(2)
 })
 
 test('a pass that fails hands its messages to the next one, and one that died does once its lease runs out', async () => {
@@ -151,4 +153,48 @@ test('a profile that kept misquoting is logged and its turn is done, so it costs
 test('a time reads the way notes write it, on the owner’s clock', () => {
   expect(clock('2026-10-20T06:31:00.000Z', 'America/Los_Angeles')).toBe('Oct 19 11:31pm')
   expect(clock('2026-10-20T19:05:00.000Z', 'America/Los_Angeles')).toBe('Oct 20 12:05pm')
+})
+
+test('a turn that took no message still gets a pass from its reply, and a retry writes no note twice', async () => {
+  await observe(dir, 's', '', { ask: async () => none, memo })
+  let asked = 0
+  const ask = async (): Promise<Answer> => (asked++, { notes: ['Oct 20: deck redo shipped'], profile: '- Wants "whatever" [telegram:-100:50]' })
+  expect(await observe(dir, 's', 'Shipped the deck redo.', { ask, memo })).toEqual(['Oct 20: deck redo shipped'])
+  expect(asked).toBe(3)
+  expect(noted()).toEqual(['Oct 20: deck redo shipped'])
+})
+
+test('turns wait in hex.db and one drainer works through them oldest first, while a lease is held the turn waits for its holder', async () => {
+  const store = open(dir)
+  const seen: string[] = []
+  store.wait({ session: 'a', reply: '', by: '' })
+  store.wait({ session: 'b', reply: '', by: '' })
+  await Promise.all([drain(dir, async pass => void seen.push(pass.session)), drain(dir, async pass => void seen.push(`2${pass.session}`))])
+  expect(seen).toEqual(['a', 'b'])
+  expect(store.waiting()).toBeUndefined()
+
+  expect(store.lease('observe', 'other', 60_000)).toBe(true)
+  store.wait({ session: 'c', reply: '', by: '' })
+  await drain(dir, async pass => void seen.push(pass.session))
+  expect(store.waiting()?.pass).toEqual({ session: 'c', reply: '', by: '' })
+  store.release('observe', 'other')
+  expect(store.lease('observe', 'dead', 0)).toBe(true)
+  await Bun.sleep(2)
+  await drain(dir, async pass => void seen.push(pass.session))
+  expect(seen).toEqual(['a', 'b', 'c'])
+})
+
+test('a holder renews its own lease, and a turn that throws leaves the queue to the next', async () => {
+  const store = open(dir)
+  expect(store.lease('observe', 'me', 0)).toBe(true)
+  expect(store.lease('observe', 'me', 60_000)).toBe(true)
+  await Bun.sleep(2)
+  expect(store.lease('observe', 'other', 60_000)).toBe(false)
+  store.release('observe', 'me')
+  store.wait({ session: 'bad', reply: '', by: '' })
+  store.wait({ session: 'good', reply: '', by: '' })
+  const seen: string[] = []
+  await drain(dir, async pass => { if (pass.session === 'bad') throw new Error('boom'); seen.push(pass.session) })
+  expect(seen).toEqual(['good'])
+  expect(store.waiting()).toBeUndefined()
 })

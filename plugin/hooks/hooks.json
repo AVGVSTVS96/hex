@@ -32,8 +32,7 @@
     ],
     "PreToolUse": [
       { "matcher": "mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }] },
-      { "matcher": "^(Edit|Write|MultiEdit)$", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
-      { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*memo note*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/quoted" }] }
+      { "matcher": "^(Edit|Write|MultiEdit)$", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] }
     ],
     "PostToolUse": [
       { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*.md*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },

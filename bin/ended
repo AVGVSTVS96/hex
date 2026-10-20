@@ -1,5 +1,5 @@
 #!/bin/sh
-# Hooks keep scratch in files named for the session, which go when it ends. hex-noted stays: bin/quoted needs it after a resume.
+# Hooks keep scratch in files named for the session, which go when it ends.
 session=$(jq -r '.session_id // empty')
 [ -n "$session" ] || exit 0
-rm -f "${TMPDIR:-/tmp}"/hex-*-"$session".* "${XDG_RUNTIME_DIR:-/tmp}/hex-log-$session"
+rm -f "${TMPDIR:-/tmp}"/hex-*-"$session".* "${TMPDIR:-/tmp}/hex-noted-$session" "${XDG_RUNTIME_DIR:-/tmp}/hex-log-$session"
