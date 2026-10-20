@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, observe, seed, type Answer } from './observe.ts'
+import { clock, observe, type Answer } from './observe.ts'
 import { about, profile, profileOf } from './profile.ts'
 import { open } from './store.ts'
 
@@ -138,25 +138,6 @@ test('a session sees the whole profile once, then only the lines that changed', 
   expect(about('# Always\n- b', '# Always for now\n- b')).toContain("Who I am")
   expect(about('# Always\n- b', '')).toBe('My profile was cleared: what it said no longer stands.')
   expect(about('# Always\n- b', '# Always\n- c')).toBe("Who I am and what's going on now, kept current by the memory agent from my own words:\n\n# Always\n- c")
-})
-
-test('a profile still misquoting after its last try is kept without the lines that fail', async () => {
-  const bad = '# Always\n- Ships "on fridays only" [telegram:-100:50]\n- Wants "whatever" [telegram:-100:50]'
-  await observe(dir, 's', '', { ask: async () => ({ notes: [], profile: bad }), memo })
-  expect(profileOf(dir)).toBe('# Always\n- Ships "on fridays only" [telegram:-100:50]')
-})
-
-test('a seed rebuilds the profile, and fails on an empty wake', async () => {
-  writeFileSync(join(dir, 'profile.md'), '# Always\n- old')
-  const fresh = '# Always\n- Ships "on fridays only" [telegram:-100:50]'
-  expect(await seed(dir, { ask: async () => ({ notes: [], profile: fresh }), wake: '#1 a memory' })).toBe(fresh)
-  expect(profileOf(dir)).toBe(fresh)
-  expect(seed(dir, { ask: async () => none, wake: '' })).rejects.toThrow('the wake came back empty')
-})
-
-test('a profile whose every line fails is not kept as bare headers', async () => {
-  await observe(dir, 's', '', { ask: async () => ({ notes: [], profile: '# Always\n- Wants "whatever" [telegram:-100:50]\n# Now' }), memo })
-  expect(profileOf(dir)).toBe('')
 })
 
 test('a time reads the way notes write it, on the owner’s clock', () => {
