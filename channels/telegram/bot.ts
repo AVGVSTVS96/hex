@@ -678,10 +678,12 @@ bot.on('message:text', async ctx => {
 })
 
 // A thread's controls, like Discord's: /model and /effort set what its next message starts
-// with, and any other /command runs in its session as Claude Code's slash command.
+// with, and any other /command runs in its session as Claude Code's slash command. A DM starts a
+// new session for that, losing its conversation, so there it stays a message, like Telegram's own /start.
 async function slash(thread: string, text: string): Promise<boolean> {
-  const [, name, rest = ''] = text.match(/^\/([a-z][\w:-]*)(?:@\w+)?(?:\s+([\s\S]*))?$/i) ?? []
-  if (!name || !hub.name(thread)) return false
+  const [, command, to, rest = ''] = text.match(/^\/([a-z][\w:-]*)(?:@(\w+))?(?:\s+([\s\S]*))?$/i) ?? []
+  const name = command?.toLowerCase()
+  if (!name || (to && to.toLowerCase() !== me().toLowerCase()) || !hub.name(thread)) return false
   const { chat_id, extra } = target(thread)
   const answer = (reply: string) => bot.api.sendMessage(chat_id, reply, extra).then(() => true)
   if (name === 'model' || name === 'effort') {
@@ -691,6 +693,7 @@ async function slash(thread: string, text: string): Promise<boolean> {
     hub.configure(thread, { [name]: choice.value })
     return answer(`${name === 'model' ? 'Model' : 'Effort'}: ${choice.name}, from this thread's next message.`)
   }
+  if (name === 'start' || !thread.startsWith('-')) return false
   if (typing.has(thread)) return answer(`This thread is working; send /${name} again once it's done.`)
   void hub.command(thread, `/${name}${rest ? ` ${rest}` : ''}`)
   return answer(`Running /${name} in this thread's session.`)
