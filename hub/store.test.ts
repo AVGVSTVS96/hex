@@ -171,6 +171,9 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
   expect(store.requote('t-2', 't3:2', 'ship').words.map(words => words.text)).toEqual(['ship', '[image: /inbox/1.png]'])
   store.addWords('t-2', 't3:2')
   expect(store.task('t-2')!.words.map(words => words.text)).toEqual(['ship', '[image: /inbox/1.png]'])
+  const attached = '<t3_code_instructions>\nx\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n[image: /inbox/2.png]'
+  store.deliver({ key: 't3:5', to: 'thread-1', from: 't3', body: attached, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  expect(store.createTask({ message: 't3:5', owner: 'thread-1' }).words.map(words => words.text)).toEqual(['ship it', '[image: /inbox/2.png]'])
   const tagged = '<user_request>\nmake the header say\n<title>Hello</title>\n</user_request>\n\n<runtime_info>opus</runtime_info>'
   store.deliver({ key: 't3:4', to: 'thread-1', from: 't3', body: tagged, meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ message: 't3:4', owner: 'thread-1' }).words[0]!.text).toBe('make the header say\n<title>Hello</title>')
