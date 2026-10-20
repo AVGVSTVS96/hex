@@ -134,6 +134,8 @@ export type Client = {
   waits?: boolean
   // What the client does as the hub stops, once no call is live.
   close?: () => Promise<void>
+  // The owner's stop as the client's own Stop does it, when it keeps state of its own about a turn.
+  stop?: (thread: string) => void
 }
 export const clients = new Map<string, Client>()
 
@@ -184,14 +186,21 @@ export function tappable(text: string): string {
   return text.replace(/buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/g, url => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`)
 }
 
-const SAID = /^## (\S+) · (\w+) · (?:\d{4}-\d{2}-\d{2} )?\d{1,2}:\d{2}\n/gm
+const SAID = /^## (.+?) · (\w+) · (?:\d{4}-\d{2}-\d{2} )?\d{1,2}:\d{2}\n/gm
+// Who the owner is in a log: themself, or the hex app they answered or typed in.
+const OWNER = new Set(['me', 'hex app'])
+
+// Where bin/log keeps a session's log.
+export function logOf(hexDir: string, session: string): string | undefined {
+  const suffix = `-${session.slice(0, 8)}.md`
+  return [join(hexDir, 'log', 'threads'), join(hexDir, 'log')]
+    .flatMap(dir => (existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(suffix)).map(name => join(dir, name)) : []))[0]
+}
 
 // A session's chat from its log (bin/log): what the owner said and hex replied in an app, leaving
-// out the terminal, which no chat showed.
+// out the terminal, which no chat showed, and what other threads and tools sent it.
 export function history(hexDir: string, session: string): Turn[] {
-  const suffix = `-${session.slice(0, 8)}.md`
-  const file = [join(hexDir, 'log', 'threads'), join(hexDir, 'log')]
-    .flatMap(dir => (existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(suffix)).map(name => join(dir, name)) : []))[0]
+  const file = logOf(hexDir, session)
   if (!file) return []
   const log = readFileSync(file, 'utf8')
   const heads = [...log.matchAll(SAID)]
@@ -199,7 +208,8 @@ export function history(hexDir: string, session: string): Turn[] {
     const [, who, app] = head
     const text = log.slice(head.index + head[0].length, heads[i + 1]?.index).trim()
     const said = app === 't3' ? asked(text) : text
-    return app === 'terminal' || !said || (who !== 'me' && who !== 'assistant') ? [] : [{ from: who === 'me' ? 'me' : 'hex', text: said } as Turn]
+    const from = OWNER.has(who!) ? 'me' : who === 'assistant' ? 'hex' : undefined
+    return app === 'terminal' || !said || !from ? [] : [{ from, text: said } as Turn]
   })
 }
 

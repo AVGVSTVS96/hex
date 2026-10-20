@@ -657,7 +657,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     launcher: process.env.HEX_LAUNCHER,
   })
 
-  clients.set('buzz', { hub, place, backfill, close: shutdown })
+  clients.set('buzz', { hub, place, backfill, close: shutdown, stop })
 
   // Desktop writes a mention as "@Name", or "@Name (pubkey)" when two members share a name.
   async function unmention(text: string): Promise<string> {

@@ -420,7 +420,8 @@ function serve(socket: Socket) {
   })
 }
 
-clients.set('t3', { hub, place, backfill, waits: true })
+// A turn T3 Code didn't start, like a schedule's, has no prompt of T3's to finish, so the hub stops it.
+clients.set('t3', { hub, place, backfill, waits: true, stop: thread => (turns.has(thread) ? cancel(thread) : hub.stop(thread)) })
 
 rmSync(SOCKET, { force: true })
 createServer(serve).listen(SOCKET)

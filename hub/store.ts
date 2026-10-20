@@ -203,6 +203,11 @@ export class Store {
     return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)
   }
 
+  // Every session that took a thread's messages, in the order each first did.
+  sessions(thread: string): string[] {
+    return (this.db.query('select taken_by from messages where "to" = ? and taken_by is not null group by taken_by order by min(taken_at)').all(thread) as { taken_by: string }[]).map(row => row.taken_by)
+  }
+
   // What a session, or another in its thread, took by a time that no pass has looked over for
   // memories yet, oldest first, leased to the pass that asks: two passes never write about the same
   // message, and one that failed or died midway hands its messages to the next in the thread.

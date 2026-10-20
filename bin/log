@@ -31,7 +31,7 @@ body=$(jq -r --arg typist "$typist" '
       if ($text | startswith("<channel")) then
         ($text | capture("^<channel(?<a>[^>]*)>").a) as $tag
         | ([$tag | capture("^ source=\"(plugin:)?(?<app>[a-z0-9]+)").app] | first // "chat") as $app
-        | block($e; if ($tag | test(" user_id=")) then "me" else [$tag | capture(" user=\"(?<u>[^\"]+)\"").u] | first // (if $app == "t3" then "me" else "hex" end) end;
+        | block($e; if ($tag | test(" user_id=| user=\"hex app\"")) then "me" else [$tag | capture(" user=\"(?<u>[^\"]+)\"").u] | first // (if $app == "t3" then "me" else "hex" end) end;
           $app;
           ([$text | capture("^<channel[^>]*>(?<m>[\\s\\S]*)</channel>").m] | first // $text) | gsub("^\\s+|\\s+$"; ""))
       elif ($text | test("^<(local-command|command-|system-reminder|task-notification)")) then empty

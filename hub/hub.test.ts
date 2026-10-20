@@ -1789,18 +1789,21 @@ function logged(body: string, id = SESSION) {
   writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${id.slice(0, 8)}.md`), `# 2026-10-06 · session ${id}\n\n${body}`)
 }
 
-test('a session\'s history is what the owner said and hex replied in its apps, headings and all, without the terminal', () => {
+test('a session\'s history is what the owner said, there or in the hex app, and hex replied in its apps, headings and all, without the terminal or other threads', () => {
   logged([
     '## me · buzz · 2026-10-06 10:06\n\nhow full is your context?\n',
     '## assistant · buzz · 2026-10-06 10:06\n\nRoomy.\n\n## What loads\n\nthe rules\n',
     '## assistant · terminal · 2026-10-06 10:06\n\nI answered in Buzz.\n',
     '## hex · voice · 2026-10-06 10:07\n\nA call never connected.\n',
     '## me · telegram · 10:08\n\nthanks\n',
+    '## hex General · telegram · 10:09\n\nFrom General: the build passed.\n',
+    '## hex app · telegram · 10:10\n\nship it\n',
   ].join('\n'))
   expect(history(join(dir, 'hex'), SESSION)).toEqual([
     { from: 'me', text: 'how full is your context?' },
     { from: 'hex', text: 'Roomy.\n\n## What loads\n\nthe rules' },
     { from: 'me', text: 'thanks' },
+    { from: 'me', text: 'ship it' },
   ])
   expect(history(join(dir, 'hex'), '9f9f9f9f-0000-4000-8000-000000000000')).toEqual([])
 })

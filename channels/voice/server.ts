@@ -5,6 +5,7 @@ import { findThread, followAgent, followThread, type Step, type Thread } from '.
 import { Call, transcript, type Mark, type Speaker, type Task } from './call.ts'
 import { CallLog, ending, usage, type CallRecord, type Ending, type Source } from './calls.ts'
 import { Changes } from './changes.ts'
+import { Chats } from './chat.ts'
 import { PORT, STATE_DIR, env } from './env.ts'
 import { Asks, type Ask } from './asks.ts'
 import { relay } from './relay.ts'
@@ -27,6 +28,7 @@ const activity = new Changes()
 const follows = new Map<string, () => void>()
 let board: Tasks
 let yours: Asks
+let chats: Chats
 
 const IDENTITY = (() => {
   try {
@@ -954,11 +956,38 @@ function taskRoutes(request: Request, url: URL) {
   const tasks = board
   if (url.pathname === '/tasks' && request.method === 'GET') return showTasks(url, tasks)
   if (url.pathname === '/tasks/summary' && request.method === 'GET') return showSummary(url, tasks, yours)
-  const [, id, talking] = url.pathname.match(/^\/tasks\/([^/]+)(\/talk)?$/) ?? []
+  const [, id, verb] = url.pathname.match(/^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/) ?? []
   const task = id && tasks.get(decodeURIComponent(id))
   if (!task) return new Response('404', { status: 404 })
-  if (talking && request.method === 'POST') return talkAbout(taskTopic(task))
-  if (!talking && request.method === 'GET') return Response.json({ ...task, ...yours.of(task.id) })
+  if (verb === 'talk' && request.method === 'POST') return talkAbout(taskTopic(task))
+  if (verb === 'chat' && request.method === 'GET') return showChat(url, task)
+  if (verb === 'chat' && request.method === 'POST') return sendChat(request, task)
+  if (verb === 'stop' && request.method === 'POST') return done(() => chats.stop(task))
+  if (!verb && request.method === 'GET') return Response.json({ ...task, ...yours.of(task.id) })
+}
+
+// A thread's chat, and with after, the next time it changes.
+async function showChat(url: URL, task: HexTask) {
+  const where = { ...task, session: board.session(task.id) }
+  const after = url.searchParams.get('after')
+  return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where))
+}
+
+async function sendChat(request: Request, task: HexTask) {
+  const { text, key } = (await request.json().catch(() => ({}))) as { text?: unknown; key?: unknown }
+  if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
+  if (typeof key !== 'string' || !/^app-[\w-]{8,60}$/.test(key)) return new Response('Name the message with a key starting app-', { status: 400 })
+  return done(() => chats.send(task, text.trim(), key))
+}
+
+// No content once act is through, or why it couldn't be.
+function done(act: () => void) {
+  try {
+    act()
+    return new Response(null, { status: 204 })
+  } catch (error) {
+    return new Response((error as Error).message, { status: 409 })
+  }
 }
 
 // A live call's record is read from the call itself, so it has every word heard so far, and a
@@ -1007,6 +1036,7 @@ export function serve(voiceHub: Hub, state: string) {
   board = new Tasks(state, dirname(state))
   board.listen(() => activity.changed())
   yours = new Asks(state)
+  chats = new Chats(state, dirname(state))
   recover()
   resume()
   return Bun.serve<Phone>({
