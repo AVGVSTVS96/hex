@@ -34,6 +34,9 @@ jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/calls"
 [ "$1 $2" = "agents --json" ] && [ -f "${dir}/unreadable" ] && rm "${dir}/unreadable" && echo 'Error: connect ECONNREFUSED' && exit 1
 [ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
 [ "$1 $2" = "daemon status" ] && [ -f "${dir}/down" ] && exit 1
+[ "$1 $2" = "daemon status" ] && echo "version: $(cat "${dir}/daemon" 2>/dev/null || echo 2.1.0)"
+[ "$1 $2" = "daemon stop" ] && rm -f "${dir}/daemon"
+[ "$1" = "--version" ] && echo "2.1.0 (Claude Code)"
 [ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
 [ "$1" = "--bg" ] && echo "backgrounded · job12345 · test"
 [ "$1" = "stop" ] && [ -f "${dir}/agents" ] && jq -c --arg id "$2" 'map(select(.sessionId | startswith($id) | not))' "${dir}/agents" > "${dir}/agents.next" && mv "${dir}/agents.next" "${dir}/agents"
@@ -258,6 +261,20 @@ test('a daemon that went down while General ran is started, so the hub finds Gen
   await until(() => calls().filter(args => args[0] === 'agents').length >= 2, 3000)
   await Bun.sleep(100)
   expect(calls().filter(args => args[0] !== 'agents' && args[0] !== 'daemon')).toEqual([])
+})
+
+test("a daemon left on an older claude is stopped with its sessions kept, so the session starts on a current one", async () => {
+  writeFileSync(join(dir, 'daemon'), '2.0.9')
+  start({ main: 'chat', general: true })
+  await launched()
+  const daemon = calls().filter(args => args[0] === 'daemon' || args[0] === '--bg').map(args => args.slice(0, 4).join(' '))
+  expect(daemon.slice(-2)).toEqual(['daemon stop --any --keep-workers', `--bg --channels ${CHANNEL} --name`])
+})
+
+test("a daemon on the claude that's installed is left running", async () => {
+  start({ main: 'chat', general: true })
+  await launched()
+  expect(calls().some(args => args[0] === 'daemon' && args[1] === 'stop')).toBe(false)
 })
 
 test('the main thread starts with the hub, under its name, with no prompt and no typing', async () => {
@@ -1422,7 +1439,7 @@ test('a fork resumes a copy of the session without checking agents or clearing i
   expect(args.slice(resume, resume + 3)).toEqual(['--resume', SESSION, '--fork-session'])
   expect(args.at(-1)).toBe('carry on')
   await Bun.sleep(50)
-  expect(calls().map(args => args[0])).toEqual(['--bg'])
+  expect(calls().map(args => args[0]).filter(command => command !== 'daemon' && command !== '--version')).toEqual(['--bg'])
 })
 
 test('a buzz:// link becomes a web link that opens it, in plain text and in Markdown', () => {

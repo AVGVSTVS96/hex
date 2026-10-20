@@ -33,7 +33,7 @@ function contained(command: string, args: string[]): [string, string[]] {
 
 function run(args: string[]): Promise<string | undefined> {
   const [command, argv] = contained('claude', args)
-  return new Promise(resolve => execFile(command, argv, { env: inherited() }, (error, stdout) => resolve(error ? undefined : stdout)))
+  return new Promise(resolve => execFile(command, argv, { env: inherited(), timeout: 15_000 }, (error, stdout) => resolve(error ? undefined : stdout)))
 }
 
 async function listed(): Promise<Agent[] | undefined> {
@@ -86,8 +86,24 @@ export const rm = (session: string) => run(['rm', short(session)])
 // Restarts a running session in place from the flags it started with, running a turn it was on again.
 export const respawn = (agent: Agent) => run(['respawn', job(agent)])
 
+// Claude's daemon moves to a new version only when the claude it started from changes, so one started
+// through a wrapper stays on its version, and starts no session at all once that version is deleted.
+// Stopped with its sessions kept, it comes back current with the next session and takes them back.
+let checking: Promise<void> | undefined
+function current() {
+  return (checking ??= (async () => {
+    const [status, version] = await Promise.all([run(['daemon', 'status']), run(['--version'])])
+    const running = status?.match(/^version:\s*(\S+)/m)?.[1]
+    const installed = version?.match(/^\S+/)?.[0]
+    if (!running || !installed || running === installed) return
+    process.stderr.write(`hub: Claude's daemon runs ${running} while claude is ${installed}, so the hub restarts it\n`)
+    await run(['daemon', 'stop', '--any', '--keep-workers'])
+  })().finally(() => (checking = undefined)))
+}
+
 // Resolves with the new session's job once Claude has put it in the background.
-export function start(launcher: string, args: string[], options: { cwd: string; env: Record<string, string | undefined> }): Promise<string> {
+export async function start(launcher: string, args: string[], options: { cwd: string; env: Record<string, string | undefined> }): Promise<string> {
+  await current()
   return new Promise((resolve, reject) => {
     const [command, argv] = contained(launcher, ['--bg', ...args])
     const child = spawn(command, argv, { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
