@@ -170,12 +170,10 @@ async function claude(input: string): Promise<Answer> {
 }
 
 // Passes run one at a time, so each reads the notes and profile the last one left: two never write
-// the same note or race for the profile. One that waits longer than a pass can take leaves its
-// messages to the thread's next pass.
+// the same note or race for the profile. A pass that died holds the lease only until it runs out.
 export async function alone(store: Store, run: () => Promise<unknown>) {
   const holder = crypto.randomUUID()
-  for (const until = Date.now() + 4 * CALL; !store.lease('observe', holder, 4 * CALL); await Bun.sleep(1000))
-    if (Date.now() > until) return console.error("hex skipped a turn's memories: other passes held the memory agent too long")
+  while (!store.lease('observe', holder, 4 * CALL)) await Bun.sleep(1000)
   try {
     await run()
   } finally {
