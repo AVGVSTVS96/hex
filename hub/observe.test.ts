@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { alone, clock, observe, type Answer } from './observe.ts'
+import { clock, drain, observe, type Answer } from './observe.ts'
 import { about, profile, profileOf } from './profile.ts'
 import { open } from './store.ts'
 
@@ -164,16 +164,22 @@ test('a turn that took no message still gets a pass from its reply, and a retry 
   expect(noted()).toEqual(['Oct 20: deck redo shipped'])
 })
 
-test('passes run one at a time, and a lease a dead pass left runs out', async () => {
+test('turns wait in hex.db and one drainer works through them oldest first, while a lease is held the turn waits for its holder', async () => {
   const store = open(dir)
-  const order: string[] = []
-  const pass = (name: string) => alone(store, async () => (order.push(`${name} in`), await Bun.sleep(30), order.push(`${name} out`)))
-  await Promise.all([pass('a'), pass('b')])
-  expect(order).toEqual(['a in', 'a out', 'b in', 'b out'])
+  const seen: string[] = []
+  store.wait({ session: 'a', reply: '', by: '' })
+  store.wait({ session: 'b', reply: '', by: '' })
+  await Promise.all([drain(dir, async pass => void seen.push(pass.session)), drain(dir, async pass => void seen.push(`2${pass.session}`))])
+  expect(seen).toEqual(['a', 'b'])
+  expect(store.waiting()).toBeUndefined()
+
+  expect(store.lease('observe', 'other', 60_000)).toBe(true)
+  store.wait({ session: 'c', reply: '', by: '' })
+  await drain(dir, async pass => void seen.push(pass.session))
+  expect(store.waiting()?.pass).toEqual({ session: 'c', reply: '', by: '' })
+  store.release('observe', 'other')
   expect(store.lease('observe', 'dead', 0)).toBe(true)
   await Bun.sleep(2)
-  expect(store.lease('observe', 'next', 1000)).toBe(true)
-  expect(store.lease('observe', 'other', 1000)).toBe(false)
-  store.release('observe', 'other')
-  expect(store.lease('observe', 'next', 1000)).toBe(true)
+  await drain(dir, async pass => void seen.push(pass.session))
+  expect(seen).toEqual(['a', 'b', 'c'])
 })

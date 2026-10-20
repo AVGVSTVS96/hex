@@ -36,7 +36,7 @@ const SCHEMA = {
 export type Answer = { notes: string[]; profile: string | null }
 
 type Hook = { session_id?: string; last_assistant_message?: string }
-type Pass = { session: string; reply: string; by: string; thread?: string }
+export type Pass = { session: string; reply: string; by: string; thread?: string }
 
 export async function observe(state: string, session: string, reply: string, { ask = claude, memo = MEMO, by = new Date().toISOString(), thread = undefined as string | undefined } = {}) {
   const recall = (pattern: string) => Bun.spawnSync([memo, 'recall', pattern], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
@@ -169,36 +169,40 @@ async function claude(input: string): Promise<Answer> {
   return result.structured_output
 }
 
-// Passes run one at a time, so each reads the notes and profile the last one left: two never write
-// the same note or race for the profile. A pass that died holds the lease only until it runs out.
-export async function alone(store: Store, run: () => Promise<unknown>) {
+// Turns wait in hex.db, oldest first, and one process at a time works through them, so each pass
+// reads the notes and profile the last one left: two never write the same note or race for the
+// profile, and a turn outlives a pass that died. A drainer that died holds the lease only until it
+// runs out; each turn renews it. One that finds the lease taken leaves its turn to the holder,
+// which looks again after letting go.
+export async function drain(state: string, run: (pass: Pass) => Promise<unknown> = pass => observe(state, pass.session, pass.reply, pass)) {
+  const store = open(state)
   const holder = crypto.randomUUID()
-  while (!store.lease('observe', holder, 4 * CALL)) await Bun.sleep(1000)
-  try {
-    await run()
-  } finally {
-    store.release('observe', holder)
+  while (store.waiting() && store.lease('observe', holder, 4 * CALL)) {
+    try {
+      for (let next; (next = store.waiting()); store.lease('observe', holder, 4 * CALL)) {
+        await run(next.pass as Pass)
+        store.passed(next.n)
+      }
+    } finally {
+      store.release('observe', holder)
+    }
   }
 }
 
-// The Stop hook hands the turn to a pass of its own and returns, since Claude Code ends a hook still
-// running when its session exits, and a hex session often exits right after a turn (a restart, an
-// update, a call that ended). The pass takes only what the session had taken by then, not the
-// next turn's message, and what an earlier pass in its thread left unfinished. Its errors go to
-// state/observe.log.
+// The Stop hook queues the turn and hands the queue to a process of its own, since Claude Code ends
+// a hook still running when its session exits, and a hex session often exits right after a turn (a
+// restart, an update, a call that ended). A pass takes only what the session had taken when its
+// turn ended, not the next turn's message, and what an earlier pass in its thread left unfinished.
+// Errors go to state/observe.log.
 if (import.meta.main) {
   const { HEX_STORE = join(hexDir, 'state'), MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
-  if (HEX_PASS) {
-    const { session, reply, by, thread } = JSON.parse(await Bun.stdin.text()) as Pass
-    await alone(open(HEX_STORE), () => observe(HEX_STORE, session, reply, { by, thread }))
-  } else if (MEMORY_DIR && existsSync(MEMO)) {
+  if (HEX_PASS) await drain(HEX_STORE)
+  else if (MEMORY_DIR && existsSync(MEMO)) {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
-    const pass: Pass = { session: hook.session_id ?? '', reply: hook.last_assistant_message ?? '', by: new Date().toISOString(), thread: HEX_THREAD }
-    if (pass.session) {
+    if (hook.session_id) {
+      open(HEX_STORE).wait({ session: hook.session_id, reply: hook.last_assistant_message ?? '', by: new Date().toISOString(), thread: HEX_THREAD })
       const log = openSync(join(HEX_STORE, 'observe.log'), 'a')
-      const child = spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['pipe', 'ignore', log], env: { ...process.env, HEX_PASS: '1' } })
-      child.stdin!.end(JSON.stringify(pass))
-      child.unref()
+      spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['ignore', 'ignore', log], env: { ...process.env, HEX_PASS: '1' } }).unref()
     }
   }
 }

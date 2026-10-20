@@ -120,7 +120,8 @@ const migrations = [
   drop trigger kept_words_delete;
   create trigger kept_words_delete before delete on words when not exists (select 1 from words w join messages m on m.key = w.message where w.task = old.task and w.message = old.message and w.rowid <> old.rowid and w.text = m.body and instr(w.text, old.text) > 0)
     begin select raise(abort, 'words are added, never taken away'); end;`,
-  `create table leases (name text primary key, holder text not null, until text not null check (until ${UTC}));`,
+  `create table leases (name text primary key, holder text not null, until text not null check (until ${UTC}));
+  create table passes (n integer primary key, pass text not null check (json_valid(pass)));`,
 ]
 
 const now = () => new Date().toISOString()
@@ -262,6 +263,20 @@ export class Store {
 
   release(name: string, holder: string) {
     this.write(() => this.db.query('delete from leases where name = ? and holder = ?').run(name, holder))
+  }
+
+  // A finished turn waiting for the memory agent, oldest first.
+  wait(pass: object) {
+    this.write(() => this.db.query('insert into passes (pass) values (?)').run(JSON.stringify(pass)))
+  }
+
+  waiting(): { n: number; pass: unknown } | undefined {
+    const row = this.db.query('select n, pass from passes order by n limit 1').get() as { n: number; pass: string } | null
+    return row ? { n: row.n, pass: JSON.parse(row.pass) } : undefined
+  }
+
+  passed(n: number) {
+    this.write(() => this.db.query('delete from passes where n = ?').run(n))
   }
 
   // The last minute since the epoch the scheduler checked, none before its first check.
