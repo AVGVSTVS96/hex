@@ -231,11 +231,11 @@ export class Asks extends Changes {
     this.names.clear()
     this.pins.clear()
     const questions = store(this.state).questions()
+    for (const { app, thread, name } of store(this.state).threads()) this.names.set(`${app}:${thread}`, name)
     for (const app of apps(this.state)) {
       const book = readJson(join(this.state, app, 'ledger.json'))
       this.ledgers.set(app, questions.filter(question => question.app === app))
       for (const [thread, pin] of Object.entries<any>(book?.pins ?? {})) if (pin.text) this.pins.set(`${app}:${thread}`, pin)
-      for (const [thread, known] of Object.entries<any>(readJson(join(this.state, app, 'threads.json')) ?? {})) this.names.set(`${app}:${thread}`, known.name ?? thread)
     }
     this.links.load()
     this.result = readJson(join(this.state, 'voice', 'check.json'))

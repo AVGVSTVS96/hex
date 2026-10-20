@@ -36,7 +36,7 @@ beforeEach(async () => {
   state = mkdtempSync(join(tmpdir(), 'asks-'))
   mkdirSync(join(state, 'telegram'))
   mkdirSync(join(state, 'voice'))
-  writeFileSync(join(state, 'telegram', 'threads.json'), JSON.stringify({ [GROUP]: { name: 'hex' }, [DESK]: { name: 'desk' } }))
+  open(state).named('telegram', { [GROUP]: 'hex', [DESK]: 'desk' })
   lines = []
   checks = []
   hub = createServer(socket => {
@@ -224,11 +224,11 @@ test('a check’s verdict is held to the ledger: real open refs and buttons only
 test('an ask names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers', () => {
   const DM = '777'
   const THREAD = '1560277464146644992'
-  writeFileSync(join(state, 'telegram', 'threads.json'), JSON.stringify({ [GROUP]: { name: 'hex' }, [DESK]: { name: 'desk' }, [DM]: { name: 'DM' } }))
+  open(state).named('telegram', { [DM]: 'DM' })
   writeFileSync(join(state, 'telegram', 'bot.json'), JSON.stringify({ username: 'hexbot' }))
   mkdirSync(join(state, 'discord'))
   writeFileSync(join(state, 'discord', 'guild.json'), JSON.stringify({ id: '42' }))
-  writeFileSync(join(state, 'discord', 'threads.json'), JSON.stringify({ [THREAD]: { name: 'fix hex NOW' } }))
+  open(state).named('discord', { [THREAD]: 'fix hex NOW' })
   const calls = join(state, 'calls')
   mkdirSync(calls)
   writeFileSync(join(calls, 'live_1.json'), JSON.stringify({ id: 'live_1', title: 'Apple charges', started: '2026-10-13T18:00:00.000Z' }))

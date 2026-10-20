@@ -1,19 +1,9 @@
-import { readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
 import { clip, fit } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
 
-// Each thread's name, from every app's threads.json in state.
+// Each thread's name, as hex.db keeps it after the thread closes.
 export function names(state: string): Record<string, string> {
-  const named: Record<string, string> = {}
-  for (const app of readdirSync(state, { withFileTypes: true })) {
-    if (!app.isDirectory()) continue
-    try {
-      const threads = JSON.parse(readFileSync(join(state, app.name, 'threads.json'), 'utf8')) as Record<string, { name?: string }>
-      for (const [key, { name }] of Object.entries(threads)) named[key] = name ?? key
-    } catch {}
-  }
-  return named
+  return Object.fromEntries(open(state).threads().map(({ thread, name }) => [thread, name]))
 }
 
 // Claude Code swaps a hook's output past 10,000 characters for a file path and a preview it

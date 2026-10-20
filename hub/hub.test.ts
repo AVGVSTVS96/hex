@@ -1273,7 +1273,7 @@ test('closing a busy thread stops its session at its next idle, not before', asy
   await until(() => calls().find(args => args[0] === 'stop'))
 })
 
-test('threads are found by name or id, and renames are kept', () => {
+test('threads are found by name or id, and renames are kept, in hex.db too', () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION }, 'chat:8': { name: 'Clips' } } })
   expect(hub.find('desk anchors')).toBe('chat:7')
   expect(hub.find('chat:8')).toBe('chat:8')
@@ -1283,6 +1283,10 @@ test('threads are found by name or id, and renames are kept', () => {
   expect(hub.name('chat:8')).toBe('Theo clips')
   expect(hub.name('chat:9')).toBeUndefined()
   expect(registry()['chat:8'].name).toBe('Theo clips')
+  expect(open(dir).threads()).toEqual([
+    { app: 'telegram', thread: 'chat:7', name: 'Desk anchors' },
+    { app: 'telegram', thread: 'chat:8', name: 'Theo clips' },
+  ])
 })
 
 test('sessions start through the launcher, in the hex folder, with nothing of the hub\'s own in its env', async () => {

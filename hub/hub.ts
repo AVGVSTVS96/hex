@@ -273,6 +273,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   let store: Store | undefined
   apps.add(app)
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 })
+  keepNames()
   const token = tokenOf(stateDir)
   const inherited = claude.inherited()
   let closed = false
@@ -299,9 +300,15 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     }
   }
 
+  // threads.json forgets a closed thread; hex.db keeps every thread's name for whatever reads one.
   function save() {
     writeFileSync(`${registry}.tmp`, JSON.stringify(threads, null, 2) + '\n')
     renameSync(`${registry}.tmp`, registry)
+    keepNames()
+  }
+
+  function keepNames() {
+    kept(store => store.named(app, Object.fromEntries(Object.entries(threads).map(([thread, { name }]) => [thread, name]))), undefined)
   }
 
   function runOf(thread: string): Run {

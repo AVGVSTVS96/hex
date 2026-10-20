@@ -167,6 +167,18 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
   expect(() => store.mergeTasks(kept.id, kept.id)).toThrow('itself')
 })
 
+test("a thread keeps its name after it leaves its app's threads.json, and takes a new one when renamed", () => {
+  const store = new Store(dir)
+  store.named('telegram', { '-100:7': 'tokenhub', '-100:8': 'portfolio' })
+  store.named('telegram', { '-100:7': 'tokenhub and deck' })
+  store.named('discord', { '1561': 'Fixhex' })
+  expect(store.threads()).toEqual([
+    { app: 'discord', thread: '1561', name: 'Fixhex' },
+    { app: 'telegram', thread: '-100:7', name: 'tokenhub and deck' },
+    { app: 'telegram', thread: '-100:8', name: 'portfolio' },
+  ])
+})
+
 test("a session is shown its list again only once it changed, or after its context lost it", () => {
   const store = new Store(dir)
   expect(store.show('session-a', '')).toBe(false)

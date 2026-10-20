@@ -108,6 +108,7 @@ const migrations = [
   create index polls on questions (app, poll) where poll is not null;`,
   `alter table tasks add column closed text check (closed ${UTC});
   update tasks set closed = at where status in ('done', 'dropped');`,
+  `create table threads (app text not null, thread text not null, name text not null, primary key (app, thread));`,
 ]
 
 const now = () => new Date().toISOString()
@@ -290,6 +291,18 @@ export class Store {
   lastDone(owner: string, count: number): Task[] {
     const rows = this.db.query("select * from tasks where owner = ? and status = 'done' order by closed desc, n desc limit ?").all(owner, count) as StoredTask[]
     return rows.map(row => this.toTask(row))
+  }
+
+  // Each thread's name as its app's hub last saved it, kept after the thread closes.
+  named(app: string, names: Record<string, string>) {
+    this.write(() => {
+      const keep = this.db.query('insert into threads (app, thread, name) values (?, ?, ?) on conflict (app, thread) do update set name = excluded.name where name is not excluded.name')
+      for (const [thread, name] of Object.entries(names)) keep.run(app, thread, name)
+    })
+  }
+
+  threads(): { app: string; thread: string; name: string }[] {
+    return this.db.query('select app, thread, name from threads order by app, thread').all() as { app: string; thread: string; name: string }[]
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.

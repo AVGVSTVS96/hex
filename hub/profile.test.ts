@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { open } from './store.ts'
@@ -9,8 +9,8 @@ let dir: string
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'profile-'))
   mkdirSync(join(dir, 'telegram'))
-  writeFileSync(join(dir, 'telegram', 'threads.json'), JSON.stringify({ '-100:7': { name: 'Website' }, '-100:9': { name: 'Errands' } }))
   const store = open(dir)
+  store.named('telegram', { '-100:7': 'Website', '-100:9': 'Errands' })
   store.deliver({ key: 'telegram:-100:50', to: '-100:7', from: 'telegram', body: 'Fix the login page.\nIt 500s on submit.', meta: { user: 'bassim' } })
   store.deliver({ key: 'telegram:-100:60', to: '-100:9', from: 'telegram', body: 'buy a power adapter', meta: { user: 'bassim' } })
   store.createTask({ message: 'telegram:-100:50', owner: '-100:7', doneWhen: 'it signs in' })
