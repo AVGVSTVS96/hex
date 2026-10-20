@@ -608,13 +608,13 @@ test('an image arrives already downloaded, as image_path, next to its listing', 
   expect(arrived.meta.attachments).toBe('shot.png (image/png, 1KB)')
 })
 
-test('new_thread opens with the request that asked for it and the replies since, forwarded', async () => {
+test('new_thread opens with its about line and forwards nothing from the thread that opened it', async () => {
   const desk = channel('5100', { name: 'desk', type: ChannelType.PublicThread, parent: general })
   const s = await session(desk.id)
   say(desk, 31, 'earlier chatter')
   say(desk, 32, 'old answer', { author: bot })
-  const asked = say(desk, 33, 'spin off the anchors work')
-  const reply = say(desk, 34, 'on it', { author: bot })
+  say(desk, 33, 'spin off the anchors work')
+  say(desk, 34, 'on it', { author: bot })
   await s.send({ type: 'state', thread: desk.id, busy: true })
   const result = await s.call('new_thread', { title: 'Anchors', prompt: 'work on the anchors', about: 'Spun off from desk' })
   await s.send({ type: 'state', thread: desk.id, busy: false })
@@ -623,7 +623,7 @@ test('new_thread opens with the request that asked for it and the replies since,
   expect(result.text).toBe(`started thread "Anchors": https://discord.com/channels/${GUILD}/${thread.id}`)
   expect(done.find(d => d.create === 'Anchors')).toEqual({ create: 'Anchors', in: general.id })
   expect(thread.posted[0].content).toBe('Spun off from desk')
-  expect(done.filter(d => d.forward && d.to === thread.id).map(d => d.forward)).toEqual([asked.id, reply.id])
+  expect(done.filter(d => d.forward && d.to === thread.id)).toEqual([])
 })
 
 test('new_thread in a forum opens a post with its tags, and fetch_messages lists a forum\'s posts', async () => {
