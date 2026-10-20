@@ -9,8 +9,7 @@
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 5" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/wake 6 last" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat begin" },
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts begin" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat begin" }
       ] },
       { "matcher": "compact", "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted memory" },
