@@ -849,18 +849,20 @@ bot.on('callback_query:data', async ctx => {
   const { data, message } = ctx.callbackQuery
   const label = message && 'reply_markup' in message ? message.reply_markup?.inline_keyboard.flat().find(button => 'callback_data' in button && button.callback_data === data)?.text : undefined
   if (!message || !label || !allowed(ctx.from)) return
-  await bot.api.editMessageReplyMarkup(message.chat.id, message.message_id, {
-    reply_markup: { inline_keyboard: [[{ text: `✓ ${label}`, disabled: {} }]] },
-  }).catch(err => process.stderr.write(`telegram hub: couldn't mark the tapped button: ${err}\n`))
   const thread = threadOf(ctx)
+  // A question's buttons are drawn from where it stands once the tap is in; any others show the tap at once.
+  const ask = ledger.find(thread, message.message_id)
+  if (!ask)
+    await bot.api.editMessageReplyMarkup(message.chat.id, message.message_id, {
+      reply_markup: { inline_keyboard: [[{ text: `✓ ${label}`, disabled: {} }]] },
+    }).catch(err => process.stderr.write(`telegram hub: couldn't mark the tapped button: ${err}\n`))
   const verdict = data.match(/^perm:(allow|deny):([a-km-z]{5})$/)
   if (verdict) {
     asking.get(thread)?.delete(message.message_id)
     return hub.answer(thread, verdict[2]!, verdict[1] as 'allow' | 'deny')
   }
   // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does.
-  const ask = ledger.find(thread, message.message_id)
-  const answered = hub.deliver(
+  hub.deliver(
     thread,
     nameOf(ctx, thread),
     {
@@ -877,7 +879,7 @@ bot.on('callback_query:data', async ctx => {
     },
     ask && (() => ledger.answered(thread, message.message_id, label, 'telegram')),
   )
-  if (!answered && ask && ledger.find(thread, message.message_id)?.answer?.label !== label) await draw(thread, message.message_id)
+  if (ask) await draw(thread, message.message_id)
 })
 
 bot.on('poll_answer', ctx => {

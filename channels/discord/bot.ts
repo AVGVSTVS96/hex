@@ -923,10 +923,10 @@ function serve(token: string) {
   }
 
   // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does,
-  // and a later tap's buttons go back to saying which one stands.
+  // and its buttons are drawn again from the one that stands.
   async function picked(ch: ThreadChannel | DMChannel, label: string, at: Date, user: { id: string; username: string }, message: string) {
     const ask = ledger.find(ch.id, message)
-    const answered = hub.deliver(
+    hub.deliver(
       ch.id,
       nameOf(ch),
       {
@@ -942,7 +942,7 @@ function serve(token: string) {
       },
       ask && (() => ledger.answered(ch.id, message, label, 'discord')),
     )
-    if (!answered && ask) await draw(ch.id, message)
+    if (ask) await draw(ch.id, message)
   }
 
   // Discord wants an answer to a tap within three seconds, so the buttons change before anything is fetched.
