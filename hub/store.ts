@@ -306,7 +306,8 @@ export class Store {
       if (whole === held) return this.task(live)!
       if (!whole.text.includes(quote)) throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`)
       if (held && whole.text !== said.body) throw new Error(`${live} already holds "${quote}" from ${message}`)
-      for (const row of rows) if (row !== whole && (row === held || pieces.includes(row.text))) this.db.query('delete from words where rowid = ?').run(row.rowid)
+      const others = whole.text === said.body ? rows.filter(row => row === held || (pieces.includes(row.text) && row.text.includes(quote))) : []
+      for (const row of others.filter(row => row !== whole)) this.db.query('delete from words where rowid = ?').run(row.rowid)
       this.db.query('update words set text = ? where rowid = ?').run(quote, whole.rowid)
       return this.task(live)!
     })
@@ -459,7 +460,9 @@ export class Store {
     if (!said) throw new Error(`no message ${message}`)
     const pieces = quote === undefined && said.from === 't3' ? sent(said.body) : []
     if (pieces.length && this.db.query('select 1 from words where task = ? and message = ? and text = ?').get(number(task), message, said.body)) return
-    for (const text of quote !== undefined ? [quote] : pieces.length ? pieces : [said.body]) {
+    const texts = quote !== undefined ? [quote] : said.from === 't3' ? pieces : [said.body]
+    if (!texts.length) throw new Error(`${message} has no words to quote`)
+    for (const text of texts) {
       if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
       if (!said.body.includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
       this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)

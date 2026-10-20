@@ -168,6 +168,7 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
   const shot = `${body}\n\n[image: /inbox/1.png]`
   store.deliver({ key: 't3:2', to: 'thread-1', from: 't3', body: shot, meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ message: 't3:2', owner: 'thread-1' }).words.map(words => words.text)).toEqual(['ship it', '[image: /inbox/1.png]'])
+  expect(store.requote('t-2', 't3:2', 'ship').words.map(words => words.text)).toEqual(['ship', '[image: /inbox/1.png]'])
   store.deliver({ key: 't3:3', to: 'thread-1', from: 't3', body: 'and the docs\n\n<runtime_info>opus</runtime_info>', meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ message: 't3:3', owner: 'thread-1' }).words[0]!.text).toBe('and the docs')
   store.deliver({ ...ask, key: 'telegram:-100:51', body: 'paste: <user_request>x</user_request>' })
