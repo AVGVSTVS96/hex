@@ -9,17 +9,16 @@ above() { case "$(cd && pwd -P)/" in "$(pwd -P | sed 's:/*$::')/"*) ;; *) return
 above && cd "$home"
 here=$(pwd -P)
 [ "$here" = "$(cd "$home" && pwd -P)" ] || away=1
-# A session started in the background has nobody to accept Claude Code's trust prompt, so hex trusts the folder it starts in; a -p run never asks.
+# A session started in the background has nobody to accept Claude Code's trust prompt, so hex trusts the folder it starts in.
 # Claude Code rewrites this file as it runs, holding the lock directory next to it, so hex takes that lock too, and checks the write until it holds; the copy keeps the file's mode.
 config=$(readlink -f "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json")
-for arg; do
-  case $arg in --) break ;; -p | --print) print=1 && break ;; esac
-done
-untrusted() { [ -z "${print:-}" ] && ! above && [ -s "$config" ] && ! jq -e --arg here "$here" '.projects[$here].hasTrustDialogAccepted' "$config" >/dev/null 2>&1; }
+bg=${1:-}
+untrusted() { [ "$bg" = --bg ] && ! above && [ -s "$config" ] && ! jq -e --arg here "$here" '.projects[$here].hasTrustDialogAccepted' "$config" >/dev/null 2>&1; }
 for try in 1 2 3 4 5; do
   untrusted || break
   if mkdir "$config.lock" 2>/dev/null; then
-    trap 'rmdir "$config.lock" 2>/dev/null' EXIT INT TERM
+    trap 'rmdir "$config.lock" 2>/dev/null' EXIT
+    trap 'exit 1' INT TERM
     trusted=$(jq --arg here "$here" '.projects[$here].hasTrustDialogAccepted = true' "$config") && [ -n "$trusted" ] &&
       cp -p "$config" "$config.hex.$$" && printf '%s\n' "$trusted" > "$config.hex.$$" && mv "$config.hex.$$" "$config" || rm -f "$config.hex.$$"
     rmdir "$config.lock"
