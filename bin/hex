@@ -95,7 +95,7 @@ case "${1:-}" in
     claude agents --json | jq -r --arg home "$(cd "$home" && pwd -P)" '.[] | "\(.name): \(.status // "running")\(if .cwd == $home or .cwd == null then "" else " in \(.cwd)" end)"'
     units=$(systemctl --user list-units --type=service --state=running --no-legend --plain | awk '{print $1}')
     if [ -n "$units" ]; then
-      systemctl --user show $units -p Id,ActiveEnterTimestamp,ExecStopPost | awk -F= -v job="$hex/bin/job --ended" '
+      systemctl --user show $units -p Id,ActiveEnterTimestamp,ExecStopPost | awk -F= -v job=" $(cd "$hex" && pwd -P)/bin/job --ended " '
         function done() { if (ours) print "job " substr(id, 1, length(id) - 8) ": running since " since; ours = 0 }
         /^$/ { done() } /^Id=/ { id = $2 } /^ActiveEnterTimestamp=/ { since = $2 } /^ExecStopPost=/ && index($0, job) { ours = 1 }
         END { done() }'
