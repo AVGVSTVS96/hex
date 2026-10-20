@@ -304,8 +304,8 @@ export class Store {
         throw new Error(`${live} holds no whole message ${message} to cut "${quote}" from`)
       }
       if (whole === held) return this.task(live)!
-      if (!whole.text.includes(quote)) throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`)
-      if (held && whole.text !== said.body) throw new Error(`${live} already holds "${quote}" from ${message}, beside the longer piece it's cut from`)
+      if (!whole.text.includes(quote) || (said.from === 't3' && !pieces.some(piece => piece.includes(quote)))) throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`)
+      if (held && whole.text !== said.body) return this.task(live)!
       const others = whole.text === said.body ? rows.filter(row => row === held || (pieces.includes(row.text) && row.text.includes(quote))) : []
       for (const row of others.filter(row => row !== whole)) this.db.query('delete from words where rowid = ?').run(row.rowid)
       this.db.query('update words set text = ? where rowid = ?').run(quote, whole.rowid)
