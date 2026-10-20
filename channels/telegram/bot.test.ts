@@ -5,7 +5,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import * as grammy from 'grammy'
 import { clients } from '../../hub/hub.ts'
-import { connect as connectSession } from '../../hub/testing.ts'
+import { connect as connectSession, noClaude } from '../../hub/testing.ts'
 import { until } from '../../hub/until.ts'
 import { open } from '../../hub/store.ts'
 
@@ -99,7 +99,7 @@ async function update(fields: Record<string, any>) {
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
   writeFileSync(join(state, 'threads.json'), JSON.stringify({ [DESK]: { name: 'desk' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } }))
-  Object.assign(process.env, { TELEGRAM_STATE_DIR: state, TELEGRAM_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', HEX_MAIN_THREAD: String(FORUM), TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
+  Object.assign(process.env, { PATH: noClaude(), TELEGRAM_STATE_DIR: state, TELEGRAM_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', HEX_MAIN_THREAD: String(FORUM), TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     if (url.startsWith('https://api.telegram.org/file/')) return new Response('jpeg')

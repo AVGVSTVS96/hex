@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { connect as netConnect } from 'net'
-import { connect } from '../../hub/testing.ts'
+import { connect, noClaude } from '../../hub/testing.ts'
 import { clients } from '../../hub/hub.ts'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -173,7 +173,7 @@ beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [OWNER] }))
   writeFileSync(join(state, 'cursor.json'), JSON.stringify({ id: snowflake(60) }))
   writeFileSync(join(state, 'threads.json'), JSON.stringify({ '7777': { name: 'deleted in Discord' } }))
-  Object.assign(process.env, { DISCORD_STATE_DIR: state, DISCORD_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
+  Object.assign(process.env, { PATH: noClaude(), DISCORD_STATE_DIR: state, DISCORD_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     if (url === 'https://cdn.discord/voice-message.ogg') return new Response('ogg')

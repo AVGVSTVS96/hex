@@ -7,6 +7,11 @@ import { route } from './hub.ts'
 // many tools/list_changed it drops, as a session starting cold does before it listens.
 export type Session = ReturnType<typeof http>
 
+// A PATH whose claude lists no sessions, for a test whose hub would otherwise ask the real one, which
+// starts a daemon of its own for any CLAUDE_CONFIG_DIR a test left set, and never stops it. It lives
+// in the repo, so a hub still running after its test's folder is gone keeps finding it.
+export const noClaude = () => `${join(import.meta.dir, 'no-claude')}:${process.env.PATH}`
+
 let ids = 0
 const streams: AbortController[] = []
 let listener: ReturnType<typeof Bun.serve> | undefined
