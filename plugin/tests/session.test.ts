@@ -130,7 +130,7 @@ test('under a job, claude started any way, from any folder, is a hex session in 
   mkdirSync(project)
   writeFileSync(join(home, 'config/.claude.json'), '{}')
   const path = `${join(home, '.hex/shim')}:${process.env.PATH}`
-  Bun.spawnSync(['bash', '-lc', 'cd deck && timeout 60 claude -p go'], { cwd: home, env: { ...process.env, PATH: path } })
+  Bun.spawnSync(['sh', '-c', 'cd deck && timeout 60 claude -p go'], { cwd: home, env: { ...process.env, PATH: path } })
   const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
   expect(args.slice(0, 2)).toEqual(['--plugin-dir', join(home, '.hex/plugin')])
   expect(args).toContain('--add-dir')

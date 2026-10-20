@@ -19,9 +19,11 @@ untrusted() { [ -z "${print:-}" ] && ! above && [ -s "$config" ] && ! jq -e --ar
 for try in 1 2 3 4 5; do
   untrusted || break
   if mkdir "$config.lock" 2>/dev/null; then
+    trap 'rmdir "$config.lock" 2>/dev/null' EXIT INT TERM
     trusted=$(jq --arg here "$here" '.projects[$here].hasTrustDialogAccepted = true' "$config") && [ -n "$trusted" ] &&
       cp -p "$config" "$config.hex.$$" && printf '%s\n' "$trusted" > "$config.hex.$$" && mv "$config.hex.$$" "$config" || rm -f "$config.hex.$$"
     rmdir "$config.lock"
+    trap - EXIT INT TERM
   fi
   sleep 0.2
 done
@@ -50,7 +52,7 @@ for arg; do
     chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
     voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
-    [ -n "${away:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg home "$home" --slurpfile hex "$home/.claude/settings.json" '. as $hub | $hex[0] | .permissions.deny |= map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/")) | . * $hub')
+    [ -n "${away:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg home "$home" --argjson hex "$(cat "$home/.claude/settings.json" 2>/dev/null || echo '{}')" '. as $hub | $hex | .permissions.deny |= (. // [] | map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/"))) | . * $hub')
     # A background session gets only the environment its settings give it, so the hooks learn here that memory came as a file.
     [ -n "${woke:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg woke "$woke" '.env.HEX_WAKE = $woke')
     # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.
