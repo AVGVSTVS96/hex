@@ -1,5 +1,5 @@
-import { beforeEach, expect, test } from 'bun:test'
-import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -17,6 +17,8 @@ beforeEach(() => {
   writeFileSync(join(home, '.hex/HEX.md'), '# How you work\n\nAnswer in plain words.\n')
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')
 })
+
+afterEach(() => rmSync(home, { recursive: true, force: true }))
 
 function hook(event: 'SessionStart' | 'UserPromptSubmit') {
   const run = Bun.spawnSync([join(home, '.hex/bin/rules')], {

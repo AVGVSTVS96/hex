@@ -1,5 +1,5 @@
-import { beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
+import { afterEach, beforeEach, expect, test } from 'bun:test'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -15,6 +15,8 @@ beforeEach(() => {
   mkdirSync(join(home, '.hex/vendor'))
   for (const script of ['compacted', 'log']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
 })
+
+afterEach(() => rmSync(home, { recursive: true, force: true }))
 
 function memo(output: string) {
   writeFileSync(join(home, 'wake.txt'), output)

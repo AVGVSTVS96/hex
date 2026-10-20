@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { startHub } from '../../hub/hub.ts'
@@ -43,6 +43,7 @@ afterEach(() => {
   hub?.close()
   listener.stop(true)
   process.env = { ...saved }
+  rmSync(home, { recursive: true, force: true })
 })
 
 async function launch(channel: string, thread: string, options: Partial<Parameters<typeof startHub>[0]> = {}, cwd?: string) {
@@ -98,7 +99,8 @@ test('a topic session, started by the hub, gets none of the chat or main additio
 
 test('a session started in another project gets the hex folder\'s settings under the hub\'s, in its file', async () => {
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ model: 'opus', permissions: { deny: ['Read(./.env)'] }, env: { MEMORY_DIR: join(home, 'memory') } }))
-  const project = mkdtempSync(join(tmpdir(), 'project-'))
+  const project = join(home, 'project')
+  mkdirSync(project)
   const { args, settings } = await launch('plugin:t3@hex', 't3:1', {}, project)
   expect(settings).toMatchObject({ model: 'opus', permissions: { deny: [`Read(/${home}/.env)`] }, enabledPlugins: { 't3@hex': true }, env: { MEMORY_DIR: join(home, 'memory'), HEX_THREAD: 't3:1' } })
   expect(args).toContain('--append-system-prompt')
