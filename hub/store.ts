@@ -296,7 +296,8 @@ export class Store {
       const said = this.message(message)
       if (!said) throw new Error(`no message ${message}`)
       const rows = this.db.query('select rowid, text from words where task = ? and message = ? order by rowid').all(number(live), message) as { rowid: number; text: string }[]
-      const whole = rows.find(row => row.text === said.body) ?? rows.find(row => said.from === 't3' && row.text === asked(said.body))
+      const pieces = said.from === 't3' ? sent(said.body) : []
+      const whole = rows.find(row => row.text === said.body) ?? rows.find(row => pieces.includes(row.text) && row.text.includes(quote))
       const held = rows.find(row => row.text === quote)
       if (!whole) {
         if (held) return this.task(live)!
@@ -305,7 +306,7 @@ export class Store {
       if (whole === held) return this.task(live)!
       if (!whole.text.includes(quote)) throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`)
       if (held && whole.text !== said.body) throw new Error(`${live} already holds "${quote}" from ${message}`)
-      if (held) this.db.query('delete from words where rowid = ?').run(held.rowid)
+      for (const row of rows) if (row !== whole && (row === held || pieces.includes(row.text))) this.db.query('delete from words where rowid = ?').run(row.rowid)
       this.db.query('update words set text = ? where rowid = ?').run(quote, whole.rowid)
       return this.task(live)!
     })
@@ -456,14 +457,13 @@ export class Store {
   private quote(task: string, message: string, quote?: string) {
     const said = this.message(message)
     if (!said) throw new Error(`no message ${message}`)
-    // An attachment sits outside the request, so a prompt with one keeps all of itself.
-    const bare = said.from === 't3' && !said.body.replace(/<user_request>[\s\S]*?<\/user_request>/, '').replace(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, '').trim()
-    const ask = bare ? asked(said.body) : ''
-    if (quote === undefined && ask && this.db.query('select 1 from words where task = ? and message = ? and text = ?').get(number(task), message, said.body)) return
-    const text = quote ?? (ask && said.body.includes(ask) ? ask : said.body)
-    if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
-    if (!said.body.includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
-    this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
+    const pieces = quote === undefined && said.from === 't3' ? sent(said.body) : []
+    if (pieces.length && this.db.query('select 1 from words where task = ? and message = ? and text = ?').get(number(task), message, said.body)) return
+    for (const text of quote !== undefined ? [quote] : pieces.length ? pieces : [said.body]) {
+      if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
+      if (!said.body.includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
+      this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
+    }
   }
 
   // The task id's words belong to: id itself, or the end of the merges it went through.
@@ -549,6 +549,17 @@ function toQuestion(row: StoredQuestion): Question {
 // or what's left without T3's blocks.
 export function asked(text: string) {
   return (text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ?? text.replace(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, '')).trim()
+}
+
+// What the owner sent in a T3 prompt, piece by piece: the prompt without T3's own blocks, with the
+// request unwrapped, and anything sent with it, like an attachment, as a piece of its own.
+function sent(body: string) {
+  return body
+    .split(/^<(?!user_request>)([a-z0-9_]+)>[\s\S]*?<\/\1>$/m)
+    .filter((_, i) => i % 2 === 0)
+    .map(piece => piece.trim())
+    .map(piece => piece.match(/^<user_request>\n?([\s\S]*?)\n?<\/user_request>$/)?.[1] ?? piece)
+    .filter(Boolean)
 }
 
 function toRow(row: Stored): Row {
