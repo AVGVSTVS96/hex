@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { join } from 'path'
 import { route } from './hub.ts'
 
@@ -8,13 +8,9 @@ import { route } from './hub.ts'
 export type Session = ReturnType<typeof http>
 
 // A PATH whose claude lists no sessions, for a test whose hub would otherwise ask the real one, which
-// starts a daemon of its own for any CLAUDE_CONFIG_DIR a test left set, and never stops it.
-export function noClaude(dir: string) {
-  const bin = join(dir, 'bin')
-  mkdirSync(bin, { recursive: true })
-  writeFileSync(join(bin, 'claude'), `#!/bin/sh\n[ "$1 $2" = "agents --json" ] && echo '[]'\nexit 0\n`, { mode: 0o755 })
-  return `${bin}:${process.env.PATH}`
-}
+// starts a daemon of its own for any CLAUDE_CONFIG_DIR a test left set, and never stops it. It lives
+// in the repo, so a hub still running after its test's folder is gone keeps finding it.
+export const noClaude = () => `${join(import.meta.dir, 'no-claude')}:${process.env.PATH}`
 
 let ids = 0
 const streams: AbortController[] = []

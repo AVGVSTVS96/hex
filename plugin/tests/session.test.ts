@@ -42,7 +42,8 @@ exit 0
 afterEach(() => {
   hub?.close()
   listener.stop(true)
-  process.env = { ...saved }
+  for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name]
+  Object.assign(process.env, saved)
   rmSync(home, { recursive: true, force: true })
 })
 

@@ -99,7 +99,7 @@ async function update(fields: Record<string, any>) {
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
   writeFileSync(join(state, 'threads.json'), JSON.stringify({ [DESK]: { name: 'desk' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } }))
-  Object.assign(process.env, { PATH: noClaude(state), TELEGRAM_STATE_DIR: state, TELEGRAM_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', HEX_MAIN_THREAD: String(FORUM), TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
+  Object.assign(process.env, { PATH: noClaude(), TELEGRAM_STATE_DIR: state, TELEGRAM_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', HEX_MAIN_THREAD: String(FORUM), TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
     if (url.startsWith('https://api.telegram.org/file/')) return new Response('jpeg')
