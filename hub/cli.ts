@@ -8,6 +8,7 @@ const USAGE = `usage:
   hex deliver <from>:<id> --to <thread> [--user <name>] <words…>
   hex task new <message key> [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
   hex task add <task> <message key> [--quote <part of it>]
+  hex task quote <task> <message key> --quote <part of it>
   hex task done <task> --proof <link or fact>
   hex task drop <task> [--into <task it repeats>]
   hex task open <task>
@@ -83,6 +84,9 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
     case 'add':
       if (!id || !key) usage()
       return show([store.addWords(id, key, flags.quote)])
+    case 'quote':
+      if (!id || !key || !flags.quote) usage()
+      return show([store.requote(id, key, flags.quote)])
     case 'done':
       if (!id || !flags.proof) throw new Error('a task is done with --proof: a link or a fact that shows it')
       return show([store.editTask(id, { status: 'done', proof: flags.proof })])

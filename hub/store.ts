@@ -114,6 +114,12 @@ const migrations = [
   update messages set observed_at = coalesce(taken_at, at);`,
   `create index taken on messages (taken_by, taken_at) where taken_by is not null;
   create index sessions on messages ("to", taken_by) where taken_by is not null;`,
+  `drop trigger kept_words;
+  create trigger kept_words before update on words when new.rowid <> old.rowid or new.task <> old.task or new.message <> old.message or instr(old.text, new.text) = 0 or length(new.text) = 0
+    begin select raise(abort, 'words are only ever cut down to the part that asks'); end;
+  drop trigger kept_words_delete;
+  create trigger kept_words_delete before delete on words when not exists (select 1 from words w join messages m on m.key = w.message where w.task = old.task and w.message = old.message and w.rowid <> old.rowid and w.text = m.body and instr(w.text, old.text) > 0)
+    begin select raise(abort, 'words are added, never taken away'); end;`,
 ]
 
 const now = () => new Date().toISOString()
@@ -282,6 +288,29 @@ export class Store {
     })
   }
 
+  // The whole message a task holds, or the whole of what a T3 prompt asked, cut down in place to
+  // the part that asks. Quotes picked on purpose are left as they are.
+  requote(id: string, message: string, quote: string): Task {
+    return this.write(() => {
+      const live = this.live(id)
+      const said = this.message(message)
+      if (!said) throw new Error(`no message ${message}`)
+      const rows = this.db.query('select rowid, text from words where task = ? and message = ? order by rowid').all(number(live), message) as { rowid: number; text: string }[]
+      const whole = rows.find(row => row.text === said.body) ?? rows.find(row => said.from === 't3' && row.text === asked(said.body))
+      const held = rows.find(row => row.text === quote)
+      if (!whole) {
+        if (held) return this.task(live)!
+        throw new Error(`${live} holds no whole message ${message} to cut "${quote}" from`)
+      }
+      if (whole === held) return this.task(live)!
+      if (!whole.text.includes(quote)) throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`)
+      if (held && whole.text !== said.body) throw new Error(`${live} already holds "${quote}" from ${message}`)
+      if (held) this.db.query('delete from words where rowid = ?').run(held.rowid)
+      this.db.query('update words set text = ? where rowid = ?').run(quote, whole.rowid)
+      return this.task(live)!
+    })
+  }
+
   editTask(id: string, change: TaskChange): Task {
     return this.write(() => {
       const task = this.task(id)
@@ -427,9 +456,13 @@ export class Store {
   private quote(task: string, message: string, quote?: string) {
     const said = this.message(message)
     if (!said) throw new Error(`no message ${message}`)
-    const text = quote ?? said.body
+    // An attachment sits outside the request, so a prompt with one keeps all of itself.
+    const bare = said.from === 't3' && !said.body.replace(/<user_request>[\s\S]*?<\/user_request>/, '').replace(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, '').trim()
+    const ask = bare ? asked(said.body) : ''
+    if (quote === undefined && ask && this.db.query('select 1 from words where task = ? and message = ? and text = ?').get(number(task), message, said.body)) return
+    const text = quote ?? (ask && said.body.includes(ask) ? ask : said.body)
     if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
-    if (!said.body.includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for the whole message`)
+    if (!said.body.includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
     this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
   }
 
@@ -510,6 +543,12 @@ function toQuestion(row: StoredQuestion): Question {
     ...(row.answer && { answer: JSON.parse(row.answer) }),
     ...(row.settled && { settled: JSON.parse(row.settled) }),
   }
+}
+
+// T3 Code sends a message with its own context around it: the owner's words are its user_request,
+// or what's left without T3's blocks.
+export function asked(text: string) {
+  return (text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ?? text.replace(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, '')).trim()
 }
 
 function toRow(row: Stored): Row {

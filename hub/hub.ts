@@ -6,7 +6,7 @@ import * as claude from './claude.ts'
 import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { schedule, zoneOf } from './schedule.ts'
-import { open, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
+import { asked, open, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
@@ -231,12 +231,6 @@ function chatOf(log: string): Turn[] {
     const from = OWNER.has(who!) ? 'me' : who === 'assistant' ? 'hex' : undefined
     return app === 'terminal' || !said || !from ? [] : [{ from, text: said } as Turn]
   })
-}
-
-// T3 Code sends a message with its own context around it: the owner's words are its user_request,
-// or what's left without T3's blocks.
-export function asked(text: string) {
-  return (text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ?? text.replace(/^<([a-z_]+)>[\s\S]*?<\/\1>$/gm, '')).trim()
 }
 
 // TRANSCRIBE_URL is any OpenAI-compatible /audio/transcriptions endpoint.
