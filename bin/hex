@@ -25,8 +25,8 @@ case "${1:-}" in
   init)
     settings="$home/.claude/settings.json"
     [ -e "$settings" ] || settings="$hex/defaults/settings.json"
-    if [ "$(id -u)" = 0 ] && [ "${IS_SANDBOX:-}" != 1 ] && [ "$(jq -r '.permissions.defaultMode' "$settings")" = bypassPermissions ]; then
-      echo "hex runs its sessions in bypassPermissions, which Claude Code refuses as root outside a sandbox (IS_SANDBOX=1): run hex as a normal user" >&2
+    if [ "$(id -u)" = 0 ] && [ "$(set +eu; unset IS_SANDBOX; . "$hex/bin/settings"; echo "${IS_SANDBOX:-}")" != 1 ] && [ "$(jq -r '.permissions.defaultMode' "$settings")" = bypassPermissions ]; then
+      echo "hex runs its sessions in bypassPermissions, which Claude Code refuses as root outside a sandbox (IS_SANDBOX=1 in .env): run hex as a normal user" >&2
       exit 1
     fi
     for file in AGENTS.md SOUL.md schedules.json; do
@@ -38,7 +38,7 @@ case "${1:-}" in
     [ -e "$home/.claude/settings.json" ] || jq --arg memory "$home/memory" '.env.MEMORY_DIR = $memory' "$hex/defaults/settings.json" > "$home/.claude/settings.json"
     # Claude Code runs a background session in bypassPermissions only with consent in the user's own settings.
     if [ "$(jq -r '.permissions.defaultMode' "$home/.claude/settings.json")" = bypassPermissions ]; then
-      user=$(set +eu; . "$hex/bin/settings"; echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json")
+      user=$(set +eu; unset CLAUDE_CONFIG_DIR; . "$hex/bin/settings"; echo "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json")
       if ! grep -q '[^[:space:]]' "$user" 2>/dev/null; then
         mkdir -p "$(dirname "$user")"
         echo '{ "skipDangerousModePermissionPrompt": true }' > "$user"
