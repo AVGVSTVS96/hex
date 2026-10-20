@@ -49,5 +49,5 @@ body=$(jq -r --arg typist "$typist" '
   ' --arg said "$said" "$transcript")
 [ -n "$body" ] || exit 0
 
-printf '# %s · session %s\n\n%s\n' "$started" "$session" "$body" > "$out.$$" && mv "$out.$$" "$out"
-if [ "${1:-}" = path ]; then echo "$out"; fi
+printf '# %s · session %s\n\n%s\n' "$started" "$session" "$body" > "$out.$$" && mv "$out.$$" "$out" || exit
+[ "${1:-}" != path ] || echo "$out"

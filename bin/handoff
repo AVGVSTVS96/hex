@@ -11,11 +11,12 @@ const input = await Bun.stdin.text()
 const { tool_name, tool_input } = JSON.parse(input)
 const state = process.env.HEX_STORE || resolve(import.meta.dir, '../../state')
 
-const prompts: Record<string, string> = { Agent: 'prompt', t3_thread_launch: 'message', t3_thread_send: 'message', delegate_task: 'task', new_thread: 'prompt' }
+const prompts: Record<string, string> = { Agent: 'prompt', SendMessage: 'message', t3_thread_launch: 'message', t3_thread_send: 'message', t3_thread_send_attachments: 'message', delegate_task: 'task', new_thread: 'prompt' }
 const tool = String(tool_name).replace(/^mcp__.*__/, '')
 const field = prompts[tool]
-const handed = tool === 'create_threads' ? tool_input.threads?.some((thread: { prompt?: string }) => thread.prompt) : typeof tool_input[field!] === 'string'
-if (!handed || tool_input.subagent_type === 'fork') process.exit(0)
+const handed = tool === 'create_threads' ? tool_input.threads?.some((thread: { prompt?: string }) => thread.prompt) : typeof tool_input[field!] === 'string' && tool_input[field!]
+// A fork already has the conversation, a remote agent can't open a local file, and main is the session itself.
+if (!handed || tool_input.subagent_type === 'fork' || tool_input.isolation === 'remote' || tool_input.to === 'main') process.exit(0)
 
 const log = Bun.spawnSync([join(import.meta.dir, 'log'), 'path'], { stdin: Buffer.from(input) }).stdout.toString().trim()
 if (!log) process.exit(0)
@@ -24,7 +25,7 @@ const newest = [...(await Bun.file(log).text()).matchAll(/^## me · \w+ · (.+)$
 const { HEX_THREAD } = process.env
 const tasks = HEX_THREAD && existsSync(join(state, 'hex.db')) ? open(state).tasks({ owner: HEX_THREAD, status: ['open'] }) : []
 const pointer = [
-  `\n\n---\nThis work comes from a conversation in hex. All of it, the owner's messages (headed "me") and hex's replies, is in ${log}, kept current as they say more${newest ? `; their newest message there is from ${newest}` : ''}. It holds the full picture and the intent behind this work in the owner's own words, which count over any retelling of them above.`,
+  `\n\n---\nThis work comes from a conversation in hex. All of it, the owner's messages (headed "me") and hex's replies, is in ${log}, kept current as they say more${newest ? `; their newest message there is from ${newest}` : ''}. It holds the full picture and the intent behind this work in the owner's own words; where the message above retells something they said, go by their words.`,
   tasks.length && `Its open tasks, each with the owner's words: ${tasks.map(task => task.id).join(', ')} (\`${resolve(import.meta.dir, 'hex')} task <id>\`).`,
 ]
   .filter(Boolean)

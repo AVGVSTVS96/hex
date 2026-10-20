@@ -53,6 +53,8 @@ test('every way of handing off gets the pointer in its prompt', () => {
   expect(hand('mcp__t3-code__delegate_task', { task: 'Review.' }).task).toContain(LOG(home))
   expect(hand('mcp__plugin_discord_discord__new_thread', { title: 'Docs', prompt: 'Read the docs.', about: 'x' }).prompt).toContain(LOG(home))
   expect(hand('Agent', { description: 'd', prompt: 'Find it.' }).prompt).toContain(LOG(home))
+  expect(hand('SendMessage', { to: 'builder', message: 'They added to it.' }).message).toContain(LOG(home))
+  expect(hand('mcp__t3-code__t3_thread_send_attachments', { attachments: [], message: 'Screens.' }).message).toContain(LOG(home))
   const threads = hand('mcp__t3-code__create_threads', { threads: [{ prompt: 'One.' }, { title: 'idle' }] }).threads
   expect(threads[0].prompt).toContain(LOG(home))
   expect(threads[1]).toEqual({ title: 'idle' })
@@ -65,12 +67,22 @@ test('the thread\'s open tasks come with it', () => {
   expect(hand('Agent', { description: 'd', prompt: 'Go.' }).prompt).toContain(`Its open tasks, each with the owner's words: ${task.id} (\``)
 })
 
-test('a fork, which already has the conversation, and an idle launch are left as they are', () => {
+test('a fork, a remote agent, a message to main and an idle launch are left as they are', () => {
   expect(hand('Agent', { description: 'd', prompt: 'Go.', subagent_type: 'fork' })).toBeUndefined()
+  expect(hand('Agent', { description: 'd', prompt: 'Go.', isolation: 'remote' })).toBeUndefined()
+  expect(hand('SendMessage', { to: 'main', message: 'Done.' })).toBeUndefined()
+  expect(hand('SendMessage', { to: 'builder', message: '', notify_when_idle: true })).toBeUndefined()
   expect(hand('mcp__t3-code__t3_thread_launch', { title: 'idle' })).toBeUndefined()
 })
 
 test('a session with nothing said yet hands off unchanged', () => {
   writeFileSync(join(home, 'transcript.jsonl'), '')
   expect(hand('Agent', { description: 'd', prompt: 'Go.' })).toBeUndefined()
+})
+
+test('the matcher catches every handoff tool, the T3 channel\'s new_thread included', () => {
+  const hooks = JSON.parse(readFileSync(join(HEX, 'plugin/hooks/hooks.json'), 'utf8')).hooks.PreToolUse
+  const matcher = new RegExp(hooks.find((hook: { hooks: { command: string }[] }) => hook.hooks[0]!.command.endsWith('bin/handoff')).matcher)
+  for (const tool of ['Agent', 'SendMessage', 'mcp__t3-code__t3_thread_launch', 'mcp__t3-code__delegate_task', 'mcp__plugin_t3_t3__new_thread', 'mcp__plugin_discord_discord__new_thread']) expect(tool).toMatch(matcher)
+  expect('mcp__t3-code__t3_thread_read').not.toMatch(matcher)
 })
