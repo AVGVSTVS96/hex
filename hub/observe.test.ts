@@ -28,7 +28,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("the owner's messages reach the pass, which writes notes for those no note names yet", async () => {
+test("the turn's messages reach the pass, which writes notes for the owner's no note names yet", async () => {
   const seen: string[] = []
   const ask = async (input: string) => {
     seen.push(input)
@@ -38,21 +38,23 @@ test("the owner's messages reach the pass, which writes notes for those no note 
   expect(seen[0]).toContain('[telegram:-100:50]')
   expect(seen[0]).toContain("The session's reply:\nDone, Friday deploys only.")
   expect(seen[0]).toContain('get the login page fixed first\n(a note already names this message: write no note for it)')
-  expect(seen[0]).not.toContain('run the backup')
+  expect(seen[0]).toContain('From schedule, not the owner,')
+  expect(seen[0]).toContain('[nightly] run the backup')
   expect(noted()).toEqual(['Oct 19 11:31pm: ships "on fridays only, my team reviews thursdays" [telegram:-100:50]'])
   expect(await observe(dir, 's', '', { ask, memo })).toEqual([])
   expect(seen).toHaveLength(1)
 })
 
-test("a note that misquotes the owner, names no message, or doesn't fit isn't written, and one is written without the date memo adds", async () => {
+test("a note that misquotes the owner, quotes without naming the message, or doesn't fit isn't written, one about what happened needs neither, and one is written without the date memo adds", async () => {
   const ask = async () => ({ profile: null, notes: [
     'Oct 19: ships "only on fridays" [telegram:-100:50]',
-    'Oct 19: ships on fridays only',
+    'Oct 19: ships "on fridays only"',
+    'Oct 19: the nightly backup ran',
     `Oct 19: "ship it on fridays only" ${'x'.repeat(280)} [telegram:-100:50]`,
     '2026-10-19 Oct 19: "ship it on fridays only" [telegram:-100:50]',
   ] })
-  expect(await observe(dir, 's', '', { ask, memo })).toEqual(['Oct 19: "ship it on fridays only" [telegram:-100:50]'])
-  expect(noted()).toHaveLength(1)
+  expect(await observe(dir, 's', '', { ask, memo })).toEqual(['Oct 19: the nightly backup ran', 'Oct 19: "ship it on fridays only" [telegram:-100:50]'])
+  expect(noted()).toHaveLength(2)
 })
 
 test('a pass that fails hands its messages to the next one, and one that died does once its lease runs out', async () => {

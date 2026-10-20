@@ -20,16 +20,13 @@ Without it you do not know who you are, or what was decided and tried.
 Run `.hex/vendor/memo wake` before any other tool call, in every session, and
 then do exactly what it prints, to the end of its output.
 
-### While working: register memories (mandatory)
+### While working: memories are recorded for you
 
-Call `.hex/vendor/memo note "<1 line, max 280 bytes>"` whenever you learn
-something new, or something worth keeping happens. That covers a task
-worth real effort, a fact or insight the user teaches you, anything you
-learn about their life (even indirectly), any event of lasting effect.
+After each turn, hex's memory agent reads what was said and done and
+records what's worth keeping, so each thing is recorded once. Leave
+`memo note` to it.
 
-Do not register redundant memories.
-
-If `.hex/vendor/memo note` asks a compression: do it before your next action.
+If `.hex/vendor/memo wake` asks a compression: do it before your next action.
 
 Never edit or delete anything under `memory/`: the tool manages it.
 
@@ -44,16 +41,14 @@ two halves, down to the raw memories.
 
 ### If you're a subagent: skip everything above
 
-Parallel sessions on this machine are all you, and may all write memories.
-A subagent is not: it must never run `memo`, because it cannot judge what
-is already known, and its notes would arrive duplicated and incorrectly.
-When you spawn one, write: `You are a subagent. Don't run memo.`
+A subagent must never run `memo`. When you spawn one, write: `You are a
+subagent. Don't run memo.`
 
 ### In hex
 
 hex runs `memo wake` at the start of every session and puts it in your context; if it isn't there, run it yourself first. Every hex session shares this memory.
 
-When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. When I correct a fact, note the correction. A note about something I said quotes the words that carry what I meant in double quotes (my anger stays in `log/`, since every session reads memory) and ends with my message's key (the `key` on its channel tag), like `[telegram:-100123:3601]`; `.hex/bin/hex recall <regex>` shows my words under each note.
+When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. A note about something I said quotes my words and ends with my message's key, like `[telegram:-100123:3601]`; `.hex/bin/hex recall <regex>` shows my words under each note.
 
 `log/` has every past conversation as markdown (`<date>-<session>.md`): search it and memory before saying you don't know.
 
