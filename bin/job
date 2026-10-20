@@ -96,5 +96,8 @@ if (mode === "--ended") {
   const told = agent ? piped + (away ? `\n\nThis work is in ${folder}: run its commands there.` : "") : ""
   const input = told ? ["-p", `StandardInputData=${Buffer.from(told).toString("base64")}`] : []
   const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`])
-  await $`systemd-run --user --unit=${mode} ${agent ? `--working-directory=${home}` : "--same-dir"} ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`} -- ${run}`
+  // systemd expands ${VARIABLE} in a unit's command, which would rewrite a thread's name or prompt;
+  // 254 added --expand-environment to turn that off, and older ones pass it as given.
+  const verbatim = (await $`systemd-run --help`.text()).includes("--expand-environment") ? ["--expand-environment=no"] : []
+  await $`systemd-run --user --unit=${mode} ${verbatim} ${agent ? `--working-directory=${home}` : "--same-dir"} ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`} -- ${run}`
 }
