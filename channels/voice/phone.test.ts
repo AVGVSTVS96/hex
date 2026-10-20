@@ -33,10 +33,9 @@ async function phoneCall() {
       },
     },
   })
-  const port = 20000 + Math.floor(Math.random() * 20000)
   writeFileSync(
     join(state, '.env'),
-    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=${port}`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`].join('\n'),
+    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`].join('\n'),
   )
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
   const hex = join(home, 'hex', 'state')
@@ -45,29 +44,37 @@ async function phoneCall() {
   const engine = `import { serve } from ${JSON.stringify(join(import.meta.dir, 'server.ts'))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 const lines = console[Symbol.asyncIterator]()
-serve({
+const server = serve({
   deliver: (content, meta) => step('deliver', { content, meta }),
   keep: () => step('keep'),
   renew: () => step('renew'),
   renewal: async () => (step('renewal'), await lines.next()),
   session: () => 'brain',
-}, ${JSON.stringify(hex)})`
+}, ${JSON.stringify(hex)})
+step('listening', { port: server.port })`
   const plugin = Bun.spawn(['bun', '-e', engine], { env: { ...env, HOME: home }, stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
   const steps: any[] = []
+  let listening!: (port: number) => void
+  const port = new Promise<number>(resolve => (listening = resolve))
   void (async () => {
     let buffer = ''
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk)
       const lines = buffer.split('\n')
       buffer = lines.pop()!
-      steps.push(...lines.map(line => JSON.parse(line)))
+      for (const step of lines.map(line => JSON.parse(line))) {
+        if (step.step === 'listening') listening(step.port)
+        else steps.push(step)
+      }
     }
   })()
-  const base = `http://127.0.0.1:${port}`
-  for (let i = 0; i < 100; i++) {
-    if (await fetch(`${base}/calls`).then(r => r.ok, () => false)) break
-    await Bun.sleep(50)
-  }
+  const exited = plugin.exited.then(code => Promise.reject(new Error(`the engine exited (${code}) before it listened`)))
+  const listened = await Promise.race([port, exited]).catch(error => {
+    openai.stop(true)
+    rmSync(home, { recursive: true, force: true })
+    throw error
+  })
+  const base = `http://127.0.0.1:${listened}`
   return {
     base,
     audio,
@@ -105,6 +112,15 @@ async function live(base: string) {
   throw new Error('the phone call never went live')
 }
 
+// Waits on the call's own changes until it holds what the test is looking for.
+async function listen(base: string, id: string, version: number, done: (call: any) => boolean) {
+  for (;;) {
+    const call = await fetch(`${base}/calls/${id}?after=${version}`).then(r => r.json())
+    if (done(call)) return call
+    version = call.version
+  }
+}
+
 test("a phone call's words reach the app as they're heard, and how it ended lands in its record", async () => {
   await using call = await phoneCall()
   const phone = await dialIn(call.base)
@@ -125,13 +141,12 @@ test("a phone call's words reach the app as they're heard, and how it ended land
 
   call.say('you', 'green?', 1300)
   call.say('voice', 'One sec.', 2500)
-  await Bun.sleep(100)
-  const later = await fetch(`${call.base}/calls/${id}?after=${heard.version}`).then(r => r.json())
+  const later = await listen(call.base, id, heard.version, call => call.turns.some((turn: any) => turn.who === 'voice'))
   expect(later.turns).toEqual([
     { who: 'you', at: 1000, text: 'is the build green?' },
     { who: 'voice', at: 2500, text: 'One sec.' },
   ])
-  expect(call.audio).toEqual(['f39/fw=='])
+  expect(await until(() => call.audio.length && call.audio)).toEqual(['f39/fw=='])
 
   const ending = fetch(`${call.base}/calls/${id}?after=${later.version}`).then(r => r.json())
   phone.send(JSON.stringify({ event: 'stop' }))

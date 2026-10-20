@@ -256,7 +256,7 @@ Bassim likes short answers.
 
 test('a session learned mid-turn picks up the lines written since the turn began', async () => {
   assistant('msg_old', { type: 'text', text: 'an earlier turn' })
-  await Bun.sleep(5)
+  setSystemTime(new Date(Date.now() + 1000))
   activity.busy({ thread: ROOT, channel: CHANNEL, triggers: [] })
   assistant('msg_01', { type: 'text', text: 'first' })
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] })

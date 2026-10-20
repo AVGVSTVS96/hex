@@ -696,8 +696,7 @@ test('a forum post that tags Hex is its own thread: comments on it reach the ses
   expect(bot.relay.events.find(event => event.id === sent)).toMatchObject({ kind: 45003, tags: [['h', bot.forum], ['e', post.id, '', 'reply'], ['p', owner], bot.auth] })
   await session.call('new_thread', { title: 'Notes', prompt: 'draft them', channel: 'ideas' })
   expect(await until(() => bot.relay.events.find(event => event.content === '**Notes**'))).toMatchObject({ kind: 45001, tags: [['h', bot.forum], ['p', owner], bot.auth] })
-  await Bun.sleep(300)
-  expect(bot.launches().length).toBe(2)
+  await until(() => bot.launches().length === 2)
 })
 
 test('list_channels names the channels Hex is in, and marks direct messages', async () => {

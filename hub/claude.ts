@@ -2,6 +2,7 @@ import { execFile, spawn } from 'child_process'
 import { closeSync, fstatSync, openSync, readFileSync, readSync, watch } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import { sleep } from './clock.ts'
 
 // A background session as `claude agents --json` lists it.
 export type Agent = { sessionId: string; id?: string; pid: number; status?: string; startedAt?: number }
@@ -31,9 +32,29 @@ function contained(command: string, args: string[]): [string, string[]] {
   return ['systemd-run', ['--user', '--scope', '--quiet', '--collect', `--slice=${slice}`, '--property=OOMPolicy=continue', ...verbatim, command, ...args]]
 }
 
+// The claude commands the hub has running.
+const running = new Set<Promise<unknown>>()
+
+function tracked<T>(command: Promise<T>): Promise<T> {
+  running.add(command)
+  const done = () => void running.delete(command)
+  command.then(done, done)
+  return command
+}
+
+// Resolves once no claude command is running and nothing waiting on one has started another, so
+// what the hub does next waits on something outside it: a session, a hook, its clock.
+export async function settled() {
+  for (;;) {
+    await new Promise(resolve => setImmediate(resolve))
+    if (!running.size) return
+    await Promise.allSettled(running)
+  }
+}
+
 function run(args: string[]): Promise<string | undefined> {
   const [command, argv] = contained('claude', args)
-  return new Promise(resolve => execFile(command, argv, { env: inherited(), timeout: 15_000 }, (error, stdout) => resolve(error ? undefined : stdout)))
+  return tracked(new Promise(resolve => execFile(command, argv, { env: inherited(), timeout: 15_000 }, (error, stdout) => resolve(error ? undefined : stdout))))
 }
 
 async function listed(): Promise<Agent[] | undefined> {
@@ -48,8 +69,9 @@ async function listed(): Promise<Agent[] | undefined> {
 // Claude's daemon runs every background session. While it's down it lists none, even with
 // sessions still running, and it comes back only for the next new session; started here instead,
 // it takes the running ones back as it comes up.
-async function awake() {
+async function awake(asking: () => boolean) {
   if ((await run(['daemon', 'status'])) !== undefined) return true
+  if (!asking()) return false
   process.stderr.write("hub: Claude's daemon isn't answering, so the hub starts it\n")
   const [command, args] = contained('claude', ['daemon', 'run'])
   spawn(command, args, { detached: true, stdio: 'ignore', env: inherited() }).on('error', () => {}).unref()
@@ -58,13 +80,15 @@ async function awake() {
 
 // Only what Claude's daemon says is running: an answer that failed or can't be read, and an empty
 // list from a daemon that's down, are asked again until it can say, never read as nothing running.
-// A caller that stops asking (a closed hub) gets no answer at all.
+// A caller that stops asking (a closed hub) gets no answer at all, even to a question already asked.
 export async function agents(asking = () => true): Promise<Agent[]> {
   for (let tries = 0; asking(); tries++) {
     const running = await listed()
-    if (running?.length || (running && (await awake()))) return running
+    if (!asking()) break
+    if (running?.length || (running && (await awake(asking)) && asking())) return running
+    if (!asking()) break
     if (!running && !tries) process.stderr.write("hub: claude agents didn't answer, so the hub asks again\n")
-    await Bun.sleep(Math.min(1000 * 2 ** tries, 30_000))
+    await sleep(Math.min(1000 * 2 ** tries, 30_000))
   }
   return new Promise(() => {})
 }
@@ -104,7 +128,7 @@ function current() {
 // Resolves with the new session's job once Claude has put it in the background.
 export async function start(launcher: string, args: string[], options: { cwd: string; env: Record<string, string | undefined> }): Promise<string> {
   await current()
-  return new Promise((resolve, reject) => {
+  return tracked(new Promise((resolve, reject) => {
     const [command, argv] = contained(launcher, ['--bg', ...args])
     const child = spawn(command, argv, { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
     let output = ''
@@ -116,7 +140,7 @@ export async function start(launcher: string, args: string[], options: { cwd: st
       if (job) resolve(job)
       else reject(new Error(output.trim() || `claude --bg exited with code ${code}`))
     })
-  })
+  }))
 }
 
 // Node can't wait on a process it didn't start, and pidwait isn't on every system (macOS has
