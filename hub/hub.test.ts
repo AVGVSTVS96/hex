@@ -745,6 +745,28 @@ test('a thread whose session failed to start starts again once another session c
   expect(received).toEqual([inbound(message)])
 })
 
+test('a thread opened with a prompt, or as a fork, whose start failed starts again with it once another session connects', async () => {
+  start()
+  const starts = () => calls().filter(args => args[0] === '--bg')
+  mkdirSync(join(dir, 'work'))
+  hub.open('chat:8', 'OpenAI', 'find the latest model', join(dir, 'work'))
+  hub.fork('chat:10', 'Copy', SESSION, 'carry on')
+  await until(() => starts().length === 2)
+  await Bun.sleep(50)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  await until(() => failures.length === 2)
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'working' }))
+  hub.open('chat:9', 'Theo clips')
+  await until(() => starts().length === 3)
+  await session('chat:9', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => starts().length === 5)
+  const again = (thread: string) => starts().slice(3).find(args => settingsOf(args).env.HEX_THREAD === thread)!
+  expect(again('chat:8').at(-1)).toBe('find the latest model')
+  expect(hub.cwd('chat:8')).toBe(join(dir, 'work'))
+  expect(again('chat:10').slice(5, 8)).toEqual(['--resume', SESSION, '--fork-session'])
+  expect(again('chat:10').at(-1)).toBe('carry on')
+})
+
 test("a thread whose starts keep failing says so in its chat once, and General hears of it once, at the third", async () => {
   start({ main: 'general', general: true })
   await launched()
@@ -760,7 +782,7 @@ test("a thread whose starts keep failing says so in its chat once, and General h
   expect(general.received.map(said => said.content)).toEqual(['[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 3 times in a row: exit 1 before init. It starts again when another session connects.'])
 })
 
-test("General whose starts keep failing says so once, straight in its chat, and leaves itself no message", async () => {
+test("General whose start failed starts again with each next message, as its heartbeat, says so once, straight in its chat, and leaves itself no message", async () => {
   start({ main: 'general', general: true })
   await launched()
   await Bun.sleep(50)
@@ -768,6 +790,7 @@ test("General whose starts keep failing says so once, straight in its chat, and 
   for (const n of [1, 2, 3]) {
     if (n > 1) hub.deliver('general', 'hex', { ...message, content: `try ${n}` })
     await until(() => states.filter(([thread, busy]) => thread === 'general' && !busy).length === n)
+    expect(calls().filter(args => args[0] === '--bg')).toHaveLength(n)
   }
   expect(failures).toEqual([['general', 'exit 1 before init']])
   expect(open(dir).untaken('general').map(row => row.body)).toEqual(['try 2', 'try 3'])

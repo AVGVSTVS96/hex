@@ -100,7 +100,12 @@ type Run = {
   held: (() => void)[]
   // The starts that failed in a row since the thread's session last connected.
   failures: number
+  opening?: Opening
 }
+
+// What a new session starts with: its first prompt, and the session it continues as a fork. quiet:
+// the prompt is the hub's own (a compaction), so the thread doesn't show as working.
+type Opening = { prompt?: string; fork?: string; quiet?: boolean }
 
 // A call on a line a client holds, like a Discord voice channel: the line plays the voice's audio
 // and ends when the call does, and the call engine hears the caller and can be hung up on. Audio is
@@ -542,10 +547,14 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     return (threads[thread] ??= { name, ...(cwd && { cwd }) })
   }
 
-  // quiet: the prompt is the hub's own (a compaction), so the thread doesn't show as working.
-  async function launch(thread: string, name: string, { prompt, fork, cwd, quiet = false }: { prompt?: string; fork?: string; cwd?: string; quiet?: boolean } = {}) {
+  // A start's prompt and the session it forks are kept until a session connects, so the next start
+  // after a failed one, a retry or the thread's next message, starts with them; its cwd is kept in
+  // threads.json.
+  async function launch(thread: string, name: string, { cwd, ...given }: Opening & { cwd?: string } = {}) {
     const run = runOf(thread)
     if (closed || underway(run)) return
+    if (given.prompt || given.fork) run.opening = given
+    const { prompt, fork, quiet = false } = run.opening ?? {}
     const known = register(thread, name, cwd)
     claim(thread)
     if ((prompt && !quiet) || run.queue.length) setState(thread, true)
@@ -652,8 +661,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
 
   // A run of failed starts, which ends when the thread's session connects, is told once in the
-  // thread's chat and, at its third, to General. General's own reach only its chat, which needs no
-  // session to read them.
+  // thread's chat and, at its third, to General. General's own failed starts reach only its chat,
+  // which needs no session to read them.
   function fail(thread: string, reason: string) {
     const run = runOf(thread)
     if (run.phase.is !== 'launching') return
@@ -733,10 +742,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     for (const row of kept(store => store.untaken(), [])) if (threads[row.to] && mine(row)) pass(row.to, threads[row.to]!.name, toMessage(row))
   }
 
-  // A thread whose session failed to start keeps the messages it was handed waiting, and the main
-  // thread is always running, so either starts again once starts go through.
+  // A thread whose session failed to start keeps its prompt and the messages it was handed waiting,
+  // and the main thread is always running, so each starts again once starts go through.
   function retry() {
-    for (const [thread, run] of runs) if (run.failures && run.phase.is === 'stopped' && (thread === main || waiting(thread).length)) void launch(thread, threads[thread]?.name ?? thread)
+    for (const [thread, run] of runs) if (run.failures && run.phase.is === 'stopped' && (thread === main || run.opening || waiting(thread).length)) void launch(thread, threads[thread]?.name ?? thread)
   }
 
   // A session that started before hex kept messages can't mark one taken itself, so its hook says so here.
@@ -795,6 +804,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const job = run.phase.is === 'launching' ? run.phase.job : undefined
     become(run, { is: 'live', line })
     run.failures = 0
+    run.opening = undefined
     if (general && thread === main) reached(api)
     if (run.renew !== 'asked') run.renew = undefined
     threads[thread] ??= { name: thread }
