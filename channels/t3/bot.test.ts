@@ -7,7 +7,7 @@ import { join } from 'path'
 import type { Subprocess } from 'bun'
 import { Database } from 'bun:sqlite'
 import { client, ndJsonStream, type SessionNotification } from '@agentclientprotocol/sdk'
-import { connect as channel, service } from '../../hub/testing.ts'
+import { ATTACH, connect as channel, service } from '../../hub/testing.ts'
 import { until } from '../../hub/until.ts'
 
 const SESSION = '0a1b2c3d-0000-4000-8000-000000000000'
@@ -27,6 +27,7 @@ beforeEach(async () => {
   writeFileSync(join(dir, '.claude.json'), '{"projects":{}}')
   script('claude', `jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/calls"
 [ "$1 $2" = "agents --json" ] && { cat "${dir}/agents" 2>/dev/null || echo '[]'; }
+${ATTACH}
 [ "$1" = stop ] && [ -f "${dir}/agents" ] && pid=$(jq '.[0].pid' "${dir}/agents") && rm "${dir}/agents" && kill "$pid"
 exit 0`)
   script('launch', `pwd >> "${dir}/cwd"
@@ -135,6 +136,7 @@ async function session(thread: string) {
     },
     idle: (background = false) => hook({ type: 'state', thread, busy: false, ...(background && { background }) }),
     write: (...entries: object[]) => appendFileSync(transcript, entries.map(entry => JSON.stringify(entry) + '\n').join('')),
+    read: () => readFileSync(transcript, 'utf8'),
   }
 }
 
@@ -166,7 +168,6 @@ async function kept(agent: Awaited<ReturnType<typeof t3>>['agent']) {
 test('a new thread starts its hex session in its project on the first prompt, which streams the turn until the transcript ends it', async () => {
   const { agent, updates } = await t3()
   const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
-  await Bun.sleep(100)
   expect(lines('launched')).toEqual([])
   const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
   await until(() => lines('cwd').length)
@@ -338,7 +339,6 @@ test('a thread T3 opens is kept only once it sends a prompt, so T3\'s provider c
   await check.agent.request('session/new', { cwd: project, mcpServers: [] })
   await until(() => check.updates.length)
   check.socket.destroy()
-  await Bun.sleep(100)
   expect(existsSync(join(dir, 'state', 'threads.json'))).toBe(false)
   expect(JSON.parse(readFileSync(join(dir, '.claude.json'), 'utf8')).projects).toEqual({})
   expect(lines('launched')).toEqual([])
@@ -437,7 +437,6 @@ test('a prompt the old hub never read before a restart reaches the session once 
   const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
   bot.kill('SIGSTOP')
   const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] })
-  await Bun.sleep(100)
   bot.kill('SIGKILL')
   await restart()
   await until(() => lines('launched').length)
@@ -465,16 +464,41 @@ test('a thread\'s history loads the same each time, so hex acp can tell what T3 
   expect(await load()).toEqual(loaded)
 })
 
-test('cancelling stops the session and answers the prompt as cancelled', async () => {
+// Claude's daemon lists the session as working, as it does through a turn.
+function working() {
+  const agents = JSON.parse(readFileSync(join(dir, 'agents'), 'utf8'))
+  writeFileSync(join(dir, 'agents'), JSON.stringify(agents.map((agent: object) => ({ ...agent, status: 'busy' }))))
+}
+
+test('a Stop interrupts the turn the way Esc does: the prompt answers as cancelled, the session keeps running, and the next prompt reaches it', async () => {
   const { agent } = await t3()
-  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
-  const hex = await session(sessionId)
+  const { sessionId, hex } = await kept(agent)
+  working()
   const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'run for a while' }] })
-  await until(() => hex.inbound.length)
+  await until(() => hex.inbound.length === 2)
+  await hex.busy()
   await agent.notify('session/cancel', { sessionId })
   expect(await answer).toEqual({ stopReason: 'cancelled' })
-  await until(() => lines('calls').some(line => line.startsWith('["stop"')))
-  expect(lines('calls')).toContain(JSON.stringify(['stop', SESSION.slice(0, 8)]))
+  expect(hex.read()).toContain('[Request interrupted by user')
+  void agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'what did you find?' }] })
+  await until(() => hex.inbound.length === 3)
+  expect(hex.inbound[2]).toMatchObject({ type: 'inbound', content: 'what did you find?' })
+  expect(lines('launched')).toHaveLength(1)
+  expect(lines('calls').filter(line => line.startsWith('["stop"'))).toEqual([])
+})
+
+test('a Stop that comes before the session reports its turn interrupts the turn once it does', async () => {
+  const { agent } = await t3()
+  const { sessionId, hex } = await kept(agent)
+  working()
+  const answer = agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'run for a while' }] })
+  await until(() => hex.inbound.length === 2)
+  await agent.notify('session/cancel', { sessionId })
+  expect(hex.read()).not.toContain('[Request interrupted by user')
+  await hex.busy()
+  expect(await answer).toEqual({ stopReason: 'cancelled' })
+  expect(hex.read()).toContain('[Request interrupted by user')
+  expect(lines('calls').filter(line => line.startsWith('["stop"'))).toEqual([])
 })
 
 // T3's own records while it restarts a turn of this session to steer it.

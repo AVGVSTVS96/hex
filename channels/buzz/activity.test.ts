@@ -206,6 +206,23 @@ test('a turn reported over before its last step is written completes once Claude
     .toEqual(['working on it', 'all done', 'turn_completed'])
 }, 15000)
 
+test('an interrupted turn, which runs no Stop hooks, completes at the line Claude Code writes for the interrupt', async () => {
+  activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] })
+  assistant('msg_01', { type: 'text', text: 'halfway' })
+  await until(() => updates().length === 1)
+  line({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } })
+  activity.idle(ROOT)
+  await until(() => frames().some(frame => frame.kind === 'turn_completed'))
+})
+
+test('a session stopped from here after its turn was reported over completes with what it wrote', async () => {
+  activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] })
+  assistant('msg_01', { type: 'text', text: 'halfway' })
+  activity.idle(ROOT)
+  activity.stopped(ROOT)
+  await until(() => frames().some(frame => frame.kind === 'turn_completed'))
+})
+
 test('a turn whose session was stopped completes with what it wrote, and the next turn starts clean', async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] })
   assistant('msg_01', { type: 'text', text: 'halfway' })

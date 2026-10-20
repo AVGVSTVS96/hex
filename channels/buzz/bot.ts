@@ -515,8 +515,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   }
 
   function stop(thread: string) {
-    activity?.stopped(thread)
-    hub.stop(thread)
+    void hub.interrupt(thread).catch(() => {})
   }
 
   async function call(caller: string, tool: string, args: Record<string, unknown>): Promise<string> {
