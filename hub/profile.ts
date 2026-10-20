@@ -109,8 +109,8 @@ if (import.meta.main) {
         const before = store.seen(mine)
         const told = store.show(mine, now) ? about(before, now) : ''
         const { text, digest } = profile(HEX_STORE, HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD, Math.max(0, ROOM - told.length))
-        if (told) store.unshow(session_id)
         const lists = store.show(session_id, digest) ? text || 'No open tasks or questions waiting on me now.' : ''
+        if (told && lists) store.unshow(session_id)
         const out = [told, lists].filter(Boolean).join('\n\n')
         if (out) console.log(out)
       }
