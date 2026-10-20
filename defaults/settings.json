@@ -3,7 +3,7 @@
   "effortLevel": "medium",
   "autoMemoryEnabled": false,
   "permissions": {
-    "defaultMode": "auto",
+    "defaultMode": "bypassPermissions",
     "deny": [
       "Read(./.env)",
       "Read(./state/*/.env)",
