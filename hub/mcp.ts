@@ -31,7 +31,7 @@ type Handshake = { is: 'initialized' } | { is: 'listed' } | { is: 'streaming'; n
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here
 // with their binding and the hub's token in headers. Every session id is taken as it comes, so a
 // session that connected before the hub restarted carries on where it was without initializing again.
-export function endpoint(name: string, channel: string, token: string, server: ChannelServer, hooks: Hooks) {
+export function endpoint(name: string, channel: string, token: string, server: ChannelServer, hooks: Hooks, zone = () => Temporal.Now.timeZoneId()) {
   const starting = new Map<string, Handshake>()
 
   function threadOf(request: Request) {
@@ -94,7 +94,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       cancel: gone,
     })
     if (thread) {
-      line = { send: payload => event(notification(payload)) }
+      line = { send: payload => event(notification(payload, zone())) }
       keepAlive = setInterval(write, 15_000, ': keepalive\n\n')
       const open = () => line && hooks.open(thread, line)
       const nudge = () => {
@@ -150,7 +150,19 @@ export function endpoint(name: string, channel: string, token: string, server: C
   }
 }
 
-function notification(payload: Payload) {
-  if (payload.type === 'inbound') return { method: 'notifications/claude/channel', params: { content: payload.content, meta: payload.meta } }
+function notification(payload: Payload, zone: string) {
+  if (payload.type === 'inbound') return { method: 'notifications/claude/channel', params: { content: payload.content, meta: local(payload.meta, zone) } }
   return { method: 'notifications/claude/channel/permission', params: { request_id: payload.request_id, behavior: payload.behavior } }
+}
+
+// The apps stamp a message in UTC, and a session that reads 06:31Z writes it down as 6:31am, so the
+// tag carries the owner's clock time with its offset instead.
+export function local(meta: Record<string, string>, zone: string): Record<string, string> {
+  const at = meta.ts ? Date.parse(meta.ts) : NaN
+  if (Number.isNaN(at)) return meta
+  try {
+    return { ...meta, ts: Temporal.Instant.fromEpochMilliseconds(at).toZonedDateTimeISO(zone).toString({ timeZoneName: 'never', smallestUnit: 'second' }) }
+  } catch {
+    return meta
+  }
 }

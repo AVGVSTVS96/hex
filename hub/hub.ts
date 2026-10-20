@@ -5,7 +5,7 @@ import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
-import { schedule } from './schedule.ts'
+import { schedule, zoneOf } from './schedule.ts'
 import { open, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
@@ -942,7 +942,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     permission: (thread, request) => permission?.(thread, request),
     open: welcome,
     close: drop,
-  })
+  }, () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId())
   channels.set(path, serve)
 
   // Where a session's hooks and hex's own tools reach the hub, one JSON line each.
