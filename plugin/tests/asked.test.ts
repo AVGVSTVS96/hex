@@ -4,7 +4,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { open, type Store } from '../../hub/store.ts'
 
-const HOOK = join(import.meta.dir, '../../bin/asked')
+const STATE = join(import.meta.dir, '../../hub/state.ts')
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_')))
 const OWNER = { user: 'avgvstvs9', user_id: '1' }
 
@@ -22,15 +22,16 @@ function said(key: string, body: string, meta: Record<string, string> = OWNER, s
   store.take(key, session)
 }
 
-function stop(session = 'session-1', again = false) {
-  const run = Bun.spawnSync([HOOK], {
-    stdin: Buffer.from(JSON.stringify({ hook_event_name: 'Stop', session_id: session, stop_hook_active: again })),
+function hook(mode: string, input: object) {
+  const run = Bun.spawnSync(['bun', STATE, mode], {
+    stdin: Buffer.from(JSON.stringify(input)),
     env: { ...env, HEX_STORE: dir, TMPDIR: dir },
   })
   expect(run.exitCode).toBe(0)
   const out = run.stdout.toString()
   return out ? (JSON.parse(out) as { decision: string; reason: string }) : null
 }
+const stop = (session = 'session-1', again = false) => hook('idle', { hook_event_name: 'Stop', session_id: session, stop_hook_active: again })
 
 test('a turn that ends with an ask no task quotes goes on once with it, then stops', () => {
   said('telegram:-100:1', 'make the deck load faster')
@@ -57,8 +58,10 @@ test('only messages taken since the last stop come back', () => {
   expect(block?.reason).not.toContain('[telegram:-100:1]')
 })
 
-test('a session without a mark, as after a restart, counts only the message that woke it', () => {
+test('a session counts what it took from its start, so a resumed one leaves its history be', () => {
   said('telegram:-100:1', 'an ask from last week')
+  hook('begin', { hook_event_name: 'SessionStart', session_id: 'session-1' })
+  Bun.sleepSync(2)
   said('telegram:-100:2', 'the ask that woke it')
   const block = stop()
   expect(block?.reason).toContain('[telegram:-100:2]')
@@ -72,4 +75,17 @@ test('taps, reactions, votes, deletes, and messages from others or other session
   said('telegram:-100:9', 'a message from someone else', { user: 'kevin' })
   said('telegram:-100:3', 'make the deck load faster', OWNER, 'session-2')
   expect(stop()).toBeNull()
+})
+
+test('a failed turn and a call\'s handoffs need nothing', () => {
+  said('telegram:-100:1', 'make the deck load faster')
+  expect(hook('idle', { hook_event_name: 'StopFailure', session_id: 'session-1' })).toBeNull()
+  store.deliver({ key: 'voice:1', to: 'voice', from: 'voice', body: '[1.4s] you: remind me to call mom', meta: { delegation_id: 'item_1' } })
+  store.take('voice:1', 'session-2')
+  expect(stop('session-2')).toBeNull()
+})
+
+test('the commands it gives run from any folder', () => {
+  said('telegram:-100:1', 'make the deck load faster')
+  expect(stop()?.reason).toContain(`\`${join(import.meta.dir, '../../bin/hex')} task new <key>\``)
 })
