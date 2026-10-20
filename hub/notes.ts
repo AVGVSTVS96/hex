@@ -46,13 +46,8 @@ export function problems(v: Verdict, withWords = true): string[] {
   ]
 }
 
-// The owner's own messages: not a schedule's slot or a job's end, and not another hex session or a
-// T3 thread passing something on, which arrive under "hex <thread>" or "T3 <thread>". "hex app" is
-// the owner tapping or typing in hex's app.
+// A call's transcript is the one owner message without a user id: it carries the call's delegation_id.
 export const owners = (rows: Row[]) =>
-  rows.filter(row => {
-    const user = row.meta?.user ?? ''
-    return row.from !== 'schedule' && row.from !== 'job' && user !== 'job' && (user === 'hex app' || !/^(hex|T3) /.test(user))
-  })
+  rows.filter(row => row.meta?.user_id || row.meta?.user === 'hex app' || (row.from === 'voice' && row.meta?.delegation_id))
 
 export const clip = (text: string, size: number) => (text.length > size ? `${text.slice(0, size)}…` : text)

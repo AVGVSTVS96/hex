@@ -15,7 +15,7 @@ let store: Store
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'quoted-'))
   store = open(dir)
-  store.deliver({ key: KEY, to: 'chat:1', from: 'telegram', body: SAID, meta: { user: 'avgvstvs9' } })
+  store.deliver({ key: KEY, to: 'chat:1', from: 'telegram', body: SAID, meta: { user: 'avgvstvs9', user_id: '1' } })
   store.take(KEY, 'session-1')
 })
 afterEach(() => rmSync(dir, { recursive: true }))
@@ -36,7 +36,7 @@ test('a note that quotes the message it names goes through', () => {
 })
 
 test('quotes match across curly quotes, case, line wraps and an ellipsis that skips words', () => {
-  store.deliver({ key: 'discord:7', to: 'chat:1', from: 'discord', body: 'I don’t wanna close threads to save memory.\nI want to close and consolidate to save mental load', meta: { user: 'avgvstvs96' } })
+  store.deliver({ key: 'discord:7', to: 'chat:1', from: 'discord', body: 'I don’t wanna close threads to save memory.\nI want to close and consolidate to save mental load', meta: { user: 'avgvstvs96', user_id: '2' } })
   expect(note(`Bassim: "I don't wanna close threads … to save mental load" [discord:7]`)).toBeNull()
 })
 
