@@ -909,6 +909,28 @@ test('a fork whose session runs without its channel starts again into that sessi
   expect(calls().filter(args => args[0] === 'respawn')).toHaveLength(2)
 })
 
+test('a thread whose session runs without its channel is retried once, not each time another session starts', async () => {
+  const STUCK = '2c3d4e5f-0000-4000-8000-000000000000'
+  bound('chat:10', STUCK)
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: STUCK, pid: 42, startedAt: 1 }]))
+  start({ reconnect: 50 })
+  const respawns = () => calls().filter(args => args[0] === 'respawn')
+  hub.deliver('chat:10', 'Stuck', message)
+  expect(await until(() => failures[0])).toEqual(['chat:10', 'its session runs, but its channel never connects'])
+  hub.open('chat:8', 'OpenAI')
+  await until(() => calls().filter(args => args[0] === '--bg').length === 1)
+  await session('chat:8', '1b2c3d4e-0000-4000-8000-000000000000')
+  await until(() => states.filter(([thread, busy]) => thread === 'chat:10' && !busy).length === 2)
+  for (const [thread, id] of [['chat:9', '3d4e5f60-0000-4000-8000-000000000000'], ['chat:11', '4e5f6071-0000-4000-8000-000000000000']]) {
+    hub.open(thread, thread)
+    await until(() => calls().some(args => args[0] === '--bg' && args.join(' ').includes(encodeURIComponent(thread))))
+    await session(thread, id)
+  }
+  await Bun.sleep(300)
+  expect(respawns()).toHaveLength(2)
+  expect(failures).toHaveLength(1)
+})
+
 test("the owner's stop ends a thread's run of failed starts, so another session connecting doesn't start it again", async () => {
   start()
   const starts = () => calls().filter(args => args[0] === '--bg')

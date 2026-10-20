@@ -78,7 +78,7 @@ type Phase =
   | { is: 'stopped' }
   // again: the hub started the thread again on its own (retry, revive), not for a message or prompt.
   | { is: 'launching'; job?: string; watch?: FSWatcher; deadline?: Timer; respawned?: boolean; again?: boolean }
-  | { is: 'recovering'; deadline?: Timer }
+  | { is: 'recovering'; deadline?: Timer; again?: boolean }
   | { is: 'live'; line: Line }
 
 // Everything the hub keeps on a thread while it runs; threads.json keeps what outlives the hub.
@@ -567,7 +567,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const running = await sessionOf(thread)
     if (run.phase !== phase) return
     if (running) {
-      become(run, { is: 'recovering' })
+      become(run, { is: 'recovering', again })
       return recover(thread)
     }
     if (!fork && known.session && !fresh(thread)) await claude.rm(known.session)
@@ -894,7 +894,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     }
     process.stderr.write(`hub: ${thread}'s session ${id} runs without its channel, so it restarts in place\n`)
     if (run.phase.is === 'launching') run.phase.respawned = true
-    else become(run, { is: 'launching', respawned: true })
+    else become(run, { is: 'launching', respawned: true, again: run.phase.is === 'recovering' && run.phase.again })
     const phase = run.phase
     writeSettings(thread, claude.settingsOf(running))
     await claude.respawn(running)
