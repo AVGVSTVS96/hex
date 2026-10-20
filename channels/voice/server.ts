@@ -866,13 +866,11 @@ function allowed(request: Request) {
 }
 
 // A page on another site, open in the owner's browser, can post here, or point its own name at this
-// machine to read and post here as if it were this page, which would hand it the token too. A post
-// comes from this page when its origin is the host it was sent to, here or at the proxy in front.
+// machine to read and post here as if it were this page, which would hand it the token too.
 function foreign(request: Request) {
   const url = new URL(request.url)
   const origin = request.headers.get('origin')
-  const sentTo = [url.host, request.headers.get('x-forwarded-host')]
-  return !ours(url.hostname) || (request.method !== 'GET' && origin !== null && !sentTo.includes(URL.parse(origin)?.host ?? ''))
+  return !ours(url.hostname) || (request.method !== 'GET' && origin !== null && URL.parse(origin)?.host !== url.host)
 }
 
 // Names a site can't point here: IPs, short names, localhost, tailnet names, and the public one.
