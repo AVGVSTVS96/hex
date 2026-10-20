@@ -166,7 +166,7 @@ function keep(thread: string) {
 }
 
 // T3's MCP credentials live only in its running server, so when T3 quits or restarts
-// mid-turn (the prompt's request aborts) the session's T3 tools are dead: it stops like a cancel.
+// mid-turn (the prompt's request aborts) the session's T3 tools are dead: the session stops.
 function prompt({ sessionId: thread, prompt: blocks, _meta }: PromptRequest, client: AgentContext, signal: AbortSignal): Promise<PromptResponse> {
   keep(known(thread))
   const name = hub.name(thread)!
@@ -194,7 +194,11 @@ function compacting(blocks: ContentBlock[]) {
 function track(thread: string, client: AgentContext, signal: AbortSignal, resolve: Turn['resolve'], reject: Turn['reject'], since: number, compact = false) {
   const turn: Turn = { client, sent: Promise.resolve(), done: false, since, resolve, reject, ...(compact && { compaction: randomUUID() }) }
   turns.set(thread, turn)
-  signal.addEventListener('abort', () => turns.get(thread) === turn && cancel(thread), { once: true })
+  signal.addEventListener('abort', () => {
+    if (turns.get(thread) !== turn) return
+    void hub.stop(thread)
+    finish(thread, 'cancelled')
+  }, { once: true })
   return turn
 }
 
@@ -274,12 +278,13 @@ function advertise(client: AgentContext, sessionId: string) {
 
 // T3 Code steers a turn by cancelling it and sending the steer as a new prompt, which reaches the
 // running session the way a message typed into it would, so a steer leaves the session and all it
-// started running. Any other cancel is a Stop: stopping the session ends the turn, and the next
-// prompt resumes it.
+// started running. Any other cancel is a Stop, which interrupts the turn the way Esc does and leaves
+// the session and its background work running too; T3 hears the turn is cancelled once it is.
 function cancel(thread: string) {
-  if (!turns.has(thread)) return
-  if (!steering(thread)) hub.stop(thread)
-  finish(thread, 'cancelled')
+  const turn = turns.get(thread)
+  if (!turn) return
+  if (steering(thread)) return finish(thread, 'cancelled')
+  void hub.interrupt(thread).finally(() => turns.get(thread) === turn && finish(thread, 'cancelled'))
 }
 
 // Images and binary files land in the inbox, so the session reads them by path.
@@ -420,7 +425,7 @@ function serve(socket: Socket) {
   })
 }
 
-// The owner's Stop from another app is never a steer, so it stops the session even while T3 Code
+// The owner's Stop from another app is never a steer, so it interrupts the turn even while T3 Code
 // is steering, and finishes T3's prompt when one is running.
 clients.set('t3', {
   hub,
@@ -428,7 +433,7 @@ clients.set('t3', {
   backfill,
   waits: true,
   stop: thread => {
-    hub.stop(thread)
+    void hub.interrupt(thread)
     finish(thread, 'cancelled')
   },
 })

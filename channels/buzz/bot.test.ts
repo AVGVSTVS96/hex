@@ -10,7 +10,7 @@ import { matchFilter, type Filter } from 'nostr-tools/filter'
 import { bytesToHex } from 'nostr-tools/utils'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { connectRelay } from './relay.ts'
-import { connect as connectSession, service } from '../../hub/testing.ts'
+import { ATTACH, connect as connectSession, service } from '../../hub/testing.ts'
 import { until } from '../../hub/until.ts'
 
 type Peer = { challenge: string; pubkey?: string; subs: Map<string, Filter[]> }
@@ -202,8 +202,9 @@ async function startBot(prepare?: (setup: { state: string; relay: ReturnType<typ
   mkdirSync(join(dir, 'config', 'jobs', 'job12345'), { recursive: true })
   writeFileSync(join(dir, 'claude'), `#!/bin/sh
 jq -cn '$ARGS.positional' --args -- "$@" >> "${dir}/calls"
-[ "$1 $2" = "agents --json" ] && echo '[]'
+[ "$1 $2" = "agents --json" ] && { cat "${dir}/agents" 2>/dev/null || echo '[]'; }
 [ "$1" = "--bg" ] && echo "backgrounded · job12345 · test"
+${ATTACH}
 exit 0
 `)
   chmodSync(join(dir, 'claude'), 0o755)
@@ -271,6 +272,14 @@ exit 0
     published,
     calls,
     launches: () => calls().filter(args => args[0] === '--bg'),
+    // The session's conversation as Claude Code keeps it, for a thread working in hex's folder.
+    conversation: () => {
+      const file = join(dir, 'config', 'projects', join(dir, 'hex').replace(/[^a-zA-Z0-9]/g, '-'), `${SESSION}.jsonl`)
+      mkdirSync(join(file, '..'), { recursive: true })
+      writeFileSync(file, '{"type":"user","message":{"content":"desk anchors are loose"}}\n')
+      writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: 4_194_305, status: 'busy' }]))
+      return () => readFileSync(file, 'utf8')
+    },
     session,
     say: (content: string, tags: string[][] = [], from = ownerKey, where = channel, at?: number, kind = 9) => {
       const event = signed(from, kind, content, [['h', where], ...tags], at)
@@ -457,11 +466,14 @@ test('a busy thread shows typing, and going idle takes back the acks', async () 
   expect(typing.tags).toEqual([['h', bot.channel], ['e', root.id, '', 'reply'], bot.auth])
 })
 
-test('!cancel from the owner stops the thread\'s session', async () => {
+test('!cancel from the owner interrupts the thread\'s turn and leaves its session running', async () => {
   const bot = await startBot()
   const { root, session } = await threadStarted(bot)
+  const transcript = bot.conversation()
+  session.send({ type: 'state', thread: root.id, busy: true })
   bot.say('!cancel', [['e', root.id, '', 'reply'], ['p', bot.me]])
-  expect(await until(() => bot.calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
+  await until(() => transcript().includes('[Request interrupted by user'))
+  expect(bot.calls().some(args => args[0] === 'stop')).toBe(false)
   expect((await session.inbound(1)).length).toBe(1)
 })
 

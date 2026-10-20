@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto'
 import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
 import type { Event } from 'nostr-tools/pure'
 import { stripLocalCommandMetadata, toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
+import { interrupted } from '../../hub/claude.ts'
 import type { Relay } from './relay.ts'
 
 type Frame = {
@@ -135,6 +136,8 @@ export function startActivity({ relay, secretKey, owner, hexDir, cancel }: {
     }
     if (!(Date.parse(entry.timestamp) >= turn.transcript!.since)) return
     if (entry.type === 'system' && entry.subtype === 'stop_hook_summary') turn.transcript!.stopped = true
+    if (interrupted(entry)) turn.transcript!.stopped = true
+    else if (entry.type === 'assistant' && !entry.isSidechain) turn.transcript!.stopped = false
     if ((entry.type !== 'assistant' && entry.type !== 'user') || entry.isSidechain) return
     if (entry.type === 'user' && (entry.isMeta || entry.origin)) return
     const content = entry.type === 'user' ? stripLocalCommandMetadata(entry.message?.content) : entry.message?.content
@@ -153,8 +156,9 @@ export function startActivity({ relay, secretKey, owner, hexDir, cancel }: {
 
   // The Stop hook reports a turn over before Claude Code has written its last
   // steps, and Claude Code writes stop_hook_summary once the hooks are done, so
-  // the turn completes when that line is read. A session stopped from here runs
-  // no Stop hooks, so its turn completes with whatever it wrote.
+  // the turn completes when that line is read. An interrupted turn runs no Stop
+  // hooks and completes at its interrupt line; so does a session stopped from
+  // here, with whatever it wrote.
   function idle(thread: string) {
     const turn = turns.get(thread)
     if (!turn) return
@@ -165,7 +169,9 @@ export function startActivity({ relay, secretKey, owner, hexDir, cancel }: {
 
   function stopped(thread: string) {
     const turn = turns.get(thread)
-    if (turn) turn.cut = true
+    if (!turn) return
+    turn.cut = true
+    if (turn.ending) finish(turn)
   }
 
   function finish(turn: Turn) {

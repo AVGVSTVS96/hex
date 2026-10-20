@@ -1,11 +1,12 @@
 import { execFile, spawn } from 'child_process'
-import { closeSync, fstatSync, openSync, readFileSync, readSync, watch } from 'fs'
+import { closeSync, fstatSync, openSync, readFileSync, readSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { sleep } from './clock.ts'
 
 // A background session as `claude agents --json` lists it.
-export type Agent = { sessionId: string; id?: string; pid: number; status?: string; startedAt?: number }
+// state: working through a turn, and while the turn waits on background agents.
+export type Agent = { sessionId: string; id?: string; pid: number; status?: string; state?: string; startedAt?: number }
 // The context a session's last request sent and when; short: it wrote the five-minute cache.
 export type Usage = { sent: number; at?: number; short?: boolean }
 
@@ -104,6 +105,102 @@ export async function listing(session: string): Promise<Agent | undefined> {
 }
 
 export const stop = (session: string) => run(['stop', short(session)])
+// Presses Esc in the session's own terminal, as a terminal attached to it would: the turn ends, and
+// the session and what it started in the background keep running. interrupted once the transcript
+// records it; exited when the attach ends first (the session is gone), let go when the caller does.
+export function interrupt(cwd: string, session: string, until: AbortSignal): Promise<'interrupted' | 'exited' | 'let go'> {
+  const file = transcript(cwd, session)
+  const from = sizeOf(file)
+  if (from === undefined) return Promise.resolve('exited')
+  if (until.aborted) return Promise.resolve('let go')
+  return new Promise((resolve, reject) => {
+    let attach: ReturnType<typeof Bun.spawn> | undefined
+    const watcher = watch(dirname(file), (_, name) => name === `${session}.jsonl` && recorded(file, from) && done('interrupted'))
+    let over = false
+    const done = (how: 'interrupted' | 'exited' | 'let go') => {
+      if (over) return
+      over = true
+      watcher.close()
+      until.removeEventListener('abort', letGo)
+      attach?.kill('SIGHUP')
+      attach?.terminal?.close()
+      resolve(how)
+    }
+    watcher.on('error', () => done('exited'))
+    const letGo = () => done('let go')
+    let shown = ''
+    let pressed = false
+    try {
+      // Claude Code has no command to interrupt a session's turn from outside, and an interrupt runs no Stop hook.
+      const [command, args] = contained('claude', ['attach', short(session)])
+      attach = Bun.spawn([command, ...args], {
+        env: inherited(),
+        terminal: {
+          cols: 120,
+          rows: 40,
+          // Attach shows its own Attaching line before it reaches the session, which drops keys
+          // until then; the session's screen follows it.
+          data: (terminal, output) => {
+            if (pressed) return
+            shown += Buffer.from(output).toString('latin1')
+            if (!/Attaching[^\n]*\n[^]/.test(shown)) return
+            pressed = true
+            terminal.write('\x1b')
+          },
+        },
+      })
+    } catch (error) {
+      watcher.close()
+      return reject(error)
+    }
+    until.addEventListener('abort', letGo)
+    void attach.exited.then(() => done(recorded(file, from) ? 'interrupted' : 'exited'))
+  })
+}
+
+function sizeOf(file: string) {
+  try {
+    return statSync(file).size
+  } catch {
+    return undefined
+  }
+}
+
+// Whether the transcript recorded an interrupt of the session's own turn after its first `from`
+// bytes. Its records of requests repeat earlier interrupts, so only the user line counts.
+function recorded(file: string, from: number) {
+  try {
+    const size = statSync(file).size
+    if (size <= from) return false
+    const added = Buffer.alloc(size - from)
+    const fd = openSync(file, 'r')
+    try {
+      readSync(fd, added, 0, added.length, from)
+    } finally {
+      closeSync(fd)
+    }
+    return added.toString('utf8').split('\n').some(interruption)
+  } catch {
+    return false
+  }
+}
+
+function interruption(line: string) {
+  if (!line.includes('[Request interrupted by user')) return false
+  try {
+    return interrupted(JSON.parse(line))
+  } catch {
+    return false
+  }
+}
+
+// Whether a transcript entry is the line Claude Code writes when Esc interrupts the session's turn.
+export function interrupted(entry: { type?: string; isSidechain?: boolean; message?: { content?: unknown } }) {
+  const content = entry.message?.content
+  const texts = typeof content === 'string' ? [content] : Array.isArray(content) ? content.map((block: { text?: string }) => block.text ?? '') : []
+  return entry.type === 'user' && !entry.isSidechain && texts.some(text => text.startsWith('[Request interrupted by user'))
+}
+
 // `claude --bg --resume` copies the conversation to a new id while the old session's job record
 // exists, even once stopped; this clears the record and keeps the conversation.
 export const rm = (session: string) => run(['rm', short(session)])

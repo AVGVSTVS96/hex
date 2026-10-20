@@ -12,6 +12,15 @@ export type Session = ReturnType<typeof http>
 // in the repo, so a hub still running after its test's folder is gone keeps finding it.
 export const noClaude = () => `${join(import.meta.dir, 'no-claude')}:${process.env.PATH}`
 
+// A fake claude's `attach`: in its terminal, Esc interrupts the session's turn, which its transcript
+// records, and it stays attached until it's hung up on. With a file named gone in Claude's config
+// folder, the session's job is gone and it exits, as Claude's does; with one named idle, the
+// session's turn is over, so Esc changes nothing and the transcript only records a request that
+// repeats an earlier interrupt.
+export const ATTACH = `[ "$1" = attach ] && [ -f "$CLAUDE_CONFIG_DIR/gone" ] && { echo "No job matching $2"; exit 1; }
+[ "$1" = attach ] && [ -f "$CLAUDE_CONFIG_DIR/idle" ] && { stty raw -echo; printf 'Attaching\\r\\nscreen'; dd bs=1 count=1 >/dev/null 2>&1; echo '{"type":"api-request-blob","message":{"content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}' >> "$(ls "$CLAUDE_CONFIG_DIR"/projects/*/"$2"*.jsonl | head -1)"; exec sleep 60; }
+[ "$1" = attach ] && { stty raw -echo; printf 'Attaching\\r\\nscreen'; [ "$(dd bs=1 count=1 2>/dev/null)" = "$(printf '\\033')" ] && echo '{"type":"user","message":{"content":"[Request interrupted by user for tool use]"}}' >> "$(ls "$CLAUDE_CONFIG_DIR"/projects/*/"$2"*.jsonl | head -1)"; exec sleep 60; }`
+
 let ids = 0
 const streams: AbortController[] = []
 let listener: ReturnType<typeof Bun.serve> | undefined

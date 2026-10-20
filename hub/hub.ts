@@ -97,6 +97,8 @@ type Run = {
   leaving?: (session: string) => void
   // The thread's session was told to stop and hasn't exited yet.
   ending?: Promise<void>
+  // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
+  interrupting?: Promise<void>
   // A new session whose conversation Claude hasn't saved yet.
   unsaved?: string
   held: (() => void)[]
@@ -246,6 +248,9 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
   return ((await res.json()) as { text?: string }).text?.trim() || undefined
 }
 
+// Claude Code shows nothing when Esc meets a turn with nothing left to interrupt, so a press gets
+// this long to show in the transcript; a real one shows in under a second.
+const PRESS = 5_000
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and
 // compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1,
 // 3, 7 and 15 seconds, then gives up for good.
@@ -337,6 +342,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   const token = tokenOf(stateDir)
   const inherited = claude.inherited()
   let closed = false
+  const closing = new AbortController()
   const serving = () => !closed
 
   function read(): Record<string, Saved> {
@@ -1012,6 +1018,38 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     process.stderr.write(`hub: no thread ${thread} in ${registry}, so a message for it from ${message.meta?.user ?? 'a local tool'} was dropped\n`)
   }
 
+  // The owner's Stop ends the turn as Esc does in a terminal: the session and what it started in the
+  // background keep running, and the next message continues the conversation. A turn the hooks
+  // report over is left alone; one they never reported (the hub restarted) is the daemon's to say.
+  // An Esc that doesn't land changes nothing, and the owner can press Stop again.
+  function interrupt(thread: string): Promise<void> {
+    const run = runOf(thread)
+    run.interrupting ??= press(thread).finally(() => (run.interrupting = undefined))
+    return run.interrupting
+  }
+
+  async function press(thread: string): Promise<void> {
+    const run = runOf(thread)
+    const session = current(thread)
+    if (!session || run.turn === 'background') return
+    const agent = await claude.listing(session)
+    if (!agent) return
+    if (run.turn === 'done' && agent.state !== 'working') return
+    const deadline = new AbortController()
+    const timer = clock.setTimeout(() => deadline.abort(), PRESS)
+    const how = await claude
+      .interrupt(cwdOf(thread), session, AbortSignal.any([deadline.signal, closing.signal]))
+      .catch(error => void process.stderr.write(`hub: couldn't interrupt ${thread}'s turn: ${error}\n`))
+      .finally(() => clock.clearTimeout(timer))
+    if (closing.signal.aborted || current(thread) !== session) return
+    if (how === 'interrupted') {
+      setState(thread, false, true)
+      if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') setState(thread, false)
+      return
+    }
+    process.stderr.write(`hub: Esc didn't interrupt ${thread}'s turn\n`)
+  }
+
   // After the owner's stop only the thread's next message starts it again, without the prompt it
   // was opened with, though a moved copy still starts from the conversation it forks.
   function halt(thread: string) {
@@ -1064,6 +1102,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     name: (thread: string) => threads[thread]?.name,
     cwd: (thread: string) => threads[thread]?.cwd,
     stop: halt,
+    interrupt,
     answer: (thread: string, request_id: string, behavior: 'allow' | 'deny') => {
       const { phase } = runOf(thread)
       if (phase.is === 'live') phase.line.send({ type: 'permission', request_id, behavior })
@@ -1087,6 +1126,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       apps.delete(app)
       sock.close()
       if (channels.get(path) === serve) channels.delete(path)
+      closing.abort()
       for (const run of runs.values()) {
         become(run, { is: 'stopped' })
         clock.clearTimeout(run.rest)

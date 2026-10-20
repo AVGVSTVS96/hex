@@ -7,7 +7,7 @@ import { begin, clients, free, history, mirror, move, stamp, startHub, tappable,
 import { settled } from './claude.ts'
 import { clock, manual } from './clock.ts'
 import { open } from './store.ts'
-import { hangUpAll, http as line, port } from './testing.ts'
+import { ATTACH, hangUpAll, http as line, port } from './testing.ts'
 import { until } from './until.ts'
 
 const CHANNEL = 'plugin:telegram@hex'
@@ -24,6 +24,7 @@ let failures: [string, string][]
 let prompts: [string, Permission][]
 let time: ReturnType<typeof manual>
 const sockets: Socket[] = []
+const sleepers: ReturnType<typeof Bun.spawn>[] = []
 const listener = { port: port() }
 
 beforeEach(() => {
@@ -43,6 +44,7 @@ trap 'jq -cn "\\$ARGS.positional" --args -- "$@" >> "${dir}/calls"' EXIT
 [ "$1" = "--version" ] && echo "2.1.0 (Claude Code)"
 [ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
 [ "$1" = "--bg" ] && echo "backgrounded · job12345 · test"
+${ATTACH}
 [ "$1" = "stop" ] && [ -f "${dir}/agents" ] && jq -c --arg id "$2" 'map(select(.sessionId | startswith($id) | not))' "${dir}/agents" > "${dir}/agents.next" && mv "${dir}/agents.next" "${dir}/agents"
 exit 0
 `)
@@ -54,6 +56,7 @@ exit 0
 
 afterEach(() => {
   for (const socket of sockets.splice(0)) socket.destroy()
+  for (const sleeper of sleepers.splice(0)) sleeper.kill()
   hangUpAll()
   hub?.close()
   time.restore()
@@ -1007,6 +1010,106 @@ test('stopping a thread ends its session now, and its next message resumes it', 
   const args = await launched()
   expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
+})
+
+// The session's conversation as Claude Code keeps it, for a thread working in hex's folder.
+function conversation() {
+  const file = join(dir, 'projects', join(dir, 'hex').replace(/[^a-zA-Z0-9]/g, '-'), `${SESSION}.jsonl`)
+  mkdirSync(join(file, '..'), { recursive: true })
+  writeFileSync(file, '{"type":"user","message":{"content":"run for a while"}}\n')
+  return () => readFileSync(file, 'utf8')
+}
+
+// A session Claude's daemon lists as working, as it does through a turn and while background agents run.
+function working() {
+  const process = Bun.spawn(['sleep', '60'])
+  sleepers.push(process)
+  return [{ sessionId: SESSION, pid: process.pid, status: 'busy' }]
+}
+
+test("the owner's interrupt presses Esc in a busy session, which keeps running, and ends the turn", async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: working() })
+  const transcript = conversation()
+  const { send } = await session('chat:7')
+  await send({ type: 'state', thread: 'chat:7', busy: true })
+  await until(() => states.length)
+  await hub.interrupt('chat:7')
+  expect(transcript()).toContain('[Request interrupted by user')
+  expect(states.at(-1)).toEqual(['chat:7', false])
+  expect(calls().some(args => args[0] === 'stop')).toBe(false)
+})
+
+test('an interrupted turn Claude still reports working counts as one with background work left, so a renew waits for it to be done', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ ...working()[0], state: 'working' }] })
+  conversation()
+  const { send } = await session('chat:7')
+  await send({ type: 'state', thread: 'chat:7', busy: true })
+  await until(() => states.length)
+  hub.renew('chat:7')
+  await hub.interrupt('chat:7')
+  await settled()
+  expect(calls().some(args => args[0] === 'stop' || args[0] === 'respawn')).toBe(false)
+})
+
+test('a Stop whose Esc lands in no turn leaves the session and its background work running', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ ...working()[0], state: 'working' }] })
+  conversation()
+  const { send } = await session('chat:7')
+  await send({ type: 'state', thread: 'chat:7', busy: true })
+  await until(() => states.length)
+  writeFileSync(join(dir, 'idle'), '')
+  const stopping = hub.interrupt('chat:7')
+  await time.lapse(5_000)
+  expect(await stopping).toBeUndefined()
+  expect(calls().some(args => args[0] === 'stop')).toBe(false)
+})
+
+test('a Stop leaves a turn alone that the hooks report over while its Esc goes in, even past a request that repeats an earlier interrupt', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: working() })
+  const transcript = conversation()
+  const { send } = await session('chat:7')
+  await send({ type: 'state', thread: 'chat:7', busy: true })
+  await until(() => states.length)
+  writeFileSync(join(dir, 'idle'), '')
+  const interrupting = hub.interrupt('chat:7')
+  await until(() => transcript().includes('api-request-blob'))
+  await send({ type: 'state', thread: 'chat:7', busy: false })
+  await until(() => states.length === 2)
+  await time.lapse(5_000)
+  expect(await interrupting).toBeUndefined()
+  expect(states).toEqual([['chat:7', true], ['chat:7', false]])
+  expect(calls().some(args => args[0] === 'stop')).toBe(false)
+})
+
+test('an interrupt leaves a session alone once its turn is over, background agents and all', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: working() })
+  const transcript = conversation()
+  const { send } = await session('chat:7')
+  await send({ type: 'state', thread: 'chat:7', busy: false, background: true })
+  await until(() => states.length)
+  await hub.interrupt('chat:7')
+  expect(transcript()).not.toContain('[Request interrupted by user')
+  expect(states).toEqual([['chat:7', false]])
+  expect(calls().some(args => args[0] === 'stop')).toBe(false)
+})
+
+test('a Stop after a hub restart presses Esc in a turn Claude\'s daemon says is working, though hex never heard it begin', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ ...working()[0], state: 'working' }] })
+  const transcript = conversation()
+  await session('chat:7')
+  await hub.interrupt('chat:7')
+  expect(transcript()).toContain('[Request interrupted by user')
+  expect(states).toEqual([['chat:7', false]])
+  expect(calls().some(args => args[0] === 'stop')).toBe(false)
+})
+
+test('a Stop leaves alone a session whose turn hex never heard and Claude\'s daemon says is done', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ ...working()[0], state: 'done' }] })
+  const transcript = conversation()
+  await session('chat:7')
+  await hub.interrupt('chat:7')
+  expect(transcript()).not.toContain('[Request interrupted by user')
+  expect(calls().some(args => args[0] === 'stop')).toBe(false)
 })
 
 test('a message that comes while a stopped session is still exiting waits, even through a second stop, and resumes the thread once it has', async () => {

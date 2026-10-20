@@ -81,7 +81,7 @@ export function projectAt(root: string): string | undefined {
 // steers an ACP agent by cancelling the turn and prompting again with the steer, and ACP has no way
 // to tell the agent which, so the cancel alone looks like a Stop. Before it cancels, T3 records the
 // run as starting again on a steering_restart attempt, in the run and attempt shapes of its
-// contracts. If the read fails, the cancel is a Stop, and the steer resumes the session.
+// contracts. If the read fails, the cancel is a Stop.
 export function steering(session: string) {
   const file = join(USERDATA, 'statev2.sqlite')
   if (!existsSync(file)) return false
@@ -94,7 +94,7 @@ export function steering(session: string) {
         where run.status = 'starting' and json_extract(attempt.payload_json, '$.reason') = 'steering_restart' and json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ?`)
       .get(session)
   } catch (error) {
-    process.stderr.write(`t3: can't read whether T3 is steering ${session}, so its cancel stops it: ${error}\n`)
+    process.stderr.write(`t3: can't read whether T3 is steering ${session}, so its cancel is a Stop: ${error}\n`)
     return false
   } finally {
     db.close()
