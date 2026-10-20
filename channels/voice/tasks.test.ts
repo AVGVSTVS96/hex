@@ -152,7 +152,8 @@ test("each thread is a task from its session's own records, what needs you first
     { at: asked, state: 'needs' },
     { at: still, state: 'needs' },
   ])
-  expect(tasks.get('telegram:-1001234567890')).toMatchObject({ where: 'General', place: 'General', link: 'https://t.me/c/1234567890/1' })
+  expect(tasks.get('telegram:-1001234567890')).toMatchObject({ where: 'General', place: 'General', link: 'https://t.me/c/1234567890/1', running: false })
+  expect(tasks.get('telegram:-1001234567890:2583')!.running).toBe(true)
   expect(tasks.get('telegram:-1001234567890:65')).toMatchObject({ line: 'clips posted', lately: [] })
   expect(tasks.get('buzz:b1')).toBeUndefined()
   expect(tasks.summary).toEqual({ needs: 1, working: 1 })
