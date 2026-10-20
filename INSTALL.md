@@ -2,7 +2,7 @@
 
 These steps are written for a coding agent (Claude Code, Codex, …) setting hex up for its user. Follow them in order. Steps marked **(you)** need the person: tell them exactly what to do, then wait for them to confirm.
 
-hex runs wherever Claude Code does, on a machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM. Run everything below on that machine, as the user hex will run as.
+hex runs wherever Claude Code does, on a machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM. Run everything below on that machine, as the user hex will run as: a normal user, not root, since Claude Code refuses bypass permissions mode as root outside a sandbox.
 
 ## 1. Check what's there
 
@@ -21,7 +21,7 @@ git clone https://github.com/AVGVSTVS96/hex ~/hex/.hex   # or their fork
 ~/hex/.hex/bin/hex init
 ```
 
-`init` writes their `AGENTS.md`, `SOUL.md`, `schedules.json`, `.env` and `.claude/settings.json`, sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
+`init` writes their `AGENTS.md`, `SOUL.md`, `schedules.json`, `.env` and `.claude/settings.json`, sets `skipDangerousModePermissionPrompt` in their Claude Code user settings, since hex's background sessions run in bypass permissions mode (that setting applies to all their Claude Code sessions, so tell them), sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
 
 ## 3. Make the Telegram bot and group (you)
 
