@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { createServer, type Socket } from 'net'
 import { Readable, Writable } from 'stream'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { basename, join } from 'path'
 import { fileURLToPath } from 'url'
@@ -22,7 +22,6 @@ const INSTANCE = process.env.T3_INSTANCE ?? 'hex'
 const HEX_DIR = process.env.HEX_DIR ?? process.cwd()
 const HOME = homedir()
 const SCRATCH = join(HOME, '.t3', 'scratch')
-const CLAUDE_JSON = join(HOME, '.claude.json')
 const COMMANDS = [{ name: 'compact', description: 'Summarize the conversation so far to free up context' }]
 type Turn = {
   client: AgentContext
@@ -310,17 +309,17 @@ function save(base64: string, mimeType?: string | null) {
   return file
 }
 
-// Claude Code never saves trust for the home folder and asks once per new folder,
-// but a hex session runs headless with nobody to accept. A T3 chat with no project
-// (home or T3's scratch folders) works in hex's own folder; a project folder is
-// trusted for good the first time hex opens there.
+// A T3 chat with no project (home, a folder above it, or T3's scratch folders) works in hex's own folder.
 function folderFor(cwd: string): string | undefined {
-  if (cwd === HOME || cwd === HEX_DIR || cwd.startsWith(SCRATCH)) return
-  const config = JSON.parse(readFileSync(CLAUDE_JSON, 'utf8'))
-  if (config.projects?.[cwd]?.hasTrustDialogAccepted) return cwd
-  config.projects = { ...config.projects, [cwd]: { ...config.projects?.[cwd], hasTrustDialogAccepted: true } }
-  writeFileSync(`${CLAUDE_JSON}.hex`, JSON.stringify(config, null, 2))
-  renameSync(`${CLAUDE_JSON}.hex`, CLAUDE_JSON)
+  const real = (path: string) => {
+    try {
+      return realpathSync(path)
+    } catch {
+      return path.replace(/\/+$/, '')
+    }
+  }
+  const folder = `${real(cwd)}/`.replace(/^\/\/$/, '/')
+  if (`${real(HOME)}/`.startsWith(folder) || folder === `${real(HEX_DIR)}/` || folder.startsWith(`${real(SCRATCH)}/`)) return
   return cwd
 }
 

@@ -515,7 +515,7 @@ test('a steer leaves the session running, its message reaches the session mid-tu
   expect(lines('calls').filter(line => line.startsWith('["stop"'))).toEqual([])
 })
 
-test('a chat with no project works in hex\'s folder, and a project folder is trusted for good', async () => {
+test('a chat with no project works in hex\'s folder', async () => {
   const { agent } = await t3()
   for (const cwd of [dir, join(dir, '.t3', 'scratch', 'chat'), project]) {
     const { sessionId } = await agent.request('session/new', { cwd, mcpServers: [] })
@@ -523,7 +523,6 @@ test('a chat with no project works in hex\'s folder, and a project folder is tru
   }
   await until(() => lines('cwd').length === 3)
   expect(lines('cwd').sort()).toEqual([join(dir, 'hex'), join(dir, 'hex'), project])
-  expect(JSON.parse(readFileSync(join(dir, '.claude.json'), 'utf8')).projects).toEqual({ [project]: { hasTrustDialogAccepted: true } })
 })
 
 test('a session that fails to start fails the prompt with its reason', async () => {
