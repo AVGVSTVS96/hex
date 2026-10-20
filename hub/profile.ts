@@ -82,14 +82,14 @@ export function about(before: string, now: string): string {
   if (!before) return `Who I am and what's going on now, kept current by the memory agent from my own words:\n\n${now}`
   const placed = (text: string) => {
     let section = ''
-    return new Map(text.split('\n').filter(each => each.trim()).flatMap(each => (each.startsWith('#') ? ((section = each), []) : [[`${section}\n${each}`, [section, each]] as const])))
+    return new Map(text.split('\n').filter(each => each.trim()).flatMap(each => (/^#{1,6}\s/.test(each) ? ((section = each), []) : [[`${section}\n${each}`, [section, each]] as const])))
   }
   const was = placed(before)
   const is = placed(now)
   const grouped = (lines: (readonly [string, string])[]) => lines.flatMap(([section, each], at) => [...(section !== lines[at - 1]?.[0] ? [section] : []), each]).filter(Boolean)
   const added = grouped([...is].filter(([key]) => !was.has(key)).map(([, place]) => place))
   const gone = grouped([...was].filter(([key]) => !is.has(key)).map(([, place]) => place))
-  if (!added.length && !gone.length) return ''
+  if (!added.length && !gone.length) return about('', now)
   const changed = ["My profile changed, as the memory agent keeps it current from my own words:", ...added, ...(gone.length ? ['No longer in it:', ...gone] : [])].join('\n')
   return changed.length < now.length ? changed : about('', now)
 }

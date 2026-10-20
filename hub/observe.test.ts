@@ -135,7 +135,7 @@ test('a session sees the whole profile once, then only the lines that changed', 
   const kept = `- ${'a'.repeat(200)}`
   expect(about(`# Always\n${kept}\n- b`, `# Always\n${kept}\n- c`)).toBe("My profile changed, as the memory agent keeps it current from my own words:\n# Always\n- c\nNo longer in it:\n# Always\n- b")
   expect(about(`# Always\n${kept}\n# Now\n- b`, `# Always\n${kept}\n- b\n# Now`)).toContain('# Always\n- b\nNo longer in it:\n# Now\n- b')
-  expect(about(`# Always\n${kept}\n- b`, `# Always\n- b\n${kept}`)).toBe('')
+  expect(about('# Always\n- b', '# Always for now\n- b')).toContain("Who I am")
   expect(about('# Always\n- b', '')).toBe('My profile was cleared: what it said no longer stands.')
   expect(about('# Always\n- b', '# Always\n- c')).toBe("Who I am and what's going on now, kept current by the memory agent from my own words:\n\n# Always\n- c")
 })

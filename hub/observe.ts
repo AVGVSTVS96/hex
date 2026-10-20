@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { join, resolve } from 'path'
 import { holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { names, PROFILE, profileOf, profilePath } from './profile.ts'
@@ -21,9 +21,9 @@ const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
-const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the owner's messages from that turn that no memory names yet, with the reply the session gave. You keep two things.
+const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the owner's messages from that turn, with the reply the session gave; a message a memory already names is marked so. You keep two things.
 
-Memories: one line each, appended forever. Write the ones worth keeping from those messages: what the owner decided, asked for, corrected, taught, or said about their life, their work or how they want things done, and anything of lasting effect that happened. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words, the words it rests on quoted in double quotes exactly as the owner wrote them ("…" skips a part), and the message's key in brackets at the end. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
+Memories: one line each, appended forever. Write the ones worth keeping from the messages no memory names yet: what the owner decided, asked for, corrected, taught, or said about their life, their work or how they want things done, and anything of lasting effect that happened. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words, the words it rests on quoted in double quotes exactly as the owner wrote them ("…" skips a part), and the message's key in brackets at the end. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
 The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it under ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
 
@@ -78,7 +78,7 @@ export async function observe(state: string, session: string, reply: string, { a
         wrong = bad.length ? retry(bad) : ''
         const last = tries === 2
         const kept = wrong && last ? held(answer.profile, store) : answer.profile
-        if ((wrong && !last) || !kept || !swap(state, before, kept)) continue
+        if ((wrong && !last) || !kept || !swap(state, store, before, kept)) continue
         if (wrong) console.error(`hex kept the profile without the lines it couldn't fix:${wrong}`)
         wanted = false
         break
@@ -109,8 +109,12 @@ export async function seed(state: string, { ask = (input: string) => claude(inpu
     const answer = await ask(input + wrong).catch(error => (console.error(`the seed call failed: ${error}`), null))
     if (!answer) continue
     const bad = misquoted(answer.profile, store)
-    if (!bad.length && swap(state, '', answer.profile!)) return answer.profile!
-    wrong = retry(bad)
+    if (bad.length) {
+      wrong = retry(bad)
+      continue
+    }
+    if (swap(state, store, '', answer.profile!)) return answer.profile!
+    throw new Error(`a memory pass wrote ${profilePath(state)} while the seed ran, so it keeps that one`)
   }
   throw new Error(`the first profile wasn't kept:${wrong}`)
 }
@@ -139,29 +143,16 @@ function held(profile: string, store: Store) {
   return kept.trim() && kept.length <= PROFILE && !misquoted(kept, store).length ? kept : null
 }
 
-// Puts the profile in place only if it's still the one this pass read, under a lock so two passes
-// never both pass that check, and whole, so a session never reads half a profile.
-function swap(state: string, before: string, profile: string) {
-  const lock = `${profilePath(state)}.lock`
-  for (let wait = 0; ; wait++) {
-    try {
-      closeSync(openSync(lock, 'wx'))
-      break
-    } catch {
-      const age = Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? Date.now())
-      if (wait > 50 || age > 10_000) rmSync(lock, { force: true })
-      Bun.sleepSync(100)
-    }
-  }
-  try {
+// Puts the profile in place only if it's still the one this pass read, inside the store's write
+// lock so two passes never both pass that check, and whole, so a session never reads half a profile.
+function swap(state: string, store: Store, before: string, profile: string) {
+  return store.write(() => {
     if (profileOf(state) !== before.trim()) return false
     const next = `${profilePath(state)}.${process.pid}.new`
     writeFileSync(next, `${profile.trim()}\n`)
     renameSync(next, profilePath(state))
     return true
-  } finally {
-    rmSync(lock, { force: true })
-  }
+  })
 }
 
 // The newest notes, enough to show what memory already says and how its lines read.
@@ -216,7 +207,7 @@ async function claude(input: string, model = MODEL, timeout = CALL): Promise<Ans
 if (import.meta.main) {
   const { HEX_STORE, MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
   if (process.argv[2] === 'seed') {
-    const wake = Bun.spawnSync([MEMO, 'wake', 'all'], { stdout: 'pipe' }).stdout.toString()
+    const wake = Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake'), 'all'], { stdout: 'pipe' }).stdout.toString().replace(/^This is your memory:.*\n\n/, '')
     console.log(await seed(HEX_STORE ?? join(hexDir, 'state'), { wake }))
   } else if (HEX_PASS) {
     const { session, reply, by, thread } = JSON.parse(await Bun.stdin.text()) as Pass
