@@ -213,14 +213,11 @@ export class Store {
     this.write(() => this.db.query('insert into scheduler (one, checked) values (1, ?) on conflict (one) do update set checked = excluded.checked').run(minute))
   }
 
-  // A schedule's slot becomes a message to its thread once, and never while the schedule's last
-  // one still waits to be taken, so a thread that's away comes back to one, not a pile.
+  // A schedule's slot becomes a message to its thread once, whether or not its last one was taken
+  // yet: a job runs each time it comes due until the owner stops it.
   fire(schedule: string, minute: number, to: string, body: string, late = false): boolean {
-    return this.write(() => {
-      const waiting = this.db.query(`select 1 from messages where taken_at is null and "from" = 'schedule' and json_extract(meta, '$.schedule') = ?`).get(schedule)
-      const slot = new Date(minute * 60_000).toISOString().slice(0, 16)
-      return !waiting && this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
-    })
+    const slot = new Date(minute * 60_000).toISOString().slice(0, 16)
+    return this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
   }
 
   // A task from the owner's message under key: all of it, or the part quote names, which has to be
