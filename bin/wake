@@ -35,7 +35,8 @@ overflow() {
 if [ "${1:-}" = all ]; then
   [ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] || exit 0
   wake=$(whole)
-  [ -n "$wake" ] || exit 0
+  # A wake that stopped to ask for a compression holds no memory, so it makes no wake file.
+  printf '%s\n' "$wake" | grep -qx 'You are awake\.' || exit 1
   printf 'This is your memory: `.hex/vendor/memo wake`, run in full for you as this session started, so you don'"'"'t need to run it. Claude Code loads it as an instruction file, but its numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one. If it ends by asking for a compression, do that first.\n\n%s\n' "$wake"
   exit
 fi

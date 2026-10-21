@@ -110,7 +110,7 @@ test('the hooks say nothing in a session the launcher already handed its wake', 
   expect(run.stdout.toString()).toBe('')
 })
 
-test('the launcher writes the whole wake where Claude Code loads it at startup, and tells the hooks so, in the foreground too', () => {
+test('the launcher writes the whole wake where Claude Code loads it at startup, tells the hooks so, in the foreground too, and keeps the last wake when memo stops to ask for a compression', () => {
   copyFileSync(join(BIN, 'session'), join(home, '.hex/bin/session'))
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { MEMORY_DIR: join(home, 'memory') } }))
@@ -135,7 +135,10 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   expect(env).toContain('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1')
   expect(env).toContain('HEX_WAKE=stale')
   expect(launch('-p', 'go').env).toContain(`HEX_WAKE=${join(dir, 'CLAUDE.md')}\n`)
-  writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\nexit 1\n')
+  writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "Cannot wake: the memory context needs #0-1."\necho "Compress memories #0-1 into one line."\nexit 1\n')
+  expect(launch().args).toContain(dir)
+  expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
+  rmSync(dir, { recursive: true })
   const without = launch()
   expect(without.args).not.toContain(join(home, 'state/wake'))
   expect(settings(without.args).env).toEqual({ HEX_THREAD: '-100:5' })
