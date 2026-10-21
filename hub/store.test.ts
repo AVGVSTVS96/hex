@@ -111,6 +111,7 @@ test('a task has a clean title of its own, and its words still come from the mes
   expect(() => store.editTask(task.id, { title: ' \n' })).toThrow("can't be empty")
   expect(store.editTask(task.id, { title: 'Make the logo\n  crisp ' }).title).toBe('Make the logo crisp')
   expect(store.editTask(task.id, { status: 'done', proof: 'abc123' }).title).toBe('Make the logo crisp')
+  expect(store.editTask(task.id, { status: 'open' }).proof).toBeUndefined()
 })
 
 test("a task holds the owner's words as they sent them, quoted whole or in part, and never retyped", () => {

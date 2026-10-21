@@ -355,6 +355,8 @@ export class Store {
       const task = this.task(id)
       if (!task) throw new Error(`no task ${id}`)
       const next = { ...task, ...Object.fromEntries(Object.entries({ ...change, title }).filter(([, value]) => value !== undefined)) }
+      // A task that's live again isn't done, so the proof it was closed with goes.
+      if ((next.status === 'open' || next.status === 'idea') && change.proof === undefined) delete next.proof
       const closed = next.status === 'done' || next.status === 'dropped' ? (next.status === task.status ? task.closed : now()) : undefined
       this.db
         .query('update tasks set title = ?, owner = ?, status = ?, project = ?, done_when = ?, proof = ?, closed = ? where n = ?')
