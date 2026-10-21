@@ -7,7 +7,7 @@ import { open } from './store.ts'
 let dir: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'profile-'))
+  dir = mkdtempSync(join(tmpdir(), 'tasks-'))
   mkdirSync(join(dir, 'telegram'))
   const store = open(dir)
   store.named('telegram', { '-100:7': 'Website', '-100:9': 'Errands' })

@@ -413,7 +413,6 @@ export class Store {
     return Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name]))
   }
 
-
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
   ask({ app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {
     this.write(() =>

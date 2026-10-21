@@ -59,7 +59,7 @@ export async function observe(state: string, session: string, reply: string, { a
     let wrong = ''
     if (taken.length || reply.trim()) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
-      const threads = open(state).names()
+      const threads = store.names()
       const place = taken[0]?.to ?? thread
       const turn = [
         `<turn thread="${place ? (threads[place] ?? place) : 'none'}" log="${logOf(session) ?? 'none'}">`,

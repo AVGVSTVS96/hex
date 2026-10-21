@@ -44,7 +44,7 @@ export function waiting(question: Question, named: Record<string, string> = {}):
 // What a session should have before it acts: the questions still waiting on the owner, then the open
 // tasks it serves, newest first, each as its clean entry, and a digest of all of it, so a change to an entry that didn't
 // fit still counts. Main sees every thread's; a thread sees its own.
-export function profile(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
+export function pending(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
   const store = open(state)
   const tasks = store.tasks({ owner: thread, status: ['open'] }).sort((a, b) => b.at.localeCompare(a.at))
   const questions = store.questions({ thread, waiting: true })
@@ -80,7 +80,7 @@ if (import.meta.main) {
         const store = open(HEX_STORE)
         if (source === 'compact' || source === 'clear') store.unshow(session_id)
         const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
-        const { text, digest } = profile(HEX_STORE, thread)
+        const { text, digest } = pending(HEX_STORE, thread)
         if (store.show(session_id, digest)) console.log(text || 'No open tasks or questions waiting on me now.')
       }
     } catch (error) {
