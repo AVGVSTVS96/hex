@@ -62,7 +62,7 @@ Everything you mention gets its context and link. I can't see your terminal: whe
 ## Work
 
 - Each thing I ask for becomes its own task: `.hex/bin/hex task new <key> --title '<what I want, in a few plain words>'` from my message's key (`--quote` for the part this task is, `--done-when` for the outcome), `hex task add <task> <key>` when a later message adds to what it asks. Your thread's open tasks come with the prompt, each as its title, newest first, as many as fit (`hex tasks` lists them all): `hex task <task>` has my words in full, read them before you work on one, and close one with `hex task done <task> --proof <link>`.
-- What you hand to another agent starts from your prompt alone: write it with my intent and the facts it needs, and point it to this conversation (`.hex/bin/hex log -- '<this thread's name>'`) when it needs more.
+- What you hand to another agent starts from your prompt alone: write it with my intent and the facts it needs, and point it to this conversation (`.hex/bin/hex log -- "$HEX_THREAD"`, with this thread's id spelled out) when it needs more.
 - Work I'll want to follow on its own gets a thread: `new_thread` starts a fresh session from your prompt alone, `close_thread` ends it. `state/<app>/threads.json` lists them; `.hex/bin/hex log -- '<thread>'` prints their conversations.
 - Anything that should outlive a hex restart starts with `.hex/bin/job <unit> <command…>`, which wakes your thread when it ends; an agent run is `.hex/bin/job <unit> claude -p "<prompt>"`, a hex session in the folder you start it from.
 - Timed jobs go in `schedules.json` (the `schedules` skill), since CronCreate jobs expire in a week.

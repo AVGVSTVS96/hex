@@ -53,7 +53,7 @@ test('after the first list, main gets only what changed, until the changes add u
   const main = { HEX_THREAD: '-100', HEX_MAIN: '1' }
   const all = await hook({ session_id: 'm2' }, main)
   const store = open(dir)
-  store.deliver({ key: 'telegram:-100:61', to: '-100:9', from: 'telegram', body: 'and batteries', meta: { user: 'bassim' } })
+  store.deliver({ key: 'telegram:-100:61', to: '-100:9', from: 'telegram', body: 'and batteries', author: 'owner', meta: { user: 'bassim' } })
   store.createTask({ title: 'Buy batteries', message: 'telegram:-100:61', owner: '-100:9' })
   store.editTask('t-1', { status: 'done', proof: 'https://example.com/pr/1' })
   const next = await hook({ session_id: 'm2' }, main)

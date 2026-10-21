@@ -91,6 +91,18 @@ function stray(word: string) {
   return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`
 }
 
+// A thread by its id, or by its name the way the hub finds one: any case, and only one thread.
+function threadOf(nameOrThread: string) {
+  const threads = store.threads()
+  if (threads.some(({ thread }) => thread === nameOrThread)) return nameOrThread
+  const wanted = nameOrThread.trim().toLowerCase()
+  const matches = [...new Set(threads.filter(({ name }) => name.toLowerCase() === wanted).map(({ thread }) => thread))]
+  if (matches.length > 1) throw new Error(`more than one thread is named "${nameOrThread}": ${matches.join(', ')}`)
+  if (matches[0]) return matches[0]
+  if (store.said(nameOrThread, 1).length) return nameOrThread
+  throw new Error(`no thread named "${nameOrThread}"`)
+}
+
 // Messages as markdown, one heading each, in the owner's time zone, for rg to search.
 function log(rows: Row[]) {
   if (flags.json) return console.log(JSON.stringify(rows, null, 1))
@@ -179,7 +191,7 @@ try {
         console.error("hex log: name the thread, by its name or id")
         process.exit(2)
       }
-      const thread = args[0] && (store.threads().find(({ name }) => name === args[0])?.thread ?? args[0])
+      const thread = args[0] && threadOf(args[0])
       const rows = thread ? store.said(thread, flags.last ? Number(flags.last) : -1) : store.since(since)
       log(rows.filter(row => row.at > since && (!flags.taken || row.taken)))
       break
