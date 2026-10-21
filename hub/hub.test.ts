@@ -1892,7 +1892,7 @@ function stored(rows: { author: string; body: string; from?: string; meta?: Reco
   for (const [i, { from = 'buzz', ...row }] of rows.entries()) store.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, session)
 }
 
-test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits", () => {
+test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits, and a session's is what it took", () => {
   stored([
     { author: 'owner', body: 'how full is your context?' },
     { author: 'hex', body: 'Roomy.\n\n## What loads\n\nthe rules' },
@@ -1910,6 +1910,9 @@ test("a thread's history is what the owner said and hex replied, headings and al
     { from: 'me', text: 'thanks' },
   ])
   expect(history(open(dir), 'chat:9')).toEqual([])
+  stored([{ author: 'owner', from: 'discord', body: 'to an older session' }], 'chat:7', 'older-session')
+  expect(history(open(dir), 'chat:7', SESSION).map(turn => turn.text)).toEqual(['how full is your context?', 'Roomy.\n\n## What loads\n\nthe rules', 'thanks'])
+  expect(history(open(dir), 'chat:7').map(turn => turn.text)).toContain('to an older session')
 })
 
 test('a T3 message in a history is the owner\'s request, without the context T3 Code sends around it', () => {

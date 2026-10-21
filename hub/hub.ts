@@ -191,10 +191,10 @@ export function tappable(text: string): string {
 }
 
 // A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as
-// first sent.
-export function history(store: Store, thread: string): Turn[] {
+// first sent; with a session, only what that session took, the conversation it has.
+export function history(store: Store, thread: string, session?: string): Turn[] {
   return store.said(thread).flatMap(row => {
-    if (row.from === 'terminal' || !row.taken) return []
+    if (row.from === 'terminal' || !row.taken || (session && row.taken.by !== session)) return []
     if (replied(row)) return row.meta?.failed || row.meta?.edited || row.meta?.permission ? [] : [{ from: 'hex', text: row.body } as Turn]
     const text = spoken(row) && row.author === 'owner' ? (row.from === 't3' ? asked(row.body) : row.body) : ''
     return text ? [{ from: 'me', text } as Turn] : []
@@ -1095,7 +1095,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     release,
     adopt,
     follow,
-    history: (thread: string) => kept(store => history(store, thread), []),
+    history: (thread: string) => kept(store => history(store, thread, current(thread)), []),
     retire,
     find,
     rename,

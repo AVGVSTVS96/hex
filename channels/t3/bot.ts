@@ -81,7 +81,7 @@ const hub = startHub({
   // Its turn is done once a stop leaves no background agent working.
   state: (thread, busy, background) => {
     const turn = turns.get(thread)
-    if (!turn) return void (!busy && hub.turned(thread))
+    if (!turn) return void (!busy && !background && hub.turned(thread))
     turn.done = !busy && !background
     const session = hub.session(thread)
     if (busy && session && !turn.reader) turn.reader = reader(thread, session, turn, turn.since)
@@ -91,7 +91,6 @@ const hub = startHub({
     const turn = turns.get(thread)
     turns.delete(thread)
     turn?.reader?.close()
-    hub.turned(thread)
     turn?.reject(RequestError.internalError(undefined, `hex couldn't start this thread's session: ${reason}`))
   },
   args: thread => {
