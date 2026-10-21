@@ -27,10 +27,11 @@ untrusted && echo "hex couldn't mark $here trusted in $config" >&2
 # Memory goes in whole as a file Claude Code loads at startup and again after compacting, since a hook's output is cut past 10,000 characters.
 wake="$home/state/wake"
 mkdir -p "$wake"
-# A wake that can't be written keeps the last one, which still holds the memory.
-if MEMORY_DIR=$(jq -r '.env.MEMORY_DIR // empty' "$home/.claude/settings.json" 2>/dev/null) "$hex/bin/wake" all > "$wake/CLAUDE.md.$$" && [ -s "$wake/CLAUDE.md.$$" ]; then
-  mv "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
+if MEMORY_DIR=$(jq -r '.env.MEMORY_DIR // empty' "$home/.claude/settings.json" 2>/dev/null) "$hex/bin/wake" all > "$wake/CLAUDE.md.$$"; then
+  # With memory off, wake prints nothing, and no wake file stays.
+  [ -s "$wake/CLAUDE.md.$$" ] && mv "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md" || rm -f "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
 else
+  # A wake that stopped to ask for a compression keeps the last one, which still holds the memory.
   rm -f "$wake/CLAUDE.md.$$"
 fi
 if [ -s "$wake/CLAUDE.md" ]; then woke="$wake/CLAUDE.md"; else unset HEX_WAKE; fi
