@@ -69,7 +69,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
   expect(shown).not.toContain('damn it')
   store.deliver({ key: 'telegram:-100:300', to: '-100:7', from: 'telegram', body: 'and the API reference', meta: { user: 'bassim' } })
   store.addWords('t-3', 'telegram:-100:300')
-  expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe('')
+  expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe(shown)
 })
 
 test('the questions still waiting on the owner come with the tasks, and leave once answered', async () => {

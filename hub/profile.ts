@@ -77,7 +77,7 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
     },
   ]
   const text = fit(sections, room)
-  const whole = tasks.map(task => [task.id, task.title, task.doneWhen])
+  const whole = tasks.map(task => [task.id, task.title, task.doneWhen, task.words.map(words => [words.message, words.text])])
   return { text, digest: text && Bun.hash(JSON.stringify([sections, whole])).toString(36) }
 }
 
