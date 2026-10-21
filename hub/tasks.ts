@@ -87,19 +87,19 @@ if (import.meta.main) {
       const { session_id, source } = JSON.parse((await Bun.stdin.text()) || '{}') as { session_id?: string; source?: string }
       if (session_id) {
         const store = open(HEX_STORE)
-        if (source === 'compact' || source === 'clear') store.unshow(session_id)
+        if (source === 'compact' || source === 'clear') store.unshow(session_id, 'tasks')
         const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
         const { text, seen } = pending(HEX_STORE, thread)
         // Diffs since the last whole list add up in sent; once they'd pass its length, the whole list
         // goes again, so a session that lost a push catches up.
         const whole = text || 'No open tasks or questions waiting on me now.'
-        const last = store.seen(session_id)
+        const last = store.seen(session_id, 'tasks')
         const before = last.startsWith('{') ? (JSON.parse(last) as { seen: Record<string, string>; sent: number }) : null
         const diff = before && changes(before.seen, seen)
         const out = diff && before.sent + diff.length < whole.length ? diff : whole
         const record = Object.keys(seen).length ? JSON.stringify({ seen, sent: out === diff ? before!.sent + diff.length : 0 }) : ''
         if (before ? diff : record !== last) {
-          store.swap(session_id, record)
+          store.show(session_id, 'tasks', record)
           console.log(out)
         }
       }

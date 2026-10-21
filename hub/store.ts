@@ -144,6 +144,8 @@ const migrations = [
   update messages set author = ${AUTHOR};
   create index said on messages ("to", at);
   create index unauthored on messages (n) where author = '';`,
+  `create table seen (session text not null, kind text not null, record text not null, primary key (session, kind));
+  insert into seen (session, kind, record) select session, 'tasks', digest from shown;`,
 ]
 
 const now = () => new Date().toISOString()
@@ -534,25 +536,18 @@ export class Store {
     this.write(() => this.db.query('delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
   }
 
-  // What a session was last shown ('' when nothing yet) when it differs from digest, noting digest
-  // as shown, or null when it's the same: one step, so two hooks never diff against a stale record.
-  swap(session: string, digest: string): string | null {
-    return this.write(() => {
-      const was = (this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null)?.digest ?? ''
-      if (was === digest) return null
-      this.db.query('insert into shown (session, digest) values (?, ?) on conflict (session) do update set digest = excluded.digest').run(session, digest)
-      return was
-    })
+  // What a session was last shown of one kind, like its rules or its tasks: '' when nothing yet.
+  seen(session: string, kind: string): string {
+    return (this.db.query('select record from seen where session = ? and kind = ?').get(session, kind) as { record: string } | null)?.record ?? ''
   }
 
-  // What a session was last shown, '' when nothing yet.
-  seen(session: string): string {
-    return (this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null)?.digest ?? ''
+  show(session: string, kind: string, record: string) {
+    this.write(() => this.db.query('insert into seen (session, kind, record) values (?, ?, ?) on conflict (session, kind) do update set record = excluded.record').run(session, kind, record))
   }
 
-  // The session's context lost what it was shown (a compaction, a clear), so its next show is in full.
-  unshow(session: string) {
-    this.write(() => this.db.query('delete from shown where session = ?').run(session))
+  // The session's context lost what it was shown of a kind: a compaction, a clear, or for its rules, its end.
+  unshow(session: string, kind: string) {
+    this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
   }
 
   private quote(task: string, message: string, quote?: string) {

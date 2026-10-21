@@ -4,39 +4,54 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
+import { open } from '../hub/store.ts'
 import { files } from './instructions'
 
 // Claude Code reads its instruction files only when a session starts, resumes or
 // compacts, so a session that runs for days keeps the rules it started with.
-// SessionStart records what the session loaded; each prompt after that gets a diff
-// of whatever changed since.
+// SessionStart records in hex.db what the session loaded, and each prompt after that
+// gets a diff of whatever changed since. Every start records it again, so it goes
+// when the session ends.
 
 const home = resolve(import.meta.dir, '../..')
 const { session_id, hook_event_name } = JSON.parse(await Bun.stdin.text())
-const seen = join(process.env.TMPDIR ?? tmpdir(), `hex-rules-${session_id}.json`)
 
-const now = Object.fromEntries(files().map(file => [file.path, file.text]))
-
-if (hook_event_name !== 'SessionStart' && existsSync(seen)) {
-  const before: Record<string, string> = JSON.parse(readFileSync(seen, 'utf8'))
-  const changed = [...new Set([...Object.keys(before), ...Object.keys(now)])].filter(file => before[file] !== now[file])
-  if (changed.length) {
-    const scratch = mkdtempSync(join(tmpdir(), 'hex-rules-'))
-    const diffs = changed.map((file, i) => {
-      const name = file.startsWith(home) ? relative(home, file) : file.replace(homedir(), '~')
-      const old = join(scratch, `${i}`), next = join(scratch, `${i}.new`)
-      writeFileSync(old, before[file] ?? '')
-      writeFileSync(next, now[file] ?? '')
-      return spawnSync(['diff', '-u', '--label', name, '--label', name, old, next]).stdout.toString()
-    })
-    rmSync(scratch, { recursive: true })
-    const names = changed.map(file => file.replace(homedir(), '~'))
-    const body = diffs.join('\n')
-    const lead = 'Your instruction files changed since this session loaded them. From now on, follow their new wording'
-    // A chat's next session starts from the new files anyway, so a change too long to show waits for it.
-    if (body.length <= ROOM) console.log(`${lead}; this is what changed:\n\n${body}`)
-    else if (!(process.env.HEX_FRESH && process.env.HEX_THREAD)) console.log(`${lead}. The change is too long to show here, so read them again: ${names.join(', ')}`)
+try {
+  const store = open(process.env.HEX_STORE ?? join(home, 'state'))
+  if (hook_event_name === 'SessionEnd') {
+    store.unshow(session_id, 'rules')
+    process.exit(0)
   }
+  const now: Record<string, string> = Object.fromEntries(files().map(file => [file.path, file.text]))
+  // A session that started before hex kept this record in hex.db has it in a file until it ends.
+  const legacy = join(process.env.TMPDIR ?? tmpdir(), `hex-rules-${session_id}.json`)
+  const kept = store.seen(session_id, 'rules')
+  const seen = kept || (existsSync(legacy) ? readFileSync(legacy, 'utf8') : '')
+  let out = ''
+  if (hook_event_name !== 'SessionStart' && seen) {
+    const before: Record<string, string> = JSON.parse(seen)
+    const changed = [...new Set([...Object.keys(before), ...Object.keys(now)])].filter(file => before[file] !== now[file])
+    if (changed.length) {
+      const scratch = mkdtempSync(join(tmpdir(), 'hex-rules-'))
+      const diffs = changed.map((file, i) => {
+        const name = file.startsWith(home) ? relative(home, file) : file.replace(homedir(), '~')
+        const old = join(scratch, `${i}`), next = join(scratch, `${i}.new`)
+        writeFileSync(old, before[file] ?? '')
+        writeFileSync(next, now[file] ?? '')
+        return spawnSync(['diff', '-u', '--label', name, '--label', name, old, next]).stdout.toString()
+      })
+      rmSync(scratch, { recursive: true })
+      const names = changed.map(file => file.replace(homedir(), '~'))
+      const body = diffs.join('\n')
+      const lead = 'Your instruction files changed since this session loaded them. From now on, follow their new wording'
+      // A chat's next session starts from the new files anyway, so a change too long to show waits for it.
+      if (body.length <= ROOM) out = `${lead}; this is what changed:\n\n${body}`
+      else if (!(process.env.HEX_FRESH && process.env.HEX_THREAD)) out = `${lead}. The change is too long to show here, so read them again: ${names.join(', ')}`
+    }
+  }
+  // Kept before it's said, so a record that can't be kept doesn't show the same change on every prompt.
+  if (JSON.stringify(now) !== kept) store.show(session_id, 'rules', JSON.stringify(now))
+  if (out) console.log(out)
+} catch (error) {
+  console.error(`hex couldn't compare this session's rules with the ones it loaded: ${error}`)
 }
-
-writeFileSync(seen, JSON.stringify(now))
