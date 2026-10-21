@@ -10,7 +10,7 @@ export const quotesOf = (note: string) => [...note.matchAll(/["“]([^"“”]+)
 // Typing turns curly quotes straight and wraps lines, and a quote may leave words out with an ellipsis.
 const plain = (text: string) => text.toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim()
 function quotes(body: string, words: string) {
-  const parts = plain(words).split(/\s*(?:\.\.\.|…)\s*/).filter(Boolean)
+  const parts = plain(words).split(/\s*(?:\.\.\.|…)\s*/).filter(part => /[\p{L}\p{N}]/u.test(part))
   if (!parts.length) return false
   let at = 0
   for (const part of parts) {

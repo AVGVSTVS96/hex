@@ -50,6 +50,7 @@ test("a note that misquotes the owner, quotes without naming the message, or doe
     'Oct 19: ships "only on fridays" [telegram:-100:50]',
     'Oct 19: ships "on fridays only"',
     'Oct 19: was angry "…" [telegram:-100:50]',
+    'Oct 19: was angry "… !" [telegram:-100:50]',
     'Oct 19: the nightly backup ran',
     `Oct 19: "ship it on fridays only" ${'x'.repeat(280)} [telegram:-100:50]`,
     '2026-10-19 Oct 19: "ship it on fridays only" [telegram:-100:50]',
