@@ -20,7 +20,7 @@ beforeEach(() => {
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_MAIN_MODEL: 'claude-opus-5-5', MEMORY_DIR: join(home, 'memory') } }))
   mkdirSync(join(home, '.hex/vendor'))
-  writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "#0 a memory"\n')
+  writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "#0 a memory"\necho "You are awake."\n')
   chmodSync(join(home, '.hex/vendor/memo'), 0o755)
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')
   writeFileSync(join(home, 'AGENTS.md'), '- Keep it short.\n')
