@@ -1,7 +1,8 @@
 import { spawn } from 'child_process'
 import { existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { join, resolve } from 'path'
+import { dirname, join, resolve } from 'path'
 import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
+import { rendered } from '../bin/instructions'
 import { names, PROFILE, profileOf, profilePath } from './profile.ts'
 import { zoneOf } from './schedule.ts'
 import { open, type Row, type Store } from './store.ts'
@@ -20,11 +21,11 @@ const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
-const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's AGENTS.md, their profile, the newest memories, and the messages the session took that turn, the owner's and others' (jobs, schedules, other sessions), with the reply it gave; an owner's message a memory already names is marked so. A turn with no messages was typed in the terminal or ran on its own: its log has what was said. You keep two things.
+const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the instructions every session reads, the owner's profile, the newest memories, and the messages the session took that turn, the owner's and others' (jobs, schedules, other sessions), with the reply it gave; an owner's message a memory already names is marked so. A turn with no messages was typed in the terminal or ran on its own: its log has what was said. You keep two things.
 
 Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages, and name anything else in plain words, without double quotes. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
-The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done; a rule their AGENTS.md already states stays out, since every session reads that file too. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it near 4,500 characters, never over ${PROFILE}. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
+The profile: a small markdown file every session will read, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, how they want things done; a rule the instructions every session reads already state stays out. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it near 4,500 characters, never over ${PROFILE}. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when this turn changes nothing in it.
 
 In both, quote the words that carry what the owner meant; anger and curses stay in the log. If you need what a message answers, the whole conversation is in the log file named with the turn.`
 
@@ -63,8 +64,7 @@ export async function observe(state: string, session: string, reply: string, { a
         '</turn>',
       ].join('\n\n')
       const ours = new Set(fresh.map(row => row.key))
-      const agents = join(hexDir, 'AGENTS.md')
-      const rules = existsSync(agents) ? `<AGENTS.md>\n${readFileSync(agents, 'utf8').trim()}\n</AGENTS.md>\n\n` : ''
+      const rules = `<instructions every session reads>\n${rendered()}\n</instructions every session reads>\n\n`
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
       // rewrite the profile while this one thinks: either way it thinks again.
       for (let tries = 0; tries < 3; tries++) {
@@ -172,9 +172,10 @@ async function claude(input: string): Promise<Answer> {
 }
 
 // OptMem asks whoever writes a note to do the compressions it makes due. The memory agent writes
-// every note, so it does them too, and a session's wake never has to ask for one.
-export async function nap(memo = MEMO, compress = summarize) {
-  for (let asked; (asked = Bun.spawnSync([memo, 'nap'], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()).startsWith('Compress'); ) {
+// every note, so it does them too, and a session's wake never has to ask for one. Each one starts
+// only while keep() holds the pass's lease.
+export async function nap(memo = MEMO, compress = summarize, keep = () => true) {
+  for (let asked; keep() && (asked = Bun.spawnSync([memo, 'nap'], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()).startsWith('Compress'); ) {
     const block = asked.match(/^Compress memories #(\d+-\d+)/)![1]!
     let why = ''
     for (let tries = 0; ; tries++) {
@@ -188,8 +189,31 @@ export async function nap(memo = MEMO, compress = summarize) {
 
 async function summarize(prompt: string) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
-  const run = Bun.spawn(['claude', '-p', '--safe-mode', '--model', MODEL, '--effort', 'low', '--tools', '', '--system-prompt', 'You compress the memories of an AI assistant. Answer with the one line only.', '--no-session-persistence'], { env, stdin: new Blob([prompt]), stdout: 'pipe', stderr: 'pipe', timeout: CALL })
-  return (await new Response(run.stdout).text()).trim().split('\n').at(-1) ?? ''
+  const run = Bun.spawn(['claude', '-p', '--safe-mode', '--model', MODEL, '--effort', 'low', '--tools', '', '--system-prompt', 'You compress the memories of an AI assistant. Answer with the one line only.', '--output-format', 'json', '--no-session-persistence'], { env, stdin: new Blob([prompt]), stdout: 'pipe', stderr: 'pipe', timeout: CALL })
+  const [out, err, code] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited])
+  const result = JSON.parse(out || '{}')
+  if (code !== 0 || result.is_error || typeof result.result !== 'string') throw new Error(`claude exited ${code}: ${result.result ?? err.slice(-500)}`)
+  return result.result.trim().split('\n').at(-1) ?? ''
+}
+
+// A session reloads its memory file after compacting, so each pass leaves it current: the profile
+// and memory as they are now, not as they were when the newest session started.
+export function refresh(wake = join(hexDir, 'state', 'wake', 'CLAUDE.md')) {
+  if (!existsSync(dirname(wake))) return
+  const text = Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake'), 'all'], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
+  if (!text.trim()) return
+  writeFileSync(`${wake}.${process.pid}`, text)
+  renameSync(`${wake}.${process.pid}`, wake)
+}
+
+// A pass looks over the turn, does the compressions its notes made due, and leaves the memory file current.
+async function pass(state: string, turn: Pass, keep: () => boolean) {
+  await observe(state, turn.session, turn.reply, turn)
+  try {
+    await nap(MEMO, summarize, keep)
+  } finally {
+    refresh()
+  }
 }
 
 // Turns wait in hex.db, oldest first, and one process at a time works through them, so each pass
@@ -197,13 +221,13 @@ async function summarize(prompt: string) {
 // profile, and a turn outlives a pass that died. A drainer that died holds the lease only until it
 // runs out; each turn renews it, and one whose lease ran out mid-turn stops. One that finds the lease taken leaves its turn to the holder,
 // which looks again after letting go.
-export async function drain(state: string, run: (pass: Pass) => Promise<unknown> = async pass => (await observe(state, pass.session, pass.reply, pass), await nap())) {
+export async function drain(state: string, run: (pass: Pass, keep: () => boolean) => Promise<unknown> = (each, keep) => pass(state, each, keep)) {
   const store = open(state)
   const holder = crypto.randomUUID()
   while (store.waiting() && store.lease('observe', holder, 4 * CALL)) {
     try {
       for (let next; (next = store.waiting()); ) {
-        await run(next.pass as Pass).catch(error => console.error(`hex couldn't look over a turn for memories: ${error}`))
+        await run(next.pass as Pass, () => store.lease('observe', holder, 4 * CALL)).catch(error => console.error(`hex couldn't look over a turn for memories: ${error}`))
         store.passed(next.n)
         if (!store.lease('observe', holder, 4 * CALL)) return
       }

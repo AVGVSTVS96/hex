@@ -75,7 +75,7 @@ test('the profile comes back ahead of memory', () => {
   memo('#0 2026-10-06 First note.\nYou are awake.\n')
   mkdirSync(join(home, 'state'))
   writeFileSync(join(home, 'state/profile.md'), '# Now\n- Login page first\n')
-  expect(hook('memory')).toEndWith('\n\n# Now\n- Login page first\n\n#0 2026-10-06 First note.\nYou are awake.\n')
+  expect(hook('memory')).toEndWith(':\n\n# Now\n- Login page first\n\nYour memory:\n\n#0 2026-10-06 First note.\nYou are awake.\n')
 })
 
 test('says nothing when OptMem is not installed', () => {
