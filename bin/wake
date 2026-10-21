@@ -3,7 +3,6 @@ here=$(cd "$(dirname "$0")" && pwd)
 memo="$here/../vendor/memo"
 profile="${HEX_STORE:-$here/../../state}/profile.md"
 export LC_ALL=C
-umask 077
 
 # What a session knows as it starts: the owner's profile, which hex's memory agent keeps current, then memory.
 whole() {
@@ -28,8 +27,6 @@ if [ "${1:-}" = all ]; then
   printf 'This is your memory: `.hex/vendor/memo wake`, run in full for you as this session started, so you don'"'"'t need to run it. Claude Code loads it as an instruction file, but its numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one. If it ends by asking for a compression, do that first.\n\n%s\n' "$wake"
   exit
 fi
-
-input=$(cat)
 session=$(printf '%s' "$input" | jq -r .session_id)
 [ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] && [ -z "${HEX_WAKE:-}" ] || exit 0
 
@@ -42,8 +39,8 @@ room=9000
 
 wake=$(whole)
 
-rest="${TMPDIR:-/tmp}/hex-wake-$session.txt"
-[ -z "$last" ] || rm -f "$rest"
+rest=
+[ -z "$last" ] || rest=$(mktemp "${TMPDIR:-/tmp}/hex-wake-XXXXXX")
 printf '%s\n' "$wake" | awk -v n="$n" -v last="$last" -v room="$room" -v rest="$rest" '
   { if (size && size + length($0) + 1 > room) { chunks++; size = 0 }
     size += length($0) + 1

@@ -3,7 +3,6 @@ input=$(cat)
 session=$(printf '%s' "$input" | jq -r .session_id)
 here=$(cd "$(dirname "$0")" && pwd)
 export LC_ALL=C
-umask 077
 
 # Claude Code puts at most 10,000 characters of a hook's output into context.
 # Past that it saves the output to a file and shows only a 2,000-character preview.
@@ -21,8 +20,7 @@ case "${1:-}" in
       printf '%s\n' "$wake"
       exit 0
     fi
-    rest="${TMPDIR:-/tmp}/hex-wake-$session.txt"
-    rm -f "$rest"
+    rest=$(mktemp "${TMPDIR:-/tmp}/hex-wake-XXXXXX")
     printf '%s\n' "$wake" > "$rest"
     shown=$(awk -v room="$room" '{ size += length($0) + 1 } size > room { exit } { n = NR } END { print n + 0 }' "$rest")
     head -n "$shown" "$rest"
