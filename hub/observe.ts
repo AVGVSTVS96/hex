@@ -71,7 +71,7 @@ export async function observe(state: string, session: string, { ask = claude, me
         ...taken.filter(shown).map(row =>
           rows.includes(row)
             ? `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`
-            : `${replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`} ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`,
+            : `${row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`} ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`,
         ),
         '</turn>',
       ].join('\n\n')
@@ -274,10 +274,11 @@ if (import.meta.main) {
   if (HEX_PASS) await drain(HEX_STORE)
   else {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
-    const answer = HEX_CHANNEL ? undefined : hook.last_assistant_message?.trim()
-    // A session no app holds answers in its terminal: its last words are hex's reply, kept before the turn is queued.
+    const answer = hook.last_assistant_message?.trim()
+    // A turn's last words in the terminal are kept before the turn is queued: a session no app holds
+    // answers there, and an app's session sums up there what its replies may not say.
     try {
-      if (hook.session_id && answer) open(HEX_STORE).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id } }, hook.session_id)
+      if (hook.session_id && answer) open(HEX_STORE).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id, ...(HEX_CHANNEL && { unsent: true }) } }, hook.session_id)
     } catch (error) {
       process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
     }

@@ -70,7 +70,7 @@ test("a job a job session starts is its owner's too", () => {
   expect(value(run(['inner', 'make'], { HEX_OWNER: 'discord:555' }).args, 'HEX_OWNER')).toBe('discord:555')
 })
 
-test("a job session's prompt is hex's words in hex.db, its answer too, and what the owner types in a terminal is theirs", () => {
+test("a job session's prompt is hex's words in hex.db, its answer too, what the owner types in a terminal is theirs, and an app session's terminal words are kept as unsent", () => {
   const state = join(home, 'state')
   const hook = (step: string, input: object, extra: Record<string, string> = {}) =>
     Bun.spawnSync(['bun', join(HEX, step === 'busy' ? 'hub/state.ts' : 'hub/observe.ts'), step], { stdin: Buffer.from(JSON.stringify(input)), env: { ...env, HEX_STORE: state, MEMORY_DIR: '', ...extra } })
@@ -85,7 +85,9 @@ test("a job session's prompt is hex's words in hex.db, its answer too, and what 
     { to: 'job-1', from: 'terminal', author: 'prompt', body: 'Build the deck tab.', by: 'job-1' },
     { to: 'job-1', from: 'terminal', author: 'hex', body: 'Built.', by: 'job-1' },
     { to: 'mine-1', from: 'terminal', author: 'owner', body: 'what is up', by: 'mine-1' },
+    { to: '-100:1', from: 'terminal', author: 'hex', body: 'narration', by: 'chat-1' },
   ])
+  expect(open(state).said('-100:1')[0]?.meta).toEqual({ session: 'chat-1', unsent: true })
 })
 
 test("a named owner is a key in one app's list, or <app>:<key>; a key in two lists is refused instead of guessed", () => {

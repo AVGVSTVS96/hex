@@ -21,9 +21,9 @@ start=$(awk -v room="$room" '
     print j <= NR ? j : i + 1
   }' "$log")
 if [ "$start" = 1 ]; then
-  echo "Your context was just compacted. This is the whole conversation so far, word for word, from \`.hex/bin/hex log\`:"
+  echo "Your context was just compacted. This is the whole conversation so far, word for word, from \`.hex/bin/hex log\`; the summary above has what you did in the turn in progress:"
 else
-  echo "Your context was just compacted. This is the end of the conversation, word for word, from \`.hex/bin/hex log\`; \`.hex/bin/hex log -- '${HEX_THREAD:-$session}'\` has the earlier messages."
+  echo "Your context was just compacted. This is the end of the conversation, word for word, from \`.hex/bin/hex log\`; \`.hex/bin/hex log -- '${HEX_THREAD:-$session}'\` has the earlier messages, and the summary above has what you did in the turn in progress."
 fi
 echo
 tail -n +"$start" "$log"
