@@ -74,3 +74,9 @@ test("a session's end forgets what it loaded, and leaves no file behind", () => 
   expect(open(join(home, 'state')).seen(SESSION, 'rules')).toBe('')
   expect(readdirSync(home).filter(name => name.startsWith('hex-'))).toEqual([])
 })
+
+test('a session that started with the record in a file still gets the change', () => {
+  writeFileSync(join(home, `hex-rules-${SESSION}.json`), JSON.stringify({ [join(home, '.claude/CLAUDE.md')]: '# Global\n' }))
+  writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n\n- Sign every commit.\n')
+  expect(hook('UserPromptSubmit')).toContain('+- Sign every commit.')
+})

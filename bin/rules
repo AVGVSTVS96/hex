@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from 'bun'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
@@ -23,7 +23,10 @@ try {
     process.exit(0)
   }
   const now: Record<string, string> = Object.fromEntries(files().map(file => [file.path, file.text]))
-  const seen = store.seen(session_id, 'rules')
+  // A session that started before hex kept this record in hex.db has it in a file until it ends.
+  const legacy = join(process.env.TMPDIR ?? tmpdir(), `hex-rules-${session_id}.json`)
+  const seen = store.seen(session_id, 'rules') || (existsSync(legacy) ? readFileSync(legacy, 'utf8') : '')
+  let out = ''
   if (hook_event_name !== 'SessionStart' && seen) {
     const before: Record<string, string> = JSON.parse(seen)
     const changed = [...new Set([...Object.keys(before), ...Object.keys(now)])].filter(file => before[file] !== now[file])
@@ -41,11 +44,13 @@ try {
       const body = diffs.join('\n')
       const lead = 'Your instruction files changed since this session loaded them. From now on, follow their new wording'
       // A chat's next session starts from the new files anyway, so a change too long to show waits for it.
-      if (body.length <= ROOM) console.log(`${lead}; this is what changed:\n\n${body}`)
-      else if (!(process.env.HEX_FRESH && process.env.HEX_THREAD)) console.log(`${lead}. The change is too long to show here, so read them again: ${names.join(', ')}`)
+      if (body.length <= ROOM) out = `${lead}; this is what changed:\n\n${body}`
+      else if (!(process.env.HEX_FRESH && process.env.HEX_THREAD)) out = `${lead}. The change is too long to show here, so read them again: ${names.join(', ')}`
     }
   }
+  // Kept before it's said, so a record that can't be kept doesn't show the same change on every prompt.
   if (JSON.stringify(now) !== seen) store.show(session_id, 'rules', JSON.stringify(now))
+  if (out) console.log(out)
 } catch (error) {
   console.error(`hex couldn't compare this session's rules with the ones it loaded: ${error}`)
 }
