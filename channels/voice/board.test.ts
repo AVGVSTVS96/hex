@@ -5,6 +5,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { Board, track } from './board.ts'
 import { until } from '../../hub/until.ts'
+import { open, type Kept } from '../../hub/store.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'voice-board-'))
 const claude = join(home, 'claude')
@@ -15,9 +16,9 @@ afterAll(() => rmSync(home, { recursive: true }))
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
 
-function threads(app: string, all: object) {
+function threads(app: string, all: Record<string, Kept>) {
   mkdirSync(join(state, app), { recursive: true })
-  writeFileSync(join(state, app, 'threads.json'), JSON.stringify(all))
+  open(state).keepThreads(app, all)
 }
 
 function job(session: string, record: object, timeline: object[] = []) {
@@ -253,7 +254,7 @@ test('a change to a session wakes the list, and the counts move only when a coun
   expect(board.runs[0].name).toBe('hex')
 })
 
-test('a new thread shows up when its app writes threads.json, once its session has records, and links once Discord has said which server it is in', async () => {
+test('a new thread shows up when its app keeps it in hex.db, once its session has records, and links once Discord has said which server it is in', async () => {
   threads('discord', { d1: { name: 'Latest Claude', session: '99999999-latest' } })
   job('99999999-latest', { state: 'failed', detail: "You've hit your weekly limit", updatedAt: ago(0) })
   await until(() => board.get('discord:d1')?.state === 'failed')

@@ -748,6 +748,11 @@ function serve(token: string) {
     stateDir: STATE_DIR,
     channel: 'plugin:discord@hex',
     server,
+    link: thread => {
+      const channel = client.channels.cache.get(thread)
+      if (channel?.isDMBased()) return `https://discord.com/channels/@me/${thread}`
+      if (channel && 'guildId' in channel) return `https://discord.com/channels/${channel.guildId}/${thread}`
+    },
     call,
     state: settle,
     fresh: thread => dms.has(thread),
@@ -1147,6 +1152,7 @@ function serve(token: string) {
     process.stderr.write(`discord hub: gateway connected as ${c.user.tag}\n`)
     const id = client.guilds.cache.first()?.id
     if (id) writeFileSync(GUILD_FILE, JSON.stringify({ id }) + '\n')
+    hub.save()
     void c.application?.commands.set(COMMANDS).catch(failure('registering slash commands'))
     ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
   })

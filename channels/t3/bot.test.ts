@@ -9,6 +9,7 @@ import { Database } from 'bun:sqlite'
 import { client, ndJsonStream, type SessionNotification } from '@agentclientprotocol/sdk'
 import { ATTACH, connect as channel, service } from '../../hub/testing.ts'
 import { until } from '../../hub/until.ts'
+import { open as hexdb } from '../../hub/store.ts'
 
 const SESSION = '0a1b2c3d-0000-4000-8000-000000000000'
 let PORT = 0
@@ -46,6 +47,9 @@ echo "backgrounded · job12345 · test"`)
   }
   await start()
 })
+
+// Each open thread as the hub keeps it in hex.db, by its id.
+const registered = (): Record<string, any> => Object.fromEntries(hexdb(join(dir, 'hex', 'state')).threads({ open: true }).map(thread => [thread.thread, thread]))
 
 afterEach(() => {
   for (const socket of sockets.splice(0)) socket.destroy()
@@ -257,7 +261,7 @@ test('a session gets T3\'s MCP servers, and starts again with them when they cha
   mkdirSync(saved, { recursive: true })
   writeFileSync(join(saved, `${SESSION}.jsonl`), '')
   const hex = await session(sessionId)
-  await until(() => existsSync(join(dir, 'state', 'threads.json')) && readFileSync(join(dir, 'state', 'threads.json'), 'utf8').includes(SESSION))
+  await until(() => JSON.stringify(registered()).includes(SESSION))
   await hex.busy()
   hex.write(prompt, reply, done)
   await hex.idle()
@@ -284,7 +288,7 @@ test('a turn whose T3 connection closes stops its session, and a reconnected T3 
   mkdirSync(saved, { recursive: true })
   writeFileSync(join(saved, `${SESSION}.jsonl`), '')
   const hex = await session(sessionId)
-  await until(() => existsSync(join(dir, 'state', 'threads.json')) && readFileSync(join(dir, 'state', 'threads.json'), 'utf8').includes(SESSION))
+  await until(() => JSON.stringify(registered()).includes(SESSION))
   await hex.busy()
   const pid = Number(Bun.spawnSync(['sh', '-c', 'sleep 60 >/dev/null 2>&1 & echo $!']).stdout.toString())
   writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid, status: 'busy' }]))
@@ -316,7 +320,7 @@ test('a thread offers T3 model and effort pickers, and its session starts again 
   mkdirSync(saved, { recursive: true })
   writeFileSync(join(saved, `${SESSION}.jsonl`), '')
   const hex = await session(sessionId)
-  await until(() => existsSync(join(dir, 'state', 'threads.json')) && readFileSync(join(dir, 'state', 'threads.json'), 'utf8').includes(SESSION))
+  await until(() => JSON.stringify(registered()).includes(SESSION))
   await hex.busy()
   hex.write(prompt, reply, done)
   await hex.idle()
@@ -332,7 +336,7 @@ test('a thread offers T3 model and effort pickers, and its session starts again 
   const fresh = await session(sessionId)
   await until(() => fresh.inbound.length)
   expect(fresh.inbound[0]).toMatchObject({ type: 'inbound', content: 'again' })
-  expect(JSON.parse(readFileSync(join(dir, 'state', 'threads.json'), 'utf8'))[sessionId]).toMatchObject({ model: 'fable', effort: 'xhigh' })
+  expect(registered()[sessionId]).toMatchObject({ model: 'fable', effort: 'xhigh' })
 })
 
 test('a thread T3 opens is kept only once it sends a prompt, so T3\'s provider check leaves nothing behind', async () => {
@@ -340,7 +344,7 @@ test('a thread T3 opens is kept only once it sends a prompt, so T3\'s provider c
   await check.agent.request('session/new', { cwd: project, mcpServers: [] })
   await until(() => check.updates.length)
   check.socket.destroy()
-  expect(existsSync(join(dir, 'state', 'threads.json'))).toBe(false)
+  expect(registered()).toEqual({})
   expect(JSON.parse(readFileSync(join(dir, '.claude.json'), 'utf8')).projects).toEqual({})
   expect(lines('launched')).toEqual([])
 })
@@ -356,7 +360,7 @@ test('a known thread resumes, an unprompted one T3 opened before resumes as new,
   agent.request('session/prompt', { sessionId: unprompted, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
   await until(() => lines('launched').length === 2)
   expect(lines('cwd')).toEqual([project, project])
-  expect(JSON.parse(readFileSync(join(dir, 'state', 'threads.json'), 'utf8'))[unprompted]).toMatchObject({ name: 'project', cwd: project })
+  expect(registered()[unprompted]).toMatchObject({ name: 'project', cwd: project })
   expect(agent.request('session/prompt', { sessionId: 'nope', prompt: [{ type: 'text', text: 'hi' }] })).rejects.toThrow('Resource not found')
 })
 
@@ -394,8 +398,7 @@ test('a turn rejoined after a hub restart follows the session running for its th
   await until(() => texts(updates).length)
   const pid = Number(Bun.spawnSync(['sh', '-c', 'sleep 60 >/dev/null 2>&1 & echo $!']).stdout.toString())
   writeFileSync(join(dir, 'agents'), JSON.stringify([{ id: 'job12345', sessionId: SESSION, pid, status: 'busy' }]))
-  const threads = join(dir, 'state', 'threads.json')
-  await restart(() => writeFileSync(threads, JSON.stringify({ [sessionId]: { ...JSON.parse(readFileSync(threads, 'utf8'))[sessionId], session: 'f0e1d2c3-0000-4000-8000-000000000000' } })))
+  await restart(() => hexdb(join(dir, 'hex', 'state')).keepThreads('t3', { [sessionId]: { ...registered()[sessionId], session: 'f0e1d2c3-0000-4000-8000-000000000000' } }))
   const back = await session(sessionId)
   back.write({ type: 'assistant', timestamp: now(), message: { id: 'm2', content: [{ type: 'text', text: 'two' }] } }, done)
   writeFileSync(join(dir, 'agents'), JSON.stringify([{ id: 'job12345', sessionId: SESSION, pid, status: 'idle' }]))
@@ -623,7 +626,7 @@ async function mirrored(turns: [string, string][]) {
   mkdirSync(saved, { recursive: true })
   writeFileSync(join(saved, `${SESSION}.jsonl`), '')
   const hex = await session(source)
-  await until(() => existsSync(join(dir, 'state', 'threads.json')) && readFileSync(join(dir, 'state', 'threads.json'), 'utf8').includes(SESSION))
+  await until(() => JSON.stringify(registered()).includes(SESSION))
   await hex.busy()
   hex.write(prompt, reply, done)
   await hex.idle()

@@ -78,7 +78,7 @@ function fold(received: { meta: { key: string } }[]) {
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
 function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = options
-  if (options.registry) writeFileSync(join(dir, 'threads.json'), JSON.stringify(options.stale ? before(options.registry) : options.registry))
+  if (options.registry) open(dir).keepThreads('telegram', Object.fromEntries(Object.entries<any>(options.stale ? before(options.registry) : options.registry).map(([thread, { from, ...known }]) => [thread, { ...known, fork: from }])))
   if (options.agents) writeFileSync(join(dir, 'agents'), JSON.stringify(options.agents))
   const seen: [string, boolean][] = (states = [])
   const failedSeen: [string, string][] = (failures = [])
@@ -191,10 +191,8 @@ function settingsOf(args: string[]) {
 }
 
 // Without the digest of what each session started with, which only the renew tests look at.
-function registry() {
-  const threads = JSON.parse(readFileSync(join(dir, 'threads.json'), 'utf8'))
-  for (const known of Object.values<any>(threads)) delete known.launched
-  return threads
+function registry(): Record<string, any> {
+  return Object.fromEntries(open(dir).threads({ open: true }).map(({ app, thread, open, launched, fork, ...known }) => [thread, { ...known, ...(fork && { from: fork }) }]))
 }
 
 test('without a transcriber set up, a recording is never fetched or sent anywhere', async () => {
@@ -695,19 +693,6 @@ test('a bad line on hub.sock is dropped, and the lines after it still work', asy
   expect(received[0]).toEqual(inbound({ content: 'still here', meta: {} }))
 })
 
-test('an unreadable threads.json is moved aside instead of overwritten, and a malformed thread is dropped', async () => {
-  writeFileSync(join(dir, 'threads.json'), '{"chat:7": {"name": "Desk')
-  start()
-  const aside = await until(() => readdirSync(dir).find(file => file.startsWith('threads.json.corrupt-')))
-  expect(readFileSync(join(dir, aside), 'utf8')).toBe('{"chat:7": {"name": "Desk')
-  hub.close()
-  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION }, 'chat:8': null, 'chat:9': { session: SESSION } } })
-  expect(hub.find('chat:7')).toBe('chat:7')
-  expect(hub.threads()).toEqual(['chat:7'])
-  expect(() => hub.find('chat:8')).toThrow()
-  expect(() => hub.find('chat:9')).toThrow()
-})
-
 test('a launcher that can\'t run fails the start instead of leaving it hanging', async () => {
   start({ launcher: join(dir, 'missing') })
   hub.deliver('chat:7', 'Desk anchors', message)
@@ -745,7 +730,7 @@ test('a local inbound request for a thread this hub doesn\'t have opens nothing'
   await launched()
   expect(calls().filter(args => args[0] === '--bg')).toHaveLength(1)
   expect(hub.threads()).toEqual(['chat:5'])
-  expect(Object.keys(JSON.parse(readFileSync(join(dir, 'threads.json'), 'utf8')))).toEqual(['chat:5'])
+  expect(Object.keys(registry())).toEqual(['chat:5'])
 })
 
 test('a session that fails to start is reported with its reason, and the next message retries', async () => {
@@ -1665,9 +1650,17 @@ test('threads are found by name or id, and renames are kept, in hex.db too', () 
   expect(hub.name('chat:9')).toBeUndefined()
   expect(registry()['chat:8'].name).toBe('Theo clips')
   expect(open(dir).threads()).toEqual([
-    { app: 'telegram', thread: 'chat:7', name: 'Desk anchors' },
-    { app: 'telegram', thread: 'chat:8', name: 'Theo clips' },
+    { app: 'telegram', thread: 'chat:7', name: 'Desk anchors', session: SESSION, open: true },
+    { app: 'telegram', thread: 'chat:8', name: 'Theo clips', open: true },
   ])
+})
+
+test('a thread hex.db keeps comes back with its folder and settings, and a closed one keeps its row', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, cwd: '/work', model: 'claude-opus-5-5' } } })
+  expect(hub.threads()).toEqual(['chat:7'])
+  expect(hub.cwd('chat:7')).toBe('/work')
+  await hub.retire('chat:7')
+  expect(open(dir).threads()).toEqual([{ app: 'telegram', thread: 'chat:7', name: 'Desk anchors', session: SESSION, cwd: '/work', model: 'opus', open: false }])
 })
 
 test('sessions start through the launcher, in the hex folder, with nothing of the hub\'s own in its env', async () => {
@@ -1708,7 +1701,7 @@ exec claude "$@"
   await launched()
   saved(SESSION, project)
   const { close } = await session('t3:1')
-  await until(() => existsSync(join(dir, 'threads.json')) && registry()['t3:1'])
+  await until(() => registry()['t3:1'])
   expect(registry()['t3:1']).toEqual({ name: 'project', cwd: project, session: SESSION })
   expect(hub.cwd('t3:1')).toBe(project)
   close()
@@ -1724,7 +1717,7 @@ test('a thread in the hex folder keeps no folder of its own', async () => {
   await launched()
   saved()
   await session('chat:7')
-  await until(() => existsSync(join(dir, 'threads.json')) && registry()['chat:7'])
+  await until(() => registry()['chat:7'])
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
   expect(hub.cwd('chat:7')).toBeUndefined()
 })

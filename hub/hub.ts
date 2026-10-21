@@ -85,7 +85,7 @@ type Phase =
   | { is: 'recovering'; deadline?: Timer; again?: boolean }
   | { is: 'live'; line: Line }
 
-// Everything the hub keeps on a thread while it runs; threads.json keeps what outlives the hub.
+// Everything the hub keeps on a thread while it runs; hex.db keeps what outlives the hub.
 type Run = {
   phase: Phase
   queue: Message[]
@@ -232,7 +232,7 @@ function capacity(tokens?: string) {
 }
 
 // What a session reads only as it starts: its launch arguments, its channel's instructions and
-// tools, and the hooks its launcher loads. threads.json keeps a digest of what each thread's
+// tools, and the hooks its launcher loads. hex.db keeps a digest of what each thread's
 // session started with.
 export function stamp(args: string[], server?: ChannelServer, hooks: string[] = []) {
   const read = (file: string) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
@@ -265,7 +265,7 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
+export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [], link }: {
   stateDir: string
   storeDir?: string
   channel: string
@@ -292,60 +292,55 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // The hooks files the launcher's plugins load (HEX_HOOKS, colon-separated): a change to one
   // renews sessions like a change to the channel does.
   hooks?: string[]
+  // Where the app opens a thread, which hex.db keeps with it.
+  link?: (thread: string) => string | undefined
 }) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = { ...LIMITS, ...limits }
-  const registry = join(stateDir, 'threads.json')
   // The thread whose session made the tool call in progress.
   const caller = new AsyncLocalStorage<string>()
   const socketPath = join(stateDir, 'hub.sock')
   // Each thread's session reads its settings, binding and token from here, so none of it shows in
   // a process's arguments, and a respawn reads the thread's current ones.
   const sessionsDir = join(stateDir, 'sessions')
-  const threads: Record<string, Saved> = read()
   const runs = new Map<string, Run>()
   const plugin = channel.replace(/^plugin:/, '')
   const path = `/${plugin.split('@')[0]}`
   const app = path.slice(1)
   let store: Store | undefined
+  const threads: Record<string, Saved> = read()
   apps.add(app)
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 })
-  keepNames()
+  save()
   const token = tokenOf(stateDir)
   const inherited = claude.inherited()
   let closed = false
   const closing = new AbortController()
   const serving = () => !closed
 
+  // The app's open threads, from hex.db: the hub starts only once it can read them, so no save
+  // closes threads it never loaded.
   function read(): Record<string, Saved> {
-    let text: string
+    store ??= open(storeDir)
+    return Object.fromEntries(store.threads({ app, open: true }).map(({ app: _, open: __, link: ___, thread, fork, model, ...known }) => [thread, { ...known, ...(model && { model: family(model) }), ...(fork && { from: fork }) }]))
+  }
+
+  // The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
+  function keepIn(store: Store, saved: Record<string, Saved>) {
+    store.keepThreads(app, Object.fromEntries(Object.entries(saved).map(([thread, known]) => [thread, { name: known.name, session: known.session, cwd: known.cwd, model: known.model, effort: known.effort, launched: known.launched, fork: known.from, link: linkOf(thread) }])))
+  }
+
+  // A link the app can't give now is no reason to lose a save.
+  function linkOf(thread: string) {
     try {
-      text = readFileSync(registry, 'utf8')
-    } catch {
-      return {}
-    }
-    try {
-      const entries = Object.entries(JSON.parse(text) ?? {})
-      const kept = entries.filter(([, known]: [string, any]) => typeof known?.name === 'string')
-      for (const [thread] of entries.filter(entry => !kept.includes(entry))) process.stderr.write(`hub: dropped malformed thread ${thread} from ${registry}\n`)
-      for (const [, known] of kept as [string, Saved][]) if (known.model) known.model = family(known.model)
-      return Object.fromEntries(kept) as Record<string, Saved>
+      return link?.(thread)
     } catch (error) {
-      const aside = `${registry}.corrupt-${Date.now()}`
-      renameSync(registry, aside)
-      process.stderr.write(`hub: ${registry} is unreadable (${error}), moved it to ${aside} and started with no threads\n`)
-      return {}
+      process.stderr.write(`hub: no link for ${app} thread ${thread}: ${error}\n`)
     }
   }
 
-  // threads.json forgets a closed thread; hex.db keeps every thread's name for whatever reads one.
+  // hex.db keeps a closed thread's row, with its name, for whatever reads one.
   function save() {
-    writeFileSync(`${registry}.tmp`, JSON.stringify(threads, null, 2) + '\n')
-    renameSync(`${registry}.tmp`, registry)
-    keepNames()
-  }
-
-  function keepNames() {
-    kept(store => store.named(app, Object.fromEntries(Object.entries(threads).map(([thread, { name }]) => [thread, name]))), undefined)
+    kept(store => keepIn(store, threads), undefined)
   }
 
   function runOf(thread: string): Run {
@@ -554,7 +549,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   // A start's prompt and the session it forks are kept until a session connects, so the next start
   // after a failed one, a retry or the thread's next message, starts with them; its cwd is kept in
-  // threads.json.
+  // hex.db.
   async function launch(thread: string, name: string, { cwd, again, ...given }: Opening & { cwd?: string; again?: boolean } = {}) {
     const run = runOf(thread)
     if (closed || underway(run)) return
@@ -997,7 +992,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // otherwise open a stray thread here, under the same key, that later wakes find first.
   function inbound(thread: string, message: Message) {
     if (Object.hasOwn(threads, thread)) return deliver(thread, threads[thread]!.name, message)
-    process.stderr.write(`hub: no thread ${thread} in ${registry}, so a message for it from ${message.meta?.user ?? 'a local tool'} was dropped\n`)
+    process.stderr.write(`hub: no open ${app} thread ${thread}, so a message for it from ${message.meta?.user ?? 'a local tool'} was dropped\n`)
   }
 
   // The owner's Stop ends the turn as Esc does in a terminal: the session and what it started in the
@@ -1089,6 +1084,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     },
     running: sessionOf,
     threads: () => Object.keys(threads),
+    // Saves the threads again, for an app that learned links it couldn't give before.
+    save,
     name: (thread: string) => threads[thread]?.name,
     cwd: (thread: string) => threads[thread]?.cwd,
     stop: halt,

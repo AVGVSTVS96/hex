@@ -71,16 +71,9 @@ test('finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
 })
 
 test("lists each thread active in the last day with its last message, skipping what only the terminal saw", () => {
-  mkdirSync(join(home, 'state/telegram'), { recursive: true })
-  mkdirSync(join(home, 'state/discord'), { recursive: true })
-  writeFileSync(join(home, 'state/telegram/threads.json'), JSON.stringify({
-    '1': { name: 'Garden', session: 'aaaaaaaa-1' },
-    '2': { name: 'Stale', session: 'bbbbbbbb-1' },
-  }))
-  writeFileSync(join(home, 'state/discord/threads.json'), JSON.stringify({ '3': { name: 'Kiln', session: 'cccccccc-1' } }))
   const store = open(join(home, 'state'))
-  store.named('telegram', { '1': 'Garden', '2': 'Stale' })
-  store.named('discord', { '3': 'Kiln' })
+  store.keepThreads('telegram', { '1': { name: 'Garden', session: 'aaaaaaaa-1' }, '2': { name: 'Stale', session: 'bbbbbbbb-1' } })
+  store.keepThreads('discord', { '3': { name: 'Kiln', session: 'cccccccc-1' } })
   const said = (key: string, to: string, author: string, body: string, minutesAgo: number) => {
     store.deliver({ key, to, from: key.split(':')[0]!, author, body }, 'x')
     store.db.query('update messages set at = ? where key = ?').run(new Date(Date.now() - minutesAgo * 60_000).toISOString(), key)

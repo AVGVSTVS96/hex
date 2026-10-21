@@ -75,11 +75,10 @@ def threads():
         states = {a.get("sessionId"): a.get("state") for a in agents()}
     except Exception:
         states = {}
-    sessions, apps = {}, {}
-    for registry in (home / "state").glob("*/threads.json"):
-        for id, thread in json.loads(registry.read_text()).items():
-            sessions[id] = thread.get("session")
-            apps[id] = (registry.parent.name, thread.get("name", id))
+    listed = subprocess.run([str(home / ".hex/bin/hex"), "threads", "--json"], capture_output=True, text=True, timeout=5, check=True).stdout
+    open_threads = [thread for thread in json.loads(listed) if thread["open"]]
+    sessions = {thread["thread"]: thread.get("session") for thread in open_threads}
+    apps = {thread["thread"]: (thread["app"], thread["name"]) for thread in open_threads}
     since = datetime.fromtimestamp(now - day).strftime("%Y-%m-%dT%H:%M")
     printed = subprocess.run([str(home / ".hex/bin/hex"), "log", "--since", since, "--json"], capture_output=True, text=True, timeout=5, check=True).stdout
     last = {}

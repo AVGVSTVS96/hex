@@ -4,6 +4,7 @@ import { join } from 'path'
 import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
 import { Changes } from './changes.ts'
 import { Links, type Delegation } from './links.ts'
+import { open } from '../../hub/store.ts'
 
 export type State = 'working' | 'needs' | 'done' | 'failed' | 'idle'
 export type Step = Did & { at: string; end?: string }
@@ -74,7 +75,7 @@ const FINE = 60 * 60_000
 const GRAIN = 50
 const SAVE = 2000
 const ORDER: State[] = ['needs', 'working', 'done', 'failed', 'idle']
-const RECORDS = new Set(['threads.json', 'guild.json', 'bot.json', 'channels.json', 'relays.jsonl'])
+const RECORDS = new Set(['guild.json', 'bot.json', 'channels.json', 'relays.jsonl'])
 const STATES: Record<string, State> = { working: 'working', blocked: 'needs', done: 'done', failed: 'failed' }
 const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progress: 'running', pending: 'pending' }
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
@@ -85,10 +86,10 @@ const BUSY = new Set(['busy', 'shell'])
 
 // Every hex thread as a run, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
-// running, and each app's threads.json for its name and `links.ts` for where its app opens it.
+// running, and hex.db's open threads for their names and `links.ts` for where its app opens them.
 // A session another one started (a topic's `claude -p` build), or a job a thread owns (bin/job),
 // counts toward it as one of its agents; a running session nothing holds is a run of its own while it works. So does each T3 Code
-// thread a hex T3 thread handed work to, which shows only under it. It wakes when one of those files
+// thread a hex T3 thread handed work to, which shows only under it. It wakes when hex.db's threads or one of those files
 // (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
 // bumps a version on any change.
 // The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
@@ -120,6 +121,7 @@ export class Board extends Changes {
     this.tracks = readJson(join(state, 'voice', 'tracks.json')) ?? {}
     this.links = new Links(state, () => this.schedule(), t3)
     this.stops.push(watchDir(state, file => file && APPS[file] && this.mark('threads')))
+    this.stops.push(open(state).watch(() => JSON.stringify(this.stored()) !== JSON.stringify(this.threads) && this.mark('threads')))
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
     this.stops.push(watchDir(join(claude, 'jobs'), file => this.jobChanged(file, true)))
     this.build()
@@ -213,15 +215,14 @@ export class Board extends Changes {
     for (const app of apps(this.state))
       if (!this.appWatchers.has(app)) this.appWatchers.set(app, watchDir(join(this.state, app), file => !!file && RECORDS.has(file) && this.mark('threads')))
     this.links.load(apps(this.state))
-    this.threads = apps(this.state).flatMap(app =>
-      Object.entries(readJson(join(this.state, app, 'threads.json')) ?? {}).map(([id, thread]: [string, any]) => ({
-        app,
-        id,
-        name: thread.name ?? id,
-        session: typeof thread.session === 'string' ? thread.session : undefined,
-        cwd: thread.cwd,
-      })),
-    )
+    this.threads = this.stored()
+  }
+
+  private stored(): Thread[] {
+    return open(this.state)
+      .threads({ open: true })
+      .filter(({ app }) => APPS[app])
+      .map(({ app, thread, name, session, cwd }) => ({ app, id: thread, name, session, cwd }))
   }
 
   private held() {

@@ -10,7 +10,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'tasks-'))
   mkdirSync(join(dir, 'telegram'))
   const store = open(dir)
-  store.named('telegram', { '-100:7': 'Website', '-100:9': 'Errands' })
+  store.keepThreads('telegram', { '-100:7': { name: 'Website' }, '-100:9': { name: 'Errands' } })
   store.deliver({ key: 'telegram:-100:50', to: '-100:7', from: 'telegram', body: 'Fix the login page.\nIt 500s on submit.', author: 'owner', meta: { user: 'bassim' } })
   store.deliver({ key: 'telegram:-100:60', to: '-100:9', from: 'telegram', body: 'buy a power adapter', author: 'owner', meta: { user: 'bassim' } })
   store.createTask({ title: 'Fix the login page', message: 'telegram:-100:50', owner: '-100:7', doneWhen: 'it signs in' })

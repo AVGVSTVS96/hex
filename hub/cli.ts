@@ -177,7 +177,7 @@ try {
     }
     case 'threads': {
       const threads = store.threads()
-      console.log(flags.json ? JSON.stringify(threads, null, 1) : threads.map(({ app, thread, name }) => `${app} ${thread} ${name}`).join('\n'))
+      console.log(flags.json ? JSON.stringify(threads, null, 1) : threads.map(({ app, thread, name, open }) => `${app} ${thread} ${name}${open ? '' : ' (closed)'}`).join('\n'))
       break
     }
     case 'profile': {

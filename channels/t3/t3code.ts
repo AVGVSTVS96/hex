@@ -130,6 +130,28 @@ export function promptedBy(session: string, asked: string): Author {
   }
 }
 
+// The T3 Code thread each hex session serves (hex's key for a T3 thread is its ACP session), from
+// T3's own records, read only.
+export function appThreads(): Map<string, string> {
+  const file = join(USERDATA, 'statev2.sqlite')
+  if (!existsSync(file)) return new Map()
+  const db = new Database(file, { readonly: true })
+  try {
+    const rows = db
+      .query<{ key: string; thread: string }, []>(
+        `select json_extract(p.payload_json, '$.nativeThreadRef.nativeId') as key, t.thread_id as thread
+         from orchestration_v2_projection_provider_threads p
+         join orchestration_v2_projection_threads t on t.thread_id = json_extract(p.payload_json, '$.appThreadId')
+         where p.driver = 'acpRegistry' and t.deleted_at is null
+         order by p.updated_at`,
+      )
+      .all()
+    return new Map(rows.map(({ key, thread }) => [key, thread]))
+  } finally {
+    db.close()
+  }
+}
+
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
 export function linkTo(thread: string) {
   const environment = readFileSync(join(USERDATA, 'environment-id'), 'utf8').trim()
