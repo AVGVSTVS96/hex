@@ -4,6 +4,9 @@ session=$(printf '%s' "$input" | jq -r .session_id)
 here=$(cd "$(dirname "$0")" && pwd)
 export LC_ALL=C
 
+# A session started before the wake hooks ran on compact still calls `compacted memory` and `compacted turns`.
+[ "${1:-}" = memory ] && exit 0
+
 # After a compaction, the end of the conversation word for word, cut at a turn to fit a hook's 10,000 characters.
 room=9000
 

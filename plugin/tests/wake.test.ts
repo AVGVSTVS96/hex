@@ -47,7 +47,7 @@ const notes = (from: number, count: number) =>
 test('a short wake arrives whole in the first part, and the other slots say nothing', () => {
   const wake = '#0 2026-10-06 First note.\nYou are awake.\n'
   memo([wake])
-  expect(hook(1)).toContain('part 1 of 1')
+  expect(hook(1)).not.toContain('part 1')
   expect(body(hook(1))).toBe(wake)
   for (let n = 2; n <= SLOTS; n++) expect(hook(n)).toBe('')
 })
@@ -67,7 +67,9 @@ test("follows memo's parts to the end and splits them into chunks that each fit 
 
 test('a wake longer than every slot sends the last one to memo for the rest', () => {
   memo([notes(0, 400) + 'You are awake.\n'])
-  expect(hook(SLOTS)).toEndWith("\nThat's all the hooks can show. `.hex/vendor/memo wake` prints the whole memory; read it to the end.\n")
+  expect(hook(SLOTS)).toEndWith(`\nThat's all the hooks can show. ${join(home, '.hex/vendor/memo')} wake prints the whole memory; follow its "Not awake yet" lines to the end.\n`)
+  const copies = Array.from({ length: SLOTS }, (_, i) => hook(i + 1).match(/parts of copy (\w+)/)?.[1])
+  expect(new Set(copies).size).toBe(1)
 })
 
 test('a compaction hands the session its wake again, as the start did', () => {

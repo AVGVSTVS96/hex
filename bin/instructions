@@ -1,5 +1,4 @@
 #!/usr/bin/env bun
-import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { handover, split } from '../hub/fit.ts'
@@ -25,7 +24,7 @@ export function rendered() {
 }
 
 function subagent(n: number, last: boolean) {
-  const text = handover(split(rendered()), n, last, 'Your instruction files.', `Read the rest from the files themselves: ${files().map(file => file.path).join(', ')}.`)
+  const text = handover(split(rendered()), n, last, 'Your instruction files.', `Read the files themselves and follow them: ${files().map(file => file.path).join(', ')}.`)
   if (text) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: text } }))
 }
 

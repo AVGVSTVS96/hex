@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, readFileSync } from 'fs'
+import { accessSync, constants, existsSync, readFileSync } from 'fs'
 import { join, resolve } from 'path'
 import { handover, split } from '../hub/fit.ts'
 
@@ -32,7 +32,15 @@ function memory() {
 }
 
 const [mode, last] = process.argv.slice(2)
-if (!existsSync(memo) || !process.env.MEMORY_DIR) process.exit(0)
+const runs = () => {
+  try {
+    accessSync(memo, constants.X_OK)
+    return true
+  } catch {
+    return false
+  }
+}
+if (!runs() || !process.env.MEMORY_DIR) process.exit(0)
 
 if (mode === 'all') {
   const { text: wake, end } = memory()
@@ -47,5 +55,5 @@ if (mode === 'all') {
 } else if (!process.env.HEX_WAKE) {
   // The profile is a part of its own, so a profile rewritten while the hooks run can't move where the memory splits.
   const parts = [mine(), ...split(memory().text)].filter(part => part.trim())
-  process.stdout.write(handover(parts, Number(mode), last === 'last', `${lead} ${record} If the last part ends by asking for a compression, do that first.`, '`.hex/vendor/memo wake` prints the whole memory; read it to the end.'))
+  process.stdout.write(handover(parts, Number(mode), last === 'last', `${lead} ${record} If the last part ends by asking for a compression, do that first.`, `${memo} wake prints the whole memory; follow its "Not awake yet" lines to the end.`))
 }

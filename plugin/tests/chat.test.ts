@@ -361,7 +361,7 @@ test('a subagent of a chat turn gets the instruction files Claude Code skipped, 
   }
   const parts = [1, 2, 3, 4, 5, 6].map(n => part(n))
   expect(parts.every(text => text.length < 10_000)).toBe(true)
-  expect(parts[0]).toStartWith('Your instruction files. It comes in 4 parts, which may arrive out of order; this is part 1 of 4.')
+  expect(parts[0]).toMatch(/^Your instruction files\. This comes in 4 parts of copy \w+, which may arrive out of order; this is part 1\./)
   expect(parts.slice(4)).toEqual(['', ''])
   const whole = Bun.spawnSync([join(home, '.hex/bin/instructions')], { env: env() }).stdout.toString()
   expect(parts.slice(0, 4).map(text => text.slice(text.indexOf('\n\n') + 2)).join('')).toBe(whole)
