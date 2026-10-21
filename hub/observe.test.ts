@@ -122,7 +122,7 @@ test('the profile is rewritten to the current truth, and one that misquotes the 
   expect(profileOf(dir)).toBe('# Always\n- Ships "any day now" [telegram:-100:80]')
   expect(asked[1]).toContain('Fix that draft rather than starting over:\n<draft>\n# Always\n- Ships "whenever" [telegram:-100:80]\n</draft>')
   const kept = readFileSync(join(dir, 'profile.md.history'), 'utf8').trim().split('\n').map(line => JSON.parse(line).profile)
-  expect(kept).toEqual([profile, '# Always\n- Ships "any day now" [telegram:-100:80]'])
+  expect(kept).toEqual([profile])
 })
 
 test('a summary still too long after its tries is cut at a word', () => {

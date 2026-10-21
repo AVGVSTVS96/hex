@@ -57,6 +57,7 @@ export async function observe(state: string, session: string, reply: string, { a
     const fresh = rows.filter(row => !noted.includes(`[${row.key}]`))
     let wanted = false
     let wrong = ''
+    let reasons = ''
     if (taken.length || reply.trim()) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = store.names()
@@ -86,12 +87,13 @@ export async function observe(state: string, session: string, reply: string, { a
         wanted = answer.profile !== null
         if (answer.profile === null) break
         const bad = misquoted(answer.profile, store)
+        reasons = bad.join('\n')
         wrong = bad.length ? retry(bad, answer.profile) : ''
         if (wrong || !swap(state, store, before, answer.profile)) continue
         wanted = false
         break
       }
-      if (wanted) console.error(`hex left the profile as it was after 3 tries:${wrong || ' another pass kept rewriting it'}`)
+      if (wanted) console.error(`hex left the profile as it was after 3 tries:${reasons ? `\n${reasons}` : ' another pass kept rewriting it'}`)
     }
     // A pass that lost to other passes leaves its turn for the next, unless it wrote notes, which a
     // second look could write again; one that kept misquoting would again, so its turn is done.
@@ -126,10 +128,15 @@ const retry = (bad: string[], draft: string) =>
 function swap(state: string, store: Store, before: string, profile: string) {
   return store.write(() => {
     if (profileOf(state) !== before.trim()) return false
-    appendFileSync(`${profilePath(state)}.history`, `${JSON.stringify({ at: new Date().toISOString(), profile: profile.trim() })}\n`)
     const next = `${profilePath(state)}.${process.pid}.new`
     writeFileSync(next, `${profile.trim()}\n`)
     renameSync(next, profilePath(state))
+    // The file holds the newest version and the history every one it replaced, hand edits too.
+    try {
+      if (before.trim()) appendFileSync(`${profilePath(state)}.history`, `${JSON.stringify({ at: new Date().toISOString(), profile: before.trim() })}\n`)
+    } catch (error) {
+      console.error(`hex couldn't keep the replaced profile: ${error}`)
+    }
     return true
   })
 }
@@ -205,10 +212,11 @@ export async function nap(memo = MEMO, compress = summarize, keep = () => true) 
 // back every compression after it.
 export function within(line: string, bytes: number) {
   const size = (text: string) => Buffer.byteLength(text)
-  if (size(line) <= bytes) return line
-  let cut = line
-  while (size(`${cut}…`) > bytes) cut = cut.slice(0, cut.lastIndexOf(' ') > 0 ? cut.lastIndexOf(' ') : cut.length - 1)
-  return `${cut.trimEnd()}…`
+  const flat = line.replace(/\s+/g, ' ').trim()
+  if (size(flat) <= bytes) return flat
+  let cut = Array.from(flat)
+  while (cut.length && size(`${cut.join('')}…`) > bytes) cut = cut.slice(0, cut.lastIndexOf(' ') > 0 ? cut.lastIndexOf(' ') : cut.length - 1)
+  return `${cut.join('').trimEnd()}…`
 }
 
 const LINE = { type: 'object', properties: { line: { type: 'string' } }, required: ['line'] }
