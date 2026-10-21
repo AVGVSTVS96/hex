@@ -44,7 +44,8 @@ export function render(task: Task, named: Record<string, string> = {}): string {
 // A task as a session's prompt carries it: the clean entry, its title and what done looks like. The
 // owner's words stay in hex.db, for `hex task` to show in full.
 export function entry(task: Task, named: Record<string, string>, done = true) {
-  const line = `${facts(task, named)}: ${task.title ? clip(task.title, 150) : `(no title yet: \`.hex/bin/hex task ${task.id}\`)`}`
+  const said = task.words.length > 1 ? `, ${task.words.length} messages` : ''
+  const line = `${facts(task, named).replace(/\)$/, `${said})`)}: ${task.title ? clip(task.title, 150) : `(no title yet: \`.hex/bin/hex task ${task.id}\`)`}`
   return done && task.doneWhen ? `${line}\n  done when: ${clip(task.doneWhen, 200)}` : line
 }
 

@@ -125,7 +125,7 @@ try {
       task(args[0], args[1], args[2])
       break
     case 'tasks':
-      show(store.tasks({ owner: flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), status: (flags.status?.split(',') ?? ['open']) as Status[] }), false)
+      show(store.tasks({ owner: flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), status: (flags.status?.split(',') ?? ['open']) as Status[] }), flags.status !== undefined)
       break
     case 'questions': {
       const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
