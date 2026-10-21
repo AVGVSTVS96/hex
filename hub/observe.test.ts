@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, drain, nap, observe, profileOf, type Answer } from './observe.ts'
+import { clock, drain, nap, observe, profileOf, within, type Answer } from './observe.ts'
 import { open } from './store.ts'
 
 let dir: string
@@ -120,6 +120,16 @@ test('the profile is rewritten to the current truth, and one that misquotes the 
   expect(asked[1]).toContain("Your last profile wasn't kept")
   expect(asked[1]).toContain('- Ships "whenever" [telegram:-100:80]')
   expect(profileOf(dir)).toBe('# Always\n- Ships "any day now" [telegram:-100:80]')
+  expect(asked[1]).toContain('Fix that draft rather than starting over:\n<draft>\n# Always\n- Ships "whenever" [telegram:-100:80]\n</draft>')
+  const kept = readFileSync(join(dir, 'profile.md.history'), 'utf8').trim().split('\n').map(line => JSON.parse(line).profile)
+  expect(kept).toEqual([profile])
+})
+
+test('a summary still too long after its tries is cut at a word', () => {
+  expect(within('short line', 280)).toBe('short line')
+  const cut = within(`${'word '.repeat(70)}end`, 280)
+  expect(Buffer.byteLength(cut)).toBeLessThanOrEqual(280)
+  expect(cut).toMatch(/word…$/)
 })
 
 test("a profile line may only quote the owner, by the key of the message it quotes", async () => {
