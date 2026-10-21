@@ -14,7 +14,7 @@ case "${1:-}" in
     [ -z "${HEX_WAKE:-}" ] || exit 0
     wake=$("$here/wake" text)
     [ -n "$wake" ] || exit 0
-    echo "Your context was just compacted, so this is \`.hex/vendor/memo wake\` again. Carry on from it as you would at the start of a session."
+    echo "Your context was just compacted, so this is what you read as the session started again: my profile if there is one, and \`.hex/vendor/memo wake\`. Carry on from it as you would at the start of a session."
     echo
     if [ "$(printf '%s\n' "$wake" | wc -c)" -le "$room" ]; then
       printf '%s\n' "$wake"

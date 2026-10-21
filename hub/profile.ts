@@ -18,7 +18,7 @@ export function names(state: string): Record<string, string> {
 // stays under it, with room for the lines that say what didn't fit.
 const ROOM = 9_000
 
-export const PROFILE = 5_500
+export const PROFILE = 6_500
 
 // A task's title, or its first words when it has none.
 export const titleOf = (task: Task, room: number) => clip(task.title ?? task.words[0]?.text ?? '', room)
