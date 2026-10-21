@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
-import { existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname, join, resolve } from 'path'
+import { existsSync, openSync, readdirSync, renameSync, writeFileSync } from 'fs'
+import { dirname, join, relative, resolve } from 'path'
+import { loaded } from '../bin/identity'
 import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { names, PROFILE, profileOf, profilePath } from './profile.ts'
 import { zoneOf } from './schedule.ts'
@@ -20,11 +21,11 @@ const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
-const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's AGENTS.md, their profile, the newest memories, and the messages the session took that turn, the owner's and others' (jobs, schedules, other sessions), with the reply it gave; an owner's message a memory already names is marked so. A turn with no messages was typed in the terminal or ran on its own: its log has what was said. You keep two things.
+const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's AGENTS.md with the files it imports, as every session reads them, their profile, the newest memories, and the messages the session took that turn, the owner's and others' (jobs, schedules, other sessions), with the reply it gave; an owner's message a memory already names is marked so. A turn with no messages was typed in the terminal or ran on its own: its log has what was said. You keep two things.
 
 Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages, and name anything else in plain words, without double quotes. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
-The profile: a small markdown file every session reads next to the owner's AGENTS.md, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, and how they want things done where AGENTS.md doesn't say it yet; a line whose every point AGENTS.md already states comes out, even one already there, and a line keeps what it adds. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled, each as where it stands and what it waits on, since how it got there is in the memories. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it short, never over ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when nothing in it needs to change.
+The profile: a small markdown file every session reads next to the owner's AGENTS.md, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, and how they want things done where AGENTS.md doesn't say it yet; a line whose every point AGENTS.md already states comes out, even one already there, and a line keeps what it adds. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled, each as where it stands and what it waits on, if anything, since how it got there is in the memories. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it short, never over ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when nothing in it needs to change.
 
 In both, quote the words that carry what the owner meant, and skip curses and anger with "…": they stay in the log, and a message that's only anger is told in plain words, without a quote or key. A cut keeps the words around it that carry the meaning, like a "never". If you need what a message answers, the whole conversation is in the log file named with the turn.`
 
@@ -63,8 +64,7 @@ export async function observe(state: string, session: string, reply: string, { a
         '</turn>',
       ].join('\n\n')
       const ours = new Set(fresh.map(row => row.key))
-      const agents = join(hexDir, 'AGENTS.md')
-      const rules = existsSync(agents) ? `<AGENTS.md>\n${readFileSync(agents, 'utf8').trim()}\n</AGENTS.md>\n\n` : ''
+      const rules = loaded(join(hexDir, 'AGENTS.md')).map(([file, text]) => `<${relative(hexDir, file)}>\n${text.trim()}\n</${relative(hexDir, file)}>\n\n`).join('')
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
       // rewrite the profile while this one thinks: either way it thinks again.
       for (let tries = 0; tries < 3; tries++) {
