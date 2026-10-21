@@ -13,14 +13,14 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'compacted-'))
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
   mkdirSync(join(home, '.hex/vendor'))
-  for (const script of ['compacted', 'log']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
+  for (const script of ['compacted', 'log', 'wake']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
 })
 
 afterEach(() => rmSync(home, { recursive: true, force: true }))
 
-function memo(output: string) {
-  writeFileSync(join(home, 'wake.txt'), output)
-  writeFileSync(join(home, '.hex/vendor/memo'), `#!/bin/sh\n[ "$1" = wake ] && cat "${home}/wake.txt"\n`)
+function memo(...parts: string[]) {
+  parts.forEach((part, i) => writeFileSync(join(home, `wake${i + 1}.txt`), part))
+  writeFileSync(join(home, '.hex/vendor/memo'), `#!/bin/sh\n[ "$1" = wake ] && cat "${home}/wake\${2:-1}.txt"\n`)
   chmodSync(join(home, '.hex/vendor/memo'), 0o755)
 }
 
@@ -62,15 +62,20 @@ test('puts all of wake back when it fits', () => {
 })
 
 test('a wake too long for the hook is cut at a line, and the session is told exactly where the rest is', () => {
-  const lines = Array.from({ length: 120 }, (_, i) => `#${i} 2026-10-06 ${'x'.repeat(180)}`)
-  const wake = [...lines, 'Not awake yet. Run: memo wake 2 240'].join('\n') + '\n'
-  memo(wake)
+  const lines = Array.from({ length: 120 }, (_, i) => `#${i} 2026-10-06 ${'x'.repeat(180)}`).join('\n') + '\n'
+  memo(lines + 'Not awake yet. Run: memo wake 2 240\n', 'You are awake.\n')
   const out = hook('memory')
   const pointer = out.match(/from line (\d+) of (\S+), and/)!
   const rest = readFileSync(pointer[2], 'utf8').split('\n').slice(Number(pointer[1]) - 1).join('\n')
   const shown = out.split('\n\n').slice(1, -1).join('\n\n')
-  expect(shown + '\n' + rest).toBe(wake)
-  expect(rest).toContain('Not awake yet')
+  expect(shown + '\n' + rest).toBe(lines + 'You are awake.\n')
+})
+
+test('the profile comes back ahead of memory', () => {
+  memo('#0 2026-10-06 First note.\nYou are awake.\n')
+  mkdirSync(join(home, 'state'))
+  writeFileSync(join(home, 'state/profile.md'), '# Now\n- Login page first\n')
+  expect(hook('memory')).toEndWith('\n\n# Now\n- Login page first\n\n#0 2026-10-06 First note.\nYou are awake.\n')
 })
 
 test('says nothing when OptMem is not installed', () => {

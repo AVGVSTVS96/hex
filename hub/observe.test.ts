@@ -2,8 +2,8 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, drain, observe, type Answer } from './observe.ts'
-import { about, profile, profileOf } from './profile.ts'
+import { clock, drain, nap, observe, type Answer } from './observe.ts'
+import { profile, profileOf } from './profile.ts'
 import { open } from './store.ts'
 
 let dir: string
@@ -132,16 +132,6 @@ test("a profile line may only quote the owner, by the key of the message it quot
   expect(profileOf(dir)).toBe('# Always\n- Ships "on fridays only" [telegram:-100:50]')
 })
 
-test('a session sees the whole profile once, then only the lines that changed', () => {
-  expect(about('', '# Always\n- a')).toContain('# Always\n- a')
-  const kept = `- ${'a'.repeat(200)}`
-  expect(about(`# Always\n${kept}\n- b`, `# Always\n${kept}\n- c`)).toBe("My profile changed, as the memory agent keeps it current from my own words:\n# Always\n- c\nNo longer in it:\n# Always\n- b")
-  expect(about(`# Always\n${kept}\n# Now\n- b`, `# Always\n${kept}\n- b\n# Now`)).toContain('# Always\n- b\nNo longer in it:\n# Now\n- b')
-  expect(about('# Always\n- b', '# Always for now\n- b')).toContain("Who I am")
-  expect(about('# Always\n- b', '')).toBe('My profile was cleared: what it said no longer stands.')
-  expect(about('# Always\n- b', '# Always\n- c')).toBe("Who I am and what's going on now, kept current by the memory agent from my own words:\n\n# Always\n- c")
-})
-
 test('a profile that kept misquoting is logged and its turn is done, so it costs no more calls', async () => {
   const asked: string[] = []
   await observe(dir, 's', '', { ask: async input => (asked.push(input), { notes: [], profile: '# Always\n- Wants "whatever" [telegram:-100:50]' }), memo })
@@ -197,4 +187,21 @@ test('a holder renews its own lease, and a turn that throws leaves the queue to 
   await drain(dir, async pass => { if (pass.session === 'bad') throw new Error('boom'); seen.push(pass.session) })
   expect(seen).toEqual(['good'])
   expect(store.waiting()).toBeUndefined()
+})
+
+test('the memory agent does the compressions memo asks for, and a line memo turns down goes back with why', async () => {
+  const napper = join(dir, 'napper')
+  writeFileSync(napper, `#!/bin/sh
+[ -z "$2" ] && { [ -f "${dir}/napped" ] && echo 'Nothing left to compress.' || printf 'Compress memories #0-1 into one line of at most 20 bytes.\\n\\n  #0 a\\n  #1 b\\n\\nRun: memo nap 0-1 "<your line>"\\n'; exit 0; }
+[ \${#3} -gt 20 ] && { echo 'Too long: compress it further.'; exit 1; }
+printf '%s %s\\n' "$2" "$3" > "${dir}/napped"
+`)
+  chmodSync(napper, 0o755)
+  const asked: string[] = []
+  const lines = ['a and b, said at far too much length', 'a and b']
+  await nap(napper, async prompt => (asked.push(prompt), lines.shift()!))
+  expect(readFileSync(join(dir, 'napped'), 'utf8')).toBe('0-1 a and b\n')
+  expect(asked[0]).toStartWith('Compress memories #0-1')
+  expect(asked[0]).not.toContain('Run:')
+  expect(asked[1]).toContain("That line wasn't kept: Too long")
 })

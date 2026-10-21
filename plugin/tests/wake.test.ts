@@ -86,8 +86,17 @@ test('`wake all` prints every part in order, as long as it runs, for the launche
   const run = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } })
   const out = run.stdout.toString()
   expect(out.length).toBeGreaterThan(LIMIT * 6)
-  expect(out).toStartWith('This is your memory: `.hex/vendor/memo wake`, run in full for you')
+  expect(out).toStartWith('This is your memory: my profile (who I am')
   expect(body(out)).toBe(wake.join('').replace('Not awake yet. Run: /x/memo wake 2 400\n', ''))
+})
+
+test('the profile comes first, ahead of memory, in the launcher\'s file and in the hooks', () => {
+  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
+  mkdirSync(join(home, 'state'))
+  writeFileSync(join(home, 'state/profile.md'), '# Always\n- Ships on fridays\n')
+  const all = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } }).stdout.toString()
+  expect(body(all)).toBe('# Always\n- Ships on fridays\n\n#0 2026-10-06 First note.\nYou are awake.\n')
+  expect(body(hook(1))).toBe('# Always\n- Ships on fridays\n\n#0 2026-10-06 First note.\nYou are awake.\n')
 })
 
 test('the hooks say nothing in a session the launcher already handed its wake', () => {

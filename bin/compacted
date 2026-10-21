@@ -10,11 +10,11 @@ room=9500
 
 case "${1:-}" in
   memory)
-    memo="$here/../vendor/memo"
     # A session started with HEX_WAKE reloads its wake file after compacting, as Claude Code does every instruction file.
-    [ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] && [ -z "${HEX_WAKE:-}" ] || exit 0
-    wake=$("$memo" wake 2>&1)
-    echo "Your context was just compacted, so this is \`.hex/vendor/memo wake\` again. Carry on from it as you would at the start of a session."
+    [ -z "${HEX_WAKE:-}" ] || exit 0
+    wake=$("$here/wake" text)
+    [ -n "$wake" ] || exit 0
+    echo "Your context was just compacted, so this is my profile and \`.hex/vendor/memo wake\` again. Carry on from them as you would at the start of a session."
     echo
     if [ "$(printf '%s\n' "$wake" | wc -c)" -le "$room" ]; then
       printf '%s\n' "$wake"
