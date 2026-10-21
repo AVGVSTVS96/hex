@@ -145,6 +145,8 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   expect(launch().args).toContain(dir)
   expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "The summary of #0-1 is blank."\nexit 1\n')
+  expect(launch().args).not.toContain(dir)
+  rmSync(join(home, '.hex/vendor/memo'))
   const without = launch()
   expect(without.args).not.toContain(join(home, 'state/wake'))
   expect(settings(without.args).env).toEqual({ HEX_THREAD: '-100:5' })
