@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { Database } from 'bun:sqlite'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { open, Store } from './store.ts'
 import { until } from './until.ts'
 
@@ -128,6 +129,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.db.run('drop index said; drop table profiles')
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
+  store.db.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
@@ -292,16 +294,36 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
   expect(() => store.mergeTasks(kept.id, kept.id)).toThrow('itself')
 })
 
-test("a thread keeps its name after it leaves its app's threads.json, and takes a new one when renamed", () => {
+test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
+  new Store(dir).db.close()
+  const old = new Database(join(dir, 'hex.db'))
+  old.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  old.run("insert into threads values ('telegram', '-100:9', 'Errands')")
+  old.run('pragma user_version = 16')
+  old.close()
+  mkdirSync(join(dir, 'telegram'))
+  writeFileSync(join(dir, 'telegram', 'threads.json'), JSON.stringify({ '-100:7': { name: 'Desk', session: 's-1', cwd: '/w', from: 's-0', launched: 'abc' } }))
+  mkdirSync(join(dir, 'discord'))
+  writeFileSync(join(dir, 'discord', 'threads.json'), '{"broken')
+  writeFileSync(join(dir, 'threads.json'), JSON.stringify({ '7': { name: 'Outside a hex' } }))
+  expect(new Store(dir).threads()).toEqual([
+    { app: 'telegram', thread: '-100:7', name: 'Desk', session: 's-1', cwd: '/w', launched: 'abc', fork: 's-0', open: true },
+    { app: 'telegram', thread: '-100:9', name: 'Errands', open: false },
+    { app: basename(dir), thread: '7', name: 'Outside a hex', open: true },
+  ].sort((a, b) => a.app.localeCompare(b.app) || a.thread.localeCompare(b.thread)))
+})
+
+test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
   const store = new Store(dir)
-  store.named('telegram', { '-100:7': 'tokenhub', '-100:8': 'portfolio' })
-  store.named('telegram', { '-100:7': 'tokenhub and deck' })
-  store.named('discord', { '1561': 'Fixhex' })
+  store.keepThreads('telegram', { '-100:7': { name: 'tokenhub', session: 's-1', cwd: '/w' }, '-100:8': { name: 'portfolio' } })
+  store.keepThreads('telegram', { '-100:7': { name: 'tokenhub and deck', session: 's-2', model: 'opus', link: 'https://t.me/c/100/7' } })
+  store.keepThreads('discord', { '1561': { name: 'Fixhex' } })
   expect(store.threads()).toEqual([
-    { app: 'discord', thread: '1561', name: 'Fixhex' },
-    { app: 'telegram', thread: '-100:7', name: 'tokenhub and deck' },
-    { app: 'telegram', thread: '-100:8', name: 'portfolio' },
+    { app: 'discord', thread: '1561', name: 'Fixhex', open: true },
+    { app: 'telegram', thread: '-100:7', name: 'tokenhub and deck', session: 's-2', model: 'opus', link: 'https://t.me/c/100/7', open: true },
+    { app: 'telegram', thread: '-100:8', name: 'portfolio', open: false },
   ])
+  expect(store.threads({ app: 'telegram', open: true }).map(thread => thread.thread)).toEqual(['-100:7'])
 })
 
 test("what a session was shown is kept per kind, until its context loses it", () => {
@@ -367,6 +389,7 @@ test('an answer and the message that wakes its thread with it land together or n
 
 test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
   const store = new Store(dir)
+  store.db.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('create index unauthored on messages (n) where author = \'\'; pragma user_version = 15')
   const kept = (key: string, from: string, author: string, meta?: object) => store.db.query('insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)').run(key, '-100:7', from, author, 'hi', meta ? JSON.stringify(meta) : null, '2026-10-21T10:00:00.000Z')
   kept('telegram:1', 'telegram', 'hex General', { user: 'hex General' })

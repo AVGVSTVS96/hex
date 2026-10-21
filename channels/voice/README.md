@@ -188,7 +188,7 @@ same ones `claude agents --json` prints) and wakes when one of them changes.
  ~/.claude/jobs/<id>/state.json      working, blocked or done; its status line; what it needs
  ~/.claude/jobs/<id>/timeline.jsonl  each change, with its time
  ~/.claude/sessions/<pid>.json       which sessions are running
- state/<app>/threads.json            each thread's name and current session
+ state/hex.db threads                each open thread's name and current session
  state/<app>/{guild,bot,channels}.json  what each bot knows of where its threads live
  ~/.t3/userdata/statev2.sqlite       which T3 Code thread a hex thread is, what it handed off,
                                      and the turns of handed-off threads that don't run on hex
@@ -202,8 +202,8 @@ A run's `link` is `https://t.me/...` (a topic, General, or the bot for the
 DM), `https://discord.com/channels/<server>/<thread>`, `buzz://message?channel=...&id=...`
 (`buzz://channel/...` for the DM) or `<scheme>://threads/<environment>/<thread>` for T3 Code,
 the app's URL scheme being `t3code` unless `T3_APP_SCHEME` says otherwise
-(`t3code-preview`, `t3code-dev`). The bots leave what these need next to their
-`threads.json` when they start (Discord's `guild.json`, Telegram's `bot.json`) and as
+(`t3code-preview`, `t3code-dev`). The bots leave what these need in their state
+folders when they start (Discord's `guild.json`, Telegram's `bot.json`) and as
 they see threads (Buzz's `channels.json`); a thread whose app can't say where it
 lives has no `link`.
 

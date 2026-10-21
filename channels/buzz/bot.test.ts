@@ -4,7 +4,7 @@ import { connect, type Socket } from 'net'
 import { createHash } from 'crypto'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { generateSecretKey, getPublicKey, finalizeEvent, verifyEvent, type Event } from 'nostr-tools/pure'
 import { matchFilter, type Filter } from 'nostr-tools/filter'
 import { bytesToHex } from 'nostr-tools/utils'
@@ -417,7 +417,7 @@ test('after a restart Hex picks up what was sent while it was down, in order, an
       return event
     }
     root = at(0, '@Hex desk anchors are loose', [['p', me]])
-    writeFileSync(join(state, 'threads.json'), JSON.stringify({ [root.id]: { name: 'Anchors' } }))
+    open(join(dirname(state), 'hex', 'state')).keepThreads('buzz', { [root.id]: { name: 'Anchors' } })
     writeFileSync(join(state, 'cursor.json'), JSON.stringify({ at: t, ids: [root.id] }))
     at(9, 'three', [['e', root.id, '', 'reply']])
     at(0, 'one', [['e', root.id, '', 'reply']])
@@ -545,7 +545,7 @@ test('a tap on buttons sent before a restart still arrives as a button', async (
     yes = signed(key, 7, '1️⃣', [['e', question.id]], at)
     const no = signed(key, 7, '2️⃣', [['e', question.id]], at)
     for (const event of [root, question, yes, no]) relay.inject(event)
-    writeFileSync(join(state, 'threads.json'), JSON.stringify({ [root.id]: { name: 'Ship it' } }))
+    open(join(dirname(state), 'hex', 'state')).keepThreads('buzz', { [root.id]: { name: 'Ship it' } })
     writeFileSync(join(state, 'buttons.json'), JSON.stringify({ [question.id]: { thread: root.id, choices: [{ label: 'Yes', reaction: yes.id }, { label: 'No', reaction: no.id }] } }))
   })
   bot.relay.inject(signed(ownerKey, 7, '2️⃣', [['e', question.id]]))
@@ -739,7 +739,7 @@ test('the channel of every thread is kept in channels.json for the voice app: th
   const bot = await startBot(({ state, relay, channel }) => {
     known = signed(ownerKey, 9, 'an old thread', [['h', channel]], Math.floor(Date.now() / 1000) - 3600)
     relay.inject(known)
-    writeFileSync(join(state, 'threads.json'), JSON.stringify({ [known.id]: { name: 'Old' }, [crypto.randomUUID()]: { name: 'bassim' } }))
+    open(join(dirname(state), 'hex', 'state')).keepThreads('buzz', { [known.id]: { name: 'Old' }, [crypto.randomUUID()]: { name: 'bassim' } })
   })
   const channels = () => JSON.parse(existsSync(join(bot.state, 'channels.json')) ? readFileSync(join(bot.state, 'channels.json'), 'utf8') : '{}')
   await until(() => channels()[known.id] === bot.channel)

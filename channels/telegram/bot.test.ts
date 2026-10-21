@@ -73,6 +73,9 @@ class Bot extends grammy.Bot {
 mock.module('grammy', () => ({ ...grammy, Bot }))
 
 const state = mkdtempSync(join(tmpdir(), 'telegram-'))
+
+// Each open thread as the hub keeps it in hex.db, by its id.
+const saved = (): Record<string, any> => Object.fromEntries(open(state).threads({ open: true }).map(thread => [thread.thread, thread]))
 const outbox = mkdtempSync(join(tmpdir(), 'telegram-outbox-'))
 afterAll(() => {
   rmSync(state, { recursive: true, force: true })
@@ -98,7 +101,7 @@ async function update(fields: Record<string, any>) {
 
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
-  writeFileSync(join(state, 'threads.json'), JSON.stringify({ [DESK]: { name: 'desk' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } }))
+  open(state).keepThreads('telegram', { [DESK]: { name: 'desk' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } })
   Object.assign(process.env, { PATH: noClaude(), TELEGRAM_STATE_DIR: state, TELEGRAM_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', HEX_MAIN_THREAD: String(FORUM), TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -119,7 +122,7 @@ beforeAll(async () => {
 
 test("closing a thread list entry that isn't a topic forgets it, instead of failing", async () => {
   expect((await call('close_thread', { thread: 'stray-key' })).text).toBe('forgot "stray": it isn\'t a topic, so there was nothing to close in Telegram')
-  await until(() => !('stray-key' in JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))))
+  await until(() => !('stray-key' in saved()))
 })
 
 test('the bot asks Telegram for reactions, button taps and poll votes', () => {
@@ -495,6 +498,6 @@ test('/effort and /model set what the thread\'s next message starts with, and ne
   await called('sendMessage', p => p.text === '/model takes one of: opus, sonnet, haiku, fable')
   await update({ message: message({ text: '/effort high' }) })
   expect(await called('sendMessage', p => p.text === "Effort: High, from this thread's next message.")).toMatchObject({ message_thread_id: 5 })
-  expect(JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))[DESK].effort).toBe('high')
+  expect(saved()[DESK].effort).toBe('high')
   expect(received.slice(before).filter(line => line.type === 'inbound').map(line => line.content)).toEqual(['/tmp/cache is full', '/model@other_bot opus'])
 })

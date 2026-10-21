@@ -21,8 +21,7 @@ beforeAll(() => {
     telegram: { 'stray-key': { name: 'stray-key' }, '-100123:908': { name: 'autofork' } },
     discord: { '555': { name: 'fix hex NOW' } },
   })) {
-    mkdirSync(join(home, 'state', app), { recursive: true })
-    writeFileSync(join(home, 'state', app, 'threads.json'), JSON.stringify(threads))
+    open(join(home, 'state')).keepThreads(app, threads)
   }
   mkdirSync(join(home, 'fake'))
   writeFileSync(join(home, 'fake/systemd-run'), `#!/bin/sh\njq -cn '$ARGS.positional' --args -- "$@" > "${ran}"\n`)

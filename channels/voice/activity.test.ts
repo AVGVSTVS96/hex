@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'f
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { until } from '../../hub/until.ts'
+import { open, type Kept } from '../../hub/store.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'voice-activity-'))
 process.env.CLAUDE_CONFIG_DIR = join(home, 'claude')
@@ -23,9 +24,8 @@ function write(path: string, ...entries: object[]) {
   appendFileSync(path, entries.map(entry => JSON.stringify(entry) + '\n').join(''))
 }
 
-function threads(app: string, all: object) {
-  mkdirSync(join(state, app), { recursive: true })
-  writeFileSync(join(state, app, 'threads.json'), JSON.stringify(all))
+function threads(app: string, all: Record<string, Kept>) {
+  open(state).keepThreads(app, all)
 }
 
 test('a step reads as a few plain words: a command by its description or first line, a file by its name, an MCP tool by its app', () => {

@@ -163,6 +163,9 @@ class Client {
 mock.module('discord.js', () => ({ ...discord, Client }))
 
 const state = mkdtempSync(join(tmpdir(), 'discord-'))
+
+// Each open thread as the hub keeps it in hex.db, by its id.
+const saved = (): Record<string, any> => Object.fromEntries(open(state).threads({ open: true }).map(thread => [thread.thread, thread]))
 afterAll(() => rmSync(state, { recursive: true, force: true }))
 let received: any[]
 let call: (tool: string, args: object) => Promise<any>
@@ -172,7 +175,7 @@ let ask: (request: object) => Promise<Response>
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [OWNER] }))
   writeFileSync(join(state, 'cursor.json'), JSON.stringify({ id: snowflake(60) }))
-  writeFileSync(join(state, 'threads.json'), JSON.stringify({ '7777': { name: 'deleted in Discord' } }))
+  open(state).keepThreads('discord', { '7777': { name: 'deleted in Discord' } })
   Object.assign(process.env, { PATH: noClaude(), DISCORD_STATE_DIR: state, DISCORD_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -497,7 +500,7 @@ test('a DM is its own session named DM, a message reaches it while it works, and
 
 test('closing a thread Discord no longer has forgets it, instead of failing on the missing channel', async () => {
   expect((await call('close_thread', { thread: '7777' })).text).toBe('forgot "deleted in Discord": its Discord thread no longer exists')
-  await until(() => !('7777' in JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))))
+  await until(() => !('7777' in saved()))
 })
 
 test('once connected the bot leaves the id of its server in guild.json, so the voice app can link a thread, and registers its slash commands', async () => {
@@ -667,7 +670,7 @@ test('slash commands set a thread\'s model and effort, and answer only the owner
     "This thread is working; compact it once it's done.",
   ])
   expect(replies.every(reply => reply.flags === MessageFlags.Ephemeral)).toBe(true)
-  expect(JSON.parse(readFileSync(join(state, 'threads.json'), 'utf8'))[desk.id]).toMatchObject({ model: 'opus', effort: 'max' })
+  expect(saved()[desk.id]).toMatchObject({ model: 'opus', effort: 'max' })
 })
 
 test('a backfill posts each line through one webhook of the channel, as the owner or the bot, split to fit', async () => {

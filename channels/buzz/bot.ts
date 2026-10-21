@@ -643,6 +643,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     stateDir: STATE_DIR,
     channel: 'plugin:buzz@hex',
     server,
+    link: thread => (isChannel(thread) ? `buzz://channel/${thread}` : homes.has(thread) ? link(homes.get(thread)!, thread) : undefined),
     call,
     state: showState,
     fresh: thread => channels.get(thread)?.dm ?? false,

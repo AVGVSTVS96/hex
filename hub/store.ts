@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite'
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
-import { join } from 'path'
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
+import { basename, join } from 'path'
 
 // One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
 // it. from: the app it was said in. author: who said it, set once by whatever kept it: the owner,
@@ -41,6 +41,11 @@ export type Question = {
   answer?: Answer
   settled?: { note: string; at: string }
 }
+// A thread of one app, by that app's id for it: its name, the Claude Code session that serves it and
+// the folder it runs in, its settings, the hash of what its session started with (hub.ts stamp()),
+// the session a new thread forks from at its first start, and where its app opens it.
+export type Thread = { app: string; thread: string; name: string; open: boolean; session?: string; cwd?: string; model?: string; effort?: string; launched?: string; fork?: string; link?: string }
+export type Kept = Omit<Thread, 'app' | 'thread' | 'open'>
 export type NewQuestion = Omit<Question, 'at'> & { at?: string }
 type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
 type StoredTask = { n: number; title: string; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
@@ -159,6 +164,36 @@ const migrations: (string | ((store: Store) => void))[] = [
   update messages set meta = json_set(coalesce(meta, '{}'), '$.user', author) where author not in ${AUTHORS} and json_extract(meta, '$.user') is null;
   update messages set author = case when author like 'buzz:%' or author in ('t3', 'discord') or ("from" = 'voice' and json_extract(meta, '$.callee') is not null) then 'other' else 'prompt' end where author not in ${AUTHORS};
   drop index unauthored;`,
+  `alter table threads add column open integer not null default 0 check (open in (0, 1));
+  alter table threads add column session text;
+  alter table threads add column cwd text;
+  alter table threads add column model text;
+  alter table threads add column effort text;
+  alter table threads add column launched text;
+  alter table threads add column fork text;
+  alter table threads add column link text;`,
+  // Each app's threads.json, as its hub last wrote it, becomes that app's open threads: in a hex's
+  // state/<app>/, or in the app's own state folder outside a hex, named for the app. The file stays
+  // where it is, read by nothing newer, so an older hex rolled back to still has it.
+  ({ db, dir }: Store) => {
+    const keep = db.query(
+      `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+      on conflict (app, thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model, effort = excluded.effort, launched = excluded.launched, fork = excluded.fork`,
+    )
+    const text = (value: unknown) => (typeof value === 'string' ? value : null)
+    for (const [app, file] of [[basename(dir), join(dir, 'threads.json')], ...readdirSync(dir).map(app => [app, join(dir, app, 'threads.json')])] as const) {
+      if (!existsSync(file)) continue
+      let saved: Record<string, any>
+      try {
+        saved = JSON.parse(readFileSync(file, 'utf8')) ?? {}
+      } catch (error) {
+        process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`)
+        continue
+      }
+      for (const [thread, known] of Object.entries(saved))
+        if (typeof known?.name === 'string') keep.run(app, thread, known.name, text(known.session), text(known.cwd), text(known.model), text(known.effort), text(known.launched), text(known.from))
+    }
+  },
 ]
 
 const now = () => new Date().toISOString()
@@ -501,17 +536,31 @@ export class Store {
     return rows.map(row => this.toTask(row))
   }
 
-  // Each thread's name as its app's hub last saved it, kept after the thread closes.
-  named(app: string, names: Record<string, string>) {
+  // An app's open threads as its hub keeps them. A thread left out has closed: it keeps its row, with
+  // its name and last session, for whatever reads one.
+  keepThreads(app: string, open: Record<string, Kept>) {
     this.write(() => {
-      const keep = this.db.query('insert into threads (app, thread, name) values (?, ?, ?) on conflict (app, thread) do update set name = excluded.name where name is not excluded.name')
-      for (const [thread, name] of Object.entries(names)) keep.run(app, thread, name)
+      this.db.query('update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))').run(app, JSON.stringify(Object.keys(open)))
+      const keep = this.db.query(
+        `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork, link) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
+        on conflict (app, thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
+          effort = excluded.effort, launched = excluded.launched, fork = excluded.fork, link = coalesce(excluded.link, link)
+        where (name, open, session, cwd, model, effort, launched, fork) is not (excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
+          or coalesce(excluded.link, link) is not link`,
+      )
+      for (const [thread, { name, session, cwd, model, effort, launched, fork, link }] of Object.entries(open))
+        keep.run(app, thread, name, session ?? null, cwd ?? null, model ?? null, effort ?? null, launched ?? null, fork ?? null, link ?? null)
     })
   }
 
-  threads(): { app: string; thread: string; name: string }[] {
-    return this.db.query('select app, thread, name from threads order by app, thread').all() as { app: string; thread: string; name: string }[]
+  // Every thread hex has had, or one app's, or only those open now.
+  threads({ app, open }: { app?: string; open?: boolean } = {}): Thread[] {
+    const rows = this.db
+      .query('select * from threads where (?1 is null or app = ?1) and (?2 is null or open = ?2) order by app, thread')
+      .all(app ?? null, open === undefined ? null : Number(open)) as (Record<string, string | null> & { open: number })[]
+    return rows.map(({ open, ...row }) => ({ ...(Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Omit<Thread, 'open'>), open: !!open }))
   }
+
   // Each thread's name by its id, as threads() keeps them.
   names(): Record<string, string> {
     return Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name]))

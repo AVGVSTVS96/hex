@@ -182,7 +182,7 @@ async function pass(name: string, about: string, text: string, app?: string, whe
   let thread = known
   if (app) {
     const opened = await begin(app, oneWord(name), { content: text, author: 'prompt', meta }, { about: `From a call: ${about}`, where })
-    thread = { app, id: opened.thread, name, threads: join(HEX_STATE, app, 'threads.json') }
+    thread = { app, id: opened.thread, name, state: HEX_STATE }
   }
   if (call && id) {
     await mark(call, { id, state: 'running', text: about, to: thread!.name, agent: thread!.id })

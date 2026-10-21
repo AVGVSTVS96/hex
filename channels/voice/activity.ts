@@ -1,12 +1,13 @@
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'fs'
+import { closeSync, fstatSync, mkdirSync, openSync, readSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
 import { toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
 import type { SessionNotification, ToolCall } from '@agentclientprotocol/sdk'
+import { open } from '../../hub/store.ts'
 
 export type Update = SessionNotification['update']
 export type Step = { line?: string; end?: 'done' | 'failed' }
-export type Thread = { app: string; id: string; name: string; cwd?: string; threads: string }
+export type Thread = { app: string; id: string; name: string; cwd?: string; state: string }
 
 const projects = () => join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects')
 const client = { sessionUpdate: async () => {} } as unknown as Parameters<typeof toAcpNotifications>[4]
@@ -375,22 +376,18 @@ export function followAgent(agent: string, session: string | undefined, onStep: 
       return followTranscript(path, 0, (_, updates) => lines(updates(), onStep))
 }
 
-// hex threads (Telegram topics, Discord, Buzz and T3 Code threads), from each app's threads.json.
+// An open hex thread (a Telegram topic, a Discord, Buzz or T3 Code thread) by its id or name, from hex.db.
 export function findThread(state: string, wanted: string): Thread | undefined {
   const lower = wanted.toLowerCase()
-  for (const app of readdirSync(state)) {
-    if (app === 'voice') continue
-    const threads = join(state, app, 'threads.json')
-    const all: Record<string, { name?: string; cwd?: string }> = readJson(threads) ?? {}
-    const id = all[wanted] ? wanted : Object.keys(all).find(id => all[id].name?.toLowerCase() === lower)
-    if (id) return { app, id, name: all[id].name ?? id, cwd: all[id].cwd, threads }
-  }
+  const all = open(state).threads({ open: true }).filter(({ app }) => app !== 'voice')
+  const found = all.find(({ thread }) => thread === wanted) ?? all.find(({ name }) => name.toLowerCase() === lower)
+  return found && { app: found.app, id: found.thread, name: found.name, cwd: found.cwd, state }
 }
 
 // One message sent to a hex thread, followed through its session's transcript: it waits until the
 // session takes in the message carrying `tag`, shows each step after that (its background agents'
 // steps too), and ends when a turn ends with none of those agents still out. A new session for the
-// thread (a renewal or a restart) shows up in threads.json and is followed from its start; so is
+// thread (a renewal or a restart) shows up in hex.db and is followed from its start; so is
 // the first one when following resumes a message sent earlier.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
   const agents = new Map<string, () => void>()
@@ -401,11 +398,12 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let failed = false
   let ended = false
 
-  const stopState = watchFile(thread.threads, locate)
+  const store = open(thread.state)
+  const stopState = store.watch(locate)
   locate()
 
   function locate() {
-    const next = readJson(thread.threads)?.[thread.id]?.session
+    const next = store.threads({ app: thread.app, open: true }).find(({ thread: id }) => id === thread.id)?.session
     if (ended || !next || next === session || !ID.test(next)) return
     const fresh = resumed || session !== undefined
     stopSession()
@@ -452,17 +450,6 @@ function lines(updates: Update[], onStep: (step: Step) => void) {
     const line = headline(update)
     if (line) onStep({ line })
   }
-}
-
-function watchFile(path: string, changed: () => void) {
-  const watcher = watch(dirname(path), (_, file) => file === basename(path) && changed())
-  return () => watcher.close()
-}
-
-function readJson(path: string) {
-  try {
-    return JSON.parse(readFileSync(path, 'utf8'))
-  } catch {}
 }
 
 export function sizeOf(path: string) {

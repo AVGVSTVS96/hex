@@ -11,7 +11,7 @@ import { startHub, clients, begin, move, title, family, MODELS, EFFORTS, type Se
 import { asked } from '../../hub/store.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
-import { withT3, projectAt, linkTo, promptedBy, steering } from './t3code.ts'
+import { withT3, projectAt, linkTo, promptedBy, steering, appThreads } from './t3code.ts'
 import { version } from './package.json'
 
 const STATE_DIR = process.env.T3_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 't3')
@@ -62,10 +62,23 @@ const servers = new Map<string, string>()
 
 mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 
+// A thread's link, once T3 Code has recorded it. A save asks for every thread at once, so T3's
+// records are read once per save.
+let recorded: Map<string, string> | undefined
+function link(thread: string) {
+  if (!recorded) {
+    recorded = appThreads()
+    queueMicrotask(() => (recorded = undefined))
+  }
+  const opened = recorded.get(thread)
+  return opened && linkTo(opened)
+}
+
 const hub = startHub({
   stateDir: STATE_DIR,
   channel: process.env.T3_CHANNEL ?? 'plugin:t3@hex',
   server,
+  link,
   // T3 Code owns its threads, so a handoff leaves this one here and a copy carries on there.
   call: async (thread, tool, args) => {
     const where = args.channel as string | undefined

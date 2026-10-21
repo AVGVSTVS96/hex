@@ -100,7 +100,7 @@ export class Questions extends Changes {
     this.links = new Links(state, () => this.schedule(), t3Home)
     this.marks = readMarks(join(state, 'voice', 'marks.json'))
     this.t3 = new T3(() => this.schedule(), t3Database)
-    for (const app of apps(state)) this.stops.push(watchDir(join(state, app), file => (file === 'ledger.json' || file === 'threads.json') && this.schedule()))
+    for (const app of apps(state)) this.stops.push(watchDir(join(state, app), file => file === 'ledger.json' && this.schedule()))
     this.stops.push(store(state).watch(() => this.schedule()))
     this.stops.push(watchDir(join(state, 'voice'), file => file === 'check.json' && this.schedule()))
     this.build()

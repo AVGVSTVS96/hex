@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
-import { dirname, join } from 'path'
+import { join } from 'path'
 import { zoneOf } from './schedule.ts'
 import { asked, open, type Author, type NewRow, type Store } from './store.ts'
 
@@ -15,15 +15,8 @@ const authorOf = (who: string): Author => (OWNER.has(who) ? 'owner' : who === 'a
 export function importLogs(store: Store, dir: string, zone: string): number {
   const files = [join(dir, 'threads'), dir].flatMap(each => (existsSync(each) ? readdirSync(each).filter(name => name.endsWith('.md')).map(name => join(each, name)) : []))
   const threads = new Map<string, Map<string, number>>()
-  // A session that took nothing hex.db kept is still the session of its thread in that app's threads.json.
-  const registered = new Map<string, string>()
-  const state = join(dirname(dir), 'state')
-  for (const app of existsSync(state) ? readdirSync(state) : []) {
-    try {
-      const registry = JSON.parse(readFileSync(join(state, app, 'threads.json'), 'utf8')) as Record<string, { session?: string }>
-      for (const [thread, { session }] of Object.entries(registry)) if (session) registered.set(session, thread)
-    } catch {}
-  }
+  // A session that took nothing hex.db kept is still the session of its thread.
+  const registered = new Map(store.threads().flatMap(({ thread, session }) => (session ? [[session, thread] as const] : [])))
   // What hex.db kept, by words, with where, when and by whom: a log turn is one of these only within a minute or two of it.
   const said = new Map<string, { to: string; at: string; by?: string }[]>()
   for (const row of store.since()) {
