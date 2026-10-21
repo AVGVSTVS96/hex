@@ -274,12 +274,12 @@ test("a thread keeps its name after it leaves its app's threads.json, and takes 
 
 test("a session is shown its list again only once it changed, or after its context lost it", () => {
   const store = new Store(dir)
-  expect(store.show('session-a', '')).toBe(false)
-  expect(store.show('session-a', 'one')).toBe(true)
-  expect(store.show('session-a', 'one')).toBe(false)
-  expect(store.show('session-b', 'one')).toBe(true)
+  expect(store.swap('session-a', '')).toBeNull()
+  expect(store.swap('session-a', 'one')).toBe('')
+  expect(store.swap('session-a', 'one')).toBeNull()
+  expect(store.swap('session-b', 'one')).toBe('')
   store.unshow('session-a')
-  expect(store.show('session-a', 'one')).toBe(true)
+  expect(store.swap('session-a', 'one')).toBe('')
 })
 
 test('hex task makes a task from a message by its key, and the owner is the thread asking', async () => {
