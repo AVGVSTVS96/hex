@@ -1069,8 +1069,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   const api = {
     deliver,
     sent,
-    said: (key: string) => kept(store => store.message(`${app}:${key}`), null),
-    edited: (id: string) => kept(store => store.edited(app, id), null),
+    said: (key: string) => kept(store => store.latest(`${app}:${key}`), null),
     own: (author: string) => kept(store => store.own(app, author), undefined),
     command: restart,
     configure,

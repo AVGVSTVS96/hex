@@ -34,6 +34,19 @@ test('a key has to start with its sender, so the keys hex makes stay its own', (
   expect(store.untaken()).toEqual([])
 })
 
+test('a message reads as its newest edit, and an edit of the same id in another chat or thread is not its', () => {
+  const store = new Store(dir)
+  const sent = { key: 'telegram:-100:42', to: '-100:7', from: 'telegram', author: 'hex', body: 'Deploy at 5' }
+  store.deliver(sent)
+  expect(store.latest(sent.key)?.body).toBe('Deploy at 5')
+  store.deliver({ ...sent, key: 'telegram:edit-1', body: 'Deploy at 6', meta: { edited: 'true', message_id: '42' } })
+  store.deliver({ ...sent, key: 'telegram:edit-2', body: 'Deploy at 7', meta: { edited: 'true', message_id: '42' } })
+  store.deliver({ ...sent, key: 'telegram:edit-3', to: '-200:3', body: 'another chat', meta: { edited: 'true', message_id: '42' } })
+  store.deliver({ ...sent, key: 'discord:edit-4', from: 'discord', body: 'another app', meta: { edited: 'true', message_id: '42' } })
+  expect(store.latest(sent.key)?.body).toBe('Deploy at 7')
+  expect(store.latest('telegram:-100:43')).toBeNull()
+})
+
 test('the first session to take a message has it, and it leaves what waits', () => {
   const store = new Store(dir)
   store.deliver(message)

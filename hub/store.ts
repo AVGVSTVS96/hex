@@ -259,9 +259,16 @@ export class Store {
     return (this.db.query('select * from messages where at > ? order by at, n').all(after) as Stored[]).map(toRow)
   }
 
-  // The newest edit an app kept of its message id.
-  edited(from: string, id: string): Row | null {
-    const row = this.db.query(`select * from messages where "from" = ? and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ? order by at desc, n desc limit 1`).get(from, id) as Stored | null
+  // A message as it reads now: its newest edit, or else the message itself. An edit is kept as a row
+  // of its own in the same thread, naming the app's id for the message, the last part of its key.
+  latest(key: string): Row | null {
+    const row = this.db
+      .query(
+        `select edit.* from messages original join messages edit on edit.key = original.key or (edit."from" = original."from" and edit."to" = original."to"
+           and json_extract(edit.meta, '$.edited') = 'true' and json_extract(edit.meta, '$.message_id') = ?2)
+         where original.key = ?1 order by edit.at desc, edit.n desc limit 1`,
+      )
+      .get(key, key.slice(key.lastIndexOf(':') + 1)) as Stored | null
     return row && toRow(row)
   }
 
