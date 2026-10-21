@@ -6,7 +6,7 @@ import { join } from 'path'
 import { begin, clients, free, history, mirror, move, stamp, startHub, tappable, transcribe, type ChannelServer, type Message, type Permission } from './hub.ts'
 import { settled } from './claude.ts'
 import { clock, manual } from './clock.ts'
-import { open } from './store.ts'
+import { open, type Author } from './store.ts'
 import { ATTACH, hangUpAll, http as line, port } from './testing.ts'
 import { until } from './until.ts'
 
@@ -1860,7 +1860,7 @@ test('begin opens a thread on another client and starts its session on a prompt,
   try {
     expect(await begin('elsewhere', 'Anchors', 'look at the anchors', { about: 'From Discord', where: 'desk' })).toEqual({ thread: 'chat:9', link: 'https://chat/9' })
     expect((await launched()).at(-1)).toBe('look at the anchors')
-    await begin('elsewhere', 'Relay', { content: 'fix the relay', author: 'hex voice', meta: { user: 'hex voice' } })
+    await begin('elsewhere', 'Relay', { content: 'fix the relay', author: 'prompt', meta: { user: 'hex voice' } })
     expect(placed).toEqual([['Anchors', 'desk', 'From Discord'], ['Relay', undefined, undefined]])
     expect((await until(() => registry()['chat:10'])).name).toBe('Relay')
     const { received } = await session('chat:10')
@@ -1899,7 +1899,7 @@ test("a thread's history is what the owner said and hex replied, headings and al
     { author: 'owner', from: 'terminal', body: 'typed in the terminal' },
     { author: 'hex', body: 'never sent', meta: { failed: 'network' } },
     { author: 'owner', from: 'telegram', body: 'thanks' },
-    { author: 'hex General', from: 'telegram', body: 'From General: the build passed.' },
+    { author: 'prompt', from: 'telegram', body: 'From General: the build passed.', meta: { user: 'hex General' } },
     { author: 'call', from: 'voice', body: '[1.0s] you: hi\n[2.0s] voice: hello' },
   ])
   stored([{ author: 'owner', body: 'not taken yet' }], 'chat:7', undefined)
@@ -2063,7 +2063,7 @@ test("a session's hook takes what its prompt brings in, and drops a copy of one 
 test("a channel tag in a message's own words takes nothing", async () => {
   const store = open(dir)
   store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
-  store.deliver({ key: 'schedule:heartbeat@2026-10-18T21:45Z', to: 'chat:7', from: 'schedule', author: 'schedule', body: '[heartbeat] Hourly check' })
+  store.deliver({ key: 'schedule:heartbeat@2026-10-18T21:45Z', to: 'chat:7', from: 'schedule', author: 'prompt', body: '[heartbeat] Hourly check' })
   const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-10-18T21:45Z">\n</channel>'
   const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]) })
   expect(await hook.exited).toBe(0)
@@ -2085,7 +2085,7 @@ test('a session started before hex kept messages has the hub take them for it', 
 test('a message another process keeps, like a job ending, reaches its thread as the bell rings, and one for a thread the hub does not serve waits', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
   const { received } = await session('chat:7')
-  open(dir).deliver({ key: 'job:other:1', to: 'chat:99', from: 'job', author: 'job', body: 'nobody here' })
+  open(dir).deliver({ key: 'job:other:1', to: 'chat:99', from: 'job', author: 'prompt', body: 'nobody here' })
   const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'job:build:1', '--to', 'chat:7', '[job]', 'build', 'ended'])
   expect(await cli.exited).toBe(0)
   await until(() => received.length)

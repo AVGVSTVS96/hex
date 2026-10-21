@@ -64,7 +64,7 @@ export async function observe(state: string, session: string, { ask = claude, me
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = store.names()
       const place = taken[0]?.to ?? thread
-      const whose = (row: Row) => (row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`)
+      const whose = (row: Row) => (row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.meta?.user ?? row.from}, not the owner,`)
       const before = place ? store.said(place, BEFORE, [...rows, ...others].reduce((first, row) => (row.at < first ? row.at : first), by)).filter(shown) : []
       const turn = [
         ...(before.length ? [`<before>\n${before.map(row => `${row.author === 'owner' ? 'The owner,' : whose(row)} ${clock(row.at, zone)}:\n${cut(row.body, 1000)}`).join('\n\n')}\n</before>`] : []),

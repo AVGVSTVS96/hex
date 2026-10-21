@@ -115,7 +115,8 @@ function log(rows: Row[]) {
     const body = row.from === 't3' && row.author === 'owner' ? asked(row.body) : row.body
     const thread = named[row.to] ? `${named[row.to]} (${row.to})` : row.to
     const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
-    console.log(`## ${row.author} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`)
+    const who = row.meta?.user && (row.author === 'prompt' || row.author === 'other') ? `${row.author} (${row.meta.user})` : row.author
+    console.log(`## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`)
   }
 }
 
@@ -159,7 +160,7 @@ try {
       const [key, ...words] = args
       const from = key?.split(':')[0]
       if (!from || from === key || !flags.to || !words.length) usage()
-      store.deliver({ key: key!, to: flags.to, from, author: flags.user ?? from, body: words.join(' '), meta: { user: flags.user ?? from } })
+      store.deliver({ key: key!, to: flags.to, from, author: 'prompt', body: words.join(' '), meta: { user: flags.user ?? from } })
       break
     }
     case 'task':

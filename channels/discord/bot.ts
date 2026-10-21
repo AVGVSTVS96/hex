@@ -887,9 +887,10 @@ function serve(token: string) {
     if (!ch) return
     ledger.deleted(ch.id, msg.id)
     hub.deliver(ch.id, nameOf(ch), {
-      author: 'discord',
+      author: 'other',
       content: '(deleted a message)',
       meta: {
+        user: 'discord',
         chat_id: ch.id,
         message_id: msg.id,
         ts: new Date().toISOString(),

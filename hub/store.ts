@@ -4,20 +4,22 @@ import { join } from 'path'
 
 // One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
 // it. from: the app it was said in. author: who said it, set once by whatever kept it: the owner,
-// hex (a reply, a session's turn), a call's transcript, or the name of another sender (a job, a
-// schedule, someone else in a shared app). taken: the session that has it in its conversation, which
-// for hex's own words is the one that wrote them, so nothing wakes on them. A message no session has
-// taken is what wakes a thread.
-export type Row = { key: string; to: string; from: string; author: string; body: string; at: string; meta?: Record<string, string>; taken?: { by: string; at: string } }
+// hex (a reply, a session's turn), a prompt (what hex itself tells a session: a job's end, a
+// schedule, another thread, the hub), a call's transcript, or someone other than the owner (another
+// person in a shared app, T3 Code itself); meta.user names the sender. taken: the session that has
+// it in its conversation, which for hex's own words is the one that wrote them, so nothing wakes on
+// them. A message no session has taken is what wakes a thread.
+export type Author = 'owner' | 'hex' | 'prompt' | 'call' | 'other'
+export type Row = { key: string; to: string; from: string; author: Author; body: string; at: string; meta?: Record<string, string>; taken?: { by: string; at: string } }
 export type NewRow = Omit<Row, 'at' | 'taken'>
-type Stored = { key: string; to: string; from: string; author: string; body: string; at: string; meta: string | null; taken_by: string | null; taken_at: string | null }
+type Stored = { key: string; to: string; from: string; author: Author; body: string; at: string; meta: string | null; taken_by: string | null; taken_at: string | null }
 
 // One thing the owner wants done: a short title in plain words that keeps their intent, and their
 // own words, each quoted from a message they sent, under its key, with who sent it and when. Words
 // are only ever added. A task merged into another
 // is dropped, and its words live on in the one it went into.
 export type Status = 'idea' | 'open' | 'done' | 'dropped'
-export type Words = { message: string; text: string; who: string; at: string }
+export type Words = { message: string; text: string; who: Author; at: string }
 export type Task = { id: string; title: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
 export type NewTask = { title: string; message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
 export type TaskChange = { title?: string; status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string }
@@ -59,6 +61,9 @@ const AUTHOR = `case
     when "from" = 'voice' and json_extract(meta, '$.callee') is null and (json_extract(meta, '$.delegation_id') is not null or json_extract(meta, '$.ended') is not null) then 'call'
     when "from" = 't3' and json_extract(meta, '$.user') is null then 'owner'
     else coalesce(json_extract(meta, '$.user'), "from") end`
+const authors = new Set<string>(['owner', 'hex', 'prompt', 'call', 'other'] satisfies Author[])
+export const isAuthor = (value: unknown): value is Author => authors.has(value as string)
+const AUTHORS = `(${[...authors].map(author => `'${author}'`).join(', ')})`
 const migrations: (string | ((store: Store) => void))[] = [
   `create table messages (
     n integer primary key,
@@ -150,6 +155,10 @@ const migrations: (string | ((store: Store) => void))[] = [
   create trigger kept_profile before update on profiles begin select raise(abort, 'a profile is added, never rewritten'); end;
   create trigger kept_profiles before delete on profiles begin select raise(abort, 'a profile is added, never taken away'); end;`,
   carryProfile,
+  `update messages set author = ${AUTHOR} where author = '';
+  update messages set meta = json_set(coalesce(meta, '{}'), '$.user', author) where author not in ${AUTHORS} and json_extract(meta, '$.user') is null;
+  update messages set author = case when author like 'buzz:%' or author in ('t3', 'discord') or ("from" = 'voice' and json_extract(meta, '$.callee') is not null) then 'other' else 'prompt' end where author not in ${AUTHORS};
+  drop index unauthored;`,
 ]
 
 const now = () => new Date().toISOString()
@@ -213,8 +222,6 @@ export class Store {
         this.db.run(`pragma user_version = ${version + 1}`)
       })
     }
-    // An older hub, still running while hex updates, keeps messages without an author.
-    if (this.db.query("select 1 from messages where author = '' limit 1").get()) this.write(() => this.db.run(`update messages set author = ${AUTHOR} where author = ''`))
   }
 
   // Runs fn as one transaction that holds the write lock from its first statement (BEGIN
@@ -258,7 +265,7 @@ export class Store {
   // Keeps a new message. A key that's kept already is its sender sending it again: false. by: the
   // session that wrote it, which has it in its conversation already.
   deliver({ key, to, from, author, body, meta }: NewRow, by?: string): boolean {
-    if (!author) throw new Error(`${key} has no author`)
+    if (!isAuthor(author)) throw new Error(`${key}'s author is ${author || 'missing'}: a message's author is owner, hex, prompt, call or other`)
     const at = now()
     return this.write(
       () =>
@@ -276,9 +283,10 @@ export class Store {
     })
   }
 
-  // Older messages an app kept under a sender it now knows is the owner, like a Buzz key, become theirs.
-  own(from: string, author: string) {
-    this.write(() => this.db.query(`update messages set author = 'owner' where "from" = ? and author = ?`).run(from, author))
+  // Buzz rows from before #69 that name their sender only by key became other, since the store can't
+  // know the owner's key; the Buzz hub, which does, hands back the owner's.
+  own(from: string, userId: string) {
+    this.write(() => this.db.query(`update messages set author = 'owner' where "from" = ? and author = 'other' and json_extract(meta, '$.user_id') = ?`).run(from, userId))
   }
 
   // A session took the message into its conversation. False when one already had, or it isn't kept.
@@ -389,7 +397,7 @@ export class Store {
   // yet: a job runs each time it comes due until the owner stops it.
   fire(schedule: string, minute: number, to: string, body: string, late = false): boolean {
     const slot = new Date(minute * 60_000).toISOString().slice(0, 16)
-    return this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', author: 'schedule', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
+    return this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', author: 'prompt', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
   }
 
   // A task from the owner's message under key: all of it, or the part quote names, which has to be
@@ -639,7 +647,7 @@ export class Store {
   private toTask(row: StoredTask): Task {
     const words = this.db
       .query(
-        `select words.message, words.text, coalesce(json_extract(messages.meta, '$.user'), messages."from") as who, messages.at
+        `select words.message, words.text, messages.author as who, messages.at
          from words join messages on messages.key = words.message where words.task = ? order by words.rowid`,
       )
       .all(row.n) as Words[]

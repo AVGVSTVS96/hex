@@ -19,7 +19,7 @@ beforeEach(() => {
   const store = open(dir)
   store.deliver({ key: 'telegram:-100:40', to: '-100:7', from: 'telegram', author: 'owner', body: 'get the login page fixed first', meta: { user_id: '1' } })
   store.deliver({ key: 'telegram:-100:50', to: '-100:7', from: 'telegram', author: 'owner', body: 'ship it on fridays only, my team reviews thursdays', meta: { user_id: '1', ts: '2026-10-20T06:31:00.000Z' } })
-  store.deliver({ key: 'schedule:nightly:1', to: '-100:7', from: 'schedule', author: 'schedule', body: '[nightly] run the backup', meta: {} })
+  store.deliver({ key: 'schedule:nightly:1', to: '-100:7', from: 'schedule', author: 'prompt', body: '[nightly] run the backup', meta: {} })
   for (const key of ['telegram:-100:40', 'telegram:-100:50', 'schedule:nightly:1']) store.take(key, 's')
 })
 
@@ -38,7 +38,7 @@ test("the turn's messages reach the pass, which writes notes for the owner's no 
   expect(seen[0]).toContain('[telegram:-100:50]')
   expect(seen[0]).toMatch(/hex replied, [^\n]*:\nDone, Friday deploys only\./)
   expect(seen[0]).toContain('get the login page fixed first\n(a note already names this message: write no note for it)')
-  expect(seen[0]).toContain('From schedule, not the owner,')
+  expect(seen[0]).toContain("hex's words to the session,")
   expect(seen[0]).toContain('[nightly] run the backup')
   expect(noted()).toEqual(['Oct 19 11:31pm: ships "on fridays only, my team reviews thursdays" [telegram:-100:50]'])
   expect(await observe(dir, 's', { ask, memo })).toEqual([])

@@ -1,15 +1,16 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { zoneOf } from './schedule.ts'
-import { asked, open, type NewRow, type Store } from './store.ts'
+import { asked, open, type Author, type NewRow, type Store } from './store.ts'
 
 // Before hex.db kept hex's replies, each session's conversation was kept as markdown in log/. This
 // brings those into hex.db once, so a thread's history has both sides: each turn under its session's
 // thread, already taken and looked over for memories, and none that hex.db already has.
 const HEAD = /^## (.+?) · (\w+) · (?:(\d{4}-\d{2}-\d{2}) )?(\d{1,2}):(\d{2})\n/gm
 const OWNER = new Set(['me', 'hex app', 'hex call'])
-// In log/, hex's replies are the assistant's; a turn written by "hex" is what hex told the session.
-const authorOf = (who: string) => (OWNER.has(who) ? 'owner' : who === 'assistant' ? 'hex' : who === 'hex' ? 'prompt' : who)
+// In log/, hex's replies are the assistant's, and any other sender (hex itself, a job, another
+// thread) is hex telling the session.
+const authorOf = (who: string): Author => (OWNER.has(who) ? 'owner' : who === 'assistant' ? 'hex' : 'prompt')
 
 export function importLogs(store: Store, dir: string, zone: string): number {
   const files = [join(dir, 'threads'), dir].flatMap(each => (existsSync(each) ? readdirSync(each).filter(name => name.endsWith('.md')).map(name => join(each, name)) : []))
@@ -80,13 +81,13 @@ export function importLogs(store: Store, dir: string, zone: string): number {
         to = known.to
         last = known.at > last ? known.at : last
       }
-      const turn = `${to}\n${author}\n${minuteAt}\n${body}`
+      const turn = `${to}\n${who}\n${minuteAt}\n${body}`
       // In Buzz, which is shared, log/ wrote every sender as "me", so only hex.db can say who it was.
       if (!body || seen.has(turn)) return
       seen.add(turn)
       if (known || (via === 'buzz' && author === 'owner')) return
       last = last && last >= minuteAt ? new Date(Date.parse(last) + 1).toISOString() : minuteAt
-      rows.push([{ key: `${via}:past:${id}:${i}`, to, from: via!, author, body, meta: { log: file.slice(dir.length + 1) } }, last])
+      rows.push([{ key: `${via}:past:${id}:${i}`, to, from: via!, author, body, meta: { log: file.slice(dir.length + 1), ...(author === 'prompt' && { user: who! }) } }, last])
     })
     const fresh = rows.filter(([row]) => store.deliver(row, id)).map(([row, at]) => [row.key, at] as [string, string])
     store.past(fresh)
