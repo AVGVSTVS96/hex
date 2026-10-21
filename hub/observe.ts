@@ -3,7 +3,7 @@ import { appendFileSync, closeSync, existsSync, openSync, readFileSync, renameSy
 import { dirname, join, resolve } from 'path'
 import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { zoneOf } from './schedule.ts'
-import { open, replied, type Row, type Store } from './store.ts'
+import { open, replied, shown, type Row, type Store } from './store.ts'
 
 // The owner's profile, which this agent keeps current after every turn; bin/wake puts it in front of
 // the memory every session starts with. It never passes PROFILE.
@@ -63,7 +63,6 @@ export async function observe(state: string, session: string, { ask = claude, me
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = store.names()
       const place = taken[0]?.to ?? thread
-      const shown = (row: Row) => !replied(row) || (!row.meta?.failed && !row.meta?.edited && !row.meta?.permission)
       const whose = (row: Row) => (row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`)
       const before = place ? store.said(place, BEFORE, [...rows, ...others].reduce((first, row) => (row.at < first ? row.at : first), by)).filter(shown) : []
       const turn = [

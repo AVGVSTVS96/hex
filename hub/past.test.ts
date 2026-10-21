@@ -58,3 +58,18 @@ test("a session's turns go under the thread each was said in, and its terminal n
   ])
   rmSync(home, { recursive: true, force: true })
 })
+
+test("a session that took nothing hex.db kept comes in under its thread in threads.json", () => {
+  const home = mkdtempSync(join(tmpdir(), 'past-'))
+  mkdirSync(join(home, 'log', 'threads'), { recursive: true })
+  mkdirSync(join(home, 'state', 'telegram'), { recursive: true })
+  writeFileSync(join(home, 'state', 'telegram', 'threads.json'), JSON.stringify({ '-100:9': { name: 'Errands', session: 'old-session' } }))
+  const store = open(join(home, 'state'))
+  writeFileSync(join(home, 'log', 'threads', '2026-10-01-old-sess.md'), '# 2026-10-01 · session old-session\n\n## me · telegram · 2026-10-01 10:06\n\nbuy stamps\n\n## assistant · telegram · 2026-10-01 10:06\n\nOn it.\n')
+  expect(importLogs(store, join(home, 'log'), 'America/Los_Angeles')).toBe(2)
+  expect(history(store, '-100:9', 'old-session')).toEqual([
+    { from: 'me', text: 'buy stamps' },
+    { from: 'hex', text: 'On it.' },
+  ])
+  rmSync(home, { recursive: true, force: true })
+})

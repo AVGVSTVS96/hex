@@ -669,6 +669,8 @@ export function spoken(row: Row): string {
 
 // hex's own words, as it sent them: a reply, a post, a terminal's answer. What hex tells a session is a prompt.
 export const replied = (row: Row) => row.author === 'hex'
+// A row of the conversation: not a reply of hex's that failed, was an edit, or asked a permission.
+export const shown = (row: Row) => !replied(row) || !(row.meta?.failed || row.meta?.edited || row.meta?.permission)
 
 function toRow(row: Stored): Row {
   return {

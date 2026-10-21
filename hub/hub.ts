@@ -7,7 +7,7 @@ import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { queue } from './observe.ts'
 import { schedule, zoneOf } from './schedule.ts'
-import { asked, open, replied, spoken, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
+import { asked, open, replied, shown, spoken, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
@@ -197,7 +197,7 @@ export function history(store: Store, thread: string, session?: string): Turn[] 
   const start = session ? (rows.find(row => row.taken?.by === session)?.at ?? '9') : ''
   return rows.flatMap(row => {
     if (row.from === 'terminal' || !row.taken || row.at < start) return []
-    if (replied(row)) return row.meta?.failed || row.meta?.edited || row.meta?.permission ? [] : [{ from: 'hex', text: row.body } as Turn]
+    if (replied(row)) return shown(row) ? [{ from: 'hex', text: row.body } as Turn] : []
     const text = spoken(row) && row.author === 'owner' ? (row.from === 't3' ? asked(row.body) : row.body) : ''
     return text ? [{ from: 'me', text } as Turn] : []
   })

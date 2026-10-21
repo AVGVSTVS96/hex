@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { zoneOf } from './schedule.ts'
 import { asked, open, type NewRow, type Store } from './store.ts'
 
@@ -14,6 +14,15 @@ const authorOf = (who: string) => (OWNER.has(who) ? 'owner' : who === 'assistant
 export function importLogs(store: Store, dir: string, zone: string): number {
   const files = [join(dir, 'threads'), dir].flatMap(each => (existsSync(each) ? readdirSync(each).filter(name => name.endsWith('.md')).map(name => join(each, name)) : []))
   const threads = new Map<string, Map<string, number>>()
+  // A session that took nothing hex.db kept is still the session of its thread in that app's threads.json.
+  const registered = new Map<string, string>()
+  const state = join(dirname(dir), 'state')
+  for (const app of existsSync(state) ? readdirSync(state) : []) {
+    try {
+      const registry = JSON.parse(readFileSync(join(state, app, 'threads.json'), 'utf8')) as Record<string, { session?: string }>
+      for (const [thread, { session }] of Object.entries(registry)) if (session) registered.set(session, thread)
+    } catch {}
+  }
   // What hex.db kept, by words, with where, when and by whom: a log turn is one of these only within a minute or two of it.
   const said = new Map<string, { to: string; at: string; by?: string }[]>()
   for (const row of store.since()) {
@@ -42,7 +51,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
     if (!session) return 0
     const [, day, id] = session as unknown as [string, string, string]
     // A session can serve more than one thread: each turn goes where the last turn this session took from hex.db was said.
-    let to = [...(threads.get(id) ?? new Map<string, number>())].sort((a, b) => b[1] - a[1])[0]?.[0] ?? id
+    let to = [...(threads.get(id) ?? new Map<string, number>())].sort((a, b) => b[1] - a[1])[0]?.[0] ?? registered.get(id) ?? id
     const heads = [...log.matchAll(HEAD)]
     // In an app's session, log/ also kept hex's notes in its terminal, which never reached the app.
     const inApp = heads.some(head => head[2] !== 'terminal')
