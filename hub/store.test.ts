@@ -34,7 +34,7 @@ test('a key has to start with its sender, so the keys hex makes stay its own', (
   expect(store.untaken()).toEqual([])
 })
 
-test('a message reads as its newest edit, and an edit of the same id in another chat or thread is not its', () => {
+test('a message reads as its newest edit, made in any topic of its chat, even when only the edit was kept', () => {
   const store = new Store(dir)
   const sent = { key: 'telegram:-100:42', to: '-100:7', from: 'telegram', author: 'hex', body: 'Deploy at 5' }
   store.deliver(sent)
@@ -44,7 +44,11 @@ test('a message reads as its newest edit, and an edit of the same id in another 
   store.deliver({ ...sent, key: 'telegram:edit-3', to: '-200:3', body: 'another chat', meta: { edited: 'true', message_id: '42' } })
   store.deliver({ ...sent, key: 'discord:edit-4', from: 'discord', body: 'another app', meta: { edited: 'true', message_id: '42' } })
   expect(store.latest(sent.key)?.body).toBe('Deploy at 7')
+  store.deliver({ ...sent, key: 'telegram:edit-5', to: '-100:9', body: 'Deploy at 8, edited from another topic', meta: { edited: 'true', message_id: '42' } })
+  expect(store.latest(sent.key)?.body).toBe('Deploy at 8, edited from another topic')
   expect(store.latest('telegram:-100:43')).toBeNull()
+  store.deliver({ key: 'buzz:e2', to: 'thread', from: 'buzz', author: 'owner', body: 'tagged on edit', meta: { edited: 'true', message_id: 'e1' } })
+  expect(store.latest('buzz:e1')?.body).toBe('tagged on edit')
 })
 
 test('the first session to take a message has it, and it leaves what waits', () => {

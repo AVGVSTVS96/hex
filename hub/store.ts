@@ -260,15 +260,18 @@ export class Store {
   }
 
   // A message as it reads now: its newest edit, or else the message itself. An edit is kept as a row
-  // of its own in the same thread, naming the app's id for the message, the last part of its key.
+  // of its own, naming the app's id for the message, the last part of its key. A Telegram id is
+  // only unique in its chat, the part before it, so its edits are the ones kept in that chat.
   latest(key: string): Row | null {
+    const app = key.slice(0, key.indexOf(':'))
+    const id = key.slice(key.lastIndexOf(':') + 1)
+    const chat = key.slice(app.length + 1, -id.length - 1)
     const row = this.db
       .query(
-        `select edit.* from messages original join messages edit on edit.key = original.key or (edit."from" = original."from" and edit."to" = original."to"
-           and json_extract(edit.meta, '$.edited') = 'true' and json_extract(edit.meta, '$.message_id') = ?2)
-         where original.key = ?1 order by edit.at desc, edit.n desc limit 1`,
+        `select * from messages where key = ?1 or ("from" = ?2 and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ?3
+           and (?4 = '' or "to" = ?4 or "to" like ?4 || ':%')) order by at desc, n desc limit 1`,
       )
-      .get(key, key.slice(key.lastIndexOf(':') + 1)) as Stored | null
+      .get(key, app, id, chat) as Stored | null
     return row && toRow(row)
   }
 
