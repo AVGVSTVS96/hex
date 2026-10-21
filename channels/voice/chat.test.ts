@@ -43,7 +43,7 @@ test("a thread's chat is what the owner said and hex replied across its sessions
   store.take('telegram:2', NOW)
   store.deliver({ key: 'telegram:11', to: DESK, from: 'telegram', author: 'hex', body: 'On it.' }, NOW)
   store.deliver({ key: 'telegram:3', to: DESK, from: 'telegram', author: 'owner', body: 'then ship', meta: { user_id: '1' } })
-  store.deliver({ key: 'schedule:4', to: DESK, from: 'schedule', author: 'schedule', body: 'heartbeat', meta: { user: 'schedule' } })
+  store.deliver({ key: 'schedule:4', to: DESK, from: 'schedule', author: 'prompt', body: 'heartbeat', meta: { user: 'schedule' } })
   expect(chats.of(where)).toMatchObject({
     sends: true,
     total: 4,

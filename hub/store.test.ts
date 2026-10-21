@@ -103,9 +103,9 @@ test('a change right after the one the bell just rang for is still heard', async
   const seen: (string | undefined)[] = []
   const stop = store.watch(() => {
     seen.push(store.message('job:quick:2')?.body)
-    if (seen.length === 1) store.deliver({ key: 'job:quick:2', to: 'general', from: 'job', author: 'job', body: 'two' })
+    if (seen.length === 1) store.deliver({ key: 'job:quick:2', to: 'general', from: 'job', author: 'prompt', body: 'two' })
   })
-  store.deliver({ key: 'job:quick:1', to: 'general', from: 'job', author: 'job', body: 'one' })
+  store.deliver({ key: 'job:quick:1', to: 'general', from: 'job', author: 'prompt', body: 'one' })
   await until(() => seen.at(-1) === 'two')
   stop()
 })
@@ -125,7 +125,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.deliver({ ...ask, body: 'Fix the login page.\nIt 500s on submit.' })
   store.createTask({ title: 'x', message: ask.key, owner: '-100:7' })
   store.db.run('update tasks set title = null')
-  store.db.run('drop index said; drop index unauthored; drop table profiles')
+  store.db.run('drop index said; drop table profiles')
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
   store.db.run('pragma user_version = 10')
@@ -150,7 +150,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   const store = new Store(dir)
   store.deliver(ask)
   const whole = store.createTask({ title: 'Fix it', message: ask.key, owner: '-100:7' })
-  expect(whole).toMatchObject({ id: 't-1', owner: '-100:7', status: 'open', words: [{ message: ask.key, text: ask.body, who: 'bassim' }] })
+  expect(whole).toMatchObject({ id: 't-1', owner: '-100:7', status: 'open', words: [{ message: ask.key, text: ask.body, who: 'owner' }] })
   expect(store.createTask({ title: 'Fix it', message: ask.key, quote: 'the logo looks blurry on retina', owner: '-100:7' }).words[0]!.text).toBe('the logo looks blurry on retina')
   expect(() => store.createTask({ title: 'Fix it', message: ask.key, quote: 'the logo is blurry', owner: '-100:7' })).toThrow("isn't in telegram:-100:50 as written")
   expect(() => store.createTask({ title: 'Fix it', message: 'telegram:-100:404', owner: '-100:7' })).toThrow('no message')
@@ -158,7 +158,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   expect(() => store.db.run("update words set text = 'Fix it' where task = 1")).toThrow('only ever cut down')
   expect(() => store.db.run("update messages set body = 'Fix it'")).toThrow('keeps its words')
   expect(() => store.createTask({ title: 'Fix it', message: ask.key, quote: '', owner: '-100:7' })).toThrow('needs words')
-  store.db.run("insert or replace into messages (key, \"to\", \"from\", body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'Fix it', '2026-10-19T00:00:00.000Z')")
+  store.db.run("insert or replace into messages (key, \"to\", \"from\", author, body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'owner', 'Fix it', '2026-10-19T00:00:00.000Z')")
   expect(store.message(ask.key)!.body).toBe(ask.body)
   expect(() => store.db.run("insert or replace into words (rowid, task, message, text) values (1, 1, 'telegram:-100:50', 'Fix the login page.')")).toThrow('never rewritten')
   expect(store.tasks().map(task => task.id)).toEqual(['t-2', 't-1'])
@@ -365,15 +365,37 @@ test('an answer and the message that wakes its thread with it land together or n
   expect(store.message('telegram:tap:2')).toBeNull()
 })
 
-test('a message an older hub kept without an author gets one when hex.db next opens', () => {
+test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
   const store = new Store(dir)
-  store.db.query(`insert into messages (key, "to", "from", body, meta, at) values ('telegram:-100:95', '-100:7', 'telegram', 'hi', '{"user_id":"1"}', '2026-10-21T10:00:00.000Z')`).run()
+  store.db.run('create index unauthored on messages (n) where author = \'\'; pragma user_version = 15')
+  const kept = (key: string, from: string, author: string, meta?: object) => store.db.query('insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)').run(key, '-100:7', from, author, 'hi', meta ? JSON.stringify(meta) : null, '2026-10-21T10:00:00.000Z')
+  kept('telegram:1', 'telegram', 'hex General', { user: 'hex General' })
+  kept('job:a:1', 'job', 'job')
+  kept('schedule:b@1', 'schedule', 'schedule', { user: 'schedule' })
+  kept('buzz:2', 'buzz', 'buzz:abc', { user: 'Ana', user_id: 'abc' })
+  kept('t3:3', 't3', 't3')
+  kept('discord:4', 'discord', 'discord')
+  kept('telegram:5', 'telegram', 'owner', { user_id: '1' })
+  kept('telegram:6', 'telegram', '', { user_id: '1' })
   store.db.close()
-  expect(new Store(dir).message('telegram:-100:95')!.author).toBe('owner')
+  const reopened = new Store(dir)
+  expect(reopened.since().map(({ key, author, meta }) => [key, author, meta?.user])).toEqual([
+    ['telegram:1', 'prompt', 'hex General'],
+    ['job:a:1', 'prompt', 'job'],
+    ['schedule:b@1', 'prompt', 'schedule'],
+    ['buzz:2', 'other', 'Ana'],
+    ['t3:3', 'other', 't3'],
+    ['discord:4', 'other', 'discord'],
+    ['telegram:5', 'owner', undefined],
+    ['telegram:6', 'owner', undefined],
+  ])
 })
 
-test('a message without its author is refused', () => {
-  expect(() => new Store(dir).deliver({ key: 'telegram:-100:90', to: '-100:7', from: 'telegram', author: '', body: 'hi' })).toThrow('telegram:-100:90 has no author')
+test("a message's author is the owner, hex, a prompt, a call or someone other", () => {
+  const store = new Store(dir)
+  expect(() => store.deliver({ key: 'telegram:-100:90', to: '-100:7', from: 'telegram', author: '' as never, body: 'hi' })).toThrow('owner, hex, prompt, call or other')
+  expect(() => store.deliver({ key: 'job:x:1', to: '-100:7', from: 'job', author: 'job' as never, body: 'hi' })).toThrow('owner, hex, prompt, call or other')
+  expect(store.deliver({ key: 'telegram:-100:91', to: '-100:7', from: 'telegram', author: 'other', body: 'hi' })).toBe(true)
 })
 
 test('the profile is its newest version, put in place only over the one a writer read, and every version stays', async () => {

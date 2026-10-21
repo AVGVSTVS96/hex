@@ -653,8 +653,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     launcher: process.env.HEX_LAUNCHER,
   })
 
-  // Messages kept before hex kept authors name a Buzz sender only by key.
-  hub.own(`buzz:${owner}`)
+  hub.own(owner)
   clients.set('buzz', { hub, place, backfill, close: shutdown, stop })
 
   // Desktop writes a mention as "@Name", or "@Name (pubkey)" when two members share a name.
@@ -702,10 +701,10 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     return original?.pubkey === event.pubkey ? original : undefined
   }
 
-  // Buzz is shared, so only the owner's own key makes a message the owner's, and anyone else's is
-  // their key, which a display name can't fake.
+  // Buzz is shared, so only the owner's own key makes a message the owner's; anyone else's names
+  // them by key in meta.user_id, which a display name can't fake.
   function authorOf(event: Event) {
-    return event.pubkey === owner ? 'owner' : `buzz:${event.pubkey}`
+    return event.pubkey === owner ? 'owner' : 'other'
   }
 
   async function about(event: Event, thread: string, channel = tag(event, 'h')): Promise<Record<string, string>> {

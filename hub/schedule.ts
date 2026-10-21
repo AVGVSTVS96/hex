@@ -113,7 +113,7 @@ export function check(storeDir: string, hexDir: string, main: string, now = Math
     jobs = parse(text)
   } catch (error) {
     const body = `[schedules] schedules.json no longer loads, so no job runs until it's fixed: ${(error as Error).message}`
-    store.deliver({ key: `schedule:broken@${Bun.hash(text).toString(36)}`, to: main, from: 'schedule', author: 'schedule', body, meta: { user: 'schedule' } })
+    store.deliver({ key: `schedule:broken@${Bun.hash(text).toString(36)}`, to: main, from: 'schedule', author: 'prompt', body, meta: { user: 'schedule' } })
     return
   }
   const zone = zoneOf(hexDir)

@@ -2,6 +2,7 @@ import { Database } from 'bun:sqlite'
 import { existsSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import type { Author } from '../../hub/store.ts'
 
 // T3 Code's own server, which hex calls like T3's app does: over its WebSocket RPC, with a bearer
 // token its CLI issues for the call and revokes after.
@@ -106,8 +107,8 @@ export function steering(session: string) {
 // another agent through T3's tools, which is hex. ACP's prompt says nothing of who wrote it, so as
 // with steering() only T3's records can tell. A prompt T3 hasn't recorded, or a read that fails, is
 // the owner's, as every T3 prompt was before hex kept authors.
-const AUTHORS: Record<string, string> = { 'user/web': 'owner', 'user/mobile': 'owner', 'agent/mcp': 'prompt', 'user/server': 'prompt', 'agent/server': 't3', 'agent/provider': 't3' }
-export function promptedBy(session: string, asked: string): string {
+const AUTHORS: Record<string, Author> = { 'user/web': 'owner', 'user/mobile': 'owner', 'agent/mcp': 'prompt', 'user/server': 'prompt', 'agent/server': 'other', 'agent/provider': 'other' }
+export function promptedBy(session: string, asked: string): Author {
   const file = join(USERDATA, 'statev2.sqlite')
   if (!existsSync(file) || !asked) return 'owner'
   let db: Database | undefined
@@ -120,7 +121,7 @@ export function promptedBy(session: string, asked: string): string {
         where json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ? and message.role = 'user' order by message.created_at desc limit 5`)
       .all(session)
     const by = recent.find(prompt => prompt.text?.trim() === asked.trim())?.by
-    return (by && AUTHORS[by]) ?? (by?.startsWith('system/') ? 't3' : 'owner')
+    return (by && AUTHORS[by]) ?? (by?.startsWith('system/') ? 'other' : 'owner')
   } catch (error) {
     process.stderr.write(`t3: can't read who wrote ${session}'s prompt, so it's the owner's: ${error}\n`)
     return 'owner'

@@ -8,13 +8,13 @@ import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { queue } from './observe.ts'
 import { schedule, zoneOf } from './schedule.ts'
-import { asked, open, replied, shown, spoken, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
+import { asked, isAuthor, open, replied, shown, spoken, storeDir as storeOf, type Author, type MessageId, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
 // key: the app's own id for what the message is, so the app sending it again changes nothing.
 // author: who wrote it, which every message a client delivers says (Store.deliver).
-export type Message = { content: string; meta: Record<string, string>; key?: string; author?: string }
+export type Message = { content: string; meta: Record<string, string>; key?: string; author?: Author }
 export type Call = (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>
 // background: the session's turn ended with background agents still working.
 export type State = (thread: string, busy: boolean, background: boolean) => void
@@ -686,7 +686,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (failing.count >= TELL_AFTER && !failing.told && generalHub && !(general && thread === main)) {
       failing.told = true
       const content = `[hub] hex couldn't start the session of ${app} thread "${threads[thread]?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`
-      generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? 'hex', { content, author: 'hub', meta: { user: 'hub' } })
+      generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? 'hex', { content, author: 'prompt', meta: { user: 'hub' } })
     }
     setState(thread, false)
   }
@@ -986,7 +986,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
     if (request.type === 'settle') questions?.settle(request.thread, request.message, request.note)
     if (request.type === 'reopen') questions?.reopen(request.thread, request.message, request.via)
-    if (request.type === 'inbound') inbound(request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key, author: request.author ?? request.meta?.user ?? 'prompt' })
+    if (request.type === 'inbound') inbound(request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key, author: isAuthor(request.author) ? request.author : 'prompt' })
     if (request.type === 'mirror') void mirror(api, find(request.thread), request.to, request.where).then(
       link => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
       error => process.stderr.write(`hub: couldn't mirror ${request.thread} to ${request.to}: ${error}\n`),
@@ -1070,7 +1070,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     deliver,
     sent,
     said: (key: string) => kept(store => store.latest(`${app}:${key}`), null),
-    own: (author: string) => kept(store => store.own(app, author), undefined),
+    own: (userId: string) => kept(store => store.own(app, userId), undefined),
     command: restart,
     configure,
     settings: (thread: string): Settings => ({ model: threads[thread]?.model, effort: threads[thread]?.effort }),

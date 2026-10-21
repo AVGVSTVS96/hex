@@ -181,7 +181,7 @@ async function pass(name: string, about: string, text: string, app?: string, whe
   const meta = { user: 'hex voice', ...(id && { voice_task: `${call}:${id}` }) }
   let thread = known
   if (app) {
-    const opened = await begin(app, oneWord(name), { content: text, author: 'hex voice', meta }, { about: `From a call: ${about}`, where })
+    const opened = await begin(app, oneWord(name), { content: text, author: 'prompt', meta }, { about: `From a call: ${about}`, where })
     thread = { app, id: opened.thread, name, threads: join(HEX_STATE, app, 'threads.json') }
   }
   if (call && id) {

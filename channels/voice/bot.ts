@@ -29,7 +29,7 @@ const hub = startHub({
 
 serve(
   {
-    deliver: (content, meta) => hub.deliver(THREAD, THREAD, { content, meta, author: (meta.delegation_id || meta.ended) && !meta.callee ? 'call' : 'voice' }),
+    deliver: (content, meta) => hub.deliver(THREAD, THREAD, { content, meta, author: meta.callee ? 'other' : meta.delegation_id || meta.ended ? 'call' : 'prompt' }),
     keep: () => hub.keep(THREAD),
     renew: () => hub.renew(THREAD),
     renewal: () => hub.renewal(THREAD),

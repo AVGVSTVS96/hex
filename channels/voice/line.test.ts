@@ -122,7 +122,7 @@ test("a call on another client's line is held like a phone call: PCM both ways, 
     step: 'delivered',
     thread: '9001',
     name: 'Anchors',
-    message: { content: 'look into the anchors', author: 'hex voice', meta: { user: 'hex voice', voice_task: 'sess_discord:the-anchors' } },
+    message: { content: 'look into the anchors', author: 'prompt', meta: { user: 'hex voice', voice_task: 'sess_discord:the-anchors' } },
   })
 
   call.tell('hangup')
