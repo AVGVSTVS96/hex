@@ -3,6 +3,7 @@ import { spawnSync } from 'bun'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
+import { ROOM } from '../hub/fit.ts'
 import { files } from './instructions'
 
 // Claude Code reads its instruction files only when a session starts, resumes or
@@ -10,7 +11,6 @@ import { files } from './instructions'
 // SessionStart records what the session loaded; each prompt after that gets a diff
 // of whatever changed since.
 
-const room = 9500
 const home = resolve(import.meta.dir, '../..')
 const { session_id, hook_event_name } = JSON.parse(await Bun.stdin.text())
 const seen = join(process.env.TMPDIR ?? tmpdir(), `hex-rules-${session_id}.json`)
@@ -34,7 +34,7 @@ if (hook_event_name !== 'SessionStart' && existsSync(seen)) {
     const body = diffs.join('\n')
     const lead = 'Your instruction files changed since this session loaded them. From now on, follow their new wording'
     // A chat's next session starts from the new files anyway, so a change too long to show waits for it.
-    if (body.length <= room) console.log(`${lead}; this is what changed:\n\n${body}`)
+    if (body.length <= ROOM) console.log(`${lead}; this is what changed:\n\n${body}`)
     else if (!(process.env.HEX_FRESH && process.env.HEX_THREAD)) console.log(`${lead}. The change is too long to show here, so read them again: ${names.join(', ')}`)
   }
 }

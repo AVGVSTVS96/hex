@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -13,16 +13,10 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'compacted-'))
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
   mkdirSync(join(home, '.hex/vendor'))
-  for (const script of ['compacted', 'log', 'wake']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
+  for (const script of ['compacted', 'log']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
 })
 
 afterEach(() => rmSync(home, { recursive: true, force: true }))
-
-function memo(...parts: string[]) {
-  parts.forEach((part, i) => writeFileSync(join(home, `wake${i + 1}.txt`), part))
-  writeFileSync(join(home, '.hex/vendor/memo'), `#!/bin/sh\n[ "$1" = wake ] && cat "${home}/wake\${2:-1}.txt"\n`)
-  chmodSync(join(home, '.hex/vendor/memo'), 0o755)
-}
 
 function transcript(turns: [string, string][]) {
   const at = (i: number) => new Date(Date.UTC(2026, 9, 6, 16, i)).toISOString()
@@ -36,8 +30,8 @@ function transcript(turns: [string, string][]) {
   return path
 }
 
-function hook(part: 'memory' | 'turns', transcriptPath = join(home, 'none.jsonl'), env: Record<string, string> = {}) {
-  const run = Bun.spawnSync([join(home, '.hex/bin/compacted'), part], {
+function hook(transcriptPath = join(home, 'none.jsonl'), env: Record<string, string> = {}) {
+  const run = Bun.spawnSync([join(home, '.hex/bin/compacted')], {
     cwd: home,
     stdin: Buffer.from(JSON.stringify({ session_id: SESSION, transcript_path: transcriptPath, source: 'compact' })),
     env: { ...process.env, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home, TZ: 'UTC', HEX_THREAD: '', HEX_MAIN: '', ...env },
@@ -48,42 +42,8 @@ function hook(part: 'memory' | 'turns', transcriptPath = join(home, 'none.jsonl'
   return out
 }
 
-test('leaves memory to the wake file in a session the launcher handed one', () => {
-  memo('#0 2026-10-06 First note.\nYou are awake.\n')
-  expect(hook('memory', undefined, { HEX_WAKE: join(home, 'state/wake/CLAUDE.md') })).toBe('')
-})
-
-test('puts all of wake back when it fits', () => {
-  const wake = '#0 2026-10-06 First note.\n#1 2026-10-06 Second note.\nYou are awake.\n'
-  memo(wake)
-  const out = hook('memory')
-  expect(out).toContain('compacted')
-  expect(out.endsWith(wake)).toBe(true)
-})
-
-test('a wake too long for the hook is cut at a line, and the session is told exactly where the rest is', () => {
-  const lines = Array.from({ length: 120 }, (_, i) => `#${i} 2026-10-06 ${'x'.repeat(180)}`).join('\n') + '\n'
-  memo(lines + 'Not awake yet. Run: memo wake 2 240\n', 'You are awake.\n')
-  const out = hook('memory')
-  const pointer = out.match(/from line (\d+) of (\S+), and/)!
-  const rest = readFileSync(pointer[2], 'utf8').split('\n').slice(Number(pointer[1]) - 1).join('\n')
-  const shown = out.split('\n\n').slice(1, -1).join('\n\n')
-  expect(shown + '\n' + rest).toBe(lines + 'You are awake.\n')
-})
-
-test('the profile comes back ahead of memory', () => {
-  memo('#0 2026-10-06 First note.\nYou are awake.\n')
-  mkdirSync(join(home, 'state'))
-  writeFileSync(join(home, 'state/profile.md'), '# Now\n- Login page first\n')
-  expect(hook('memory')).toEndWith(':\n\n# Now\n- Login page first\n\nYour memory:\n\n#0 2026-10-06 First note.\nYou are awake.\n')
-})
-
-test('says nothing when OptMem is not installed', () => {
-  expect(hook('memory')).toBe('')
-})
-
 test('brings back the whole conversation when it fits, without the compact summary', () => {
-  const out = hook('turns', transcript([['me', 'hi'], ['assistant', 'hey'], ['me', 'what is up']]))
+  const out = hook(transcript([['me', 'hi'], ['assistant', 'hey'], ['me', 'what is up']]))
   expect(out).toContain('the whole conversation so far')
   expect(out).toContain('## me · terminal · 2026-10-06 16:00\n\nhi')
   expect(out).toContain('## me · terminal · 2026-10-06 16:02\n\nwhat is up')
@@ -92,7 +52,7 @@ test('brings back the whole conversation when it fits, without the compact summa
 
 test('brings back the last whole turns of a long conversation, and points to the earlier ones', () => {
   const turns = Array.from({ length: 40 }, (_, i): [string, string] => [i % 2 ? 'assistant' : 'me', `turn ${i} ${'y'.repeat(600)}`])
-  const out = hook('turns', transcript(turns))
+  const out = hook(transcript(turns))
   const pointer = out.match(/from line (\d+) of (log\/\S+\.md)\. Earlier turns are above it there\./)!
   const log = readFileSync(join(home, pointer[2]), 'utf8').split('\n')
   expect(log[Number(pointer[1]) - 1]).toMatch(/^## (me|assistant) · /)
@@ -102,7 +62,7 @@ test('brings back the last whole turns of a long conversation, and points to the
 })
 
 test('logs relays under their sender, and as me only channel messages with a user_id or typed in the hex app', () => {
-  const out = hook('turns', transcript([
+  const out = hook(transcript([
     ['me', '<channel source="plugin:telegram:telegram" chat_id="1" user="ada" user_id="1001">ping me every minute</channel>'],
     ['me', '<channel source="plugin:telegram:telegram" user="watcher">Verified problems, fix them</channel>'],
     ['me', '<channel source="plugin:telegram:telegram" user="hex General">Ada said, word for word</channel>'],
@@ -115,7 +75,7 @@ test('logs relays under their sender, and as me only channel messages with a use
 })
 
 test('a T3 Code message is the owner\'s, since only the owner reaches T3, and a relay into T3 is its sender\'s', () => {
-  const out = hook('turns', transcript([
+  const out = hook(transcript([
     ['me', '<channel source="plugin:t3:t3" ts="2026-10-06T16:00:00Z">ship it</channel>'],
     ['me', '<channel source="plugin:t3:t3" user="hex General">Ada said, word for word</channel>'],
   ]), { HEX_THREAD: '42' })
@@ -124,6 +84,6 @@ test('a T3 Code message is the owner\'s, since only the owner reaches T3, and a 
 })
 
 test('a thread logs the prompt that opened it as hex, not me', () => {
-  const out = hook('turns', transcript([['me', 'You own the input device topic'], ['assistant', 'on it']]), { HEX_THREAD: '42' })
+  const out = hook(transcript([['me', 'You own the input device topic'], ['assistant', 'on it']]), { HEX_THREAD: '42' })
   expect(out).toContain('## hex · terminal · 2026-10-06 16:00\n\nYou own the input device topic')
 })

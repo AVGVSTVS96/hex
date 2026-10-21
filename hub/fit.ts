@@ -29,3 +29,27 @@ export function fit(sections: Section[], room: number): string {
   })
   return text
 }
+
+// Claude Code puts at most 10,000 characters of a hook's output into context and swaps the rest for
+// a path and a preview it doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output),
+// so a hook's output stays under ROOM, which leaves space for the lines around it.
+export const ROOM = 9_000
+
+// Text split at line ends into parts that each fit a hook.
+export function split(text: string, room = ROOM) {
+  const parts = ['']
+  for (const line of text.replace(/\n$/, '').split('\n')) {
+    if (parts.at(-1) && parts.at(-1)!.length + line.length + 1 > room) parts.push('')
+    parts[parts.length - 1] += `${line}\n`
+  }
+  return parts
+}
+
+// What the nth of a run of hooks puts into context when they hand over parts that together don't fit
+// one: its part under the lead, and from the last hook, where to find the parts left over.
+export function handover(parts: string[], n: number, last: boolean, lead: string, rest: string) {
+  const part = parts[n - 1]
+  if (!part?.trim()) return ''
+  const more = last && parts.length > n ? `\nThat's all the hooks can show. ${rest}\n` : ''
+  return `${lead} It comes in ${parts.length} parts, which may arrive out of order; this is part ${n} of ${parts.length}. Read them in order.\n\n${part}${more}`
+}
