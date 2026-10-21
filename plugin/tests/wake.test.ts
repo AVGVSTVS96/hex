@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -146,11 +146,9 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "Cannot wake: the memory context needs #0-1."\necho "Compress memories #0-1 into one line."\nexit 1\n')
   expect(launch().args).toContain(dir)
   expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
-  memo([wake])
-  mkdirSync(join(home, 'state/profile.md'))
-  expect(launch().args).not.toContain(dir)
-  rmSync(join(home, 'state/profile.md'), { recursive: true })
-  launch()
+  renameSync(join(home, '.hex/hub'), join(home, '.hex/hub.away'))
+  expect(launch().args).toContain(dir)
+  renameSync(join(home, '.hex/hub.away'), join(home, '.hex/hub'))
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "The summary of #0-1 is blank."\nexit 1\n')
   expect(launch().args).not.toContain(dir)
   rmSync(join(home, '.hex/vendor/memo'))

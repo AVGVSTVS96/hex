@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { accessSync, constants, existsSync, readFileSync } from 'fs'
+import { accessSync, constants, readFileSync } from 'fs'
 import { join, resolve } from 'path'
 import { handover, split } from '../hub/fit.ts'
 
@@ -13,7 +13,10 @@ const lead = 'This is your memory: `.hex/vendor/memo wake`, run in full for you 
 const record = 'Its numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one.'
 
 function mine() {
-  const text = existsSync(profile) ? readFileSync(profile, 'utf8').trim() : ''
+  let text = ''
+  try {
+    text = readFileSync(profile, 'utf8').trim()
+  } catch {}
   return text && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${text}\n\nYour memory:\n`
 }
 
@@ -44,11 +47,11 @@ if (!runs() || !process.env.MEMORY_DIR) process.exit(0)
 
 if (mode === 'all') {
   const { text: wake, end } = memory()
-  // A wake that holds no memory makes no wake file. One that stopped to ask for a compression exits 3,
+  // A wake that holds no memory makes no wake file. One that stopped to ask for a compression exits 1,
   // so the launcher keeps the last wake; one that failed prints nothing, as with memory off.
   if (!/^You are awake\.$/m.test(end)) {
     process.stderr.write(`${end.split('\n')[0]}\n`)
-    process.exit(/^Cannot wake:/m.test(end) ? 3 : 0)
+    process.exit(/^Cannot wake:/m.test(end) ? 1 : 0)
   }
   const head = mine()
   console.log(`${lead} Claude Code loads it as an instruction file. ${record} If it ends by asking for a compression, do that first.\n\n${head && `${head}\n`}${wake.trimEnd()}`)
