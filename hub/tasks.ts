@@ -1,24 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { clip, fit } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
-
-// The owner's profile, which the memory agent keeps current after every turn. bin/wake puts it in front
-// of the memory every session starts with.
-export const profilePath = (state: string) => join(state, 'profile.md')
-export const profileOf = (state: string) => (existsSync(profilePath(state)) ? readFileSync(profilePath(state), 'utf8').trim() : '')
-
-// Each thread's name, as hex.db keeps it after the thread closes.
-export function names(state: string): Record<string, string> {
-  return Object.fromEntries(open(state).threads().map(({ thread, name }) => [thread, name]))
-}
 
 // Claude Code swaps a hook's output past 10,000 characters for a file path and a preview it
 // doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output), so the list
 // stays under it, with room for the lines that say what didn't fit.
 const ROOM = 9_000
-
-export const PROFILE = 6_500
 
 // A task's title, or its first words when it has none.
 export const titleOf = (task: Task, room: number) => clip(task.title ?? task.words[0]?.text ?? '', room)
@@ -58,11 +44,11 @@ export function waiting(question: Question, named: Record<string, string> = {}):
 // What a session should have before it acts: the questions still waiting on the owner, then the open
 // tasks it serves, newest first, each as its clean entry, and a digest of all of it, so a change to an entry that didn't
 // fit still counts. Main sees every thread's; a thread sees its own.
-export function profile(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
+export function pending(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
   const store = open(state)
   const tasks = store.tasks({ owner: thread, status: ['open'] }).sort((a, b) => b.at.localeCompare(a.at))
   const questions = store.questions({ thread, waiting: true })
-  const named = names(state)
+  const named = store.names()
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {
@@ -94,7 +80,7 @@ if (import.meta.main) {
         const store = open(HEX_STORE)
         if (source === 'compact' || source === 'clear') store.unshow(session_id)
         const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
-        const { text, digest } = profile(HEX_STORE, thread)
+        const { text, digest } = pending(HEX_STORE, thread)
         if (store.show(session_id, digest)) console.log(text || 'No open tasks or questions waiting on me now.')
       }
     } catch (error) {

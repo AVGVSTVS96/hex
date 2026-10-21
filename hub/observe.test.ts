@@ -2,8 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, drain, nap, observe, type Answer } from './observe.ts'
-import { profile, profileOf } from './profile.ts'
+import { clock, drain, nap, observe, profileOf, type Answer } from './observe.ts'
 import { open } from './store.ts'
 
 let dir: string

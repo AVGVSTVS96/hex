@@ -1,5 +1,5 @@
 import { clip, fit } from './fit.ts'
-import { titleOf } from './profile.ts'
+import { titleOf } from './tasks.ts'
 import type { Store } from './store.ts'
 
 // A thread's status post: the session's note, then what's blocked on the owner (its waiting

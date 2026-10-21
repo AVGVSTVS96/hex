@@ -7,7 +7,7 @@ import { open } from './store.ts'
 let dir: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'profile-'))
+  dir = mkdtempSync(join(tmpdir(), 'tasks-'))
   mkdirSync(join(dir, 'telegram'))
   const store = open(dir)
   store.named('telegram', { '-100:7': 'Website', '-100:9': 'Errands' })
@@ -22,7 +22,7 @@ afterEach(() => {
 })
 
 async function hook(input: object, env: Record<string, string> = {}) {
-  const run = Bun.spawn(['bun', join(import.meta.dir, 'profile.ts')], { stdin: new Blob([JSON.stringify(input)]), stdout: 'pipe', env: { PATH: process.env.PATH!, HEX_STORE: dir, ...env } })
+  const run = Bun.spawn(['bun', join(import.meta.dir, 'tasks.ts')], { stdin: new Blob([JSON.stringify(input)]), stdout: 'pipe', env: { PATH: process.env.PATH!, HEX_STORE: dir, ...env } })
   expect(await run.exited).toBe(0)
   return new Response(run.stdout).text()
 }
@@ -50,7 +50,7 @@ test("main sees every thread's open tasks, and gets them again after a compactio
 })
 
 test('a session outside hex, or one with no tasks, hears nothing', async () => {
-  const outside = Bun.spawn(['bun', join(import.meta.dir, 'profile.ts')], { stdin: new Blob(['{"session_id":"x"}']), stdout: 'pipe', env: { PATH: process.env.PATH! } })
+  const outside = Bun.spawn(['bun', join(import.meta.dir, 'tasks.ts')], { stdin: new Blob(['{"session_id":"x"}']), stdout: 'pipe', env: { PATH: process.env.PATH! } })
   expect(await outside.exited).toBe(0)
   expect(await new Response(outside.stdout).text()).toBe('')
   expect(await hook({ session_id: 'b' }, { HEX_THREAD: '-100:404' })).toBe('')
