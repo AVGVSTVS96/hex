@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { appendFileSync, existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { zoneOf } from './schedule.ts'
@@ -86,7 +86,7 @@ export async function observe(state: string, session: string, reply: string, { a
         wanted = answer.profile !== null
         if (answer.profile === null) break
         const bad = misquoted(answer.profile, store)
-        wrong = bad.length ? retry(bad) : ''
+        wrong = bad.length ? retry(bad, answer.profile) : ''
         if (wrong || !swap(state, store, before, answer.profile)) continue
         wanted = false
         break
@@ -118,14 +118,15 @@ function misquoted(profile: string | null, store: Store): string[] {
   })
 }
 
-const retry = (bad: string[]) =>
-  `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}`
+const retry = (bad: string[], draft: string) =>
+  `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}\n\nFix that draft rather than starting over:\n<draft>\n${draft.trim()}\n</draft>`
 
 // Puts the profile in place only if it's still the one this pass read, inside the store's write
 // lock so two passes never both pass that check, and whole, so a session never reads half a profile.
 function swap(state: string, store: Store, before: string, profile: string) {
   return store.write(() => {
     if (profileOf(state) !== before.trim()) return false
+    appendFileSync(`${profilePath(state)}.history`, `${JSON.stringify({ at: new Date().toISOString(), profile: profile.trim() })}\n`)
     const next = `${profilePath(state)}.${process.pid}.new`
     writeFileSync(next, `${profile.trim()}\n`)
     renameSync(next, profilePath(state))
@@ -191,12 +192,23 @@ export async function nap(memo = MEMO, compress = summarize, keep = () => true) 
     const block = asked.match(/^Compress memories #(\d+-\d+)/)![1]!
     let why = ''
     for (let tries = 0; ; tries++) {
-      const kept = Bun.spawnSync([memo, 'nap', block, await compress(asked.slice(0, asked.lastIndexOf('\nRun:')) + why)], { stdout: 'pipe', stderr: 'pipe' })
+      const line = await compress(asked.slice(0, asked.lastIndexOf('\nRun:')) + why)
+      const kept = Bun.spawnSync([memo, 'nap', block, tries === 2 ? within(line, BYTES) : line], { stdout: 'pipe', stderr: 'pipe' })
       if (kept.exitCode === 0) break
       if (tries === 2) throw new Error(`memo kept no summary of #${block}: ${kept.stdout}${kept.stderr}`)
       why = `\n\nThat line wasn't kept: ${kept.stdout}${kept.stderr}`
     }
   }
+}
+
+// A summary that stayed too long after its tries loses its last words, so one stuck block can't hold
+// back every compression after it.
+export function within(line: string, bytes: number) {
+  const size = (text: string) => Buffer.byteLength(text)
+  if (size(line) <= bytes) return line
+  let cut = line
+  while (size(`${cut}…`) > bytes) cut = cut.slice(0, cut.lastIndexOf(' ') > 0 ? cut.lastIndexOf(' ') : cut.length - 1)
+  return `${cut.trimEnd()}…`
 }
 
 const LINE = { type: 'object', properties: { line: { type: 'string' } }, required: ['line'] }
