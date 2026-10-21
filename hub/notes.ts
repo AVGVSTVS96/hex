@@ -9,7 +9,10 @@ export const quotesOf = (note: string) => [...note.matchAll(/["“]([^"“”]+)
 
 // Typing turns curly quotes straight and wraps lines, and a quote may leave words out with an ellipsis.
 const plain = (text: string) => text.toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, ' ').trim()
+// A quote has letters or digits: "👍" or "?" would match almost any message.
+const worded = (words: string) => /[\p{L}\p{N}]/u.test(words)
 function quotes(body: string, words: string) {
+  if (!worded(words)) return false
   const parts = plain(words).split(/\s*(?:\.\.\.|…)\s*/).filter(Boolean)
   if (!parts.length) return false
   let at = 0
@@ -39,10 +42,10 @@ export const holds = (v: Verdict) => v.keys.length > 0 && !v.unknown.length && !
 
 // Why a keyed note doesn't hold, said so the session can fix it in its next call.
 export function problems(v: Verdict, withWords = true): string[] {
-  const shown = v.keys.map(row => `[${row.key}] says:\n${clip(row.body, 1500)}`)
+  const shown = v.keys.map(row => `[${row.key}] says:\n${cut(row.body, 1500)}`)
   return [
     ...v.unknown.map(key => `[${key}] isn't a message hex keeps. A message's key is the \`key\` on its channel tag.`),
-    ...v.unquoted.map(words => `"${words}" isn't in ${v.keys.map(row => `[${row.key}]`).join(' or ') || 'any message the note names'} as written.`),
+    ...v.unquoted.map(words => worded(words) ? `"${words}" isn't in ${v.keys.map(row => `[${row.key}]`).join(' or ') || 'any message the note names'} as written.` : `"${words}" holds no words; a quote is the owner's words.`),
     ...(v.keys.length && !v.quoted ? ['The note names a message without quoting it.'] : []),
     ...(withWords && (v.unquoted.length || !v.quoted) ? shown : []),
   ]
@@ -51,4 +54,6 @@ export function problems(v: Verdict, withWords = true): string[] {
 // The owner's messages, and calls they spoke on.
 export const owners = (rows: Row[]) => rows.filter(row => spoken(row))
 
-export const clip = (text: string, size: number) => (text.length > size ? `${text.slice(0, size)}…` : text)
+// Text at most size characters long, every line kept, ending in … where it was cut. fit.ts's clip
+// keeps one line, for lists.
+export const cut = (text: string, size: number) => (text.length > size ? `${text.slice(0, size - 1)}…` : text)

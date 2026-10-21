@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { clock, drain, nap, observe, profileOf, within, type Answer } from './observe.ts'
+import { clock, drain, nap, observe, within, type Answer } from './observe.ts'
 import { open } from './store.ts'
 
 let dir: string
@@ -52,6 +52,7 @@ test("a note that misquotes the owner, quotes without naming the message, or doe
     'Oct 19: the nightly backup ran',
     `Oct 19: "ship it on fridays only" ${'x'.repeat(280)} [telegram:-100:50]`,
     '2026-10-19 Oct 19: "ship it on fridays only" [telegram:-100:50]',
+    'Oct 19: answered "?" [telegram:-100:50]',
   ] })
   expect(await observe(dir, 's', { ask, memo })).toEqual(['Oct 19: the nightly backup ran', 'Oct 19: "ship it on fridays only" [telegram:-100:50]'])
   expect(noted()).toHaveLength(2)
@@ -110,7 +111,7 @@ test('the profile is rewritten to the current truth, and one that misquotes the 
   const seen: string[] = []
   await observe(dir, 's', { ask: async input => (seen.push(input), { notes: [], profile }), memo })
   expect(seen[0]).toContain('<profile>\n(none yet)\n</profile>')
-  expect(profileOf(dir)).toBe(profile)
+  expect(open(dir).profile()).toBe(profile)
 
   const store = open(dir)
   store.deliver({ key: 'telegram:-100:80', to: '-100:7', from: 'telegram', author: 'owner', body: 'actually ship any day now', meta: { user_id: '1' } })
@@ -120,10 +121,9 @@ test('the profile is rewritten to the current truth, and one that misquotes the 
   await observe(dir, 's', { ask: async input => (asked.push(input), { notes: [], profile: answers.shift()! }), memo })
   expect(asked[1]).toContain("Your last profile wasn't kept")
   expect(asked[1]).toContain('- Ships "whenever" [telegram:-100:80]')
-  expect(profileOf(dir)).toBe('# Always\n- Ships "any day now" [telegram:-100:80]')
+  expect(open(dir).profile()).toBe('# Always\n- Ships "any day now" [telegram:-100:80]')
   expect(asked[1]).toContain('Fix that draft rather than starting over:\n<draft>\n# Always\n- Ships "whenever" [telegram:-100:80]\n</draft>')
-  const kept = readFileSync(join(dir, 'profile.md.history'), 'utf8').trim().split('\n').map(line => JSON.parse(line).profile)
-  expect(kept).toEqual([profile])
+  expect(store.profiles().map(({ body }) => body)).toEqual(['# Always\n- Ships "any day now" [telegram:-100:80]', profile])
 })
 
 test('a summary still too long after its tries is cut at a word', () => {
@@ -139,13 +139,13 @@ test("a profile line may only quote the owner, by the key of the message it quot
   await observe(dir, 's', { ask: async input => (asked.push(input), { notes: [], profile: answers.shift()! }), memo })
   expect(asked[1]).toContain("names no message of the owner's for its quote")
   expect(asked[2]).toContain("[schedule:nightly:1] isn't the owner's message")
-  expect(profileOf(dir)).toBe('# Always\n- Ships "on fridays only" [telegram:-100:50]')
+  expect(open(dir).profile()).toBe('# Always\n- Ships "on fridays only" [telegram:-100:50]')
 })
 
 test('a profile that kept misquoting is logged and its turn is done, so it costs no more calls', async () => {
   const asked: string[] = []
   await observe(dir, 's', { ask: async input => (asked.push(input), { notes: [], profile: '# Always\n- Wants "whatever" [telegram:-100:50]' }), memo })
-  expect(profileOf(dir)).toBe('')
+  expect(open(dir).profile()).toBe('')
   await observe(dir, 's', { ask: async input => (asked.push(input), none), memo })
   expect(asked).toHaveLength(3)
 })

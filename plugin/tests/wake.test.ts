@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { open } from '../../hub/store.ts'
 
 const BIN = join(import.meta.dir, '../../bin')
 const SESSION = 'addfa113-0000-4000-8000-000000000000'
@@ -115,8 +116,7 @@ test('a compression memo asks for after waking is left to the memory agent, and 
 
 test('the profile comes first, ahead of memory, in the launcher\'s file and in the hooks', () => {
   memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
-  mkdirSync(join(home, 'state'))
-  writeFileSync(join(home, 'state/profile.md'), '# Always\n- Ships on fridays\n')
+  open(join(home, 'state')).profiled('', '# Always\n- Ships on fridays\n')
   const all = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } }).stdout.toString()
   const both = "My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n# Always\n- Ships on fridays\n\nYour memory, oldest first:\n\n#0 2026-10-06 First note.\nYou are awake.\n"
   expect(body(all)).toBe(both)
