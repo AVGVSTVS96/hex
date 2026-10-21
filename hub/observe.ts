@@ -26,7 +26,7 @@ Memories: one line each, appended forever. Sessions write none, so every memory 
 
 The profile: a small markdown file every session reads next to the owner's AGENTS.md, the current truth about the owner. Under "# Always" goes what stays true: who they are, their people, their work, and how they want things done where AGENTS.md doesn't say it yet; a line whose every point AGENTS.md already states, in any words, comes out, even one already there, and a line keeps what it adds. Under "# Now" goes what's in motion: what they're asking for and waiting on, the projects that are live, what was just decided or settled, each as where it stands and what it waits on, since how it got there is in the memories. When a message changes something the profile says, rewrite that line so only the current truth stays; drop what's done or no longer matters. Keep it short, never over ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when nothing in it needs to change.
 
-In both, quote the words that carry what the owner meant, and skip curses and anger with "…": they stay in the log. If you need what a message answers, the whole conversation is in the log file named with the turn.`
+In both, quote the words that carry what the owner meant, and skip curses and anger with "…": they stay in the log, and a message that's only anger gets no quote. If you need what a message answers, the whole conversation is in the log file named with the turn.`
 
 const SCHEMA = {
   type: 'object',
@@ -102,7 +102,7 @@ export async function observe(state: string, session: string, reply: string, { a
 // naming the owner's message it quotes, or misquotes it.
 function misquoted(profile: string | null, store: Store): string[] {
   if (!profile?.trim()) return ['(empty)']
-  if (profile.length > PROFILE) return [`(${profile.length} characters: cut it to about 4,500 by merging lines and dropping what's done or no longer matters, and any line AGENTS.md already states)`]
+  if (profile.length > PROFILE) return [`(${profile.length} characters: cut it to about 4,500 by merging lines and dropping what's done or no longer matters, and what AGENTS.md already states)`]
   return profile.split('\n').flatMap(each => {
     if (!keysOf(each).length) return quotesOf(each).length ? [`${each}\n  names no message of the owner's for its quote`] : []
     const found = verdict(each, store)
