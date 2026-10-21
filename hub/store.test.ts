@@ -297,7 +297,7 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
   new Store(dir).db.close()
   const old = new Database(join(dir, 'hex.db'))
-  old.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  old.run('drop table pins; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   old.run("insert into threads values ('telegram', '-100:9', 'Errands')")
   old.run('pragma user_version = 16')
   old.close()
