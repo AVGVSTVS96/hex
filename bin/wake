@@ -43,6 +43,7 @@ room=9000
 wake=$(whole)
 
 rest="${TMPDIR:-/tmp}/hex-wake-$session.txt"
+[ -z "$last" ] || rm -f "$rest"
 printf '%s\n' "$wake" | awk -v n="$n" -v last="$last" -v room="$room" -v rest="$rest" '
   { if (size && size + length($0) + 1 > room) { chunks++; size = 0 }
     size += length($0) + 1

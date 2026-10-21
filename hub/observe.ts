@@ -193,12 +193,11 @@ export async function nap(memo = MEMO, compress = summarize, keep = () => true) 
   }
 }
 
-// The summary line, without the quotes or code fence a model may wrap it in.
+const LINE = { type: 'object', properties: { line: { type: 'string' } }, required: ['line'] }
+
 async function summarize(prompt: string) {
-  const { result } = await call(prompt, 'You compress the memories of an AI assistant. Answer with the one line only.', ['--effort', 'low', '--tools', ''])
-  const bare = (line: string) => (/^"[^"]*"$/.test(line) ? line.slice(1, -1) : line)
-  const lines = String(result ?? '').split('\n').map(each => bare(each.trim().replace(/^`+|`+$/g, '').trim())).filter(Boolean)
-  return lines.sort((a, b) => b.length - a.length)[0] ?? ''
+  const { structured_output } = await call(prompt, 'You compress the memories of an AI assistant into one line.', ['--effort', 'low', '--tools', '', '--json-schema', JSON.stringify(LINE)])
+  return String(structured_output?.line ?? '').trim()
 }
 
 // A session reloads its memory file after compacting, so each pass leaves it current: the profile
