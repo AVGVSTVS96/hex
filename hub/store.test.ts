@@ -129,7 +129,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.db.run('drop index said; drop table profiles')
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
-  store.db.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
