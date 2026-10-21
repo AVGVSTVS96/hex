@@ -488,11 +488,6 @@ export class Store {
     })
   }
 
-  // Whether what a session was last shown differs from digest, noting digest as shown.
-  show(session: string, digest: string): boolean {
-    return this.swap(session, digest) !== null
-  }
-
   // The session's context lost what it was shown (a compaction, a clear), so its next show is in full.
   unshow(session: string) {
     this.write(() => this.db.query('delete from shown where session = ?').run(session))

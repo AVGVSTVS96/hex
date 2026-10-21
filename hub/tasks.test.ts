@@ -49,6 +49,20 @@ test("main sees every thread's open tasks, and gets them again after a compactio
   expect(await hook({ session_id: 'm', hook_event_name: 'SessionStart', source: 'compact' }, { HEX_THREAD: '-100', HEX_MAIN: '1' })).toBe(all)
 })
 
+test('after the first list, main gets only what changed: new or edited entries, and the ones that left', async () => {
+  const main = { HEX_THREAD: '-100', HEX_MAIN: '1' }
+  const all = await hook({ session_id: 'm2' }, main)
+  const store = open(dir)
+  store.deliver({ key: 'telegram:-100:61', to: '-100:9', from: 'telegram', body: 'and batteries', meta: { user: 'bassim' } })
+  store.createTask({ title: 'Buy batteries', message: 'telegram:-100:61', owner: '-100:9' })
+  store.editTask('t-1', { status: 'done', proof: 'https://example.com/pr/1' })
+  const next = await hook({ session_id: 'm2' }, main)
+  expect(next).toBe('New or changed since you last saw the list:\nt-3 (open, Errands): Buy batteries\n\nNo longer open or waiting:\n- t-1 (open, Website): Fix the login page\n')
+  expect(next.length).toBeLessThan(all.length)
+  store.editTask('t-2', { doneWhen: 'it charges the laptop' })
+  expect(await hook({ session_id: 'm2' }, main)).toBe('New or changed since you last saw the list:\nt-2 (open, Errands): Buy a power adapter\n  done when: it charges the laptop\n')
+})
+
 test('a session outside hex, or one with no tasks, hears nothing', async () => {
   const outside = Bun.spawn(['bun', join(import.meta.dir, 'tasks.ts')], { stdin: new Blob(['{"session_id":"x"}']), stdout: 'pipe', env: { PATH: process.env.PATH! } })
   expect(await outside.exited).toBe(0)
