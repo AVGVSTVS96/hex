@@ -1,10 +1,5 @@
-import { clip, fit } from './fit.ts'
+import { clip, fit, ROOM } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
-
-// Claude Code swaps a hook's output past 10,000 characters for a file path and a preview it
-// doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output), so the list
-// stays under it, with room for the lines that say what didn't fit.
-const ROOM = 9_000
 
 function facts(task: Task, named: Record<string, string>) {
   const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]

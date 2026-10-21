@@ -17,7 +17,8 @@ function mine() {
   return text && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${text}\n\nYour memory:\n`
 }
 
-// memo prints its wake in parts, each ending with the command for the next.
+// memo prints its wake in parts, each ending with the command for the next, and the last says
+// "You are awake." unless it stopped.
 function memory() {
   let text = ''
   for (let args = ['wake']; ; ) {
@@ -25,7 +26,7 @@ function memory() {
     const part = run.stdout.toString() + run.stderr.toString()
     const next = part.match(/^Not awake yet\. Run: .* wake (\d+) (\d+)\n?/m)
     text += next ? part.replace(next[0], '') : part
-    if (!next) return text
+    if (!next) return { text, end: part }
     args = ['wake', next[1]!, next[2]!]
   }
 }
@@ -34,17 +35,17 @@ const [mode, last] = process.argv.slice(2)
 if (!existsSync(memo) || !process.env.MEMORY_DIR) process.exit(0)
 
 if (mode === 'all') {
-  const wake = memory()
+  const { text: wake, end } = memory()
   // A wake that holds no memory makes no wake file. One that stopped to ask for a compression exits 1,
   // so the launcher keeps the last wake; one that failed prints nothing, as with memory off.
-  if (!/^You are awake\.$/m.test(wake)) {
-    process.stderr.write(`${wake.split('\n')[0]}\n`)
-    process.exit(wake.startsWith('Cannot wake:') ? 1 : 0)
+  if (!/^You are awake\.$/m.test(end)) {
+    process.stderr.write(`${end.split('\n')[0]}\n`)
+    process.exit(/^Cannot wake:/m.test(end) ? 1 : 0)
   }
   const head = mine()
   console.log(`${lead} Claude Code loads it as an instruction file. ${record} If it ends by asking for a compression, do that first.\n\n${head && `${head}\n`}${wake.trimEnd()}`)
 } else if (!process.env.HEX_WAKE) {
   // The profile is a part of its own, so a profile rewritten while the hooks run can't move where the memory splits.
-  const parts = [mine(), ...split(memory())].filter(part => part.trim())
+  const parts = [mine(), ...split(memory().text)].filter(part => part.trim())
   process.stdout.write(handover(parts, Number(mode), last === 'last', `${lead} ${record} If the last part ends by asking for a compression, do that first.`, '`.hex/vendor/memo wake` prints the whole memory; read it to the end.'))
 }
