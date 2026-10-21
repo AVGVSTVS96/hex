@@ -450,7 +450,7 @@ function show(call: Live, id: string) {
   return `showing "${question.question}" to the caller`
 }
 
-// An question answered on a call, said aloud (via call) or tapped on its card (via app).
+// A question answered on a call, said aloud (via call) or tapped on its card (via app).
 async function answerQuestion(id: string, label: string, via: string) {
   const question = yours.find(id) ?? live?.shown.get(id)
   await yours.answer(id, label, via)
@@ -893,7 +893,7 @@ async function showActivity(url: URL) {
 // that the call isn't already following, so a call shows all of it and not only what it sent.
 function elsewhere(call: Live): (Task & { line?: string })[] {
   const following = new Set(call.call.activity().flatMap(task => (task.state === 'running' && task.agent ? [task.agent] : [])))
-  return board.tasks
+  return board.runs
     .filter(row => row.state === 'working' && row.app !== 'voice' && !following.has(row.thread))
     .map(row => ({ id: row.id, state: 'running', text: row.name, to: row.name, line: newest(row) }))
 }

@@ -198,7 +198,7 @@ same ones `claude agents --json` prints) and wakes when one of them changes.
         GET /tasks?after=<version> ── the app's Tasks sheet
 ```
 
-A task's `link` is `https://t.me/...` (a topic, General, or the bot for the
+A run's `link` is `https://t.me/...` (a topic, General, or the bot for the
 DM), `https://discord.com/channels/<server>/<thread>`, `buzz://message?channel=...&id=...`
 (`buzz://channel/...` for the DM) or `<scheme>://threads/<environment>/<thread>` for T3 Code,
 the app's URL scheme being `t3code` unless `T3_APP_SCHEME` says otherwise
@@ -219,15 +219,15 @@ order (needs you, working, done, failed, idle), newest change first in each.
 | `GET /tasks` | `{ version, tasks }`: each thread's `id`, `name`, `where` (Telegram, General, Discord...), `state` (`needs`, `working`, `done`, `failed`, `idle`), whether its session is `running` a turn right now, one `line`, `since` its state began, `at` its last change, its `agents` (while it works: each Claude Code subagent, session it started, or T3 Code thread it handed work to, working or finished since `since`: `id`, `label`, `state` (`working`, `done`, `failed`, `stopped`), `via` (`claude` or `t3`), `who` (the model in words), `since`, `end`, one `line`, and a T3 `link`), its `track` (the last week of its states for its lane: each change, with steps for the last hour only), and a `link` that opens the thread in its own app (Telegram, Discord, Buzz or T3 Code) |
 | `GET /tasks?after=<version>` | the same, once anything has changed (or after 25 seconds) |
 | `GET /tasks/summary?after=<version>` | `{ version, needs, working }`, once a count changes |
-| `GET /tasks/<id>` | one task, with what it `needs` from you in full, what it did `lately`, its newest `steps` (newest first: `id`, `at`, `end`, `kind`, a few words of `text`, a tool's `state`, `detail` and `result`, and the `agent` it started), its `plan`, and each agent's `result` and own `steps` |
-| `POST /tasks/<id>/talk` | during a call: the voice brings the task up, and Claude hears which thread it is |
+| `GET /tasks/<id>` | one run, with what it `needs` from you in full, what it did `lately`, its newest `steps` (newest first: `id`, `at`, `end`, `kind`, a few words of `text`, a tool's `state`, `detail` and `result`, and the `agent` it started), its `plan`, and each agent's `result` and own `steps` |
+| `POST /tasks/<id>/talk` | during a call: the voice brings the run up, and Claude hears which thread it is |
 | `GET /tasks/<id>/chat` | `{ version, sends, total, turns, waiting }`: the thread's chat across every session it has had, from their logs (`turns`: its latest 100 of `total`, each `from` `me` or `hex` with its `text`); what you sent that its session hasn't taken in yet (`waiting`: `key`, `text`, `at`, where `key` is the one hex keeps it under, `<app>:<your key>` for words sent from here); and whether words typed here reach it (`sends`: false for T3 Code threads and sessions no app holds) |
 | `GET /tasks/<id>/chat?after=<version>` | the same, once the chat changes (or after 25 seconds) |
 | `POST /tasks/<id>/chat` | `{ text, key }`: your words to the thread, as if typed in its own app; `key` (`app-` and 8 to 60 letters, digits, `-` or `_`) names the message, so sending it again delivers it once. 409 when `sends` is false |
 | `POST /tasks/<id>/stop` | your stop, as the thread's own app's Stop does it. 409 when no app holds the thread |
 
-An app starting a call with `"about": "<task id>"` in its `/session` body gets
-the same: the voice opens with the task, and Claude's "call started" message
+An app starting a call with `"about": "<run id>"` in its `/session` body gets
+the same: the voice opens with the run, and Claude's "call started" message
 names it, so `send` can reach that thread.
 
 ## Questions
