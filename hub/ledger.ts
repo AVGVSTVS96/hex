@@ -20,15 +20,16 @@ export class Ledger {
     private readonly app: string,
   ) {
     this.store = open(storeDir(dirname(file)))
-    // An older hex kept these in this file (state/<app>/ledger.json): they move into hex.db once, and
-    // the file stays beside it as ledger.json.moved.
+    // An older hex kept these in this file (state/<app>/ledger.json): they move into hex.db, a pin
+    // only when it's newer than the one hex.db has, and the file stays beside it as ledger.json.moved-<time>.
     const book = read(file)
     if (!book) return
     this.store.write(() => {
       for (const question of book.asks ?? []) keep(() => this.store.ask({ app: this.app, ...question }), 'a question', question)
-      for (const [thread, pin] of Object.entries<any>(book.pins ?? {})) keep(() => this.store.pin(this.app, thread) ?? this.store.pinned({ ...pin, app: this.app, thread }), 'a pin', pin)
+      for (const [thread, pin] of Object.entries<any>(book.pins ?? {}))
+        keep(() => (this.store.pin(this.app, thread)?.at ?? '') < pin.at && this.store.pinned({ ...pin, app: this.app, thread }), 'a pin', pin)
     })
-    renameSync(file, `${file}.moved`)
+    renameSync(file, `${file}.moved-${Date.now()}`)
 
     function keep(move: () => unknown, what: string, kept: unknown) {
       try {
