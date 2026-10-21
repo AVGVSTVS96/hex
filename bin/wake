@@ -27,7 +27,7 @@ if [ "${1:-}" = all ]; then
   printf 'This is your memory: `.hex/vendor/memo wake`, run in full for you as this session started, so you don'"'"'t need to run it. Claude Code loads it as an instruction file, but its numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one. If it ends by asking for a compression, do that first.\n\n%s\n' "$wake"
   exit
 fi
-session=$(printf '%s' "$input" | jq -r .session_id)
+
 [ -x "$memo" ] && [ -n "${MEMORY_DIR:-}" ] && [ -z "${HEX_WAKE:-}" ] || exit 0
 
 # Claude Code puts at most 10,000 characters of a hook's output into context,
