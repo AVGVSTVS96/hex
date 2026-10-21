@@ -28,13 +28,12 @@ untrusted && echo "hex couldn't mark $here trusted in $config" >&2
 wake="$home/state/wake"
 mkdir -p "$wake"
 if ! MEMORY_DIR=$(jq -r '.env.MEMORY_DIR // empty' "$home/.claude/settings.json" 2>/dev/null) "$hex/bin/wake" all > "$wake/CLAUDE.md.$$"; then
-  # A wake that couldn't be written keeps the last one, which still holds the memory.
-  echo "hex kept the last wake file, since memo couldn't wake" >&2
+  # A wake that stopped to ask for a compression keeps the last one, which still holds the memory.
   rm -f "$wake/CLAUDE.md.$$"
 elif [ -s "$wake/CLAUDE.md.$$" ]; then
   mv "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
 else
-  # With memory off, wake prints nothing, and no wake file stays.
+  # With memory off or failing, wake prints nothing, and no wake file stays.
   rm -f "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
 fi
 if [ -s "$wake/CLAUDE.md" ]; then woke="$wake/CLAUDE.md"; else unset HEX_WAKE; fi
