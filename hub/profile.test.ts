@@ -27,13 +27,12 @@ async function hook(input: object, env: Record<string, string> = {}) {
   return new Response(run.stdout).text()
 }
 
-test("a thread's session gets its own open tasks in the owner's words, once, and again when they change", async () => {
+test("a thread's session gets its own open tasks as clean entries, once, and again when they change", async () => {
   const first = await hook({ session_id: 'a', hook_event_name: 'UserPromptSubmit' }, { HEX_THREAD: '-100:7' })
   expect(first).toContain("This thread's open tasks")
-  expect(first).toContain('t-1 (open, Website): Fix the login page')
-  expect(first).toContain('  done when: it signs in')
-  expect(first).toContain('[telegram:-100:50 · bassim · ')
-  expect(first).toContain('    Fix the login page.\n    It 500s on submit.')
+  expect(first).toContain('t-1 (open, Website): Fix the login page\n  done when: it signs in')
+  expect(first).not.toContain('It 500s on submit')
+  expect(first).not.toContain('telegram:-100:50')
   expect(first).not.toContain('power adapter')
   expect(await hook({ session_id: 'a' }, { HEX_THREAD: '-100:7' })).toBe('')
   open(dir).editTask('t-1', { status: 'done', proof: 'https://example.com/pr/1' })
@@ -57,23 +56,20 @@ test('a session outside hex, or one with no tasks, hears nothing', async () => {
   expect(await hook({ session_id: 'b' }, { HEX_THREAD: '-100:404' })).toBe('')
 })
 
-test("a list too long for one hook's output gives each task in full while it fits, then in a line that says where its words are", async () => {
+test("a list too long for one hook's output gives each entry with its done-when while it fits, then one line, and never the owner's words", async () => {
   const store = open(dir)
-  store.deliver({ key: 'telegram:-100:70', to: '-100:7', from: 'telegram', body: `Rewrite the docs.\n${'every page, '.repeat(800)}`, meta: { user: 'bassim' } })
-  store.createTask({ title: 'Rewrite the docs', message: 'telegram:-100:70', owner: '-100:7' })
-  for (let n = 0; n < 60; n++) {
-    store.deliver({ key: `telegram:-100:${100 + n}`, to: '-100:7', from: 'telegram', body: `chore ${n}: ${'tidy up the build, '.repeat(6)}`, meta: { user: 'bassim' } })
-    store.createTask({ title: `Chore ${n}`, message: `telegram:-100:${100 + n}`, owner: '-100:7' })
+  for (let n = 0; n < 120; n++) {
+    store.deliver({ key: `telegram:-100:${100 + n}`, to: '-100:7', from: 'telegram', body: `chore ${n}, damn it`, meta: { user: 'bassim' } })
+    store.createTask({ title: `Chore ${n}: ${'tidy up the build '.repeat(7)}`, message: `telegram:-100:${100 + n}`, owner: '-100:7', doneWhen: 'the build is tidy '.repeat(8) })
   }
   const shown = await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })
   expect(shown.length).toBeLessThan(10_000)
-  expect(shown).toContain('    Fix the login page.\n    It 500s on submit.')
-  expect(shown).toContain('t-3 (open, Website): Rewrite the docs (`.hex/bin/hex task t-3` has my words in full)')
-  expect(shown).toContain('    chore 0: tidy up the build')
-  expect(shown).toMatch(/…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/)
-  store.deliver({ key: 'telegram:-100:200', to: '-100:7', from: 'telegram', body: 'and the API reference', meta: { user: 'bassim' } })
-  store.addWords('t-3', 'telegram:-100:200')
-  expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe(shown)
+  expect(shown).toContain('t-1 (open, Website): Fix the login page\n  done when: it signs in')
+  expect(shown).toMatch(/\n  done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/)
+  expect(shown).not.toContain('damn it')
+  store.deliver({ key: 'telegram:-100:300', to: '-100:7', from: 'telegram', body: 'and the API reference', meta: { user: 'bassim' } })
+  store.addWords('t-3', 'telegram:-100:300')
+  expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe('')
 })
 
 test('the questions still waiting on the owner come with the tasks, and leave once answered', async () => {

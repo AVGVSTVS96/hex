@@ -28,7 +28,7 @@ function facts(task: Task, named: Record<string, string>) {
   return `${task.id} (${facts.filter(Boolean).join(', ')})`
 }
 
-// A task as a session reads it: its title and facts on one line, then each of the owner's words in
+// A task as `hex task` shows it: its title and facts on one line, then each of the owner's words in
 // full, under the key of the message they came from.
 export function render(task: Task, named: Record<string, string> = {}): string {
   const lines = [task.title ? `${facts(task, named)}: ${task.title}` : facts(task, named)]
@@ -41,9 +41,11 @@ export function render(task: Task, named: Record<string, string> = {}): string {
   return lines.join('\n')
 }
 
-// A task in one line, for when its words don't fit, and where to read them.
-function brief(task: Task, named: Record<string, string>) {
-  return `${facts(task, named)}: ${titleOf(task, 150)} (\`.hex/bin/hex task ${task.id}\` has my words in full)`
+// A task as a session's prompt carries it: the clean entry, its title and what done looks like. The
+// owner's words stay in hex.db, for `hex task` to show in full.
+function entry(task: Task, named: Record<string, string>, done = true) {
+  const line = `${facts(task, named)}: ${titleOf(task, 150)}`
+  return done && task.doneWhen ? `${line}\n  done when: ${clip(task.doneWhen, 200)}` : line
 }
 
 // A question as a session reads it: where it was asked, its first line, and its buttons.
@@ -51,9 +53,9 @@ export function waiting(question: Question, named: Record<string, string> = {}):
   return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
 }
 
-// What a session should have before it acts: the open tasks it serves, each with its title and the
-// owner's own words, the questions still waiting on the owner, and a digest of all of it, so a change to words that didn't fit still counts. Main sees
-// every thread's; a thread sees its own.
+// What a session should have before it acts: the questions still waiting on the owner, then the open
+// tasks it serves, each as its clean entry, and a digest of all of it, so a change to an entry that didn't
+// fit still counts. Main sees every thread's; a thread sees its own.
 export function profile(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
   const store = open(state)
   const tasks = store.tasks({ owner: thread, status: ['open'] })
@@ -62,16 +64,16 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {
-      header: `${whose}'s open tasks, each with its title, then my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`,
-      items: tasks.map(task => [render(task, named), brief(task, named)]),
-      gap: '\n\n',
-      rest: '`.hex/bin/hex tasks` lists them all',
-    },
-    {
       header: `${whose}'s questions still waiting on my answer (edit_message with settled: true closes one that no longer stands):`,
       items: questions.map(question => [waiting(question, named)]),
       gap: '\n',
       rest: '`.hex/bin/hex questions` lists them all',
+    },
+    {
+      header: `${whose}'s open tasks (\`.hex/bin/hex task <id>\` has my words in full, adds to them and closes them):`,
+      items: tasks.map(task => [entry(task, named), entry(task, named, false)]),
+      gap: '\n',
+      rest: '`.hex/bin/hex tasks` lists them all',
     },
   ]
   const text = fit(sections, room)
