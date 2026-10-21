@@ -25,7 +25,8 @@ try {
   const now: Record<string, string> = Object.fromEntries(files().map(file => [file.path, file.text]))
   // A session that started before hex kept this record in hex.db has it in a file until it ends.
   const legacy = join(process.env.TMPDIR ?? tmpdir(), `hex-rules-${session_id}.json`)
-  const seen = store.seen(session_id, 'rules') || (existsSync(legacy) ? readFileSync(legacy, 'utf8') : '')
+  const kept = store.seen(session_id, 'rules')
+  const seen = kept || (existsSync(legacy) ? readFileSync(legacy, 'utf8') : '')
   let out = ''
   if (hook_event_name !== 'SessionStart' && seen) {
     const before: Record<string, string> = JSON.parse(seen)
@@ -49,7 +50,7 @@ try {
     }
   }
   // Kept before it's said, so a record that can't be kept doesn't show the same change on every prompt.
-  if (JSON.stringify(now) !== seen) store.show(session_id, 'rules', JSON.stringify(now))
+  if (JSON.stringify(now) !== kept) store.show(session_id, 'rules', JSON.stringify(now))
   if (out) console.log(out)
 } catch (error) {
   console.error(`hex couldn't compare this session's rules with the ones it loaded: ${error}`)

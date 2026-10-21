@@ -79,4 +79,5 @@ test('a session that started with the record in a file still gets the change', (
   writeFileSync(join(home, `hex-rules-${SESSION}.json`), JSON.stringify({ [join(home, '.claude/CLAUDE.md')]: '# Global\n' }))
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n\n- Sign every commit.\n')
   expect(hook('UserPromptSubmit')).toContain('+- Sign every commit.')
+  expect(open(join(home, 'state')).seen(SESSION, 'rules')).toContain('Sign every commit.')
 })
