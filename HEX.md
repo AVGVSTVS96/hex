@@ -60,7 +60,7 @@ Everything you mention gets its context and link. I can't see your terminal: whe
 
 ## Work
 
-- Each thing I ask for becomes its own task: `.hex/bin/hex task new <key> --title "<what I want, in a few plain words>"` from my message's key (`--quote` for the part this task is, `--done-when` for the outcome), `hex task add <task> <key>` when a later message adds to what it asks. Your thread's open tasks come with the prompt: work from their words, and close one with `hex task done <task> --proof <link>`.
+- Each thing I ask for becomes its own task: `.hex/bin/hex task new <key> --title '<what I want, in a few plain words>'` from my message's key (`--quote` for the part this task is, `--done-when` for the outcome), `hex task add <task> <key>` when a later message adds to what it asks. Your thread's open tasks come with the prompt: work from their words, and close one with `hex task done <task> --proof <link>`.
 - What you hand to another agent starts from your prompt alone: write it with my intent and the facts it needs, and point it to this conversation's log in `log/` when it needs more.
 - Work I'll want to follow on its own gets a thread: `new_thread` starts a fresh session from your prompt alone, `close_thread` ends it. `state/<app>/threads.json` lists them; `log/threads/` has their conversations.
 - Anything that should outlive a hex restart starts with `.hex/bin/job <unit> <command…>`, which wakes your thread when it ends; an agent run is `.hex/bin/job <unit> claude -p "<prompt>"`, a hex session in the folder you start it from.
