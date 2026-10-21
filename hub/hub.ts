@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'async_hooks'
 import { createServer } from 'net'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
@@ -294,6 +295,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 }) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = { ...LIMITS, ...limits }
   const registry = join(stateDir, 'threads.json')
+  // The thread whose session made the tool call in progress.
+  const caller = new AsyncLocalStorage<string>()
   const socketPath = join(stateDir, 'hub.sock')
   // Each thread's session reads its settings, binding and token from here, so none of it shows in
   // a process's arguments, and a respawn reads the thread's current ones.
@@ -719,7 +722,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // meta.failed. The session that wrote it has it already, so it wakes nothing.
   function sent(thread: string, { key, content, meta = {} }: Partial<Message> & { content: string }) {
     const row = { key: `${app}:${key ?? randomUUID()}`, to: thread, from: app, author: 'hex', body: content, meta }
-    kept(store => store.deliver(row, current(thread) ?? 'hub'), false)
+    kept(store => store.deliver(row, current(caller.getStore() ?? thread) ?? 'hub'), false)
   }
 
   function pass(thread: string, name: string, message: Message) {
@@ -946,7 +949,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
 
   const serve = endpoint(path.slice(1), channel, token, server, {
-    call,
+    // A tool can send into another thread: what it sends there is still its caller's session's words.
+    call: (thread, tool, args) => caller.run(thread, () => call(thread, tool, args)),
     permission: (thread, request) => permission?.(thread, request),
     open: welcome,
     close: drop,

@@ -76,7 +76,7 @@ function fold(received: { meta: { key: string } }[]) {
 }
 
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
-function start(options: { main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
+function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = options
   if (options.registry) writeFileSync(join(dir, 'threads.json'), JSON.stringify(options.stale ? before(options.registry) : options.registry))
   if (options.agents) writeFileSync(join(dir, 'agents'), JSON.stringify(options.agents))
@@ -90,7 +90,7 @@ function start(options: { main?: string; general?: boolean; idleStop?: number; c
     port: listener.port,
     main: options.main,
     general: options.general,
-    call: async (thread, tool) => `${tool} in ${thread}`,
+    call: options.call ?? (async (thread, tool) => `${tool} in ${thread}`),
     state: (thread, busy) => void seen.push([thread, busy]),
     failed: (thread, reason) => void failedSeen.push([thread, reason]),
     permission: (thread, request) => void asked.push([thread, request]),
@@ -2113,4 +2113,15 @@ test("hex's own words are kept as its session's, already taken, so they wake not
   ])
   expect(open(dir).untaken('chat:7')).toEqual([])
   expect(hub.said('9')?.body).toBe('Done.')
+})
+
+test("what a session sends into another thread is kept as its own words, not that thread's session's", async () => {
+  start({
+    registry: { 'chat:7': { name: 'Desk anchors', session: SESSION }, 'chat:8': { name: 'Errands', session: 'other-session' } },
+    call: async () => (hub.sent('chat:8', { key: '12', content: 'From Desk anchors: done.' }), 'sent'),
+  })
+  const line = http('chat:7')
+  await line.initialize()
+  await line.call('reply', { text: 'done' })
+  expect(open(dir).said('chat:8').map(({ body, taken }) => ({ body, by: taken?.by }))).toEqual([{ body: 'From Desk anchors: done.', by: SESSION }])
 })
