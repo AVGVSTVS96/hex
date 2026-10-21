@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { open, Store } from './store.ts'
@@ -125,7 +125,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.deliver({ ...ask, body: 'Fix the login page.\nIt 500s on submit.' })
   store.createTask({ title: 'x', message: ask.key, owner: '-100:7' })
   store.db.run('update tasks set title = null')
-  store.db.run('drop index said; drop index unauthored')
+  store.db.run('drop index said; drop index unauthored; drop table profiles')
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
   store.db.run('pragma user_version = 10')
@@ -374,4 +374,34 @@ test('a message an older hub kept without an author gets one when hex.db next op
 
 test('a message without its author is refused', () => {
   expect(() => new Store(dir).deliver({ key: 'telegram:-100:90', to: '-100:7', from: 'telegram', author: '', body: 'hi' })).toThrow('telegram:-100:90 has no author')
+})
+
+test('the profile is its newest version, put in place only over the one a writer read, and every version stays', async () => {
+  const store = open(dir)
+  expect(store.profile()).toBe('')
+  expect(store.profiled('', '# Who he is\n- Ships on fridays\n')).toBe(true)
+  expect(store.profiled('', '# Who he is\n- Ships any day')).toBe(false)
+  expect(store.profiled('# Who he is\n- Ships on fridays', '# Who he is\n- Ships on fridays')).toBe(true)
+  expect(store.profiled('# Who he is\n- Ships on fridays', '# Who he is\n- Ships any day')).toBe(true)
+  expect(store.profile()).toBe('# Who he is\n- Ships any day')
+  expect(store.profiles().map(({ body }) => body)).toEqual(['# Who he is\n- Ships any day', '# Who he is\n- Ships on fridays'])
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'profile'], { stdout: 'pipe' })
+  expect(await new Response(cli.stdout).text()).toBe('# Who he is\n- Ships any day\n')
+})
+
+test('a profile kept in state/profile.md comes into hex.db with its history, in order and once each, and the files move aside', () => {
+  writeFileSync(join(dir, 'profile.md'), '# Who he is\n- Third\n')
+  const history = [{ at: '2026-10-21T13:00:00.000Z', profile: '# Always\n- First' }, { at: '2026-10-21T13:32:54.590Z', profile: '# Always\n- First' }, { at: '2026-10-21T15:09:00.000Z', profile: '# Who he is\n- Second' }]
+  writeFileSync(join(dir, 'profile.md.history'), history.map(each => JSON.stringify(each)).join('\n') + '\n{"at": "broken\n')
+  const store = new Store(dir)
+  expect(store.profiles().map(({ body }) => body)).toEqual(['# Who he is\n- Third', '# Who he is\n- Second', '# Always\n- First'])
+  expect(store.profiles()[1]!.at).toBe('2026-10-21T13:32:54.590Z')
+  expect(store.profiles()[2]!.at).toBe('2026-10-21T13:00:00.000Z')
+  expect(readFileSync(join(dir, 'profile.md.moved-to-hex.db'), 'utf8')).toBe('# Who he is\n- Third\n')
+  expect(() => store.db.run('delete from profiles')).toThrow('never taken away')
+})
+
+test('a carry that renamed the profile files and then failed to commit carries them from their new names', () => {
+  writeFileSync(join(dir, 'profile.md.moved-to-hex.db'), '# Who he is\n- Third\n')
+  expect(new Store(dir).profile()).toBe('# Who he is\n- Third')
 })

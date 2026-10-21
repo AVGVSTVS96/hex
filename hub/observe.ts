@@ -1,20 +1,18 @@
 import { spawn } from 'child_process'
-import { appendFileSync, closeSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { closeSync, existsSync, openSync, renameSync, writeFileSync } from 'fs'
 import { dirname, join, resolve } from 'path'
-import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
+import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { zoneOf } from './schedule.ts'
 import { open, replied, shown, type Row, type Store } from './store.ts'
 
-// The owner's profile, which this agent keeps current after every turn; bin/wake puts it in front of
-// the memory every session starts with. It never passes PROFILE.
-export const profilePath = (state: string) => join(state, 'profile.md')
-export const profileOf = (state: string) => (existsSync(profilePath(state)) ? readFileSync(profilePath(state), 'utf8').trim() : '')
+// The owner's profile, which this agent keeps current after every turn in hex.db; bin/wake puts it in
+// front of the memory every session starts with. It never passes PROFILE.
 export const PROFILE = 6_500
 
 // hex's memory agent, the observer from https://dhravya.dev/writing/memory-on-the-harness-level/:
 // after a session's turn, a model reads the messages it took, with the reply they got, the newest
 // notes and the owner's profile. It writes every note memory gets, the owner's words in their own
-// words and what happened in plain ones, and keeps the profile (state/profile.md) one consolidated,
+// words and what happened in plain ones, and keeps the profile (hex.db's newest profile) one consolidated,
 // current account of who they are, a changed fact replaced rather than stacked; their rules,
 // wants and history live in AGENTS.md, tasks and memory. Every note and profile line that names a message is checked against the words it quotes.
 
@@ -26,6 +24,9 @@ const BEFORE = 10
 const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
+// An entry in state/observe.log, which a pass's errors go to: stamped with when it was written, its
+// further lines indented under it.
+const log = (entry: string) => process.stderr.write(`${new Date().toISOString()} ${entry.replaceAll('\n', '\n  ')}\n`)
 
 const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the messages of that turn in order, the owner's, others' (jobs, schedules, other sessions) and what hex replied; an owner's message a memory already names is marked so. You keep two things.
 
@@ -66,12 +67,12 @@ export async function observe(state: string, session: string, { ask = claude, me
       const whose = (row: Row) => (row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`)
       const before = place ? store.said(place, BEFORE, [...rows, ...others].reduce((first, row) => (row.at < first ? row.at : first), by)).filter(shown) : []
       const turn = [
-        ...(before.length ? [`<before>\n${before.map(row => `${row.author === 'owner' ? 'The owner,' : whose(row)} ${clock(row.at, zone)}:\n${clip(row.body, 1000)}`).join('\n\n')}\n</before>`] : []),
+        ...(before.length ? [`<before>\n${before.map(row => `${row.author === 'owner' ? 'The owner,' : whose(row)} ${clock(row.at, zone)}:\n${cut(row.body, 1000)}`).join('\n\n')}\n</before>`] : []),
         `<turn thread="${place ? (threads[place] ?? place) : 'none'}">`,
         ...taken.filter(shown).map(row =>
           rows.includes(row)
             ? `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`
-            : `${whose(row)} ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`,
+            : `${whose(row)} ${clock(row.at, zone)}:\n${cut(row.body, 2000)}`,
         ),
         '</turn>',
       ].join('\n\n')
@@ -79,7 +80,7 @@ export async function observe(state: string, session: string, { ask = claude, me
       // A profile that misquotes the owner goes back with what's wrong, and another pass may
       // rewrite the profile while this one thinks: either way it thinks again.
       for (let tries = 0; tries < 3; tries++) {
-        const before = profileOf(state)
+        const before = store.profile()
         const answer = await ask(`<profile>\n${before || '(none yet)'}\n</profile>\n\n<newest memories>\n${newest(recall('.'))}\n</newest memories>\n\n${turn}${wrong}`)
         const now = named(fresh)
         for (const note of tries ? [] : answer.notes.map(line).filter(Boolean)) {
@@ -93,11 +94,11 @@ export async function observe(state: string, session: string, { ask = claude, me
         const bad = misquoted(answer.profile, store)
         reasons = bad.join('\n')
         wrong = bad.length ? retry(bad, answer.profile) : ''
-        if (wrong || !swap(state, store, before, answer.profile)) continue
+        if (wrong || !store.profiled(before, answer.profile)) continue
         wanted = false
         break
       }
-      if (wanted) console.error(`hex left the profile as it was after 3 tries:${reasons ? `\n${reasons}` : ' another pass kept rewriting it'}`)
+      if (wanted) log(`hex left the profile as it was after 3 tries:${reasons ? `\n${reasons}` : ' another pass kept rewriting it'}`)
     }
     // A pass that lost to other passes leaves its turn for the next, unless it wrote notes, which a
     // second look could write again; one that kept misquoting would again, so its turn is done.
@@ -105,7 +106,7 @@ export async function observe(state: string, session: string, { ask = claude, me
     return written
   } catch (error) {
     store.observed(taken.map(row => row.key), written.length > 0)
-    console.error(`hex couldn't look over this turn for memories: ${error}`)
+    log(`hex couldn't look over this turn for memories: ${error}`)
     return written
   }
 }
@@ -126,24 +127,6 @@ function misquoted(profile: string | null, store: Store): string[] {
 
 const retry = (bad: string[], draft: string) =>
   `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join('\n')}\n\nFix that draft rather than starting over:\n<draft>\n${draft.trim()}\n</draft>`
-
-// Puts the profile in place only if it's still the one this pass read, inside the store's write
-// lock so two passes never both pass that check, and whole, so a session never reads half a profile.
-function swap(state: string, store: Store, before: string, profile: string) {
-  return store.write(() => {
-    if (profileOf(state) !== before.trim()) return false
-    const next = `${profilePath(state)}.${process.pid}.new`
-    writeFileSync(next, `${profile.trim()}\n`)
-    renameSync(next, profilePath(state))
-    // The file holds the newest version and the history every one it replaced, hand edits too.
-    try {
-      if (before.trim()) appendFileSync(`${profilePath(state)}.history`, `${JSON.stringify({ at: new Date().toISOString(), profile: before.trim() })}\n`)
-    } catch (error) {
-      console.error(`hex couldn't keep the replaced profile: ${error}`)
-    }
-    return true
-  })
-}
 
 // The newest notes, enough to show what memory already says and how its lines read.
 const newest = (recalled: string) => recalled.split('\n').filter(line => line.startsWith('#')).slice(-NEWEST).join('\n')
@@ -254,7 +237,7 @@ export async function drain(state: string, run: (pass: Pass, keep: () => boolean
   while (store.waiting() && store.lease('observe', holder, 4 * CALL)) {
     try {
       for (let next; (next = store.waiting()); ) {
-        await run(next.pass as Pass, () => store.lease('observe', holder, 4 * CALL)).catch(error => console.error(`hex couldn't look over a turn for memories: ${error}`))
+        await run(next.pass as Pass, () => store.lease('observe', holder, 4 * CALL)).catch(error => log(`hex couldn't look over a turn for memories: ${error}`))
         store.passed(next.n)
         if (!store.lease('observe', holder, 4 * CALL)) return
       }

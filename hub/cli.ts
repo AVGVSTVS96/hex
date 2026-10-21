@@ -19,6 +19,7 @@ const USAGE = `usage:
   hex questions [--thread <thread> | --all] [--json]
   hex threads [--json]
   hex message <key>
+  hex profile [--all] [--json]
   hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--json]
   hex recall <regex>`
 
@@ -176,6 +177,13 @@ try {
     case 'threads': {
       const threads = store.threads()
       console.log(flags.json ? JSON.stringify(threads, null, 1) : threads.map(({ app, thread, name }) => `${app} ${thread} ${name}`).join('\n'))
+      break
+    }
+    case 'profile': {
+      // The owner's profile as it is now, or with --all every version, newest first.
+      const versions = flags.all ? store.profiles() : store.profiles().slice(0, 1)
+      if (flags.json) console.log(JSON.stringify(flags.all ? versions : (versions[0] ?? null), null, 1))
+      else console.log(versions.map(({ at, body }) => (flags.all ? `--- ${at}\n${body}\n` : body)).join('\n') || 'no profile yet')
       break
     }
     case 'message': {

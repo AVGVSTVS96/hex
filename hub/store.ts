@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite'
-import { appendFileSync, mkdirSync, watch, type FSWatcher } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
 import { join } from 'path'
 
 // One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
@@ -43,8 +43,8 @@ export type NewQuestion = Omit<Question, 'at'> & { at?: string }
 type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
 type StoredTask = { n: number; title: string; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
 
-// Migration n takes the database from user_version n to n + 1. Append; never edit one that has
-// shipped. Times are UTC the way toISOString() writes them, so they sort as text. A key starts with
+// Migration n takes the database from user_version n to n + 1: SQL, or a step that needs more than
+// SQL can do, run in the same transaction. Append; never edit one that has shipped. Times are UTC the way toISOString() writes them, so they sort as text. A key starts with
 // its sender, so a key hex makes for a schedule's slot or a job's end can't be one an app sent.
 const UTC = "glob '????-??-??T??:??:??.???Z'"
 // Who wrote each message kept before hex kept authors: one with a chat app's user_id is the owner's
@@ -59,7 +59,7 @@ const AUTHOR = `case
     when "from" = 'voice' and json_extract(meta, '$.callee') is null and (json_extract(meta, '$.delegation_id') is not null or json_extract(meta, '$.ended') is not null) then 'call'
     when "from" = 't3' and json_extract(meta, '$.user') is null then 'owner'
     else coalesce(json_extract(meta, '$.user'), "from") end`
-const migrations = [
+const migrations: (string | ((store: Store) => void))[] = [
   `create table messages (
     n integer primary key,
     key text not null unique check (substr(key, 1, length("from") + 1) = "from" || ':'),
@@ -146,9 +146,42 @@ const migrations = [
   create index unauthored on messages (n) where author = '';`,
   `create table seen (session text not null, kind text not null, record text not null, primary key (session, kind));
   insert into seen (session, kind, record) select session, 'tasks', digest from shown;`,
+  `create table profiles (n integer primary key, at text not null check (at ${UTC}), body text not null check (length(trim(body)) > 0));
+  create trigger kept_profile before update on profiles begin select raise(abort, 'a profile is added, never rewritten'); end;
+  create trigger kept_profiles before delete on profiles begin select raise(abort, 'a profile is added, never taken away'); end;`,
+  carryProfile,
 ]
 
 const now = () => new Date().toISOString()
+
+// The profile and its history moved into hex.db from state/profile.md and profile.md.history, where
+// each version it replaced is a JSON line with when it was replaced: when the next was put in place.
+// A run of the same version is kept once. The files are renamed, not deleted, so nothing still
+// writing to them mistakes them for the profile; a carry that failed after renaming them reads the
+// renamed ones when it runs again.
+function carryProfile(store: Store) {
+  const [file, history] = ['profile.md', 'profile.md.history'].map(name => join(store.dir, name))
+  const moved = (path: string) => `${path}.moved-to-hex.db`
+  const from = (path: string) => [path, moved(path)].find(each => existsSync(each))
+  const current = from(file!)
+  if (!current || !readFileSync(current, 'utf8').trim()) return
+  const before = from(history!)
+  const when = (at: unknown) => (typeof at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at) ? at : statSync(before!).mtime.toISOString())
+  const replaced = (before ? readFileSync(before, 'utf8').split('\n').filter(Boolean) : []).map(line => {
+    try {
+      const { at, profile } = JSON.parse(line)
+      return { at: when(at), body: typeof profile === 'string' ? profile.trim() : '' }
+    } catch {
+      return { at: when(undefined), body: '' }
+    }
+  })
+  const latest = [replaced.at(-1)?.at ?? '', statSync(current).mtime.toISOString()].sort().at(-1)!
+  const versions = [...replaced.map(({ body }, n) => ({ at: replaced[n - 1]?.at ?? replaced[0]!.at, body })), { at: latest, body: readFileSync(current, 'utf8').trim() }]
+  const keep = store.db.query('insert into profiles (at, body) values (?, ?)')
+  let last = ''
+  for (const { at, body } of versions) if (body && body !== last) keep.run(at, (last = body))
+  for (const each of [file!, history!]) if (existsSync(each)) renameSync(each, moved(each))
+}
 
 // state/hex.db, the records every hex process shares: the hub, each session's hooks, the hex
 // command. In WAL mode with synchronous=full, a write() that returned survives a crash or a power
@@ -174,7 +207,9 @@ export class Store {
       this.write(() => {
         const version = this.version()
         if (version === migrations.length) return
-        this.db.run(migrations[version]!)
+        const step = migrations[version]!
+        if (typeof step === 'string') this.db.run(step)
+        else step(this)
         this.db.run(`pragma user_version = ${version + 1}`)
       })
     }
@@ -534,6 +569,27 @@ export class Store {
   // The message that asked it is gone: one message's question, or a whole thread's.
   unask(app: string, thread: string, message?: MessageId) {
     this.write(() => this.db.query('delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
+  }
+
+  // The owner's profile, which the memory agent keeps: its newest version, '' when there's none yet.
+  profile(): string {
+    return (this.db.query('select body from profiles order by n desc limit 1').get() as { body: string } | null)?.body ?? ''
+  }
+
+  // Every version of the profile, newest first, each with when it was put in place.
+  profiles(): { at: string; body: string }[] {
+    return this.db.query('select at, body from profiles order by n desc').all() as { at: string; body: string }[]
+  }
+
+  // Puts body in place as the profile if the newest is still before, so two passes never both write
+  // over the one they read. The one it replaced stays, as history.
+  profiled(before: string, body: string, at = now()): boolean {
+    return this.write(() => {
+      if (this.profile() !== before.trim()) return false
+      if (body.trim() === before.trim()) return true
+      this.db.query('insert into profiles (at, body) values (?, ?)').run(at, body.trim())
+      return true
+    })
   }
 
   // What a session was last shown of one kind, like its rules or its tasks: '' when nothing yet.
