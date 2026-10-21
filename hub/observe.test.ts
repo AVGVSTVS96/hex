@@ -167,7 +167,7 @@ test('a turn that took no message still gets a pass from its reply, and a retry 
 
 test("an app session's last words in its terminal reach the pass as what the owner doesn't see", async () => {
   await observe(dir, 's', { ask: async () => none, memo })
-  open(dir).deliver({ key: 'terminal:summed', to: '-100:7', from: 'terminal', author: 'hex', body: 'Heartbeat: nothing new.', meta: { unsent: true } }, 's')
+  open(dir).deliver({ key: 'terminal:summed', to: '-100:7', from: 'terminal', author: 'hex', body: 'Heartbeat: nothing new.', meta: { unsent: 'true' } }, 's')
   const asked: string[] = []
   await observe(dir, 's', { ask: async input => (asked.push(input), none), memo })
   expect(asked[0]).toContain('hex, in its terminal, which the owner does not see,')

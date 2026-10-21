@@ -265,29 +265,35 @@ export async function drain(state: string, run: (pass: Pass, keep: () => boolean
   }
 }
 
+// Queues a session's turn for the memory agent and hands the queue to a process of its own.
+export function queue(state: string, pass: Pass) {
+  if (!process.env.MEMORY_DIR || !existsSync(MEMO)) return
+  open(state).wait(pass)
+  const log = openSync(join(state, 'observe.log'), 'a')
+  spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['ignore', 'ignore', log], env: { ...process.env, HEX_STORE: state, HEX_PASS: '1' } }).unref()
+}
+
 // The Stop hook queues the turn and hands the queue to a process of its own, since Claude Code ends
 // a hook still running when its session exits, and a hex session often exits right after a turn (a
 // restart, an update, a call that ended). A pass takes only what the session had taken when its
 // turn ended, not the next turn's message, and what an earlier pass in its thread left unfinished.
 // Errors go to state/observe.log.
 if (import.meta.main) {
-  const { HEX_STORE = join(hexDir, 'state'), MEMORY_DIR, HEX_PASS, HEX_THREAD, HEX_CHANNEL } = process.env
+  const { HEX_STORE = join(hexDir, 'state'), HEX_PASS, HEX_THREAD, HEX_CHANNEL } = process.env
   if (HEX_PASS) await drain(HEX_STORE)
   else {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
     // A turn's last words in the terminal are kept before the turn is queued: a session no app holds
     // answers there, and an app's session sums up there what its replies may not say. In T3 Code the
     // terminal is the conversation, which T3's bot keeps as hex's reply.
-    const answer = HEX_CHANNEL?.startsWith('plugin:t3@') ? undefined : hook.last_assistant_message?.trim()
+    const t3 = HEX_CHANNEL?.startsWith('plugin:t3@')
+    const answer = t3 ? undefined : hook.last_assistant_message?.trim()
     try {
-      if (hook.session_id && answer) open(HEX_STORE).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id, ...(HEX_CHANNEL && { unsent: true }) } }, hook.session_id)
+      if (hook.session_id && answer) open(HEX_STORE).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id, ...(HEX_CHANNEL && { unsent: 'true' }) } }, hook.session_id)
     } catch (error) {
       process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
     }
-    if (hook.session_id && MEMORY_DIR && existsSync(MEMO)) {
-      open(HEX_STORE).wait({ session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
-      const log = openSync(join(HEX_STORE, 'observe.log'), 'a')
-      spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['ignore', 'ignore', log], env: { ...process.env, HEX_PASS: '1' } }).unref()
-    }
+    // A T3 turn's reply is kept once T3's bot sees the turn end, after this hook: the hub queues that turn.
+    if (hook.session_id && !t3) queue(HEX_STORE, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
   }
 }

@@ -87,7 +87,7 @@ test("a job session's prompt is hex's words in hex.db, its answer too, what the 
     { to: 'mine-1', from: 'terminal', author: 'owner', body: 'what is up', by: 'mine-1' },
     { to: '-100:1', from: 'terminal', author: 'hex', body: 'narration', by: 'chat-1' },
   ])
-  expect(open(state).said('-100:1')[0]?.meta).toEqual({ session: 'chat-1', unsent: true })
+  expect(open(state).said('-100:1')[0]?.meta).toEqual({ session: 'chat-1', unsent: 'true' })
 })
 
 test("a named owner is a key in one app's list, or <app>:<key>; a key in two lists is refused instead of guessed", () => {

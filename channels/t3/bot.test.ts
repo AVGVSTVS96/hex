@@ -42,6 +42,7 @@ echo "backgrounded · job12345 · test"`)
     HEX_DIR: join(dir, 'hex'),
     HEX_LAUNCHER: join(dir, 'launch'),
     CLAUDE_CONFIG_DIR: join(dir, 'config'),
+    MEMORY_DIR: '',
   }
   await start()
 })

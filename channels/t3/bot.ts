@@ -66,6 +66,7 @@ const hub = startHub({
   stateDir: STATE_DIR,
   channel: process.env.T3_CHANNEL ?? 'plugin:t3@hex',
   server,
+  observes: true,
   // T3 Code owns its threads, so a handoff leaves this one here and a copy carries on there.
   call: async (thread, tool, args) => {
     const where = args.channel as string | undefined
