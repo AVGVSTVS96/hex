@@ -56,7 +56,8 @@
     ],
     "SessionEnd": [
       { "hooks": [
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/ended" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/ended" },
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" }
       ] }
     ]
   }

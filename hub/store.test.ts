@@ -127,6 +127,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.db.run('update tasks set title = null')
   store.db.run('drop index said; drop index unauthored')
   store.db.run('alter table messages drop column author')
+  store.db.run('drop table shown; create table shown (session text primary key, digest text not null)')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
@@ -303,14 +304,17 @@ test("a thread keeps its name after it leaves its app's threads.json, and takes 
   ])
 })
 
-test("a session is shown its list again only once it changed, or after its context lost it", () => {
+test("what a session was shown is kept per kind, until its context loses it or it ends", () => {
   const store = new Store(dir)
-  expect(store.swap('session-a', '')).toBeNull()
-  expect(store.swap('session-a', 'one')).toBe('')
-  expect(store.swap('session-a', 'one')).toBeNull()
-  expect(store.swap('session-b', 'one')).toBe('')
+  expect(store.seen('session-a', 'tasks')).toBe('')
+  store.show('session-a', 'tasks', 'one')
+  store.show('session-a', 'rules', '{}')
+  store.show('session-b', 'tasks', 'two')
+  expect(store.seen('session-a', 'tasks')).toBe('one')
+  store.unshow('session-a', 'tasks')
+  expect([store.seen('session-a', 'tasks'), store.seen('session-a', 'rules')]).toEqual(['', '{}'])
   store.unshow('session-a')
-  expect(store.swap('session-a', 'one')).toBe('')
+  expect([store.seen('session-a', 'rules'), store.seen('session-b', 'tasks')]).toEqual(['', 'two'])
 })
 
 test('hex task makes a task from a message by its key, and the owner is the thread asking', async () => {
