@@ -71,17 +71,16 @@ export function pending(state: string, thread?: string, room = ROOM): { text: st
 }
 
 // What changed between two pushes: each new or edited entry in full, and a line for each one that
-// left. Whatever is shorter, this or the whole list, is what a session gets.
-export function changes(before: Record<string, string>, now: Record<string, string>, whole: string): string {
+// left.
+export function changes(before: Record<string, string>, now: Record<string, string>): string {
   const fresh = Object.entries(now).filter(([id, line]) => before[id] !== line).map(([, line]) => line)
   const gone = Object.entries(before).filter(([id]) => !(id in now)).map(([, line]) => line.split('\n')[0]!.replace(/^- /, ''))
-  const text = [
+  return [
     fresh.length && `New or changed since you last saw the list:\n${fresh.join('\n')}`,
     gone.length && `No longer open or waiting:\n${gone.map(line => `- ${line}`).join('\n')}`,
   ]
     .filter(Boolean)
     .join('\n\n')
-  return text.length < whole.length ? text : whole
 }
 
 // The UserPromptSubmit and SessionStart hook: a session gets the whole list the first time and once a
@@ -96,10 +95,18 @@ if (import.meta.main) {
         if (source === 'compact' || source === 'clear') store.unshow(session_id)
         const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
         const { text, seen } = pending(HEX_STORE, thread)
-        const was = store.swap(session_id, Object.keys(seen).length ? JSON.stringify(seen) : '')
+        // Diffs since the last whole list add up in sent; once they'd pass its length, the whole list
+        // goes again, so a session that lost a push catches up.
         const whole = text || 'No open tasks or questions waiting on me now.'
-        const before = was && (JSON.parse(was.startsWith('{') ? was : 'null') as Record<string, string> | null)
-        if (was !== null) console.log(before ? changes(before, seen, whole) : whole)
+        const last = store.seen(session_id)
+        const before = last.startsWith('{') ? (JSON.parse(last) as { seen: Record<string, string>; sent: number }) : null
+        const diff = before && changes(before.seen, seen)
+        const out = diff && before.sent + diff.length < whole.length ? diff : whole
+        const record = Object.keys(seen).length ? JSON.stringify({ seen, sent: out === diff ? before!.sent + diff.length : 0 }) : ''
+        if (before ? diff : record !== last) {
+          store.swap(session_id, record)
+          console.log(out)
+        }
       }
     } catch (error) {
       console.error(`hex couldn't read its tasks: ${error}`)

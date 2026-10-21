@@ -488,6 +488,11 @@ export class Store {
     })
   }
 
+  // What a session was last shown, '' when nothing yet.
+  seen(session: string): string {
+    return (this.db.query('select digest from shown where session = ?').get(session) as { digest: string } | null)?.digest ?? ''
+  }
+
   // The session's context lost what it was shown (a compaction, a clear), so its next show is in full.
   unshow(session: string) {
     this.write(() => this.db.query('delete from shown where session = ?').run(session))

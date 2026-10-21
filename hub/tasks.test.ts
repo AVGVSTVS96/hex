@@ -49,7 +49,7 @@ test("main sees every thread's open tasks, and gets them again after a compactio
   expect(await hook({ session_id: 'm', hook_event_name: 'SessionStart', source: 'compact' }, { HEX_THREAD: '-100', HEX_MAIN: '1' })).toBe(all)
 })
 
-test('after the first list, main gets only what changed: new or edited entries, and the ones that left', async () => {
+test('after the first list, main gets only what changed, until the changes add up to the whole list again', async () => {
   const main = { HEX_THREAD: '-100', HEX_MAIN: '1' }
   const all = await hook({ session_id: 'm2' }, main)
   const store = open(dir)
@@ -60,7 +60,9 @@ test('after the first list, main gets only what changed: new or edited entries, 
   expect(next).toBe('New or changed since you last saw the list:\nt-3 (open, Errands): Buy batteries\n\nNo longer open or waiting:\n- t-1 (open, Website): Fix the login page\n')
   expect(next.length).toBeLessThan(all.length)
   store.editTask('t-2', { doneWhen: 'it charges the laptop' })
-  expect(await hook({ session_id: 'm2' }, main)).toBe('New or changed since you last saw the list:\nt-2 (open, Errands): Buy a power adapter\n  done when: it charges the laptop\n')
+  const third = await hook({ session_id: 'm2' }, main)
+  expect(third).toContain("Every thread's open tasks")
+  expect(third).toContain('t-2 (open, Errands): Buy a power adapter\n  done when: it charges the laptop')
 })
 
 test('a session outside hex, or one with no tasks, hears nothing', async () => {
