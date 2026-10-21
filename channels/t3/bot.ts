@@ -66,7 +66,6 @@ const hub = startHub({
   stateDir: STATE_DIR,
   channel: process.env.T3_CHANNEL ?? 'plugin:t3@hex',
   server,
-  observes: true,
   // T3 Code owns its threads, so a handoff leaves this one here and a copy carries on there.
   call: async (thread, tool, args) => {
     const where = args.channel as string | undefined
@@ -82,7 +81,7 @@ const hub = startHub({
   // Its turn is done once a stop leaves no background agent working.
   state: (thread, busy, background) => {
     const turn = turns.get(thread)
-    if (!turn) return
+    if (!turn) return void (!busy && hub.turned(thread))
     turn.done = !busy && !background
     const session = hub.session(thread)
     if (busy && session && !turn.reader) turn.reader = reader(thread, session, turn, turn.since)
@@ -92,6 +91,7 @@ const hub = startHub({
     const turn = turns.get(thread)
     turns.delete(thread)
     turn?.reader?.close()
+    hub.turned(thread)
     turn?.reject(RequestError.internalError(undefined, `hex couldn't start this thread's session: ${reason}`))
   },
   args: thread => {
@@ -145,6 +145,7 @@ function finish(thread: string, stopReason: StopReason, error?: string) {
   turns.delete(thread)
   turn.reader?.close()
   if (turn.said.length) hub.sent(thread, { content: turn.said.join('\n\n'), meta: { stop: stopReason, ...(error && { error }) } })
+  hub.turned(thread)
   if (turn.compaction) compaction(turn, thread, error ? 'failed' : stopReason === 'cancelled' ? 'cancelled' : 'completed', error)
   void turn.sent.then(() => (error ? turn.reject(RequestError.internalError(undefined, error)) : turn.resolve({ stopReason })))
 }

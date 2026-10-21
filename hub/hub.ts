@@ -262,7 +262,7 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [], observes = false }: {
+export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
   stateDir: string
   storeDir?: string
   channel: string
@@ -289,8 +289,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // The hooks files the launcher's plugins load (HEX_HOOKS, colon-separated): a change to one
   // renews sessions like a change to the channel does.
   hooks?: string[]
-  // The channel's reply that ends a turn (meta.stop) is the turn's end, so it queues the memory pass.
-  observes?: boolean
 }) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = { ...LIMITS, ...limits }
   const registry = join(stateDir, 'threads.json')
@@ -719,9 +717,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // meta.failed. The session that wrote it has it already, so it wakes nothing.
   function sent(thread: string, { key, content, meta = {} }: Partial<Message> & { content: string }) {
     const row = { key: `${app}:${key ?? randomUUID()}`, to: thread, from: app, author: 'hex', body: content, meta }
-    const session = current(thread)
-    kept(store => store.deliver(row, session ?? 'hub'), false)
-    if (observes && meta.stop && session) queue(storeDir, { session, by: new Date().toISOString(), thread })
+    kept(store => store.deliver(row, current(thread) ?? 'hub'), false)
   }
 
   function pass(thread: string, name: string, message: Message) {
@@ -1081,6 +1077,11 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     keep,
     renew: renewAsked,
     session: current,
+    // A channel that keeps a turn's reply only once the turn has ended queues its memory pass then.
+    turned: (thread: string) => {
+      const session = current(thread)
+      if (session) queue(storeDir, { session, by: new Date().toISOString(), thread })
+    },
     running: sessionOf,
     threads: () => Object.keys(threads),
     name: (thread: string) => threads[thread]?.name,

@@ -303,8 +303,7 @@ if (import.meta.main) {
     } catch (error) {
       process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
     }
-    // A T3 turn's reply is kept once T3's bot sees the turn end, after this hook, so T3's hub queues
-    // another pass for it then; a pass finds only what no pass has looked over yet.
-    if (hook.session_id) queue(HEX_STORE, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
+    // A T3 turn's reply is kept once T3's bot sees the turn end, after this hook, so T3's bot queues its pass then.
+    if (hook.session_id && !t3) queue(HEX_STORE, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
   }
 }
