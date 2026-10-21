@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -13,6 +13,7 @@ beforeEach(() => {
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
   mkdirSync(join(home, '.claude'))
   for (const script of ['rules', 'identity', 'instructions']) copyFileSync(join(BIN, script), join(home, '.hex/bin', script))
+  symlinkSync(join(BIN, '../hub'), join(home, '.hex/hub'))
   writeFileSync(join(home, 'AGENTS.md'), '@.hex/HEX.md\n\n- Keep it short.\n')
   writeFileSync(join(home, '.hex/HEX.md'), '# How you work\n\nAnswer in plain words.\n')
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')

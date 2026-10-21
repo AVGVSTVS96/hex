@@ -16,7 +16,7 @@ let listener: ReturnType<typeof Bun.serve>
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'session-'))
-  for (const dir of ['bin', 'chat']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true })
+  for (const dir of ['bin', 'chat', 'hub']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true })
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_MAIN_MODEL: 'claude-opus-5-5', MEMORY_DIR: join(home, 'memory') } }))
   mkdirSync(join(home, '.hex/vendor'))

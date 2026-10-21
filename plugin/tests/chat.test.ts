@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { until } from '../../hub/until.ts'
@@ -19,6 +19,7 @@ beforeEach(() => {
   copyFileSync(join(HEX, 'bin/chat'), join(home, '.hex/bin/chat'))
   copyFileSync(join(HEX, 'bin/session'), join(home, '.hex/bin/session'))
   for (const script of ['instructions', 'identity']) copyFileSync(join(HEX, 'bin', script), join(home, '.hex/bin', script))
+  symlinkSync(join(HEX, 'hub'), join(home, '.hex/hub'))
   copyFileSync(join(HEX, 'chat/prompt.md'), join(home, '.hex/chat/prompt.md'))
   mkdirSync(join(home, '.claude'))
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')
@@ -360,7 +361,7 @@ test('a subagent of a chat turn gets the instruction files Claude Code skipped, 
   }
   const parts = [1, 2, 3, 4, 5, 6].map(n => part(n))
   expect(parts.every(text => text.length < 10_000)).toBe(true)
-  expect(parts[0]).toStartWith('Your instruction files, in 4 parts that may arrive out of order; this is part 1 of 4.')
+  expect(parts[0]).toMatch(/^Your instruction files\. This comes in 4 parts of copy \w+, which may arrive out of order; this is part 1\./)
   expect(parts.slice(4)).toEqual(['', ''])
   const whole = Bun.spawnSync([join(home, '.hex/bin/instructions')], { env: env() }).stdout.toString()
   expect(parts.slice(0, 4).map(text => text.slice(text.indexOf('\n\n') + 2)).join('')).toBe(whole)

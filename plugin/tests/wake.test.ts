@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -17,6 +17,7 @@ beforeEach(() => {
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
   mkdirSync(join(home, '.hex/vendor'))
   copyFileSync(join(BIN, 'wake'), join(home, '.hex/bin/wake'))
+  symlinkSync(join(BIN, '../hub'), join(home, '.hex/hub'))
 })
 
 afterEach(() => rmSync(home, { recursive: true, force: true }))
@@ -27,10 +28,10 @@ function memo(parts: string[]) {
   chmodSync(join(home, '.hex/vendor/memo'), 0o755)
 }
 
-function hook(chunk: number) {
+function hook(chunk: number, source = 'startup') {
   const run = Bun.spawnSync([join(home, '.hex/bin/wake'), String(chunk), ...(chunk === SLOTS ? ['last'] : [])], {
     cwd: home,
-    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, source: 'startup' })),
+    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, source })),
     env: { ...clean, CLAUDE_PROJECT_DIR: home, MEMORY_DIR: join(home, 'memory'), TMPDIR: home },
   })
   expect(run.exitCode).toBe(0)
@@ -43,10 +44,10 @@ const body = (out: string) => out.split('\n\n').slice(1).join('\n\n')
 const notes = (from: number, count: number) =>
   Array.from({ length: count }, (_, i) => `#${from + i} 2026-10-06 ${'x'.repeat(180)}`).join('\n') + '\n'
 
-test('a short wake arrives whole in the first chunk, and the other slots say nothing', () => {
+test('a short wake arrives whole in the first part, and the other slots say nothing', () => {
   const wake = '#0 2026-10-06 First note.\nYou are awake.\n'
   memo([wake])
-  expect(hook(1)).toContain('chunk 1 of 1')
+  expect(hook(1)).not.toContain('part 1')
   expect(body(hook(1))).toBe(wake)
   for (let n = 2; n <= SLOTS; n++) expect(hook(n)).toBe('')
 })
@@ -64,13 +65,20 @@ test("follows memo's parts to the end and splits them into chunks that each fit 
   expect(joined.endsWith('You are awake.\n')).toBe(true)
 })
 
-test('a wake longer than every slot points the last one at the rest', () => {
+test('a wake longer than every slot sends the last one to memo for the rest', () => {
   memo([notes(0, 400) + 'You are awake.\n'])
-  const out = hook(SLOTS)
-  const pointer = out.match(/from line (\d+) of (\S+), and/)!
-  const rest = readFileSync(pointer[2], 'utf8').split('\n').slice(Number(pointer[1]) - 1).join('\n')
-  expect(rest).toStartWith(`#${Number(pointer[1]) - 1} `)
-  expect(rest).toEndWith('You are awake.\n')
+  expect(hook(SLOTS)).toEndWith(`\nThat's all the hooks can show. ${join(home, '.hex/vendor/memo')} wake prints the whole memory; follow its "Not awake yet" lines to the end.\n`)
+  const copies = Array.from({ length: SLOTS }, (_, i) => hook(i + 1).match(/parts of copy (\w+)/)?.[1])
+  expect(new Set(copies).size).toBe(1)
+})
+
+test('a compaction hands the session its wake again, as the start did', () => {
+  const hooks = JSON.parse(readFileSync(join(BIN, '../plugin/hooks/hooks.json'), 'utf8')).hooks.SessionStart
+  const wakes = hooks.find((group: { hooks: { command: string }[] }) => group.hooks.some(each => each.command.endsWith('/bin/wake 1')))
+  expect(wakes.matcher.split('|')).toEqual(['startup', 'resume', 'clear', 'compact'])
+  expect(wakes.hooks.map((each: { command: string }) => each.command.replace(/.*\/bin\//, ''))).toEqual(['wake 1', 'wake 2', 'wake 3', 'wake 4', 'wake 5', `wake ${SLOTS} last`])
+  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
+  expect(hook(1, 'compact')).toBe(hook(1))
 })
 
 test('says nothing when OptMem is not installed', () => {
@@ -97,7 +105,7 @@ test('the profile comes first, ahead of memory, in the launcher\'s file and in t
   const all = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } }).stdout.toString()
   const both = "My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n# Always\n- Ships on fridays\n\nYour memory:\n\n#0 2026-10-06 First note.\nYou are awake.\n"
   expect(body(all)).toBe(both)
-  expect(body(hook(1))).toBe(both)
+  expect(body(hook(1)) + '\n' + body(hook(2))).toBe(both)
 })
 
 test('the hooks say nothing in a session the launcher already handed its wake', () => {
@@ -138,7 +146,12 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "Cannot wake: the memory context needs #0-1."\necho "Compress memories #0-1 into one line."\nexit 1\n')
   expect(launch().args).toContain(dir)
   expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
+  renameSync(join(home, '.hex/hub'), join(home, '.hex/hub.away'))
+  expect(launch().args).toContain(dir)
+  renameSync(join(home, '.hex/hub.away'), join(home, '.hex/hub'))
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "The summary of #0-1 is blank."\nexit 1\n')
+  expect(launch().args).not.toContain(dir)
+  rmSync(join(home, '.hex/vendor/memo'))
   const without = launch()
   expect(without.args).not.toContain(join(home, 'state/wake'))
   expect(settings(without.args).env).toEqual({ HEX_THREAD: '-100:5' })
