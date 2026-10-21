@@ -46,6 +46,10 @@ export type Question = {
 // the session a new thread forks from at its first start, and where its app opens it.
 export type Thread = { app: string; thread: string; name: string; open: boolean; session?: string; cwd?: string; model?: string; effort?: string; launched?: string; fork?: string; link?: string }
 export type Kept = Omit<Thread, 'app' | 'thread' | 'open'>
+// A thread's pinned post in its app, as last written. A pin with a note is the thread's status post:
+// hex writes it as the note over the thread's questions and tasks (status.ts).
+export type Pin = { app: string; thread: string; message: MessageId; text: string; at: string; note?: string }
+type StoredPin = Omit<Pin, 'note'> & { note: string | null }
 export type NewQuestion = Omit<Question, 'at'> & { at?: string }
 type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
 type StoredTask = { n: number; title: string; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
@@ -194,6 +198,15 @@ const migrations: (string | ((store: Store) => void))[] = [
         if (typeof known?.name === 'string') keep.run(app, thread, known.name, text(known.session), text(known.cwd), text(known.model), text(known.effort), text(known.launched), text(known.from))
     }
   },
+  `create table pins (
+    app text not null,
+    thread text not null,
+    message not null,
+    text text not null,
+    note text,
+    at text not null check (at ${UTC}),
+    primary key (app, thread)
+  );`,
 ]
 
 const now = () => new Date().toISOString()
@@ -649,6 +662,31 @@ export class Store {
     })
   }
 
+  pin(app: string, thread: string): Pin | null {
+    const row = this.db.query('select * from pins where app = ? and thread = ?').get(app, thread) as StoredPin | null
+    return row && toPin(row)
+  }
+
+  // Every thread's pin, or one app's or one thread's.
+  pins({ app, thread }: { app?: string; thread?: string } = {}): Pin[] {
+    const rows = this.db.query('select * from pins where (?1 is null or app = ?1) and (?2 is null or thread = ?2) order by app, thread').all(app ?? null, thread ?? null) as StoredPin[]
+    return rows.map(toPin)
+  }
+
+  // The thread's pin is now this message; at comes only with one an older hex kept elsewhere.
+  pinned({ app, thread, message, text, note, at = now() }: Omit<Pin, 'at'> & { at?: string }) {
+    this.write(() =>
+      this.db
+        .query('insert into pins (app, thread, message, text, note, at) values (?, ?, ?, ?, ?, ?) on conflict (app, thread) do update set message = excluded.message, text = excluded.text, note = excluded.note, at = excluded.at')
+        .run(app, thread, message, text, note ?? null, at),
+    )
+  }
+
+  // The thread has no pin now, or none if its pin was this message.
+  unpinned(app: string, thread: string, message?: MessageId) {
+    this.write(() => this.db.query('delete from pins where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
+  }
+
   // What a session was last shown of one kind, like its rules or its tasks: '' when nothing yet.
   seen(session: string, kind: string): string {
     return (this.db.query('select record from seen where session = ? and kind = ?').get(session, kind) as { record: string } | null)?.record ?? ''
@@ -748,6 +786,10 @@ function number(id: string): number {
   const n = Number(id.replace(/^t-/, ''))
   if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`)
   return n
+}
+
+function toPin({ note, ...pin }: StoredPin): Pin {
+  return { ...pin, ...(note !== null && { note }) }
 }
 
 function toQuestion(row: StoredQuestion): Question {
