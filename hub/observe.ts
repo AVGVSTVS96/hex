@@ -206,7 +206,8 @@ async function summarize(prompt: string) {
 export function refresh(wake = join(hexDir, 'state', 'wake', 'CLAUDE.md')) {
   if (!existsSync(dirname(wake))) return
   const text = Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake'), 'all'], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
-  if (!text.trim()) return
+  // A wake that stopped to ask for a compression holds no memory, so the file keeps the one it has.
+  if (!text.includes('You are awake.')) return
   writeFileSync(`${wake}.${process.pid}`, text)
   renameSync(`${wake}.${process.pid}`, wake)
 }

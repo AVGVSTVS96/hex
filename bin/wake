@@ -3,6 +3,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 memo="$here/../vendor/memo"
 profile="${HEX_STORE:-$here/../../state}/profile.md"
 export LC_ALL=C
+umask 077
 
 # What a session knows as it starts: the owner's profile, which hex's memory agent keeps current, then memory.
 whole() {
