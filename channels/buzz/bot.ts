@@ -771,7 +771,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const id = tag(event, 'e') ?? ''
     const reaction = reactions.get(id)
     // The relay hides deleted events, so a deletion is explained by the message hex.db kept.
-    const found = hub.edited(id) ?? hub.said(id)
+    const found = hub.said(id)
     const said = found?.meta?.reaction || found?.meta?.button ? undefined : found
     const thread = reaction?.thread ?? said?.to
     if (!thread || (hub.name(thread) === undefined && !channels.get(thread)?.dm)) return

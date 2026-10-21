@@ -433,6 +433,15 @@ test('a pinned post keeps its latest text in the ledger', async () => {
   expect(ledger().pins[DESK]).toMatchObject({ message: id, text: 'Status: shipped' })
 })
 
+test('a message edited before it is pinned or forwarded goes with its new text', async () => {
+  const id = Number((await call('reply', { text: 'Status: drafting' })).text.match(/id: (\d+)/)[1])
+  await call('edit_message', { message_id: String(id), text: 'Status: live' })
+  await call('pin', { message_id: String(id) })
+  expect(ledger().pins[DESK]).toMatchObject({ message: id, text: 'Status: live' })
+  const forwarded = Number((await call('forward', { message_id: String(id), thread: 'notes' })).text.match(/id: (\d+)/)[1])
+  expect(open(state).message(`telegram:${FORUM}:${forwarded}`)?.body).toBe('Status: live')
+})
+
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
   const id = Number((await call('reply', { text: 'Site: example.com' })).text.match(/id: (\d+)/)[1])
   await call('pin', { message_id: String(id), status: true })

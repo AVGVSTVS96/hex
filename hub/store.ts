@@ -259,10 +259,23 @@ export class Store {
     return (this.db.query('select * from messages where at > ? order by at, n').all(after) as Stored[]).map(toRow)
   }
 
-  // The newest edit an app kept of its message id.
-  edited(from: string, id: string): Row | null {
-    const row = this.db.query(`select * from messages where "from" = ? and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ? order by at desc, n desc limit 1`).get(from, id) as Stored | null
-    return row && toRow(row)
+  // A message as it reads now: the message, with its newest edit's words, or the edit alone when only
+  // that was kept. An edit is kept as a row of its own in the thread that made it, naming the app's id
+  // for the message, the last part of its key; a Telegram id is only unique in its chat, the part
+  // before it, so its edits are the ones kept in that chat.
+  latest(key: string): Row | null {
+    const app = key.slice(0, key.indexOf(':'))
+    const id = key.slice(key.lastIndexOf(':') + 1)
+    const chat = key.slice(app.length + 1, -id.length - 1)
+    const original = this.message(key)
+    const edit = this.db
+      .query(
+        `select * from messages where "from" = ?1 and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ?2
+           and (?3 = '' or "to" = ?3 or "to" like ?3 || ':%') order by at desc, n desc limit 1`,
+      )
+      .get(app, id, chat) as Stored | null
+    if (!edit) return original
+    return original ? { ...original, body: edit.body } : toRow(edit)
   }
 
   // A thread's messages, oldest first: all of them, or its last few, or its last few before a time.
