@@ -408,6 +408,11 @@ export class Store {
   threads(): { app: string; thread: string; name: string }[] {
     return this.db.query('select app, thread, name from threads order by app, thread').all() as { app: string; thread: string; name: string }[]
   }
+  // Each thread's name by its id, as threads() keeps them.
+  names(): Record<string, string> {
+    return Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name]))
+  }
+
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
   ask({ app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {

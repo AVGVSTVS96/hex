@@ -1,24 +1,10 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { clip, fit } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
-
-// The owner's profile, which the memory agent keeps current after every turn. bin/wake puts it in front
-// of the memory every session starts with.
-export const profilePath = (state: string) => join(state, 'profile.md')
-export const profileOf = (state: string) => (existsSync(profilePath(state)) ? readFileSync(profilePath(state), 'utf8').trim() : '')
-
-// Each thread's name, as hex.db keeps it after the thread closes.
-export function names(state: string): Record<string, string> {
-  return Object.fromEntries(open(state).threads().map(({ thread, name }) => [thread, name]))
-}
 
 // Claude Code swaps a hook's output past 10,000 characters for a file path and a preview it
 // doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output), so the list
 // stays under it, with room for the lines that say what didn't fit.
 const ROOM = 9_000
-
-export const PROFILE = 6_500
 
 // A task's title, or its first words when it has none.
 export const titleOf = (task: Task, room: number) => clip(task.title ?? task.words[0]?.text ?? '', room)
@@ -62,7 +48,7 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
   const store = open(state)
   const tasks = store.tasks({ owner: thread, status: ['open'] }).sort((a, b) => b.at.localeCompare(a.at))
   const questions = store.questions({ thread, waiting: true })
-  const named = names(state)
+  const named = store.names()
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {

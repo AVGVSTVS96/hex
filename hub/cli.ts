@@ -1,7 +1,7 @@
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
-import { entry, names, render, waiting } from './profile.ts'
+import { entry, render, waiting } from './tasks.ts'
 import { open, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
@@ -50,7 +50,7 @@ function usage(): never {
 
 function show(tasks: Task[], full = true) {
   if (flags.json) return console.log(JSON.stringify(tasks, null, 1))
-  const named = names(state!)
+  const named = store.names()
   console.log(tasks.map(task => (full ? render(task, named) : entry(task, named))).join(full ? '\n\n' : '\n') || 'no tasks')
 }
 
@@ -130,7 +130,7 @@ try {
     case 'questions': {
       const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
       if (flags.json) console.log(JSON.stringify(questions, null, 1))
-      else console.log(questions.map(question => waiting(question, names(state!))).join('\n') || 'no questions waiting')
+      else console.log(questions.map(question => waiting(question, store.names())).join('\n') || 'no questions waiting')
       break
     }
     case 'threads': {

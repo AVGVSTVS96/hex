@@ -48,7 +48,7 @@ fi
 n=${1:?usage: wake all | wake <chunk> [last]}
 last=${2:-}
 room=9000
-# The profile rides in chunk 1, which leaves room for it whatever its length, so a profile rewritten
+# The profile rides in chunk 1, which leaves room for it at its cap (PROFILE in hub/observe.ts), so a profile rewritten
 # while the hooks run can't move where the memory splits.
 first=$((room - 6500))
 
