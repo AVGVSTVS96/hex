@@ -9,28 +9,34 @@ import { handover, split } from '../hub/fit.ts'
 
 const memo = resolve(import.meta.dir, '../vendor/memo')
 const profile = join(process.env.HEX_STORE ?? resolve(import.meta.dir, '../../state'), 'profile.md')
-const lead = 'This is your memory: `.hex/vendor/memo wake`, run in full for you as this session started, so you don\'t need to run it.'
-const record = 'Its numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one.'
+const lead = 'This is what you know as this session starts and after each compaction: my profile, then your memory as `.hex/vendor/memo wake` prints it, which hex loads for you. The memory\'s numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one.'
+const stopped = 'hex ran `.hex/vendor/memo wake` for you, and it stopped before waking. Before anything else, do what it asks, then run it again and read it to the end.'
+const failed = 'hex ran `.hex/vendor/memo wake` for you, and it failed, so your memory may be missing or cut short this time.'
 
 function mine() {
   let text = ''
   try {
     text = readFileSync(profile, 'utf8').trim()
   } catch {}
-  return text && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${text}\n\nYour memory:\n`
+  return text && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${text}\n`
 }
 
-// memo prints its wake in parts, each ending with the command for the next, and the last says
-// "You are awake." unless it stopped.
+const awake = (part: string) => /^You are awake\.$/m.test(part)
+
+// memo prints its wake in parts, each under a header and ending with the command for the next, which
+// go as hex joins them, and the last says "You are awake." unless it stopped. A compression it asks
+// for after that goes too: the memory agent does them.
 function memory() {
   let text = ''
   for (let args = ['wake']; ; ) {
     const run = Bun.spawnSync([memo, ...args], { stdout: 'pipe', stderr: 'pipe' })
-    const part = run.stdout.toString() + run.stderr.toString()
+    const part = (run.stdout.toString() + run.stderr.toString()).replace(/^Your memory, part \d+ of \d+, .*\n/m, '')
     const next = part.match(/^Not awake yet\. Run: .* wake (\d+) (\d+)\n?/m)
-    text += next ? part.replace(next[0], '') : part
-    if (!next) return { text, end: part }
-    args = ['wake', next[1]!, next[2]!]
+    if (next) {
+      text += part.replace(next[0], '')
+      args = ['wake', next[1]!, next[2]!]
+    } else if (awake(part)) return { text: `Your memory, oldest first:\n\n${text}${part.replace(/^(You are awake\.)$[\s\S]*/m, '$1\n')}`, end: part }
+    else return { text: text + part, end: part }
   }
 }
 
@@ -46,17 +52,18 @@ const runs = () => {
 if (!runs() || !process.env.MEMORY_DIR) process.exit(0)
 
 if (mode === 'all') {
-  const { text: wake, end } = memory()
+  const { text, end } = memory()
   // A wake that holds no memory makes no wake file. One that stopped to ask for a compression exits 1,
   // so the launcher keeps the last wake; one that failed prints nothing, as with memory off.
-  if (!/^You are awake\.$/m.test(end)) {
+  if (!awake(end)) {
     process.stderr.write(`${end.split('\n')[0]}\n`)
     process.exit(/^Cannot wake:/m.test(end) ? 1 : 0)
   }
   const head = mine()
-  console.log(`${lead} Claude Code loads it as an instruction file. ${record} If it ends by asking for a compression, do that first.\n\n${head && `${head}\n`}${wake.trimEnd()}`)
+  console.log(`${lead}\n\n${head && `${head}\n`}${text.trimEnd()}`)
 } else if (!process.env.HEX_WAKE) {
+  const { text, end } = memory()
   // The profile is a part of its own, so a profile rewritten while the hooks run can't move where the memory splits.
-  const parts = [mine(), ...split(memory().text)].filter(part => part.trim())
-  process.stdout.write(handover(parts, Number(mode), last === 'last', `${lead} ${record} If the last part ends by asking for a compression, do that first.`, `${memo} wake prints the whole memory; follow its "Not awake yet" lines to the end.`))
+  const parts = [mine(), ...split(text)].filter(part => part.trim())
+  process.stdout.write(handover(parts, Number(mode), last === 'last', awake(end) ? lead : /^Cannot wake:/m.test(end) ? stopped : failed, `${memo} wake prints the whole memory; follow its "Not awake yet" lines to the end.`))
 }

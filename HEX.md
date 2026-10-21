@@ -17,16 +17,17 @@ Without it you do not know who you are, or what was decided and tried.
 
 ### At startup: activating OptMem (mandatory)
 
-Run `.hex/vendor/memo wake` before any other tool call, in every session, and
-then do exactly what it prints, to the end of its output.
+hex runs `.hex/vendor/memo wake` for you as every session starts and after
+every compaction, and puts what it prints in your context, after my profile
+(`state/profile.md`: who I am and what's going on now, which the memory agent
+keeps current). If it isn't there, run `.hex/vendor/memo wake` before any other
+tool call, and then do exactly what it prints, to the end of its output.
 
 ### While working: memories are recorded for you
 
 After each turn, hex's memory agent reads what was said and done,
 records what's worth keeping, so each thing is recorded once, and does the
 compressions its notes make due. Leave `memo note` to it.
-
-If `.hex/vendor/memo wake` asks a compression: do it before your next action.
 
 Never edit or delete anything under `memory/`: the tool manages it.
 
@@ -46,7 +47,7 @@ subagent. Don't run memo.`
 
 ### In hex
 
-hex runs `memo wake` at the start of every session and puts it in your context, after my profile (`state/profile.md`: who I am and what's going on now, which the memory agent keeps current); if it isn't there, run it yourself first. Every hex session shares this memory.
+Every hex session shares this memory.
 
 When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. A note about something I said quotes my words and ends with my message's key, like `[telegram:-100123:3601]`; `.hex/bin/hex recall <regex>` shows my words under each note.
 
