@@ -3,7 +3,8 @@ import { join } from 'node:path'
 import { clip, fit } from './fit.ts'
 import { open, type Question, type Task } from './store.ts'
 
-// The owner's profile, which the memory agent keeps current after every turn.
+// The owner's profile, which the memory agent keeps current after every turn. bin/wake puts it in front
+// of the memory every session starts with.
 export const profilePath = (state: string) => join(state, 'profile.md')
 export const profileOf = (state: string) => (existsSync(profilePath(state)) ? readFileSync(profilePath(state), 'utf8').trim() : '')
 
@@ -17,7 +18,6 @@ export function names(state: string): Record<string, string> {
 // stays under it, with room for the lines that say what didn't fit.
 const ROOM = 9_000
 
-// The profile takes most of that room, leaving the rest for tasks and questions.
 export const PROFILE = 6_500
 
 // A task's title, or its first words when it has none.
@@ -78,28 +78,8 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
   return { text, digest: text && Bun.hash(JSON.stringify(sections)).toString(36) }
 }
 
-// The profile as a session should see it: whole the first time, then only the lines that changed
-// since the version it saw, so a rewrite after every turn costs a line or two, not the whole file.
-export function about(before: string, now: string): string {
-  if (!now) return before ? 'My profile was cleared: what it said no longer stands.' : ''
-  if (!before) return `Who I am and what's going on now, kept current by the memory agent from my own words:\n\n${now}`
-  const placed = (text: string) => {
-    let section = ''
-    return new Map(text.split('\n').filter(each => each.trim()).flatMap(each => (/^#{1,6}\s/.test(each) ? ((section = each), []) : [[`${section}\n${each}`, [section, each]] as const])))
-  }
-  const was = placed(before)
-  const is = placed(now)
-  const grouped = (lines: (readonly [string, string])[]) => lines.flatMap(([section, each], at) => [...(section !== lines[at - 1]?.[0] ? [section] : []), each]).filter(Boolean)
-  const added = grouped([...is].filter(([key]) => !was.has(key)).map(([, place]) => place))
-  const gone = grouped([...was].filter(([key]) => !is.has(key)).map(([, place]) => place))
-  if (!added.length && !gone.length) return about('', now)
-  const changed = ["My profile changed, as the memory agent keeps it current from my own words:", ...added, ...(gone.length ? ['No longer in it:', ...gone] : [])].join('\n')
-  return changed.length < now.length ? changed : about('', now)
-}
-
-// The UserPromptSubmit and SessionStart hook: a session gets the profile and the list whenever they
-// changed since it last saw them, so it's in context without riding along on every prompt, and again in full once a
-// compaction or a clear took it away.
+// The UserPromptSubmit and SessionStart hook: a session gets the list whenever it changed since it
+// last saw it, and again once a compaction or a clear took it away.
 if (import.meta.main) {
   const { HEX_STORE, HEX_THREAD, HEX_MAIN } = process.env
   if (HEX_STORE) {
@@ -107,17 +87,10 @@ if (import.meta.main) {
       const { session_id, source } = JSON.parse((await Bun.stdin.text()) || '{}') as { session_id?: string; source?: string }
       if (session_id) {
         const store = open(HEX_STORE)
-        const mine = `${session_id}:profile`
-        if (source === 'compact' || source === 'clear') for (const each of [session_id, mine]) store.unshow(each)
-        const now = profileOf(HEX_STORE).slice(0, PROFILE)
-        const before = store.swap(mine, now)
-        const told = before === null ? '' : about(before, now)
+        if (source === 'compact' || source === 'clear') store.unshow(session_id)
         const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
-        const { text, digest } = profile(HEX_STORE, thread, Math.max(0, ROOM - told.length))
-        const lists = store.show(session_id, digest) ? text || 'No open tasks or questions waiting on me now.' : ''
-        if (told && lists && text !== profile(HEX_STORE, thread).text) store.unshow(session_id)
-        const out = [told, lists].filter(Boolean).join('\n\n')
-        if (out) console.log(out)
+        const { text, digest } = profile(HEX_STORE, thread)
+        if (store.show(session_id, digest)) console.log(text || 'No open tasks or questions waiting on me now.')
       }
     } catch (error) {
       console.error(`hex couldn't read its tasks: ${error}`)
