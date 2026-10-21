@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, renameSync, watch, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { noteOf, type Ask as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
+import { noteOf, type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
 import { statusPost } from '../../hub/status.ts'
 import { open as store } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
@@ -13,18 +13,18 @@ import { T3, type Fresh, type Stuck } from './t3.ts'
 export type Kind = 'pick' | 'yesno' | 'do' | 'look'
 // value: the button's own label, when the option stands for one.
 export type Option = { label: string; value?: string; pick?: boolean }
-// A page an ask points to; opening it answers nothing.
+// A page a question points to; opening it answers nothing.
 export type Link = { label: string; url: string }
 export type Answer = { label: string; at: string; via: string }
 export type Ref = { app: string; thread: string; message: MessageId }
-// Where an ask was asked, as hex's check found it: a thread, with the message when it knows it
+// Where a question was asked, as hex's check found it: a thread, with the message when it knows it
 // (a question, a pinned post, a plain message), or a call.
 export type Source = { app: string; thread?: string; message?: MessageId; call?: string }
-// Each place an ask was asked, for its row: the app, what the place is called there, the hex thread
-// (task) or call it is, and a link that opens it, the message itself where the app has one. A place
+// Each place a question was asked, for its row: the app, what the place is called there, the hex thread
+// or call it is, and a link that opens it, the message itself where the app has one. A place
 // without a link is still known to be where it was asked.
 export type Place = { app: string; place: string; task?: string; call?: string; link?: string }
-export type Ask = {
+export type Question = {
   id: string
   kind: Kind
   task: string
@@ -41,7 +41,7 @@ export type Ask = {
 // hex's check rewrites the raw questions into these: one per decision, however many places asked
 // it (from; refs are the open questions with buttons among them, which an answer goes back to), in
 // the order that unblocks the most, with its pick and what it costs.
-export type Curated = Omit<Ask, 'app' | 'topic' | 'places'> & { from?: Source[]; refs?: Ref[] }
+export type Curated = Omit<Question, 'app' | 'topic' | 'places'> & { from?: Source[]; refs?: Ref[] }
 // A check.json written before places and links were typed: its places were names and a link was an
 // option with a url. The next pass rewrites it.
 type Written = Omit<Curated, 'options'> & { places?: string[]; options: (Option & { url?: string })[] }
@@ -58,7 +58,7 @@ export type CheckResult = {
 }
 export type View = {
   version: number
-  asks: Ask[]
+  asks: Question[]
   stuck: (Stuck & { sent?: string })[]
   fresh: (Fresh & { read: boolean })[]
   check: { at: string; why: string; fixed: number; flagged: number } | null
@@ -74,7 +74,7 @@ const PICK = /\s*[(\[]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/i
 // poll and nobody has answered (from each app's ledger), as hex's check last rewrote them; what's
 // stuck and what finished since he looked (T3 Code's own records, and what the check found). An
 // answer goes back the way a tap in the chat app would, through that app's hub.
-export class Asks extends Changes {
+export class Questions extends Changes {
   view: Omit<View, 'version'> = { asks: [], stuck: [], fresh: [], check: null }
   counts = new Changes()
   private ledgers = new Map<string, Asked[]>()
@@ -113,7 +113,7 @@ export class Asks extends Changes {
   // Tasks opened with questions newer than the last check, or a call ended: hex checks again.
   opened() {
     const checked = this.result?.at ?? ''
-    if ([...this.ledgers.values()].some(asks => asks.some(ask => !ask.answer && !ask.settled && ask.at > checked))) this.check('you opened Tasks')
+    if ([...this.ledgers.values()].some(questions => questions.some(question => !question.answer && !question.settled && question.at > checked))) this.check('you opened Tasks')
   }
 
   called() {
@@ -128,34 +128,34 @@ export class Asks extends Changes {
   }
 
   find(id: string) {
-    return this.view.asks.find(ask => ask.id === id)
+    return this.view.asks.find(question => question.id === id)
   }
 
   // The thread's own questions and its pinned status post, for its page: one hex keeps is read
   // from hex.db as the page opens, in full.
-  of(task: string) {
-    const pin = this.pins.get(task)
-    const thread = task.slice(task.indexOf(':') + 1)
+  of(id: string) {
+    const pin = this.pins.get(id)
+    const thread = id.slice(id.indexOf(':') + 1)
     const text = pin && (pin.note === undefined ? pin.text : statusPost(store(this.state), thread, pin.note, Infinity))
-    return { asks: this.view.asks.filter(ask => ask.task === task), ...(text && { pin: text }) }
+    return { asks: this.view.asks.filter(question => question.task === id), ...(text && { pin: text }) }
   }
 
   async answer(id: string, label: string, via: string) {
-    const ask = this.find(id)
-    if (!ask) throw new Error('that question is already answered or settled')
-    const option = ask.options.find(option => option.label === label)
+    const question = this.find(id)
+    if (!question) throw new Error('that question is already answered or settled')
+    const option = question.options.find(option => option.label === label)
     const refs = this.refs(id).filter(ref => this.open(ref))
     const where = WHERE[via] ?? via
     if (!refs.length) {
       this.marks.answers[id] = { label, at: now(), via }
       this.saveMarks()
-      return this.tell(ask.task, `(answered ${where}) ${ask.question}: ${label}`, via)
+      return this.tell(question.task, `(answered ${where}) ${question.question}: ${label}`, via)
     }
     const [first, ...rest] = refs
     const value = option?.value ?? label
     if (this.asked(first!)!.options.includes(value)) await relay(this.state, first!.app, { type: 'answer', thread: first!.thread, message: first!.message, label: value, via })
     else {
-      await this.tell(`${first!.app}:${first!.thread}`, `(answered ${where}) ${ask.question}: ${label}`, via)
+      await this.tell(`${first!.app}:${first!.thread}`, `(answered ${where}) ${question.question}: ${label}`, via)
       rest.unshift(first!)
     }
     for (const ref of rest) await relay(this.state, ref.app, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ Answered ${where}: ${label}` })
@@ -167,7 +167,7 @@ export class Asks extends Changes {
     if (answered) {
       delete this.marks.answers[id]
       this.saveMarks()
-      const curated = this.result?.asks.find(ask => ask.id === id)
+      const curated = this.result?.asks.find(question => question.id === id)
       return curated && this.tell(curated.task, `(took back) ${curated.question}: ${answered.label}`, via)
     }
     for (const ref of this.refs(id)) {
@@ -193,17 +193,17 @@ export class Asks extends Changes {
   }
 
   private refs(id: string): Ref[] {
-    const curated = this.result?.asks.find(ask => ask.id === id)
+    const curated = this.result?.asks.find(question => question.id === id)
     if (curated) return curated.refs ?? []
-    for (const [app, asks] of this.ledgers) {
-      const asked = asks.find(ask => refId({ app, ...ask }) === id)
+    for (const [app, questions] of this.ledgers) {
+      const asked = questions.find(question => refId({ app, ...question }) === id)
       if (asked) return [{ app, thread: asked.thread, message: asked.message }]
     }
     return []
   }
 
   private asked(ref: Ref) {
-    return this.ledgers.get(ref.app)?.find(ask => ask.thread === ref.thread && String(ask.message) === String(ref.message))
+    return this.ledgers.get(ref.app)?.find(question => question.thread === ref.thread && String(question.message) === String(ref.message))
   }
 
   private open(ref: Ref) {
@@ -211,13 +211,13 @@ export class Asks extends Changes {
     return !!asked && !asked.answer && !asked.settled
   }
 
-  private tell(task: string, content: string, via: string) {
-    const [app, ...thread] = task.split(':')
+  private tell(id: string, content: string, via: string) {
+    const [app, ...thread] = id.split(':')
     return relay(this.state, app!, { type: 'inbound', thread: thread.join(':'), content, meta: { user: `hex ${via}` } })
   }
 
   private general() {
-    const general = [...this.names.keys()].find(task => /^telegram:-\d+$/.test(task))
+    const general = [...this.names.keys()].find(id => /^telegram:-\d+$/.test(id))
     if (!general) throw new Error('hex has no Telegram General to send this to')
     return general
   }
@@ -241,13 +241,13 @@ export class Asks extends Changes {
     this.result = readJson(join(this.state, 'voice', 'check.json'))
     this.notice()
     const used = new Set<string>()
-    const curated = (this.result?.asks ?? []).flatMap((ask: Written) => {
-      for (const ref of ask.refs ?? []) used.add(refId(ref))
-      const live = ask.refs?.length ? ask.refs.some(ref => this.open(ref)) : !this.marks.answers[ask.id]
-      return live ? [this.dress(ask)] : []
+    const curated = (this.result?.asks ?? []).flatMap((question: Written) => {
+      for (const ref of question.refs ?? []) used.add(refId(ref))
+      const live = question.refs?.length ? question.refs.some(ref => this.open(ref)) : !this.marks.answers[question.id]
+      return live ? [this.dress(question)] : []
     })
-    const raw = [...this.ledgers].flatMap(([app, asks]) =>
-      asks.filter(ask => !ask.answer && !ask.settled && !used.has(refId({ app, ...ask }))).map(ask => this.dress(fromLedger(app, ask))),
+    const raw = [...this.ledgers].flatMap(([app, questions]) =>
+      questions.filter(question => !question.answer && !question.settled && !used.has(refId({ app, ...question }))).map(question => this.dress(fromLedger(app, question))),
     )
     raw.sort((a, b) => b.at.localeCompare(a.at))
     const checked = this.result?.at ?? ''
@@ -255,7 +255,7 @@ export class Asks extends Changes {
       .filter(item => !this.marks.dismissed[item.id])
       .map(item => ({ ...item, ...(this.marks.sent[item.id] && { sent: this.marks.sent[item.id] }) }))
     const view: Omit<View, 'version'> = {
-      asks: [...raw.filter(ask => ask.at > checked), ...curated, ...raw.filter(ask => ask.at <= checked)],
+      asks: [...raw.filter(question => question.at > checked), ...curated, ...raw.filter(question => question.at <= checked)],
       stuck,
       fresh: this.t3.fresh.map(item => ({ ...item, read: !!this.marks.read[item.id] })),
       check: this.result ? { at: this.result.at, why: this.result.why, fixed: this.result.fixed.length, flagged: this.result.flagged.length } : null,
@@ -270,7 +270,7 @@ export class Asks extends Changes {
   // A pinned post that changed or a T3 run that ended starts a check; the first read only takes note.
   private notice() {
     const now = {
-      pins: JSON.stringify([...this.pins].map(([task, pin]) => [task, noteOf(pin)])),
+      pins: JSON.stringify([...this.pins].map(([id, pin]) => [id, noteOf(pin)])),
       t3: JSON.stringify([this.t3.stuck, this.t3.fresh].map(items => items.map(item => item.id))),
     }
     const why = !this.seen ? undefined : now.pins !== this.seen.pins ? 'a pinned post changed' : now.t3 !== this.seen.t3 ? 'a T3 run ended' : undefined
@@ -278,20 +278,20 @@ export class Asks extends Changes {
     if (why) this.check(why)
   }
 
-  private dress({ refs, from, options, links = [], places: _names, ...ask }: Written): Ask {
-    const [app, ...thread] = ask.task.split(':')
+  private dress({ refs, from, options, links = [], places: _names, ...question }: Written): Question {
+    const [app, ...thread] = question.task.split(':')
     const pages = [...links, ...options.flatMap(({ label, url }) => (url ? [{ label, url }] : []))]
     return {
-      ...ask,
+      ...question,
       app: app!,
-      topic: this.names.get(ask.task) ?? thread.at(-1)!,
+      topic: this.names.get(question.task) ?? thread.at(-1)!,
       options: options.filter(option => !option.url),
       ...(pages.length && { links: pages }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(':') }]),
     }
   }
 
-  // Every place an ask was asked, the ones that open first, each newest first where it's known
+  // Every place a question was asked, the ones that open first, each newest first where it's known
   // when: each call, and each thread once, at the message that matters most there: its open question, else its pinned post, else
   // any message, else the thread itself.
   private places(from: Source[]): Place[] {
@@ -316,12 +316,12 @@ export class Asks extends Changes {
 
   // A thread's place, and when it asked there: the question's or the pinned post's time.
   private thread(app: string, thread: string, message?: MessageId): Place & { at?: string } {
-    const task = `${app}:${thread}`
-    const place = app === 'telegram' && !thread.includes(':') ? (thread.startsWith('-') ? 'General' : 'DM') : (this.links.title(app, thread) ?? this.names.get(task) ?? thread)
+    const key = `${app}:${thread}`
+    const place = app === 'telegram' && !thread.includes(':') ? (thread.startsWith('-') ? 'General' : 'DM') : (this.links.title(app, thread) ?? this.names.get(key) ?? thread)
     const link = this.links.of(app, thread, message)
-    const pin = this.pins.get(task)
+    const pin = this.pins.get(key)
     const at = message === undefined ? undefined : pin && String(pin.message) === String(message) ? pin.at : this.asked({ app, thread, message })?.at
-    return { app, place, task, ...(link && { link }), at }
+    return { app, place, task: key, ...(link && { link }), at }
   }
 
   private call(id: string): Place & { at?: string } {

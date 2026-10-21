@@ -53,7 +53,7 @@ export function preview({ input_preview, description }: Permission): string {
 }
 // What another process (the voice app, hex's check) can do with a question the client asked
 // with buttons: answer it for the owner, settle it as no longer asked, or take an answer back.
-export type Asks = {
+export type Questions = {
   answer: (thread: string, message: MessageId, label: string, via: string) => void
   settle: (thread: string, message: MessageId, note: string) => void
   reopen: (thread: string, message: MessageId, via: string) => void
@@ -296,7 +296,7 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, asks, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
+export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [] }: {
   stateDir: string
   storeDir?: string
   channel: string
@@ -312,7 +312,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   state: State
   failed: Failed
   permission?: (thread: string, request: Permission) => void
-  asks?: Asks
+  questions?: Questions
   args?: (thread: string) => string[]
   // A fresh thread's session is never compacted: its launcher builds what a new session knows
   // of the chat, and a new one takes over once the old one's context or cache is spent.
@@ -1001,9 +1001,9 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       setState(request.thread, request.busy, request.background === true)
     }
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
-    if (request.type === 'answer') asks?.answer(request.thread, request.message, request.label, request.via)
-    if (request.type === 'settle') asks?.settle(request.thread, request.message, request.note)
-    if (request.type === 'reopen') asks?.reopen(request.thread, request.message, request.via)
+    if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
+    if (request.type === 'settle') questions?.settle(request.thread, request.message, request.note)
+    if (request.type === 'reopen') questions?.reopen(request.thread, request.message, request.via)
     if (request.type === 'inbound') inbound(request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key })
     if (request.type === 'mirror') void mirror(api, find(request.thread), request.to, request.where).then(
       link => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),

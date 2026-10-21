@@ -3,15 +3,14 @@ import { dirname } from 'path'
 import { statusPost } from './status.ts'
 import { open, storeDir, type MessageId, type Question, type Store } from './store.ts'
 
-export type { Answer, MessageId } from './store.ts'
-export type Ask = Question
+export type { Answer, MessageId, Question } from './store.ts'
 // A pin with a note is the thread's status post: hex writes it as the note over the thread's
 // questions and tasks (status.ts).
 export type Pin = { message: MessageId; text: string; at: string; note?: string }
 
 // What a pin says in its session's own words: a status post's note, or all of a pin written by hand.
 export const noteOf = (pin: Pin) => pin.note ?? pin.text
-type Book = { pins: Record<string, Pin>; asks?: Omit<Ask, 'app'>[] }
+type Book = { pins: Record<string, Pin>; asks?: Omit<Question, 'app'>[] }
 type Edit = (thread: string, message: MessageId, text: string) => Promise<unknown>
 
 // One app's questions, which hex.db keeps (store.ts) so every reader sees the same answer, and
@@ -30,13 +29,13 @@ export class Ledger {
     this.book = read(file)
     // The questions an older hex kept in this file move into hex.db, once.
     if (this.book.asks) {
-      const asks = this.book.asks
+      const kept = this.book.asks
       this.store.write(() => {
-        for (const ask of asks) {
+        for (const question of kept) {
           try {
-            this.store.ask({ app: this.app, ...ask })
+            this.store.ask({ app: this.app, ...question })
           } catch (error) {
-            process.stderr.write(`hub: left out a question ${file} kept that hex.db refuses (${error}): ${JSON.stringify(ask)}\n`)
+            process.stderr.write(`hub: left out a question ${file} kept that hex.db refuses (${error}): ${JSON.stringify(question)}\n`)
           }
         }
       })
@@ -45,7 +44,7 @@ export class Ledger {
     }
   }
 
-  get asks(): readonly Ask[] {
+  get questions(): readonly Question[] {
     return this.store.questions({ app: this.app })
   }
 

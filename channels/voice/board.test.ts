@@ -3,10 +3,10 @@ import { afterAll, expect, test } from 'bun:test'
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { Tasks, track } from './tasks.ts'
+import { Board, track } from './board.ts'
 import { until } from '../../hub/until.ts'
 
-const home = mkdtempSync(join(tmpdir(), 'voice-tasks-'))
+const home = mkdtempSync(join(tmpdir(), 'voice-board-'))
 const claude = join(home, 'claude')
 const state = join(home, 'hex', 'state')
 const hex = join(home, 'hex')
@@ -119,18 +119,18 @@ function item(thread: string, ordinal: number, type: string, status: string, pay
 
 mkdirSync(join(project, 'cccccccc-voiceapp', 'subagents'), { recursive: true })
 writeFileSync(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.meta.json'), JSON.stringify({ agentType: 'Explore', description: 'Build the Tasks view' }))
-const tasks = new Tasks(state, hex, claude, t3)
-afterAll(() => tasks.close())
+const board = new Board(state, hex, claude, t3)
+afterAll(() => board.close())
 
-test("each thread is a task from its session's own records, what needs you first, then what's working, then what finished", () => {
-  expect(tasks.tasks.map(task => [task.name, task.state])).toEqual([
+test("each thread is a run from its session's own records, what needs you first, then what's working, then what finished", () => {
+  expect(board.runs.map(run => [run.name, run.state])).toEqual([
     ['autofork', 'needs'],
     ['voiceapp', 'working'],
     ['hex', 'done'],
     ['Leisure time', 'idle'],
     ['Theo clips', 'idle'],
   ])
-  const autofork = tasks.get('telegram:-1001234567890:908')!
+  const autofork = board.get('telegram:-1001234567890:908')!
   expect(autofork).toMatchObject({
     where: 'Telegram',
     place: 'autofork',
@@ -152,16 +152,16 @@ test("each thread is a task from its session's own records, what needs you first
     { at: asked, state: 'needs' },
     { at: still, state: 'needs' },
   ])
-  expect(tasks.get('telegram:-1001234567890')).toMatchObject({ where: 'General', place: 'General', link: 'https://t.me/c/1234567890/1', running: false })
-  expect(tasks.get('telegram:-1001234567890:2583')!.running).toBe(true)
-  expect(tasks.get('telegram:-1001234567890:65')).toMatchObject({ line: 'clips posted', lately: [] })
-  expect(tasks.get('buzz:b1')).toBeUndefined()
-  expect(tasks.summary).toEqual({ needs: 1, working: 1 })
-  expect(tasks.rows()[0]).not.toContainKeys(['needs', 'lately', 'steps'])
+  expect(board.get('telegram:-1001234567890')).toMatchObject({ where: 'General', place: 'General', link: 'https://t.me/c/1234567890/1', running: false })
+  expect(board.get('telegram:-1001234567890:2583')!.running).toBe(true)
+  expect(board.get('telegram:-1001234567890:65')).toMatchObject({ line: 'clips posted', lately: [] })
+  expect(board.get('buzz:b1')).toBeUndefined()
+  expect(board.summary).toEqual({ needs: 1, working: 1 })
+  expect(board.rows()[0]).not.toContainKeys(['needs', 'lately', 'steps'])
 })
 
 test("a working thread's line is its newest step, and each of its agents from this stretch of work shows its own, running ones first", async () => {
-  const voiceapp = () => tasks.get('telegram:-1001234567890:2583')!
+  const voiceapp = () => board.get('telegram:-1001234567890:2583')!
   expect(voiceapp().agents).toEqual([
     { id: 'agent1', label: 'Build the Tasks view', state: 'working', via: 'claude', since: new Date(building).toISOString(), steps: [] },
     { id: 'agent2', label: 'Check the server', state: 'done', via: 'claude', since: new Date(checking).toISOString(), end: new Date(checked).toISOString(), steps: [] },
@@ -175,13 +175,13 @@ test("a working thread's line is its newest step, and each of its agents from th
   ])
   step(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.jsonl'), 'Read', { file_path: '/repo/README.md' })
   await until(() => voiceapp().agents[0].line === 'Reading README.md')
-  const row = tasks.rows().find(row => row.name === 'voiceapp')!
+  const row = board.rows().find(row => row.name === 'voiceapp')!
   expect(row).not.toContainKey('steps')
   expect(row.agents[0]).toMatchObject({ id: 'agent1', label: 'Build the Tasks view', state: 'working', line: 'Reading README.md' })
 })
 
 test("a Claude Code agent shows its type and model, and once it stops, what it handed back", async () => {
-  const voiceapp = () => tasks.get('telegram:-1001234567890:2583')!
+  const voiceapp = () => board.get('telegram:-1001234567890:2583')!
   said(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.jsonl'), { type: 'text', text: 'Looking.' }, { message: { id: 'm', model: 'claude-haiku-5-5', content: [{ type: 'text', text: 'Looking.' }] } })
   await until(() => voiceapp().agents[0].who === 'Explore · Haiku 5.5')
   heard(
@@ -191,11 +191,11 @@ test("a Claude Code agent shows its type and model, and once it stops, what it h
   )
   await until(() => !!voiceapp().agents[1].result)
   expect(voiceapp().agents[1]).toMatchObject({ state: 'done', line: 'The server answers in 40ms.', result: 'The server answers in 40ms.\nThe rest is fine.' })
-  expect(tasks.rows().find(row => row.name === 'voiceapp')!.agents[1]).not.toContainKey('result')
+  expect(board.rows().find(row => row.name === 'voiceapp')!.agents[1]).not.toContainKey('result')
 })
 
 test("a step's result comes back on it: when it ended, whether it worked, its first lines, and the agent it started", async () => {
-  const voiceapp = () => tasks.get('telegram:-1001234567890:2583')!
+  const voiceapp = () => board.get('telegram:-1001234567890:2583')!
   const transcript = join(project, 'cccccccc-voiceapp.jsonl')
   step(transcript, 'Bash', { command: 'bun test', description: 'Run the tests' }, 'toolu_test')
   await until(() => voiceapp().steps[0]?.id === 'toolu_test')
@@ -216,7 +216,7 @@ test("a step's result comes back on it: when it ended, whether it worked, its fi
 })
 
 test("a working thread's page has its thoughts in their own words and its plan as Claude Code's todo list stands", async () => {
-  const voiceapp = () => tasks.get('telegram:-1001234567890:2583')!
+  const voiceapp = () => board.get('telegram:-1001234567890:2583')!
   const transcript = join(project, 'cccccccc-voiceapp.jsonl')
   said(transcript, { type: 'thinking', thinking: 'The **list** needs a lane.\n\nThen the rows.', signature: 'x' })
   step(transcript, 'TodoWrite', {
@@ -236,31 +236,31 @@ test("a working thread's page has its thoughts in their own words and its plan a
     ['plan', 'Drawing the lanes'],
     ['think', 'The list needs a lane. Then the rows.'],
   ])
-  expect(tasks.rows().find(row => row.name === 'voiceapp')).not.toContainKey('plan')
+  expect(board.rows().find(row => row.name === 'voiceapp')).not.toContainKey('plan')
 })
 
 test('a change to a session wakes the list, and the counts move only when a count does', async () => {
-  const { version } = tasks
-  const counted = tasks.counts.version
-  const woke = tasks.changes(version, 2000)
+  const { version } = board
+  const counted = board.counts.version
+  const woke = board.changes(version, 2000)
   job('aaaaaaaa-general', { state: 'done', detail: 'heartbeat ran again', updatedAt: ago(0) })
   await woke
-  await until(() => tasks.get('telegram:-1001234567890')?.line === 'heartbeat ran again')
-  expect(tasks.counts.version).toBe(counted)
+  await until(() => board.get('telegram:-1001234567890')?.line === 'heartbeat ran again')
+  expect(board.counts.version).toBe(counted)
   job('aaaaaaaa-general', { state: 'blocked', detail: 'Your call: ship it?', updatedAt: ago(0) })
-  await until(() => tasks.summary.needs === 2)
-  expect(tasks.counts.version).toBeGreaterThan(counted)
-  expect(tasks.tasks[0].name).toBe('hex')
+  await until(() => board.summary.needs === 2)
+  expect(board.counts.version).toBeGreaterThan(counted)
+  expect(board.runs[0].name).toBe('hex')
 })
 
 test('a new thread shows up when its app writes threads.json, once its session has records, and links once Discord has said which server it is in', async () => {
   threads('discord', { d1: { name: 'Latest Claude', session: '99999999-latest' } })
   job('99999999-latest', { state: 'failed', detail: "You've hit your weekly limit", updatedAt: ago(0) })
-  await until(() => tasks.get('discord:d1')?.state === 'failed')
-  expect(tasks.get('discord:d1')).toMatchObject({ where: 'Discord', line: "You've hit your weekly limit" })
-  expect(tasks.get('discord:d1')!.link).toBeUndefined()
+  await until(() => board.get('discord:d1')?.state === 'failed')
+  expect(board.get('discord:d1')).toMatchObject({ where: 'Discord', line: "You've hit your weekly limit" })
+  expect(board.get('discord:d1')!.link).toBeUndefined()
   writeFileSync(join(state, 'discord', 'guild.json'), JSON.stringify({ id: '3000' }))
-  await until(() => tasks.get('discord:d1')?.link === 'https://discord.com/channels/3000/d1')
+  await until(() => board.get('discord:d1')?.link === 'https://discord.com/channels/3000/d1')
 })
 
 test("a Buzz thread links to its message in the channel the bot recorded, a DM to its channel, and a thread with no channel to nothing", async () => {
@@ -271,22 +271,22 @@ test("a Buzz thread links to its message in the channel the bot recorded, a DM t
     [dm]: { name: 'bassim', session: 'b0000003-dm' },
   })
   for (const session of ['b0000001-anchors', 'b0000002-lost', 'b0000003-dm']) job(session, { state: 'done', detail: 'ok', updatedAt: ago(1) })
-  await until(() => [anchors, lost, dm].every(thread => tasks.get(`buzz:${thread}`)))
-  expect(tasks.get(`buzz:${anchors}`)!.link).toBeUndefined()
+  await until(() => [anchors, lost, dm].every(thread => board.get(`buzz:${thread}`)))
+  expect(board.get(`buzz:${anchors}`)!.link).toBeUndefined()
   writeFileSync(join(state, 'buzz', 'channels.json'), JSON.stringify({ [anchors]: channel }))
-  await until(() => tasks.get(`buzz:${anchors}`)?.link === `buzz://message?channel=${channel}&id=${anchors}`)
-  expect(tasks.get(`buzz:${dm}`)!.link).toBe(`buzz://channel/${dm}`)
-  expect(tasks.get(`buzz:${lost}`)!.link).toBeUndefined()
+  await until(() => board.get(`buzz:${anchors}`)?.link === `buzz://message?channel=${channel}&id=${anchors}`)
+  expect(board.get(`buzz:${dm}`)!.link).toBe(`buzz://channel/${dm}`)
+  expect(board.get(`buzz:${lost}`)!.link).toBeUndefined()
 })
 
 test("a Telegram DM links to the bot once the bot has said its name", async () => {
   threads('telegram', { ...telegram, '2000100': { name: 'DM', session: '20001000-dm' } })
   job('20001000-dm', { state: 'done', detail: 'ok', updatedAt: ago(1) })
-  await until(() => !!tasks.get('telegram:2000100'))
-  expect(tasks.get('telegram:2000100')).toMatchObject({ where: 'DM' })
-  expect(tasks.get('telegram:2000100')!.link).toBeUndefined()
+  await until(() => !!board.get('telegram:2000100'))
+  expect(board.get('telegram:2000100')).toMatchObject({ where: 'DM' })
+  expect(board.get('telegram:2000100')!.link).toBeUndefined()
   writeFileSync(join(state, 'telegram', 'bot.json'), JSON.stringify({ username: 'hex_bot' }))
-  await until(() => tasks.get('telegram:2000100')?.link === 'https://t.me/hex_bot')
+  await until(() => board.get('telegram:2000100')?.link === 'https://t.me/hex_bot')
 })
 
 test("a T3 Code thread links to T3's own thread for it, once T3 has one, and the app's environment; deleted threads and other drivers give no link", async () => {
@@ -301,13 +301,13 @@ test("a T3 Code thread links to T3's own thread for it, once T3 has one, and the
   mapped('mapped', '4a1e7c52-9b3d-4f60-8a2e-5d6c7b8e9f01', { title: 'Voice app restyle' })
   mapped('gone', 'thread-gone', { deleted: ago(5) })
   mapped('other', 'thread-other', { driver: 'claudeAgent' })
-  await until(() => !!tasks.get('t3:mapped')?.link)
-  expect(tasks.get('t3:mapped')).toMatchObject({ link: 't3code://threads/env-1/4a1e7c52-9b3d-4f60-8a2e-5d6c7b8e9f01', place: 'Voice app restyle', name: 'Voice app' })
-  expect(tasks.get('t3:unmapped')!.place).toBe('Unmapped')
-  for (const key of ['later', 'gone', 'other', 'unmapped']) expect(tasks.get(`t3:${key}`)!.link).toBeUndefined()
+  await until(() => !!board.get('t3:mapped')?.link)
+  expect(board.get('t3:mapped')).toMatchObject({ link: 't3code://threads/env-1/4a1e7c52-9b3d-4f60-8a2e-5d6c7b8e9f01', place: 'Voice app restyle', name: 'Voice app' })
+  expect(board.get('t3:unmapped')!.place).toBe('Unmapped')
+  for (const key of ['later', 'gone', 'other', 'unmapped']) expect(board.get(`t3:${key}`)!.link).toBeUndefined()
   mapped('later', 'thread:delegated task')
-  await until(() => !!tasks.get('t3:later')?.link)
-  expect(tasks.get('t3:later')!.link).toBe('t3code://threads/env-1/thread%3Adelegated%20task')
+  await until(() => !!board.get('t3:later')?.link)
+  expect(board.get('t3:later')!.link).toBe('t3code://threads/env-1/thread%3Adelegated%20task')
 })
 
 test("a hex T3 thread's delegations are its agents, one on hex only under it with its own transcript's steps, and the thread works while any of them does", async () => {
@@ -327,9 +327,9 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
   handed('native', 'thread-lead', 'thread-native', { origin: 'provider_native', title: 'a native subagent' })
   item('thread-sol', 1, 'command_execution', 'completed', { input: `/usr/bin/bash -lc "rg -n 'durable' ~/notes"`, output: 'notes.md:3: durable\n', exitCode: 0 })
   item('thread-sol', 2, 'web_search', 'running', { patterns: ['pi-durable github', 'temporal schedules'], completedAt: null })
-  const lead = () => tasks.get('t3:lead')
+  const lead = () => board.get('t3:lead')
   await until(() => lead()?.agents.length === 4)
-  expect(tasks.get('t3:kid')).toBeUndefined()
+  expect(board.get('t3:kid')).toBeUndefined()
   expect(lead()).toMatchObject({ state: 'working', since: kidSince, place: 'hex primitives' })
   expect(lead()!.agents.map(agent => [agent.label, agent.state, agent.via, agent.who])).toEqual([
     ['sol: second opinion', 'working', 't3', 'Sol'],
@@ -363,15 +363,15 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
     ['tool', 'Checked on kid: map the hub', undefined, undefined],
     ['agent', 'Handed off sol: second opinion', 'Act as the reviewer.', 'thread-sol'],
   ])
-  expect(tasks.rows().find(row => row.id === 't3:lead')!.agents[2]).not.toContainKeys(['steps', 'result'])
+  expect(board.rows().find(row => row.id === 't3:lead')!.agents[2]).not.toContainKeys(['steps', 'result'])
   handed('task-kid', 'thread-lead', 'thread-kid', { status: 'completed', title: 'kid: map the hub', since: ago(5), end: ago(0) })
   handed('task-sol', 'thread-lead', 'thread-sol', { driver: 'codex', status: 'failed', title: 'sol: second opinion', since: ago(3), end: ago(0) })
   await until(() => lead()?.state === 'done')
-  expect(tasks.get('t3:kid')).toBeUndefined()
+  expect(board.get('t3:kid')).toBeUndefined()
 })
 
 test("a thread that stops working keeps its last stretch, with nothing left running and its agents as T3 Code has them now, until it works again", async () => {
-  const lead = () => tasks.get('t3:lead')!
+  const lead = () => board.get('t3:lead')!
   expect(lead().state).toBe('done')
   expect(lead().steps.map(step => [step.text, step.state])).toEqual([
     ['Waiting on agents', undefined],
@@ -388,7 +388,7 @@ test("a thread that stops working keeps its last stretch, with nothing left runn
   ])
   expect(lead().agents[0]).toMatchObject({ end: expect.any(String), link: 't3code://threads/env-1/thread-sol' })
   expect(lead().agents[0].steps[0]).not.toContainKey('state')
-  expect(tasks.rows().find(row => row.id === 't3:lead')!.agents[0]).not.toContainKeys(['steps', 'result'])
+  expect(board.rows().find(row => row.id === 't3:lead')!.agents[0]).not.toContainKeys(['steps', 'result'])
   ask('thread-lead', new Date().toISOString())
   handed('task-new', 'thread-lead', 'thread-new', { driver: 'codex', title: 'new: round two', since: new Date(Date.now() + 1000).toISOString() })
   await until(() => lead().state === 'working')
@@ -401,26 +401,26 @@ test("a thread whose turn ended stays working while its workflow runs, each work
     { at: ago(3), state: 'working', detail: 'Phase 1 resumed', text: 'Resumed Phase 1' },
   ])
   running('51351351-antibody', 'idle')
-  const antibody = () => tasks.get('telegram:-1001234567890:513')
+  const antibody = () => board.get('telegram:-1001234567890:513')
   await until(() => antibody()?.state === 'working')
   expect(antibody()!.agents.map(agent => [agent.label, agent.state])).toEqual([['build:bills', 'working']])
   step(join(project, '51351351-antibody', 'subagents', 'workflows', 'wf_1', 'agent-wfbills.jsonl'), 'Read', { file_path: '/repo/bills.ts' })
   await until(() => antibody()?.agents[0].line === 'Reading bills.ts')
 })
 
-test('a running session no thread holds is a task of its own while it works', async () => {
+test('a running session no thread holds is a run of its own while it works', async () => {
   job('12121212-review', { state: 'working', detail: 'reviewing autofork', updatedAt: ago(0) })
   job('34343434-probe', { state: 'done', detail: 'probe ran', updatedAt: ago(0) })
   running('12121212-review', 'busy', process.pid, { kind: 'bg', name: 'autofork-review', cwd: '/repo' })
   running('34343434-probe', 'idle', process.pid, { kind: 'bg', name: 'probe' })
   running('56565656-terminal', 'busy', process.pid, { kind: 'interactive', name: 'bassim-1' })
-  await until(() => tasks.get('claude:12121212')?.state === 'working')
-  expect(tasks.get('claude:12121212')).toMatchObject({ name: 'autofork-review', where: 'Claude Code', line: 'reviewing autofork' })
-  expect(tasks.tasks.filter(task => task.app === 'claude').map(task => task.name)).toEqual(['autofork-review', 'bassim-1'])
+  await until(() => board.get('claude:12121212')?.state === 'working')
+  expect(board.get('claude:12121212')).toMatchObject({ name: 'autofork-review', where: 'Claude Code', line: 'reviewing autofork' })
+  expect(board.runs.filter(run => run.app === 'claude').map(run => run.name)).toEqual(['autofork-review', 'bassim-1'])
   job('12121212-review', { state: 'done', detail: 'reviewed', updatedAt: ago(0) })
   running('12121212-review', 'idle', process.pid, { kind: 'bg', name: 'autofork-review', cwd: '/repo' })
   rmSync(join(claude, 'sessions', '56565656.json'))
-  await until(() => !tasks.get('claude:12121212') && !tasks.get('claude:56565656'))
+  await until(() => !board.get('claude:12121212') && !board.get('claude:56565656'))
 })
 
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
@@ -434,12 +434,12 @@ test("a thread stays working while a session it started runs, that session one o
   threads('telegram', { ...telegram, '-1001234567890:3275': { name: 'lab', session: '32753275-lab' } })
   job('32753275-lab', { state: 'done', detail: 'started the build', updatedAt: ago(1) })
   running('32753275-lab', 'idle', shell.pid)
-  const lab = () => tasks.get('telegram:-1001234567890:3275')
+  const lab = () => board.get('telegram:-1001234567890:3275')
   await until(() => lab()?.state === 'done')
   running('78787878-build', 'busy', build, { kind: 'interactive', name: 'lab-build-c0', cwd: '/scratch/build', startedAt: Date.now() })
   await until(() => lab()?.state === 'working')
   expect(lab()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['78787878-build', 'lab-build-c0', 'working']])
-  expect(tasks.get('claude:78787878')).toBeUndefined()
+  expect(board.get('claude:78787878')).toBeUndefined()
   step(join(claude, 'projects', '-scratch-build', '78787878-build.jsonl'), 'Read', { file_path: '/scratch/build/plan.md' })
   await until(() => lab()?.agents[0]?.line === 'Reading plan.md')
   rmSync(join(claude, 'sessions', '78787878.json'))
@@ -449,36 +449,36 @@ test("a thread stays working while a session it started runs, that session one o
   expect(lab()!.running).toBe(false)
 })
 
-test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a task of its own", async () => {
+test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a run of its own", async () => {
   const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:65' } })
   const orphan = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:404' } })
   afterAll(() => {
     owned.kill()
     orphan.kill()
   })
-  const theo = () => tasks.get('telegram:-1001234567890:65')
+  const theo = () => board.get('telegram:-1001234567890:65')
   job('91919191-clips', { state: 'working', detail: 'cutting clips', updatedAt: ago(0) })
   job('92929292-lost', { state: 'working', detail: 'lost its thread', updatedAt: ago(0) })
   running('91919191-clips', 'busy', owned.pid, { kind: 'interactive', name: 'Theo clips/cut', startedAt: Date.now() })
   running('92929292-lost', 'busy', orphan.pid, { kind: 'interactive', name: 'gone/job', startedAt: Date.now() })
-  await until(() => theo()?.state === 'working' && !!tasks.get('claude:92929292'))
+  await until(() => theo()?.state === 'working' && !!board.get('claude:92929292'))
   expect(theo()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['91919191-clips', 'Theo clips/cut', 'working']])
-  expect(tasks.get('claude:91919191')).toBeUndefined()
+  expect(board.get('claude:91919191')).toBeUndefined()
   rmSync(join(claude, 'sessions', '91919191.json'))
   rmSync(join(claude, 'sessions', '92929292.json'))
-  await until(() => theo()?.state !== 'working' && !tasks.get('claude:92929292'))
+  await until(() => theo()?.state !== 'working' && !board.get('claude:92929292'))
 })
 
 test("a job's session works under the thread that owns it while that thread has no session of its own", async () => {
   const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:3675' } })
   afterAll(() => owned.kill())
   threads('telegram', { ...telegram, '-1001234567890:3675': { name: 'unemployment' } })
-  const claim = () => tasks.get('telegram:-1001234567890:3675')
+  const claim = () => board.get('telegram:-1001234567890:3675')
   job('93939393-claim', { state: 'working', detail: 'filling the claim', updatedAt: ago(0) })
   running('93939393-claim', 'busy', owned.pid, { kind: 'interactive', name: 'unemployment/claim', cwd: '/scratch/claim', startedAt: Date.now() })
   await until(() => claim()?.state === 'working')
   expect(claim()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['93939393-claim', 'unemployment/claim', 'working']])
-  expect(tasks.get('claude:93939393')).toBeUndefined()
+  expect(board.get('claude:93939393')).toBeUndefined()
   step(join(claude, 'projects', '-scratch-claim', '93939393-claim.jsonl'), 'Read', { file_path: '/scratch/claim/form.md' })
   await until(() => claim()?.agents[0]?.line === 'Reading form.md')
   rmSync(join(claude, 'sessions', '93939393.json'))
@@ -488,10 +488,10 @@ test("a job's session works under the thread that owns it while that thread has 
 test("a renewed session's new job folder still wakes the list", async () => {
   rmSync(join(claude, 'jobs', 'aaaaaaaa'), { recursive: true })
   job('aaaaaaaa-general', { state: 'done', detail: 'renewed', updatedAt: ago(0) })
-  await until(() => tasks.get('telegram:-1001234567890')?.line === 'renewed')
+  await until(() => board.get('telegram:-1001234567890')?.line === 'renewed')
   await Bun.sleep(100)
   job('aaaaaaaa-general', { state: 'done', detail: 'after the renew', updatedAt: ago(0) })
-  await until(() => tasks.get('telegram:-1001234567890')?.line === 'after the renew')
+  await until(() => board.get('telegram:-1001234567890')?.line === 'after the renew')
 })
 
 test("a lane holds a week: the change before it, steps only in the last hour, and quiet gaps too small to see joined", () => {
@@ -531,11 +531,11 @@ test("a thread's lane outlives its session starting over, kept in the voice fold
     { at: earlier, state: 'working', detail: 'before', text: '' },
     { at: ago(2 * 60), state: 'done', detail: 'before the respawn', text: '' },
   ])
-  await until(() => tasks.get('telegram:-1001234567890')?.line === 'before the respawn')
+  await until(() => board.get('telegram:-1001234567890')?.line === 'before the respawn')
   rmSync(join(claude, 'jobs', 'aaaaaaaa'), { recursive: true })
   job('aaaaaaaa-general', { state: 'done', detail: 'after the respawn', updatedAt: ago(0) }, [{ at: ago(1), state: 'done', detail: 'after the respawn', text: '' }])
-  await until(() => tasks.get('telegram:-1001234567890')?.line === 'after the respawn')
-  expect(tasks.get('telegram:-1001234567890')!.track[0]).toEqual({ at: earlier, state: 'working' })
+  await until(() => board.get('telegram:-1001234567890')?.line === 'after the respawn')
+  expect(board.get('telegram:-1001234567890')!.track[0]).toEqual({ at: earlier, state: 'working' })
   await until(() => {
     try {
       return JSON.parse(readFileSync(join(state, 'voice', 'tracks.json'), 'utf8'))['telegram:-1001234567890']?.[0]?.at === earlier
@@ -555,7 +555,7 @@ test("a T3 thread woken by its delegations finishing still shows what it handed 
   ask('thread-woken', ago(10))
   handed('task-files', 'thread-woken', 'thread-files', { driver: 'codex', status: 'completed', title: 'files: one line each', since: ago(9), end: ago(2) })
   ask('thread-woken', ago(2), { delegatedCompletion: { taskIds: ['task-files'] } })
-  const woken = () => tasks.get('t3:woken')
+  const woken = () => board.get('t3:woken')
   await until(() => woken()?.state === 'working' && woken()!.agents.length > 0)
   expect(woken()!.agents.map(agent => [agent.label, agent.state])).toEqual([['files: one line each', 'done']])
 })
@@ -587,17 +587,17 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
       'not json',
     ].map(line => (typeof line === 'string' ? line : JSON.stringify(line)) + '\n').join(''),
   )
-  const fix = () => tasks.get('discord:fix')
+  const fix = () => board.get('discord:fix')
   await until(() => fix()?.agents.length === 2)
   expect(fix()!.state).toBe('working')
   expect(fix()!.agents.map(agent => [agent.label, agent.state, agent.via, agent.line])).toEqual([
     ['hex primitives + durability', 'working', 't3', undefined],
     ['sol: a second look', 'done', 't3', 'Looks sound.'],
   ])
-  expect(tasks.get('t3:prims')).toBeUndefined()
+  expect(board.get('t3:prims')).toBeUndefined()
   run('thread-prims', 2, { status: 'completed', since: ago(2), end: ago(0) })
   run('thread-prims', 3, { since: ago(0) })
-  await until(() => !!tasks.get('t3:prims'))
+  await until(() => !!board.get('t3:prims'))
   expect(fix()!.state).not.toBe('working')
 })
 
@@ -614,7 +614,7 @@ test("two T3 threads that send each other work each show on their own, the other
       { at: ago(1), from: 'pong', thread: 'thread-ping', run: toPing },
     ].map(line => JSON.stringify(line) + '\n').join(''),
   )
-  await until(() => tasks.get('t3:ping')?.agents.length && tasks.get('t3:pong')?.agents.length)
-  expect(tasks.get('t3:ping')!.agents.map(agent => [agent.label, agent.state])).toEqual([['pong', 'working']])
-  expect(tasks.get('t3:pong')!.agents.map(agent => [agent.label, agent.state])).toEqual([['ping', 'working']])
+  await until(() => board.get('t3:ping')?.agents.length && board.get('t3:pong')?.agents.length)
+  expect(board.get('t3:ping')!.agents.map(agent => [agent.label, agent.state])).toEqual([['pong', 'working']])
+  expect(board.get('t3:pong')!.agents.map(agent => [agent.label, agent.state])).toEqual([['ping', 'working']])
 })

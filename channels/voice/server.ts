@@ -8,9 +8,9 @@ import { CallLog, ending, usage, type CallRecord, type Ending, type Source } fro
 import { Changes } from './changes.ts'
 import { Chats } from './chat.ts'
 import { PORT, STATE_DIR, env } from './env.ts'
-import { Asks, type Ask } from './asks.ts'
+import { Questions, type Question } from './questions.ts'
 import { relay } from './relay.ts'
-import { Tasks, opener, type HexTask } from './tasks.ts'
+import { Board, opener, type Run } from './board.ts'
 import { begin, title as oneWord, type Held, type VoiceLine } from '../../hub/hub.ts'
 import page from './page.html' with { type: 'text' }
 
@@ -28,8 +28,8 @@ const TOKEN = env.VOICE_TOKEN
 const calls = new CallLog(join(STATE_DIR, 'calls'))
 const activity = new Changes()
 const follows = new Map<string, () => void>()
-let board: Tasks
-let yours: Asks
+let board: Board
+let yours: Questions
 let chats: Chats
 
 const IDENTITY = (() => {
@@ -66,7 +66,7 @@ type Pending = { resolve: () => void; reject: (error: Error) => void }
 type Ring = { delegation: string; offset: number }
 type Live = {
   id: string
-  shown: Map<string, Ask>
+  shown: Map<string, Question>
   socket: WebSocket
   call: Call
   record: Omit<CallRecord, 'turns' | 'tasks' | 'moments'>
@@ -112,7 +112,7 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   if (name === 'title') return title(args.call, args)
   if (name === 'task') return task(args.id, args.state as Task['state'], args.text, args.call, args.agent)
   if (name === 'send') return pass(args.thread, args.about, args.text, args.app, args.channel)
-  if (name === 'answer') return answerAsk(args.id, args.label, 'call')
+  if (name === 'answer') return answerQuestion(args.id, args.label, 'call')
   if (name === 'note' && !live && ringing()) {
     briefing.push(args.text)
     return 'the call is still ringing; the voice gets this when it connects'
@@ -231,7 +231,7 @@ function settle(call: string, id: string, thread: Thread, end: NonNullable<Step[
   check()
 }
 
-function newest(row: HexTask) {
+function newest(row: Run) {
   return row.agents.find(agent => agent.state === 'working' && agent.line)?.line ?? row.line
 }
 
@@ -409,24 +409,24 @@ function follow(socket: WebSocket, record: Live['record'], { call = new Call(), 
 // is told to do first.
 type Topic = { id: string; claude: string; voice: string }
 
-function taskTopic(task: HexTask): Topic {
+function runTopic(run: Run): Topic {
   return {
-    id: task.id,
-    claude: `The caller started it with Talk it through on a task. ${opener(task)}`,
-    voice: `The caller tapped Talk it through on a task, so bring it up now in a sentence or two, then listen. ${opener(task)}`,
+    id: run.id,
+    claude: `The caller started it with Talk it through on a task. ${opener(run)}`,
+    voice: `The caller tapped Talk it through on a task, so bring it up now in a sentence or two, then listen. ${opener(run)}`,
   }
 }
 
-// Go through them with hex: Claude walks the caller's asks in the app's order, one card at a time.
-function walkTopic(asks: Ask[]): Topic {
-  const list = asks.map(
-    (ask, i) =>
-      `${i + 1}. ${ask.id} · ${ask.topic} · ${ask.question}${ask.context ? ` (${ask.context})` : ''} Options: ${ask.options.map(option => `${option.label}${option.pick ? ' (hex’s pick)' : ''}`).join(' / ')}${ask.tag ? ` [${ask.tag}]` : ''}`,
+// Go through them with hex: Claude walks the caller's questions in the app's order, one card at a time.
+function walkTopic(questions: Question[]): Topic {
+  const list = questions.map(
+    (question, i) =>
+      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${question.context ? ` (${question.context})` : ''} Options: ${question.options.map(option => `${option.label}${option.pick ? ' (hex’s pick)' : ''}`).join(' / ')}${question.tag ? ` [${question.tag}]` : ''}`,
   )
   return {
     id: 'asks',
     claude: [
-      `The caller tapped Go through them with hex: walk them through the ${asks.length} things waiting on them, one at a time, in this order. For each, put it on screen with ask, say it in a sentence or two with hex's pick if it has one, and listen. When they say a choice, answer sends it to the thread that asked; when they tap the card instead, a message tells you. Move on when they skip one. Say so when a choice costs money or goes out in their name.`,
+      `The caller tapped Go through them with hex: walk them through the ${questions.length} things waiting on them, one at a time, in this order. For each, put it on screen with ask, say it in a sentence or two with hex's pick if it has one, and listen. When they say a choice, answer sends it to the thread that asked; when they tap the card instead, a message tells you. Move on when they skip one. Say so when a choice costs money or goes out in their name.`,
       ...list,
     ].join('\n'),
     voice: `The caller wants to go through what's waiting on them, one at a time. Say you'll start with the first one, and hand off to the backend now: it brings each one up.`,
@@ -440,26 +440,26 @@ function talkAbout(topic: Topic) {
   return new Response(null, { status: 204 })
 }
 
-// Puts an ask on the caller's screen as a card in the transcript.
+// Puts a question on the caller's screen as a card in the transcript.
 function show(call: Live, id: string) {
-  const ask = yours.find(id)
-  if (!ask) throw new Error(`no open ask ${id}`)
-  call.shown.set(id, ask)
-  remember(call, 'ask', ask.question, id)
+  const question = yours.find(id)
+  if (!question) throw new Error(`no open ask ${id}`)
+  call.shown.set(id, question)
+  remember(call, 'ask', question.question, id)
   activity.changed()
-  return `showing "${ask.question}" to the caller`
+  return `showing "${question.question}" to the caller`
 }
 
-// An ask answered on a call, said aloud (via call) or tapped on its card (via app).
-async function answerAsk(id: string, label: string, via: string) {
-  const ask = yours.find(id) ?? live?.shown.get(id)
+// An question answered on a call, said aloud (via call) or tapped on its card (via app).
+async function answerQuestion(id: string, label: string, via: string) {
+  const question = yours.find(id) ?? live?.shown.get(id)
   await yours.answer(id, label, via)
-  if (live && ask) {
-    live.shown.set(id, ask)
+  if (live && question) {
+    live.shown.set(id, question)
     remember(live, 'answered', label, id)
     activity.changed()
   }
-  return `sent "${label}" to ${ask?.topic ?? 'its thread'}`
+  return `sent "${label}" to ${question?.topic ?? 'its thread'}`
 }
 
 function listen(call: Live, socket: WebSocket, attempt = 0) {
@@ -898,7 +898,7 @@ function elsewhere(call: Live): (Task & { line?: string })[] {
     .map(row => ({ id: row.id, state: 'running', text: row.name, to: row.name, line: newest(row) }))
 }
 
-// The asks put on screen in this call, in order, each with its answer once it has one.
+// The questions put on screen in this call, in order, each with its answer once it has one.
 function cards(call: Live) {
   const marks = call.call.record().moments
   return marks
@@ -908,45 +908,45 @@ function cards(call: Live) {
 
 function topicOf(about?: string): Topic | undefined {
   if (about === 'asks') return walkTopic(yours.view.asks)
-  const task = about ? board.get(about) : undefined
-  return task && taskTopic(task)
+  const run = about ? board.get(about) : undefined
+  return run && runTopic(run)
 }
 
 
-async function showTasks(url: URL, tasks: Tasks) {
+async function showRuns(url: URL, runs: Board) {
   const after = url.searchParams.get('after')
-  if (after) await tasks.changes(Number(after), 25_000)
-  return Response.json({ version: tasks.version, tasks: tasks.rows() })
+  if (after) await runs.changes(Number(after), 25_000)
+  return Response.json({ version: runs.version, tasks: runs.rows() })
 }
 
 // The Tasks button's counts: threads that need you and are working, and how many things are yours,
-// as many as Tasks lists under Needs you: every ask, everything stuck, and every thread that needs
-// you without an ask.
-async function showSummary(url: URL, tasks: Tasks, asks: Asks) {
-  const version = () => tasks.counts.version + asks.counts.version
+// as many as Tasks lists under Needs you: every question, everything stuck, and every thread that needs
+// you without a question.
+async function showSummary(url: URL, runs: Board, questions: Questions) {
+  const version = () => runs.counts.version + questions.counts.version
   const after = Number(url.searchParams.get('after'))
-  if (after === version()) await Promise.race([tasks.counts.changes(tasks.counts.version, 25_000), asks.counts.changes(asks.counts.version, 25_000)])
-  const asked = new Set(asks.view.asks.map(ask => ask.task))
-  const unasked = tasks.rows().filter(row => row.state === 'needs' && !asked.has(row.id)).length
-  return Response.json({ version: version(), ...tasks.summary, yours: asks.view.asks.length + asks.view.stuck.length + unasked })
+  if (after === version()) await Promise.race([runs.counts.changes(runs.counts.version, 25_000), questions.counts.changes(questions.counts.version, 25_000)])
+  const asked = new Set(questions.view.asks.map(question => question.task))
+  const unasked = runs.rows().filter(row => row.state === 'needs' && !asked.has(row.id)).length
+  return Response.json({ version: version(), ...runs.summary, yours: questions.view.asks.length + questions.view.stuck.length + unasked })
 }
 
-async function showAsks(url: URL, asks: Asks) {
+async function showQuestions(url: URL, questions: Questions) {
   const after = url.searchParams.get('after')
-  if (after) await asks.changes(Number(after), 25_000)
-  return Response.json({ version: asks.version, ...asks.view })
+  if (after) await questions.changes(Number(after), 25_000)
+  return Response.json({ version: questions.version, ...questions.view })
 }
 
-// What the app's tap on an ask, a stuck item or a new result does. Each answers once the hub has it;
+// What the app's tap on a question, a stuck item or a new result does. Each answers once the hub has it;
 // the change itself comes back through the list.
-async function askRoutes(request: Request, url: URL) {
-  const asks = yours
+async function questionRoutes(request: Request, url: URL) {
+  const questions = yours
   if (url.pathname === '/asks' && request.method === 'GET') {
-    if (!url.searchParams.get('after')) asks.opened()
-    return showAsks(url, asks)
+    if (!url.searchParams.get('after')) questions.opened()
+    return showQuestions(url, questions)
   }
-  if (url.pathname === '/asks/check' && request.method === 'GET') return asks.lastCheck ? Response.json(asks.lastCheck) : new Response('No check yet', { status: 404 })
-  if (url.pathname === '/asks/talk' && request.method === 'POST') return talkAbout(walkTopic(asks.view.asks))
+  if (url.pathname === '/asks/check' && request.method === 'GET') return questions.lastCheck ? Response.json(questions.lastCheck) : new Response('No check yet', { status: 404 })
+  if (url.pathname === '/asks/talk' && request.method === 'POST') return talkAbout(walkTopic(questions.view.asks))
   const [, kind, id, verb] = url.pathname.match(/^\/(asks|stuck|fresh)\/([^/]+)\/(answer|undo|act|read)$/) ?? []
   if (!kind || request.method !== 'POST') return new Response('404', { status: 404 })
   const key = decodeURIComponent(id!)
@@ -955,11 +955,11 @@ async function askRoutes(request: Request, url: URL) {
       const { label } = (await request.json()) as { label?: string }
       if (!label) return new Response('An answer needs its label', { status: 400 })
       const shown = live?.shown.has(key)
-      await answerAsk(key, label, 'app')
+      await answerQuestion(key, label, 'app')
       if (shown) deliver(`The caller tapped "${label}" on the card for ${key}; it's sent to its thread.`, { call: live!.id })
-    } else if (kind === 'asks' && verb === 'undo') await asks.undo(key, 'app')
-    else if (kind === 'stuck' && verb === 'act') await asks.act(key)
-    else if (kind === 'fresh' && verb === 'read') asks.read(key)
+    } else if (kind === 'asks' && verb === 'undo') await questions.undo(key, 'app')
+    else if (kind === 'stuck' && verb === 'act') await questions.act(key)
+    else if (kind === 'fresh' && verb === 'read') questions.read(key)
     else return new Response('404', { status: 404 })
   } catch (error) {
     return new Response(error instanceof Error ? error.message : String(error), { status: 409 })
@@ -967,32 +967,32 @@ async function askRoutes(request: Request, url: URL) {
   return new Response(null, { status: 204 })
 }
 
-function taskRoutes(request: Request, url: URL) {
-  const tasks = board
-  if (url.pathname === '/tasks' && request.method === 'GET') return showTasks(url, tasks)
-  if (url.pathname === '/tasks/summary' && request.method === 'GET') return showSummary(url, tasks, yours)
+function runRoutes(request: Request, url: URL) {
+  const runs = board
+  if (url.pathname === '/tasks' && request.method === 'GET') return showRuns(url, runs)
+  if (url.pathname === '/tasks/summary' && request.method === 'GET') return showSummary(url, runs, yours)
   const [, id, verb] = url.pathname.match(/^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/) ?? []
-  const task = id && tasks.get(decodeURIComponent(id))
-  if (!task) return new Response('404', { status: 404 })
-  if (verb === 'talk' && request.method === 'POST') return talkAbout(taskTopic(task))
-  if (verb === 'chat' && request.method === 'GET') return showChat(url, task)
-  if (verb === 'chat' && request.method === 'POST') return sendChat(request, task)
-  if (verb === 'stop' && request.method === 'POST') return done(() => chats.stop(task))
-  if (!verb && request.method === 'GET') return Response.json({ ...task, ...yours.of(task.id) })
+  const run = id && runs.get(decodeURIComponent(id))
+  if (!run) return new Response('404', { status: 404 })
+  if (verb === 'talk' && request.method === 'POST') return talkAbout(runTopic(run))
+  if (verb === 'chat' && request.method === 'GET') return showChat(url, run)
+  if (verb === 'chat' && request.method === 'POST') return sendChat(request, run)
+  if (verb === 'stop' && request.method === 'POST') return done(() => chats.stop(run))
+  if (!verb && request.method === 'GET') return Response.json({ ...run, ...yours.of(run.id) })
 }
 
 // A thread's chat, and with after, the next time it changes.
-async function showChat(url: URL, task: HexTask) {
-  const where = () => ({ ...task, session: board.session(task.id) })
+async function showChat(url: URL, run: Run) {
+  const where = () => ({ ...run, session: board.session(run.id) })
   const after = url.searchParams.get('after')
   return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where()))
 }
 
-async function sendChat(request: Request, task: HexTask) {
+async function sendChat(request: Request, run: Run) {
   const { text, key } = ((await request.json().catch(() => null)) ?? {}) as { text?: unknown; key?: unknown }
   if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
   if (typeof key !== 'string' || !/^app-[\w-]{8,60}$/.test(key)) return new Response('Name the message with a key starting app-', { status: 400 })
-  return done(() => chats.send(task, text.trim(), key))
+  return done(() => chats.send(run, text.trim(), key))
 }
 
 // No content once act is through, or why it couldn't be.
@@ -1030,8 +1030,8 @@ function routes(request: Request) {
   }
   if (pathname === '/calls' && request.method === 'GET') return listCalls(new URL(request.url))
   if (pathname === '/activity' && request.method === 'GET') return showActivity(new URL(request.url))
-  if (pathname === '/tasks' || pathname.startsWith('/tasks/')) return taskRoutes(request, new URL(request.url))
-  if (/^\/(asks|stuck|fresh)(\/|$)/.test(pathname)) return askRoutes(request, new URL(request.url))
+  if (pathname === '/tasks' || pathname.startsWith('/tasks/')) return runRoutes(request, new URL(request.url))
+  if (/^\/(asks|stuck|fresh)(\/|$)/.test(pathname)) return questionRoutes(request, new URL(request.url))
   const [, callId, moments] = pathname.match(/^\/calls\/([\w-]+)(\/moments)?$/) ?? []
   if (callId && moments && request.method === 'POST') return interruption(request, callId)
   if (callId && !moments && request.method === 'GET') return showCall(callId, new URL(request.url))
@@ -1048,13 +1048,13 @@ function routes(request: Request) {
 export function serve(voiceHub: Hub, state: string) {
   hub = voiceHub
   HEX_STATE = state
-  board = new Tasks(state, dirname(state))
+  board = new Board(state, dirname(state))
   chats = new Chats(state, dirname(state))
   board.listen(() => {
     activity.changed()
     chats.changed()
   })
-  yours = new Asks(state)
+  yours = new Questions(state)
   recover()
   resume()
   return Bun.serve<Phone>({

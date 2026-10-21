@@ -49,7 +49,7 @@ import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSy
 import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
-import { Ledger, type Ask, type MessageId } from '../../hub/ledger.ts'
+import { Ledger, type MessageId, type Question } from '../../hub/ledger.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
 
@@ -483,7 +483,7 @@ function serve(token: string) {
 
   // What a question's controls show: the pick its own tap made, where else it was answered, how it
   // was settled, or its choices again.
-  function controls({ options, multiple, answer, settled }: Ask) {
+  function controls({ options, multiple, answer, settled }: Question) {
     if (settled) return only(settled.note)
     if (!answer) return choices(options, !!multiple)
     if (answer.via !== 'discord') return only(answeredText(answer))
@@ -498,11 +498,11 @@ function serve(token: string) {
     const at = `${thread}:${message}`
     const drawn = (drawing.get(at) ?? Promise.resolve())
       .then(async () => {
-        const ask = ledger.find(thread, message)
-        if (!ask) return
+        const question = ledger.find(thread, message)
+        if (!question) return
         const ch = await threadChannel(thread)
-        if (!ask.poll) return void (await ch.messages.edit(String(message), { components: controls(ask) }))
-        if (ask.settled || (ask.answer && ask.answer.via !== 'discord')) await (await ch.messages.fetch(String(message))).poll!.end()
+        if (!question.poll) return void (await ch.messages.edit(String(message), { components: controls(question) }))
+        if (question.settled || (question.answer && question.answer.via !== 'discord')) await (await ch.messages.fetch(String(message))).poll!.end()
       })
       .catch(err => {
         process.stderr.write(`discord hub: couldn't draw the buttons on ${thread} ${message}: ${err}\n`)
@@ -512,19 +512,19 @@ function serve(token: string) {
     return drawn
   }
 
-  async function answerAsk(thread: string, message: MessageId, label: string, via: string) {
-    const ask = ledger.find(thread, message)
-    if (!ask || ask.answer) return
+  async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
+    const question = ledger.find(thread, message)
+    if (!question || question.answer) return
     const answered = hub.deliver(
       thread,
       hub.name(thread) ?? thread,
       {
-        content: ask.poll ? `(vote: ${label})` : label,
+        content: question.poll ? `(vote: ${label})` : label,
         meta: {
           chat_id: thread,
           user: `hex ${via}`,
           ts: new Date().toISOString(),
-          ...(ask.poll ? { vote: label, poll_message_id: String(message), poll: ask.text } : { button: 'true', button_message_id: String(message) }),
+          ...(question.poll ? { vote: label, poll_message_id: String(message), poll: question.text } : { button: 'true', button_message_id: String(message) }),
           answered_in: ANSWERED_IN[via] ?? via,
         },
       },
@@ -533,26 +533,26 @@ function serve(token: string) {
     if (answered) await draw(thread, message)
   }
 
-  async function settleAsk(thread: string, message: MessageId, note: string) {
-    const ask = ledger.find(thread, message)
-    if (!ask || ask.answer || ask.settled) return
+  async function settleQuestion(thread: string, message: MessageId, note: string) {
+    const question = ledger.find(thread, message)
+    if (!question || question.answer || question.settled) return
     ledger.settled(thread, message, note)
     await draw(thread, message)
   }
 
   // Takes back an answer given elsewhere, or a settle: the buttons come back, and the thread hears
   // that the answer it got no longer stands. An ended poll stays ended.
-  async function reopenAsk(thread: string, message: MessageId, via: string) {
-    const ask = ledger.find(thread, message)
-    if (!ask || !(ask.answer || ask.settled)) return
-    const taken = ask.answer?.label
+  async function reopenQuestion(thread: string, message: MessageId, via: string) {
+    const question = ledger.find(thread, message)
+    if (!question || !(question.answer || question.settled)) return
+    const taken = question.answer?.label
     const reopened = taken
       ? hub.deliver(
           thread,
           hub.name(thread) ?? thread,
           {
             content: `(took back: ${taken})`,
-            meta: { chat_id: thread, user: `hex ${via}`, ts: new Date().toISOString(), took_back: taken, [ask.poll ? 'poll_message_id' : 'button_message_id']: String(message) },
+            meta: { chat_id: thread, user: `hex ${via}`, ts: new Date().toISOString(), took_back: taken, [question.poll ? 'poll_message_id' : 'button_message_id']: String(message) },
           },
           () => ledger.reopened(thread, message),
         )
@@ -641,7 +641,7 @@ function serve(token: string) {
         if (pinned?.note !== undefined && pinned.message === args.message_id && args.text !== undefined) {
           if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
           await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost, tappable(args.text as string))
-          if (args.settled) await settleAsk(thread, pinned.message, '✓ Settled')
+          if (args.settled) await settleQuestion(thread, pinned.message, '✓ Settled')
           return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
         }
         const msg = await message(ch, args.message_id as string)
@@ -653,7 +653,7 @@ function serve(token: string) {
             })
           : msg
         if (args.text !== undefined) ledger.edited(thread, edited.id, args.text as string)
-        if (args.settled) await settleAsk(thread, edited.id, '✓ Settled')
+        if (args.settled) await settleQuestion(thread, edited.id, '✓ Settled')
         return `edited (id: ${edited.id})`
       }
       case 'delete_message': {
@@ -740,10 +740,10 @@ function serve(token: string) {
       void threadChannel(thread).then(ch => ch.send(`Couldn't start this thread's session: ${reason}`)).catch(() => {})
     },
     permission: (thread, request) => void ask(thread, request).catch(err => process.stderr.write(`discord hub: couldn't relay a permission prompt to ${thread}: ${err}\n`)),
-    asks: {
-      answer: (thread, message, label, via) => void answerAsk(thread, message, label, via),
-      settle: (thread, message, note) => void settleAsk(thread, message, note),
-      reopen: (thread, message, via) => void reopenAsk(thread, message, via),
+    questions: {
+      answer: (thread, message, label, via) => void answerQuestion(thread, message, label, via),
+      settle: (thread, message, note) => void settleQuestion(thread, message, note),
+      reopen: (thread, message, via) => void reopenQuestion(thread, message, via),
     },
     hexDir: process.env.HEX_DIR,
     launcher: process.env.HEX_LAUNCHER,
@@ -916,7 +916,7 @@ function serve(token: string) {
   // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does,
   // and its buttons are drawn again from the one that stands.
   async function picked(ch: ThreadChannel | DMChannel, label: string, at: Date, user: { id: string; username: string }, message: string) {
-    const ask = ledger.find(ch.id, message)
+    const question = ledger.find(ch.id, message)
     hub.deliver(
       ch.id,
       nameOf(ch),
@@ -931,9 +931,9 @@ function serve(token: string) {
           button_message_id: message,
         },
       },
-      ask && (() => ledger.answered(ch.id, message, label, 'discord')),
+      question && (() => ledger.answered(ch.id, message, label, 'discord')),
     )
-    if (ask) await draw(ch.id, message)
+    if (question) await draw(ch.id, message)
   }
 
   // Discord wants an answer to a tap within three seconds, so the buttons change before anything is fetched.

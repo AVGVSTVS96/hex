@@ -26,7 +26,7 @@ other apps:
 
 - `server.ts` is the call engine: the call page and app API on `VOICE_PORT`,
   each call's `gpt-live-1` connection, Twilio's media streams, call records,
-  Tasks and Asks. It lives as long as the service, not a session.
+  the board and the questions. It lives as long as the service, not a session.
 - `bot.ts` starts the hub for the `voice` thread and the engine, and hands the
   engine the hub's side: deliver, keep, renew.
 - `channel.ts` is the channel the hub serves the voice session over HTTP, with
@@ -177,11 +177,11 @@ same conversion hex uses for Buzz and T3 Code), then into a few plain words.
 | `GET /activity` | `{ version, call, tasks }`: the live call's tasks, most recently changed first, each with its latest `line` |
 | `GET /activity?after=<version>` | the same, once anything has changed since that version (or after 25 seconds) |
 
-## Tasks
+## The board
 
-In hex, the app can also show every hex thread as a task, call or no call:
+In hex, the app's Tasks sheet can also show every hex thread as a run, call or no call:
 what needs you, what's working and its newest step, and what finished. Nothing
-new reports in: `tasks.ts` reads the records Claude Code already keeps (the
+new reports in: `board.ts` reads the records Claude Code already keeps (the
 same ones `claude agents --json` prints) and wakes when one of them changes.
 
 ```
@@ -230,26 +230,26 @@ An app starting a call with `"about": "<task id>"` in its `/session` body gets
 the same: the voice opens with the task, and Claude's "call started" message
 names it, so `send` can reach that thread.
 
-## Asks
+## Questions
 
 Everything waiting on you, in one list the app answers in place. The Telegram
 hub keeps a ledger (`state/telegram/ledger.json`, `hub/ledger.ts`): every
 question a thread asks with buttons or a poll, what became of it (tapped,
 answered in the app or on a call, settled, edited away), and each thread's
-pinned status post as last written. `asks.ts` reads it, with T3 Code's own
+pinned status post as last written. `questions.ts` reads it, with T3 Code's own
 records (`t3.ts`, read only) for what's stuck and what finished since you
 looked.
 
 ```
  reply(buttons) / poll ──► telegram hub ──► ledger.json ─┐
- tap in Telegram ─────────►      │                       ├─► asks.ts ── GET /asks?after=<version>
- pin / edit_message ──────►      │                       │                      │
- ~/.t3/userdata/statev2.sqlite ──────────── t3.ts ───────┘                      ▼
-                                 ▲                                         the app's Tasks
-            {type:"answer"} on hub.sock ◄── POST /asks/<id>/answer ◄───────────┘
+ tap in Telegram ─────────►      │                       ├─► questions.ts ── GET /asks?after=<version>
+ pin / edit_message ──────►      │                       │                           │
+ ~/.t3/userdata/statev2.sqlite ──────────── t3.ts ───────┘                           ▼
+                                 ▲                                              the app's Tasks
+            {type:"answer"} on hub.sock ◄── POST /asks/<id>/answer ◄────────────────┘
 ```
 
-Each of an ask's `places` is `{ app, place, task?, call?, link? }`: the app (`telegram`,
+Each of a question's `places` is `{ app, place, task?, call?, link? }`: the app (`telegram`,
 `discord`, `buzz`, `t3`, or `voice` for a call), what the place is called there (a topic, General,
 DM, a T3 Code title, a call's title), the hex thread (`task`, as in `/tasks`) or call it is, and a
 `link` that opens it: the message itself where its app links messages (a Telegram group, a
@@ -286,11 +286,11 @@ buttons back and tells the thread the answer no longer stands.
 
 ### The check
 
-`check.ts` is hex auditing its own asks against what actually happened: an
+`check.ts` is hex auditing its own questions against what actually happened: an
 Opus pass (`claude -p`, read-only tools, structured output) over the ledger's
 open and lately closed questions, every pinned post, the last three days of
 call wrap-ups and what T3 Code shows. It rewrites the raw questions into one
-list (repeats merged into one ask with every place that asked it: each question, pinned post,
+list (repeats merged into one question with every place that asked it: each question, pinned post,
 plain message (with its id, from the transcripts) and call, hex's pick,
 what each unblocks or costs, most unblocking first), settles the questions the
 records show are already decided or done (their buttons say why), and flags
@@ -304,7 +304,7 @@ It writes `state/voice/check.json`; `check/error` keeps the last failure.
 
 ### On a call
 
-In hex the voice session also has `ask` (put an open ask on the caller's
+In hex the voice session also has `ask` (put an open question on the caller's
 screen as a card in the transcript, by id) and `answer` (send the choice they
 said aloud). `GET /activity` carries the call's cards as `asks`, each with its
 answer once it has one; a tap on a card answers it like the Tasks sheet does,

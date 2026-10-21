@@ -23,9 +23,9 @@ export type Agent = {
 }
 export type Moment = { at: string; state: State; text: string }
 export type Turn = { at: string; state: State }
-export type Row = Omit<HexTask, 'needs' | 'lately' | 'steps' | 'plan' | 'agents'> & { agents: Omit<Agent, 'steps' | 'result'>[] }
+export type Row = Omit<Run, 'needs' | 'lately' | 'steps' | 'plan' | 'agents'> & { agents: Omit<Agent, 'steps' | 'result'>[] }
 export type Summary = { needs: number; working: number }
-export type HexTask = {
+export type Run = {
   id: string
   app: string
   thread: string
@@ -59,7 +59,7 @@ type Job = {
 type Fan = { id: string; kind: string; label: string; startedAt?: number; doneAt?: number }
 type Entry = { at: string; state: string; detail?: string; text?: string }
 type Told = { state: Agent['state']; result?: string }
-type Stretch = Pick<HexTask, 'steps' | 'plan' | 'agents'>
+type Stretch = Pick<Run, 'steps' | 'plan' | 'agents'>
 type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string }
 
 const CLAUDE = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
@@ -83,17 +83,17 @@ const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done'
 const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'failed' }
 const BUSY = new Set(['busy', 'shell'])
 
-// Every hex thread as a task, from the records Claude Code already keeps (the same ones
+// Every hex thread as a run, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
 // running, and each app's threads.json for its name and `links.ts` for where its app opens it.
 // A session another one started (a topic's `claude -p` build), or a job a thread owns (bin/job),
-// counts toward it as one of its agents; a running session nothing holds is a task of its own while it works. So does each T3 Code
+// counts toward it as one of its agents; a running session nothing holds is a run of its own while it works. So does each T3 Code
 // thread a hex T3 thread handed work to, which shows only under it. It wakes when one of those files
 // (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
 // bumps a version on any change.
 // The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
-export class Tasks extends Changes {
-  tasks: HexTask[] = []
+export class Board extends Changes {
+  runs: Run[] = []
   summary: Summary = { needs: 0, working: 0 }
   counts = new Changes()
   private threads: Thread[] = []
@@ -126,16 +126,16 @@ export class Tasks extends Changes {
   }
 
   get(id: string) {
-    return this.tasks.find(task => task.id === id)
+    return this.runs.find(run => run.id === id)
   }
 
-  // The Claude Code session a task's thread runs in, whose log holds its chat.
+  // The Claude Code session a run's thread runs in, whose log holds its chat.
   session(id: string) {
     return [...this.threads, ...this.loose()].find(thread => `${thread.app}:${thread.id}` === id)?.session
   }
 
   rows(): Row[] {
-    return this.tasks.map(({ needs, lately, steps, plan, agents, ...row }) => ({ ...row, agents: agents.map(({ steps, result, ...agent }) => agent) }))
+    return this.runs.map(({ needs, lately, steps, plan, agents, ...row }) => ({ ...row, agents: agents.map(({ steps, result, ...agent }) => agent) }))
   }
 
   close() {
@@ -175,16 +175,16 @@ export class Tasks extends Changes {
     const since = new Date(Date.now() - KEEP).toISOString()
     const threads = this.threads
       .filter(thread => !this.links.delegated(thread.app, thread.id))
-      .map(thread => this.task(thread))
-      .filter(task => task.state === 'needs' || task.state === 'working' || task.at > since)
-    const tasks = [...threads, ...this.loose().map(thread => this.task(thread)).filter(task => task.state === 'working')]
-    this.follow(tasks)
-    for (const task of tasks) this.keep(task)
-    tasks.sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at))
-    if (JSON.stringify(tasks) === JSON.stringify(this.tasks)) return
-    this.tasks = tasks
+      .map(thread => this.run(thread))
+      .filter(run => run.state === 'needs' || run.state === 'working' || run.at > since)
+    const runs = [...threads, ...this.loose().map(thread => this.run(thread)).filter(run => run.state === 'working')]
+    this.follow(runs)
+    for (const run of runs) this.keep(run)
+    runs.sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at))
+    if (JSON.stringify(runs) === JSON.stringify(this.runs)) return
+    this.runs = runs
     this.changed()
-    const summary = { needs: count(tasks, 'needs'), working: count(tasks, 'working') }
+    const summary = { needs: count(runs, 'needs'), working: count(runs, 'working') }
     if (summary.needs === this.summary.needs && summary.working === this.summary.working) return
     this.summary = summary
     this.counts.changed()
@@ -193,13 +193,13 @@ export class Tasks extends Changes {
   // A working thread's stretch of work is kept, so once it stops it still shows its last steps,
   // plan and agents, until it works again: a step still running then just loses its state, and an
   // agent still working says what T3 Code says of it now.
-  private keep(task: HexTask) {
-    const stretch = this.stretches.get(task.id)
-    if (task.state === 'working') this.stretches.set(task.id, { steps: task.steps, plan: task.plan, agents: task.agents })
-    if (task.state === 'working' || !stretch) return
-    const thread = this.threads.find(thread => `${thread.app}:${thread.id}` === task.id)
-    const handed = this.links.delegations(task.app, task.thread)
-    Object.assign(task, {
+  private keep(run: Run) {
+    const stretch = this.stretches.get(run.id)
+    if (run.state === 'working') this.stretches.set(run.id, { steps: run.steps, plan: run.plan, agents: run.agents })
+    if (run.state === 'working' || !stretch) return
+    const thread = this.threads.find(thread => `${thread.app}:${thread.id}` === run.id)
+    const handed = this.links.delegations(run.app, run.thread)
+    Object.assign(run, {
       steps: settled(stretch.steps),
       plan: stretch.plan,
       agents: stretch.agents.map(agent => {
@@ -241,11 +241,11 @@ export class Tasks extends Changes {
   // owns, and not another thread's own.
   private started(thread: Thread) {
     const held = this.held()
-    const task = `${thread.app}:${thread.id}`
+    const key = `${thread.app}:${thread.id}`
     const root = (session: Session): Session => (session.parent && !held.has(session.id) ? root(this.sessions.get(session.parent)!) : session)
     return [...this.sessions.values()].filter(session => {
       const top = root(session)
-      return session.id !== thread.session && busy(session) && (top.id === thread.session || top.owner === task)
+      return session.id !== thread.session && busy(session) && (top.id === thread.session || top.owner === key)
     })
   }
 
@@ -305,7 +305,7 @@ export class Tasks extends Changes {
     return cached
   }
 
-  private task(thread: Thread): HexTask {
+  private run(thread: Thread): Run {
     const { job, timeline } = thread.session ? this.job(thread.session) : { job: undefined, timeline: [] }
     const session = thread.session ? this.sessions.get(thread.session) : undefined
     const started = this.started(thread)
@@ -440,12 +440,12 @@ export class Tasks extends Changes {
 
   // A working thread's transcript, and those of its subagents, workflow agents and the sessions it
   // started from this stretch of work, give its steps.
-  private follow(tasks: HexTask[]) {
+  private follow(runs: Run[]) {
     const wanted = new Map<string, [number, (path: (found: string) => () => void) => () => void]>()
     const threads = [...this.threads, ...this.loose()]
-    for (const task of tasks) {
-      if (task.state !== 'working') continue
-      const thread = threads.find(thread => `${thread.app}:${thread.id}` === task.id)!
+    for (const run of runs) {
+      if (run.state !== 'working') continue
+      const thread = threads.find(thread => `${thread.app}:${thread.id}` === run.id)!
       const { session } = thread
       const key = keyOf(thread)
       const job = session ? this.job(session).job : undefined
@@ -453,7 +453,7 @@ export class Tasks extends Changes {
       const subagents = join(project, key, 'subagents')
       const handed = this.links.delegations(thread.app, thread.id)
       if (session) wanted.set(session, [STEPS, follow => follow(join(project, `${session}.jsonl`))])
-      for (const agent of task.agents) {
+      for (const agent of run.agents) {
         const started = this.sessions.get(agent.id)
         const hex = handed.find(one => one.id === agent.id)?.hex
         const child = hex && threads.find(one => one.app === 't3' && one.id === hex)?.session
@@ -511,20 +511,20 @@ export class Tasks extends Changes {
   }
 }
 
-// What the voice and Claude hear about a task when the caller wants to talk it through.
-export function opener(task: HexTask) {
+// What the voice and Claude hear about a run when the caller wants to talk it through.
+export function opener(run: Run) {
   const state = {
-    needs: `It's waiting on the caller: ${task.needs ?? task.line}`,
-    working: `It's working: ${task.line}`,
-    done: `It finished: ${task.line}`,
-    failed: `It failed: ${task.line}`,
-    idle: `It's idle${task.line ? `; last: ${task.line}` : ''}`,
-  }[task.state]
-  return `The task is the hex thread ${task.name} (${task.where}, thread id ${task.thread}). ${state}`
+    needs: `It's waiting on the caller: ${run.needs ?? run.line}`,
+    working: `It's working: ${run.line}`,
+    done: `It finished: ${run.line}`,
+    failed: `It failed: ${run.line}`,
+    idle: `It's idle${run.line ? `; last: ${run.line}` : ''}`,
+  }[run.state]
+  return `The task is the hex thread ${run.name} (${run.where}, thread id ${run.thread}). ${state}`
 }
 
-function count(tasks: HexTask[], state: State) {
-  return tasks.filter(task => task.state === state).length
+function count(runs: Run[], state: State) {
+  return runs.filter(run => run.state === state).length
 }
 
 function apps(state: string) {
