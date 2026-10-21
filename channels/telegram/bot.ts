@@ -159,28 +159,16 @@ function target(thread: string) {
 
 const topicNames = new Map<string, string>()
 
-// Telegram's reaction updates carry neither the message's text nor its topic,
-// so the hub keeps both for every message it sends or receives, per thread,
-// until the thread is forgotten.
-type Seen = { text?: string; user: string }
-const seen = new Map<string, Map<number, Seen>>()
 const ledger = new Ledger(join(STATE_DIR, 'ledger.json'), 'telegram')
 
 // Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
 async function editPost(thread: string, message: MessageId, text: string) {
   await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) })
-  remember(thread, Number(message), { text, user: me() })
 }
 
-function remember(thread: string, id: number, entry: Seen): void {
-  if (!seen.has(thread)) seen.set(thread, new Map())
-  seen.get(thread)!.set(id, entry)
-}
-
-function recall(chat: string, id: number): [string, Seen] | undefined {
-  for (const [thread, messages] of seen) {
-    if (target(thread).chat_id === chat && messages.has(id)) return [thread, messages.get(id)!]
-  }
+// What hex posts in a thread is kept in hex.db as its own words, under Telegram's id for the message.
+function said(thread: string, id: number | undefined, text = '', meta: Record<string, string> = {}): void {
+  hub.sent(thread, { key: id === undefined ? undefined : `${target(thread).chat_id}:${id}`, content: text, meta })
 }
 
 function me(): string {
@@ -188,10 +176,7 @@ function me(): string {
 }
 
 function retire(thread: string): Promise<string> {
-  return hub.retire(thread).then(session => {
-    seen.delete(thread)
-    return session
-  })
+  return hub.retire(thread)
 }
 
 function nameOf(ctx: Context, thread: string): string {
@@ -256,7 +241,7 @@ async function ask(thread: string, request: Permission): Promise<void> {
       { text: 'Deny', callback_data: `perm:deny:${request_id}` },
     ]] },
   })
-  remember(thread, sent.message_id, { text, user: me() })
+  said(thread, sent.message_id, text, { permission: request_id })
   asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.message_id))
 }
 
@@ -293,7 +278,7 @@ async function place(name: string, _where?: string, about?: string) {
   const topic = await bot.api.createForumTopic(chat_id, name, icon ? { icon_custom_emoji_id: icon } : {})
   const thread = `${chat_id}:${topic.message_thread_id}`
   topicNames.set(thread, name)
-  if (about) remember(thread, (await bot.api.sendMessage(chat_id, about, { message_thread_id: topic.message_thread_id })).message_id, { text: about, user: me() })
+  if (about) said(thread, (await bot.api.sendMessage(chat_id, about, { message_thread_id: topic.message_thread_id })).message_id, about)
   return { thread, link: `https://t.me/c/${chat_id.replace(/^-100/, '')}/${topic.message_thread_id}` }
 }
 
@@ -312,17 +297,15 @@ async function paced<T>(send: () => Promise<T>): Promise<T> {
 }
 
 // A bot posts only as itself, so the owner's lines go quoted under their name, and hex's as its
-// own replies, all silently.
+// own replies, all silently. hex.db keeps the originals, so the copies aren't kept again.
 async function backfill(thread: string, turns: Turn[]) {
   const { chat_id, extra } = target(thread)
   const owner = (await bot.api.getChatMember(chat_id, Number(loadAccess().allowFrom[0]))).user.first_name
   const opts = { ...extra, disable_notification: true }
   for (const { from, text } of turns) {
     for (const part of from === 'me' ? chunk(text, MAX_CHUNK_LIMIT - owner.length - 1, 'newline') : fenced(text, MAX_RICH_LIMIT, 'newline')) {
-      const sent = from === 'me'
-        ? await paced(() => bot.api.sendMessage(chat_id, `${owner}\n${part}`, { ...opts, entities: [{ type: 'bold', offset: 0, length: owner.length }, { type: 'blockquote', offset: owner.length + 1, length: part.length }] }))
-        : await paced(() => bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts))
-      remember(thread, sent.message_id, { text: part, user: me() })
+      if (from === 'me') await paced(() => bot.api.sendMessage(chat_id, `${owner}\n${part}`, { ...opts, entities: [{ type: 'bold', offset: 0, length: owner.length }, { type: 'blockquote', offset: owner.length + 1, length: part.length }] }))
+      else await paced(() => bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts))
     }
   }
 }
@@ -365,12 +348,13 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
           const sent = markdown
             ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(chunks[i]!) }, opts)
             : await bot.api.sendMessage(chat_id, chunks[i]!, { ...opts, ...parseMode })
-          remember(thread, sent.message_id, { text: chunks[i], user: me() })
+          said(thread, sent.message_id, chunks[i])
           sentIds.push(sent.message_id)
           if (buttons.length && i === chunks.length - 1) asked = sent.message_id
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        said(thread, undefined, chunks.slice(sentIds.length).join('\n'), { failed: msg })
         throw new Error(`reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`)
       }
 
@@ -386,7 +370,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         const sent = photos[i]
           ? await bot.api.sendPhoto(chat_id, input, opts)
           : await bot.api.sendDocument(chat_id, input, opts)
-        remember(thread, sent.message_id, { text: captioned ? caption : undefined, user: me() })
+        said(thread, sent.message_id, captioned ? caption : `(file: ${basename(files[i]!)})`)
         sentIds.push(sent.message_id)
         if (buttons.length && captioned) asked = sent.message_id
       }
@@ -429,7 +413,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         })
       } else if (!args.settled) throw new Error('edit_message needs text, a file, or settled')
       if (text != null) {
-        remember(thread, id, { text, user: me() })
+        said(thread, undefined, text, { edited: 'true', message_id: String(id) })
         ledger.edited(thread, id, text)
       }
       if (args.settled) await settleQuestion(thread, id, '✓ Settled')
@@ -438,7 +422,6 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
     case 'delete_message': {
       const id = Number(args.message_id)
       await bot.api.deleteMessage(chat_id, id)
-      seen.get(thread)?.delete(id)
       ledger.deleted(thread, id)
       return `deleted (id: ${id})`
     }
@@ -449,7 +432,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         ledger.unpinned(thread, id)
       } else {
         await bot.api.pinChatMessage(chat_id, id)
-        const text = seen.get(thread)?.get(id)?.text
+        const text = hub.said(`${chat_id}:${id}`)?.body
         const pinned = ledger.pin(thread)
         const kept = pinned && Number(pinned.message) === id ? pinned.note : undefined
         ledger.pinned(thread, id, text, args.status ? (kept ?? text ?? '') : undefined)
@@ -461,7 +444,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const id = Number(args.message_id)
       const from = target(caller).chat_id
       const sent = await bot.api.forwardMessage(chat_id, from, id, extra)
-      remember(thread, sent.message_id, { text: recall(from, id)?.[1].text, user: me() })
+      said(thread, sent.message_id, hub.said(`${from}:${id}`)?.body ?? '(forwarded)', { forwarded: 'true' })
       return `forwarded to "${topicNames.get(thread) ?? hub.name(thread) ?? thread}" (id: ${sent.message_id})`
     }
     case 'poll': {
@@ -472,7 +455,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         is_anonymous: false,
         allows_multiple_answers: !!args.multiple,
       })
-      remember(thread, sent.message_id, { text: question, user: me() })
+      said(thread, sent.message_id, question, { poll: options.join(' / ') })
       ledger.ask(thread, sent.message_id, question, options, sent.poll.id)
       return `sent poll (id: ${sent.message_id})`
     }
@@ -524,7 +507,6 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         await bot.api.sendMessage(chat_id, `Continued in ${to}: ${link}`, extra)
         return `a copy of this conversation continues in ${to}: ${link}. You stay here.`
       }
-      seen.delete(thread)
       await bot.api.sendMessage(chat_id, `Moved to ${to}: ${link}`, extra)
       await bot.api.closeForumTopic(chat_id, extra.message_thread_id!)
       return `moving to ${to}: ${link}. Your session stops here once this turn ends and resumes there.`
@@ -597,6 +579,7 @@ async function answerQuestion(thread: string, message: number, label: string, vi
     thread,
     topicNames.get(thread) ?? hub.name(thread) ?? thread,
     {
+      author: 'owner',
       content: question.poll ? `(vote: ${label})` : label,
       meta: {
         chat_id,
@@ -630,6 +613,7 @@ async function reopenQuestion(thread: string, message: number, via: string) {
         thread,
         topicNames.get(thread) ?? hub.name(thread) ?? thread,
         {
+          author: 'owner',
           content: `(took back: ${taken})`,
           meta: { chat_id, user: `hex ${via}`, ts: new Date().toISOString(), took_back: taken, [question.poll ? 'poll_message_id' : 'button_message_id']: String(message) },
         },
@@ -825,12 +809,13 @@ bot.on('message:sticker', async ctx => {
 })
 
 // Telegram only reports reactions to bots that are admins, and the update
-// names neither the topic nor the text, so both come from what the hub has seen.
+// names neither the topic nor the text, so both come from the message hex.db kept.
 bot.on('message_reaction', ctx => {
   const { chat, message_id, user, date } = ctx.messageReaction
   if (!allowed(user)) return
-  const known = recall(String(chat.id), message_id)
-  const thread = known?.[0] ?? plainThread(chat)
+  const found = hub.said(`${chat.id}:${message_id}`)
+  const known = found && hub.name(found.to) ? found : undefined
+  const thread = known?.to ?? plainThread(chat)
   if (!thread) return
   const { emojiAdded, emojiRemoved } = ctx.reactions()
   const meta = {
@@ -839,12 +824,12 @@ bot.on('message_reaction', ctx => {
     user_id: String(user.id),
     ts: new Date(date * 1000).toISOString(),
     reaction_to_message_id: String(message_id),
-    ...(known ? { reaction_to_user: known[1].user } : {}),
-    ...(known?.[1].text ? { reaction_to_text: known[1].text } : {}),
+    ...(known ? { reaction_to_user: known.author === 'hex' ? me() : (known.meta?.user ?? known.author) } : {}),
+    ...(known?.body ? { reaction_to_text: known.body } : {}),
   }
   const key = `${chat.id}:${message_id}:${ctx.update.update_id}`
-  for (const emoji of emojiAdded) hub.deliver(thread, nameOf(ctx, thread), { key: `${key}+${emoji}`, content: `(reaction: ${emoji})`, meta: { ...meta, reaction: emoji } })
-  for (const emoji of emojiRemoved) hub.deliver(thread, nameOf(ctx, thread), { key: `${key}-${emoji}`, content: `(reaction removed: ${emoji})`, meta: { ...meta, reaction: emoji, reaction_removed: 'true' } })
+  for (const emoji of emojiAdded) hub.deliver(thread, nameOf(ctx, thread), { author: 'owner', key: `${key}+${emoji}`, content: `(reaction: ${emoji})`, meta: { ...meta, reaction: emoji } })
+  for (const emoji of emojiRemoved) hub.deliver(thread, nameOf(ctx, thread), { author: 'owner', key: `${key}-${emoji}`, content: `(reaction removed: ${emoji})`, meta: { ...meta, reaction: emoji, reaction_removed: 'true' } })
 })
 
 // Outside a forum a chat, a DM included, is one thread; a forum's topic is only
@@ -875,6 +860,7 @@ bot.on('callback_query:data', async ctx => {
     thread,
     nameOf(ctx, thread),
     {
+      author: 'owner',
       key: `tap:${ctx.callbackQuery.id}`,
       content: label,
       meta: {
@@ -900,6 +886,7 @@ bot.on('poll_answer', ctx => {
     question.thread,
     nameOf(ctx, question.thread),
     {
+      author: 'owner',
       key: `poll:${poll_id}:${ctx.update.update_id}`,
       content: vote ? `(vote: ${vote})` : '(vote removed)',
       meta: {
@@ -965,7 +952,7 @@ async function replyMeta(msg: Context['msg']): Promise<Record<string, string>> {
   const source = external ?? replied
   if (!msg || !source || replied?.forum_topic_created) return {}
   const id = replied?.message_id ?? external?.message_id
-  const known = id != null ? recall(String(external?.chat?.id ?? msg.chat.id), id)?.[1] : undefined
+  const known = id != null ? hub.said(`${external?.chat?.id ?? msg.chat.id}:${id}`) : undefined
   const text = replied?.text ?? replied?.caption
   const user = replied?.from ? replied.from.username ?? String(replied.from.id) : external ? senderOf(external.origin) : undefined
   const photo = source.photo?.at(-1)
@@ -977,7 +964,7 @@ async function replyMeta(msg: Context['msg']): Promise<Record<string, string>> {
   return {
     ...(id != null ? { reply_to_message_id: String(id) } : {}),
     ...(user ? { reply_to_user: user } : {}),
-    ...(text ? { reply_to_text: linked(text, replied?.entities ?? replied?.caption_entities) } : known?.text ? { reply_to_text: known.text } : {}),
+    ...(text ? { reply_to_text: linked(text, replied?.entities ?? replied?.caption_entities) } : known?.body ? { reply_to_text: known.body } : {}),
     ...(msg.quote ? { reply_to_quote: msg.quote.text } : {}),
     ...(imagePath ? { reply_to_image_path: imagePath } : {}),
     ...(kind ? { reply_to_attachment_kind: kind, reply_to_attachment_file_id: source[kind]!.file_id } : {}),
@@ -1046,11 +1033,11 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     ? `(album of ${parts.length})`
     : linked(captioned.text, captioned.ctx.msg?.entities ?? captioned.ctx.msg?.caption_entities)
   const user = from.username ?? String(from.id)
-  for (const part of parts) if (part.ctx.msg) remember(thread, part.ctx.msg.message_id, { text: part.ctx.msg.text ?? part.ctx.msg.caption, user })
 
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
   // annotation is forgeable by any allowlisted sender typing that string.
   const message: Message = {
+    author: 'owner',
     ...(msgId != null && { key: `${ctx.msg!.chat.id}:${msgId}${ctx.editedMessage ? `@${ctx.editedMessage.edit_date}` : ''}` }),
     content,
     meta: {

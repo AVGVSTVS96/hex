@@ -10,22 +10,22 @@ export LC_ALL=C
 # After a compaction, the end of the conversation word for word, cut at a turn to fit a hook's 10,000 characters.
 room=9000
 
-printf '%s' "$input" | "$here/log"
-cd "$here/../.." || exit 0
-id=$(printf %.8s "$session")
-for log in log/*-"$id".md log/threads/*-"$id".md; do [ -f "$log" ] && break; done
-[ -f "$log" ] || exit 0
+# A hub's session keeps its thread's messages, a terminal session its own.
+# It reads the hex.db its hooks write to, which the hub names in HEX_STORE.
+log=$(mktemp)
+trap 'rm -f "$log"' EXIT
+bun "$here/../hub/cli.ts" "${HEX_STORE:-$(cd "$here/../.." && pwd)/state}" log --last 200 --taken -- "${HEX_THREAD:-$session}" > "$log" 2>/dev/null && [ -s "$log" ] || exit 0
 start=$(awk -v room="$room" '
-  { line[NR] = $0; turn[NR] = /^## .+ · .+ · [0-9-]+ [0-9][0-9]:[0-9][0-9]$/ }
+  { line[NR] = $0; turn[NR] = /^## .+ · \[[^]]+\]/ }
   END {
     for (i = NR; i > 0 && size + length(line[i]) + 1 <= room; i--) size += length(line[i]) + 1
     for (j = i + 1; j <= NR && !turn[j]; j++) ;
     print j <= NR ? j : i + 1
   }' "$log")
-if [ "$(awk '/^## .+ · .+ · [0-9-]+ [0-9:]+$/{ print NR; exit }' "$log")" = "$start" ]; then
-  echo "Your context was just compacted. This is the whole conversation so far, word for word, from $log:"
+if [ "$start" = 1 ]; then
+  echo "Your context was just compacted. This is the whole conversation so far, word for word, from \`$here/hex log\`; the summary above has what you did in the turn in progress:"
 else
-  echo "Your context was just compacted. This is the end of the conversation, word for word, from line $start of $log. Earlier turns are above it there."
+  echo "Your context was just compacted. This is the end of the conversation, word for word, from \`$here/hex log\`; \`$here/hex log -- '${HEX_THREAD:-$session}'\` has the earlier messages, and the summary above has what you did in the turn in progress."
 fi
 echo
 tail -n +"$start" "$log"

@@ -2,7 +2,8 @@ import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { entry, render, waiting } from './tasks.ts'
-import { open, type Status, type Task } from './store.ts'
+import { zoneOf } from './schedule.ts'
+import { asked, open, type Row, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
   hex deliver <from>:<id> --to <thread> [--user <name>] <words…>
@@ -18,6 +19,7 @@ const USAGE = `usage:
   hex questions [--thread <thread> | --all] [--json]
   hex threads [--json]
   hex message <key>
+  hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--json]
   hex recall <regex>`
 
 const { values: flags, positionals } = parseArgs({
@@ -37,13 +39,16 @@ const { values: flags, positionals } = parseArgs({
     status: { type: 'string' },
     all: { type: 'boolean' },
     json: { type: 'boolean' },
+    since: { type: 'string' },
+    last: { type: 'string' },
+    taken: { type: 'boolean' },
   },
 })
 const [state, command, ...args] = positionals
 if (!state || !command) usage()
 // How many words each command takes before its flags; a word past them is a flag's value left
 // unquoted, which would otherwise be cut short without a word.
-const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2 } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1 } as Record<string, number>)[command] ?? 0
+const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2 } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
 if (args.length > takes) {
   console.error(`hex: ${stray(args[takes]!)}`)
   process.exit(1)
@@ -86,6 +91,33 @@ function stray(word: string) {
   return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`
 }
 
+// A thread by its id, or by its name the way the hub finds one: any case, and only one thread.
+function threadOf(nameOrThread: string) {
+  const threads = store.threads()
+  if (threads.some(({ thread }) => thread === nameOrThread)) return nameOrThread
+  const wanted = nameOrThread.trim().toLowerCase()
+  const matches = [...new Set(threads.filter(({ name }) => name.toLowerCase() === wanted).map(({ thread }) => thread))]
+  if (matches.length > 1) throw new Error(`more than one thread is named "${nameOrThread}": ${matches.join(', ')}`)
+  if (matches[0]) return matches[0]
+  if (store.said(nameOrThread, 1).length) return nameOrThread
+  throw new Error(`no thread named "${nameOrThread}"`)
+}
+
+// Messages as markdown, one heading each, in the owner's time zone, for rg to search.
+function log(rows: Row[]) {
+  if (flags.json) return console.log(JSON.stringify(rows, null, 1))
+  const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
+  const named = open(state!).names()
+  for (const row of rows) {
+    const at = Temporal.Instant.from(row.at).toZonedDateTimeISO(zone).toPlainDateTime().toString().slice(0, 16).replace('T', ' ')
+    const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : ''
+    const body = row.from === 't3' && row.author === 'owner' ? asked(row.body) : row.body
+    const thread = named[row.to] ? `${named[row.to]} (${row.to})` : row.to
+    const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
+    console.log(`## ${row.author} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`)
+  }
+}
+
 function task(verb: string | undefined, id: string | undefined, key: string | undefined) {
   const thread = process.env.HEX_THREAD
   switch (verb) {
@@ -126,7 +158,7 @@ try {
       const [key, ...words] = args
       const from = key?.split(':')[0]
       if (!from || from === key || !flags.to || !words.length) usage()
-      store.deliver({ key: key!, to: flags.to, from, body: words.join(' '), meta: { user: flags.user ?? from } })
+      store.deliver({ key: key!, to: flags.to, from, author: flags.user ?? from, body: words.join(' '), meta: { user: flags.user ?? from } })
       break
     }
     case 'task':
@@ -150,6 +182,18 @@ try {
       const said = args[0] && store.message(args[0])
       if (!said) throw new Error(`no message ${args[0] ?? ''}`)
       console.log(flags.json ? JSON.stringify(said, null, 1) : said.body)
+      break
+    }
+    case 'log': {
+      const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
+      const since = flags.since ? new Date(Temporal.PlainDateTime.from(flags.since).toZonedDateTime(zone).epochMilliseconds).toISOString() : ''
+      if (args.length && !args[0]) {
+        console.error("hex log: name the thread, by its name or id")
+        process.exit(2)
+      }
+      const thread = args[0] && threadOf(args[0])
+      const rows = thread ? store.said(thread, flags.last ? Number(flags.last) : -1) : store.since(since)
+      log(rows.filter(row => row.at > since && (!flags.taken || row.taken)))
       break
     }
     case 'recall':

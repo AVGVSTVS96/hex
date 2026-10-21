@@ -395,18 +395,24 @@ function serve(token: string) {
 
   const link = (thread: string) => `https://discord.com/channels/${guild().id}/${thread}`
 
+  // What hex posts in a thread is kept in hex.db as its own words, under Discord's id for the message.
+  function said(thread: string, id: string | undefined, text: string, meta: Record<string, string> = {}) {
+    hub.sent(thread, { key: id, content: text, meta })
+  }
+
   // A forum takes a thread only as a post, which opens with a message: the about line, or its title.
   async function place(name: string, where?: string, about?: string, tags: string[] = []) {
     const parent = await textChannel(where, true)
     if (!isForum(parent)) {
       const thread = await parent.threads.create({ name })
-      if (about) await thread.send(about)
+      if (about) said(thread.id, (await thread.send(about)).id, about)
       return { thread: thread.id, link: link(thread.id) }
     }
     const wanted = tags.map(tag => tag.toLowerCase())
     const applied = parent.availableTags.filter(tag => wanted.includes(tag.name.toLowerCase()))
     if (applied.length < wanted.length) throw new Error(`#${parent.name} has the tags ${parent.availableTags.map(tag => tag.name).join(', ') || '(none)'}`)
     const post = await parent.threads.create({ name, message: { content: about ?? name }, appliedTags: applied.map(tag => tag.id) })
+    said(post.id, post.id, about ?? name)
     return { thread: post.id, link: link(post.id) }
   }
 
@@ -463,6 +469,7 @@ function serve(token: string) {
       content: `🔐 **${request.tool_name}**: ${request.description.slice(0, 300)}${shown ? `\n${block(shown, 1500)}` : ''}`,
       components: verdicts(request.request_id),
     })
+    said(thread, sent.id, sent.content, { permission: request.request_id })
     asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.id))
   }
 
@@ -519,6 +526,7 @@ function serve(token: string) {
       thread,
       hub.name(thread) ?? thread,
       {
+        author: 'owner',
         content: question.poll ? `(vote: ${label})` : label,
         meta: {
           chat_id: thread,
@@ -551,6 +559,7 @@ function serve(token: string) {
           thread,
           hub.name(thread) ?? thread,
           {
+            author: 'owner',
             content: `(took back: ${taken})`,
             meta: { chat_id: thread, user: `hex ${via}`, ts: new Date().toISOString(), took_back: taken, [question.poll ? 'poll_message_id' : 'button_message_id']: String(message) },
           },
@@ -614,10 +623,12 @@ function serve(token: string) {
               ...(i === chunks.length - 1 && components ? { components } : {}),
               ...(shouldReplyTo ? { reply: { messageReference: reply_to, failIfNotExists: false } } : {}),
             })
+            said(thread, sent.id, chunks[i]!)
             sentIds.push(sent.id)
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
+          said(thread, undefined, chunks.slice(sentIds.length).join('\n'), { failed: msg })
           throw new Error(`reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`)
         }
         if (labels?.length) ledger.ask(thread, sentIds.at(-1)!, text, labels, undefined, multiple)
@@ -652,7 +663,10 @@ function serve(token: string) {
               ...(files ? { files, attachments: [] } : {}),
             })
           : msg
-        if (args.text !== undefined) ledger.edited(thread, edited.id, args.text as string)
+        if (args.text !== undefined) {
+          said(thread, undefined, tappable(args.text as string), { edited: 'true', message_id: edited.id })
+          ledger.edited(thread, edited.id, args.text as string)
+        }
         if (args.settled) await settleQuestion(thread, edited.id, '✓ Settled')
         return `edited (id: ${edited.id})`
       }
@@ -688,6 +702,7 @@ function serve(token: string) {
             duration: 24,
           },
         })
+        said(thread, sent.id, args.question as string, { poll: (args.options as string[]).join(' / ') })
         ledger.ask(thread, sent.id, args.question as string, args.options as string[], sent.id)
         return `sent poll (id: ${sent.id})`
       }
@@ -809,6 +824,7 @@ function serve(token: string) {
     const shots = edited || voiced ? [] : await images(source.attachments)
 
     const message: Message = {
+      author: 'owner',
       key: edited ? `${msg.id}@${msg.editedTimestamp}` : msg.id,
       content: heard ? `(voice message) ${heard}` : voiced ? "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)" : source.content.replace(/<@[!&]?\d+>/g, '').trim() || (atts.length > 0 ? '(attachment)' : stickers.length > 0 ? '(sticker)' : poll ? '(poll)' : ''),
       meta: {
@@ -847,6 +863,7 @@ function serve(token: string) {
     const who = user.partial ? await user.fetch() : user
     const emoji = reaction.emoji.toString()
     hub.deliver(ch.id, nameOf(ch), {
+      author: 'owner',
       content: `(${removed ? 'reaction removed' : 'reaction'}: ${emoji})`,
       meta: {
         chat_id: ch.id,
@@ -870,6 +887,7 @@ function serve(token: string) {
     if (!ch) return
     ledger.deleted(ch.id, msg.id)
     hub.deliver(ch.id, nameOf(ch), {
+      author: 'discord',
       content: '(deleted a message)',
       meta: {
         chat_id: ch.id,
@@ -893,6 +911,7 @@ function serve(token: string) {
       ch.id,
       nameOf(ch),
       {
+        author: 'owner',
         content: `(${removed ? 'vote removed' : 'vote'}: ${vote})`,
         meta: {
           chat_id: ch.id,
@@ -921,6 +940,7 @@ function serve(token: string) {
       ch.id,
       nameOf(ch),
       {
+        author: 'owner',
         content: label,
         meta: {
           chat_id: ch.id,

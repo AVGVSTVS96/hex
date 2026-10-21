@@ -112,7 +112,7 @@ test('the check’s version of a question stands in for every place that asked i
   ])
 
   await questions.answer('check:read', 'Open', 'app')
-  expect(await until(() => lines.find(line => line.type === 'inbound'))).toEqual({ type: 'inbound', thread: DESK, content: '(answered in the app) Read the launch review: Open', meta: { user: 'hex app' } })
+  expect(await until(() => lines.find(line => line.type === 'inbound'))).toEqual({ type: 'inbound', thread: DESK, content: '(answered in the app) Read the launch review: Open', author: 'owner', meta: { user: 'hex app' } })
   await until(() => !questions.find('check:read'))
   await questions.undo('check:read', 'app')
   await until(() => questions.find('check:read'))
@@ -144,7 +144,7 @@ test('a stuck item with a request goes to General, one without is put away', asy
   )
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
   await questions.act('disk')
-  expect(await until(() => lines[0])).toEqual({ type: 'inbound', thread: GROUP, content: 'Restore cloud from checkpoint v7.', meta: { user: 'hex app' } })
+  expect(await until(() => lines[0])).toEqual({ type: 'inbound', thread: GROUP, content: 'Restore cloud from checkpoint v7.', author: 'prompt', meta: { user: 'hex app' } })
   await questions.act('runs')
   await until(() => questions.view.stuck.length === 1)
   expect(questions.view.stuck[0]).toMatchObject({ id: 'disk', app: 'hex', sent: expect.any(String) })
@@ -308,7 +308,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   const byHand = { message: 2, text: 'Status: by hand', at: '2026-10-13T10:00:00.000Z' }
   ledger([asked(1, 'Ship it?', ['Yes', 'No'])], { [DESK]: pin, [GROUP]: byHand })
   const store = open(state)
-  store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', meta: { user: 'owner' } })
+  store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', author: 'owner', meta: { user: 'owner' } })
   const task = store.createTask({ title: 'Fix the login page', message: 'telegram:-1001234:40', owner: DESK })
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
   expect(questions.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)

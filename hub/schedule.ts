@@ -83,10 +83,14 @@ function minuteOf(at: string, zone = Temporal.Now.timeZoneId()) {
 }
 
 // The owner's time zone: TZ in the hex folder's .claude/settings.json, or else this machine's.
+// The owner's zone, if settings name one Temporal knows.
 export function zoneOf(hexDir: string): string | undefined {
   try {
-    return JSON.parse(readFileSync(join(hexDir, '.claude', 'settings.json'), 'utf8')).env?.TZ || undefined
-  } catch {
+    const zone = JSON.parse(readFileSync(join(hexDir, '.claude', 'settings.json'), 'utf8')).env?.TZ || undefined
+    if (zone) Temporal.Now.zonedDateTimeISO(zone)
+    return zone
+  } catch (error) {
+    if (error instanceof RangeError) process.stderr.write(`hex: TZ in .claude/settings.json isn't a zone hex knows, so it uses this machine's: ${error}\n`)
     return undefined
   }
 }
@@ -109,7 +113,7 @@ export function check(storeDir: string, hexDir: string, main: string, now = Math
     jobs = parse(text)
   } catch (error) {
     const body = `[schedules] schedules.json no longer loads, so no job runs until it's fixed: ${(error as Error).message}`
-    store.deliver({ key: `schedule:broken@${Bun.hash(text).toString(36)}`, to: main, from: 'schedule', body, meta: { user: 'schedule' } })
+    store.deliver({ key: `schedule:broken@${Bun.hash(text).toString(36)}`, to: main, from: 'schedule', author: 'schedule', body, meta: { user: 'schedule' } })
     return
   }
   const zone = zoneOf(hexDir)

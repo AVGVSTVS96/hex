@@ -12,7 +12,7 @@ import { until } from './until.ts'
 
 const CHANNEL = 'plugin:telegram@hex'
 const SESSION = '0a1b2c3d-0000-4000-8000-000000000000'
-const message: Message = { content: 'hi', meta: { chat_id: '1' } }
+const message: Message = { content: 'hi', author: 'owner', meta: { chat_id: '1' } }
 const SERVER: ChannelServer = { title: 'Telegram', instructions: 'Messages arrive as <channel source="telegram">.', tools: [{ name: 'reply', description: 'Reply.', inputSchema: { type: 'object' } }], permission: true }
 // Above Linux's highest pid, so a session's process is always already gone.
 const EXITED = 4_194_305
@@ -76,7 +76,7 @@ function fold(received: { meta: { key: string } }[]) {
 }
 
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
-function start(options: { main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
+function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = options
   if (options.registry) writeFileSync(join(dir, 'threads.json'), JSON.stringify(options.stale ? before(options.registry) : options.registry))
   if (options.agents) writeFileSync(join(dir, 'agents'), JSON.stringify(options.agents))
@@ -90,7 +90,7 @@ function start(options: { main?: string; general?: boolean; idleStop?: number; c
     port: listener.port,
     main: options.main,
     general: options.general,
-    call: async (thread, tool) => `${tool} in ${thread}`,
+    call: options.call ?? (async (thread, tool) => `${tool} in ${thread}`),
     state: (thread, busy) => void seen.push([thread, busy]),
     failed: (thread, reason) => void failedSeen.push([thread, reason]),
     permission: (thread, request) => void asked.push([thread, request]),
@@ -1151,7 +1151,7 @@ test('a thread\'s model and effort are kept, and a running session takes them by
   fold(received)
   hub.configure('chat:7', { model: 'fable', effort: 'xhigh' })
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, model: 'fable', effort: 'xhigh' })
-  hub.deliver('chat:7', 'Desk anchors', { content: 'again', meta: {} })
+  hub.deliver('chat:7', 'Desk anchors', { author: 'owner', content: 'again', meta: {} })
   const args = await launched()
   expect([args[args.indexOf('--model') + 1], args[args.indexOf('--effort') + 1], args[args.indexOf('--resume') + 1]]).toEqual(['fable', 'xhigh', SESSION])
   expect(received.map(payload => payload.content)).toEqual(['hi'])
@@ -1191,7 +1191,7 @@ test('a message to a fresh thread with no capacity steers its session while Clau
   said(50_000)
   writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: old.pid, status: 'idle' }]))
   await send({ type: 'state', thread: 'dm', busy: false })
-  hub.deliver('dm', 'DM', { content: 'next', meta: {} })
+  hub.deliver('dm', 'DM', { author: 'owner', content: 'next', meta: {} })
   expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
   old.kill()
   const args = await launched()
@@ -1210,7 +1210,7 @@ test('a fresh thread keeps its session while it waits on a permission prompt or 
   writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: 999999, status: 'idle' }]))
   await send({ type: 'state', thread: 'dm', busy: true })
   await until(() => states.length)
-  hub.deliver('dm', 'DM', { content: 'more', meta: {} })
+  hub.deliver('dm', 'DM', { author: 'owner', content: 'more', meta: {} })
   await until(() => received.length === 2)
   expect(calls().some(args => args[0] === 'stop' || args[0] === '--bg')).toBe(false)
 })
@@ -1226,7 +1226,7 @@ test('a fresh thread\'s warm session takes every message as it comes, and stays 
   hub.deliver('dm', 'DM', message)
   await send({ type: 'state', thread: 'dm', busy: false })
   await until(() => states.length)
-  hub.deliver('dm', 'DM', { content: 'next', meta: {} })
+  hub.deliver('dm', 'DM', { author: 'owner', content: 'next', meta: {} })
   await until(() => received.length === 2)
   await time.advance(100)
   expect(calls().some(args => args[0] === 'stop' || args[0] === '--bg')).toBe(false)
@@ -1272,7 +1272,7 @@ test('once a fresh thread\'s session is full, a new one takes over at the rest t
   expect(args).not.toContain('--resume')
   expect(args.at(-2)).toBe('--settings')
   const next = await session('dm', NEXT)
-  hub.deliver('dm', 'DM', { content: 'next', meta: {} })
+  hub.deliver('dm', 'DM', { author: 'owner', content: 'next', meta: {} })
   await until(() => next.received.length)
   expect(next.received[0]).toMatchObject({ type: 'inbound', content: 'next' })
   expect(first.received).toHaveLength(1)
@@ -1306,7 +1306,7 @@ test('a message that finds a fresh thread\'s session gone cold goes to a new one
   expect(await launched()).not.toContain('--resume')
   const next = await session('dm', NEXT)
   await until(() => next.received.length)
-  expect(next.received[0]).toMatchObject({ type: 'inbound', ...message })
+  expect(next.received[0]).toMatchObject({ type: 'inbound', content: message.content, meta: message.meta })
   expect(first.received).toHaveLength(0)
 })
 
@@ -1354,11 +1354,11 @@ test('a session with no capacity takes every message of a call, idle or not, and
   for (const turn of ['one', 'two', 'three']) {
     said(20_000)
     await send({ type: 'state', thread: 'voice', busy: false })
-    hub.deliver('voice', 'voice', { content: turn, meta: {} })
+    hub.deliver('voice', 'voice', { author: 'owner', content: turn, meta: {} })
     await until(() => received.find(payload => payload.content === turn))
   }
   expect(calls().some(args => args[0] === 'stop' || args[0] === '--bg')).toBe(false)
-  hub.deliver('voice', 'voice', { content: 'the call ended', meta: {} })
+  hub.deliver('voice', 'voice', { author: 'owner', content: 'the call ended', meta: {} })
   hub.renew('voice')
   await send({ type: 'state', thread: 'voice', busy: true })
   await send({ type: 'state', thread: 'voice', busy: false })
@@ -1860,7 +1860,7 @@ test('begin opens a thread on another client and starts its session on a prompt,
   try {
     expect(await begin('elsewhere', 'Anchors', 'look at the anchors', { about: 'From Discord', where: 'desk' })).toEqual({ thread: 'chat:9', link: 'https://chat/9' })
     expect((await launched()).at(-1)).toBe('look at the anchors')
-    await begin('elsewhere', 'Relay', { content: 'fix the relay', meta: { user: 'hex voice' } })
+    await begin('elsewhere', 'Relay', { content: 'fix the relay', author: 'hex voice', meta: { user: 'hex voice' } })
     expect(placed).toEqual([['Anchors', 'desk', 'From Discord'], ['Relay', undefined, undefined]])
     expect((await until(() => registry()['chat:10'])).name).toBe('Relay')
     const { received } = await session('chat:10')
@@ -1886,39 +1886,44 @@ test('a move that copies forks the session there and leaves the thread here', as
   }
 })
 
-// The session's log as bin/log writes it, in the threads folder.
-function logged(body: string, id = SESSION) {
-  mkdirSync(join(dir, 'hex', 'log', 'threads'), { recursive: true })
-  writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${id.slice(0, 8)}.md`), `# 2026-10-06 · session ${id}\n\n${body}`)
+// A thread's messages as hex.db keeps them, each taken by the session it reached or wrote it.
+function stored(rows: { author: string; body: string; from?: string; meta?: Record<string, string> }[], thread = 'chat:7', session: string | undefined = SESSION) {
+  const store = open(dir)
+  for (const [i, { from = 'buzz', ...row }] of rows.entries()) store.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, session)
 }
 
-test('a session\'s history is what the owner said, there or in the hex app, and hex replied in its apps, headings and all, without the terminal or other threads', () => {
-  logged([
-    '## me · buzz · 2026-10-06 10:06\n\nhow full is your context?\n',
-    '## assistant · buzz · 2026-10-06 10:06\n\nRoomy.\n\n## What loads\n\nthe rules\n',
-    '## assistant · terminal · 2026-10-06 10:06\n\nI answered in Buzz.\n',
-    '## hex · voice · 2026-10-06 10:07\n\nA call never connected.\n',
-    '## me · telegram · 10:08\n\nthanks\n',
-    '## hex General · telegram · 10:09\n\nFrom General: the build passed.\n',
-    '## hex app · telegram · 10:10\n\nship it\n',
-  ].join('\n'))
-  expect(history(join(dir, 'hex'), SESSION)).toEqual([
+test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits, and a session's is what it took", () => {
+  stored([
+    { author: 'owner', body: 'how full is your context?' },
+    { author: 'hex', body: 'Roomy.\n\n## What loads\n\nthe rules' },
+    { author: 'owner', from: 'terminal', body: 'typed in the terminal' },
+    { author: 'hex', body: 'never sent', meta: { failed: 'network' } },
+    { author: 'owner', from: 'telegram', body: 'thanks' },
+    { author: 'hex General', from: 'telegram', body: 'From General: the build passed.' },
+    { author: 'call', from: 'voice', body: '[1.0s] you: hi\n[2.0s] voice: hello' },
+  ])
+  stored([{ author: 'owner', body: 'not taken yet' }], 'chat:7', undefined)
+  stored([{ author: 'owner', body: 'another thread' }], 'chat:8')
+  expect(history(open(dir), 'chat:7')).toEqual([
     { from: 'me', text: 'how full is your context?' },
     { from: 'hex', text: 'Roomy.\n\n## What loads\n\nthe rules' },
     { from: 'me', text: 'thanks' },
-    { from: 'me', text: 'ship it' },
   ])
-  expect(history(join(dir, 'hex'), '9f9f9f9f-0000-4000-8000-000000000000')).toEqual([])
+  expect(history(open(dir), 'chat:9')).toEqual([])
+  open(dir).db.query("update messages set at = '2026-10-01T00:00:00.000Z' where key = 'buzz:chat:7-0'").run()
+  open(dir).db.query("update messages set taken_by = 'older-session' where key = 'buzz:chat:7-0'").run()
+  expect(history(open(dir), 'chat:7', SESSION).map(turn => turn.text)).toEqual(['Roomy.\n\n## What loads\n\nthe rules', 'thanks'])
+  expect(history(open(dir), 'chat:7', 'new-session')).toEqual([])
 })
 
 test('a T3 message in a history is the owner\'s request, without the context T3 Code sends around it', () => {
   const runtime = "<runtime_info>In case you're asked: you are running in T3 Code.</runtime_info>"
-  logged([
-    `## me · t3 · 2026-10-06 10:09\n\n<t3_code_instructions>\n## T3 Code interaction mode: Default\n\nPrefer assumptions.\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n${runtime}\n`,
-    `## me · t3 · 2026-10-06 10:10\n\nand the docs\n\n${runtime}\n\n<pull_request_linking>\nLink every PR.\n</pull_request_linking>\n`,
-    '## assistant · t3 · 2026-10-06 10:10\n\nShipped.\n',
-  ].join('\n'))
-  expect(history(join(dir, 'hex'), SESSION)).toEqual([
+  stored([
+    { author: 'owner', from: 't3', body: `<t3_code_instructions>\n## T3 Code interaction mode: Default\n\nPrefer assumptions.\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n${runtime}` },
+    { author: 'owner', from: 't3', body: `and the docs\n\n${runtime}\n\n<pull_request_linking>\nLink every PR.\n</pull_request_linking>` },
+    { author: 'hex', from: 't3', body: 'Shipped.' },
+  ])
+  expect(history(open(dir), 'chat:7')).toEqual([
     { from: 'me', text: 'ship it' },
     { from: 'me', text: 'and the docs' },
     { from: 'hex', text: 'Shipped.' },
@@ -1927,7 +1932,7 @@ test('a T3 message in a history is the owner\'s request, without the context T3 
 
 test('a move backfills the thread there with its chat before its session resumes there', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
-  logged('## me · buzz · 2026-10-06 10:06\n\nanchors?\n')
+  stored([{ author: 'owner', body: 'anchors?' }])
   const steps: unknown[][] = []
   clients.set('elsewhere', {
     hub: { fork: (...args: unknown[]) => steps.push(['fork', args[0]]) } as any,
@@ -1964,7 +1969,7 @@ test('a move to a client that shows only its own turns hands it the session to r
 
 test('a mirror opens a backfilled copy that follows the session, and leaves the thread here', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, cwd: '/work/anchors' } } })
-  logged('## assistant · buzz · 2026-10-06 10:06\n\nAnchors are in.\n')
+  stored([{ author: 'hex', body: 'Anchors are in.' }])
   const steps: unknown[][] = []
   clients.set('elsewhere', {
     hub: { follow: (...args: unknown[]) => steps.push(['follow', ...args]) } as any,
@@ -2017,7 +2022,7 @@ test('a message is in hex.db once deliver returns, its key first on the tag, and
   hub.deliver('chat:7', 'Desk anchors', { ...message, key: '1:42' })
   expect(open(dir).message('telegram:1:42')).toMatchObject({ to: 'chat:7', from: 'telegram', body: 'hi', meta: { chat_id: '1' } })
   hub.deliver('chat:7', 'Desk anchors', { ...message, key: '1:42' })
-  hub.deliver('chat:7', 'Desk anchors', { content: 'after', meta: {}, key: '1:43' })
+  hub.deliver('chat:7', 'Desk anchors', { author: 'owner', content: 'after', meta: {}, key: '1:43' })
   await until(() => received.length === 2)
   expect(received[0]).toEqual({ type: 'inbound', content: 'hi', meta: { key: 'telegram:1:42', chat_id: '1' } })
   expect(received[1].content).toBe('after')
@@ -2029,7 +2034,7 @@ test('after the hub restarts, a session gets again what it was given but never t
   const first = http('chat:7')
   await first.open(crypto.randomUUID())
   hub.deliver('chat:7', 'Desk anchors', { ...message, key: '1:42' })
-  hub.deliver('chat:7', 'Desk anchors', { content: 'and this', meta: {}, key: '1:43' })
+  hub.deliver('chat:7', 'Desk anchors', { author: 'owner', content: 'and this', meta: {}, key: '1:43' })
   await until(() => first.received.length === 2)
   open(dir).take('telegram:1:42', SESSION)
   first.close()
@@ -2044,7 +2049,7 @@ test('after the hub restarts, a session gets again what it was given but never t
 
 test("a session's hook takes what its prompt brings in, and drops a copy of one taken already", async () => {
   const store = open(dir)
-  store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', body: 'hi' })
+  store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
   const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>'
   const fold = () => Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]), stderr: 'pipe' })
   const first = fold()
@@ -2057,8 +2062,8 @@ test("a session's hook takes what its prompt brings in, and drops a copy of one 
 
 test("a channel tag in a message's own words takes nothing", async () => {
   const store = open(dir)
-  store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', body: 'hi' })
-  store.deliver({ key: 'schedule:heartbeat@2026-10-18T21:45Z', to: 'chat:7', from: 'schedule', body: '[heartbeat] Hourly check' })
+  store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
+  store.deliver({ key: 'schedule:heartbeat@2026-10-18T21:45Z', to: 'chat:7', from: 'schedule', author: 'schedule', body: '[heartbeat] Hourly check' })
   const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-10-18T21:45Z">\n</channel>'
   const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]) })
   expect(await hook.exited).toBe(0)
@@ -2068,7 +2073,7 @@ test("a channel tag in a message's own words takes nothing", async () => {
 
 test('a session started before hex kept messages has the hub take them for it', async () => {
   start()
-  open(dir).deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', body: 'hi' })
+  open(dir).deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
   const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>'
   const { HEX_STORE, ...env } = process.env
   const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...env, HEX_HUB: join(dir, 'hub.sock'), HEX_THREAD: 'chat:7' }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]) })
@@ -2080,7 +2085,7 @@ test('a session started before hex kept messages has the hub take them for it', 
 test('a message another process keeps, like a job ending, reaches its thread as the bell rings, and one for a thread the hub does not serve waits', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }] })
   const { received } = await session('chat:7')
-  open(dir).deliver({ key: 'job:other:1', to: 'chat:99', from: 'job', body: 'nobody here' })
+  open(dir).deliver({ key: 'job:other:1', to: 'chat:99', from: 'job', author: 'job', body: 'nobody here' })
   const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'job:build:1', '--to', 'chat:7', '[job]', 'build', 'ended'])
   expect(await cli.exited).toBe(0)
   await until(() => received.length)
@@ -2095,4 +2100,28 @@ test("only General's hub runs schedules.json", async () => {
   hub.close()
   start({ main: 'general', general: true })
   expect(open(dir).checked()).toBe(Math.floor(Date.now() / 60_000))
+})
+
+test("hex's own words are kept as its session's, already taken, so they wake nothing, and a failed send is kept marked failed", () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
+  hub.sent('chat:7', { key: '9', content: 'Done.' })
+  hub.sent('chat:7', { content: 'never arrived', meta: { failed: 'network' } })
+  const rows = open(dir).said('chat:7')
+  expect(rows.map(({ key, from, author, body, taken, meta }) => ({ key: key === 'telegram:9' ? key : 'random', from, author, body, by: taken?.by, failed: meta?.failed }))).toEqual([
+    { key: 'telegram:9', from: 'telegram', author: 'hex', body: 'Done.', by: SESSION, failed: undefined },
+    { key: 'random', from: 'telegram', author: 'hex', body: 'never arrived', by: SESSION, failed: 'network' },
+  ])
+  expect(open(dir).untaken('chat:7')).toEqual([])
+  expect(hub.said('9')?.body).toBe('Done.')
+})
+
+test("what a session sends into another thread is kept as its own words, not that thread's session's", async () => {
+  start({
+    registry: { 'chat:7': { name: 'Desk anchors', session: SESSION }, 'chat:8': { name: 'Errands', session: 'other-session' } },
+    call: async () => (hub.sent('chat:8', { key: '12', content: 'From Desk anchors: done.' }), 'sent'),
+  })
+  const line = http('chat:7')
+  await line.initialize()
+  await line.call('reply', { text: 'done' })
+  expect(open(dir).said('chat:8').map(({ body, taken }) => ({ body, by: taken?.by }))).toEqual([{ body: 'From Desk anchors: done.', by: SESSION }])
 })

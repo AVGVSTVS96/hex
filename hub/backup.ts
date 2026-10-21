@@ -49,7 +49,7 @@ export function nightly(storeDir: string, hexDir: string, main: string): () => v
         await backup(storeDir, day, process.env.HEX_COMPUTER || undefined)
       } catch (error) {
         const body = `[backup] hex couldn't back up state/hex.db for ${day}: ${(error as Error).message}. The next try is at 3:00.`
-        open(storeDir).deliver({ key: `backup:failed@${day}`, to: main, from: 'backup', body, meta: { user: 'backup' } })
+        open(storeDir).deliver({ key: `backup:failed@${day}`, to: main, from: 'backup', author: 'backup', body, meta: { user: 'backup' } })
       }
     }
     if (!stopped) timer = setTimeout(run, (passed ? today.add({ days: 1 }) : today).epochMilliseconds - Date.now())

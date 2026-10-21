@@ -24,7 +24,7 @@ void up.then(general => {
   if (commit) writeFileSync(join(state, 'good'), commit + '\n')
   nightly(state, home, general.main!)
   if (!existsSync(rollback)) return
-  general.deliver(general.main!, general.name(general.main!) ?? 'hex', { content: readFileSync(rollback, 'utf8').trim(), meta: { user: 'hex' } })
+  general.deliver(general.main!, general.name(general.main!) ?? 'hex', { content: readFileSync(rollback, 'utf8').trim(), author: 'prompt', meta: { user: 'hex' } })
   rmSync(rollback)
 })
 

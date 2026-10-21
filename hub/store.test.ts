@@ -15,7 +15,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-const message = { key: 'telegram:-100:42', to: '-100:7', from: 'telegram', body: 'remind me to buy Cheryl a salty treat', meta: { user: 'bassim' } }
+const message = { key: 'telegram:-100:42', to: '-100:7', from: 'telegram', body: 'remind me to buy Cheryl a salty treat', author: 'owner', meta: { user: 'bassim' } }
 
 test('a message is kept once, word for word, and a resend under its key changes nothing', () => {
   const store = new Store(dir)
@@ -81,6 +81,18 @@ test('a change committed in another process rings the bell, and a write that cha
   stop()
 })
 
+test('a change right after the one the bell just rang for is still heard', async () => {
+  const store = open(dir)
+  const seen: (string | undefined)[] = []
+  const stop = store.watch(() => {
+    seen.push(store.message('job:quick:2')?.body)
+    if (seen.length === 1) store.deliver({ key: 'job:quick:2', to: 'general', from: 'job', author: 'job', body: 'two' })
+  })
+  store.deliver({ key: 'job:quick:1', to: 'general', from: 'job', author: 'job', body: 'one' })
+  await until(() => seen.at(-1) === 'two')
+  stop()
+})
+
 test('hex deliver says how to call it when something is missing', async () => {
   for (const args of [['job:build:abc', 'no thread'], ['build', '--to', 'general', 'no sender']]) {
     const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', ...args], { stderr: 'pipe' })
@@ -96,6 +108,8 @@ test('a task from before titles gets its first words as its title', () => {
   store.deliver({ ...ask, body: 'Fix the login page.\nIt 500s on submit.' })
   store.createTask({ title: 'x', message: ask.key, owner: '-100:7' })
   store.db.run('update tasks set title = null')
+  store.db.run('drop index said; drop index unauthored')
+  store.db.run('alter table messages drop column author')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
@@ -182,25 +196,25 @@ test('cutting takes the whole message and leaves quotes picked on purpose alone'
 test("a task from a T3 Code prompt holds what was asked, not T3's instructions around it", () => {
   const store = new Store(dir)
   const body = '<t3_code_instructions>\n## T3 Code interaction mode: Default\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n<runtime_info>opus</runtime_info>'
-  store.deliver({ key: 't3:1', to: 'thread-1', from: 't3', body, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  store.deliver({ key: 't3:1', to: 'thread-1', from: 't3', author: 'owner', body, meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ title: 'Fix it', message: 't3:1', owner: 'thread-1' }).words[0]!.text).toBe('ship it')
-  store.addWords('t-1', 't3:1', body)
-  expect(store.addWords('t-1', 't3:1').words.map(words => words.text)).toEqual(['ship it', body])
+  expect(() => store.addWords('t-1', 't3:1', body)).toThrow("isn't in")
+  expect(store.addWords('t-1', 't3:1').words.map(words => words.text)).toEqual(['ship it'])
   expect(store.requote('t-1', 't3:1', 'ship').words.map(words => words.text)).toEqual(['ship'])
   expect(store.requote('t-1', 't3:1', 'ship').words.map(words => words.text)).toEqual(['ship'])
   const shot = `${body}\n\n[image: /inbox/1.png]`
-  store.deliver({ key: 't3:2', to: 'thread-1', from: 't3', body: shot, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  store.deliver({ key: 't3:2', to: 'thread-1', from: 't3', author: 'owner', body: shot, meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ title: 'Fix it', message: 't3:2', owner: 'thread-1' }).words.map(words => words.text)).toEqual(['ship it', '[image: /inbox/1.png]'])
   expect(store.requote('t-2', 't3:2', 'ship').words.map(words => words.text)).toEqual(['ship', '[image: /inbox/1.png]'])
   store.addWords('t-2', 't3:2')
   expect(store.task('t-2')!.words.map(words => words.text)).toEqual(['ship', '[image: /inbox/1.png]'])
   const attached = '<t3_code_instructions>\nx\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n[image: /inbox/2.png]'
-  store.deliver({ key: 't3:5', to: 'thread-1', from: 't3', body: attached, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  store.deliver({ key: 't3:5', to: 'thread-1', from: 't3', author: 'owner', body: attached, meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ title: 'Fix it', message: 't3:5', owner: 'thread-1' }).words.map(words => words.text)).toEqual(['ship it', '[image: /inbox/2.png]'])
   const tagged = '<user_request>\nmake the header say\n<title>Hello</title>\n</user_request>\n\n<runtime_info>opus</runtime_info>'
-  store.deliver({ key: 't3:4', to: 'thread-1', from: 't3', body: tagged, meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  store.deliver({ key: 't3:4', to: 'thread-1', from: 't3', author: 'owner', body: tagged, meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ title: 'Fix it', message: 't3:4', owner: 'thread-1' }).words[0]!.text).toBe('make the header say\n<title>Hello</title>')
-  store.deliver({ key: 't3:3', to: 'thread-1', from: 't3', body: 'and the docs\n\n<runtime_info>opus</runtime_info>', meta: { ts: '2026-10-20T00:00:00.000Z' } })
+  store.deliver({ key: 't3:3', to: 'thread-1', from: 't3', author: 'owner', body: 'and the docs\n\n<runtime_info>opus</runtime_info>', meta: { ts: '2026-10-20T00:00:00.000Z' } })
   expect(store.createTask({ title: 'Fix it', message: 't3:3', owner: 'thread-1' }).words[0]!.text).toBe('and the docs')
   store.deliver({ ...ask, key: 'telegram:-100:51', body: 'paste: <user_request>x</user_request>' })
   expect(store.createTask({ title: 'Fix it', message: 'telegram:-100:51', owner: '-100:7' }).words[0]!.text).toBe('paste: <user_request>x</user_request>')
@@ -319,7 +333,7 @@ test("a question keeps its first answer, a poll's vote replaces the one before, 
 test('an answer and the message that wakes its thread with it land together or not at all', () => {
   const store = new Store(dir)
   store.ask({ app: 'telegram', thread: '-100:7', message: 41, text: 'Deploy now?', options: ['Deploy', 'Wait'] })
-  const wake = { key: 'telegram:tap:1', to: '-100:7', from: 'telegram', body: 'Wait' }
+  const wake = { key: 'telegram:tap:1', to: '-100:7', from: 'telegram', author: 'owner', body: 'Wait' }
   expect(() =>
     store.write(() => {
       store.answered('telegram', '-100:7', 41, 'Wait', 'telegram')
@@ -330,4 +344,15 @@ test('an answer and the message that wakes its thread with it land together or n
   expect(store.write(() => store.answered('telegram', '-100:7', 41, 'Wait', 'telegram') && store.deliver(wake))).toBe(true)
   expect(store.write(() => store.answered('telegram', '-100:7', 41, 'Deploy', 'telegram') && store.deliver({ ...wake, key: 'telegram:tap:2', body: 'Deploy' }))).toBe(false)
   expect(store.message('telegram:tap:2')).toBeNull()
+})
+
+test('a message an older hub kept without an author gets one when hex.db next opens', () => {
+  const store = new Store(dir)
+  store.db.query(`insert into messages (key, "to", "from", body, meta, at) values ('telegram:-100:95', '-100:7', 'telegram', 'hi', '{"user_id":"1"}', '2026-10-21T10:00:00.000Z')`).run()
+  store.db.close()
+  expect(new Store(dir).message('telegram:-100:95')!.author).toBe('owner')
+})
+
+test('a message without its author is refused', () => {
+  expect(() => new Store(dir).deliver({ key: 'telegram:-100:90', to: '-100:7', from: 'telegram', author: '', body: 'hi' })).toThrow('telegram:-100:90 has no author')
 })

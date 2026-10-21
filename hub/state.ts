@@ -1,7 +1,8 @@
 import { connect } from 'net'
+import { join } from 'path'
 import { open } from './store.ts'
 
-const { HEX_HUB, HEX_THREAD, HEX_STORE } = process.env
+const { HEX_HUB, HEX_THREAD, HEX_STORE, HEX_OWNER, HEX_MAIN } = process.env
 const busy = process.argv[2] === 'busy'
 
 // Claude Code counts a session with these running as still working, and shells or monitors as not.
@@ -35,6 +36,20 @@ if (key && HEX_STORE) {
       process.exit(2)
     }
     untold = undefined
+  } catch {}
+}
+
+// What's typed in a session's terminal is kept like any message, already taken by the session: the
+// owner's, or a job's prompt (the hub keeps the prompt it starts a session with itself; observe.ts keeps
+// a terminal's answers).
+const said = busy && typeof prompt === 'string' && !fromChat && !/^(\/|<(local-command|command-|system-reminder|task-notification))/.test(prompt) ? prompt : undefined
+if (said && session_id) {
+  try {
+    const store = open(HEX_STORE ?? join(import.meta.dir, '..', '..', 'state'))
+    const to = HEX_THREAD ?? session_id
+    const author = HEX_OWNER && !HEX_MAIN ? 'prompt' : 'owner'
+    const started = author === 'owner' && store.said(to, 20).some(row => row.from === 'hub' && row.body.trim() === said.trim())
+    if (!started) store.deliver({ key: `terminal:${crypto.randomUUID()}`, to, from: 'terminal', author, body: said, meta: { session: session_id } }, session_id)
   } catch {}
 }
 

@@ -11,6 +11,7 @@ import { bytesToHex } from 'nostr-tools/utils'
 import { schnorr } from '@noble/curves/secp256k1.js'
 import { connectRelay } from './relay.ts'
 import { ATTACH, connect as connectSession, service } from '../../hub/testing.ts'
+import { open } from '../../hub/store.ts'
 import { until } from '../../hub/until.ts'
 
 type Peer = { challenge: string; pubkey?: string; subs: Map<string, Filter[]> }
@@ -502,15 +503,12 @@ test('new_thread opens a thread in Buzz with its about line under the title, sta
 test('a mirror backfills the new thread with the chat, the owner\'s lines quoted under their name', async () => {
   const bot = await startBot()
   const { root, session } = await threadStarted(bot)
-  mkdirSync(join(bot.state, '..', 'hex', 'log', 'threads'), { recursive: true })
-  writeFileSync(join(bot.state, '..', 'hex', 'log', 'threads', `2026-10-06-${SESSION.slice(0, 8)}.md`), [
-    `# 2026-10-06 · session ${SESSION}\n`,
-    '## me · telegram · 2026-10-06 10:06\n\nhow full is\nyour context?\n',
-    '## assistant · telegram · 2026-10-06 10:06\n\nRoomy.\n',
-  ].join('\n'))
+  const store = open(join(bot.state, '..', 'hex', 'state'))
+  store.deliver({ key: 'telegram:1', to: root.id, from: 'telegram', author: 'owner', body: 'how full is\nyour context?' }, SESSION)
+  store.deliver({ key: 'telegram:2', to: root.id, from: 'telegram', author: 'hex', body: 'Roomy.' }, SESSION)
   session.send({ type: 'mirror', thread: root.id, to: 'buzz' })
   const head = await until(() => bot.published(9).find(event => event.content === '**desk**'))
-  const posts = await until(() => (posts => posts.length === 2 && posts)(bot.published(9).filter(event => event.tags.some(([tag, id]) => tag === 'e' && id === head.id))))
+  const posts = await until(() => (posts => posts.at(-1)?.content === 'Roomy.' && posts.slice(-2))(bot.published(9).filter(event => event.tags.some(([tag, id]) => tag === 'e' && id === head.id))))
   expect(posts.map(event => event.content)).toEqual(['> **Bassim**\n> how full is\n> your context?', 'Roomy.'])
   expect(posts[0]!.tags).toEqual([['h', bot.channel], ['e', head.id, '', 'reply'], ['p', owner], bot.auth])
 })

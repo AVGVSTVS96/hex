@@ -2,12 +2,15 @@ import { Database } from 'bun:sqlite'
 import { appendFileSync, mkdirSync, watch, type FSWatcher } from 'fs'
 import { join } from 'path'
 
-// One message as hex keeps it: anything that wakes a thread (the owner's message in an app, a
-// schedule's slot, a job's end), word for word, under its sender's own id for it. taken: the
-// session that took it into its conversation.
-export type Row = { key: string; to: string; from: string; body: string; at: string; meta?: Record<string, string>; taken?: { by: string; at: string } }
+// One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
+// it. from: the app it was said in. author: who said it, set once by whatever kept it: the owner,
+// hex (a reply, a session's turn), a call's transcript, or the name of another sender (a job, a
+// schedule, someone else in a shared app). taken: the session that has it in its conversation, which
+// for hex's own words is the one that wrote them, so nothing wakes on them. A message no session has
+// taken is what wakes a thread.
+export type Row = { key: string; to: string; from: string; author: string; body: string; at: string; meta?: Record<string, string>; taken?: { by: string; at: string } }
 export type NewRow = Omit<Row, 'at' | 'taken'>
-type Stored = { key: string; to: string; from: string; body: string; at: string; meta: string | null; taken_by: string | null; taken_at: string | null }
+type Stored = { key: string; to: string; from: string; author: string; body: string; at: string; meta: string | null; taken_by: string | null; taken_at: string | null }
 
 // One thing the owner wants done: a short title in plain words that keeps their intent, and their
 // own words, each quoted from a message they sent, under its key, with who sent it and when. Words
@@ -44,6 +47,18 @@ type StoredTask = { n: number; title: string; owner: string; status: Status; pro
 // shipped. Times are UTC the way toISOString() writes them, so they sort as text. A key starts with
 // its sender, so a key hex makes for a schedule's slot or a job's end can't be one an app sent.
 const UTC = "glob '????-??-??T??:??:??.???Z'"
+// Who wrote each message kept before hex kept authors: one with a chat app's user_id is the owner's
+// (Telegram and Discord let only them in), and so is what they typed or tapped in the hex app; in Buzz,
+// which is shared, it's the sender's key; a call's transcript is a call; what hex itself sent a session
+// is a prompt; any other is its user's.
+const AUTHOR = `case
+    when "from" = 'buzz' and json_extract(meta, '$.user_id') is not null then 'buzz:' || json_extract(meta, '$.user_id')
+    when json_extract(meta, '$.user_id') is not null then 'owner'
+    when json_extract(meta, '$.user') in ('hex app', 'hex call') then 'owner'
+    when json_extract(meta, '$.user') = 'hex' then 'prompt'
+    when "from" = 'voice' and json_extract(meta, '$.callee') is null and (json_extract(meta, '$.delegation_id') is not null or json_extract(meta, '$.ended') is not null) then 'call'
+    when "from" = 't3' and json_extract(meta, '$.user') is null then 'owner'
+    else coalesce(json_extract(meta, '$.user'), "from") end`
 const migrations = [
   `create table messages (
     n integer primary key,
@@ -125,6 +140,10 @@ const migrations = [
   create table passes (n integer primary key autoincrement, pass text not null check (json_valid(pass)));`,
   `alter table tasks add column title text;`,
   `update tasks set title = coalesce(nullif(trim(substr(replace((select text from words where task = tasks.n order by rowid limit 1), char(10), ' '), 1, 80)), ''), 'Task ' || n) where title is null;`,
+  `alter table messages add column author text not null default '';
+  update messages set author = ${AUTHOR};
+  create index said on messages ("to", at);
+  create index unauthored on messages (n) where author = '';`,
 ]
 
 const now = () => new Date().toISOString()
@@ -157,6 +176,8 @@ export class Store {
         this.db.run(`pragma user_version = ${version + 1}`)
       })
     }
+    // An older hub, still running while hex updates, keeps messages without an author.
+    if (this.db.query("select 1 from messages where author = '' limit 1").get()) this.write(() => this.db.run(`update messages set author = ${AUTHOR} where author = ''`))
   }
 
   // Runs fn as one transaction that holds the write lock from its first statement (BEGIN
@@ -180,9 +201,7 @@ export class Store {
   // Calls back after each change any process commits, until the stop it returns is called.
   watch(listener: () => void): () => void {
     this.listeners.add(listener)
-    this.watcher ??= watch(this.bell, () => {
-      for (const each of this.listeners) each()
-    })
+    this.watcher ??= watch(this.bell, () => this.rang())
     return () => {
       this.listeners.delete(listener)
       if (this.listeners.size) return
@@ -191,14 +210,38 @@ export class Store {
     }
   }
 
-  // Keeps a new message. A key that's kept already is its sender sending it again: false.
-  deliver({ key, to, from, body, meta }: NewRow): boolean {
+  // Bun's fs.watch drops a change that lands within about a millisecond of the one it just reported,
+  // so each ring is heard again once that has passed, if hex.db moved since.
+  private rang() {
+    const seen = this.moved()
+    for (const each of this.listeners) each()
+    setTimeout(() => this.watcher && this.moved() !== seen && this.rang(), 5)
+  }
+
+  // Keeps a new message. A key that's kept already is its sender sending it again: false. by: the
+  // session that wrote it, which has it in its conversation already.
+  deliver({ key, to, from, author, body, meta }: NewRow, by?: string): boolean {
+    if (!author) throw new Error(`${key} has no author`)
+    const at = now()
     return this.write(
       () =>
         this.db
-          .query('insert into messages (key, "to", "from", body, meta, at) values (?, ?, ?, ?, ?, ?) on conflict (key) do nothing')
-          .run(key, to, from, body, meta ? JSON.stringify(meta) : null, now()).changes === 1,
+          .query('insert into messages (key, "to", "from", author, body, meta, at, taken_by, taken_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (key) do nothing')
+          .run(key, to, from, author, body, meta ? JSON.stringify(meta) : null, at, by ?? null, by ? at : null).changes > 0,
     )
+  }
+
+  // Messages brought in from log/ (hub/past.ts) keep the time it gave them, taken and looked over then.
+  past(times: [string, string][]) {
+    this.write(() => {
+      const at = this.db.query('update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1')
+      for (const [key, when] of times) at.run(key, when)
+    })
+  }
+
+  // Older messages an app kept under a sender it now knows is the owner, like a Buzz key, become theirs.
+  own(from: string, author: string) {
+    this.write(() => this.db.query(`update messages set author = 'owner' where "from" = ? and author = ?`).run(from, author))
   }
 
   // A session took the message into its conversation. False when one already had, or it isn't kept.
@@ -212,18 +255,19 @@ export class Store {
   }
 
   // Every message kept after a time, oldest first.
-  since(after: string): Row[] {
-    return (this.db.query('select * from messages where at > ? order by at').all(after) as Stored[]).map(toRow)
+  since(after = ''): Row[] {
+    return (this.db.query('select * from messages where at > ? order by at, n').all(after) as Stored[]).map(toRow)
   }
 
-  // What one session took into its conversation after a time, oldest first.
-  took(session: string, after = ''): Row[] {
-    return (this.db.query('select * from messages where taken_by = ? and taken_at > ? order by taken_at').all(session, after) as Stored[]).map(toRow)
+  // The newest edit an app kept of its message id.
+  edited(from: string, id: string): Row | null {
+    const row = this.db.query(`select * from messages where "from" = ? and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ? order by at desc, n desc limit 1`).get(from, id) as Stored | null
+    return row && toRow(row)
   }
 
-  // Every session that took a thread's messages, in the order each first did.
-  sessions(thread: string): string[] {
-    return (this.db.query('select taken_by from messages where "to" = ? and taken_by is not null group by taken_by order by min(taken_at)').all(thread) as { taken_by: string }[]).map(row => row.taken_by)
+  // A thread's messages, oldest first: all of them, or its last few, or its last few before a time.
+  said(thread: string, last = -1, before = '9'): Row[] {
+    return (this.db.query('select * from (select * from messages where "to" = ? and at < ? order by at desc, n desc limit ?) order by at, n').all(thread, before, last) as Stored[]).map(toRow)
   }
 
   // What a session, or another in its thread, took by a time that no pass has looked over for
@@ -295,7 +339,7 @@ export class Store {
   // yet: a job runs each time it comes due until the owner stops it.
   fire(schedule: string, minute: number, to: string, body: string, late = false): boolean {
     const slot = new Date(minute * 60_000).toISOString().slice(0, 16)
-    return this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
+    return this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', author: 'schedule', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
   }
 
   // A task from the owner's message under key: all of it, or the part quote names, which has to be
@@ -503,11 +547,12 @@ export class Store {
     if (!said) throw new Error(`no message ${message}`)
     const pieces = quote === undefined && said.from === 't3' ? sent(said.body) : []
     if (quote === undefined && this.db.query('select 1 from words where task = ? and message = ?').get(number(task), message)) return
-    const texts = quote !== undefined ? [quote] : said.from === 't3' ? pieces : [said.body]
+    const texts = quote !== undefined ? [quote] : said.from === 't3' ? pieces : said.author === 'call' ? spoken(said).split('\n') : [said.body]
     if (!texts.length) throw new Error(`${message} has no words to quote`)
+    if (!spoken(said)) throw new Error(`${message} is ${said.author}'s, not the owner's; a task holds the owner's words`)
     for (const text of texts) {
       if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
-      if (!said.body.includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
+      if (!spoken(said).includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
       this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
     }
   }
@@ -551,6 +596,11 @@ export class Store {
 
   private version() {
     return (this.db.query('pragma user_version').get() as { user_version: number }).user_version
+  }
+
+  // Changes since this connection opened: its own, and other processes' commits.
+  private moved() {
+    return `${(this.db.query('pragma data_version').get() as { data_version: number }).data_version}:${this.changes()}`
   }
 
   private changes() {
@@ -609,11 +659,25 @@ function sent(body: string) {
   return pieces.map(piece => piece.trim()).filter(Boolean)
 }
 
+// The owner's own words in a message: all of it when they wrote it, less the context T3 Code sends
+// around a prompt; their lines of a call's transcript; and nothing of anyone else's.
+export function spoken(row: Row): string {
+  if (row.author === 'owner') return row.from === 't3' ? row.body.replace(/^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/gm, '') : row.body
+  if (row.author !== 'call') return ''
+  return [...row.body.matchAll(/^\[[\d.]+s\] you: (.*)$/gm)].map(([, line]) => line).join('\n')
+}
+
+// hex's own words, as it sent them: a reply, a post, a terminal's answer. What hex tells a session is a prompt.
+export const replied = (row: Row) => row.author === 'hex'
+// A row of the conversation: not a reply of hex's that failed, was an edit, or asked a permission.
+export const shown = (row: Row) => !replied(row) || !(row.meta?.failed || row.meta?.edited || row.meta?.permission)
+
 function toRow(row: Stored): Row {
   return {
     key: row.key,
     to: row.to,
     from: row.from,
+    author: row.author,
     body: row.body,
     at: row.at,
     ...(row.meta && { meta: JSON.parse(row.meta) }),

@@ -3,6 +3,7 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeF
 import { Database } from 'bun:sqlite'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { open } from '../../hub/store.ts'
 
 // bin/job against a fake systemd-run that records what it was asked to run.
 
@@ -14,7 +15,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !n
 const session = { HEX_CHANNEL: 'plugin:t3@hex', HEX_THREAD: 'stray-key' }
 
 beforeAll(() => {
-  for (const file of ['bin/job', 'bin/hex', 'bin/log', 'bin/session', 'hub/cli.ts', 'hub/fit.ts', 'hub/notes.ts', 'hub/tasks.ts', 'hub/store.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
+  for (const file of ['bin/job', 'bin/hex', 'bin/session', 'hub/cli.ts', 'hub/fit.ts', 'hub/notes.ts', 'hub/tasks.ts', 'hub/schedule.ts', 'hub/clock.ts', 'hub/store.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
   for (const [app, threads] of Object.entries({
     t3: { 'stray-key': { name: 'hex' } },
     telegram: { 'stray-key': { name: 'stray-key' }, '-100123:908': { name: 'autofork' } },
@@ -69,13 +70,24 @@ test("a job a job session starts is its owner's too", () => {
   expect(value(run(['inner', 'make'], { HEX_OWNER: 'discord:555' }).args, 'HEX_OWNER')).toBe('discord:555')
 })
 
-test("a job session's log is hex's words, kept with the threads, not the owner's", () => {
-  const transcript = join(home, 'job.jsonl')
-  writeFileSync(transcript, JSON.stringify({ type: 'user', message: { content: 'Build the deck tab.' }, timestamp: new Date(Date.UTC(2026, 9, 20, 7, 30)).toISOString() }) + '\n')
-  const input = JSON.stringify({ session_id: 'b5e87338-0000-4000-8000-000000000000', transcript_path: transcript })
-  const logged = Bun.spawnSync([join(home, '.hex/bin/log'), 'path'], { stdin: Buffer.from(input), env: { ...env, TZ: 'UTC', HEX_OWNER: 't3:stray-key' } })
-  expect(logged.stdout.toString().trim()).toBe(join(home, 'log/threads/2026-10-20-b5e87338.md'))
-  expect(readFileSync(join(home, 'log/threads/2026-10-20-b5e87338.md'), 'utf8')).toContain('## hex · terminal')
+test("a job session's prompt is hex's words in hex.db, its answer too, what the owner types in a terminal is theirs, and an app session's terminal words are kept as unsent", () => {
+  const state = join(home, 'state')
+  const hook = (step: string, input: object, extra: Record<string, string> = {}) =>
+    Bun.spawnSync(['bun', join(HEX, step === 'busy' ? 'hub/state.ts' : 'hub/observe.ts'), step], { stdin: Buffer.from(JSON.stringify(input)), env: { ...env, HEX_STORE: state, MEMORY_DIR: '', ...extra } })
+  hook('busy', { session_id: 'job-1', prompt: 'Build the deck tab.' }, { HEX_OWNER: 't3:stray-key' })
+  hook('idle', { hook_event_name: 'Stop', session_id: 'job-1', last_assistant_message: 'Built.' }, { HEX_OWNER: 't3:stray-key' })
+  hook('busy', { session_id: 'mine-1', prompt: 'what is up' })
+  hook('busy', { session_id: 'mine-1', prompt: '<task-notification>done</task-notification>' })
+  hook('busy', { session_id: 'mine-1', prompt: '/compact' })
+  hook('idle', { hook_event_name: 'Stop', session_id: 'chat-1', last_assistant_message: 'narration' }, { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:1' })
+  const rows = open(state).since().map(({ to, from, author, body, taken }) => ({ to, from, author, body, by: taken?.by }))
+  expect(rows).toEqual([
+    { to: 'job-1', from: 'terminal', author: 'prompt', body: 'Build the deck tab.', by: 'job-1' },
+    { to: 'job-1', from: 'terminal', author: 'hex', body: 'Built.', by: 'job-1' },
+    { to: 'mine-1', from: 'terminal', author: 'owner', body: 'what is up', by: 'mine-1' },
+    { to: '-100:1', from: 'terminal', author: 'hex', body: 'narration', by: 'chat-1' },
+  ])
+  expect(open(state).said('-100:1')[0]?.meta).toEqual({ session: 'chat-1', unsent: 'true' })
 })
 
 test("a named owner is a key in one app's list, or <app>:<key>; a key in two lists is refused instead of guessed", () => {

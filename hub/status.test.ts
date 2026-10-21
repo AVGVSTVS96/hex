@@ -17,7 +17,7 @@ afterEach(() => {
 
 const said = (store: Store, n: number, body: string) => {
   const key = `telegram:-100:${n}`
-  store.deliver({ key, to: '-100:7', from: 'telegram', body, meta: { user: 'owner' } })
+  store.deliver({ key, to: '-100:7', from: 'telegram', body, author: 'owner', meta: { user: 'owner' } })
   return key
 }
 

@@ -11,7 +11,7 @@ import { startHub, clients, begin, move, title, family, MODELS, EFFORTS, type Se
 import { asked } from '../../hub/store.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
-import { withT3, projectAt, linkTo, steering } from './t3code.ts'
+import { withT3, projectAt, linkTo, promptedBy, steering } from './t3code.ts'
 import { version } from './package.json'
 
 const STATE_DIR = process.env.T3_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 't3')
@@ -28,6 +28,8 @@ type Turn = {
   client: AgentContext
   reader?: ReturnType<typeof follow>
   sent: Promise<unknown>
+  // What the session said in T3 this turn, kept as hex's reply once the turn ends.
+  said: string[]
   done: boolean
   since: number
   compaction?: string
@@ -79,7 +81,7 @@ const hub = startHub({
   // Its turn is done once a stop leaves no background agent working.
   state: (thread, busy, background) => {
     const turn = turns.get(thread)
-    if (!turn) return
+    if (!turn) return void (!busy && !background && hub.turned(thread))
     turn.done = !busy && !background
     const session = hub.session(thread)
     if (busy && session && !turn.reader) turn.reader = reader(thread, session, turn, turn.since)
@@ -127,6 +129,8 @@ function reader(thread: string, session: string, turn: Turn, since?: number) {
 }
 
 function send(turn: Turn, notification: SessionNotification) {
+  const { update } = notification
+  if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') turn.said.push(update.content.text)
   turn.sent = turn.sent.then(() => turn.client.notify('session/update', notification)).catch(() => {})
 }
 
@@ -139,6 +143,8 @@ function finish(thread: string, stopReason: StopReason, error?: string) {
   if (!turn) return
   turns.delete(thread)
   turn.reader?.close()
+  if (turn.said.length) hub.sent(thread, { content: turn.said.join('\n\n'), meta: { stop: stopReason, ...(error && { error }) } })
+  hub.turned(thread)
   if (turn.compaction) compaction(turn, thread, error ? 'failed' : stopReason === 'cancelled' ? 'cancelled' : 'completed', error)
   void turn.sent.then(() => (error ? turn.reject(RequestError.internalError(undefined, error)) : turn.resolve({ stopReason })))
 }
@@ -180,7 +186,7 @@ function prompt({ sessionId: thread, prompt: blocks, _meta }: PromptRequest, cli
   return new Promise((resolve, reject) => {
     const turn = track(thread, client, signal, resolve, reject, Date.now(), compact)
     if (session) turn.reader = reader(thread, session, turn)
-    if (!compact) return hub.deliver(thread, name, message(blocks, turn.since, _meta))
+    if (!compact) return hub.deliver(thread, name, message(thread, blocks, turn.since, _meta))
     compaction(turn, thread, 'in_progress')
     hub.command(thread, '/compact')
   })
@@ -192,7 +198,7 @@ function compacting(blocks: ContentBlock[]) {
 }
 
 function track(thread: string, client: AgentContext, signal: AbortSignal, resolve: Turn['resolve'], reject: Turn['reject'], since: number, compact = false) {
-  const turn: Turn = { client, sent: Promise.resolve(), done: false, since, resolve, reject, ...(compact && { compaction: randomUUID() }) }
+  const turn: Turn = { client, sent: Promise.resolve(), said: [], done: false, since, resolve, reject, ...(compact && { compaction: randomUUID() }) }
   turns.set(thread, turn)
   signal.addEventListener('abort', () => {
     if (turns.get(thread) !== turn) return
@@ -202,9 +208,11 @@ function track(thread: string, client: AgentContext, signal: AbortSignal, resolv
   return turn
 }
 
-// The key `hex acp` gives a prompt (acp.ts) keeps it one message in hex.db however often it's sent.
-function message(blocks: ContentBlock[], since: number, meta: PromptRequest['_meta']) {
-  return { content: render(blocks), meta: { ts: new Date(since).toISOString() }, key: meta?.['hex/key'] as string | undefined }
+// The key `hex acp` gives a prompt (acp.ts) keeps it one message in hex.db however often it's sent,
+// and T3's records say who wrote it.
+function message(thread: string, blocks: ContentBlock[], since: number, meta: PromptRequest['_meta']) {
+  const content = render(blocks)
+  return { content, meta: { ts: new Date(since).toISOString() }, key: meta?.['hex/key'] as string | undefined, author: promptedBy(thread, asked(blocks.flatMap(block => (block.type === 'text' ? [block.text] : [])).join('\n'))) }
 }
 
 // After a hub restart, `hex acp` asks again for the turn T3 was waiting on (acp.ts): it streams
@@ -224,7 +232,7 @@ async function rejoin({ sessionId: thread, prompt: blocks, since, _meta }: Rejoi
     const turn = track(thread, client, signal, resolve, reject, since)
     if (session) turn.reader = reader(thread, session, turn, since)
     const asked = !!turn.reader?.asked()
-    if (!compacting(blocks)) hub.deliver(thread, hub.name(thread)!, message(blocks, since, _meta))
+    if (!compacting(blocks)) hub.deliver(thread, hub.name(thread)!, message(thread, blocks, since, _meta))
     else if (!working && !asked) return finish(thread, 'end_turn')
     turn.done = asked && !working
     turn.reader?.settle()

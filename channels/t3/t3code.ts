@@ -101,6 +101,34 @@ export function steering(session: string) {
   }
 }
 
+// Who wrote the prompt T3 just sent this session, from T3's own records, read only: the owner, in
+// T3 Code's web or mobile app; T3 itself (a PR watch, a delegated task's result, a restart); or
+// another agent through T3's tools, which is hex. ACP's prompt says nothing of who wrote it, so as
+// with steering() only T3's records can tell. A prompt T3 hasn't recorded, or a read that fails, is
+// the owner's, as every T3 prompt was before hex kept authors.
+const AUTHORS: Record<string, string> = { 'user/web': 'owner', 'user/mobile': 'owner', 'agent/mcp': 'prompt', 'user/server': 'prompt', 'agent/server': 't3', 'agent/provider': 't3' }
+export function promptedBy(session: string, asked: string): string {
+  const file = join(USERDATA, 'statev2.sqlite')
+  if (!existsSync(file) || !asked) return 'owner'
+  let db: Database | undefined
+  try {
+    db = new Database(file, { readonly: true })
+    const recent = db
+      .query<{ by: string; text: string | null }, [string]>(`select json_extract(message.payload_json, '$.createdBy') || '/' || json_extract(message.payload_json, '$.creationSource') as by, json_extract(message.payload_json, '$.text') as text
+        from orchestration_v2_projection_messages message
+        join orchestration_v2_projection_provider_threads thread on thread.thread_id = message.thread_id
+        where json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ? and message.role = 'user' order by message.created_at desc limit 5`)
+      .all(session)
+    const by = recent.find(prompt => prompt.text?.trim() === asked.trim())?.by
+    return (by && AUTHORS[by]) ?? (by?.startsWith('system/') ? 't3' : 'owner')
+  } catch (error) {
+    process.stderr.write(`t3: can't read who wrote ${session}'s prompt, so it's the owner's: ${error}\n`)
+    return 'owner'
+  } finally {
+    db?.close()
+  }
+}
+
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
 export function linkTo(thread: string) {
   const environment = readFileSync(join(USERDATA, 'environment-id'), 'utf8').trim()
