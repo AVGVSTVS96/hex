@@ -98,7 +98,8 @@ test('a task has a clean title of its own, and its words still come from the mes
   expect(task).toMatchObject({ title: 'Sharpen the logo on retina', words: [{ text: ask.body }] })
   expect(() => store.createTask({ title: ' ', message: ask.key, owner: '-100:7' })).toThrow('needs a title')
   expect(store.editTask(task.id, { title: 'Make the logo crisp' }).title).toBe('Make the logo crisp')
-  expect(() => store.editTask(task.id, { title: '' })).toThrow("can't be empty")
+  expect(() => store.editTask(task.id, { title: ' \n' })).toThrow("can't be empty")
+  expect(store.editTask(task.id, { title: 'Make the logo\n  crisp ' }).title).toBe('Make the logo crisp')
   expect(store.editTask(task.id, { status: 'done', proof: 'abc123' }).title).toBe('Make the logo crisp')
 })
 
@@ -246,6 +247,9 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
   expect(() => store.editTask(duplicate.id, { status: 'open' })).toThrow()
   expect(() => store.mergeTasks(kept.id, duplicate.id)).toThrow('dropped')
   expect(() => store.mergeTasks(kept.id, kept.id)).toThrow('itself')
+  store.db.run('update tasks set title = null where n = 1')
+  const third = store.createTask({ title: 'Fix the login page', message: 'telegram:-100:61', owner: '-100:9' })
+  expect(store.mergeTasks(kept.id, third.id).title).toBe('Fix the login page')
 })
 
 test("a thread keeps its name after it leaves its app's threads.json, and takes a new one when renamed", () => {
@@ -282,6 +286,7 @@ test('hex task makes a task from a message by its key, and the owner is the thre
   expect((await hex('tasks')).out).toContain('t-1 (open, chat:3): Fix the login page\n')
   expect(await hex('task', 'edit', 't-1', '--title', 'Make sign-in work')).toMatchObject({ code: 0, out: expect.stringContaining(': Make sign-in work\n') })
   expect(await hex('task', 'done', 't-1')).toMatchObject({ code: 1, err: expect.stringContaining('--proof') })
+  expect(await hex('task', 'new', ask.key, '--title', 'Fix', 'the', 'login')).toMatchObject({ code: 1, err: expect.stringContaining('quote the title') })
   expect(await hex('task', 'new', ask.key, '--title', 'Fix login', '--quote', 'fix login')).toMatchObject({ code: 1, err: expect.stringContaining('as written') })
   expect((await hex('message', ask.key)).out).toBe(`${ask.body}\n`)
 })

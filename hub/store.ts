@@ -300,11 +300,12 @@ export class Store {
   // A task from the owner's message under key: all of it, or the part quote names, which has to be
   // in the message as written. A session points at what was said; it can't retype it.
   createTask({ title, message, quote, owner, status = 'open', project, doneWhen }: NewTask): Task {
-    if (!title?.trim()) throw new Error('a task needs a title: what the owner wants done, in a few plain words')
+    title = oneLine(title ?? '')
+    if (!title) throw new Error('a task needs a title: what the owner wants done, in a few plain words')
     return this.write(() => {
       const { lastInsertRowid } = this.db
         .query('insert into tasks (title, owner, status, project, done_when, at) values (?, ?, ?, ?, ?, ?)')
-        .run(title.trim(), owner, status, project ?? null, doneWhen ?? null, now())
+        .run(title, owner, status, project ?? null, doneWhen ?? null, now())
       const id = `t-${lastInsertRowid}`
       this.quote(id, message, quote)
       return this.task(id)!
@@ -347,15 +348,16 @@ export class Store {
   }
 
   editTask(id: string, change: TaskChange): Task {
-    if (change.title !== undefined && !change.title.trim()) throw new Error("a task's title can't be empty")
+    const title = change.title === undefined ? undefined : oneLine(change.title)
+    if (title === '') throw new Error("a task's title can't be empty")
     return this.write(() => {
       const task = this.task(id)
       if (!task) throw new Error(`no task ${id}`)
-      const next = { ...task, ...Object.fromEntries(Object.entries(change).filter(([, value]) => value !== undefined)) }
+      const next = { ...task, ...Object.fromEntries(Object.entries({ ...change, title }).filter(([, value]) => value !== undefined)) }
       const closed = next.status === 'done' || next.status === 'dropped' ? (next.status === task.status ? task.closed : now()) : undefined
       this.db
         .query('update tasks set title = ?, owner = ?, status = ?, project = ?, done_when = ?, proof = ?, closed = ? where n = ?')
-        .run(next.title?.trim() || null, next.owner, next.status, next.project ?? null, next.doneWhen ?? null, next.proof ?? null, closed ?? null, number(id))
+        .run(next.title ?? null, next.owner, next.status, next.project ?? null, next.doneWhen ?? null, next.proof ?? null, closed ?? null, number(id))
       return this.task(id)!
     })
   }
@@ -370,6 +372,7 @@ export class Store {
         if (status !== 'idea' && status !== 'open') throw new Error(`${id} is ${status}; only idea and open tasks merge`)
       }
       this.db.query('insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid').run(number(into), number(from))
+      this.db.query('update tasks set title = coalesce(title, (select title from tasks where n = ?)) where n = ?').run(number(from), number(into))
       this.db.query("update tasks set status = 'dropped', merged_into = ?, closed = ? where n = ?").run(number(into), now(), number(from))
       return this.task(into)!
     })
@@ -561,6 +564,8 @@ export function open(dir: string): Store {
   if (!store) stores.set(dir, (store = new Store(dir)))
   return store
 }
+
+const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
 
 function number(id: string): number {
   const n = Number(id.replace(/^t-/, ''))

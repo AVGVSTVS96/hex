@@ -6,13 +6,13 @@ import { open, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
   hex deliver <from>:<id> --to <thread> [--user <name>] <words…>
-  hex task new <message key> --title <what's wanted, in a few plain words> [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
+  hex task new <message key> --title "<what's wanted, in a few plain words>" [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
   hex task add <task> <message key> [--quote <part of it>]
   hex task quote <task> <message key> --quote <part of it>
   hex task done <task> --proof <link or fact>
   hex task drop <task> [--into <task it repeats>]
   hex task open <task>
-  hex task edit <task> [--title <title>] [--owner <thread>] [--project <name>] [--done-when <outcome>]
+  hex task edit <task> [--title "<title>"] [--owner <thread>] [--project <name>] [--done-when <outcome>]
   hex task <task> [--json]
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
   hex questions [--thread <thread> | --all] [--json]
@@ -78,6 +78,7 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
   const thread = process.env.HEX_THREAD
   switch (verb) {
     case 'new': {
+      if (key) throw new Error(`one message key, then flags: quote the title, as in --title "${key} …"`)
       const said = id && store.message(id)
       if (!said) throw new Error(id ? `no message ${id}` : 'name the message the task comes from by its key')
       return show([store.createTask({ title: flags.title!, message: id!, quote: flags.quote, owner: flags.owner ?? thread ?? said.to, project: flags.project, doneWhen: flags['done-when'], status: flags.idea ? 'idea' : 'open' })])
@@ -98,7 +99,7 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
       if (!id) usage()
       return show([store.editTask(id, { status: 'open' })])
     case 'edit':
-      if (!id) usage()
+      if (!id || key) usage()
       return show([store.editTask(id, { title: flags.title, owner: flags.owner, project: flags.project, doneWhen: flags['done-when'] })])
     default: {
       const found = verb && store.task(verb)

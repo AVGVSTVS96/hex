@@ -62,7 +62,7 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {
-      header: `${whose}'s open tasks, each with my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`,
+      header: `${whose}'s open tasks, each with its title and my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`,
       items: tasks.map(task => [render(task, named), brief(task, named)]),
       gap: '\n\n',
       rest: '`.hex/bin/hex tasks` lists them all',
