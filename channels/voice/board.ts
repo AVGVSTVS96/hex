@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
-import { homedir } from 'os'
 import { join } from 'path'
 import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
+import { busy, CLAUDE, running, serving, type Session } from '../../hub/running.ts'
 import { Changes } from './changes.ts'
 import { Links, type Delegation } from './links.ts'
 import { open } from '../../hub/store.ts'
@@ -48,7 +48,6 @@ export type Run = {
 }
 
 type Thread = { app: string; id: string; name: string; session?: string; cwd?: string }
-type Session = { id: string; pid: number; status: string; name?: string; cwd?: string; started: number; at: number; parent?: string; owner?: string }
 type Job = {
   state?: string
   detail?: string
@@ -63,7 +62,6 @@ type Told = { state: Agent['state']; result?: string }
 type Stretch = Pick<Run, 'steps' | 'plan' | 'agents'>
 type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string }
 
-const CLAUDE = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 const TAIL = 256 * 1024
 const LATELY = 5
 const STEPS = 24
@@ -82,7 +80,6 @@ const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord',
 const WORK = new Set(['agent', 'workflow'])
 const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped', rolled_back: 'stopped' }
 const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'failed' }
-const BUSY = new Set(['busy', 'shell'])
 
 // Every hex thread as a run, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
@@ -225,8 +222,9 @@ export class Board extends Changes {
       .map(({ app, thread, name, session, cwd }) => ({ app, id: thread, name, session, cwd }))
   }
 
+  // Each thread's session, as the <app>:<key> of the thread it serves.
   private held() {
-    return new Set(this.threads.map(thread => thread.session))
+    return new Map(this.threads.flatMap(thread => (thread.session ? [[thread.session, `${thread.app}:${thread.id}`] as [string, string]] : [])))
   }
 
   // Running sessions no thread holds, owns, or started, named as Claude Code named them.
@@ -243,11 +241,7 @@ export class Board extends Changes {
   private started(thread: Thread) {
     const held = this.held()
     const key = `${thread.app}:${thread.id}`
-    const root = (session: Session): Session => (session.parent && !held.has(session.id) ? root(this.sessions.get(session.parent)!) : session)
-    return [...this.sessions.values()].filter(session => {
-      const top = root(session)
-      return session.id !== thread.session && busy(session) && (top.id === thread.session || top.owner === key)
-    })
+    return [...this.sessions.values()].filter(session => session.id !== thread.session && busy(session) && serving(session, this.sessions, held) === key)
   }
 
   private wanted() {
@@ -273,26 +267,8 @@ export class Board extends Changes {
     this.watchers.delete(id)
   }
 
-  // Running sessions by id, with Claude Code's status; a file whose process is gone doesn't count.
-  // A session's owner is the thread its job started for, else its parent is the nearest session
-  // above it in the process tree.
   private readSessions() {
-    this.sessions.clear()
-    const dir = join(this.claude, 'sessions')
-    for (const name of list(dir)) {
-      if (!name.endsWith('.json')) continue
-      const record = readJson(join(dir, name))
-      if (!record?.sessionId || !alive(record.pid) || busy(this.sessions.get(record.sessionId))) continue
-      const { sessionId: id, pid, status = 'idle', name: title, cwd, startedAt = 0 } = record
-      this.sessions.set(id, { id, pid, status, name: title, cwd, started: startedAt, at: record.statusUpdatedAt ?? startedAt })
-    }
-    const byPid = new Map([...this.sessions.values()].map(session => [session.pid, session.id]))
-    const parents = processParents()
-    for (const session of this.sessions.values()) {
-      session.owner = ownerOf(session.pid)
-      if (session.owner) continue
-      for (let pid = parents.get(session.pid); pid && pid > 1 && !session.parent; pid = parents.get(pid)) session.parent = byPid.get(pid)
-    }
+    this.sessions = running(this.claude)
   }
 
   private job(session: string) {
@@ -591,26 +567,6 @@ function keyOf(thread: Thread) {
   return thread.session ?? `${thread.app}:${thread.id}`
 }
 
-function busy(session?: Session) {
-  return !!session && BUSY.has(session.status)
-}
-
-// The thread a job's session works for, which bin/job puts in its environment as <app>:<key>.
-function ownerOf(pid: number) {
-  try {
-    return readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').find(entry => entry.startsWith('HEX_OWNER='))?.slice('HEX_OWNER='.length) || undefined
-  } catch {}
-}
-
-function processParents() {
-  try {
-    const out = Bun.spawnSync(['ps', '-A', '-o', 'pid=,ppid=']).stdout.toString()
-    return new Map(out.trim().split('\n').map(line => line.trim().split(/\s+/).map(Number) as [number, number]))
-  } catch {
-    return new Map<number, number>()
-  }
-}
-
 // A model's name in words: claude-opus-5-5 is Opus 5.5, gpt-6.1-sol is Sol.
 function who(model?: string | null) {
   const id = (model ?? '').replace(/\[\w+\]$/, '').replace(/-\d{8}$/, '').replace(/^claude-/, '')
@@ -693,14 +649,6 @@ export function watchDir(dir: string, changed: (file: string | null) => void) {
     return () => watcher.close()
   } catch {
     return () => {}
-  }
-}
-
-function alive(pid: unknown) {
-  try {
-    return typeof pid === 'number' && process.kill(pid, 0)
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
   }
 }
 
