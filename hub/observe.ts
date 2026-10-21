@@ -102,7 +102,7 @@ export async function observe(state: string, session: string, reply: string, { a
 // naming the owner's message it quotes, or misquotes it.
 function misquoted(profile: string | null, store: Store): string[] {
   if (!profile?.trim()) return ['(empty)']
-  if (profile.length > PROFILE) return [`(${profile.length} characters: cut it to about 4,500 by merging lines, dropping what's done from Now, and what AGENTS.md already states)`]
+  if (profile.length > PROFILE) return [`(${profile.length} characters: cut it to about 4,500 by merging and tightening lines while keeping their facts, dropping what's done from Now, and what AGENTS.md already states)`]
   return profile.split('\n').flatMap(each => {
     if (!keysOf(each).length) return quotesOf(each).length ? [`${each}\n  names no message of the owner's for its quote`] : []
     const found = verdict(each, store)
