@@ -44,7 +44,7 @@ export function render(task: Task, named: Record<string, string> = {}): string {
 // A task as a session's prompt carries it: the clean entry, its title and what done looks like. The
 // owner's words stay in hex.db, for `hex task` to show in full.
 function entry(task: Task, named: Record<string, string>, done = true) {
-  const line = `${facts(task, named)}: ${titleOf(task, 150)}`
+  const line = `${facts(task, named)}: ${task.title ? clip(task.title, 150) : `(no title yet: \`.hex/bin/hex task ${task.id}\`)`}`
   return done && task.doneWhen ? `${line}\n  done when: ${clip(task.doneWhen, 200)}` : line
 }
 
@@ -77,7 +77,8 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
     },
   ]
   const text = fit(sections, room)
-  return { text, digest: text && Bun.hash(JSON.stringify(sections)).toString(36) }
+  const whole = tasks.map(task => [task.id, task.title, task.doneWhen])
+  return { text, digest: text && Bun.hash(JSON.stringify([sections, whole])).toString(36) }
 }
 
 // The UserPromptSubmit and SessionStart hook: a session gets the list whenever it changed since it
