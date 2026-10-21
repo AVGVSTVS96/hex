@@ -23,3 +23,13 @@ test("bin/quiet waits while a session hex started is busy, and not on other sess
   expect(await quiet.exited).toBe(0)
   expect(await new Response(quiet.stdout).text()).toBe('waiting on: ours\n')
 })
+
+test('bin/quiet leaves out the session that asked for the wait', async () => {
+  const status = (file: string, name: string) => writeFileSync(join(sessions, file), JSON.stringify({ pid: process.pid, sessionId: name, name, kind: 'bg', status: 'busy' }))
+  rmSync(sessions, { recursive: true, force: true })
+  mkdirSync(sessions, { recursive: true })
+  status('1.json', 'asker')
+  const quiet = Bun.spawn([join(home, '.hex/bin/quiet'), 'asker'], { env: { ...process.env, CLAUDE_CONFIG_DIR: join(home, 'config'), HEX_QUIET_MS: '100' }, stdout: 'pipe' })
+  expect(await quiet.exited).toBe(0)
+  expect(await new Response(quiet.stdout).text()).toBe('')
+})
