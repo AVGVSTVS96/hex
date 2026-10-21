@@ -41,6 +41,8 @@ function hook(chunk: number, source = 'startup') {
 }
 
 const body = (out: string) => out.split('\n\n').slice(1).join('\n\n')
+const LABEL = 'Your memory, oldest first:\n\n'
+const header = (part: number) => `Your memory, part ${part} of 2, oldest first (120 memories).\n`
 const notes = (from: number, count: number) =>
   Array.from({ length: count }, (_, i) => `#${from + i} 2026-10-06 ${'x'.repeat(180)}`).join('\n') + '\n'
 
@@ -48,20 +50,20 @@ test('a short wake arrives whole in the first part, and the other slots say noth
   const wake = '#0 2026-10-06 First note.\nYou are awake.\n'
   memo([wake])
   expect(hook(1)).not.toContain('part 1')
-  expect(body(hook(1))).toBe(wake)
+  expect(body(hook(1))).toBe(LABEL + wake)
   for (let n = 2; n <= SLOTS; n++) expect(hook(n)).toBe('')
 })
 
 test("follows memo's parts to the end and splits them into chunks that each fit a hook, losing no line", () => {
   const wake = [
-    notes(0, 60) + 'Not awake yet. Run: /x/memo wake 2 150\n',
-    'Your memory, part 2 of 2\n' + notes(60, 60) + 'You are awake.\n',
+    header(1) + notes(0, 60) + 'Not awake yet. Run: /x/memo wake 2 150\n',
+    header(2) + notes(60, 60) + 'You are awake.\n',
   ]
   memo(wake)
   const chunks = Array.from({ length: SLOTS }, (_, i) => hook(i + 1)).filter(Boolean)
   expect(chunks.length).toBeGreaterThan(1)
   const joined = chunks.map(body).join('')
-  expect(joined).toBe(wake.join('').replace('Not awake yet. Run: /x/memo wake 2 150\n', ''))
+  expect(joined).toBe(LABEL + notes(0, 60) + notes(60, 60) + 'You are awake.\n')
   expect(joined.endsWith('You are awake.\n')).toBe(true)
 })
 
@@ -87,15 +89,28 @@ test('says nothing when OptMem is not installed', () => {
 
 test('`wake all` prints every part in order, as long as it runs, for the launcher to hand over as a file', () => {
   const wake = [
-    notes(0, 200) + 'Not awake yet. Run: /x/memo wake 2 400\n',
-    'Your memory, part 2 of 2\n' + notes(200, 200) + 'You are awake.\n',
+    header(1) + notes(0, 200) + 'Not awake yet. Run: /x/memo wake 2 400\n',
+    header(2) + notes(200, 200) + 'You are awake.\n',
   ]
   memo(wake)
   const run = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } })
   const out = run.stdout.toString()
   expect(out.length).toBeGreaterThan(LIMIT * 6)
-  expect(out).toStartWith('This is your memory: `.hex/vendor/memo wake`, run in full for you')
-  expect(body(out)).toBe(wake.join('').replace('Not awake yet. Run: /x/memo wake 2 400\n', ''))
+  expect(out).toStartWith('This is what you know as this session starts and after each compaction: my profile, then your memory')
+  expect(body(out)).toBe(LABEL + notes(0, 200) + notes(200, 200) + 'You are awake.\n')
+})
+
+test('a compression memo asks for after waking is left to the memory agent, and one it needs before waking reaches the session', () => {
+  memo(['#0 2026-10-06 First note.\nYou are awake.\n\nCompress memories #0-1 into one line of at most 280 bytes.\nRun: memo nap 0-1 "<your line>"\n'])
+  const all = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } }).stdout.toString()
+  expect(body(all)).toBe(LABEL + '#0 2026-10-06 First note.\nYou are awake.\n')
+  expect(body(hook(1))).toBe(LABEL + '#0 2026-10-06 First note.\nYou are awake.\n')
+  const cannot = 'Cannot wake: the memory context needs #0-1, which is not compressed yet.\nDo the compression below, then run memo wake again.\n\nCompress memories #0-1 into one line.\n'
+  memo([cannot])
+  expect(hook(1)).toStartWith('hex ran `.hex/vendor/memo wake` for you, and it stopped before waking.')
+  expect(body(hook(1))).toBe(cannot)
+  const failed = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } })
+  expect([failed.exitCode, failed.stdout.toString(), failed.stderr.toString()]).toEqual([1, '', cannot.split('\n')[0] + '\n'])
 })
 
 test('the profile comes first, ahead of memory, in the launcher\'s file and in the hooks', () => {
@@ -103,7 +118,7 @@ test('the profile comes first, ahead of memory, in the launcher\'s file and in t
   mkdirSync(join(home, 'state'))
   writeFileSync(join(home, 'state/profile.md'), '# Always\n- Ships on fridays\n')
   const all = Bun.spawnSync([join(home, '.hex/bin/wake'), 'all'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } }).stdout.toString()
-  const both = "My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n# Always\n- Ships on fridays\n\nYour memory:\n\n#0 2026-10-06 First note.\nYou are awake.\n"
+  const both = "My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n# Always\n- Ships on fridays\n\nYour memory, oldest first:\n\n#0 2026-10-06 First note.\nYou are awake.\n"
   expect(body(all)).toBe(both)
   expect(body(hook(1)) + '\n' + body(hook(2))).toBe(both)
 })
@@ -138,14 +153,14 @@ test('the launcher writes the whole wake where Claude Code loads it at startup, 
   const { args, env } = launch()
   const dir = args[args.indexOf('--add-dir') + 1]!
   expect(dir).toBe(join(home, 'state/wake'))
-  expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
+  expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(LABEL + wake)
   expect(settings(args).env).toEqual({ HEX_THREAD: '-100:5', HEX_WAKE: join(dir, 'CLAUDE.md') })
   expect(env).toContain('CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1')
   expect(env).toContain('HEX_WAKE=stale')
   expect(launch('-p', 'go').env).toContain(`HEX_WAKE=${join(dir, 'CLAUDE.md')}\n`)
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "Cannot wake: the memory context needs #0-1."\necho "Compress memories #0-1 into one line."\nexit 1\n')
   expect(launch().args).toContain(dir)
-  expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(wake)
+  expect(body(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'))).toBe(LABEL + wake)
   renameSync(join(home, '.hex/hub'), join(home, '.hex/hub.away'))
   expect(launch().args).toContain(dir)
   renameSync(join(home, '.hex/hub.away'), join(home, '.hex/hub'))
