@@ -309,7 +309,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   ledger([asked(1, 'Ship it?', ['Yes', 'No'])], { [DESK]: pin, [GROUP]: byHand })
   const store = open(state)
   store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', meta: { user: 'owner' } })
-  const task = store.createTask({ message: 'telegram:-1001234:40', owner: DESK })
+  const task = store.createTask({ title: 'Fix the login page', message: 'telegram:-1001234:40', owner: DESK })
   asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
   expect(asks.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)
   expect(asks.of(`telegram:${GROUP}`).pin).toBe('Status: by hand')

@@ -20,15 +20,18 @@ const ROOM = 9_000
 // The profile takes most of that room, leaving the rest for tasks and questions.
 export const PROFILE = 6_500
 
+// A task's title, or its first words when it has none.
+export const titleOf = (task: Task, room: number) => clip(task.title ?? task.words[0]?.text ?? '', room)
+
 function facts(task: Task, named: Record<string, string>) {
   const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
   return `${task.id} (${facts.filter(Boolean).join(', ')})`
 }
 
-// A task as a session reads it: the facts on one line, then each of the owner's words in full,
-// under the key of the message they came from.
+// A task as a session reads it: its title and facts on one line, then each of the owner's words in
+// full, under the key of the message they came from.
 export function render(task: Task, named: Record<string, string> = {}): string {
-  const lines = [facts(task, named)]
+  const lines = [task.title ? `${facts(task, named)}: ${task.title}` : facts(task, named)]
   if (task.doneWhen) lines.push(`  done when: ${task.doneWhen}`)
   if (task.proof) lines.push(`  proof: ${task.proof}`)
   for (const words of task.words) {
@@ -40,7 +43,7 @@ export function render(task: Task, named: Record<string, string> = {}): string {
 
 // A task in one line, for when its words don't fit, and where to read them.
 function brief(task: Task, named: Record<string, string>) {
-  return `${facts(task, named)}: ${clip(task.words[0]?.text ?? '', 150)} (\`.hex/bin/hex task ${task.id}\` has my words in full)`
+  return `${facts(task, named)}: ${titleOf(task, 150)} (\`.hex/bin/hex task ${task.id}\` has my words in full)`
 }
 
 // A question as a session reads it: where it was asked, its first line, and its buttons.
@@ -48,8 +51,8 @@ export function waiting(question: Question, named: Record<string, string> = {}):
   return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
 }
 
-// What a session should have before it acts: the open tasks it serves, each in the owner's own
-// words, the questions still waiting on the owner, and a digest of all of it, so a change to words that didn't fit still counts. Main sees
+// What a session should have before it acts: the open tasks it serves, each with its title and the
+// owner's own words, the questions still waiting on the owner, and a digest of all of it, so a change to words that didn't fit still counts. Main sees
 // every thread's; a thread sees its own.
 export function profile(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
   const store = open(state)
@@ -59,7 +62,7 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {
-      header: `${whose}'s open tasks, each with my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`,
+      header: `${whose}'s open tasks, each with its title, then my words as I said them (\`.hex/bin/hex task\` adds to them and closes them):`,
       items: tasks.map(task => [render(task, named), brief(task, named)]),
       gap: '\n\n',
       rest: '`.hex/bin/hex tasks` lists them all',
