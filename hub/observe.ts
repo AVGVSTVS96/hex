@@ -15,8 +15,8 @@ export const PROFILE = 6_500
 // after a session's turn, a model reads the messages it took, with the reply they got, the newest
 // notes and the owner's profile. It writes every note memory gets, the owner's words in their own
 // words and what happened in plain ones, and keeps the profile (state/profile.md) one consolidated,
-// current account of them: what's always true, what's going on now, a changed fact replaced rather
-// than stacked. Every note and profile line that names a message is checked against the words it quotes.
+// current account of who they are, a changed fact replaced rather than stacked; their rules,
+// wants and history live in AGENTS.md, tasks and memory. Every note and profile line that names a message is checked against the words it quotes.
 
 const MODEL = 'sonnet'
 const BYTES = 280
@@ -29,7 +29,7 @@ const SYSTEM = `You are the memory agent of hex, the owner's personal assistant.
 
 Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages, and name anything else in plain words, without double quotes. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
-The profile: a small markdown file every session reads, who the owner is: their life, health, home, people, work, and plans that hold for a while, like a trip. Each fact has one home, and the others are elsewhere: how they want things done is in their AGENTS.md, what they want done is in tasks, and what happened is in memories. When a message changes a fact, rewrite its line so only the current truth stays; a line stays until a message says it's no longer true. Keep it short, never over ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when nothing in it needs to change.
+The profile: a small markdown file every session reads, who the owner is: their life, health, home, people, work, and plans that hold for a while, like a trip. Each fact has one home, and the others are elsewhere: how they want things done is in their AGENTS.md, what they want done is in tasks, and what happened is in memories. When a message changes a fact, rewrite its line so only the current truth stays; a line stays until a message says it's no longer true. A line that's none of these, like a "# Now" section or a rule from an older profile, comes out. Keep it short, never over ${PROFILE} characters. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when nothing in it needs to change.
 
 In both, quote the words that carry what the owner meant; anger and curses stay in the log. If you need what a message answers, the whole conversation is in the log file named with the turn.`
 
@@ -107,7 +107,7 @@ export async function observe(state: string, session: string, reply: string, { a
 // naming the owner's message it quotes, or misquotes it.
 function misquoted(profile: string | null, store: Store): string[] {
   if (!profile?.trim()) return ['(empty)']
-  if (profile.length > PROFILE) return [`(${profile.length} characters: cut it by merging and tightening lines while keeping their facts)`]
+  if (profile.length > PROFILE) return [`(${profile.length} characters: cut it by merging and tightening lines, then dropping the facts that matter least; the replaced profile stays in its history)`]
   return profile.split('\n').flatMap(each => {
     if (!keysOf(each).length) return quotesOf(each).length ? [`${each}\n  names no message of the owner's for its quote`] : []
     const found = verdict(each, store)
