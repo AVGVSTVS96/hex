@@ -64,12 +64,12 @@ test("a list too long for one hook's output gives each entry with its done-when 
   }
   const shown = await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })
   expect(shown.length).toBeLessThan(10_000)
-  expect(shown).toContain('t-1 (open, Website): Fix the login page\n  done when: it signs in')
+  expect(shown).toContain("This thread's open tasks (`.hex/bin/hex task <id>` has my words in full, adds to them and closes them):\nt-")
   expect(shown).toMatch(/\n  done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/)
   expect(shown).not.toContain('damn it')
   store.deliver({ key: 'telegram:-100:300', to: '-100:7', from: 'telegram', body: 'and the API reference', meta: { user: 'bassim' } })
   store.addWords('t-3', 'telegram:-100:300')
-  expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe(shown)
+  expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toBe('')
 })
 
 test('the questions still waiting on the owner come with the tasks, and leave once answered', async () => {

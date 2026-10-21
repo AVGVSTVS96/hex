@@ -43,7 +43,7 @@ export function render(task: Task, named: Record<string, string> = {}): string {
 
 // A task as a session's prompt carries it: the clean entry, its title and what done looks like. The
 // owner's words stay in hex.db, for `hex task` to show in full.
-function entry(task: Task, named: Record<string, string>, done = true) {
+export function entry(task: Task, named: Record<string, string>, done = true) {
   const line = `${facts(task, named)}: ${task.title ? clip(task.title, 150) : `(no title yet: \`.hex/bin/hex task ${task.id}\`)`}`
   return done && task.doneWhen ? `${line}\n  done when: ${clip(task.doneWhen, 200)}` : line
 }
@@ -54,11 +54,11 @@ export function waiting(question: Question, named: Record<string, string> = {}):
 }
 
 // What a session should have before it acts: the questions still waiting on the owner, then the open
-// tasks it serves, each as its clean entry, and a digest of all of it, so a change to an entry that didn't
+// tasks it serves, newest first, each as its clean entry, and a digest of all of it, so a change to an entry that didn't
 // fit still counts. Main sees every thread's; a thread sees its own.
 export function profile(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
   const store = open(state)
-  const tasks = store.tasks({ owner: thread, status: ['open'] })
+  const tasks = store.tasks({ owner: thread, status: ['open'] }).sort((a, b) => b.at.localeCompare(a.at))
   const questions = store.questions({ thread, waiting: true })
   const named = names(state)
   const whose = thread ? 'This thread' : 'Every thread'
@@ -77,7 +77,7 @@ export function profile(state: string, thread?: string, room = ROOM): { text: st
     },
   ]
   const text = fit(sections, room)
-  const whole = tasks.map(task => [task.id, task.title, task.doneWhen, task.words.map(words => [words.message, words.text])])
+  const whole = tasks.map(task => [task.id, task.title, task.doneWhen])
   return { text, digest: text && Bun.hash(JSON.stringify([sections, whole])).toString(36) }
 }
 
