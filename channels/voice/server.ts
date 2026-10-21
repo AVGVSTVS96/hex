@@ -42,25 +42,7 @@ const IDENTITY = (() => {
 
 const VOICE_PROMPT = `${IDENTITY}
 
-Backchannel policy: Use light backchannels. Acknowledge naturally without competing with the main response.
-
-Interruption policy: Stop speaking when the caller interrupts. Listen to what they say.
-
-Delegation policy:
-Backend tools:
-- Assistant: the agent behind your voice, with the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions and runs long tasks in the background.
-
-Delegate to the backend when:
-- The caller asks something or wants something done, including questions about you, about them, and how a task is going.
-- A correction or addition changes work already requested.
-
-Do not delegate to the backend when:
-- You can answer from the conversation or a still-current result, like repeating what the backend just said.
-- The caller only greets or thanks you.
-- You need a brief clarification to understand the request.
-
-Delegate before you answer anything that depends on backend work. While it works, tell the caller in a few words of your own that you're on it, then wait for its result without guessing it, and say what it gave you. Facts you give come from the backend or the conversation, never from your own knowledge.
-Backend work keeps running while you talk, and several tasks can run at once. Each time a task starts or finishes, its new state arrives as quiet context.`
+Your backend is the agent behind your voice, with the caller's files, machines, memory, messages, email and the web. Hand it every question and request, corrections and hanging up included, and say in a few words that you're on it. Then say what it gives you, every fact and caveat, and nothing it didn't: only the backend acts. Its task updates arrive as quiet context.`
 
 type Pending = { resolve: () => void; reject: (error: Error) => void }
 type Ring = { delegation: string; offset: number }
