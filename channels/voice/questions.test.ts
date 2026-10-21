@@ -4,36 +4,36 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { createServer, type Server } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { Asks, fromLedger } from './asks.ts'
+import { Questions, fromLedger } from './questions.ts'
 import { vet } from './check.ts'
 import { T3 } from './t3.ts'
 import { until } from '../../hub/until.ts'
-import type { Ask } from '../../hub/ledger.ts'
+import type { Question } from '../../hub/ledger.ts'
 import { open } from '../../hub/store.ts'
 
 const GROUP = '-1001234'
 const DESK = `${GROUP}:5`
 let state: string
-let asks: Asks
+let questions: Questions
 let hub: Server
 let lines: any[]
 let checks: string[]
 
-function ledger(asks: Omit<Ask, 'app'>[], pins = {}) {
+function ledger(kept: Omit<Question, 'app'>[], pins = {}) {
   const store = open(state)
   store.write(() => {
     store.db.run('delete from questions')
-    for (const ask of asks) store.ask({ app: 'telegram', ...ask })
+    for (const question of kept) store.ask({ app: 'telegram', ...question })
   })
   writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins }))
 }
 
-function asked(message: number, text: string, options: string[], fields: Partial<Ask> = {}) {
+function asked(message: number, text: string, options: string[], fields: Partial<Question> = {}) {
   return { thread: DESK, message, text, options, at: `2026-10-13T1${message % 10}:00:00.000Z`, ...fields }
 }
 
 beforeEach(async () => {
-  state = mkdtempSync(join(tmpdir(), 'asks-'))
+  state = mkdtempSync(join(tmpdir(), 'questions-'))
   mkdirSync(join(state, 'telegram'))
   mkdirSync(join(state, 'voice'))
   open(state).named('telegram', { [GROUP]: 'hex', [DESK]: 'desk' })
@@ -47,14 +47,14 @@ beforeEach(async () => {
 })
 
 afterEach(() => {
-  asks?.close()
+  questions?.close()
   hub.close()
   rmSync(state, { recursive: true, force: true })
 })
 
 test('a question asked with buttons reads as its first line, its context and the pick its thread marked', () => {
-  const ask = fromLedger('telegram', asked(1, '**Music for the Saves video?**\n\nThree new takes, no cost.\n```\nA  Deep\n```', ['Deep (my pick)', 'French touch', 'Minimal']))
-  expect(ask).toMatchObject({
+  const question = fromLedger('telegram', asked(1, '**Music for the Saves video?**\n\nThree new takes, no cost.\n```\nA  Deep\n```', ['Deep (my pick)', 'French touch', 'Minimal']))
+  expect(question).toMatchObject({
     id: `telegram:${DESK}:1`,
     kind: 'pick',
     task: `telegram:${DESK}`,
@@ -66,8 +66,8 @@ test('a question asked with buttons reads as its first line, its context and the
 
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {
   ledger([asked(1, 'Ship it?', ['Yes', 'No']), asked(2, 'Rename it?', ['Yes', 'No'], { answer: { label: 'No', at: '', via: 'telegram' } }), asked(3, 'Which color?', ['Mint', 'Coral'])])
-  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  expect(asks.view.asks.map(ask => [ask.question, ask.app, ask.topic, ask.places])).toEqual([
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.view.asks.map(question => [question.question, question.app, question.topic, question.places])).toEqual([
     ['Which color?', 'telegram', 'desk', [{ app: 'telegram', place: 'desk', task: `telegram:${DESK}`, link: 'https://t.me/c/1234/5/3' }]],
     ['Ship it?', 'telegram', 'desk', [{ app: 'telegram', place: 'desk', task: `telegram:${DESK}`, link: 'https://t.me/c/1234/5/1' }]],
   ])
@@ -99,35 +99,35 @@ test('the check’s version of a question stands in for every place that asked i
       ],
     }),
   )
-  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  expect(asks.view.asks.map(ask => ask.id)).toEqual([`telegram:${DESK}:9`, 'check:twilio', 'check:read'])
-  expect(asks.view.asks.map(ask => ask.app)).toEqual(['telegram', 'telegram', 'telegram'])
-  expect(asks.view.check).toEqual({ at: '2026-10-13T15:00:00.000Z', why: 'a pinned post changed', fixed: 0, flagged: 0 })
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.view.asks.map(question => question.id)).toEqual([`telegram:${DESK}:9`, 'check:twilio', 'check:read'])
+  expect(questions.view.asks.map(question => question.app)).toEqual(['telegram', 'telegram', 'telegram'])
+  expect(questions.view.check).toEqual({ at: '2026-10-13T15:00:00.000Z', why: 'a pinned post changed', fixed: 0, flagged: 0 })
 
-  await asks.answer('check:twilio', 'Use the app', 'app')
+  await questions.answer('check:twilio', 'Use the app', 'app')
   await until(() => lines.length === 2)
   expect(lines).toEqual([
     { type: 'answer', thread: DESK, message: 1, label: 'Not yet', via: 'app' },
     { type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: Use the app' },
   ])
 
-  await asks.answer('check:read', 'Open', 'app')
+  await questions.answer('check:read', 'Open', 'app')
   expect(await until(() => lines.find(line => line.type === 'inbound'))).toEqual({ type: 'inbound', thread: DESK, content: '(answered in the app) Read the launch review: Open', meta: { user: 'hex app' } })
-  await until(() => !asks.find('check:read'))
-  await asks.undo('check:read', 'app')
-  await until(() => asks.find('check:read'))
+  await until(() => !questions.find('check:read'))
+  await questions.undo('check:read', 'app')
+  await until(() => questions.find('check:read'))
 })
 
 test('an answer that lands in the ledger takes the question off the list, and undo asks for its buttons back', async () => {
   ledger([asked(1, 'Ship it?', ['Yes', 'No'])])
-  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  const version = asks.version
-  await asks.answer(`telegram:${DESK}:1`, 'Yes', 'app')
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  const version = questions.version
+  await questions.answer(`telegram:${DESK}:1`, 'Yes', 'app')
   expect(await until(() => lines[0])).toEqual({ type: 'answer', thread: DESK, message: 1, label: 'Yes', via: 'app' })
   ledger([asked(1, 'Ship it?', ['Yes', 'No'], { answer: { label: 'Yes', at: '', via: 'app' } })])
-  await asks.changes(version, 2000)
-  expect(asks.view.asks).toEqual([])
-  await asks.undo(`telegram:${DESK}:1`, 'app')
+  await questions.changes(version, 2000)
+  expect(questions.view.asks).toEqual([])
+  await questions.undo(`telegram:${DESK}:1`, 'app')
   expect(await until(() => lines[1])).toEqual({ type: 'reopen', thread: DESK, message: 1, via: 'app' })
 })
 
@@ -142,12 +142,12 @@ test('a stuck item with a request goes to General, one without is put away', asy
       ],
     }),
   )
-  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  await asks.act('disk')
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await questions.act('disk')
   expect(await until(() => lines[0])).toEqual({ type: 'inbound', thread: GROUP, content: 'Restore cloud from checkpoint v7.', meta: { user: 'hex app' } })
-  await asks.act('runs')
-  await until(() => asks.view.stuck.length === 1)
-  expect(asks.view.stuck[0]).toMatchObject({ id: 'disk', app: 'hex', sent: expect.any(String) })
+  await questions.act('runs')
+  await until(() => questions.view.stuck.length === 1)
+  expect(questions.view.stuck[0]).toMatchObject({ id: 'disk', app: 'hex', sent: expect.any(String) })
   expect(JSON.parse(readFileSync(join(state, 'voice', 'marks.json'), 'utf8')).dismissed.runs).toBeString()
 })
 
@@ -188,7 +188,7 @@ test('T3 Code’s records give what waits on a limit, what never started, what f
 })
 
 test('a check’s verdict is held to the ledger: real open refs and buttons only, and nothing both settled and listed', () => {
-  const asks = { telegram: [asked(1, 'Twilio?', ['Upgrade', 'Not yet']), asked(2, 'Old?', ['Yes', 'No'], { settled: { note: 'x', at: '' } }), asked(3, 'Music?', ['A', 'B'])] }
+  const ledgers = { telegram: [asked(1, 'Twilio?', ['Upgrade', 'Not yet']), asked(2, 'Old?', ['Yes', 'No'], { settled: { note: 'x', at: '' } }), asked(3, 'Music?', ['A', 'B'])] }
   const ref = (message: number) => ({ app: 'telegram', thread: DESK, message })
   const verdict = vet(
     {
@@ -208,7 +208,7 @@ test('a check’s verdict is held to the ledger: real open refs and buttons only
       flagged: [],
       stuck: [{ id: 'disk', title: 'disk', why: '', action: 'Look', mark: 'failed', at: '' }],
     },
-    asks,
+    ledgers,
     { threads: { [`telegram:${GROUP}`]: 'hex', [`telegram:${DESK}`]: 'desk' }, calls: [{ id: 'live_1' }] },
   )
   expect(verdict.asks[0]).toMatchObject({
@@ -221,7 +221,7 @@ test('a check’s verdict is held to the ledger: real open refs and buttons only
   expect(verdict.stuck[0]!.id).toBe('check-disk')
 })
 
-test("a closed thread's open question stays a check's ref, so answering the ask settles it", () => {
+test("a closed thread's open question stays a check's ref, so answering the question settles it", () => {
   const closed = { app: 'telegram', thread: `${GROUP}:7`, message: 4 }
   const verdict = vet(
     { asks: [{ id: 'music', kind: 'pick', task: `telegram:${GROUP}:7`, at: '', question: 'Music?', options: [{ label: 'A', value: 'A' }], from: [closed] }], settle: [], fixed: [], flagged: [], stuck: [] },
@@ -231,7 +231,7 @@ test("a closed thread's open question stays a check's ref, so answering the ask 
   expect(verdict.asks[0]).toMatchObject({ refs: [closed], from: [closed], options: [{ label: 'A', value: 'A' }] })
 })
 
-test('an ask names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers', () => {
+test('a question names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers', () => {
   const DM = '777'
   const THREAD = '1560277464146644992'
   open(state).named('telegram', { [DM]: 'DM' })
@@ -272,8 +272,8 @@ test('an ask names every place it was asked, each thread once at its open questi
       ],
     }),
   )
-  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', calls, check: why => checks.push(why) })
-  const [duo] = asks.view.asks
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', calls, check: why => checks.push(why) })
+  const [duo] = questions.view.asks
   expect(duo).toMatchObject({ options: [{ label: 'Ordered', value: 'Ordered' }, { label: 'Not yet', value: 'Not yet' }], links: [{ label: 'Apple Store', url: 'https://apple.com/store' }] })
   expect(duo!.places).toEqual([
     { app: 'telegram', place: 'General', task: `telegram:${GROUP}`, link: 'https://t.me/c/1234/2693' },
@@ -284,7 +284,7 @@ test('an ask names every place it was asked, each thread once at its open questi
   ])
 })
 
-test('a check written before places and links were typed still gives each ask its places, and its url options as links', () => {
+test('a check written before places and links were typed still gives each question its places, and its url options as links', () => {
   ledger([asked(1, 'Read the review?', ['Done', 'Later'])])
   writeFileSync(
     join(state, 'voice', 'check.json'),
@@ -296,8 +296,8 @@ test('a check written before places and links were typed still gives each ask it
       ],
     }),
   )
-  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  expect(asks.view.asks.map(ask => [ask.id, ask.options, ask.links, ask.places])).toEqual([
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.view.asks.map(question => [question.id, question.options, question.links, question.places])).toEqual([
     ['check:review', [{ label: 'Done', value: 'Done' }], [{ label: 'Open PR #2', url: 'https://github.com/x/pull/2' }], [{ app: 'telegram', place: 'desk', task: `telegram:${DESK}`, link: 'https://t.me/c/1234/5/1' }]],
     ['check:pin', [{ label: 'Done' }], undefined, [{ app: 'telegram', place: 'General', task: `telegram:${GROUP}`, link: 'https://t.me/c/1234/1' }]],
   ])
@@ -310,11 +310,11 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   const store = open(state)
   store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', meta: { user: 'owner' } })
   const task = store.createTask({ title: 'Fix the login page', message: 'telegram:-1001234:40', owner: DESK })
-  asks = new Asks(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  expect(asks.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)
-  expect(asks.of(`telegram:${GROUP}`).pin).toBe('Status: by hand')
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)
+  expect(questions.of(`telegram:${GROUP}`).pin).toBe('Status: by hand')
 
-  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, text: asks.of(`telegram:${DESK}`).pin }, [GROUP]: byHand } }))
+  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, text: questions.of(`telegram:${DESK}`).pin }, [GROUP]: byHand } }))
   await Bun.sleep(150)
   expect(checks).toEqual([])
   writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, note: 'Site: example.org' }, [GROUP]: byHand } }))

@@ -38,7 +38,7 @@ test("an older hex's questions move from ledger.json into hex.db once, answers a
   expect(ledger.find('-100:7', 43)).toBeUndefined()
   expect(ledger.find('-100:7', 44)).toBeUndefined()
   expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ pins: { '-100:7': pin } })
-  expect(new Ledger(file, 'telegram').asks).toHaveLength(2)
+  expect(new Ledger(file, 'telegram').questions).toHaveLength(2)
 })
 
 test('a question stays open through an edit and leaves the waiting list only when answered or settled, and a pin keeps its latest text', () => {
@@ -57,7 +57,7 @@ test('a question stays open through an edit and leaves the waiting list only whe
   ledger.edited('-100:7', 9, 'Status: shipped')
   expect(ledger.pin('-100:7')).toMatchObject({ message: 9, text: 'Status: shipped' })
   ledger.forget('-100:7')
-  expect(ledger.asks).toEqual([])
+  expect(ledger.questions).toEqual([])
   expect(ledger.pin('-100:7')).toBeUndefined()
 })
 

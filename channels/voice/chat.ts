@@ -4,7 +4,7 @@ import { clients, logged, type Turn } from '../../hub/hub.ts'
 import { owners } from '../../hub/notes.ts'
 import { open as store } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
-import { watchDir } from './tasks.ts'
+import { watchDir } from './board.ts'
 
 export type Sent = { key: string; text: string; at: string }
 // turns: the chat's latest turns, out of all it has (total). sends: whether words typed in the app

@@ -3,9 +3,9 @@ import { createHash } from 'crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
-import { noteOf, type Ask as Asked, type Pin } from '../../hub/ledger.ts'
+import { noteOf, type Question as Asked, type Pin } from '../../hub/ledger.ts'
 import { open as store } from '../../hub/store.ts'
-import type { CheckResult, Curated, Ref, Source } from './asks.ts'
+import type { CheckResult, Curated, Ref, Source } from './questions.ts'
 import { relay } from './relay.ts'
 import { T3, type Stuck } from './t3.ts'
 
@@ -116,18 +116,18 @@ function gather(state: string) {
       if (text) pins.push({ pin: { app, thread, message: pin.message }, topic: names[`${app}:${thread}`] ?? thread, text: clip(text, LONG) })
     }
   }
-  const shown = (app: string, ask: Asked) => ({
-    ref: { app, thread: ask.thread, message: ask.message },
-    topic: names[`${app}:${ask.thread}`] ?? ask.thread,
-    at: ask.at,
-    text: clip(ask.text, 700),
-    options: ask.options,
-    ...(ask.poll && { poll: true }),
-    ...(ask.answer && { answer: ask.answer }),
-    ...(ask.settled && { settled: ask.settled }),
+  const shown = (app: string, question: Asked) => ({
+    ref: { app, thread: question.thread, message: question.message },
+    topic: names[`${app}:${question.thread}`] ?? question.thread,
+    at: question.at,
+    text: clip(question.text, 700),
+    options: question.options,
+    ...(question.poll && { poll: true }),
+    ...(question.answer && { answer: question.answer }),
+    ...(question.settled && { settled: question.settled }),
   })
-  const open = Object.entries(ledgers).flatMap(([app, asks]) => asks.filter(ask => !ask.answer && !ask.settled).map(ask => shown(app, ask)))
-  const closed = Object.entries(ledgers).flatMap(([app, asks]) => asks.filter(ask => (ask.answer || ask.settled) && ask.at > recent).map(ask => shown(app, ask)))
+  const open = Object.entries(ledgers).flatMap(([app, questions]) => questions.filter(question => !question.answer && !question.settled).map(question => shown(app, question)))
+  const closed = Object.entries(ledgers).flatMap(([app, questions]) => questions.filter(question => (question.answer || question.settled) && question.at > recent).map(question => shown(app, question)))
   const t3 = new T3(() => {})
   const t3Now = t3.query(now)
   t3.close()
@@ -232,31 +232,31 @@ function claude(input: string, hexDir: string) {
 }
 
 // What the pass returned, held to the records: its places are real threads, questions and calls (a
-// closed thread's question still is), the open questions among them are the ask's refs, a value is a
+// closed thread's question still is), the open questions among them are its refs, a value is a
 // real button, and a question it settles isn't also one it lists.
 export function vet(verdict: Verdict, ledgers: Record<string, Asked[]>, { threads, calls }: Known): Verdict {
-  const find = (ref: Ref) => ledgers[ref.app]?.find(ask => ask.thread === ref.thread && String(ask.message) === String(ref.message))
+  const find = (ref: Ref) => ledgers[ref.app]?.find(question => question.thread === ref.thread && String(question.message) === String(ref.message))
   const open = (ref: Ref) => {
-    const ask = find(ref)
-    return !!ask && !ask.answer && !ask.settled
+    const question = find(ref)
+    return !!question && !question.answer && !question.settled
   }
   const real = (source: Source) =>
     source.call ? calls.some(call => call.id === source.call) : !!source.thread && (`${source.app}:${source.thread}` in threads || !!find(source as Ref))
-  const asks: Curated[] = verdict.asks.map(({ from = [], ...ask }) => {
+  const curated: Curated[] = verdict.asks.map(({ from = [], ...question }) => {
     const places: Source[] = from.filter(real).map(({ app, thread, message, call }) => (call ? { app: 'voice', call } : { app, thread, ...(message !== undefined && { message }) }))
     const refs: Ref[] = places.flatMap(({ app, thread, message }) => (thread && message !== undefined && open({ app, thread, message }) ? [{ app, thread, message }] : []))
     const buttons = refs[0] ? find(refs[0])!.options : []
     return {
-      ...ask,
-      id: ask.id.startsWith('check:') ? ask.id : `check:${ask.id}`,
-      options: ask.options.map(({ value, ...option }) => ({ ...option, ...(value && buttons.includes(value) && { value }) })),
+      ...question,
+      id: question.id.startsWith('check:') ? question.id : `check:${question.id}`,
+      options: question.options.map(({ value, ...option }) => ({ ...option, ...(value && buttons.includes(value) && { value }) })),
       from: places,
       refs,
     }
   })
-  const listed = new Set(asks.flatMap(ask => ask.refs ?? []).map(ref => `${ref.app} ${ref.thread} ${ref.message}`))
+  const listed = new Set(curated.flatMap(question => question.refs ?? []).map(ref => `${ref.app} ${ref.thread} ${ref.message}`))
   return {
-    asks,
+    asks: curated,
     settle: verdict.settle.filter(ref => open(ref) && !listed.has(`${ref.app} ${ref.thread} ${ref.message}`)).map(ref => ({ ...ref, note: ref.note.slice(0, 60) })),
     fixed: verdict.fixed,
     flagged: verdict.flagged,
