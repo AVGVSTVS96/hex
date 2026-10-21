@@ -1,5 +1,5 @@
 import { spawn } from 'child_process'
-import { appendFileSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { zoneOf } from './schedule.ts'
@@ -268,9 +268,19 @@ export async function drain(state: string, run: (pass: Pass, keep: () => boolean
 // Queues a session's turn for the memory agent and hands the queue to a process of its own.
 export function queue(state: string, pass: Pass) {
   if (!process.env.MEMORY_DIR || !existsSync(MEMO)) return
-  open(state).wait(pass)
-  const log = openSync(join(state, 'observe.log'), 'a')
-  spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['ignore', 'ignore', log], env: { ...process.env, HEX_STORE: state, HEX_PASS: '1' } }).unref()
+  try {
+    open(state).wait(pass)
+    const log = openSync(join(state, 'observe.log'), 'a')
+    try {
+      spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['ignore', 'ignore', log], env: { ...process.env, HEX_STORE: state, HEX_PASS: '1' } })
+        .on('error', error => process.stderr.write(`hex couldn't start the memory agent: ${error}\n`))
+        .unref()
+    } finally {
+      closeSync(log)
+    }
+  } catch (error) {
+    process.stderr.write(`hex couldn't queue a turn for memories: ${error}\n`)
+  }
 }
 
 // The Stop hook queues the turn and hands the queue to a process of its own, since Claude Code ends
@@ -293,7 +303,8 @@ if (import.meta.main) {
     } catch (error) {
       process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
     }
-    // A T3 turn's reply is kept once T3's bot sees the turn end, after this hook: the hub queues that turn.
-    if (hook.session_id && !t3) queue(HEX_STORE, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
+    // A T3 turn's reply is kept once T3's bot sees the turn end, after this hook, so T3's hub queues
+    // another pass for it then; a pass finds only what no pass has looked over yet.
+    if (hook.session_id) queue(HEX_STORE, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
   }
 }
