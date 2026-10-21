@@ -19,8 +19,8 @@ Without it you do not know who you are, or what was decided and tried.
 
 hex runs `.hex/vendor/memo wake` for you as every session starts and after
 every compaction, and puts what it prints in your context, after my profile
-(`state/profile.md`: who I am and what's going on now, which the memory agent
-keeps current). If it isn't there, run `.hex/vendor/memo wake` before any other
+(`state/profile.md`: who I am, which the memory agent keeps current; what's
+going on now is in my tasks and your memory). If it isn't there, run `.hex/vendor/memo wake` before any other
 tool call, and then do exactly what it prints, to the end of its output.
 
 ### While working: memories are recorded for you
