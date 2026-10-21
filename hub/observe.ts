@@ -64,14 +64,15 @@ export async function observe(state: string, session: string, { ask = claude, me
       const threads = store.names()
       const place = taken[0]?.to ?? thread
       const shown = (row: Row) => !replied(row) || (!row.meta?.failed && !row.meta?.edited && !row.meta?.permission)
+      const whose = (row: Row) => (row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`)
       const before = place ? store.said(place, BEFORE, [...rows, ...others].reduce((first, row) => (row.at < first ? row.at : first), by)).filter(shown) : []
       const turn = [
-        ...(before.length ? [`<before>\n${before.map(row => `${row.author === 'owner' ? 'The owner' : row.author}, ${clock(row.at, zone)}:\n${clip(row.body, 1000)}`).join('\n\n')}\n</before>`] : []),
+        ...(before.length ? [`<before>\n${before.map(row => `${row.author === 'owner' ? 'The owner,' : whose(row)} ${clock(row.at, zone)}:\n${clip(row.body, 1000)}`).join('\n\n')}\n</before>`] : []),
         `<turn thread="${place ? (threads[place] ?? place) : 'none'}">`,
         ...taken.filter(shown).map(row =>
           rows.includes(row)
             ? `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`
-            : `${row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`} ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`,
+            : `${whose(row)} ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`,
         ),
         '</turn>',
       ].join('\n\n')
@@ -274,9 +275,10 @@ if (import.meta.main) {
   if (HEX_PASS) await drain(HEX_STORE)
   else {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
-    const answer = hook.last_assistant_message?.trim()
     // A turn's last words in the terminal are kept before the turn is queued: a session no app holds
-    // answers there, and an app's session sums up there what its replies may not say.
+    // answers there, and an app's session sums up there what its replies may not say. In T3 Code the
+    // terminal is the conversation, which T3's bot keeps as hex's reply.
+    const answer = HEX_CHANNEL?.startsWith('plugin:t3@') ? undefined : hook.last_assistant_message?.trim()
     try {
       if (hook.session_id && answer) open(HEX_STORE).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id, ...(HEX_CHANNEL && { unsent: true }) } }, hook.session_id)
     } catch (error) {
