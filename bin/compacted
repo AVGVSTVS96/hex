@@ -20,7 +20,7 @@ case "${1:-}" in
       printf '%s\n' "$wake"
       exit 0
     fi
-    rest=$(mktemp "${TMPDIR:-/tmp}/hex-wake-XXXXXX")
+    rest=$("$here/wake" overflow) || exit 0
     printf '%s\n' "$wake" > "$rest"
     shown=$(awk -v room="$room" '{ size += length($0) + 1 } size > room { exit } { n = NR } END { print n + 0 }' "$rest")
     head -n "$shown" "$rest"
