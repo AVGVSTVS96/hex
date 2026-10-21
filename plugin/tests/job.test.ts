@@ -81,6 +81,7 @@ test("a job session's prompt is hex's words in hex.db, its answer too, what the 
   hook('busy', { session_id: 'mine-1', prompt: '<task-notification>done</task-notification>' })
   hook('busy', { session_id: 'mine-1', prompt: '<agent-message from="a1">merged</agent-message>' })
   hook('busy', { session_id: 'mine-1', prompt: '<cross-session-message from="s2">done</cross-session-message>' })
+  hook('busy', { session_id: 'mine-1', prompt: '<teammate-message teammate_id="t1">hi</teammate-message>' })
   hook('busy', { session_id: 'mine-1', prompt: '/compact' })
   hook('idle', { hook_event_name: 'Stop', session_id: 'chat-1', last_assistant_message: 'narration' }, { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:1' })
   const rows = open(state).since().map(({ to, from, author, body, taken }) => ({ to, from, author, body, by: taken?.by }))

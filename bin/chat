@@ -430,7 +430,7 @@ def entries(record):
             if block.get("type") == "tool_result":
                 yield "echo", clip("\n".join(said(block.get("content") or "")))
     for text in said(content):
-        if re.match(r"^<(task-notification|agent-message|cross-session-message)", text):
+        if re.match(r"^<(task-notification|(agent|cross-session|teammate)-message[\s>])", text):
             yield "work", text
         elif text.strip() and not re.match(r"^<(local-command|command-|system-reminder)", text):
             yield heard(text)

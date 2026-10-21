@@ -43,7 +43,7 @@ if (key && HEX_STORE) {
 // owner's, except the prompt a job's session opens on (the hub keeps the prompt it starts a session
 // with itself; observe.ts keeps a terminal's answers). Typed into a job's session later, by someone
 // attached to it, it's the owner's again.
-const said = busy && typeof prompt === 'string' && !fromChat && !/^(\/|<(local-command|command-|system-reminder|task-notification|agent-message|cross-session-message))/.test(prompt) ? prompt : undefined
+const said = busy && typeof prompt === 'string' && !fromChat && !/^(\/|<(local-command|command-|system-reminder|task-notification|(agent|cross-session|teammate)-message[\s>]))/.test(prompt) ? prompt : undefined
 if (said && session_id) {
   try {
     const store = open(HEX_STORE ?? join(import.meta.dir, '..', '..', 'state'))
