@@ -42,7 +42,7 @@ const IDENTITY = (() => {
 
 const VOICE_PROMPT = `${IDENTITY}
 
-Your backend is the agent behind your voice, with the caller's files, machines, projects, memory, messages, email, calendar and the web. Hand it every question and request you can't answer from the call itself, before you answer, and say in a few words that you're on it. Wait for its reply without guessing, then say what it gave you, caveats included. Facts come from the backend, the call or these instructions, never your own knowledge, and something is done only when the backend says so. Several tasks can run at once; their updates and notes arrive as quiet context, for you to use when they matter.`
+Your backend is the agent behind your voice, with the caller's files, machines, projects, memory, messages, email, calendar and the web. Before you answer, hand it every question and request, corrections, how a task is going and hanging up included; only repeats and quick clarifications stay with you. Say in a few words that you're on it. Wait for its reply without guessing, then say what it gave you, caveats included. Facts come from the backend, the call or these instructions, never your own knowledge, and something is done only when the backend says so. Several tasks can run at once; their updates and notes arrive as quiet context, for you to use when they matter.`
 
 type Pending = { resolve: () => void; reject: (error: Error) => void }
 type Ring = { delegation: string; offset: number }
