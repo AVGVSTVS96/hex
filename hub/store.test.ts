@@ -45,7 +45,7 @@ test('a message reads as its newest edit, made in any topic of its chat, even wh
   store.deliver({ ...sent, key: 'discord:edit-4', from: 'discord', body: 'another app', meta: { edited: 'true', message_id: '42' } })
   expect(store.latest(sent.key)?.body).toBe('Deploy at 7')
   store.deliver({ ...sent, key: 'telegram:edit-5', to: '-100:9', body: 'Deploy at 8, edited from another topic', meta: { edited: 'true', message_id: '42' } })
-  expect(store.latest(sent.key)?.body).toBe('Deploy at 8, edited from another topic')
+  expect(store.latest(sent.key)).toMatchObject({ key: sent.key, to: '-100:7', body: 'Deploy at 8, edited from another topic' })
   expect(store.latest('telegram:-100:43')).toBeNull()
   store.deliver({ key: 'buzz:e2', to: 'thread', from: 'buzz', author: 'owner', body: 'tagged on edit', meta: { edited: 'true', message_id: 'e1' } })
   expect(store.latest('buzz:e1')?.body).toBe('tagged on edit')
