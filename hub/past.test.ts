@@ -1,0 +1,27 @@
+import { expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { history } from './hub.ts'
+import { importLogs } from './past.ts'
+import { open } from './store.ts'
+
+test("log/'s conversations come into hex.db once, under each session's thread, around what hex.db kept, and wake no memory pass", () => {
+  const home = mkdtempSync(join(tmpdir(), 'past-'))
+  mkdirSync(join(home, 'log', 'threads'), { recursive: true })
+  const store = open(join(home, 'state'))
+  store.deliver({ key: 'telegram:1', to: '-100:7', from: 'telegram', author: 'owner', body: 'how full is your context?' }, 'abc-session')
+  store.db.query('update messages set at = ?1, taken_at = ?1 where key = ?2').run('2026-10-06T17:06:20.000Z', 'telegram:1')
+  writeFileSync(
+    join(home, 'log', 'threads', '2026-10-06-abc-sess.md'),
+    '# 2026-10-06 · session abc-session\n\n## me · telegram · 2026-10-06 10:06\n\nhow full is your context?\n\n## assistant · telegram · 2026-10-06 10:06\n\nRoomy.\n',
+  )
+  expect(importLogs(store, join(home, 'log'), 'America/Los_Angeles')).toBe(1)
+  expect(importLogs(store, join(home, 'log'), 'America/Los_Angeles')).toBe(0)
+  expect(history(store, '-100:7')).toEqual([
+    { from: 'me', text: 'how full is your context?' },
+    { from: 'hex', text: 'Roomy.' },
+  ])
+  expect(store.observe('abc-session', new Date(Date.now() + 1000).toISOString()).map(row => row.key)).toEqual(['telegram:1'])
+  rmSync(home, { recursive: true, force: true })
+})

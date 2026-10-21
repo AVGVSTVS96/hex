@@ -10,3 +10,4 @@ fi
 if [ "$(jq -r '.heartbeat.prompt // empty' "$home/schedules.json")" = 'Hourly check, see "Heartbeat" in .hex/HEX.md' ]; then
   jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt = $defaults[0].heartbeat.prompt' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
 fi
+bun "$hex/hub/past.ts" "$home" || echo "hex couldn't bring log/ into hex.db this time; the next update tries again" >&2

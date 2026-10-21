@@ -78,7 +78,7 @@ type Live = {
   speak?: (audio: string) => void
 }
 type Placed = { to: string; why?: string; started: string; session?: string }
-type Dial = { greeting: string; from: Source; token: string; why?: string }
+type Dial = { greeting: string; from: Source; token: string; why?: string; callee?: string }
 type Phone = Dial & { openai?: WebSocket; stream?: string; started?: true; refused?: true }
 
 // What the call engine asks of the voice thread's hub: hand its session a message, hold the session
@@ -181,7 +181,7 @@ async function pass(name: string, about: string, text: string, app?: string, whe
   const meta = { user: 'hex voice', ...(id && { voice_task: `${call}:${id}` }) }
   let thread = known
   if (app) {
-    const opened = await begin(app, oneWord(name), { content: text, meta }, { about: `From a call: ${about}`, where })
+    const opened = await begin(app, oneWord(name), { content: text, author: 'hex voice', meta }, { about: `From a call: ${about}`, where })
     thread = { app, id: opened.thread, name, threads: join(HEX_STATE, app, 'threads.json') }
   }
   if (call && id) {
@@ -319,6 +319,7 @@ function ring(call: Live, { delegation, offset }: Ring) {
     call: call.id,
     delegation_id: delegation,
     at: `${(offset / 1000).toFixed(1)}s`,
+    ...(call.record.callee && { callee: call.record.callee }),
   })
   save(call)
 }
@@ -353,7 +354,7 @@ function finish(call: Live, reason: string, by?: string) {
   activity.changed()
   deliver(
     [`The call ended: ${ENDINGS[end]} (${reason}). Name it with title.`, ...(rest.length ? ['Last words:', transcript(rest)] : [])].join('\n'),
-    { call: call.id, ended: end, reason },
+    { call: call.id, ended: end, reason, ...(call.record.callee && { callee: call.record.callee }) },
   )
   toHub(hub.renew)
   call.socket.onclose = null
@@ -594,7 +595,8 @@ async function dial(to = CALLER_NUMBER, why?: string) {
   const greeting = why
     ? `You placed this phone call because: ${why}. Greet them briefly and tell them why you're calling, then listen.`
     : 'You placed this phone call. Greet them briefly first, then listen.'
-  dials.set(token, { greeting, from: 'phone-out', token, why })
+  // On a call hex placed to someone else, "you" in the transcript is them, not the owner.
+  dials.set(token, { greeting, from: 'phone-out', token, why, ...(to !== CALLER_NUMBER && { callee: to }) })
   placed.set(token, { to, why, started: new Date().toISOString() })
   setTimeout(() => placed.get(token)?.session || placed.delete(token), 300_000)
   const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
@@ -648,6 +650,7 @@ async function phoneStatus(request: Request, token: string) {
 type Passed = {
   name: string
   from: Source
+  callee?: string
   greeting: string
   why?: string
   format: { type: string; rate: number }
@@ -657,7 +660,7 @@ type Passed = {
   closed: () => void
 }
 
-function passThrough({ name, from, greeting, why, format, play, started, refused, closed }: Passed) {
+function passThrough({ name, from, callee, greeting, why, format, play, started, refused, closed }: Passed) {
   const openai = new WebSocket(API, { headers: { Authorization: `Bearer ${KEY}` } } as any)
   let up = false
   let refusing = false
@@ -677,7 +680,7 @@ function passThrough({ name, from, greeting, why, format, play, started, refused
     if (event.type !== 'session.started') return
     up = true
     started(event.session.id)
-    follow(openai, base(event.session.id, from, { voice: VOICE, why, expires: expiry(event.session.expires_at) }), { speak: play })
+    follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play })
   })
   openai.addEventListener('close', ({ code, reason }) => {
     trace(`OpenAI closed the ${name} session (${code} ${reason})`)
@@ -691,6 +694,7 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
   twilio.data.openai = passThrough({
     name: 'phone',
     from: twilio.data.from,
+    callee: twilio.data.callee,
     greeting: twilio.data.greeting,
     why: twilio.data.why,
     format: { type: 'audio/pcmu', rate: 8000 },
@@ -1049,7 +1053,7 @@ export function serve(voiceHub: Hub, state: string) {
   hub = voiceHub
   HEX_STATE = state
   board = new Board(state, dirname(state))
-  chats = new Chats(state, dirname(state))
+  chats = new Chats(state)
   board.listen(() => {
     activity.changed()
     chats.changed()

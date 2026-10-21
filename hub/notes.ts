@@ -1,4 +1,4 @@
-import type { Row, Store } from './store.ts'
+import { spoken, type Row, type Store } from './store.ts'
 
 // A note about something the owner said keeps their words: the ones it rests on in double quotes,
 // copied from their message, and the message's key in brackets. hex.db keeps every message word
@@ -30,7 +30,7 @@ export function verdict(note: string, store: Store): Verdict {
   return {
     keys: found,
     unknown: keys.filter(key => !found.some(row => row.key === key)),
-    unquoted: words.filter(each => !found.some(row => quotes(row.body, each))),
+    unquoted: words.filter(each => !found.some(row => quotes(spoken(row) || row.body, each))),
     quoted: words.length > 0,
   }
 }
@@ -48,9 +48,7 @@ export function problems(v: Verdict, withWords = true): string[] {
   ]
 }
 
-// The owner's messages: from a chat app with their user id, typed or answered in the hex app or on a
-// call, and a call's transcript, which carries the call's delegation_id.
-export const owners = (rows: Row[]) =>
-  rows.filter(row => row.meta?.user_id || /^hex (app|call)$/.test(row.meta?.user ?? '') || (row.from === 'voice' && row.meta?.delegation_id))
+// The owner's messages, and calls they spoke on.
+export const owners = (rows: Row[]) => rows.filter(row => spoken(row))
 
 export const clip = (text: string, size: number) => (text.length > size ? `${text.slice(0, size)}…` : text)

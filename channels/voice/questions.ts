@@ -181,7 +181,7 @@ export class Questions extends Changes {
     const item = this.view.stuck.find(item => item.id === id)
     if (!item) throw new Error('that is no longer stuck')
     if (item.request) {
-      await this.tell(this.general(), item.request, 'app')
+      await this.tell(this.general(), item.request, 'app', 'prompt')
       this.marks.sent[id] = now()
     } else this.marks.dismissed[id] = now()
     this.saveMarks()
@@ -211,9 +211,10 @@ export class Questions extends Changes {
     return !!asked && !asked.answer && !asked.settled
   }
 
-  private tell(id: string, content: string, via: string) {
+  // An answer is the owner's; a stuck item's request is hex's check's words, sent on the owner's tap.
+  private tell(id: string, content: string, via: string, author = 'owner') {
     const [app, ...thread] = id.split(':')
-    return relay(this.state, app!, { type: 'inbound', thread: thread.join(':'), content, meta: { user: `hex ${via}` } })
+    return relay(this.state, app!, { type: 'inbound', thread: thread.join(':'), content, author, meta: { user: `hex ${via}` } })
   }
 
   private general() {

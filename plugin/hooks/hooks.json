@@ -35,7 +35,6 @@
     ],
     "PostToolUse": [
       { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*.md*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
-      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log new", "async": true }] },
       { "matcher": "mcp__t3.code__t3_thread_(send|launch)", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/relayed.ts", "async": true }] }
     ],
     "UserPromptSubmit": [
@@ -48,7 +47,6 @@
     "Stop": [
       { "hooks": [
         { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts idle" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat log" },
         { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/observe.ts" }
       ] }
@@ -58,7 +56,6 @@
     ],
     "SessionEnd": [
       { "hooks": [
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/log" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/ended" }
       ] }
     ]

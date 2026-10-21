@@ -429,7 +429,7 @@ test('a prompt a hub restart lost before its session took it reaches the session
   await hex.idle()
   expect(await answer).toEqual({ stopReason: 'end_turn' })
   expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
-  expect(new Database(join(dir, 'hex', 'state', 'hex.db')).query('select count(*) as n from messages').get()).toEqual({ n: 1 })
+  expect(new Database(join(dir, 'hex', 'state', 'hex.db')).query('select author, count(*) as n from messages group by author order by author').all()).toEqual([{ author: 'hex', n: 1 }, { author: 'owner', n: 1 }])
 })
 
 test('a prompt the old hub never read before a restart reaches the session once hex is back', async () => {
@@ -452,8 +452,6 @@ test('a prompt the old hub never read before a restart reaches the session once 
 test('a thread\'s history loads the same each time, so hex acp can tell what T3 already has when a hub restart cuts a load short', async () => {
   const { agent, updates } = await t3()
   const { sessionId } = await kept(agent)
-  mkdirSync(join(dir, 'hex', 'log', 'threads'), { recursive: true })
-  writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${SESSION.slice(0, 8)}.md`), ['## me · t3 · 2026-10-06 10:06\n\nhi\n', '## assistant · t3 · 2026-10-06 10:06\n\nhi from hex\n'].join('\n'))
   const load = async () => {
     updates.splice(0)
     await agent.request('session/load', { sessionId, cwd: project, mcpServers: [] })
@@ -613,8 +611,8 @@ function t3Server() {
   return { requests, stop: () => listener.stop(true) }
 }
 
-// A T3 thread whose session has said something, mirrored back into T3 with this log as its history.
-async function mirrored(log: string) {
+// A T3 thread whose session has said something, mirrored back into T3 with these turns as its history.
+async function mirrored(turns: [string, string][]) {
   const server = t3Server()
   const { agent } = await t3()
   const { sessionId: source } = await agent.request('session/new', { cwd: project, mcpServers: [] })
@@ -629,8 +627,10 @@ async function mirrored(log: string) {
   hex.write(prompt, reply, done)
   await hex.idle()
   await first
-  mkdirSync(join(dir, 'hex', 'log', 'threads'), { recursive: true })
-  writeFileSync(join(dir, 'hex', 'log', 'threads', `2026-10-06-${SESSION.slice(0, 8)}.md`), log)
+  const db = new Database(join(dir, 'hex', 'state', 'hex.db'))
+  db.query('delete from messages where "to" = ?').run(source)
+  for (const [i, [author, body]] of turns.entries())
+    db.query(`insert into messages (key, "to", "from", author, body, at, taken_by, taken_at) values (?, ?, 'telegram', ?, ?, ?, ?, ?)`).run(`telegram:${i}`, source, author, body, `2026-10-06T10:0${i}:00.000Z`, SESSION, `2026-10-06T10:0${i}:00.000Z`)
   const sock = await open(join(dir, 'state', 'hub.sock'))
   sock.write(JSON.stringify({ type: 'mirror', thread: source, to: 't3' }) + '\n')
   await until(() => server.requests.some(request => request.tag === 'orchestration.dispatchCommand'))
@@ -639,13 +639,12 @@ async function mirrored(log: string) {
 
 test('a thread mirrored into T3 is imported as a hex session in its project, with its chat sent in as turns its replies answer', async () => {
   const { server, agent, thread } = await mirrored([
-    `# 2026-10-06 · session ${SESSION}\n`,
-    '## assistant · telegram · 2026-10-06 10:05\n\nAnchors are in.\n',
-    '## me · telegram · 2026-10-06 10:06\n\nhow full is your context?\n',
-    '## assistant · telegram · 2026-10-06 10:06\n\nRoomy.\n',
-    '## assistant · telegram · 2026-10-06 10:06\n\nStill roomy.\n',
-    '## me · telegram · 2026-10-06 10:07\n\nthanks\n',
-  ].join('\n'))
+    ['hex', 'Anchors are in.'],
+    ['owner', 'how full is your context?'],
+    ['hex', 'Roomy.'],
+    ['hex', 'Still roomy.'],
+    ['owner', 'thanks'],
+  ])
   await until(() => server.requests.filter(request => request.tag === 'orchestration.dispatchCommand').length === 3)
   const [imported, ...sent] = server.requests
   expect(imported).toEqual({ tag: 'server.importAcpRegistrySession', payload: { instanceId: 'hex', projectId: 'project-1', sessionId: thread, title: 'project' } })
@@ -680,7 +679,7 @@ test('a thread mirrored into T3 is imported as a hex session in its project, wit
 })
 
 test('a T3 prompt that isn\'t the next message of a backfill drops what is left of it and reaches the session', async () => {
-  const { server, thread } = await mirrored(`# x\n\n## me · telegram · 10:06\n\nanchors?\n\n## assistant · telegram · 10:06\n\nIn.\n`)
+  const { server, thread } = await mirrored([['owner', 'anchors?'], ['hex', 'In.']])
   const { agent: importer, updates } = await t3()
   await importer.request('session/load', { sessionId: thread, cwd: project, mcpServers: [] })
   updates.splice(0)

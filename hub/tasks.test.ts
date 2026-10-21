@@ -11,8 +11,8 @@ beforeEach(() => {
   mkdirSync(join(dir, 'telegram'))
   const store = open(dir)
   store.named('telegram', { '-100:7': 'Website', '-100:9': 'Errands' })
-  store.deliver({ key: 'telegram:-100:50', to: '-100:7', from: 'telegram', body: 'Fix the login page.\nIt 500s on submit.', meta: { user: 'bassim' } })
-  store.deliver({ key: 'telegram:-100:60', to: '-100:9', from: 'telegram', body: 'buy a power adapter', meta: { user: 'bassim' } })
+  store.deliver({ key: 'telegram:-100:50', to: '-100:7', from: 'telegram', body: 'Fix the login page.\nIt 500s on submit.', author: 'owner', meta: { user: 'bassim' } })
+  store.deliver({ key: 'telegram:-100:60', to: '-100:9', from: 'telegram', body: 'buy a power adapter', author: 'owner', meta: { user: 'bassim' } })
   store.createTask({ title: 'Fix the login page', message: 'telegram:-100:50', owner: '-100:7', doneWhen: 'it signs in' })
   store.createTask({ title: 'Buy a power adapter', message: 'telegram:-100:60', owner: '-100:9' })
 })
@@ -75,7 +75,7 @@ test('a session outside hex, or one with no tasks, hears nothing', async () => {
 test("a list too long for one hook's output gives each entry with its done-when while it fits, then one line, and never the owner's words", async () => {
   const store = open(dir)
   for (let n = 0; n < 120; n++) {
-    store.deliver({ key: `telegram:-100:${100 + n}`, to: '-100:7', from: 'telegram', body: `chore ${n}, damn it`, meta: { user: 'bassim' } })
+    store.deliver({ key: `telegram:-100:${100 + n}`, to: '-100:7', from: 'telegram', body: `chore ${n}, damn it`, author: 'owner', meta: { user: 'bassim' } })
     store.createTask({ title: `Chore ${n}: ${'tidy up the build '.repeat(7)}`, message: `telegram:-100:${100 + n}`, owner: '-100:7', doneWhen: 'the build is tidy '.repeat(8) })
   }
   const shown = await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })
@@ -83,7 +83,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
   expect(shown).toContain("This thread's open tasks (`.hex/bin/hex task <id>` has my words in full, adds to them and closes them):\nt-")
   expect(shown).toMatch(/\n  done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/)
   expect(shown).not.toContain('damn it')
-  store.deliver({ key: 'telegram:-100:300', to: '-100:7', from: 'telegram', body: 'and the API reference', meta: { user: 'bassim' } })
+  store.deliver({ key: 'telegram:-100:300', to: '-100:7', from: 'telegram', body: 'and the API reference', author: 'owner', meta: { user: 'bassim' } })
   const first = shown.match(/\n(t-\d+) \(open, Website\)/)![1]!
   store.addWords(first, 'telegram:-100:300')
   expect(await hook({ session_id: 'big' }, { HEX_THREAD: '-100:7' })).toContain(`${first} (open, Website, 2 messages): Chore`)

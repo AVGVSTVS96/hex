@@ -63,7 +63,7 @@ async function launch(channel: string, thread: string, options: Partial<Paramete
     ...options,
   })
   if (cwd) hub.open(thread, thread, 'hi', cwd)
-  else hub.deliver(thread, thread, { content: 'hi', meta: {} })
+  else hub.deliver(thread, thread, { content: 'hi', author: 'owner', meta: {} })
   for (let i = 0; i < 200 && !existsSync(join(home, 'launched')); i++) await Bun.sleep(25)
   const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
   const file = args[args.indexOf('--settings') + 1]!

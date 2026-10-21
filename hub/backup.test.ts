@@ -15,7 +15,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'backup-'))
   path = process.env.PATH
   named = process.env.HEX_COMPUTER
-  open(dir).deliver({ key: 'telegram:-100:42', to: '-100:7', from: 'telegram', body: 'remind me to buy Cheryl a salty treat', meta: { user: 'bassim' } })
+  open(dir).deliver({ key: 'telegram:-100:42', to: '-100:7', from: 'telegram', body: 'remind me to buy Cheryl a salty treat', author: 'owner', meta: { user: 'bassim' } })
 })
 
 afterEach(() => {

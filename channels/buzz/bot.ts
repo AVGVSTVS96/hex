@@ -199,8 +199,6 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   const triggers = new Map<string, string[]>()
   const acks = new Map<string, string[]>()
   const typing = new Map<string, ReturnType<typeof setInterval>>()
-  // The relay hides deleted events, so a deletion is explained by what Hex saw before it.
-  const texts = new Map<string, { thread: string; text: string }>()
   const reactions = new Map<string, { thread: string; emoji: string; meta: Record<string, string> }>()
   // Messages Hex sent with buttons, its keycap reaction for each, and which one was tapped.
   const buttons = load<Record<string, { thread: string; choices: { label: string; reaction?: string }[]; chosen?: number }>>(BUTTONS_FILE, {})
@@ -277,9 +275,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   // In a forum channel every thread is a post, and a reply in it is a comment.
   async function post(thread: string, content: string, extra: string[][] = [], parent?: string): Promise<Event> {
     const channel = await channelOf(thread)
-    const sent = await relay.publish({ kind: channels.get(channel)?.forum ? COMMENT : 9, content, tags: [['h', channel], ...threadTags(thread, parent), ['p', owner], ...extra] })
-    texts.set(sent.id, { thread, text: content })
-    return sent
+    return relay.publish({ kind: channels.get(channel)?.forum ? COMMENT : 9, content, tags: [['h', channel], ...threadTags(thread, parent), ['p', owner], ...extra] })
   }
 
   async function place(name: string, where?: string, about?: string) {
@@ -563,10 +559,12 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
             const last = i === chunks.length - 1
             const content = last ? chunks[i] + uploads.map(u => `\n${u.line}`).join('') : chunks[i]!
             const sent = await post(thread, content, last ? uploads.map(u => u.imeta) : [], i === 0 ? reply_to : undefined)
+            hub.sent(thread, { key: sent.id, content })
             sentIds.push(sent.id)
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
+          hub.sent(thread, { content: chunks.slice(sentIds.length).join('\n'), meta: { failed: msg } })
           throw new Error(`reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`)
         }
 
@@ -595,14 +593,13 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         const target = await message(thread, args.message_id as string)
         if (target.pubkey !== me) throw new Error('only the bot\'s own messages can be edited')
         const edited = await edit(target, args.text as string)
-        texts.set(target.id, { thread, text: args.text as string })
+        hub.sent(thread, { key: edited.id, content: args.text as string, meta: { edited: 'true', message_id: target.id } })
         return `edited (id: ${edited.id})`
       }
       case 'delete_message': {
         const target = await message(thread, args.message_id as string)
         if (target.pubkey !== me) throw new Error('only the bot\'s own messages can be deleted')
         await relay.publish({ kind: 5, content: '', tags: [['h', tag(target, 'h')!], ['e', target.id]] })
-        texts.delete(target.id)
         return 'deleted'
       }
       case 'download_attachment': {
@@ -656,6 +653,8 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     launcher: process.env.HEX_LAUNCHER,
   })
 
+  // Messages kept before hex kept authors name a Buzz sender only by key.
+  hub.own(`buzz:${owner}`)
   clients.set('buzz', { hub, place, backfill, close: shutdown, stop })
 
   // Desktop writes a mention as "@Name", or "@Name (pubkey)" when two members share a name.
@@ -703,6 +702,12 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     return original?.pubkey === event.pubkey ? original : undefined
   }
 
+  // Buzz is shared, so only the owner's own key makes a message the owner's, and anyone else's is
+  // their key, which a display name can't fake.
+  function authorOf(event: Event) {
+    return event.pubkey === owner ? 'owner' : `buzz:${event.pubkey}`
+  }
+
   async function about(event: Event, thread: string, channel = tag(event, 'h')): Promise<Record<string, string>> {
     const where = channels.get(channel ?? '')
     return {
@@ -739,6 +744,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     reactions.set(event.id, { thread, emoji: event.content, meta })
     hub.deliver(thread, hub.name(thread) ?? await nameOf(event.pubkey), {
       key: event.id,
+      author: authorOf(event),
       content: `(reaction: ${event.content})`,
       meta: { ...(await about(event, thread, tag(target, 'h'))), reaction: event.content, ...meta },
     })
@@ -755,6 +761,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const meta = await about(event, asked.thread, await channelOf(asked.thread))
     hub.deliver(asked.thread, hub.name(asked.thread) ?? meta.user!, {
       key: event.id,
+      author: authorOf(event),
       content: asked.choices[index]!.label,
       meta: { ...meta, button: 'true', button_message_id: id },
     })
@@ -763,15 +770,17 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   async function handleDeletion(event: Event): Promise<void> {
     const id = tag(event, 'e') ?? ''
     const reaction = reactions.get(id)
-    const said = texts.get(id)
-    const thread = reaction?.thread ?? said?.thread
-    if (!thread) return
+    // The relay hides deleted events, so a deletion is explained by the message hex.db kept.
+    const found = hub.edited(id) ?? hub.said(id)
+    const said = found?.meta?.reaction || found?.meta?.button ? undefined : found
+    const thread = reaction?.thread ?? said?.to
+    if (!thread || (hub.name(thread) === undefined && !channels.get(thread)?.dm)) return
     reactions.delete(id)
-    texts.delete(id)
     const meta = await about(event, thread)
+    const author = authorOf(event)
     hub.deliver(thread, hub.name(thread) ?? meta.user!, reaction
-      ? { key: event.id, content: `(reaction removed: ${reaction.emoji})`, meta: { ...meta, reaction: reaction.emoji, reaction_removed: 'true', ...reaction.meta } }
-      : { key: event.id, content: '(deleted a message)', meta: { ...meta, deleted: 'true', message_id: id, ...(said?.text ? { deleted_text: said.text } : {}) } })
+      ? { key: event.id, author, content: `(reaction removed: ${reaction.emoji})`, meta: { ...meta, reaction: reaction.emoji, reaction_removed: 'true', ...reaction.meta } }
+      : { key: event.id, author, content: '(deleted a message)', meta: { ...meta, deleted: 'true', message_id: id, ...(said?.body ? { deleted_text: said.body } : {}) } })
   }
 
   async function handleInbound(event: Event): Promise<void> {
@@ -790,7 +799,6 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     if (!edited && event.pubkey === owner && tagged && text === '!cancel') return stop(thread)
 
     triggers.set(thread, [...(triggers.get(thread) ?? []), original.id])
-    texts.set(original.id, { thread, text: event.content })
     void ack(thread, original.id, '👀').catch(() => {})
 
     // Attachments are listed (name/type/size) but not downloaded: the model
@@ -805,6 +813,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     // On the sender's own message, those words are what they said, and the thread's log keeps them.
     const message: Message = {
       key: event.id,
+      author: authorOf(event),
       content: text || (atts.length > 0 ? '(attachment)' : own || '(tagged you)'),
       meta: {
         ...(await about(event, thread, channel)),

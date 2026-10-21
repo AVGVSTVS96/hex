@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { open } from '../../hub/store.ts'
 
 let home: string
 let bin: string
@@ -13,6 +14,8 @@ beforeEach(() => {
   bin = mkdtempSync(join(tmpdir(), 'live-status-bin-'))
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
   copyFileSync(join(import.meta.dir, '../../bin/live-status'), join(home, '.hex/bin/live-status'))
+  copyFileSync(join(import.meta.dir, '../../bin/hex'), join(home, '.hex/bin/hex'))
+  symlinkSync(join(import.meta.dir, '../../hub'), join(home, '.hex/hub'))
   const commit = (msg: string) => sh('git', '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', 'commit', '-q', '--allow-empty', '-m', msg)
   sh('git', 'init', '-q', '-b', 'trunk')
   commit('first')
@@ -68,21 +71,28 @@ test('finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
 })
 
 test("lists each thread active in the last day with its last message, skipping what only the terminal saw", () => {
-  const clock = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString().slice(0, 16).replace('T', ' ')
   mkdirSync(join(home, 'state/telegram'), { recursive: true })
   mkdirSync(join(home, 'state/discord'), { recursive: true })
-  mkdirSync(join(home, 'log/threads'), { recursive: true })
   writeFileSync(join(home, 'state/telegram/threads.json'), JSON.stringify({
     '1': { name: 'Garden', session: 'aaaaaaaa-1' },
     '2': { name: 'Stale', session: 'bbbbbbbb-1' },
   }))
   writeFileSync(join(home, 'state/discord/threads.json'), JSON.stringify({ '3': { name: 'Kiln', session: 'cccccccc-1' } }))
-  writeFileSync(join(home, 'log/threads/2026-01-01-aaaaaaaa.md'), `# x\n\n## me · telegram · ${clock(90)}\n\nwater the beds?\n\n## assistant · telegram · ${clock(89)}\n\n**Done.** Beds watered.\n## not a header\n\n## assistant · terminal · ${clock(89)}\n\nwatered\n`)
-  writeFileSync(join(home, 'log/threads/2026-01-01-bbbbbbbb.md'), `# x\n\n## me · telegram · ${clock(3000)}\n\nold\n`)
-  writeFileSync(join(home, 'log/threads/2026-01-01-cccccccc.md'), `# x\n\n## me · discord · ${clock(5)}\n\nfire it\nat noon\n`)
+  const store = open(join(home, 'state'))
+  store.named('telegram', { '1': 'Garden', '2': 'Stale' })
+  store.named('discord', { '3': 'Kiln' })
+  const said = (key: string, to: string, author: string, body: string, minutesAgo: number) => {
+    store.deliver({ key, to, from: key.split(':')[0]!, author, body }, 'x')
+    store.db.query('update messages set at = ? where key = ?').run(new Date(Date.now() - minutesAgo * 60_000).toISOString(), key)
+  }
+  said('telegram:1', '1', 'owner', 'water the beds?', 90)
+  said('telegram:2', '1', 'hex', '**Done.** Beds watered.\n## not a header', 89)
+  said('terminal:1', '1', 'hex', 'watered', 88)
+  said('telegram:3', '2', 'owner', 'old', 3000)
+  said('discord:4', '3', 'owner', 'fire it\nat noon', 5)
   claude([{ kind: 'background', state: 'blocked', sessionId: 'cccccccc-1', cwd: home }])
   const out = hook()
-  expect(out).toContain('- Kiln (discord, blocked, 5m ago) user: fire it at noon\n- Garden (telegram, 1h ago) reply: Done. Beds watered. ## not a header\n')
+  expect(out).toContain('- Kiln (discord, blocked, 5m ago) owner: fire it at noon\n- Garden (telegram, 1h ago) hex: Done. Beds watered. ## not a header\n')
   expect(out).not.toContain('Stale')
 })
 

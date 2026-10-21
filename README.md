@@ -50,7 +50,7 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 └──────────────┘               │                                             │
 ┌──────────────┐               │                                             │
 │ Buzz         │               │                                             │
-│  └ #ops      │◀─────────────▶│  SOUL.md  AGENTS.md  memory/  log/          │
+│  └ #ops      │◀─────────────▶│  SOUL.md  AGENTS.md  memory/  state/        │
 │    └ backups │               │                                             │
 └──────────────┘               │                                             │
 ┌──────────────┐               │                                             │
@@ -61,7 +61,7 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 
 - **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for about an hour, the life of its prompt cache, stops, and starts again with its conversation when you write.
 - **A DM is one chat that never ends.** Your DMs to hex work like Taelin's [OptChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449): every message is logged word for word in `chat/`, Haiku compresses the log into a tree of one-line summaries in the background, and each message starts a fresh session that sees those summaries instead of a history, opening any line back up to the words it came from. Nothing is compacted and nothing is lost. A message sent while hex is still working reaches that same session.
-- **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), your own rules in `AGENTS.md`, `schedules.json`, its memory and every conversation as markdown in `log/`. It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo that updates never mix with your files.
+- **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), your own rules in `AGENTS.md`, `schedules.json`, its memory, and every message it heard and sent in `state/hex.db` (`hex log` prints them as markdown). It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo that updates never mix with your files.
 - **One memory, with a timeline.** After every turn, a memory agent records what you said and what happened in [OptMem](https://github.com/VictorTaelin/OptMem): plain text files, read back at the start of each session, with older memories summarized and still searchable word for word. It also keeps a short profile of who you are, which each session reads first; what you want done is in tasks. Your rules live in `AGENTS.md`; everything else hex knows is in OptMem.
 - **Works with any Claude connector.** Every connector on your Claude account works in every hex session, with nothing to set up on the machine: Gmail, your calendar, [Executor](https://executor.sh) for many accounts behind one sign-in, [AgentMail](https://agentmail.to) for an inbox of its own. Sending, replying or deleting through any of them waits for your yes.
 - **It speaks up when it matters.** Every hour while you're up it checks your mail, the work it started, threads waiting on you, and anything it said it would follow up on, and only messages you if something's worth it. Other jobs are lines in `schedules.json`, a cron line and a prompt each.
@@ -117,15 +117,14 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 ├── AGENTS.md                       your rules; imports SOUL.md and .hex/HEX.md
 ├── SOUL.md                         who it is
 ├── schedules.json                  recurring jobs, the hourly check included
-├── memory/  log/                   its OptMem memory, every conversation as markdown
+├── memory/                         its OptMem memory
 ├── chat/                           each DM's chat that never ends: its log, summary tree and view
-├── .env  state/                    bot tokens, thread lists (never committed)
+├── .env  state/                    bot tokens, thread lists, hex.db with every message (never committed)
 └── .hex/                           hex itself: this repo
     ├── HEX.md                      how it works
     ├── bin/
-    │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code; deliver wakes a thread
+    │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code; deliver wakes a thread; log prints every message
     │   ├── session                 how the hub starts each session
-    │   ├── log                     saves each conversation to log/ as markdown
     │   ├── chat                        logs a DM, compresses it, and builds what its next session sees
     │   ├── wake                    loads your profile and its memory as each session starts and after a compaction
     │   ├── live-status             shows its branches, upcoming jobs, sessions and each active thread's last message as each session starts
@@ -176,8 +175,8 @@ this repo ─────────────────▶ your fork ─�
 ## Principles
 
 - **Don't interrupt.** Scheduled jobs wait their turn. The heartbeat only messages you when something needs you. Idle sessions stop and come back when you write.
-- **Plain files over infrastructure.** Everything hex knows lives in markdown you can open, edit and grep.
-- **Your machine, your account.** hex runs on your machine with your Claude subscription. Its memory and logs are files in your folder, and only you can talk to it.
+- **Plain files over infrastructure.** Everything hex knows lives in markdown you can open, edit and grep, and every message in one SQLite file that `hex log` prints as markdown.
+- **Your machine, your account.** hex runs on your machine with your Claude subscription. Its memory and messages are files in your folder, and only you can talk to it.
 - **Yours to change.** About 1,400 lines you can read in an afternoon. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, have your agent build your own client, or fork the whole thing.
 
 ## License

@@ -1,17 +1,18 @@
 import { createServer } from 'net'
 import { createHash, randomBytes, randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type FSWatcher } from 'fs'
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { schedule, zoneOf } from './schedule.ts'
-import { asked, open, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
+import { asked, open, replied, spoken, storeDir as storeOf, type MessageId, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
 // key: the app's own id for what the message is, so the app sending it again changes nothing.
-export type Message = { content: string; meta: Record<string, string>; key?: string }
+// author: who wrote it, which every message a client delivers says (Store.deliver).
+export type Message = { content: string; meta: Record<string, string>; key?: string; author?: string }
 export type Call = (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>
 // background: the session's turn ended with background agents still working.
 export type State = (thread: string, busy: boolean, background: boolean) => void
@@ -188,50 +189,14 @@ export function tappable(text: string): string {
   return text.replace(/buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/g, url => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`)
 }
 
-const SAID = /^## (.+?) · (\w+) · (?:\d{4}-\d{2}-\d{2} )?\d{1,2}:\d{2}\n/gm
-// Who the owner is in a log: themself, or the hex app they answered, typed or spoke in.
-const OWNER = new Set(['me', 'hex app', 'hex call'])
-
-// Where bin/log keeps each session's log, and each log's chat as last read: a chat open in the app
-// asks for them on every change anywhere.
-const logs = new Map<string, string>()
-const read = new Map<string, { stamp: string; turns: Turn[] }>()
-
-// A session's log (bin/log): where it is, when it was last written, and its chat.
-export function logged(hexDir: string, session: string): { mtime: Date; turns: Turn[] } | undefined {
-  const id = join(hexDir, session)
-  const known = logs.get(id)
-  const file = known && existsSync(known) ? known : logOf(hexDir, session)
-  if (!file) return
-  logs.set(id, file)
-  const { mtime, mtimeMs, size } = statSync(file)
-  const stamp = `${mtimeMs}:${size}`
-  const last = read.get(file)
-  const turns = last?.stamp === stamp ? last.turns : chatOf(readFileSync(file, 'utf8'))
-  read.set(file, { stamp, turns })
-  return { mtime, turns }
-}
-
-function logOf(hexDir: string, session: string): string | undefined {
-  const suffix = `-${session.slice(0, 8)}.md`
-  return [join(hexDir, 'log', 'threads'), join(hexDir, 'log')]
-    .flatMap(dir => (existsSync(dir) ? readdirSync(dir).filter(name => name.endsWith(suffix)).map(name => join(dir, name)) : []))[0]
-}
-
-// A session's chat from its log (bin/log): what the owner said and hex replied in an app, leaving
-// out the terminal, which no chat showed, and what other threads and tools sent it.
-export function history(hexDir: string, session: string): Turn[] {
-  return logged(hexDir, session)?.turns ?? []
-}
-
-function chatOf(log: string): Turn[] {
-  const heads = [...log.matchAll(SAID)]
-  return heads.flatMap((head, i) => {
-    const [, who, app] = head
-    const text = log.slice(head.index + head[0].length, heads[i + 1]?.index).trim()
-    const said = app === 't3' ? asked(text) : text
-    const from = OWNER.has(who!) ? 'me' : who === 'assistant' ? 'hex' : undefined
-    return app === 'terminal' || !said || !from ? [] : [{ from, text: said } as Turn]
+// A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as
+// first sent.
+export function history(store: Store, thread: string): Turn[] {
+  return store.said(thread).flatMap(row => {
+    if (row.from === 'terminal' || !row.taken) return []
+    if (replied(row)) return row.meta?.failed || row.meta?.edited || row.meta?.permission ? [] : [{ from: 'hex', text: row.body } as Turn]
+    const text = spoken(row) && row.author === 'owner' ? (row.from === 't3' ? asked(row.body) : row.body) : ''
+    return text ? [{ from: 'me', text } as Turn] : []
   })
 }
 
@@ -663,6 +628,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   async function start(thread: string, prompt?: string, fork?: string) {
     const known = threads[thread]!
     writeSettings(thread)
+    // The session's hooks keep what's typed in it as the owner's; this one is hex's.
+    if (prompt) kept(store => store.deliver({ key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`, to: thread, from: 'hub', author: 'prompt', body: prompt, meta: {} }, 'hub'), false)
     const launchArgs = extra(thread)
     const launched = stamp(launchArgs, server, hooks)
     if (known.launched !== launched) {
@@ -713,7 +680,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (failing.count >= TELL_AFTER && !failing.told && generalHub && !(general && thread === main)) {
       failing.told = true
       const content = `[hub] hex couldn't start the session of ${app} thread "${threads[thread]?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`
-      generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? 'hex', { content, meta: { user: 'hub' } })
+      generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? 'hex', { content, author: 'hub', meta: { user: 'hub' } })
     }
     setState(thread, false)
   }
@@ -736,12 +703,20 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // does; when it changes nothing, or hex.db can't take it, there's nothing to tell. Whether the
   // thread is told.
   function deliver(thread: string, name: string, message: Message, along?: () => boolean): boolean {
+    if (!message.author) throw new Error(`a message to ${thread} has no author`)
     const key = `${app}:${message.key ?? randomUUID()}`
     const { content, meta } = message
-    const added = kept(store => store.write(() => (!along || along()) && store.deliver({ key, to: thread, from: app, body: content, meta })), along ? false : undefined)
+    const added = kept(store => store.write(() => (!along || along()) && store.deliver({ key, to: thread, from: app, author: message.author, body: content, meta })), along ? false : undefined)
     if (added === false) return false
     pass(thread, name, added ? { content, meta: { key, ...meta } } : { content, meta })
     return true
+  }
+
+  // What hex said in a thread, kept as its session sent it: a reply, a post, a failed send with
+  // meta.failed. The session that wrote it has it already, so it wakes nothing.
+  function sent(thread: string, { key, content, meta = {} }: Partial<Message> & { content: string }) {
+    const row = { key: `${app}:${key ?? randomUUID()}`, to: thread, from: app, author: 'hex', body: content, meta }
+    kept(store => store.deliver(row, current(thread) ?? 'hub'), false)
   }
 
   function pass(thread: string, name: string, message: Message) {
@@ -768,7 +743,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // schedule, the hex command) goes to the hub that serves its thread.
   const mine = (row: Row) => row.from === app || !apps.has(row.from)
   // The key goes first on the channel tag, where the session's hook reads it (state.ts).
-  const toMessage = (row: Row): Message => ({ content: row.body, meta: { key: row.key, ...row.meta } })
+  const toMessage = (row: Row): Message => ({ content: row.body, author: row.author, meta: { key: row.key, ...row.meta } })
 
   // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   function waiting(thread: string): Message[] {
@@ -1004,7 +979,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
     if (request.type === 'settle') questions?.settle(request.thread, request.message, request.note)
     if (request.type === 'reopen') questions?.reopen(request.thread, request.message, request.via)
-    if (request.type === 'inbound') inbound(request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key })
+    if (request.type === 'inbound') inbound(request.thread, { content: request.content, meta: request.meta ?? {}, key: request.key, author: request.author ?? request.meta?.user ?? 'prompt' })
     if (request.type === 'mirror') void mirror(api, find(request.thread), request.to, request.where).then(
       link => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
       error => process.stderr.write(`hub: couldn't mirror ${request.thread} to ${request.to}: ${error}\n`),
@@ -1086,6 +1061,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   const api = {
     deliver,
+    sent,
+    said: (key: string) => kept(store => store.message(`${app}:${key}`), null),
+    edited: (id: string) => kept(store => store.edited(app, id), null),
+    own: (author: string) => kept(store => store.own(app, author), undefined),
     command: restart,
     configure,
     settings: (thread: string): Settings => ({ model: threads[thread]?.model, effort: threads[thread]?.effort }),
@@ -1110,10 +1089,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     release,
     adopt,
     follow,
-    history: (thread: string) => {
-      const session = current(thread)
-      return session ? history(hexDir, session) : []
-    },
+    history: (thread: string) => kept(store => history(store, thread), []),
     retire,
     find,
     rename,

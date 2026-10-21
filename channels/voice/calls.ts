@@ -14,6 +14,7 @@ export type CallRecord = {
   end?: Ending
   reason?: string
   from: Source
+  callee?: string
   voice?: string
   title?: string
   claude?: string

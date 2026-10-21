@@ -1,9 +1,9 @@
 import { spawn } from 'child_process'
-import { appendFileSync, existsSync, openSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { appendFileSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { clip, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { zoneOf } from './schedule.ts'
-import { open, type Row, type Store } from './store.ts'
+import { open, replied, type Row, type Store } from './store.ts'
 
 // The owner's profile, which this agent keeps current after every turn; bin/wake puts it in front of
 // the memory every session starts with. It never passes PROFILE.
@@ -21,17 +21,19 @@ export const PROFILE = 6_500
 const MODEL = 'sonnet'
 const BYTES = 280
 const NEWEST = 40
+// How many of the thread's messages before the turn the pass reads, for what the turn answers.
+const BEFORE = 10
 const CALL = 5 * 60_000
 const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 
-const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the messages the session took that turn, the owner's and others' (jobs, schedules, other sessions), with the reply it gave; an owner's message a memory already names is marked so. A turn with no messages was typed in the terminal or ran on its own: its log has what was said. You keep two things.
+const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the messages of that turn in order, the owner's, others' (jobs, schedules, other sessions) and what hex replied; an owner's message a memory already names is marked so. You keep two things.
 
 Memories: one line each, appended forever. Sessions write none, so every memory comes from you. Write the ones worth keeping: from the owner's messages no memory names yet, what they decided, asked for, corrected, taught, or said about their life, their work or how they want things done; and from the whole turn, anything of lasting effect that happened, like work shipped, a fact found or a plan changed. Most turns need one memory or none; a message that only answers the turn, like "ok" or "go", needs none. Each is at most ${BYTES} bytes, written like the newest memories: the owner's local time, then what happened in plain words. One that rests on the owner's words quotes them in double quotes exactly as the owner wrote them ("…" skips a part) and ends with the message's key in brackets; quote and key only the owner's messages, and name anything else in plain words, without double quotes. When the owner corrects or changes something a memory says, the new line starts with "Correction:". A memory that's already there doesn't need writing again.
 
 The profile: a small markdown file every session reads, who the owner is: their life, health, home, people, work, and plans that hold for a while, like a trip. Each fact has one home, and the others are elsewhere: how they want things done is in their AGENTS.md, what they want done is in tasks, and what happened is in memories. When a message changes a fact, rewrite its line so only the current truth stays; a line stays until a message says it's no longer true or it has ended, like a trip that's over. Keep it short and never over ${PROFILE} characters; over it, merge and tighten lines, then drop the facts that matter least. A line that rests on the owner's words quotes them exactly and names the message's key in brackets. Return the whole profile when it changes, or null when nothing in it needs to change.
 
-In both, quote the words that carry what the owner meant; anger and curses stay in the log. If you need what a message answers, the whole conversation is in the log file named with the turn.`
+In both, quote the words that carry what the owner meant; anger and curses stay in the log. What came before the turn in its thread is there for what a message answers: write about the turn's own messages.`
 
 const SCHEMA = {
   type: 'object',
@@ -41,9 +43,9 @@ const SCHEMA = {
 export type Answer = { notes: string[]; profile: string | null }
 
 type Hook = { session_id?: string; last_assistant_message?: string }
-export type Pass = { session: string; reply: string; by: string; thread?: string }
+export type Pass = { session: string; by: string; thread?: string }
 
-export async function observe(state: string, session: string, reply: string, { ask = claude, memo = MEMO, by = new Date().toISOString(), thread = undefined as string | undefined } = {}) {
+export async function observe(state: string, session: string, { ask = claude, memo = MEMO, by = new Date().toISOString(), thread = undefined as string | undefined } = {}) {
   const recall = (pattern: string) => Bun.spawnSync([memo, 'recall', pattern], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
   const named = (rows: Row[]) => (rows.length ? recall(rows.map(row => `\\[${escape(row.key)}\\]`).join('|')) : '')
   const store = open(state)
@@ -57,15 +59,20 @@ export async function observe(state: string, session: string, reply: string, { a
     let wanted = false
     let wrong = ''
     let reasons = ''
-    if (taken.length || reply.trim()) {
+    if (taken.length) {
       const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
       const threads = store.names()
       const place = taken[0]?.to ?? thread
+      const shown = (row: Row) => !replied(row) || (!row.meta?.failed && !row.meta?.edited && !row.meta?.permission)
+      const before = place ? store.said(place, BEFORE, [...rows, ...others].reduce((first, row) => (row.at < first ? row.at : first), by)).filter(shown) : []
       const turn = [
-        `<turn thread="${place ? (threads[place] ?? place) : 'none'}" log="${logOf(session) ?? 'none'}">`,
-        ...rows.map(row => `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`),
-        ...others.map(row => `From ${row.meta?.user || row.from}, not the owner, ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`),
-        `The session's reply:\n${reply.trim() || '(none)'}`,
+        ...(before.length ? [`<before>\n${before.map(row => `${row.author === 'owner' ? 'The owner' : row.author}, ${clock(row.at, zone)}:\n${clip(row.body, 1000)}`).join('\n\n')}\n</before>`] : []),
+        `<turn thread="${place ? (threads[place] ?? place) : 'none'}">`,
+        ...taken.filter(shown).map(row =>
+          rows.includes(row)
+            ? `${said(row, zone)}${noted.includes(`[${row.key}]`) ? '\n(a note already names this message: write no note for it)' : ''}`
+            : `${replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.author}, not the owner,`} ${clock(row.at, zone)}:\n${clip(row.body, 2000)}`,
+        ),
         '</turn>',
       ].join('\n\n')
       const ours = new Set(fresh.map(row => row.key))
@@ -160,21 +167,13 @@ export function clock(at: string, zone: string) {
 
 const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
-function logOf(session: string) {
-  const id = session.slice(0, 8)
-  for (const dir of [join(hexDir, 'log', 'threads'), join(hexDir, 'log')]) {
-    const file = existsSync(dir) && readdirSync(dir).find(name => name.endsWith(`-${id}.md`))
-    if (file) return join(dir, file)
-  }
-}
-
-// One read-only call: the model may open the turn's log, and its only effect is what it returns.
+// One call with no tools: its only effect is what it returns.
 // Its three tries end inside the pass's lease (4 calls long), so a hung call fails rather than racing the next pass.
 async function call(input: string, system: string, args: string[]) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
   const run = Bun.spawn(
     ['claude', '-p', '--safe-mode', '--model', MODEL, ...args, '--system-prompt', system, '--output-format', 'json', '--no-session-persistence'],
-    { cwd: join(hexDir, 'log'), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
+    { cwd: hexDir, env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
   )
   const [out, err, code] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited])
   const result = JSON.parse(out || '{}')
@@ -183,7 +182,7 @@ async function call(input: string, system: string, args: string[]) {
 }
 
 async function claude(input: string): Promise<Answer> {
-  const result = await call(input, SYSTEM, ['--effort', 'high', '--tools', 'Read,Grep', '--json-schema', JSON.stringify(SCHEMA)])
+  const result = await call(input, SYSTEM, ['--effort', 'high', '--tools', '', '--json-schema', JSON.stringify(SCHEMA)])
   if (!result.structured_output) throw new Error(`claude answered without the schema: ${result.result}`)
   return result.structured_output
 }
@@ -236,7 +235,7 @@ export function refresh(wake = join(hexDir, 'state', 'wake', 'CLAUDE.md')) {
 
 // A pass looks over the turn, does the compressions its notes made due, and leaves the memory file current.
 async function pass(state: string, turn: Pass, keep: () => boolean) {
-  await observe(state, turn.session, turn.reply, turn)
+  await observe(state, turn.session, turn)
   try {
     await nap(MEMO, summarize, keep)
   } finally {
@@ -271,12 +270,19 @@ export async function drain(state: string, run: (pass: Pass, keep: () => boolean
 // turn ended, not the next turn's message, and what an earlier pass in its thread left unfinished.
 // Errors go to state/observe.log.
 if (import.meta.main) {
-  const { HEX_STORE = join(hexDir, 'state'), MEMORY_DIR, HEX_PASS, HEX_THREAD } = process.env
+  const { HEX_STORE = join(hexDir, 'state'), MEMORY_DIR, HEX_PASS, HEX_THREAD, HEX_CHANNEL } = process.env
   if (HEX_PASS) await drain(HEX_STORE)
-  else if (MEMORY_DIR && existsSync(MEMO)) {
+  else {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
-    if (hook.session_id) {
-      open(HEX_STORE).wait({ session: hook.session_id, reply: hook.last_assistant_message ?? '', by: new Date().toISOString(), thread: HEX_THREAD })
+    const answer = HEX_CHANNEL ? undefined : hook.last_assistant_message?.trim()
+    // A session no app holds answers in its terminal: its last words are hex's reply, kept before the turn is queued.
+    try {
+      if (hook.session_id && answer) open(HEX_STORE).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id } }, hook.session_id)
+    } catch (error) {
+      process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
+    }
+    if (hook.session_id && MEMORY_DIR && existsSync(MEMO)) {
+      open(HEX_STORE).wait({ session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
       const log = openSync(join(HEX_STORE, 'observe.log'), 'a')
       spawn(process.execPath, [import.meta.path], { detached: true, stdio: ['ignore', 'ignore', log], env: { ...process.env, HEX_PASS: '1' } }).unref()
     }

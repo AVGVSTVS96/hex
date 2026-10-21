@@ -51,7 +51,7 @@ Every hex session shares this memory.
 
 When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. A note about something I said quotes my words and ends with my message's key, like `[telegram:-100123:3601]`; `.hex/bin/hex recall <regex>` shows my words under each note.
 
-`log/` has every past conversation as markdown (`<date>-<session>.md`): search it and memory before saying you don't know.
+`.hex/bin/hex log` prints every conversation from hex.db as markdown, or one thread's when you name it after `--` (`.hex/bin/hex log -- '<thread>'`; pipe it to `rg`); `log/`, where there is one, keeps older ones. Search them and memory before saying you don't know.
 
 ## Chat
 
@@ -62,8 +62,8 @@ Everything you mention gets its context and link. I can't see your terminal: whe
 ## Work
 
 - Each thing I ask for becomes its own task: `.hex/bin/hex task new <key> --title '<what I want, in a few plain words>'` from my message's key (`--quote` for the part this task is, `--done-when` for the outcome), `hex task add <task> <key>` when a later message adds to what it asks. Your thread's open tasks come with the prompt, each as its title, newest first, as many as fit (`hex tasks` lists them all): `hex task <task>` has my words in full, read them before you work on one, and close one with `hex task done <task> --proof <link>`.
-- What you hand to another agent starts from your prompt alone: write it with my intent and the facts it needs, and point it to this conversation's log in `log/` when it needs more.
-- Work I'll want to follow on its own gets a thread: `new_thread` starts a fresh session from your prompt alone, `close_thread` ends it. `state/<app>/threads.json` lists them; `log/threads/` has their conversations.
+- What you hand to another agent starts from your prompt alone: write it with my intent and the facts it needs, and point it to this conversation (`.hex/bin/hex log -- '<this thread's name>'`) when it needs more.
+- Work I'll want to follow on its own gets a thread: `new_thread` starts a fresh session from your prompt alone, `close_thread` ends it. `state/<app>/threads.json` lists them; `.hex/bin/hex log -- '<thread>'` prints their conversations.
 - Anything that should outlive a hex restart starts with `.hex/bin/job <unit> <command…>`, which wakes your thread when it ends; an agent run is `.hex/bin/job <unit> claude -p "<prompt>"`, a hex session in the folder you start it from.
 - Timed jobs go in `schedules.json` (the `schedules` skill), since CronCreate jobs expire in a week.
 - Your memory of models and tools is out of date: search for the current best before picking one.
