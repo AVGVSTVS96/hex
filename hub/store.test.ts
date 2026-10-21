@@ -402,7 +402,7 @@ test('an answer and the message that wakes its thread with it land together or n
 
 test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
   const store = new Store(dir)
-  store.db.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('create index unauthored on messages (n) where author = \'\'; pragma user_version = 15')
   const kept = (key: string, from: string, author: string, meta?: object) => store.db.query('insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)').run(key, '-100:7', from, author, 'hi', meta ? JSON.stringify(meta) : null, '2026-10-21T10:00:00.000Z')
   kept('telegram:1', 'telegram', 'hex General', { user: 'hex General' })
