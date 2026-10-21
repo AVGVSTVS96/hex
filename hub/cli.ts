@@ -1,7 +1,7 @@
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
-import { names, render, waiting } from './profile.ts'
+import { entry, names, render, waiting } from './profile.ts'
 import { open, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
@@ -48,10 +48,10 @@ function usage(): never {
   process.exit(2)
 }
 
-function show(tasks: Task[]) {
+function show(tasks: Task[], full = true) {
   if (flags.json) return console.log(JSON.stringify(tasks, null, 1))
   const named = names(state!)
-  console.log(tasks.map(task => render(task, named)).join('\n\n') || 'no tasks')
+  console.log(tasks.map(task => (full ? render(task, named) : entry(task, named))).join(full ? '\n\n' : '\n') || 'no tasks')
 }
 
 // Every line memo recalls, with the words of each message a note names by its [key] under it, what
@@ -125,7 +125,7 @@ try {
       task(args[0], args[1], args[2])
       break
     case 'tasks':
-      show(store.tasks({ owner: flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), status: (flags.status?.split(',') ?? ['open']) as Status[] }))
+      show(store.tasks({ owner: flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), status: (flags.status?.split(',') ?? ['open']) as Status[] }), flags.status !== undefined)
       break
     case 'questions': {
       const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
