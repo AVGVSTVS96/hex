@@ -20,15 +20,18 @@ const ROOM = 9_000
 // The profile takes most of that room, leaving the rest for tasks and questions.
 export const PROFILE = 6_500
 
+// A task's title, or its first words when it has none.
+export const titleOf = (task: Task, room: number) => clip(task.title ?? task.words[0]?.text ?? '', room)
+
 function facts(task: Task, named: Record<string, string>) {
   const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
   return `${task.id} (${facts.filter(Boolean).join(', ')})`
 }
 
-// A task as a session reads it: the facts on one line, then each of the owner's words in full,
-// under the key of the message they came from.
+// A task as a session reads it: its title and facts on one line, then each of the owner's words in
+// full, under the key of the message they came from.
 export function render(task: Task, named: Record<string, string> = {}): string {
-  const lines = [facts(task, named)]
+  const lines = [task.title ? `${facts(task, named)}: ${task.title}` : facts(task, named)]
   if (task.doneWhen) lines.push(`  done when: ${task.doneWhen}`)
   if (task.proof) lines.push(`  proof: ${task.proof}`)
   for (const words of task.words) {
@@ -40,7 +43,7 @@ export function render(task: Task, named: Record<string, string> = {}): string {
 
 // A task in one line, for when its words don't fit, and where to read them.
 function brief(task: Task, named: Record<string, string>) {
-  return `${facts(task, named)}: ${clip(task.words[0]?.text ?? '', 150)} (\`.hex/bin/hex task ${task.id}\` has my words in full)`
+  return `${facts(task, named)}: ${titleOf(task, 150)} (\`.hex/bin/hex task ${task.id}\` has my words in full)`
 }
 
 // A question as a session reads it: where it was asked, its first line, and its buttons.

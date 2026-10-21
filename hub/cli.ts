@@ -6,13 +6,13 @@ import { open, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
   hex deliver <from>:<id> --to <thread> [--user <name>] <words…>
-  hex task new <message key> [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
+  hex task new <message key> --title <what's wanted, in a few plain words> [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
   hex task add <task> <message key> [--quote <part of it>]
   hex task quote <task> <message key> --quote <part of it>
   hex task done <task> --proof <link or fact>
   hex task drop <task> [--into <task it repeats>]
   hex task open <task>
-  hex task edit <task> [--owner <thread>] [--project <name>] [--done-when <outcome>]
+  hex task edit <task> [--title <title>] [--owner <thread>] [--project <name>] [--done-when <outcome>]
   hex task <task> [--json]
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
   hex questions [--thread <thread> | --all] [--json]
@@ -25,6 +25,7 @@ const { values: flags, positionals } = parseArgs({
   options: {
     to: { type: 'string' },
     user: { type: 'string' },
+    title: { type: 'string' },
     quote: { type: 'string' },
     owner: { type: 'string' },
     thread: { type: 'string' },
@@ -79,7 +80,7 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
     case 'new': {
       const said = id && store.message(id)
       if (!said) throw new Error(id ? `no message ${id}` : 'name the message the task comes from by its key')
-      return show([store.createTask({ message: id!, quote: flags.quote, owner: flags.owner ?? thread ?? said.to, project: flags.project, doneWhen: flags['done-when'], status: flags.idea ? 'idea' : 'open' })])
+      return show([store.createTask({ title: flags.title!, message: id!, quote: flags.quote, owner: flags.owner ?? thread ?? said.to, project: flags.project, doneWhen: flags['done-when'], status: flags.idea ? 'idea' : 'open' })])
     }
     case 'add':
       if (!id || !key) usage()
@@ -98,7 +99,7 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
       return show([store.editTask(id, { status: 'open' })])
     case 'edit':
       if (!id) usage()
-      return show([store.editTask(id, { owner: flags.owner, project: flags.project, doneWhen: flags['done-when'] })])
+      return show([store.editTask(id, { title: flags.title, owner: flags.owner, project: flags.project, doneWhen: flags['done-when'] })])
     default: {
       const found = verb && store.task(verb)
       if (!found) throw new Error(verb ? `no task ${verb}` : USAGE)

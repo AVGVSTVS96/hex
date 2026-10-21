@@ -28,10 +28,10 @@ test("a status post is the note over the thread's waiting questions, open tasks 
 
   store.ask({ app: 'telegram', thread: '-100:7', message: 60, text: 'Ship today?\nCI is green.', options: ['Yes', 'No'] })
   store.ask({ app: 'telegram', thread: '-100:8', message: 61, text: 'Elsewhere?', options: ['Yes', 'No'] })
-  const open = store.createTask({ message: said(store, 50, 'Fix the login page'), owner: '-100:7' })
-  const old = store.createTask({ message: said(store, 52, 'Rename the repo'), owner: '-100:7' })
-  const done = store.createTask({ message: said(store, 51, 'Blur the logo less'), owner: '-100:7' })
-  store.createTask({ message: said(store, 53, 'Not this thread'), owner: '-100:8' })
+  const open = store.createTask({ title: 'Fix the login page', message: said(store, 50, 'Fix the login page'), owner: '-100:7' })
+  const old = store.createTask({ title: 'Rename the repo', message: said(store, 52, 'Rename the repo'), owner: '-100:7' })
+  const done = store.createTask({ title: 'Blur the logo less', message: said(store, 51, 'Blur the logo less'), owner: '-100:7' })
+  store.createTask({ title: 'Not this thread', message: said(store, 53, 'Not this thread'), owner: '-100:8' })
   store.editTask(old.id, { status: 'done', proof: 'gh repo rename' })
   store.editTask(done.id, { status: 'done', proof: 'shipped in abc123' })
 
@@ -39,7 +39,7 @@ test("a status post is the note over the thread's waiting questions, open tasks 
     [note, '🔴 **Blocked on you**\n1. Ship today? [Yes | No]', `🟡 **Pending**\n- Fix the login page (${open.id})`, `🟢 **Done**\n- Blur the logo less (${done.id}) · shipped in abc123\n- Rename the repo (${old.id}) · gh repo rename`].join('\n\n'),
   )
 
-  for (let n = 54; n < 58; n++) store.editTask(store.createTask({ message: said(store, n, `Later ${n}`), owner: '-100:7' }).id, { status: 'done', proof: 'ok' })
+  for (let n = 54; n < 58; n++) store.editTask(store.createTask({ title: `Later ${n}`, message: said(store, n, `Later ${n}`), owner: '-100:7' }).id, { status: 'done', proof: 'ok' })
   const latest = statusPost(store, '-100:7', note, 4096)
   expect(latest).toContain(`- Blur the logo less (${done.id})`)
   expect(latest).not.toContain('Rename the repo')
@@ -47,7 +47,7 @@ test("a status post is the note over the thread's waiting questions, open tasks 
 
 test('a status post fits the room the app gives one message, saying how many more there are', () => {
   const store = new Store(dir)
-  for (let n = 0; n < 40; n++) store.createTask({ message: said(store, n, `Task number ${n} with enough words to take some room`), owner: '-100:7' })
+  for (let n = 0; n < 40; n++) store.createTask({ title: `Task number ${n} with enough words to take some room`, message: said(store, n, `Task number ${n} with enough words to take some room`), owner: '-100:7' })
   for (let room = 300; room <= 2100; room += 7) expect(statusPost(store, '-100:7', 'Note', room).length).toBeLessThanOrEqual(room)
   const long = statusPost(store, '-100:7', 'x'.repeat(3000), 2000)
   expect(long.length).toBeLessThanOrEqual(2000)
