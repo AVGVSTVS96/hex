@@ -191,10 +191,12 @@ export function tappable(text: string): string {
 }
 
 // A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as
-// first sent; with a session, only what that session took, the conversation it has.
+// first sent; with a session, from the first message that session took, the conversation it has.
 export function history(store: Store, thread: string, session?: string): Turn[] {
-  return store.said(thread).flatMap(row => {
-    if (row.from === 'terminal' || !row.taken || (session && row.taken.by !== session)) return []
+  const rows = store.said(thread)
+  const start = session ? (rows.find(row => row.taken?.by === session)?.at ?? '9') : ''
+  return rows.flatMap(row => {
+    if (row.from === 'terminal' || !row.taken || row.at < start) return []
     if (replied(row)) return row.meta?.failed || row.meta?.edited || row.meta?.permission ? [] : [{ from: 'hex', text: row.body } as Turn]
     const text = spoken(row) && row.author === 'owner' ? (row.from === 't3' ? asked(row.body) : row.body) : ''
     return text ? [{ from: 'me', text } as Turn] : []
