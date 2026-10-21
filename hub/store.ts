@@ -144,10 +144,8 @@ const migrations = [
   update messages set author = ${AUTHOR};
   create index said on messages ("to", at);
   create index unauthored on messages (n) where author = '';`,
-  `alter table shown rename to tasks_shown;
-  create table shown (session text not null, kind text not null, seen text not null, primary key (session, kind));
-  insert into shown (session, kind, seen) select session, 'tasks', digest from tasks_shown;
-  drop table tasks_shown;`,
+  `create table seen (session text not null, kind text not null, record text not null, primary key (session, kind));
+  insert into seen (session, kind, record) select session, 'tasks', digest from shown;`,
 ]
 
 const now = () => new Date().toISOString()
@@ -540,16 +538,16 @@ export class Store {
 
   // What a session was last shown of one kind, like its rules or its tasks: '' when nothing yet.
   seen(session: string, kind: string): string {
-    return (this.db.query('select seen from shown where session = ? and kind = ?').get(session, kind) as { seen: string } | null)?.seen ?? ''
+    return (this.db.query('select record from seen where session = ? and kind = ?').get(session, kind) as { record: string } | null)?.record ?? ''
   }
 
-  show(session: string, kind: string, seen: string) {
-    this.write(() => this.db.query('insert into shown (session, kind, seen) values (?, ?, ?) on conflict (session, kind) do update set seen = excluded.seen').run(session, kind, seen))
+  show(session: string, kind: string, record: string) {
+    this.write(() => this.db.query('insert into seen (session, kind, record) values (?, ?, ?) on conflict (session, kind) do update set record = excluded.record').run(session, kind, record))
   }
 
-  // The session's context lost what it was shown of a kind (a compaction, a clear), or the session ended and so lost all of it.
-  unshow(session: string, kind?: string) {
-    this.write(() => this.db.query('delete from shown where session = ?1 and (?2 is null or kind = ?2)').run(session, kind ?? null))
+  // The session's context lost what it was shown of a kind: a compaction, a clear, or for its rules, its end.
+  unshow(session: string, kind: string) {
+    this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
   }
 
   private quote(task: string, message: string, quote?: string) {
