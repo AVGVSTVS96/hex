@@ -91,6 +91,16 @@ test('hex deliver says how to call it when something is missing', async () => {
 
 const ask = { ...message, key: 'telegram:-100:50', body: 'Fix the login page. Also the logo looks blurry on retina.' }
 
+test('a task from before titles gets its first words as its title', () => {
+  const store = new Store(dir)
+  store.deliver({ ...ask, body: 'Fix the login page.\nIt 500s on submit.' })
+  store.createTask({ title: 'x', message: ask.key, owner: '-100:7' })
+  store.db.run('update tasks set title = null')
+  store.db.run('pragma user_version = 10')
+  store.db.close()
+  expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
+})
+
 test('a task has a clean title of its own, and its words still come from the message', () => {
   const store = new Store(dir)
   store.deliver(ask)
@@ -118,7 +128,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   store.db.run("insert or replace into messages (key, \"to\", \"from\", body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'Fix it', '2026-10-19T00:00:00.000Z')")
   expect(store.message(ask.key)!.body).toBe(ask.body)
   expect(() => store.db.run("insert or replace into words (rowid, task, message, text) values (1, 1, 'telegram:-100:50', 'Fix the login page.')")).toThrow('never rewritten')
-  expect(store.tasks().map(task => task.id)).toEqual(['t-1', 't-2'])
+  expect(store.tasks().map(task => task.id)).toEqual(['t-2', 't-1'])
   expect(store.task('t-1')!.words[0]!.text).toBe(ask.body)
 })
 
@@ -247,9 +257,6 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
   expect(() => store.editTask(duplicate.id, { status: 'open' })).toThrow()
   expect(() => store.mergeTasks(kept.id, duplicate.id)).toThrow('dropped')
   expect(() => store.mergeTasks(kept.id, kept.id)).toThrow('itself')
-  store.db.run('update tasks set title = null where n = 1')
-  const third = store.createTask({ title: 'Fix the login page', message: 'telegram:-100:61', owner: '-100:9' })
-  expect(store.mergeTasks(kept.id, third.id).title).toBe('Fix the login page')
 })
 
 test("a thread keeps its name after it leaves its app's threads.json, and takes a new one when renamed", () => {
@@ -286,6 +293,8 @@ test('hex task makes a task from a message by its key, and the owner is the thre
   expect((await hex('tasks')).out).toContain('t-1 (open, chat:3): Fix the login page\n')
   expect(await hex('task', 'edit', 't-1', '--title', 'Make sign-in work')).toMatchObject({ code: 0, out: expect.stringContaining(': Make sign-in work\n') })
   expect(await hex('task', 'done', 't-1')).toMatchObject({ code: 1, err: expect.stringContaining('--proof') })
+  expect(await hex('task', 'done', 't-1', '--proof', 'shipped', 'in', 'abc123')).toMatchObject({ code: 1, err: expect.stringContaining('"in" isn\'t a flag\'s value') })
+  expect((await hex('tasks', '--status', 'open')).out).toBe((await hex('tasks')).out)
   expect(await hex('task', 'new', ask.key, '--title', 'Fix', 'the', 'login')).toMatchObject({ code: 1, err: expect.stringContaining('"the" isn\'t a flag\'s value') })
   expect(await hex('task', 'edit', 't-1', '--title', 'Make', 'it', 'work')).toMatchObject({ code: 1, err: expect.stringContaining('"it" isn\'t') })
   expect(await hex('task', 'new', ask.key, '--title', 'Fix login', '--quote', 'fix login')).toMatchObject({ code: 1, err: expect.stringContaining('as written') })

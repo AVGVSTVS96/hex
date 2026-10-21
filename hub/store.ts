@@ -15,7 +15,7 @@ type Stored = { key: string; to: string; from: string; body: string; at: string;
 // is dropped, and its words live on in the one it went into.
 export type Status = 'idea' | 'open' | 'done' | 'dropped'
 export type Words = { message: string; text: string; who: string; at: string }
-export type Task = { id: string; title?: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
+export type Task = { id: string; title: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
 export type NewTask = { title: string; message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
 export type TaskChange = { title?: string; status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string }
 // A call that's the owner's: a question a thread asked with buttons or a poll, in one app's
@@ -38,7 +38,7 @@ export type Question = {
 }
 export type NewQuestion = Omit<Question, 'at'> & { at?: string }
 type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
-type StoredTask = { n: number; title: string | null; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
+type StoredTask = { n: number; title: string; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
 
 // Migration n takes the database from user_version n to n + 1. Append; never edit one that has
 // shipped. Times are UTC the way toISOString() writes them, so they sort as text. A key starts with
@@ -124,6 +124,7 @@ const migrations = [
   `create table leases (name text primary key, holder text not null, until text not null check (until ${UTC}));
   create table passes (n integer primary key autoincrement, pass text not null check (json_valid(pass)));`,
   `alter table tasks add column title text;`,
+  `update tasks set title = coalesce(nullif(trim(substr(replace((select text from words where task = tasks.n order by rowid limit 1), char(10), ' '), 1, 80)), ''), 'Task ' || n) where title is null;`,
 ]
 
 const now = () => new Date().toISOString()
@@ -372,7 +373,6 @@ export class Store {
         if (status !== 'idea' && status !== 'open') throw new Error(`${id} is ${status}; only idea and open tasks merge`)
       }
       this.db.query('insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid').run(number(into), number(from))
-      this.db.query('update tasks set title = coalesce(title, (select title from tasks where n = ?)) where n = ?').run(number(from), number(into))
       this.db.query("update tasks set status = 'dropped', merged_into = ?, closed = ? where n = ?").run(number(into), now(), number(from))
       return this.task(into)!
     })
@@ -383,10 +383,10 @@ export class Store {
     return row && this.toTask(row)
   }
 
-  // Oldest first: every task, or one owner's, or those in some states.
+  // Newest first: every task, or one owner's, or those in some states.
   tasks({ owner, status }: { owner?: string; status?: Status[] } = {}): Task[] {
     const rows = this.db
-      .query('select * from tasks where (?1 is null or owner = ?1) and (?2 is null or status in (select value from json_each(?2))) order by n')
+      .query('select * from tasks where (?1 is null or owner = ?1) and (?2 is null or status in (select value from json_each(?2))) order by at desc, n desc')
       .all(owner ?? null, status ? JSON.stringify(status) : null) as StoredTask[]
     return rows.map(row => this.toTask(row))
   }
@@ -534,7 +534,7 @@ export class Store {
       .all(row.n) as Words[]
     return {
       id: `t-${row.n}`,
-      ...(row.title && { title: row.title }),
+      title: row.title,
       owner: row.owner,
       status: row.status,
       words,

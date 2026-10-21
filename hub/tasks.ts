@@ -6,9 +6,6 @@ import { open, type Question, type Task } from './store.ts'
 // stays under it, with room for the lines that say what didn't fit.
 const ROOM = 9_000
 
-// A task's title, or its first words when it has none.
-export const titleOf = (task: Task, room: number) => clip(task.title ?? task.words[0]?.text ?? '', room)
-
 function facts(task: Task, named: Record<string, string>) {
   const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
   return `${task.id} (${facts.filter(Boolean).join(', ')})`
@@ -17,7 +14,7 @@ function facts(task: Task, named: Record<string, string>) {
 // A task as `hex task` shows it: its title and facts on one line, then each of the owner's words in
 // full, under the key of the message they came from.
 export function render(task: Task, named: Record<string, string> = {}): string {
-  const lines = [task.title ? `${facts(task, named)}: ${task.title}` : facts(task, named)]
+  const lines = [`${facts(task, named)}: ${task.title}`]
   if (task.doneWhen) lines.push(`  done when: ${task.doneWhen}`)
   if (task.proof) lines.push(`  proof: ${task.proof}`)
   for (const words of task.words) {
@@ -32,8 +29,9 @@ export function render(task: Task, named: Record<string, string> = {}): string {
 export function entry(task: Task, named: Record<string, string>, done = true) {
   const messages = new Set(task.words.map(words => words.message)).size
   const said = messages > 1 ? `, ${messages} messages` : ''
-  const line = `${facts(task, named).replace(/\)$/, `${said})`)}: ${task.title ? clip(task.title, 150) : `(no title yet: \`.hex/bin/hex task ${task.id}\`)`}`
-  return done && task.doneWhen ? `${line}\n  done when: ${clip(task.doneWhen, 200)}` : line
+  const line = `${facts(task, named).replace(/\)$/, `${said})`)}: ${clip(task.title, 150)}`
+  if (!done) return line
+  return [line, task.doneWhen && `  done when: ${clip(task.doneWhen, 200)}`, task.proof && `  proof: ${clip(task.proof, 200)}`].filter(Boolean).join('\n')
 }
 
 // A question as a session reads it: where it was asked, its first line, and its buttons.
@@ -46,7 +44,7 @@ export function waiting(question: Question, named: Record<string, string> = {}):
 // fit still counts. Main sees every thread's; a thread sees its own.
 export function pending(state: string, thread?: string, room = ROOM): { text: string; digest: string } {
   const store = open(state)
-  const tasks = store.tasks({ owner: thread, status: ['open'] }).sort((a, b) => b.at.localeCompare(a.at))
+  const tasks = store.tasks({ owner: thread, status: ['open'] })
   const questions = store.questions({ thread, waiting: true })
   const named = store.names()
   const whose = thread ? 'This thread' : 'Every thread'
