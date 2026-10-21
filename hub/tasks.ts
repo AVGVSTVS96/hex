@@ -31,7 +31,7 @@ export function entry(task: Task, named: Record<string, string>, done = true) {
   const said = messages > 1 ? `, ${messages} messages` : ''
   const line = `${facts(task, named).replace(/\)$/, `${said})`)}: ${clip(task.title, 150)}`
   if (!done) return line
-  return [line, task.doneWhen && `  done when: ${clip(task.doneWhen, 200)}`, task.proof && `  proof: ${clip(task.proof, 200)}`].filter(Boolean).join('\n')
+  return [line, task.doneWhen && `  done when: ${clip(task.doneWhen, 200)}`, task.status === 'done' && task.proof && `  proof: ${clip(task.proof, 200)}`].filter(Boolean).join('\n')
 }
 
 // A question as a session reads it: where it was asked, its first line, and its buttons.
