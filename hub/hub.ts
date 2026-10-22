@@ -1041,6 +1041,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       .finally(() => clock.clearTimeout(timer))
     if (closing.signal.aborted || current(thread) !== session) return
     if (how === 'interrupted') {
+      // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it.
+      kept(store => store.turned(session, false), undefined)
       setState(thread, false, true)
       if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') setState(thread, false)
       return

@@ -28,11 +28,12 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     const record = file.endsWith('.json') ? readJson(join(dir, file)) : undefined
     if (!record?.sessionId || !alive(record.pid)) continue
     const { sessionId: id, pid, status = 'idle', kind, name, cwd, startedAt: started = 0, statusUpdatedAt } = record
+    const updated = typeof statusUpdatedAt === 'number' ? statusUpdatedAt : undefined
     const kept = sessions.get(id)
-    if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && (kept.updated ?? kept.started) >= (statusUpdatedAt ?? started)))) continue
+    if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && (kept.updated ?? kept.started) >= (updated ?? started)))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }), thread: kind === 'bg' ? undefined : served(environ(pid)), ...store.turn(id) })
+    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(updated !== undefined && { updated }), thread: kind === 'bg' ? undefined : served(environ(pid)), ...store.turn(id) })
   }
   return sessions
 }
