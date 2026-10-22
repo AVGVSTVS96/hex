@@ -93,11 +93,13 @@ function locked(fn: () => void) {
     }
   }
   mkdirSync(dirname(wake), { recursive: true })
-  for (;;) {
+  // A writer still going after this long is stuck; the wake it's writing is as new as this one's.
+  for (const until = Date.now() + 3 * 60_000; ; ) {
     try {
       mkdirSync(lock)
       break
     } catch {
+      if (Date.now() > until) return
       if (held()) Bun.sleepSync(100)
       else rmSync(lock, { recursive: true, force: true })
     }
