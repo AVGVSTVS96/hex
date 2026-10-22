@@ -270,11 +270,14 @@ try {
       log(rows.filter(row => row.at > since && (!flags.taken || row.taken)))
       break
     }
-    case 'watch':
-      // A line each time any hex process changes hex.db, for an app to read again what it shows; once
-      // the app stops reading, the next line ends it.
-      store.watch(() => process.stdout.write(`${new Date().toISOString()}\n`, error => error && process.exit()))
+    case 'watch': {
+      // A line once it's listening, then one each time any hex process changes hex.db: an app reads
+      // what it shows again at each. Once the app stops reading, the next line ends it.
+      const line = () => process.stdout.write(`${new Date().toISOString()}\n`, error => error && process.exit())
+      store.watch(line)
+      line()
       break
+    }
     case 'recall':
       if (!args[0]) usage()
       await recall(args[0])

@@ -114,7 +114,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall" >&2
+    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall|watch" >&2
     exit 2
     ;;
 esac
