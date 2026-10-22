@@ -55,6 +55,8 @@ case "${1:-}" in
     export HEX_HOOKS="$hex/plugin/hooks/hooks.json"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     echo $$ > "$pidfile"
+    # Apps following hex with `hex watch` read it again as it starts, as after a restore of hex.db.
+    printf . >> "$home/state/hex.bell"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
     first= second= third=
@@ -98,7 +100,7 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
-  deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall)
+  deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall|watch)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
@@ -114,7 +116,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall" >&2
+    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall|watch" >&2
     exit 2
     ;;
 esac

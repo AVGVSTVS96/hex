@@ -99,6 +99,26 @@ test('a change committed in another process rings the bell, and a write that cha
   stop()
 })
 
+test('hex watch prints a line once it listens and one for each change to hex.db, never opens it, and ends once nothing reads it', async () => {
+  const watch = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'watch'], { stdout: 'pipe' })
+  try {
+    const lines = watch.stdout.getReader()
+    const line = async () => new TextDecoder().decode((await lines.read()).value)
+    expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n$/)
+    expect(existsSync(join(dir, 'hex.db'))).toBe(false)
+    const store = open(dir)
+    let n = 0
+    const change = () => store.deliver({ key: `job:watched:${n++}`, to: 'general', from: 'job', author: 'prompt', body: 'one' })
+    change()
+    expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n/)
+    await lines.cancel()
+    await until(() => watch.exitCode !== null || void change(), 10_000)
+    expect(watch.exitCode).toBe(0)
+  } finally {
+    watch.kill()
+  }
+})
+
 test('a change right after the one the bell just rang for is still heard', async () => {
   const store = open(dir)
   const seen: (string | undefined)[] = []

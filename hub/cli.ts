@@ -1,4 +1,4 @@
-import { realpathSync } from 'fs'
+import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
@@ -25,7 +25,8 @@ const USAGE = `usage:
   hex message <key>
   hex profile [--all] [--json]
   hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--room <characters>] [--json]
-  hex recall <regex>`
+  hex recall <regex>
+  hex watch`
 
 const { values: flags, positionals } = parseArgs({
   allowPositionals: true,
@@ -59,6 +60,8 @@ if (args.length > takes) {
   console.error(`hex: ${stray(args[takes]!)}`)
   process.exit(1)
 }
+// hex watch never opens hex.db, so a restore can replace it underneath.
+if (command === 'watch') await follow(join(state, 'hex.bell'))
 const store = open(state)
 // A thread named the way every --json output names it, <app>:<key>, is the bare key hex.db's
 // messages, tasks, questions and pins keep.
@@ -110,6 +113,29 @@ function withThread<T>(rows: T[], key: (row: T) => string) {
 function keyOf(id: string) {
   const split = id.indexOf(':')
   return split > 0 && store.threads({ app: id.slice(0, split) }).some(({ thread }) => thread === id.slice(split + 1)) ? id.slice(split + 1) : id
+}
+
+// A line once it's listening, then one within 50ms of each time hex.bell grows, as every commit to
+// hex.db makes it: an app reads what it shows again at each. A burst of commits gets one line, and
+// the bell is checked again 50ms after each line, so a change Bun's fs.watch drops right after the
+// last one (https://github.com/oven-sh/bun/issues/45954) still gets its own. Once the app is gone,
+// the next line ends the watch.
+function follow(bell: string): Promise<never> {
+  mkdirSync(dirname(bell), { recursive: true })
+  appendFileSync(bell, '')
+  let size = -1
+  let timer: Timer | undefined
+  const check = () => {
+    timer = undefined
+    const now = statSync(bell).size
+    if (now === size) return
+    size = now
+    process.stdout.write(`${new Date().toISOString()}\n`, error => error && process.exit((error as NodeJS.ErrnoException).code === 'EPIPE' ? 0 : 1))
+    timer = setTimeout(check, 50)
+  }
+  watch(bell, () => (timer ??= setTimeout(check, 50)))
+  check()
+  return new Promise(() => {})
 }
 
 function stray(word: string) {
