@@ -65,6 +65,12 @@ test('a hex.db that took a ledger in at each start brings in only what an older 
   expect(after.db.query("select name from sqlite_master where name in ('files', 'shown')").all()).toEqual([])
 })
 
+test("a ledger.json that can't be read stays where it is", () => {
+  writeFileSync(file, '{"broken')
+  expect(new Ledger(dir, 'telegram').pin('-100:7')).toBeUndefined()
+  expect(existsSync(file)).toBe(true)
+})
+
 test('a question stays open through an edit and leaves the waiting list only when answered or settled, and a pin keeps its latest text', () => {
   const ledger = new Ledger(dir, 'telegram')
   const store = open(dir)

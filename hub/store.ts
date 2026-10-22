@@ -235,9 +235,13 @@ const rename = (path: string) => existsSync(path) && renameSync(path, moved(path
 // taken in by an earlier step, so it's only renamed.
 function carryLedgers(store: Store) {
   for (const [app, folder] of apps(store.dir)) {
+    rename(join(folder, 'threads.json'))
     const file = either(join(folder, 'ledger.json'))
+    if (!file) continue
     const before = (store.db.query('select body from files where name = ?').get(`${app}/ledger.json`) as { body: string } | null)?.body ?? '{}'
-    const [book, was] = file ? [readFileSync(file, 'utf8'), before].map(text => bookOf(text, file)) : []
+    const [book, was] = [() => readFileSync(file, 'utf8'), () => before].map(text => bookOf(text, file))
+    // One that can't be read stays where it is, for whoever looks into why.
+    if (!book) continue
     const keep = (take: () => unknown, kept: unknown) => {
       try {
         take()
@@ -245,23 +249,23 @@ function carryLedgers(store: Store) {
         process.stderr.write(`hex.db left out ${JSON.stringify(kept)} from ${file}, which it refuses: ${error}\n`)
       }
     }
-    for (const thread of book ? new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])]) : []) {
-      const [pin, old] = [book!.pins.get(thread), was?.pins.get(thread)]
+    for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
+      const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)]
       if (JSON.stringify(pin) === JSON.stringify(old)) continue
-      if (!pin) store.unpinned(app, thread, old?.message)
+      if (!pin) keep(() => store.unpinned(app, thread, old?.message), old)
       else if (pin.message !== old?.message || store.pin(app, thread)?.message === old?.message) keep(() => store.pinned({ ...pin, app, thread }), pin)
     }
     const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
-    for (const question of book?.asks ?? []) if (!asked.has(JSON.stringify(question))) keep(() => store.ask({ app, ...question }), question)
-    for (const name of ['ledger.json', 'threads.json']) rename(join(folder, name))
+    for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => store.ask({ app, ...question }), question)
+    rename(join(folder, 'ledger.json'))
   }
 }
 
 type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
 
-function bookOf(text: string, file: string): Book | undefined {
+function bookOf(text: () => string, file: string): Book | undefined {
   try {
-    const book = JSON.parse(text) ?? {}
+    const book = JSON.parse(text()) ?? {}
     const pinned = ([, pin]: [string, any]) => ['number', 'string'].includes(typeof pin?.message)
     return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries<any>(book.pins).filter(pinned) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
   } catch (error) {
@@ -745,11 +749,12 @@ export class Store {
     return (this.db.query('select record from seen where session = ? and kind = ?').get(session, kind) as { record: string } | null)?.record ?? ''
   }
 
-  // A record nobody showed for SEEN goes: its session ended, or gets its whole list again if it comes back.
+  // A tasks record nobody changed for SEEN goes, since a session's end leaves it (a resume still has
+  // the list): a session that's still there gets its whole list again. Rules records go at the end.
   show(session: string, kind: string, record: string, at = now()) {
     this.write(() => {
       this.db.query('insert into seen (session, kind, record, at) values (?, ?, ?, ?) on conflict (session, kind) do update set record = excluded.record, at = excluded.at').run(session, kind, record, at)
-      this.db.query('delete from seen where at < ?').run(new Date(Date.parse(at) - SEEN).toISOString())
+      this.db.query("delete from seen where kind <> 'rules' and at < ?").run(new Date(Date.parse(at) - SEEN).toISOString())
     })
   }
 

@@ -354,7 +354,7 @@ test("what a session was shown is kept per kind, until its context loses it", ()
   store.unshow('session-a', 'tasks')
   expect([store.seen('session-a', 'tasks'), store.seen('session-a', 'rules'), store.seen('session-b', 'tasks')]).toEqual(['', '{}', 'two'])
   store.show('session-c', 'tasks', 'three', new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString())
-  expect([store.seen('session-a', 'rules'), store.seen('session-b', 'tasks'), store.seen('session-c', 'tasks')]).toEqual(['', '', 'three'])
+  expect([store.seen('session-a', 'rules'), store.seen('session-b', 'tasks'), store.seen('session-c', 'tasks')]).toEqual(['{}', '', 'three'])
 })
 
 test('hex task makes a task from a message by its key, and the owner is the thread asking', async () => {

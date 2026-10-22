@@ -2,7 +2,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { nightly } from './backup.ts'
 import { clients, free, listen, up } from './hub.ts'
-import { hexDir, stateDir } from './store.ts'
+import { hexDir } from './store.ts'
 
 // Before the clients load: Telegram's bot module awaits its polling loop, which never ends.
 // A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign
@@ -19,7 +19,7 @@ await listen()
 const hex = join(import.meta.dir, '..')
 const commit = Bun.spawnSync(['git', '-C', hex, 'rev-parse', '-q', '--verify', 'HEAD']).stdout.toString().trim()
 const home = hexDir()
-const state = stateDir()
+const state = join(home, 'state')
 const rollback = join(state, 'rollback')
 void up.then(general => {
   if (commit) writeFileSync(join(state, 'good'), commit + '\n')
