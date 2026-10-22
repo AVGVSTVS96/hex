@@ -134,7 +134,10 @@ function threadOf(named: string) {
 function log(rows: Row[]) {
   const room = flags.room === undefined ? Infinity : Number(flags.room)
   if (!(room === Infinity || (Number.isInteger(room) && room > 0)) || (flags.room !== undefined && flags.json)) usage()
-  if (flags.json) return json(withThread(rows, row => row.to))
+  if (flags.json) {
+    const named = store.names()
+    return json(withThread(rows, row => row.to).map(row => (named[`${row.from}:${row.to}`] ? { ...row, threadId: `${row.from}:${row.to}` } : row)))
+  }
   const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
   const named = open(state!).names()
   const entries = rows.map(row => {

@@ -16,22 +16,31 @@ const BUSY = new Set(['busy', 'shell'])
 export const busy = (session?: Session) => !!session && BUSY.has(session.status)
 const busyness = (status: string) => (status === 'busy' ? 2 : status === 'shell' ? 1 : 0)
 
+// Each record Claude Code keeps of a live session process (sessions/<pid>.json), as it wrote it;
+// updated is when its status last changed, where Claude Code says.
+export type SessionRecord = { id: string; pid: number; status: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number }
+
+export function records(claude = CLAUDE): SessionRecord[] {
+  const dir = join(claude, 'sessions')
+  return list(dir).flatMap(name => {
+    const record = name.endsWith('.json') ? readJson(join(dir, name)) : undefined
+    if (!record?.sessionId || !alive(record.pid)) return []
+    const { sessionId: id, pid, status = 'idle', kind, name: title, cwd, startedAt = 0, statusUpdatedAt } = record
+    return [{ id, pid, status, kind, name: title, cwd, started: startedAt, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }) }]
+  })
+}
+
 // Every running session by id. Two records of one session count as the busiest (mid-turn, then a
 // shell still running, then anything else), and of two as busy, the newer.
 export function running(claude = CLAUDE): Map<string, Session> {
   const sessions = new Map<string, Session>()
-  const dir = join(claude, 'sessions')
-  for (const name of list(dir)) {
-    if (!name.endsWith('.json')) continue
-    const record = readJson(join(dir, name))
-    if (!record?.sessionId || !alive(record.pid)) continue
-    const { sessionId: id, pid, status = 'idle', kind, name: title, cwd, startedAt = 0 } = record
-    const at = record.statusUpdatedAt ?? startedAt
+  for (const { id, pid, status, kind, name, cwd, started, updated } of records(claude)) {
+    const at = updated ?? started
     const kept = sessions.get(id)
     if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && kept.at >= at))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    sessions.set(id, { id, pid, status, ...job, kind, name: title, cwd, started: startedAt, at })
+    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, at })
   }
   const byPid = new Map([...sessions.values()].map(session => [session.pid, session.id]))
   const parents = processParents()
