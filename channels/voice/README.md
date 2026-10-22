@@ -47,8 +47,8 @@ other apps:
    timeline order (by `start_ms`), so lines that arrive late still land in the
    right place.
 3. When the voice model hands off (`session.delegation.created`), the engine
-   waits for the first words spoken after that moment, so the request is fully
-   transcribed, then sends Claude everything said since the last handoff.
+   waits for the first words spoken after that moment, or 1.5 seconds, so the
+   request is fully transcribed, then sends Claude everything said since the last handoff.
    Every message to Claude carries the caller's local time (`time`), and the
    voice model is told the time the call started, so both can answer "the last
    ten minutes" without guessing.

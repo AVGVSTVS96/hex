@@ -475,7 +475,14 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
         call.spoke = Date.now()
         return hear(call, 'voice', event)
       case 'session.delegation.created':
-        if (event.delegation?.target === 'client') call.rings.push({ delegation: event.delegation.id, offset: event.offset_ms })
+        if (event.delegation?.target === 'client') {
+          const pending = { delegation: event.delegation.id, offset: event.offset_ms }
+          call.rings.push(pending)
+          setTimeout(() => {
+            const at = call.rings.indexOf(pending)
+            if (live === call && at >= 0) for (const due of call.rings.splice(0, at + 1)) ring(call, due)
+          }, 1500)
+        }
         return
       case 'session.commentary.appended':
       case 'session.thinking.appended':
