@@ -60,16 +60,31 @@ const servers = new Map<string, string>()
 
 mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 
-// A thread's link, once T3 Code has recorded it. A save asks for every thread at once, so T3's
-// records are read once per save.
-let recorded: Map<string, string> | undefined
+// T3 Code's records, read once per save, since a save asks for every thread's link at once. They
+// give a thread its link and its name, T3's title for it. A thread T3 deleted closes here too, as
+// does one T3 never recorded, once T3 has had a few minutes to record what hex just kept.
+const RECORDING = 5 * 60_000
+const kept = new Map<string, number>()
+let recorded: ReturnType<typeof appThreads> | null = null
 function link(thread: string) {
-  if (!recorded) {
+  if (recorded === null) {
     recorded = appThreads()
-    queueMicrotask(() => (recorded = undefined))
+    queueMicrotask(() => {
+      mirror(recorded)
+      recorded = null
+    })
   }
-  const opened = recorded.get(thread)
-  return opened && linkTo(opened)
+  const opened = recorded?.get(thread)
+  return opened && linkTo(opened.thread)
+}
+
+function mirror(records: ReturnType<typeof appThreads>) {
+  if (!records) return
+  for (const thread of hub.threads()) {
+    const record = records.get(thread)
+    if (record) hub.rename(thread, record.title || hub.name(thread)!)
+    else if (Date.now() - (kept.get(thread) ?? 0) > RECORDING) void hub.retire(thread)
+  }
 }
 
 const hub = startHub({
@@ -181,6 +196,7 @@ function keep(thread: string) {
   const waiting = opened.get(thread)
   if (!waiting) return
   opened.delete(thread)
+  kept.set(thread, Date.now())
   const folder = folderFor(waiting.cwd)
   hub.register(thread, basename(folder ?? HEX_DIR), folder)
   hub.configure(thread, waiting.settings)
@@ -364,6 +380,7 @@ async function place(name: string, _where?: string, _about?: string, cwd?: strin
   if (!projectId) throw new Error(`T3 Code has no project for ${root}`)
   const thread = randomUUID()
   const { threadId } = await withT3(call => call('server.importAcpRegistrySession', { instanceId: INSTANCE, projectId, sessionId: thread, title: name }))
+  kept.set(thread, Date.now())
   hub.register(thread, name, cwd)
   placed.add(thread)
   writeFileSync(PLACED_FILE, JSON.stringify([...placed].filter(known => hub.name(known))))
@@ -432,7 +449,7 @@ function serve(socket: Socket) {
     }))
     .onRequest('session/load', async ({ params, client }) => {
       remember(reopen(params.sessionId, params.cwd, socket), params.mcpServers)
-      for (const [i, { from, text }] of hub.history(params.sessionId).entries()) {
+      for (const [i, { from, text }] of hub.history(params.sessionId, true).entries()) {
         await client.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: from === 'me' ? 'user_message_chunk' : 'agent_message_chunk', messageId: `${hub.session(params.sessionId)}:${i}`, content: { type: 'text', text } } })
       }
       advertise(client, params.sessionId)

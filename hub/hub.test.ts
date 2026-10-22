@@ -78,6 +78,8 @@ function fold(received: { meta: { key: string } }[]) {
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
 function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
   const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = options
+  // A registered session has its conversation on disk, as one Claude Code ran does.
+  for (const { session, from } of Object.values<any>(options.registry ?? {})) for (const id of [session, from]) if (id) saved(id)
   if (options.registry) open(dir).keepThreads('telegram', Object.fromEntries(Object.entries<any>(options.stale ? before(options.registry) : options.registry).map(([thread, { from, ...known }]) => [thread, { ...known, fork: from }])))
   if (options.agents) writeFileSync(join(dir, 'agents'), JSON.stringify(options.agents))
   const seen: [string, boolean][] = (states = [])
@@ -745,21 +747,9 @@ test('a session that fails to start is reported with its reason, and the next me
   await until(() => calls().filter(args => args[0] === '--bg').length === 2)
 })
 
-// A launcher whose resumes fail as Claude Code fails one of a session no project folder has.
-function forgetting() {
-  const launcher = join(dir, 'launch')
-  writeFileSync(launcher, `#!/bin/sh
-case "$*" in *--resume*) echo "backgrounded · jobgone1 · test"; exit 0;; esac
-exec claude "$@"
-`)
-  chmodSync(launcher, 0o755)
-  mkdirSync(join(dir, 'jobs', 'jobgone1'))
-  writeFileSync(join(dir, 'jobs', 'jobgone1', 'state.json'), JSON.stringify({ state: 'failed', detail: `source session ${SESSION} not found` }))
-  return launcher
-}
-
 test('a thread whose session Claude Code no longer has starts a new one, which hears why when it connects', async () => {
-  start({ launcher: forgetting(), registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [] })
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [] })
+  rmSync(join(dir, 'projects'), { recursive: true })
   hub.deliver('chat:7', 'Desk anchors', message)
   expect(await launched()).not.toContain('--resume')
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
@@ -770,21 +760,21 @@ test('a thread whose session Claude Code no longer has starts a new one, which h
   expect(failures).toEqual([])
 })
 
-test("a resume Claude Code can't find, of a session another project folder has, fails and keeps the session", async () => {
-  start({ launcher: forgetting(), registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [] })
-  saved(SESSION, join(dir, 'elsewhere'))
-  hub.deliver('chat:7', 'Desk anchors', message)
-  await until(() => failures.length)
-  expect(failures).toEqual([['chat:7', `source session ${SESSION} not found`]])
-  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
-})
-
 test('a thread that would fork a session Claude Code no longer has starts a new one instead', async () => {
-  start({ launcher: forgetting(), registry: { 'chat:7': { name: 'Desk anchors', from: SESSION } }, agents: [] })
+  start({ registry: { 'chat:7': { name: 'Desk anchors', from: SESSION } }, agents: [] })
+  rmSync(join(dir, 'projects'), { recursive: true })
   hub.deliver('chat:7', 'Desk anchors', message)
   expect(await launched()).not.toContain('--resume')
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
   expect(failures).toEqual([])
+})
+
+test('a fork of a session just started, whose conversation is not on disk yet, still forks it', async () => {
+  start({ agents: [{ id: 'job12345', sessionId: SESSION, pid: EXITED, status: 'busy' }] })
+  hub.fork('chat:7', 'Desk anchors', SESSION, 'carry on')
+  const args = await launched()
+  expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 3)).toEqual(['--resume', SESSION, '--fork-session'])
+  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
 })
 
 test('a thread whose session failed to start starts again once another session connects, and gets the message that waited', async () => {
@@ -806,6 +796,7 @@ test('a thread whose session failed to start starts again once another session c
 
 test('a thread opened with a prompt, or as a fork, whose start failed starts again with it once another session connects', async () => {
   start()
+  saved()
   const starts = () => calls().filter(args => args[0] === '--bg')
   mkdirSync(join(dir, 'work'))
   hub.open('chat:8', 'OpenAI', 'find the latest model', join(dir, 'work'))
@@ -1812,6 +1803,7 @@ test('the main thread cannot be closed or released, nor a thread without a sessi
 
 test('an adopted thread clears the old job record, then resumes its session in its folder with the prompt last', async () => {
   start({ agents: [] })
+  saved(SESSION, dir)
   hub.adopt('chat:7', 'Desk anchors', SESSION, 'carry on', dir)
   const args = await launched()
   expect(calls().filter(args => args[0] !== 'agents' && args[0] !== 'daemon')[0]).toEqual(['rm', SESSION.slice(0, 8)])
@@ -1822,6 +1814,7 @@ test('an adopted thread clears the old job record, then resumes its session in i
 
 test('a fork resumes a copy of the session without checking agents or clearing its job record', async () => {
   start()
+  saved()
   hub.fork('chat:7', 'Desk anchors', SESSION, 'carry on')
   const args = await launched()
   const resume = args.indexOf('--resume')
@@ -1929,7 +1922,7 @@ function stored(rows: { author: string; body: string; from?: string; meta?: Reco
   for (const [i, { from = 'buzz', ...row }] of rows.entries()) store.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, session)
 }
 
-test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits, and a session's is what it took", () => {
+test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits, prompts only when asked for, and a session's is what it took", () => {
   stored([
     { author: 'owner', body: 'how full is your context?' },
     { author: 'hex', body: 'Roomy.\n\n## What loads\n\nthe rules' },
@@ -1946,6 +1939,7 @@ test("a thread's history is what the owner said and hex replied, headings and al
     { from: 'hex', text: 'Roomy.\n\n## What loads\n\nthe rules' },
     { from: 'me', text: 'thanks' },
   ])
+  expect(history(open(dir), 'chat:7', undefined, true).map(turn => turn.text)).toEqual(['how full is your context?', 'Roomy.\n\n## What loads\n\nthe rules', 'thanks', 'From General: the build passed.'])
   expect(history(open(dir), 'chat:9')).toEqual([])
   open(dir).db.query("update messages set at = '2026-10-01T00:00:00.000Z' where key = 'buzz:chat:7-0'").run()
   open(dir).db.query("update messages set taken_by = 'older-session' where key = 'buzz:chat:7-0'").run()
@@ -2041,6 +2035,7 @@ test('a mirror asked on hub.sock opens there, by the thread\'s name', async () =
 test('a thread that follows a session forks it with its first message, then keeps the fork as its own', async () => {
   const FORKED = '0a1b2c3d-2222-4000-8000-000000000000'
   start({ agents: [] })
+  saved()
   hub.follow('chat:7', 'Desk anchors', SESSION)
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', from: SESSION })
   hub.deliver('chat:7', 'Desk anchors', message)

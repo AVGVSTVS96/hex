@@ -546,6 +546,45 @@ test('a steer leaves the session running, its message reaches the session mid-tu
   expect(lines('calls').filter(line => line.startsWith('["stop"'))).toEqual([])
 })
 
+// T3's records of the hex threads it has: each key, its title and whether T3 deleted it.
+function recorded(threads: [string, string, boolean?][]) {
+  const userdata = join(dir, '.t3', 'userdata')
+  mkdirSync(userdata, { recursive: true })
+  writeFileSync(join(userdata, 'environment-id'), 'env-1\n')
+  const db = new Database(join(userdata, 'statev2.sqlite'))
+  db.run('create table orchestration_v2_projection_provider_threads (driver text, updated_at text, payload_json text)')
+  db.run('create table orchestration_v2_projection_threads (thread_id text, title text, deleted_at text)')
+  for (const [key, title, deleted] of threads) {
+    db.run("insert into orchestration_v2_projection_provider_threads values ('acpRegistry', '2026-10-21', ?)", [JSON.stringify({ nativeThreadRef: { nativeId: key }, appThreadId: `thread:${key}` })])
+    db.run('insert into orchestration_v2_projection_threads values (?, ?, ?)', [`thread:${key}`, title, deleted ? '2026-10-21' : null])
+  }
+  db.close()
+}
+
+test('a thread T3 deleted or never recorded closes in hex, and one T3 has goes by its T3 title', async () => {
+  const gone = 'deleted-0000-4000-8000-000000000000'
+  const never = 'never-00-0000-4000-8000-000000000000'
+  const live = 'live-000-0000-4000-8000-000000000000'
+  await restart(() => {
+    hexdb(join(dir, 'hex', 'state')).keepThreads('t3', { [gone]: { name: 'project' }, [never]: { name: 'project' }, [live]: { name: 'project' } })
+    recorded([[gone, 'old work', true], [live, 'voice: one line per file']])
+  })
+  await until(() => Object.keys(registered()).length === 1)
+  expect(registered()[live]).toMatchObject({ name: 'voice: one line per file', link: `t3code://threads/env-1/thread%3A${live}` })
+  expect(hexdb(join(dir, 'hex', 'state')).threads({ app: 't3' }).find(thread => thread.thread === gone)).toMatchObject({ open: false, name: 'project' })
+})
+
+test('a thread hex just kept stays open while T3 has yet to record it', async () => {
+  recorded([])
+  const { agent } = await t3()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
+  await until(() => lines('launched').length)
+  await until(() => registered()[sessionId])
+  await Bun.sleep(100)
+  expect(registered()[sessionId]).toMatchObject({ name: 'project' })
+})
+
 test('a chat with no project works in hex\'s folder', async () => {
   const { agent } = await t3()
   for (const cwd of [dir, join(dir, '.t3', 'scratch', 'chat'), project]) {

@@ -189,15 +189,18 @@ export function tappable(text: string): string {
   return text.replace(/buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/g, url => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`)
 }
 
-// A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as
-// first sent; with a session, from the first message that session took, the conversation it has.
-export function history(store: Store, thread: string, session?: string): Turn[] {
+// A thread's chat, oldest first: what the owner said that a session took in, with prompts too if
+// asked (a job's or another agent's, for the app that shows the session its own conversation), and
+// hex's replies as first sent; with a session, from the first message that session took, the
+// conversation it has.
+export function history(store: Store, thread: string, session?: string, prompts = false): Turn[] {
   const rows = store.said(thread)
   const start = session ? (rows.find(row => row.taken?.by === session)?.at ?? '9') : ''
   return rows.flatMap(row => {
     if (row.from === 'terminal' || !row.taken || row.at < start) return []
     if (replied(row)) return shown(row) ? [{ from: 'hex', text: row.body } as Turn] : []
-    const text = spoken(row) && row.author === 'owner' ? (row.from === 't3' ? asked(row.body) : row.body) : ''
+    const said = (spoken(row) && row.author === 'owner') || (prompts && row.author === 'prompt') ? row.body : ''
+    const text = row.from === 't3' ? asked(said) : said
     return text ? [{ from: 'me', text } as Turn] : []
   })
 }
@@ -625,6 +628,11 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   async function start(thread: string, prompt?: string, fork?: string) {
     const known = threads[thread]!
+    const { phase } = runOf(thread)
+    let source = fork ?? (known.session ? undefined : known.from)
+    if (source && (await lost(thread, source))) source = undefined
+    const session = !source && known.session && !fresh(thread) && !(await lost(thread, known.session)) ? known.session : undefined
+    if (runOf(thread).phase !== phase) return
     writeSettings(thread)
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (prompt) kept(store => store.deliver({ key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`, to: thread, from: 'hub', author: 'prompt', body: prompt, meta: {} }, 'hub'), false)
@@ -634,8 +642,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       known.launched = launched
       save()
     }
-    const source = fork ?? (known.session ? undefined : known.from)
-    const resume = source ? ['--resume', source, '--fork-session'] : known.session && !fresh(thread) ? ['--resume', known.session] : []
+    const resume = source ? ['--resume', source, '--fork-session'] : session ? ['--resume', session] : []
     try {
       watchJob(thread, await claude.start(launcher, ['--channels', channel, '--name', known.name, ...resume, ...launchArgs, '--settings', settingsOf(thread), ...(prompt ? [prompt] : [])], { cwd: known.cwd ?? hexDir, env: inherited }))
     } catch (error) {
@@ -669,7 +676,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const { phase } = run
     if (phase.is !== 'launching') return
     become(run, { is: 'stopped' })
-    if (lost(thread, reason)) return void launch(thread, threads[thread]!.name, { again: phase.again })
     if (run.renew === 'underway') run.renew = undefined
     const failing = (run.failing ??= { count: 0 })
     failing.count++
@@ -684,19 +690,18 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     setState(thread, false)
   }
 
-  // Claude Code failed a start for not finding the session it resumed or forked, and no project
-  // folder has its conversation, so the thread lets go of it once a note is kept that tells its
-  // next session why it starts without it. One another folder has fails as any start does.
-  function lost(thread: string, reason: string) {
+  // A session with no conversation on disk that Claude Code isn't running either can't be resumed or
+  // forked, so the thread lets go of it once a note is kept that tells its next session why it starts
+  // without it. A session just started has no conversation on disk yet, but it runs.
+  async function lost(thread: string, session: string) {
+    if (claude.saved(session) || (await claude.agents(serving)).some(agent => agent.sessionId === session)) return false
     const known = threads[thread]
     const run = runOf(thread)
-    const session = reason.match(/source session (\S+) not found/)?.[1]
-    if (!known || !session || ![known.session, known.from, run.opening?.fork].includes(session) || claude.saved(session)) return false
     const key = `hub:${thread}:lost:${session}`
     const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`
-    if (!kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
+    if (!known || !kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
     run.handed.add(key)
-    process.stderr.write(`hub: ${thread} lets go of session ${session}, which Claude Code can't find, and starts a new one\n`)
+    process.stderr.write(`hub: ${thread} lets go of session ${session}, which Claude Code doesn't have, and starts a new one\n`)
     if (known.session === session) delete known.session
     if (known.from === session) delete known.from
     if (run.opening?.fork === session) delete run.opening.fork
@@ -1116,7 +1121,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     release,
     adopt,
     follow,
-    history: (thread: string) => kept(store => history(store, thread, current(thread)), []),
+    history: (thread: string, prompts = false) => kept(store => history(store, thread, current(thread), prompts), []),
     retire,
     find,
     rename,

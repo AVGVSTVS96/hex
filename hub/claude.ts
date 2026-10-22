@@ -298,10 +298,17 @@ export function transcript(cwd: string, session: string) {
 // Whether any project folder has the session's conversation, or it can't be told.
 export function saved(session: string) {
   const projects = join(home(), 'projects')
+  const untold = (error: unknown) => !['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code!)
   try {
-    return readdirSync(projects).some(project => existsSync(join(projects, project, `${session}.jsonl`)))
+    return readdirSync(projects).some(project => {
+      try {
+        return !!statSync(join(projects, project, `${session}.jsonl`))
+      } catch (error) {
+        return untold(error)
+      }
+    })
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
+    return untold(error)
   }
 }
 
