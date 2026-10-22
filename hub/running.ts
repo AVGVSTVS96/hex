@@ -58,11 +58,12 @@ function environ(pid: number): Record<string, string> {
   }
 }
 
+// Claude Code's sessions are this user's processes, so a pid this user can't signal is another's.
 function alive(pid: unknown) {
   try {
     return Number.isInteger(pid) && (pid as number) > 0 && process.kill(pid as number, 0)
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  } catch {
+    return false
   }
 }
 

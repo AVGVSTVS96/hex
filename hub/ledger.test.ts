@@ -122,3 +122,9 @@ test("a pin with a note is the thread's status post: hex rewrites it from hex.db
   await ledger.rewrite('-100:8', 4096, slow, 'Site: example.net')
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', message: 11, text: 'Status: by hand again', at: expect.any(String) })
 })
+
+test("Telegram's bot.json, which nothing reads now, is renamed", () => {
+  writeFileSync(join(dir, 'telegram', 'bot.json'), '{"username":"hex_bot"}')
+  open(dir)
+  expect([existsSync(join(dir, 'telegram', 'bot.json')), existsSync(join(dir, 'telegram', 'bot.json.moved-to-hex.db'))]).toEqual([false, true])
+})

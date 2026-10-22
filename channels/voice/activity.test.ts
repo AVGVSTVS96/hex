@@ -168,14 +168,6 @@ test('a name more than one thread has finds none of them, and says where they ar
   expect(findThread(state, 'buzz:buzz-id')).toMatchObject({ app: 'buzz', id: 'buzz-id', name: 'hex' })
 })
 
-test("a thread's app:key comes before another's bare key, and a bare key two apps have finds neither", () => {
-  threads('buzz', { 'discord:x': { name: 'colon key' }, shared: { name: 'one' } })
-  threads('discord', { x: { name: 'plain' }, shared: { name: 'two' } })
-  expect(findThread(state, 'discord:x')).toMatchObject({ app: 'discord', id: 'x' })
-  expect(() => findThread(state, 'shared')).toThrow('more than one hex thread goes by shared, in buzz and discord: pass its app:key id, from hex threads --json')
-  expect(findThread(state, 'buzz:shared')).toMatchObject({ app: 'buzz', name: 'one' })
-})
-
 test("a message sent to a thread shows that thread's steps once it takes the message in, its agents' too, and is done when a turn ends with no agent out", async () => {
   mkdirSync(project, { recursive: true })
   const path = join(project, 's1.jsonl')

@@ -220,6 +220,12 @@ const migrations: (string | ((store: Store) => void))[] = [
   `create table turns (session text primary key, began text check (began ${UTC}), ended text check (ended ${UTC}));
   create table relays ("from" text not null, thread text not null, run text not null, at text not null check (at ${UTC}), primary key ("from", thread));`,
   carryRelays,
+  // A thread's key is hex's name for it everywhere (Telegram chat ids, Discord snowflakes, Buzz
+  // hashes, T3 Code UUIDs never meet), so messages, tasks, questions and pins keep it bare. A key
+  // two apps had anyway keeps its open, then newest, row.
+  `delete from threads where exists (select 1 from threads other where other.thread = threads.thread and (other.open, other.rowid) > (threads.open, threads.rowid));
+  create unique index if not exists threads_key on threads (thread);`,
+  ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -627,15 +633,16 @@ export class Store {
   }
 
   // An app's open threads as its hub keeps them. A thread left out has closed: it keeps its row, with
-  // its name and last session, for whatever reads one.
+  // its name and last session, for whatever reads one. A key is one thread's, so the app that keeps it
+  // last has it.
   keepThreads(app: string, open: Record<string, Kept>) {
     this.write(() => {
       this.db.query('update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))').run(app, JSON.stringify(Object.keys(open)))
       const keep = this.db.query(
         `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork, link) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-        on conflict (app, thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
+        on conflict (thread) do update set app = excluded.app, name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
           effort = excluded.effort, launched = excluded.launched, fork = excluded.fork, link = coalesce(excluded.link, link)
-        where (name, open, session, cwd, model, effort, launched, fork) is not (excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
+        where (app, name, open, session, cwd, model, effort, launched, fork) is not (excluded.app, excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
           or coalesce(excluded.link, link) is not link`,
       )
       for (const [thread, { name, session, cwd, model, effort, launched, fork, link }] of Object.entries(open))
@@ -651,17 +658,20 @@ export class Store {
     return rows.map(({ open, ...row }) => ({ ...(Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Omit<Thread, 'open'>), open: !!open }))
   }
 
-  // Each thread's name by its id, <app>:<key>, and by its bare key where only one app has that key.
+  // Each thread's name by its key.
   names(): Record<string, string> {
-    const threads = this.threads()
-    const apps = Object.groupBy(threads, ({ thread }) => thread)
-    return Object.fromEntries(threads.flatMap(({ app, thread, name }) => [[`${app}:${thread}`, name], ...(apps[thread]!.length === 1 ? [[thread, name]] : [])]))
+    return Object.assign(Object.create(null), Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name])))
   }
 
-  // Each bare key's thread as <app>:<key>, where only one app has that key.
+  // Each thread's id, <app>:<key>, the way every --json output names it, by its key.
   ids(): Record<string, string> {
-    const apps = Object.groupBy(this.threads(), ({ thread }) => thread)
-    return Object.fromEntries(Object.entries(apps).flatMap(([key, threads]) => (threads!.length === 1 ? [[key, `${threads![0]!.app}:${key}`]] : [])))
+    return Object.assign(Object.create(null), Object.fromEntries(this.threads().map(({ app, thread }) => [thread, `${app}:${thread}`])))
+  }
+
+  // A thread's key from its id, <app>:<key>, or from the key itself.
+  key(id: string): string {
+    const split = id.indexOf(':')
+    return split > 0 && this.db.query('select 1 from threads where app = ? limit 1').get(id.slice(0, split)) ? id.slice(split + 1) : id
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.

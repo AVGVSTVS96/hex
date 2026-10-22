@@ -8,7 +8,7 @@ import { zoneOf } from './schedule.ts'
 import { asked, open, type Row, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
-  hex deliver <from>:<id> --to <thread> [--user <name>] <words…>
+  hex deliver <from>[:<id>] --to <thread> [--user <name>] <words…>
   hex task new <message key> --title '<what the owner wants, in a few plain words>' [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
   hex task add <task> <message key> [--quote <part of it>]
   hex task quote <task> <message key> --quote <part of it>
@@ -63,9 +63,7 @@ if (args.length > takes) {
 // hex watch never opens hex.db, so a restore can replace it underneath.
 if (command === 'watch') await follow(join(state, 'hex.bell'))
 const store = open(state)
-// A thread named the way every --json output names it, <app>:<key>, is the bare key hex.db's
-// messages, tasks, questions and pins keep.
-for (const flag of ['owner', 'thread', 'to'] as const) flags[flag] &&= keyOf(flags[flag])
+for (const flag of ['owner', 'thread', 'to'] as const) flags[flag] &&= store.key(flags[flag])
 
 function usage(): never {
   console.error(USAGE)
@@ -100,7 +98,7 @@ async function recall(pattern: string) {
 }
 
 // Every --json output names a thread one way, as <app>:<key>: a thread's id, and the threadId of what
-// belongs to one (a task's owner, a message's thread, a question, a pin), where hex.db knows the app.
+// belongs to one (a task's owner, a message's thread, a question, a pin).
 function json(value: unknown) {
   console.log(JSON.stringify(value, null, 1))
 }
@@ -108,11 +106,6 @@ function json(value: unknown) {
 function withThread<T>(rows: T[], key: (row: T) => string) {
   const ids = store.ids()
   return rows.map(row => ({ ...row, ...(ids[key(row)] && { threadId: ids[key(row)] }) }))
-}
-
-function keyOf(id: string) {
-  const split = id.indexOf(':')
-  return split > 0 && store.threads({ app: id.slice(0, split) }).some(({ thread }) => thread === id.slice(split + 1)) ? id.slice(split + 1) : id
 }
 
 // A line once it's listening, then one within 50ms of each time hex.bell grows, as every commit to
@@ -144,15 +137,15 @@ function stray(word: string) {
 
 // A thread by its id, or by its name the way the hub finds one: any case, and only one thread.
 function threadOf(named: string) {
-  const nameOrThread = keyOf(named)
+  const key = store.key(named)
   const threads = store.threads()
-  if (threads.some(({ thread }) => thread === nameOrThread)) return nameOrThread
-  const wanted = nameOrThread.trim().toLowerCase()
+  if (threads.some(({ thread }) => thread === key)) return key
+  const wanted = named.trim().toLowerCase()
   const matches = [...new Set(threads.filter(({ name }) => name.toLowerCase() === wanted).map(({ thread }) => thread))]
-  if (matches.length > 1) throw new Error(`more than one thread is named "${nameOrThread}": ${matches.join(', ')}`)
+  if (matches.length > 1) throw new Error(`more than one thread is named "${named}": ${matches.join(', ')}`)
   if (matches[0]) return matches[0]
-  if (store.said(nameOrThread, 1).length) return nameOrThread
-  throw new Error(`no thread named "${nameOrThread}"`)
+  if (store.said(named, 1).length) return named
+  throw new Error(`no thread named "${named}"`)
 }
 
 // Messages as markdown, one heading each, in the owner's time zone, for rg to search. Within room,
@@ -162,16 +155,13 @@ function log(rows: Row[]) {
   const room = flags.room === undefined ? Infinity : Number(flags.room)
   if (!(room === Infinity || (Number.isInteger(room) && room > 0)) || (flags.room !== undefined && flags.json)) usage()
   rows = rows.map(row => (row.from === 't3' && row.author === 'owner' ? { ...row, body: asked(row.body) } : row))
-  if (flags.json) {
-    const named = store.names()
-    return json(withThread(rows, row => row.to).map(row => (named[`${row.from}:${row.to}`] ? { ...row, threadId: `${row.from}:${row.to}` } : row)))
-  }
+  if (flags.json) return json(withThread(rows, row => row.to))
   const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
-  const named = open(state!).names()
+  const named = store.names()
   const entries = rows.map(row => {
     const at = Temporal.Instant.from(row.at).toZonedDateTimeISO(zone).toPlainDateTime().toString().slice(0, 16).replace('T', ' ')
     const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : ''
-    const name = named[`${row.from}:${row.to}`] ?? named[row.to]
+    const name = named[row.to]
     const thread = name ? `${name} (${row.to})` : row.to
     const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
     const who = row.meta?.user && (row.author === 'prompt' || row.author === 'other') ? `${row.author} (${row.meta.user})` : row.author
@@ -226,10 +216,11 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
 try {
   switch (command) {
     case 'deliver': {
-      const [key, ...words] = args
-      const from = key?.split(':')[0]
-      if (!from || from === key || !flags.to || !words.length) usage()
-      store.deliver({ key: key!, to: flags.to, from, author: 'prompt', body: words.join(' '), meta: { user: flags.user ?? from } })
+      const [given, ...words] = args
+      const from = given?.split(':')[0]
+      if (!from || !flags.to || !words.length) usage()
+      const key = from === given ? `${from}:${crypto.randomUUID()}` : given!
+      store.deliver({ key, to: flags.to, from, author: 'prompt', body: words.join(' '), meta: { user: flags.user ?? from } })
       break
     }
     case 'task':
@@ -246,9 +237,9 @@ try {
     }
     case 'pins': {
       const pins = store.pins({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD) })
-      const names = new Map(store.threads().map(({ app, thread, name }) => [`${app}:${thread}`, name]))
+      const names = store.names()
       if (flags.json) json(pins.map(pin => ({ ...pin, threadId: `${pin.app}:${pin.thread}` })))
-      else console.log(pins.map(pin => `${pin.app} · ${names.get(`${pin.app}:${pin.thread}`) ?? pin.thread} · message ${pin.message} · ${(pin.note || pin.text).trim().split('\n')[0]}`).join('\n') || 'no pins')
+      else console.log(pins.map(pin => `${pin.app} · ${names[pin.thread] ?? pin.thread} · message ${pin.message} · ${(pin.note || pin.text).trim().split('\n')[0]}`).join('\n') || 'no pins')
       break
     }
     case 'threads': {

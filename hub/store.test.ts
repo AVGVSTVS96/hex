@@ -132,11 +132,18 @@ test('a change right after the one the bell just rang for is still heard', async
 })
 
 test('hex deliver says how to call it when something is missing', async () => {
-  for (const args of [['job:build:abc', 'no thread'], ['build', '--to', 'general', 'no sender']]) {
+  for (const args of [['job:build:abc', 'no thread'], ['build', '--to', 'general']]) {
     const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', ...args], { stderr: 'pipe' })
     expect(await cli.exited).toBe(2)
-    expect(await new Response(cli.stderr).text()).toContain('hex deliver <from>:<id> --to <thread>')
+    expect(await new Response(cli.stderr).text()).toContain('hex deliver <from>[:<id>] --to <thread>')
   }
+})
+
+test('hex deliver reaches a thread by its id, and a sender alone gets a key of its own', async () => {
+  open(dir).keepThreads('discord', { '1561': { name: 'Fixhex' } })
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'hex', '--to', 'discord:1561', '--user', 'hex General', 'look at the build'])
+  expect(await cli.exited).toBe(0)
+  expect(open(dir).said('1561', 1)).toMatchObject([{ key: expect.stringMatching(/^hex:[0-9a-f-]{36}$/), from: 'hex', author: 'prompt', body: 'look at the build', meta: { user: 'hex General' } }])
 })
 
 const ask = { ...message, key: 'telegram:-100:50', body: 'Fix the login page. Also the logo looks blurry on retina.' }
@@ -399,14 +406,27 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
   expect(store.threads({ app: 'telegram', open: true }).map(thread => thread.thread)).toEqual(['-100:7'])
 })
 
-test("a thread is named by <app>:<key>, and by its bare key only where one app has that key", async () => {
+test("a thread's key names it in every app, and its id is <app>:<key>", async () => {
   const store = new Store(dir)
   store.keepThreads('discord', { '1561': { name: 'Fixhex' }, '1562': { name: 'Deck' } })
-  store.keepThreads('buzz', { '1561': { name: 'Lab' } })
-  expect(store.names()).toEqual({ 'discord:1561': 'Fixhex', 'discord:1562': 'Deck', '1562': 'Deck', 'buzz:1561': 'Lab' })
-  expect(store.ids()).toEqual({ '1562': 'discord:1562' })
+  store.keepThreads('telegram', { '-100:7': { name: 'Lab' } })
+  store.keepThreads('buzz', { '1561': { name: 'Lab' }, abc: { name: 'Buzz lab' } })
+  expect(store.threads({ app: 'buzz' }).map(({ thread }) => thread)).toEqual(['1561', 'abc'])
+  store.keepThreads('discord', { '1561': { name: 'Fixhex' }, '1562': { name: 'Deck' } })
+  expect(store.names()).toEqual({ '1561': 'Fixhex', '1562': 'Deck', '-100:7': 'Lab', abc: 'Buzz lab' })
+  expect(store.ids()).toEqual({ '1561': 'discord:1561', '1562': 'discord:1562', '-100:7': 'telegram:-100:7', abc: 'buzz:abc' })
+  expect(['discord:1561', '1561', 'telegram:-100:7', '-100:7', 'slack:1', 'abc', 'constructor'].map(id => store.key(id))).toEqual(['1561', '1561', '-100:7', '-100:7', 'slack:1', 'abc', 'constructor'])
+  expect([store.names().constructor, store.ids().constructor]).toEqual([undefined, undefined])
   const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'threads', '--json'], { stdout: 'pipe' })
-  expect(JSON.parse(await new Response(cli.stdout).text()).map(({ id }: { id: string }) => id)).toEqual(['buzz:1561', 'discord:1561', 'discord:1562'])
+  expect(JSON.parse(await new Response(cli.stdout).text()).map(({ id }: { id: string }) => id)).toEqual(['buzz:abc', 'discord:1561', 'discord:1562', 'telegram:-100:7'])
+})
+
+test('a key two apps had before keys were global keeps its open, then newest, row', () => {
+  const store = new Store(dir)
+  store.db.run('drop index threads_key; pragma user_version = 23')
+  store.db.run("insert into threads (app, thread, name, open) values ('buzz', 'k', 'old', 0), ('discord', 'k', 'live', 1), ('t3', 'k', 'closed too', 0), ('buzz', 'j', 'first', 0), ('t3', 'j', 'later', 0)")
+  store.db.close()
+  expect(new Store(dir).threads().map(({ app, thread }) => `${app}:${thread}`)).toEqual(['discord:k', 't3:j'])
 })
 
 test("what a session was shown is kept per kind, until its context loses it", () => {

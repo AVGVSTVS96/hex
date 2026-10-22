@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, renameSync, watch, writeFileSync } from 'fs'
+import { readFileSync, renameSync, watch, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { noteOf, type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
@@ -232,7 +232,7 @@ export class Questions extends Changes {
     this.pins.clear()
     const questions = store(this.state).questions()
     for (const thread of store(this.state).threads()) this.threads.set(`${thread.app}:${thread.thread}`, thread)
-    for (const app of apps(this.state)) this.ledgers.set(app, questions.filter(question => question.app === app))
+    this.ledgers = Map.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app)
     for (const pin of store(this.state).pins()) if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin)
     this.result = readJson(join(this.state, 'voice', 'check.json'))
     this.notice()
@@ -374,14 +374,6 @@ function plain(text: string) {
 
 function clip(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
-}
-
-function apps(state: string) {
-  try {
-    return readdirSync(state).filter(app => app !== 'voice')
-  } catch {
-    return []
-  }
 }
 
 function readMarks(file: string): Marks {
