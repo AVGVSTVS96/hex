@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite'
+import { createHash } from 'crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 
@@ -207,7 +208,7 @@ const migrations: (string | ((store: Store) => void))[] = [
     at text not null check (at ${UTC}),
     primary key (app, thread)
   );
-  create table files (path text primary key, mtime real not null);`,
+  create table files (name text primary key, digest text not null);`,
 ]
 
 const now = () => new Date().toISOString()
@@ -663,19 +664,21 @@ export class Store {
     })
   }
 
-  // Runs take with an older hex's file when it changed since hex.db last took it in, so a file an
-  // older hex writes again (after a rollback) comes in again, and one nothing wrote since stays out.
-  takeIn(file: string, take: (text: string) => void) {
-    let mtime: number
+  // Runs take with what an older hex keeps in a file, under a name of its own, when the file says
+  // something else than when hex.db last took it in: the first time, and after an older hex (rolled
+  // back to) wrote it again. A copy, move or touch of the same words changes nothing.
+  takeIn(name: string, file: string, take: (text: string) => void) {
+    let text: string
     try {
-      mtime = statSync(file).mtimeMs
+      text = readFileSync(file, 'utf8')
     } catch {
       return
     }
+    const digest = createHash('sha256').update(text).digest('hex')
     this.write(() => {
-      if ((this.db.query('select mtime from files where path = ?').get(file) as { mtime: number } | null)?.mtime === mtime) return
-      take(readFileSync(file, 'utf8'))
-      this.db.query('insert into files (path, mtime) values (?, ?) on conflict (path) do update set mtime = excluded.mtime').run(file, mtime)
+      if ((this.db.query('select digest from files where name = ?').get(name) as { digest: string } | null)?.digest === digest) return
+      take(text)
+      this.db.query('insert into files (name, digest) values (?, ?) on conflict (name) do update set digest = excluded.digest').run(name, digest)
     })
   }
 
