@@ -59,7 +59,7 @@ Do not generate <|SpawnThinking|> when:
 - You can answer from the conversation or a still-current result.
 - You need a brief clarification to understand the request.
 
-Generate <|SpawnThinking|> before giving an answer that depends on backend work.
+Generate <|SpawnThinking|> before giving an answer that depends on backend work, then tell the caller in a few words that you're on it.
 Do not guess the result while waiting.
 Say something is done only when the backend says so.`
 
@@ -76,7 +76,6 @@ type Live = {
   changes: Changes
   spoke: number
   warning?: ReturnType<typeof setTimeout>
-  quiet?: ReturnType<typeof setTimeout>
   speak?: (audio: string) => void
 }
 type Placed = { to: string; why?: string; started: string; session?: string }
@@ -330,12 +329,6 @@ function hear(call: Live, who: Speaker, event: { delta: string; start_ms: number
   call.call.hear({ who, text: event.delta, start: event.start_ms, end: event.end_ms })
   call.changes.changed()
   while (call.rings[0] && call.rings[0].offset <= event.start_ms) ring(call, call.rings.shift()!)
-  waitForQuiet(call)
-}
-
-function waitForQuiet(call: Live) {
-  clearTimeout(call.quiet)
-  if (call.rings.length) call.quiet = setTimeout(() => live === call && call.rings.splice(0).forEach(due => ring(call, due)), 1500)
 }
 
 const ENDINGS: Record<Ending, string> = {
@@ -353,7 +346,6 @@ function finish(call: Live, reason: string, by?: string) {
   live = undefined
   ended = call.id
   clearTimeout(call.warning)
-  clearTimeout(call.quiet)
   const end = ending(reason, by)
   for (const pending of call.pending.values()) pending.reject(new Error(`the call ended (${reason})`))
   for (const pending of call.rings) ring(call, pending)
@@ -483,10 +475,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
         call.spoke = Date.now()
         return hear(call, 'voice', event)
       case 'session.delegation.created':
-        if (event.delegation?.target === 'client') {
-          call.rings.push({ delegation: event.delegation.id, offset: event.offset_ms })
-          waitForQuiet(call)
-        }
+        if (event.delegation?.target === 'client') call.rings.push({ delegation: event.delegation.id, offset: event.offset_ms })
         return
       case 'session.commentary.appended':
       case 'session.thinking.appended':
