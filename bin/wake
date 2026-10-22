@@ -1,50 +1,62 @@
 #!/usr/bin/env bun
-import { accessSync, constants } from 'fs'
-import { resolve } from 'path'
-import { handover, split } from '../hub/fit.ts'
-import { open } from '../hub/store.ts'
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { dirname, join, resolve } from 'path'
+import { open, stateDir } from '../hub/store.ts'
 
 // What a session knows as it starts and after a compaction: the owner's profile, which hex's memory
-// agent keeps current, then memory. `wake all` is the whole of it, for the launcher's wake file;
-// `wake <n> [last]` is the nth of the hooks that hand it to any other session.
+// agent keeps current, then memory. It goes in state/wake/CLAUDE.md, which HEX.md imports, so Claude
+// Code loads it into every session in the hex folder; the launcher and each memory pass rewrite it.
 
 const memo = resolve(import.meta.dir, '../vendor/memo')
-const state = process.env.HEX_STORE ?? resolve(import.meta.dir, '../../state')
+const home = resolve(import.meta.dir, '../..')
+const wake = resolve(home, 'state/wake/CLAUDE.md')
 const lead = 'This is what you know as this session starts and after each compaction: my profile, then your memory as `.hex/vendor/memo wake` prints it, which hex loads for you. The memory\'s numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one.'
-const stopped = 'hex ran `.hex/vendor/memo wake` for you, and it stopped before waking. Before anything else, do what it asks, then run it again and read it to the end.'
-const failed = 'hex ran `.hex/vendor/memo wake` for you, and it failed, so your memory may be missing or cut short this time.'
-
-// A profile hex.db can't give drops out of the wake, not the memory with it.
-function mine() {
-  let text = ''
-  try {
-    text = open(state).profile()
-  } catch (error) {
-    process.stderr.write(`hex couldn't read the profile: ${error}\n`)
-  }
-  return text && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${text}\n`
-}
 
 const awake = (part: string) => /^You are awake\.$/m.test(part)
 
 // memo prints its wake in parts, each under a header and ending with the command for the next, which
 // go as hex joins them, and the last says "You are awake." unless it stopped. A compression it asks
 // for after that goes too: the memory agent does them.
-function memory() {
+function memory(env: Record<string, string | undefined>) {
   let text = ''
   for (let args = ['wake']; ; ) {
-    const run = Bun.spawnSync([memo, ...args], { stdout: 'pipe', stderr: 'pipe' })
+    const run = Bun.spawnSync([memo, ...args], { env, stdout: 'pipe', stderr: 'pipe', timeout: 60_000 })
     const part = (run.stdout.toString() + run.stderr.toString()).replace(/^Your memory, part \d+ of \d+, .*\n/m, '')
     const next = part.match(/^Not awake yet\. Run: .* wake (\d+) (\d+)\n?/m)
     if (next) {
       text += part.replace(next[0], '')
       args = ['wake', next[1]!, next[2]!]
-    } else if (awake(part)) return { text: `Your memory, oldest first:\n\n${text}${part.replace(/^(You are awake\.)$[\s\S]*/m, '$1\n')}`, end: part }
-    else return { text: text + part, end: part }
+    } else if (awake(part)) return { text: `Your memory, oldest first:\n\n${text}${part.replace(/^(You are awake\.)$[\s\S]*/m, '$1\n')}` }
+    else return { text: '', why: part.trim().split('\n')[0] || 'nothing' }
   }
 }
 
-const [mode, last] = process.argv.slice(2)
+// Where memory is: the hex folder's settings, or else the environment. Settings that don't parse
+// right now say nothing either way (null), so the last wake stays.
+function memoryDir(): string | undefined | null {
+  let text
+  try {
+    text = readFileSync(resolve(home, '.claude/settings.json'), 'utf8')
+  } catch {
+    return process.env.MEMORY_DIR || undefined
+  }
+  try {
+    return JSON.parse(text).env?.MEMORY_DIR || process.env.MEMORY_DIR || undefined
+  } catch {
+    return null
+  }
+}
+
+// A profile hex.db can't give drops out of the wake, not the memory with it.
+function mine() {
+  try {
+    return open(stateDir()).profile()
+  } catch (error) {
+    process.stderr.write(`hex couldn't read the profile: ${error}\n`)
+    return ''
+  }
+}
+
 const runs = () => {
   try {
     accessSync(memo, constants.X_OK)
@@ -53,21 +65,66 @@ const runs = () => {
     return false
   }
 }
-if (!runs() || !process.env.MEMORY_DIR) process.exit(0)
 
-if (mode === 'all') {
-  const { text, end } = memory()
-  // A wake that holds no memory makes no wake file. One that stopped to ask for a compression exits 1,
-  // so the launcher keeps the last wake; one that failed prints nothing, as with memory off.
-  if (!awake(end)) {
-    process.stderr.write(`${end.split('\n')[0]}\n`)
-    process.exit(/^Cannot wake:/m.test(end) ? 1 : 0)
-  }
-  const head = mine()
-  console.log(`${lead}\n\n${head && `${head}\n`}${text.trimEnd()}`)
-} else if (!process.env.HEX_WAKE) {
-  const { text, end } = memory()
-  // The profile is a part of its own, so a profile rewritten while the hooks run can't move where the memory splits.
-  const parts = [mine(), ...split(text)].filter(part => part.trim())
-  process.stdout.write(handover(parts, Number(mode), last === 'last', awake(end) ? lead : /^Cannot wake:/m.test(end) ? stopped : failed, `${memo} wake prints the whole memory; follow its "Not awake yet" lines to the end.`))
+// A session started before the wake moved into HEX.md's import still runs six `wake <n>` hooks;
+// they have nothing to do. (Remove once no session predates this release.)
+if (process.argv[2]) process.exit(0)
+
+const dir = memoryDir()
+
+function write(text: string) {
+  mkdirSync(dirname(wake), { recursive: true })
+  writeFileSync(`${wake}.${process.pid}`, text)
+  renameSync(`${wake}.${process.pid}`, wake)
 }
+
+// One wake at a time, so a slower one can't put older memory over a newer one: a lock folder
+// holding its owner's pid, taken over once that process is gone.
+function locked(fn: () => void) {
+  const lock = `${wake}.lock`
+  const pid = join(lock, 'pid')
+  const held = () => {
+    const owner = Number(existsSync(pid) ? readFileSync(pid, 'utf8') : 0)
+    if (!owner) return Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? 0) < 5_000
+    try {
+      return process.kill(owner, 0)
+    } catch {
+      return false
+    }
+  }
+  mkdirSync(dirname(wake), { recursive: true })
+  // A writer still going after this long is stuck; the wake it's writing is as new as this one's.
+  for (const until = Date.now() + 3 * 60_000; ; ) {
+    try {
+      mkdirSync(lock)
+      break
+    } catch {
+      if (Date.now() > until) return
+      if (held()) Bun.sleepSync(100)
+      else rmSync(lock, { recursive: true, force: true })
+    }
+  }
+  writeFileSync(pid, String(process.pid))
+  try {
+    fn()
+  } finally {
+    rmSync(lock, { recursive: true, force: true })
+  }
+}
+
+// With memory off there's no wake file. A wake that failed, or stopped to ask for a compression,
+// keeps the last one, which still holds the memory, and says so.
+if (dir === undefined) rmSync(wake, { force: true })
+else if (dir && runs()) locked(() => {
+  const { text, why } = memory({ ...process.env, MEMORY_DIR: dir })
+  if (text) {
+    const profile = mine()
+    const body = `${profile && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${profile}\n\n`}${text.trimEnd()}`
+    // In a fence, so Claude Code reads no `@path` in memory as an import.
+    const fence = '`'.repeat(Math.max(3, 1 + Math.max(0, ...(body.match(/`+/g) ?? []).map(run => run.length))))
+    write(`${lead}\n\n${fence}\n${body}\n${fence}\n`)
+  } else if (existsSync(wake) && readFileSync(wake, 'utf8').includes(`\n\n`)) {
+    const kept = readFileSync(wake, 'utf8')
+    write(`${lead} It's the last one hex could load: \`.hex/vendor/memo wake\` has since said \`${why.replace(/`/g, "'")}\`, so newer memories may be missing; \`.hex/vendor/memo recall <regex>\` finds them.${kept.slice(kept.indexOf('\n\n'))}`)
+  }
+})

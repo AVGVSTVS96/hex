@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { open } from '../../hub/store.ts'
@@ -30,10 +30,10 @@ afterEach(() => {
   rmSync(bin, { recursive: true, force: true })
 })
 
-function claude(agents: object[] | string) {
-  const out = typeof agents === 'string' ? agents : JSON.stringify(agents)
-  writeFileSync(join(bin, 'claude'), `#!/bin/sh\ncat <<'END'\n${out}\nEND\n`)
-  chmodSync(join(bin, 'claude'), 0o755)
+// Running Claude Code sessions, as Claude Code records them while their process lives.
+function running(sessions: object[]) {
+  mkdirSync(join(home, '.claude/sessions'), { recursive: true })
+  sessions.forEach((session, n) => writeFileSync(join(home, `.claude/sessions/${n}.json`), JSON.stringify({ pid: process.pid, sessionId: `${n}0000000-s`, ...session })))
 }
 
 function hook() {
@@ -52,11 +52,12 @@ test('finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
     dentist: { cron: '30 9 14 3 *', prompt: 'x' },
     treat: { at: ['2020-10-20 16:00', '2999-10-20 16:00'], prompt: 'x' },
   }))
-  claude([
-    { kind: 'background', state: 'working', name: 'General', cwd: home, startedAt: 2 },
-    { kind: 'background', state: 'working', name: 'Topic', cwd: join(home, 'sub'), startedAt: 3 },
-    { kind: 'background', state: 'blocked', name: 'Elsewhere', cwd: `${home}-other`, startedAt: 1 },
-    { kind: 'interactive', state: 'working', name: 'Terminal', cwd: home, startedAt: 1 },
+  running([
+    { kind: 'bg', status: 'busy', name: 'General', cwd: home, startedAt: 2 },
+    { kind: 'bg', status: 'busy', name: 'Topic', cwd: join(home, 'sub'), startedAt: 3 },
+    { kind: 'bg', status: 'idle', name: 'Elsewhere', cwd: `${home}-other`, startedAt: 1 },
+    { kind: 'interactive', status: 'busy', name: 'Terminal', cwd: home, startedAt: 1 },
+    { kind: 'bg', status: 'busy', name: 'Gone', cwd: home, startedAt: 4, pid: 2 ** 22 + 1 },
   ])
   const out = hook()
   expect(out).toContain('- idea (0m ago): Try an idea')
@@ -65,8 +66,9 @@ test('finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
   expect(out).toMatch(/- \w{3} Oct 20 4:00PM: treat\n/)
   expect(out.match(/: treat/g)).toHaveLength(1)
   expect(out).not.toContain('heartbeat')
-  expect(out).toContain('- working (2): Topic, General')
+  expect(out).toContain('- busy (2): Topic, General')
   expect(out).not.toContain('Elsewhere')
+  expect(out).not.toContain('Gone')
   expect(out).not.toContain('Terminal')
 })
 
@@ -83,7 +85,9 @@ test("lists each thread active in the last day with its last message, skipping w
   said('terminal:1', '1', 'hex', 'watered', 88)
   said('telegram:3', '2', 'owner', 'old', 3000)
   said('discord:4', '3', 'owner', 'fire it\nat noon', 5)
-  claude([{ kind: 'background', state: 'blocked', sessionId: 'cccccccc-1', cwd: home }])
+  running([{ kind: 'bg', status: 'idle', sessionId: 'cccccccc-1', cwd: home }])
+  mkdirSync(join(home, '.claude/jobs/cccccccc'), { recursive: true })
+  writeFileSync(join(home, '.claude/jobs/cccccccc/state.json'), JSON.stringify({ state: 'blocked' }))
   const out = hook()
   expect(out).toContain('- Kiln (discord, blocked, 5m ago) owner: fire it at noon\n- Garden (telegram, 1h ago) hex: Done. Beds watered. ## not a header\n')
   expect(out).not.toContain('Stale')
@@ -91,11 +95,10 @@ test("lists each thread active in the last day with its last message, skipping w
 
 test('drops a section it cannot read, and says none for one that is empty', () => {
   writeFileSync(join(home, 'schedules.json'), JSON.stringify({ broken: { cron: '0 9 31 2 *' } }))
-  claude('not json')
   const out = hook()
   expect(out).toContain('Unmerged hex branches')
   expect(out).not.toContain('Upcoming one-off jobs')
-  expect(out).not.toContain('background sessions')
+  expect(out).toContain('background sessions running, by state (`hex running`):\n- none')
 })
 
 test('stays quiet and exits 0 when neither git nor claude can run', () => {

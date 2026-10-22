@@ -1,46 +1,46 @@
-import { readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname } from 'path'
 import { statusPost } from './status.ts'
-import { open, storeDir, type MessageId, type Question, type Store } from './store.ts'
+import { open, storeDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
 
-export type { Answer, MessageId, Question } from './store.ts'
-// A pin with a note is the thread's status post: hex writes it as the note over the thread's
-// questions and tasks (status.ts).
-export type Pin = { message: MessageId; text: string; at: string; note?: string }
+export type { Answer, MessageId, Pin, Question } from './store.ts'
 
 // What a pin says in its session's own words: a status post's note, or all of a pin written by hand.
 export const noteOf = (pin: Pin) => pin.note ?? pin.text
-type Book = { pins: Record<string, Pin>; asks?: Omit<Question, 'app'>[] }
 type Edit = (thread: string, message: MessageId, text: string) => Promise<unknown>
 
-// One app's questions, which hex.db keeps (store.ts) so every reader sees the same answer, and
-// each thread's pinned status post as last written, in the app's ledger.json. The client that
-// sends and edits the messages keeps it.
+// One app's questions and each thread's pinned post, which hex.db keeps (store.ts) so every reader
+// sees the same ones. The client that sends and edits the messages keeps them.
 export class Ledger {
-  private book: Book
   private readonly store: Store
   private rewriting = new Map<string, Promise<void>>()
 
+  // file: the app's ledger.json, where an older hex kept these. Whenever it says something else than
+  // when hex.db last took it in, what it changed since (the older hex's doing) comes in: each pin it
+  // took away or moved to another message, an edit to a pin hex.db still has, and each question it added.
   constructor(
-    private file: string,
+    file: string,
     private readonly app: string,
   ) {
     this.store = open(storeDir(dirname(file)))
-    this.book = read(file)
-    // The questions an older hex kept in this file move into hex.db, once.
-    if (this.book.asks) {
-      const kept = this.book.asks
-      this.store.write(() => {
-        for (const question of kept) {
-          try {
-            this.store.ask({ app: this.app, ...question })
-          } catch (error) {
-            process.stderr.write(`hub: left out a question ${file} kept that hex.db refuses (${error}): ${JSON.stringify(question)}\n`)
-          }
-        }
-      })
-      delete this.book.asks
-      this.save()
+    this.store.takeIn(`${app}/ledger.json`, file, (now, before) => {
+      const [book, was] = [now, before ?? '{}'].map(text => read(text, file))
+      if (!book) return false
+      for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
+        const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)]
+        if (JSON.stringify(pin) === JSON.stringify(old)) continue
+        if (!pin) this.store.unpinned(app, thread, old?.message)
+        else if (pin.message !== old?.message || this.store.pin(app, thread)?.message === old?.message) keep(() => this.store.pinned({ ...pin, app, thread }), pin)
+      }
+      const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
+      for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => this.store.ask({ app, ...question }), question)
+    })
+
+    function keep(take: () => unknown, kept: unknown) {
+      try {
+        take()
+      } catch (error) {
+        process.stderr.write(`hub: left out ${JSON.stringify(kept)} from ${file}, which hex.db refuses: ${error}\n`)
+      }
     }
   }
 
@@ -49,12 +49,12 @@ export class Ledger {
   }
 
   pin(thread: string): Pin | undefined {
-    return this.book.pins[thread]
+    return this.store.pin(this.app, thread) ?? undefined
   }
 
   // The threads whose pin is their status post.
   posts(): string[] {
-    return Object.entries(this.book.pins).flatMap(([thread, pin]) => (pin.note === undefined ? [] : [thread]))
+    return this.store.pins({ app: this.app }).flatMap(pin => (pin.note === undefined ? [] : [pin.thread]))
   }
 
   // Rewrites the thread's status post if what it should say changed: a new note, or its questions
@@ -64,16 +64,17 @@ export class Ledger {
     const next = (this.rewriting.get(thread) ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
-        const pin = this.book.pins[thread]
+        const pin = this.pin(thread)
         const said = note ?? pin?.note
         if (!pin || said === undefined) return
         const text = statusPost(this.store, thread, said, room)
         if (text === pin.text && said === pin.note) return
         if (text !== pin.text) await edit(thread, pin.message, text)
-        const still = this.book.pins[thread]
-        if (still?.message !== pin.message || still.note !== pin.note) return
-        this.book.pins[thread] = { message: pin.message, text, at: now(), note: said }
-        this.save()
+        this.store.write(() => {
+          const still = this.pin(thread)
+          if (still?.message !== pin.message || still.note !== pin.note) return
+          this.store.pinned({ app: this.app, thread, message: pin.message, text, note: said })
+        })
       })
     this.rewriting.set(thread, next)
     return next
@@ -115,61 +116,44 @@ export class Ledger {
   // A question's or a pinned post's latest words. A question stays open through an edit: it's
   // settled only by saying so.
   edited(thread: string, message: MessageId, text: string) {
-    this.store.reworded(this.app, thread, message, text)
-    const pin = this.book.pins[thread]
-    if (pin?.message !== message) return
-    this.book.pins[thread] = { ...pin, text, at: now() }
-    this.save()
+    this.store.write(() => {
+      this.store.reworded(this.app, thread, message, text)
+      const pin = this.pin(thread)
+      if (pin?.message === message) this.store.pinned({ app: this.app, thread, message, text, note: pin.note })
+    })
   }
 
   pinned(thread: string, message: MessageId, text = '', note?: string) {
-    this.book.pins[thread] = { message, text, at: now(), ...(note !== undefined && { note }) }
-    this.save()
+    this.store.pinned({ app: this.app, thread, message, text, note })
   }
 
   unpinned(thread: string, message: MessageId) {
-    if (this.book.pins[thread]?.message !== message) return
-    delete this.book.pins[thread]
-    this.save()
+    this.store.unpinned(this.app, thread, message)
   }
 
   deleted(thread: string, message: MessageId) {
-    this.store.unask(this.app, thread, message)
-    if (this.book.pins[thread]?.message !== message) return
-    delete this.book.pins[thread]
-    this.save()
+    this.store.write(() => {
+      this.store.unask(this.app, thread, message)
+      this.store.unpinned(this.app, thread, message)
+    })
   }
 
   forget(thread: string) {
-    this.store.unask(this.app, thread)
-    delete this.book.pins[thread]
-    this.save()
-  }
-
-  private save() {
-    writeFileSync(`${this.file}.tmp`, JSON.stringify(this.book, null, 1) + '\n')
-    renameSync(`${this.file}.tmp`, this.file)
+    this.store.write(() => {
+      this.store.unask(this.app, thread)
+      this.store.unpinned(this.app, thread)
+    })
   }
 }
 
-function read(file: string): Book {
-  let text: string
+type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
+
+function read(text: string, file: string): Book | undefined {
   try {
-    text = readFileSync(file, 'utf8')
-  } catch {
-    return { pins: {} }
-  }
-  try {
-    const book = JSON.parse(text)
-    return { pins: book.pins ?? {}, ...(Array.isArray(book.asks) && { asks: book.asks }) }
+    const book = JSON.parse(text) ?? {}
+    const pinned = ([, pin]: [string, any]) => ['number', 'string'].includes(typeof pin?.message)
+    return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries<any>(book.pins).filter(pinned) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
   } catch (error) {
-    const aside = `${file}.corrupt-${Date.now()}`
-    renameSync(file, aside)
-    process.stderr.write(`hub: ${file} is unreadable (${error}), moved it to ${aside} and started a new ledger\n`)
-    return { pins: {} }
+    process.stderr.write(`hub: ${file} is unreadable, so hex.db left it out: ${error}\n`)
   }
-}
-
-function now() {
-  return new Date().toISOString()
 }

@@ -1,13 +1,35 @@
 #!/bin/sh
 # Runs from bin/update after the merge, as its own process, so a release's migrations run on the update that brings them.
+# Each step runs once, in order: state/migrated holds the number of the last one done, as hex.db's user_version does. A new one is the next stepN, and steps counts it.
 set -eu
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
+done="$home/state/migrated"
 
-if [ "$(jq -r '.memory.prompt // empty' "$home/schedules.json")" = 'Nightly memory pass, see "Memory" in .hex/HEX.md' ]; then
+steps=3
+
+step1() {
+  [ -f "$home/schedules.json" ] || return 0
+  prompt=$(jq -r '.memory.prompt // empty' "$home/schedules.json") || return
+  [ "$prompt" = 'Nightly memory pass, see "Memory" in .hex/HEX.md' ] || return 0
   jq 'del(.memory)' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
-fi
-if [ "$(jq -r '.heartbeat.prompt // empty' "$home/schedules.json")" = 'Hourly check, see "Heartbeat" in .hex/HEX.md' ]; then
+}
+
+step2() {
+  [ -f "$home/schedules.json" ] || return 0
+  prompt=$(jq -r '.heartbeat.prompt // empty' "$home/schedules.json") || return
+  [ "$prompt" = 'Hourly check, see "Heartbeat" in .hex/HEX.md' ] || return 0
   jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt = $defaults[0].heartbeat.prompt' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
-fi
-bun "$hex/hub/past.ts" "$home" || echo "hex couldn't bring log/ into hex.db this time; the next update tries again" >&2
+}
+
+step3() {
+  bun "$hex/hub/past.ts" "$home"
+}
+
+n=$(cat "$done" 2>/dev/null) || n=0
+case $n in '' | *[!0-9]*) n=0 ;; esac
+while [ "$n" -lt "$steps" ]; do
+  n=$((n + 1))
+  "step$n" || { echo "hex couldn't run migration $n this time; the next update tries it again" >&2; break; }
+  echo "$n" > "$done.new" && mv "$done.new" "$done"
+done

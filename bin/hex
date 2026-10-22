@@ -43,6 +43,7 @@ case "${1:-}" in
     fi
     "$hex/bin/optmem"
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
+    HEX_STORE="$home/state" MEMORY_DIR="$home/memory" "$hex/bin/wake" || :
     chmod 700 "$home" "$home/state"
     [ -d "$home/.git" ] || { git -C "$home" init -q && git -C "$home" add -A && git -C "$home" commit -qm "A new hex"; }
     echo "hex is set up in $home"
@@ -97,7 +98,7 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
-  deliver|task|tasks|questions|threads|message|profile|log|recall)
+  deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
@@ -113,7 +114,7 @@ case "${1:-}" in
     fi
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|threads|message|profile|log|recall" >&2
+    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall" >&2
     exit 2
     ;;
 esac

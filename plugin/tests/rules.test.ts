@@ -81,3 +81,12 @@ test('a session that started with the record in a file still gets the change', (
   expect(hook('UserPromptSubmit')).toContain('+- Sign every commit.')
   expect(open(join(home, 'state')).seen(SESSION, 'rules')).toContain('Sign every commit.')
 })
+
+test('a memory pass rewriting the wake HEX.md imports is no change to the rules', () => {
+  mkdirSync(join(home, 'state/wake'), { recursive: true })
+  writeFileSync(join(home, '.hex/HEX.md'), '# How you work\n\n@../state/wake/CLAUDE.md\n')
+  writeFileSync(join(home, 'state/wake/CLAUDE.md'), '#0 a memory\n')
+  hook('SessionStart')
+  writeFileSync(join(home, 'state/wake/CLAUDE.md'), '#0 a memory\n#1 another\n')
+  expect(hook('UserPromptSubmit')).toBe('')
+})

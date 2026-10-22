@@ -8,7 +8,7 @@ import { Questions, fromLedger } from './questions.ts'
 import { vet } from './check.ts'
 import { T3 } from './t3.ts'
 import { until } from '../../hub/until.ts'
-import type { Question } from '../../hub/ledger.ts'
+import type { Pin, Question } from '../../hub/ledger.ts'
 import { open } from '../../hub/store.ts'
 
 const GROUP = '-1001234'
@@ -19,13 +19,14 @@ let hub: Server
 let lines: any[]
 let checks: string[]
 
-function ledger(kept: Omit<Question, 'app'>[], pins = {}) {
+function ledger(kept: Omit<Question, 'app'>[], pins: Record<string, Omit<Pin, 'app' | 'thread'>> = {}) {
   const store = open(state)
   store.write(() => {
     store.db.run('delete from questions')
+    store.db.run('delete from pins')
     for (const question of kept) store.ask({ app: 'telegram', ...question })
+    for (const [thread, pin] of Object.entries(pins)) store.pinned({ app: 'telegram', thread, ...pin })
   })
-  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins }))
 }
 
 function asked(message: number, text: string, options: string[], fields: Partial<Question> = {}) {
@@ -314,10 +315,10 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   expect(questions.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)
   expect(questions.of(`telegram:${GROUP}`).pin).toBe('Status: by hand')
 
-  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, text: questions.of(`telegram:${DESK}`).pin }, [GROUP]: byHand } }))
+  store.pinned({ app: 'telegram', thread: DESK, ...pin, text: questions.of(`telegram:${DESK}`).pin! })
   await Bun.sleep(150)
   expect(checks).toEqual([])
-  writeFileSync(join(state, 'telegram', 'ledger.json'), JSON.stringify({ pins: { [DESK]: { ...pin, note: 'Site: example.org' }, [GROUP]: byHand } }))
+  store.pinned({ app: 'telegram', thread: DESK, ...pin, note: 'Site: example.org' })
   await until(() => checks.length)
   expect(checks).toEqual(['a pinned post changed'])
 })

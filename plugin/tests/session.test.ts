@@ -23,7 +23,7 @@ beforeEach(() => {
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "#0 a memory"\necho "You are awake."\n')
   chmodSync(join(home, '.hex/vendor/memo'), 0o755)
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')
-  writeFileSync(join(home, 'AGENTS.md'), '- Keep it short.\n')
+  writeFileSync(join(home, 'AGENTS.md'), '- Keep it short.\n\n@state/wake/CLAUDE.md\n')
   mkdirSync(join(home, 'fake'))
   mkdirSync(join(home, 'config/jobs/job12345'), { recursive: true })
   writeFileSync(join(home, 'fake/claude'), `#!/bin/sh
@@ -72,9 +72,13 @@ async function launch(channel: string, thread: string, options: Partial<Paramete
 
 test('a DM session the hub starts gets the chat prompt, and its settings, token included, stay in an owner-only file', async () => {
   const { args, file, settings } = await launch('plugin:telegram@hex', '6296842341', { fresh: () => true })
-  expect(readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8')).toStartWith('You are hex')
+  const system = readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8')
+  expect(system).toStartWith('You are hex')
+  expect(system).not.toContain('#0 a memory')
   expect(settings.claudeMdExcludes).toContain(join(home, 'AGENTS.md'))
-  expect(settings.env).toMatchObject({ HEX_FRESH: '1', HEX_THREAD: '6296842341', HEX_WAKE: join(home, 'state/wake/CLAUDE.md') })
+  expect(settings.claudeMdExcludes).not.toContain(join(home, 'state/wake/CLAUDE.md'))
+  expect(args[args.indexOf('--add-dir') + 1]).toBe(join(home, 'state/wake'))
+  expect(settings.env).toMatchObject({ HEX_FRESH: '1', HEX_THREAD: '6296842341' })
   expect(settings.env.HEX_TOKEN).toBeString()
   expect(args.join(' ')).not.toContain(settings.env.HEX_TOKEN)
   expect(statSync(file).mode & 0o777).toBe(0o600)

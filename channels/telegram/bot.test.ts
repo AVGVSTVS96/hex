@@ -343,7 +343,7 @@ test('a DM is its own thread: it reaches the DM session, not the group, and repl
   dm.close()
 })
 
-const ledger = () => JSON.parse(readFileSync(join(state, 'ledger.json'), 'utf8'))
+const ledger = () => ({ pins: Object.fromEntries(open(state).pins({ app: 'telegram' }).map(pin => [pin.thread, pin])) })
 const asked = (id: number) => open(state).question('telegram', DESK, id)!
 
 test('a question with buttons goes in the ledger, and a tap there answers it', async () => {
