@@ -210,14 +210,13 @@ export function refresh() {
   Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake')], { stdout: 'ignore', stderr: 'ignore' })
 }
 
-// A pass looks over the turn, does the compressions its notes made due, and leaves the memory file
-// current, unless another drainer took over the queue meanwhile, which leaves it current after its own.
+// A pass looks over the turn, does the compressions its notes made due, and leaves the memory file current.
 async function pass(state: string, turn: Pass, keep: () => boolean) {
   await observe(state, turn.session, turn)
   try {
     await nap(MEMO, summarize, keep)
   } finally {
-    if (keep()) refresh()
+    refresh()
   }
 }
 

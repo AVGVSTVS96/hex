@@ -84,7 +84,7 @@ test('a DM session the hub starts gets the chat prompt, and its settings, token 
   expect(statSync(file).mode & 0o777).toBe(0o600)
 })
 
-test('a launch writes the wake only when there is none, and removes it once memory is off', async () => {
+test('a launch writes the wake only when there is none, and removes it once memory is off, not when settings do not parse', async () => {
   const wake = join(home, 'state/wake/CLAUDE.md')
   await launch('plugin:telegram@hex', '-100:5')
   expect(readFileSync(wake, 'utf8')).toContain('#0 a memory')
@@ -92,6 +92,12 @@ test('a launch writes the wake only when there is none, and removes it once memo
   rmSync(join(home, 'launched'))
   hub.close()
   await launch('plugin:telegram@hex', '-100:6')
+  expect(readFileSync(wake, 'utf8')).toBe('kept\n')
+  // Settings that don't parse say nothing about memory, so the wake stays.
+  writeFileSync(join(home, '.claude/settings.json'), '{ "env": ')
+  rmSync(join(home, 'launched'))
+  hub.close()
+  await launch('plugin:telegram@hex', '-100:8')
   expect(readFileSync(wake, 'utf8')).toBe('kept\n')
   writeFileSync(join(home, '.claude/settings.json'), '{}')
   rmSync(join(home, 'launched'))
