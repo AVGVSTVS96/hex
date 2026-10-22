@@ -46,7 +46,6 @@ export type Question = {
 // the session a new thread forks from at its first start, and where its app opens it.
 export type Thread = { app: string; thread: string; name: string; open: boolean; session?: string; cwd?: string; model?: string; effort?: string; launched?: string; fork?: string; link?: string }
 export type Kept = Omit<Thread, 'app' | 'thread' | 'open'>
-export type Relay = { from: string; thread: string; run: string }
 // A thread's pinned post in its app, as last written. A pin with a note is the thread's status post:
 // hex writes it as the note over the thread's questions and tasks (status.ts).
 export type Pin = { app: string; thread: string; message: MessageId; text: string; at: string; note?: string }
@@ -218,7 +217,7 @@ const migrations: (string | ((store: Store) => void))[] = [
   alter table seen add column at text not null default '1970-01-01T00:00:00.000Z' check (at ${UTC});
   update seen set at = strftime('%Y-%m-%dT%H:%M:%fZ');
   update messages set "from" = 't3', key = 't3' || substr(key, 2) where "from" = 't' and key not in (select message from words) and 't3' || substr(key, 2) not in (select key from messages);`,
-  `create table turns (session text primary key, thread text, began text check (began ${UTC}), ended text check (ended ${UTC}));
+  `create table turns (session text primary key, began text check (began ${UTC}), ended text check (ended ${UTC}));
   create table relays ("from" text not null, thread text not null, run text not null, at text not null check (at ${UTC}), primary key ("from", thread));`,
   carryRelays,
 ]
@@ -273,7 +272,7 @@ function carryRelays(store: Store) {
     for (const line of readFileSync(file, 'utf8').split('\n')) {
       try {
         const { at, from, thread, run } = JSON.parse(line)
-        if ([from, thread, run].every(word => typeof word === 'string' && word)) store.relayed(`${app}:${from}`, thread, run, at)
+        if ([at, from, thread, run].every(word => typeof word === 'string' && word)) store.relayed(`${app}:${from}`, thread, run, at)
       } catch {}
     }
     rename(join(folder, 'relays.jsonl'))
@@ -792,19 +791,18 @@ export class Store {
     this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
   }
 
-  // hex's own record of a session's turn: it began (busy) or ended at the time its hook started, and
-  // the thread it works for, as <app>:<key>. An end from before the turn's begin is a late hook's,
-  // so old news. A session not heard from in TURNS goes.
-  turned(session: string, busy: boolean, thread?: string, at = now()) {
+  // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
+  // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes.
+  turned(session: string, busy: boolean, at = now()) {
     this.write(() => {
-      if (busy) this.db.query('insert into turns (session, thread, began) values (?, ?, ?) on conflict (session) do update set thread = excluded.thread, began = excluded.began, ended = null').run(session, thread ?? null, at)
-      else this.db.query('insert into turns (session, thread, ended) values (?, ?, ?) on conflict (session) do update set thread = excluded.thread, ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, thread ?? null, at)
+      if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
+      else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
       this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
     })
   }
 
-  turn(session: string): { thread?: string; began?: string; ended?: string } {
-    const row = this.db.query('select thread, began, ended from turns where session = ?').get(session) as Record<string, string | null> | null
+  turn(session: string): { began?: string; ended?: string } {
+    const row = this.db.query('select began, ended from turns where session = ?').get(session) as Record<string, string | null> | null
     return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
   }
 
@@ -813,8 +811,8 @@ export class Store {
     this.write(() => this.db.query('insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at where excluded.at >= relays.at').run(from, thread, run, at))
   }
 
-  relays(): Relay[] {
-    return this.db.query('select "from", thread, run from relays order by at').all() as Relay[]
+  relays() {
+    return this.db.query('select "from", thread, run from relays order by at').all() as { from: string; thread: string; run: string }[]
   }
 
   private quote(task: string, message: string, quote?: string) {

@@ -6,9 +6,9 @@ import type { Store } from './store.ts'
 // A Claude Code session whose process runs, from the record Claude Code keeps of it while it lives
 // (sessions/<pid>.json): its status (busy, shell, idle) and kind (bg for a background session), and
 // a background session's job state (working, blocked on the owner, done), status line and what it
-// needs, from jobs/<id>/state.json, and when Claude Code last changed its status, where it says.
-// From hex's own record of its turns (hex.db's turns): the thread it works for, as <app>:<key>, when
-// its latest turn began, and when that turn ended, if it has.
+// needs, from jobs/<id>/state.json, and when Claude Code last changed its status, where it says. The
+// thread it works for, as <app>:<key>, from the environment it started with (served). From hex's own
+// record of its turns (hex.db's turns): when its latest turn began, and when that turn ended, if it has.
 export type Session = { id: string; pid: number; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number; thread?: string; began?: string; ended?: string }
 
 export const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
@@ -30,21 +30,29 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && kept.started >= started))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }), ...store.turn(id) })
+    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }), thread: served(environ(pid)), ...store.turn(id) })
   }
   return sessions
 }
 
 // The thread a session works for, as <app>:<key>: the one it serves (held maps each thread's
-// session to it), else the one its hooks heard it works for.
+// session to it), else the one it started for.
 export const serving = (session: Session, held: Map<string, string>) => held.get(session.id) ?? session.thread
 
-// The thread this process works for, as <app>:<key>: the one its hub started its session for, or
-// its job's owner. A session started from another's shell has its environment, so works for it too.
+// The thread a process works for, as <app>:<key>: the one its hub started its session for, or its
+// job's owner. A session started from another's shell has its environment, so works for it too.
 export function served(env = process.env): string | undefined {
   const app = env.HEX_CHANNEL?.match(/^plugin:([^@]+)/)?.[1]
   if (app && env.HEX_THREAD) return `${app}:${env.HEX_THREAD}`
   return env.HEX_OWNER?.includes(':') ? env.HEX_OWNER : undefined
+}
+
+function environ(pid: number): Record<string, string> {
+  try {
+    return Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').map(entry => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]))
+  } catch {
+    return {}
+  }
 }
 
 function alive(pid: unknown) {

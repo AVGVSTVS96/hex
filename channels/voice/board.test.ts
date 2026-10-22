@@ -390,13 +390,14 @@ test('a running session no thread holds is a run of its own while it works', asy
 })
 
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
+  const build = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-1001234567890:3275' } })
+  afterAll(() => build.kill())
   threads('telegram', { ...telegram, '-1001234567890:3275': { name: 'lab', session: '32753275-lab' } })
   job('32753275-lab', { state: 'done', detail: 'started the build', updatedAt: ago(1) })
   running('32753275-lab', 'idle')
   const lab = () => board.get('telegram:-1001234567890:3275')
   await until(() => lab()?.state === 'done')
-  open(state).turned('78787878-build', true, 'telegram:-1001234567890:3275')
-  running('78787878-build', 'busy', process.pid, { kind: 'interactive', name: 'lab-build-c0', cwd: '/scratch/build', startedAt: Date.now() })
+  running('78787878-build', 'busy', build.pid, { kind: 'interactive', name: 'lab-build-c0', cwd: '/scratch/build', startedAt: Date.now() })
   await until(() => lab()?.state === 'working')
   expect(lab()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['78787878-build', 'lab-build-c0', 'working']])
   expect(board.get('claude:78787878')).toBeUndefined()
@@ -410,13 +411,17 @@ test("a thread stays working while a session it started runs, that session one o
 })
 
 test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a run of its own", async () => {
-  open(state).turned('91919191-clips', true, 'telegram:-1001234567890:65')
-  open(state).turned('92929292-lost', true, 'telegram:-1001234567890:404')
+  const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:65' } })
+  const orphan = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:404' } })
+  afterAll(() => {
+    owned.kill()
+    orphan.kill()
+  })
   const theo = () => board.get('telegram:-1001234567890:65')
   job('91919191-clips', { state: 'working', detail: 'cutting clips', updatedAt: ago(0) })
   job('92929292-lost', { state: 'working', detail: 'lost its thread', updatedAt: ago(0) })
-  running('91919191-clips', 'busy', process.pid, { kind: 'interactive', name: 'Theo clips/cut', startedAt: Date.now() })
-  running('92929292-lost', 'busy', process.pid, { kind: 'interactive', name: 'gone/job', startedAt: Date.now() })
+  running('91919191-clips', 'busy', owned.pid, { kind: 'interactive', name: 'Theo clips/cut', startedAt: Date.now() })
+  running('92929292-lost', 'busy', orphan.pid, { kind: 'interactive', name: 'gone/job', startedAt: Date.now() })
   await until(() => theo()?.state === 'working' && !!board.get('claude:92929292'))
   expect(theo()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['91919191-clips', 'Theo clips/cut', 'working']])
   expect(board.get('claude:91919191')).toBeUndefined()
@@ -426,11 +431,12 @@ test("a job's session works under the thread that owns it, wherever it runs, and
 })
 
 test("a job's session works under the thread that owns it while that thread has no session of its own", async () => {
-  open(state).turned('93939393-claim', true, 'telegram:-1001234567890:3675')
+  const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:3675' } })
+  afterAll(() => owned.kill())
   threads('telegram', { ...telegram, '-1001234567890:3675': { name: 'unemployment' } })
   const claim = () => board.get('telegram:-1001234567890:3675')
   job('93939393-claim', { state: 'working', detail: 'filling the claim', updatedAt: ago(0) })
-  running('93939393-claim', 'busy', process.pid, { kind: 'interactive', name: 'unemployment/claim', cwd: '/scratch/claim', startedAt: Date.now() })
+  running('93939393-claim', 'busy', owned.pid, { kind: 'interactive', name: 'unemployment/claim', cwd: '/scratch/claim', startedAt: Date.now() })
   await until(() => claim()?.state === 'working')
   expect(claim()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['93939393-claim', 'unemployment/claim', 'working']])
   expect(board.get('claude:93939393')).toBeUndefined()

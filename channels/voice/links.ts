@@ -3,7 +3,7 @@ import { existsSync, readFileSync, watch } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { MessageId } from '../../hub/ledger.ts'
-import { open, type Relay } from '../../hub/store.ts'
+import { open } from '../../hub/store.ts'
 import type { Item } from './activity.ts'
 
 // Work a hex thread handed to another T3 Code thread with delegate_task: the child thread, the task
@@ -38,17 +38,17 @@ const SHOWN = ['command_execution', 'web_search', 'file_change', 'dynamic_tool',
 
 // What T3 Code's own database, read only, says of hex's T3 threads: what each is called there, what
 // it handed off, and the turns of those that don't run on hex, read when asked and again whenever T3
-// Code writes. Where a thread opens in its own app is hex.db's (Thread.link): linkAt only adds a message.
+// Code writes or hex.db does (its relays). Where a thread opens in its own app is hex.db's (Thread.link): linkAt only adds a message.
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
 export class Links {
   private threads = new Map<string, { thread: string; title: string }>()
   private handed: Delegation[] = []
-  private relays: Relay[] = []
   private items = new Map<string, Item[]>()
   private titles = new Map<string, string | undefined>()
   private environment?: string
   private db?: Database
   private watcher?: ReturnType<typeof watch>
+  private unwatch?: () => void
   private pending?: ReturnType<typeof setTimeout>
 
   constructor(
@@ -62,19 +62,15 @@ export class Links {
     this.environment = word(readFile(join(t3, 'environment-id'))?.trim())
     this.db = new Database(database, { readonly: true })
     this.watcher = watch(t3, (_, file) => file?.startsWith(DATABASE) && this.schedule())
+    this.unwatch = open(state).watch(() => this.schedule())
     this.read()
   }
 
   close() {
     clearTimeout(this.pending)
     this.watcher?.close()
+    this.unwatch?.()
     this.db?.close()
-  }
-
-  // hex.db's relays, newest per thread pair; read again whenever the threads are.
-  load() {
-    this.relays = open(this.state).relays()
-    if (this.db) this.read()
   }
 
   // What the thread is called in its own app, where hex knows it by another name: T3 Code's title.
@@ -180,7 +176,7 @@ export class Links {
          from orchestration_v2_projection_runs r join orchestration_v2_projection_threads t on t.thread_id = r.thread_id
          where r.run_id = ? and t.deleted_at is null`,
       )
-      const relayed = this.relays.flatMap(({ from, thread, run: task }): Delegation[] => {
+      const relayed = open(this.state).relays().flatMap(({ from, thread, run: task }): Delegation[] => {
         const ran = run.get(task)
         const hex = keys.get(thread)
         if (!ran || from === `t3:${hex}` || handed.some(one => one.parent === from && one.id === thread)) return []

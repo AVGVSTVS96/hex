@@ -97,7 +97,6 @@ export class Board extends Changes {
   private links: Links
   private jobs = new Map<string, { job?: Job; timeline: Entry[] }>()
   private sessions = new Map<string, Session>()
-  private kept = ''
   private watchers = new Map<string, FSWatcher>()
   private followers = new Map<string, Follower>()
   private stretches = new Map<string, Stretch>()
@@ -116,8 +115,8 @@ export class Board extends Changes {
     super()
     this.tracks = readJson(join(state, 'voice', 'tracks.json')) ?? {}
     this.links = new Links(state, () => this.schedule(), t3)
-    // hex.db holds the threads, the relays links.ts reads, and the turns running.ts reads.
-    this.stops.push(open(state).watch(() => (this.mark('sessions'), this.known() !== this.kept && this.mark('threads'))))
+    // hex.db holds the threads and the turns running.ts reads (links.ts watches it for relays).
+    this.stops.push(open(state).watch(() => (this.mark('sessions'), JSON.stringify(this.stored()) !== JSON.stringify(this.threads) && this.mark('threads'))))
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
     this.stops.push(watchDir(join(claude, 'jobs'), file => this.jobChanged(file, true)))
     this.build()
@@ -208,13 +207,7 @@ export class Board extends Changes {
   }
 
   private readThreads() {
-    this.kept = this.known()
-    this.links.load()
     this.threads = this.stored()
-  }
-
-  private known() {
-    return JSON.stringify([this.stored(), open(this.state).relays()])
   }
 
   private stored(): Thread[] {
