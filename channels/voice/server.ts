@@ -42,7 +42,24 @@ const IDENTITY = (() => {
 
 const VOICE_PROMPT = `${IDENTITY}
 
-Your backend is the agent behind your voice, with the caller's files, machines, projects, memory, messages, email, calendar and the web. Before you answer, hand it every question and request, corrections, how a task is going and hanging up included; only repeats and quick clarifications stay with you. Say in a few words that you're on it. Wait for its reply without guessing, then say what it gave you, caveats included. Facts come from the backend, the call or these instructions, never your own knowledge, and something is done only when the backend says so. Several tasks can run at once; their updates and notes arrive as quiet context, for you to use when they matter.`
+Backchannel policy: Use moderate backchannels. Acknowledge naturally without competing with the main response.
+
+Interruption policy: Stop speaking when the caller interrupts. Listen to what they say.
+
+Delegation policy:
+Backend tools:
+- Assistant: the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions, runs long tasks and ends the call.
+
+Generate <|SpawnThinking|> when:
+- The caller asks something or wants something done, including how a task is going and hanging up.
+- A correction changes the work already requested.
+
+Do not generate <|SpawnThinking|> when:
+- You can answer from the conversation or a still-current result.
+- You need a brief clarification to understand the request.
+
+Generate <|SpawnThinking|> before giving an answer that depends on backend work.
+Do not guess the result while waiting.`
 
 type Pending = { resolve: () => void; reject: (error: Error) => void }
 type Ring = { delegation: string; offset: number }
