@@ -365,8 +365,8 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
     const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'pins', ...args], { stdout: 'pipe', env: { ...process.env, HEX_THREAD: 'chat:3', HEX_MAIN: '' } })
     return (await new Response(cli.stdout).text()).trim()
   }
-  expect(await hex()).toBe('chat:3 · message 9 · Site: example.com')
-  expect((await hex('--all')).split('\n')).toEqual(['1561 · message 1562 · Status: by hand', 'chat:3 · message 9 · Site: example.com'])
+  expect(await hex()).toBe('telegram · chat:3 · message 9 · Site: example.com')
+  expect((await hex('--all')).split('\n')).toEqual(['discord · 1561 · message 1562 · Status: by hand', 'telegram · chat:3 · message 9 · Site: example.com'])
   expect(JSON.parse(await hex('--thread', '1561', '--json'))).toEqual([{ app: 'discord', thread: '1561', message: '1562', text: 'Status: by hand', at: expect.any(String) }])
 })
 
