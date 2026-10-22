@@ -111,11 +111,12 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
   expect(await end('round3', 't3:stray-key')).toBe(0)
   expect(await end('older', '555')).toBe(0)
   expect(await end('topic', 'telegram:-100123:908')).toBe(0)
-  expect(await end('typo', 'telegram:nothing')).toBe(1)
+  expect(await end('early', 'telegram:-100123:909')).toBe(0)
   const rows = new Database(join(home, 'state/hex.db')).query('select "to", "from", body, meta from messages where taken_at is null order by rowid').all()
   expect(rows).toEqual([
     { to: 'stray-key', from: 'job', body: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: JSON.stringify({ user: 'job' }) },
     { to: '555', from: 'job', body: expect.stringContaining('[job] older ended'), meta: JSON.stringify({ user: 'job' }) },
     { to: '-100123:908', from: 'job', body: expect.stringContaining('[job] topic ended'), meta: JSON.stringify({ user: 'job' }) },
+    { to: '-100123:909', from: 'job', body: expect.stringContaining('[job] early ended'), meta: JSON.stringify({ user: 'job' }) },
   ])
 })

@@ -633,16 +633,17 @@ export class Store {
   }
 
   // An app's open threads as its hub keeps them. A thread left out has closed: it keeps its row, with
-  // its name and last session, for whatever reads one.
+  // its name and last session, for whatever reads one. A key is one thread's, so the app that keeps it
+  // last has it.
   keepThreads(app: string, open: Record<string, Kept>) {
     this.write(() => {
       this.db.query('update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))').run(app, JSON.stringify(Object.keys(open)))
       const keep = this.db.query(
         `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork, link) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-        on conflict (thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
+        on conflict (thread) do update set app = excluded.app, name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
           effort = excluded.effort, launched = excluded.launched, fork = excluded.fork, link = coalesce(excluded.link, link)
-        where threads.app = excluded.app and ((name, open, session, cwd, model, effort, launched, fork) is not (excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
-          or coalesce(excluded.link, link) is not link)`,
+        where (app, name, open, session, cwd, model, effort, launched, fork) is not (excluded.app, excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
+          or coalesce(excluded.link, link) is not link`,
       )
       for (const [thread, { name, session, cwd, model, effort, launched, fork, link }] of Object.entries(open))
         keep.run(app, thread, name, session ?? null, cwd ?? null, model ?? null, effort ?? null, launched ?? null, fork ?? null, link ?? null)
@@ -659,18 +660,18 @@ export class Store {
 
   // Each thread's name by its key.
   names(): Record<string, string> {
-    return Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name]))
+    return Object.assign(Object.create(null), Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name])))
   }
 
   // Each thread's id, <app>:<key>, the way every --json output names it, by its key.
   ids(): Record<string, string> {
-    return Object.fromEntries(this.threads().map(({ app, thread }) => [thread, `${app}:${thread}`]))
+    return Object.assign(Object.create(null), Object.fromEntries(this.threads().map(({ app, thread }) => [thread, `${app}:${thread}`])))
   }
 
   // A thread's key from its id, <app>:<key>, or from the key itself.
   key(id: string): string {
     const split = id.indexOf(':')
-    return split > 0 && this.db.query('select 1 from threads where app = ? and thread = ?').get(id.slice(0, split), id.slice(split + 1)) ? id.slice(split + 1) : id
+    return split > 0 && this.db.query('select 1 from threads where app = ? limit 1').get(id.slice(0, split)) ? id.slice(split + 1) : id
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.

@@ -105,7 +105,7 @@ function json(value: unknown) {
 
 function withThread<T>(rows: T[], key: (row: T) => string) {
   const ids = store.ids()
-  return rows.map(row => ({ ...row, ...(Object.hasOwn(ids, key(row)) && { threadId: ids[key(row)] }) }))
+  return rows.map(row => ({ ...row, ...(ids[key(row)] && { threadId: ids[key(row)] }) }))
 }
 
 // A line once it's listening, then one within 50ms of each time hex.bell grows, as every commit to
@@ -137,15 +137,15 @@ function stray(word: string) {
 
 // A thread by its id, or by its name the way the hub finds one: any case, and only one thread.
 function threadOf(named: string) {
-  const nameOrThread = store.key(named)
+  const key = store.key(named)
   const threads = store.threads()
-  if (threads.some(({ thread }) => thread === nameOrThread)) return nameOrThread
-  const wanted = nameOrThread.trim().toLowerCase()
+  if (threads.some(({ thread }) => thread === key)) return key
+  const wanted = named.trim().toLowerCase()
   const matches = [...new Set(threads.filter(({ name }) => name.toLowerCase() === wanted).map(({ thread }) => thread))]
-  if (matches.length > 1) throw new Error(`more than one thread is named "${nameOrThread}": ${matches.join(', ')}`)
+  if (matches.length > 1) throw new Error(`more than one thread is named "${named}": ${matches.join(', ')}`)
   if (matches[0]) return matches[0]
-  if (store.said(nameOrThread, 1).length) return nameOrThread
-  throw new Error(`no thread named "${nameOrThread}"`)
+  if (store.said(named, 1).length) return named
+  throw new Error(`no thread named "${named}"`)
 }
 
 // Messages as markdown, one heading each, in the owner's time zone, for rg to search. Within room,
