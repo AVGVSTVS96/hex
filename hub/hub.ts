@@ -189,8 +189,9 @@ export function tappable(text: string): string {
   return text.replace(/buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/g, url => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`)
 }
 
-// A thread's chat, oldest first: what the owner said that a session took in, with prompts too if
-// asked (a job's or another agent's, for the app that shows the session its own conversation), and
+// A thread's chat, oldest first: what the owner said that a session took in, with others' prompts
+// too if asked (a job's, another agent's, the app's own, for the app that shows the session its own
+// conversation; the hub's own notes stay out), and
 // hex's replies as first sent; with a session, from the first message that session took, the
 // conversation it has.
 export function history(store: Store, thread: string, session?: string, prompts = false): Turn[] {
@@ -199,7 +200,7 @@ export function history(store: Store, thread: string, session?: string, prompts 
   return rows.flatMap(row => {
     if (row.from === 'terminal' || !row.taken || row.at < start) return []
     if (replied(row)) return shown(row) ? [{ from: 'hex', text: row.body } as Turn] : []
-    const said = (spoken(row) && row.author === 'owner') || (prompts && row.author === 'prompt') ? row.body : ''
+    const said = (spoken(row) && row.author === 'owner') || (prompts && (row.author === 'prompt' || row.author === 'other') && row.from !== 'hub') ? row.body : ''
     const text = row.from === 't3' ? asked(said) : said
     return text ? [{ from: 'me', text } as Turn] : []
   })
@@ -630,9 +631,9 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const known = threads[thread]!
     const { phase } = runOf(thread)
     let source = fork ?? (known.session ? undefined : known.from)
-    if (source && (await lost(thread, source))) source = undefined
-    const session = !source && known.session && !fresh(thread) && !(await lost(thread, known.session)) ? known.session : undefined
-    if (runOf(thread).phase !== phase) return
+    if (source && (await lost(thread, source, phase))) source = undefined
+    const session = !source && known.session && !fresh(thread) && !(await lost(thread, known.session, phase)) ? known.session : undefined
+    if (runs.get(thread)?.phase !== phase) return
     writeSettings(thread)
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (prompt) kept(store => store.deliver({ key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`, to: thread, from: 'hub', author: 'prompt', body: prompt, meta: {} }, 'hub'), false)
@@ -692,11 +693,13 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   // A session with no conversation on disk that Claude Code isn't running either can't be resumed or
   // forked, so the thread lets go of it once a note is kept that tells its next session why it starts
-  // without it. A session just started has no conversation on disk yet, but it runs.
-  async function lost(thread: string, session: string) {
-    if (claude.saved(session) || (await claude.agents(serving)).some(agent => agent.sessionId === session)) return false
+  // without it. A session just started has no conversation on disk yet, but it runs. hex sets a
+  // thread's session only once its conversation is in the folder this reads (claim).
+  async function lost(thread: string, session: string, phase: Phase) {
+    if (claude.saved(session) || (await claude.listing(session))) return false
     const known = threads[thread]
-    const run = runOf(thread)
+    const run = runs.get(thread)
+    if (!run || run.phase !== phase) return false
     const key = `hub:${thread}:lost:${session}`
     const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`
     if (!known || !kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false

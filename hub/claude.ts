@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'child_process'
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'fs'
+import { closeSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
 import { sleep } from './clock.ts'

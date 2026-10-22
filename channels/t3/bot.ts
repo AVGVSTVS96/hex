@@ -62,25 +62,32 @@ mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 
 // T3 Code's records, read once per save, since a save asks for every thread's link at once. They
 // give a thread its link and its name, T3's title for it. A thread T3 deleted closes here too, as
-// does one T3 never recorded, once T3 has had a few minutes to record what hex just kept.
+// does one T3 never recorded, once T3 has had a few minutes to record what hex just kept. Records
+// that have none of hex's threads aren't T3's records of them, so nothing closes.
 const RECORDING = 5 * 60_000
 const kept = new Map<string, number>()
 let recorded: ReturnType<typeof appThreads> | null = null
 function link(thread: string) {
   if (recorded === null) {
-    recorded = appThreads()
     queueMicrotask(() => {
       mirror(recorded)
       recorded = null
     })
+    try {
+      recorded = appThreads()
+    } catch (error) {
+      recorded = undefined
+      throw error
+    }
   }
   const opened = recorded?.get(thread)
   return opened && linkTo(opened.thread)
 }
 
 function mirror(records: ReturnType<typeof appThreads>) {
-  if (!records) return
-  for (const thread of hub.threads()) {
+  const threads = hub.threads()
+  if (!threads.some(thread => records?.has(thread))) return
+  for (const thread of threads) {
     const record = records.get(thread)
     if (record) hub.rename(thread, record.title || hub.name(thread)!)
     else if (Date.now() - (kept.get(thread) ?? 0) > RECORDING) void hub.retire(thread)

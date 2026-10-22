@@ -575,14 +575,30 @@ test('a thread T3 deleted or never recorded closes in hex, and one T3 has goes b
 })
 
 test('a thread hex just kept stays open while T3 has yet to record it', async () => {
-  recorded([])
+  const live = 'live-000-0000-4000-8000-000000000000'
+  await restart(() => {
+    hexdb(join(dir, 'hex', 'state')).keepThreads('t3', { [live]: { name: 'project' } })
+    recorded([[live, 'voice: one line per file']])
+  })
+  const { agent } = await t3()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
+  await until(() => registered()[sessionId])
+  await until(() => lines('launched').length)
+  expect(registered()[sessionId]).toMatchObject({ name: 'project' })
+})
+
+test("records of T3's that have none of hex's threads close nothing", async () => {
+  const mine = 'mine-000-0000-4000-8000-000000000000'
+  await restart(() => {
+    hexdb(join(dir, 'hex', 'state')).keepThreads('t3', { [mine]: { name: 'project' } })
+    recorded([['someone-else', 'not hex']])
+  })
   const { agent } = await t3()
   const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
   agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
   await until(() => lines('launched').length)
-  await until(() => registered()[sessionId])
-  await Bun.sleep(100)
-  expect(registered()[sessionId]).toMatchObject({ name: 'project' })
+  expect(Object.keys(registered()).sort()).toEqual([mine, sessionId].sort())
 })
 
 test('a chat with no project works in hex\'s folder', async () => {
