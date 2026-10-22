@@ -1,4 +1,4 @@
-import { appendFileSync, realpathSync, statSync, watch } from 'fs'
+import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
@@ -116,10 +116,12 @@ function keyOf(id: string) {
 }
 
 // A line once it's listening, then one each time hex.bell grows, as every commit to hex.db makes it:
-// an app reads what it shows again at each. A line still queued stands for the changes after it too,
-// and writing one once the app is gone ends the watch. Each ring is checked again 5ms on, since Bun's
-// fs.watch on Linux drops a change within about a millisecond of the last one (https://github.com/oven-sh/bun/issues/45954).
+// an app reads what it shows again at each. While a line waits for the app, it stands for the changes
+// after it, and the bell is checked again once it's written; writing one once the app is gone ends the
+// watch. Each ring is also checked again 5ms on, since Bun's fs.watch on Linux drops a change within
+// about a millisecond of the last one (https://github.com/oven-sh/bun/issues/45954).
 function follow(bell: string): Promise<never> {
+  mkdirSync(dirname(bell), { recursive: true })
   appendFileSync(bell, '')
   let size = -1
   let queued = false
@@ -128,7 +130,11 @@ function follow(bell: string): Promise<never> {
     if (now === size || queued) return
     size = now
     queued = true
-    process.stdout.write(`${new Date().toISOString()}\n`, error => (error ? process.exit((error as NodeJS.ErrnoException).code === 'EPIPE' ? 0 : 1) : (queued = false)))
+    process.stdout.write(`${new Date().toISOString()}\n`, error => {
+      if (error) process.exit((error as NodeJS.ErrnoException).code === 'EPIPE' ? 0 : 1)
+      queued = false
+      ring()
+    })
     setTimeout(ring, 5)
   }
   watch(bell, ring)
