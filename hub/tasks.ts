@@ -1,8 +1,8 @@
 import { clip, fit, ROOM } from './fit.ts'
 import { open, stateDir, type Question, type Task } from './store.ts'
 
-function facts(task: Task, named: Record<string, string>) {
-  const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
+function facts(task: Task, named: Record<string, string>, said?: string) {
+  const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`, said]
   return `${task.id} (${facts.filter(Boolean).join(', ')})`
 }
 
@@ -23,8 +23,7 @@ export function render(task: Task, named: Record<string, string> = {}): string {
 // owner's words stay in hex.db, for `hex task` to show in full.
 export function entry(task: Task, named: Record<string, string>, done = true) {
   const messages = new Set(task.words.map(words => words.message)).size
-  const said = messages > 1 ? `, ${messages} messages` : ''
-  const line = `${facts(task, named).replace(/\)$/, `${said})`)}: ${clip(task.title, 150)}`
+  const line = `${facts(task, named, messages > 1 ? `${messages} messages` : undefined)}: ${clip(task.title, 150)}`
   if (!done) return line
   return [line, task.doneWhen && `  done when: ${clip(task.doneWhen, 200)}`, task.status === 'done' && task.proof && `  proof: ${clip(task.proof, 200)}`].filter(Boolean).join('\n')
 }

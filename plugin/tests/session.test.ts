@@ -34,7 +34,7 @@ echo "backgrounded · job12345 · test"
 exit 0
 `)
   chmodSync(join(home, 'fake/claude'), 0o755)
-  for (const name of Object.keys(process.env)) if (name.startsWith('HEX_')) delete process.env[name]
+  for (const name of Object.keys(process.env)) if (name.startsWith('HEX_') || name === 'MEMORY_DIR') delete process.env[name]
   Object.assign(process.env, { HOME: home, PATH: `${join(home, 'fake')}:${process.env.PATH}`, CLAUDE_CONFIG_DIR: join(home, 'config'), CLAUDE_SECURESTORAGE_CONFIG_DIR: '', HEX_CHAT_CLAUDE: 'true' })
   listener = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(null, { status: 404 }) })
 })
@@ -82,6 +82,28 @@ test('a DM session the hub starts gets the chat prompt, and its settings, token 
   expect(settings.env.HEX_TOKEN).toBeString()
   expect(args.join(' ')).not.toContain(settings.env.HEX_TOKEN)
   expect(statSync(file).mode & 0o777).toBe(0o600)
+})
+
+test('a launch writes the wake only when there is none, and removes it once memory is off, not when settings do not parse', async () => {
+  const wake = join(home, 'state/wake/CLAUDE.md')
+  await launch('plugin:telegram@hex', '-100:5')
+  expect(readFileSync(wake, 'utf8')).toContain('#0 a memory')
+  writeFileSync(wake, 'kept\n')
+  rmSync(join(home, 'launched'))
+  hub.close()
+  await launch('plugin:telegram@hex', '-100:6')
+  expect(readFileSync(wake, 'utf8')).toBe('kept\n')
+  // Settings that don't parse say nothing about memory, so the wake stays.
+  writeFileSync(join(home, '.claude/settings.json'), '{ "env": ')
+  rmSync(join(home, 'launched'))
+  hub.close()
+  await launch('plugin:telegram@hex', '-100:8')
+  expect(readFileSync(wake, 'utf8')).toBe('kept\n')
+  writeFileSync(join(home, '.claude/settings.json'), '{}')
+  rmSync(join(home, 'launched'))
+  hub.close()
+  await launch('plugin:telegram@hex', '-100:7')
+  expect(existsSync(wake)).toBe(false)
 })
 
 test('General, started by the hub, runs the main model', async () => {

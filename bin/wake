@@ -1,11 +1,12 @@
 #!/usr/bin/env bun
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
-import { dirname, join, resolve } from 'path'
-import { open, stateDir } from '../hub/store.ts'
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { dirname, resolve } from 'path'
+import { open, stateDir, type Store } from '../hub/store.ts'
 
 // What a session knows as it starts and after a compaction: the owner's profile, which hex's memory
 // agent keeps current, then memory. It goes in state/wake/CLAUDE.md, which HEX.md imports, so Claude
-// Code loads it into every session in the hex folder; the launcher and each memory pass rewrite it.
+// Code loads it into every session in the hex folder. `hex init` writes the first, each memory pass
+// and update rewrites it, and a launch that finds none or memory off writes it.
 
 const memo = resolve(import.meta.dir, '../vendor/memo')
 const home = resolve(import.meta.dir, '../..')
@@ -31,26 +32,10 @@ function memory(env: Record<string, string | undefined>) {
   }
 }
 
-// Where memory is: the hex folder's settings, or else the environment. Settings that don't parse
-// right now say nothing either way (null), so the last wake stays.
-function memoryDir(): string | undefined | null {
-  let text
-  try {
-    text = readFileSync(resolve(home, '.claude/settings.json'), 'utf8')
-  } catch {
-    return process.env.MEMORY_DIR || undefined
-  }
-  try {
-    return JSON.parse(text).env?.MEMORY_DIR || process.env.MEMORY_DIR || undefined
-  } catch {
-    return null
-  }
-}
-
 // A profile hex.db can't give drops out of the wake, not the memory with it.
-function mine() {
+function mine(store?: Store) {
   try {
-    return open(stateDir()).profile()
+    return store?.profile() ?? ''
   } catch (error) {
     process.stderr.write(`hex couldn't read the profile: ${error}\n`)
     return ''
@@ -66,59 +51,18 @@ const runs = () => {
   }
 }
 
-// A session started before the wake moved into HEX.md's import still runs six `wake <n>` hooks;
-// they have nothing to do. (Remove once no session predates this release.)
-if (process.argv[2]) process.exit(0)
-
-const dir = memoryDir()
-
 function write(text: string) {
   mkdirSync(dirname(wake), { recursive: true })
   writeFileSync(`${wake}.${process.pid}`, text)
   renameSync(`${wake}.${process.pid}`, wake)
 }
 
-// One wake at a time, so a slower one can't put older memory over a newer one: a lock folder
-// holding its owner's pid, taken over once that process is gone.
-function locked(fn: () => void) {
-  const lock = `${wake}.lock`
-  const pid = join(lock, 'pid')
-  const held = () => {
-    const owner = Number(existsSync(pid) ? readFileSync(pid, 'utf8') : 0)
-    if (!owner) return Date.now() - (statSync(lock, { throwIfNoEntry: false })?.mtimeMs ?? 0) < 5_000
-    try {
-      return process.kill(owner, 0)
-    } catch {
-      return false
-    }
-  }
-  mkdirSync(dirname(wake), { recursive: true })
-  // A writer still going after this long is stuck; the wake it's writing is as new as this one's.
-  for (const until = Date.now() + 3 * 60_000; ; ) {
-    try {
-      mkdirSync(lock)
-      break
-    } catch {
-      if (Date.now() > until) return
-      if (held()) Bun.sleepSync(100)
-      else rmSync(lock, { recursive: true, force: true })
-    }
-  }
-  writeFileSync(pid, String(process.pid))
-  try {
-    fn()
-  } finally {
-    rmSync(lock, { recursive: true, force: true })
-  }
-}
-
-// With memory off there's no wake file. A wake that failed, or stopped to ask for a compression,
-// keeps the last one, which still holds the memory, and says so.
-if (dir === undefined) rmSync(wake, { force: true })
-else if (dir && runs()) locked(() => {
-  const { text, why } = memory({ ...process.env, MEMORY_DIR: dir })
+// A wake that failed, or stopped to ask for a compression, keeps the last one, which still holds
+// the memory, and says so.
+function rewrite(store?: Store) {
+  const { text, why } = memory(process.env)
   if (text) {
-    const profile = mine()
+    const profile = mine(store)
     const body = `${profile && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${profile}\n\n`}${text.trimEnd()}`
     // In a fence, so Claude Code reads no `@path` in memory as an import.
     const fence = '`'.repeat(Math.max(3, 1 + Math.max(0, ...(body.match(/`+/g) ?? []).map(run => run.length))))
@@ -127,4 +71,24 @@ else if (dir && runs()) locked(() => {
     const kept = readFileSync(wake, 'utf8')
     write(`${lead} It's the last one hex could load: \`.hex/vendor/memo wake\` has since said \`${why.replace(/`/g, "'")}\`, so newer memories may be missing; \`.hex/vendor/memo recall <regex>\` finds them.${kept.slice(kept.indexOf('\n\n'))}`)
   }
-})
+}
+
+// With memory off there's no wake file. Otherwise one wake runs at a time, under hex.db's lease, so
+// a slower one can't put older memory over a newer one. A wake takes well under a second, so one
+// that held it 10 seconds died or is stuck, and the next goes ahead; so does one hex.db can't open.
+if (!process.env.MEMORY_DIR) rmSync(wake, { force: true })
+else if (runs()) {
+  let store: Store | undefined
+  try {
+    store = open(stateDir())
+  } catch (error) {
+    process.stderr.write(`hex couldn't open hex.db: ${error}\n`)
+  }
+  const holder = crypto.randomUUID()
+  for (const until = Date.now() + 10_000; store && !store.lease('wake', holder, 10_000) && Date.now() < until; ) Bun.sleepSync(100)
+  try {
+    rewrite(store)
+  } finally {
+    store?.release('wake', holder)
+  }
+}

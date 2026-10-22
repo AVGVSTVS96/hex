@@ -353,17 +353,20 @@ test('a fresh session starts from the chat: the launcher adds the system prompt 
 })
 
 test('a subagent of a chat turn gets the instruction files Claude Code skipped, in hook-sized parts that say their order', () => {
-  writeFileSync(join(home, 'AGENTS.md'), Array.from({ length: 600 }, (_, i) => `- rule ${i} ${'x'.repeat(40)}`).join('\n') + '\n')
   const part = (n: number, extra: Record<string, string> = {}) => {
-    const result = Bun.spawnSync([join(home, '.hex/bin/instructions'), String(n), ...(n === 6 ? ['last'] : [])], { stdin: Buffer.from(JSON.stringify({ session_id: 's' })), env: env({ TMPDIR: home, ...extra }) })
+    const result = Bun.spawnSync([join(home, '.hex/bin/instructions'), String(n), ...(n === 3 ? ['last'] : [])], { stdin: Buffer.from(JSON.stringify({ session_id: 's' })), env: env({ TMPDIR: home, ...extra }) })
     const out = result.stdout.toString()
     return out ? JSON.parse(out).hookSpecificOutput.additionalContext as string : ''
   }
-  const parts = [1, 2, 3, 4, 5, 6].map(n => part(n))
+  const rules = (count: number) => writeFileSync(join(home, 'AGENTS.md'), Array.from({ length: count }, (_, i) => `- rule ${i} ${'x'.repeat(40)}`).join('\n') + '\n')
+  rules(300)
+  const parts = [1, 2, 3].map(n => part(n))
   expect(parts.every(text => text.length < 10_000)).toBe(true)
-  expect(parts[0]).toMatch(/^Your instruction files\. This comes in 4 parts of copy \w+, which may arrive out of order; this is part 1\./)
-  expect(parts.slice(4)).toEqual(['', ''])
+  expect(parts[0]).toStartWith('Your instruction files, part 1 of 2; read the parts in order.\n\n')
+  expect(parts[2]).toBe('')
   const whole = Bun.spawnSync([join(home, '.hex/bin/instructions')], { env: env() }).stdout.toString()
-  expect(parts.slice(0, 4).map(text => text.slice(text.indexOf('\n\n') + 2)).join('')).toBe(whole)
+  expect(parts.slice(0, 2).map(text => text.slice(text.indexOf('\n\n') + 2)).join('')).toBe(whole)
+  rules(600)
+  expect(part(3)).toContain(`That's all the hooks can show. Read the files themselves and follow them: ${join(home, '.claude/CLAUDE.md')}, ${join(home, 'AGENTS.md')}`)
   expect(part(1, { HEX_FRESH: '' })).toBe('')
 })
