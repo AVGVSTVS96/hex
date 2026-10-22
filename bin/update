@@ -54,7 +54,7 @@ git merge -q --ff-only "$incoming"
 "$hex/bin/optmem"
 "$hex/bin/migrate"
 # The new code, or a new memo, may write the wake differently.
-(unset MEMORY_DIR; . "$hex/bin/settings"; [ -z "$settings_unread" ] && "$hex/bin/wake") || :
+(. "$hex/bin/settings"; [ -z "$settings_unread" ] && "$hex/bin/wake") || :
 
 unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null || :)
 if [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] && ! git diff --quiet "$before" HEAD -- systemd; then

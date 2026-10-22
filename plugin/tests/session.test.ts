@@ -34,7 +34,7 @@ echo "backgrounded · job12345 · test"
 exit 0
 `)
   chmodSync(join(home, 'fake/claude'), 0o755)
-  for (const name of Object.keys(process.env)) if (name.startsWith('HEX_')) delete process.env[name]
+  for (const name of Object.keys(process.env)) if (name.startsWith('HEX_') || name === 'MEMORY_DIR') delete process.env[name]
   Object.assign(process.env, { HOME: home, PATH: `${join(home, 'fake')}:${process.env.PATH}`, CLAUDE_CONFIG_DIR: join(home, 'config'), CLAUDE_SECURESTORAGE_CONFIG_DIR: '', HEX_CHAT_CLAUDE: 'true' })
   listener = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(null, { status: 404 }) })
 })
