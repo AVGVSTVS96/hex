@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Ledger } from './ledger.ts'
@@ -44,6 +44,17 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(existsSync(file)).toBe(true)
   expect(new Ledger(file, 'telegram').questions).toHaveLength(2)
   expect(open(join(dir, 'telegram')).pins()).toHaveLength(2)
+})
+
+test('a ledger.json an older hex wrote again comes in again, and one nothing wrote since stays out', () => {
+  writeFileSync(file, JSON.stringify({ pins: { '-100:7': { message: 9, text: 'old', at: '2026-10-18T09:00:00.000Z' } } }))
+  new Ledger(file, 'telegram').unpinned('-100:7', 9)
+  expect(new Ledger(file, 'telegram').pin('-100:7')).toBeUndefined()
+  writeFileSync(file, JSON.stringify({ pins: { '-100:8': { message: 12, text: 'rolled back', at: '2026-10-19T09:00:00.000Z' } } }))
+  utimesSync(file, new Date(), new Date(Date.now() + 1000))
+  const ledger = new Ledger(file, 'telegram')
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 12, text: 'rolled back' })
+  expect(ledger.pin('-100:7')).toBeUndefined()
 })
 
 test('a question stays open through an edit and leaves the waiting list only when answered or settled, and a pin keeps its latest text', () => {

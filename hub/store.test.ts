@@ -129,7 +129,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.db.run('drop index said; drop table profiles')
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
-  store.db.run('drop table pins; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
@@ -297,7 +297,7 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
   new Store(dir).db.close()
   const old = new Database(join(dir, 'hex.db'))
-  old.run('drop table pins; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  old.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   old.run("insert into threads values ('telegram', '-100:9', 'Errands')")
   old.run('pragma user_version = 16')
   old.close()
@@ -402,7 +402,7 @@ test('an answer and the message that wakes its thread with it land together or n
 
 test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
   const store = new Store(dir)
-  store.db.run('drop table pins; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('create index unauthored on messages (n) where author = \'\'; pragma user_version = 15')
   const kept = (key: string, from: string, author: string, meta?: object) => store.db.query('insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)').run(key, '-100:7', from, author, 'hi', meta ? JSON.stringify(meta) : null, '2026-10-21T10:00:00.000Z')
   kept('telegram:1', 'telegram', 'hex General', { user: 'hex General' })

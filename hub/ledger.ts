@@ -14,12 +14,32 @@ export class Ledger {
   private readonly store: Store
   private rewriting = new Map<string, Promise<void>>()
 
-  // file: the app's state/<app>/ledger.json, where an older hex kept these, which hex.db took in once.
+  // file: the app's ledger.json, where an older hex kept these. Whenever an older hex wrote it since
+  // hex.db last took it in, its pins are the app's pins again, and its questions come in.
   constructor(
     file: string,
     private readonly app: string,
   ) {
     this.store = open(storeDir(dirname(file)))
+    this.store.takeIn(file, text => {
+      let book: { pins?: Record<string, Omit<Pin, 'app' | 'thread'>>; asks?: Omit<Question, 'app'>[] }
+      try {
+        book = JSON.parse(text) ?? {}
+      } catch (error) {
+        return void process.stderr.write(`hub: ${file} is unreadable, so hex.db left it out: ${error}\n`)
+      }
+      this.store.unpinned(app)
+      for (const [thread, pin] of Object.entries(book.pins ?? {})) keep(() => this.store.pinned({ ...pin, app, thread }), pin)
+      for (const question of Array.isArray(book.asks) ? book.asks : []) keep(() => this.store.ask({ app, ...question }), question)
+    })
+
+    function keep(take: () => unknown, kept: unknown) {
+      try {
+        take()
+      } catch (error) {
+        process.stderr.write(`hub: left out ${JSON.stringify(kept)} from ${file}, which hex.db refuses: ${error}\n`)
+      }
+    }
   }
 
   get questions(): readonly Question[] {

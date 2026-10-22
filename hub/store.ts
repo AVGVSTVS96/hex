@@ -206,34 +206,8 @@ const migrations: (string | ((store: Store) => void))[] = [
     note text,
     at text not null check (at ${UTC}),
     primary key (app, thread)
-  );`,
-  // The pins, and any questions not moved yet, that an older hex kept in each app's ledger.json: in a
-  // hex's state/<app>/, or in the app's own state folder outside a hex. The file stays where it is.
-  ({ db, dir }: Store) => {
-    const pin = db.query('insert into pins (app, thread, message, text, note, at) values (?, ?, ?, ?, ?, ?) on conflict do nothing')
-    const ask = db.query('insert into questions (app, thread, message, text, options, poll, multiple, answer, settled, at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing')
-    const json = (value: unknown) => (value === undefined ? null : JSON.stringify(value))
-    for (const [app, file] of [[basename(dir), join(dir, 'ledger.json')], ...readdirSync(dir).map(app => [app, join(dir, app, 'ledger.json')])] as const) {
-      if (!existsSync(file)) continue
-      let book: { pins?: Record<string, any>; asks?: any[] }
-      try {
-        book = JSON.parse(readFileSync(file, 'utf8')) ?? {}
-      } catch (error) {
-        process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`)
-        continue
-      }
-      const keep = (kept: unknown, put: () => unknown) => {
-        try {
-          put()
-        } catch (error) {
-          process.stderr.write(`hex.db left out ${JSON.stringify(kept)} from ${file}: ${error}\n`)
-        }
-      }
-      for (const [thread, kept] of Object.entries(book.pins ?? {})) keep(kept, () => pin.run(app, thread, kept.message, kept.text ?? '', kept.note ?? null, kept.at))
-      for (const kept of Array.isArray(book.asks) ? book.asks : [])
-        keep(kept, () => ask.run(app, kept.thread, kept.message, kept.text, json(kept.options), kept.poll ?? null, kept.multiple ? 1 : 0, json(kept.answer), json(kept.settled), kept.at))
-    }
-  },
+  );
+  create table files (path text primary key, mtime real not null);`,
 ]
 
 const now = () => new Date().toISOString()
@@ -689,6 +663,22 @@ export class Store {
     })
   }
 
+  // Runs take with an older hex's file when it changed since hex.db last took it in, so a file an
+  // older hex writes again (after a rollback) comes in again, and one nothing wrote since stays out.
+  takeIn(file: string, take: (text: string) => void) {
+    let mtime: number
+    try {
+      mtime = statSync(file).mtimeMs
+    } catch {
+      return
+    }
+    this.write(() => {
+      if ((this.db.query('select mtime from files where path = ?').get(file) as { mtime: number } | null)?.mtime === mtime) return
+      take(readFileSync(file, 'utf8'))
+      this.db.query('insert into files (path, mtime) values (?, ?) on conflict (path) do update set mtime = excluded.mtime').run(file, mtime)
+    })
+  }
+
   pin(app: string, thread: string): Pin | null {
     const row = this.db.query('select * from pins where app = ? and thread = ?').get(app, thread) as StoredPin | null
     return row && toPin(row)
@@ -709,9 +699,9 @@ export class Store {
     )
   }
 
-  // The thread has no pin now, or none if its pin was this message.
-  unpinned(app: string, thread: string, message?: MessageId) {
-    this.write(() => this.db.query('delete from pins where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
+  // The thread has no pin now, or none if its pin was this message; with no thread, no thread of the app has one.
+  unpinned(app: string, thread?: string, message?: MessageId) {
+    this.write(() => this.db.query('delete from pins where app = ?1 and (?2 is null or thread = ?2) and (?3 is null or message = ?3)').run(app, thread ?? null, message ?? null))
   }
 
   // What a session was last shown of one kind, like its rules or its tasks: '' when nothing yet.
