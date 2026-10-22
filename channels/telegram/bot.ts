@@ -631,7 +631,7 @@ const hub = startHub({
   channel: 'plugin:telegram@hex',
   server,
   link: thread =>
-    thread.startsWith('-100') ? `https://t.me/c/${thread.slice(4).replace(':', '/')}${thread.includes(':') ? '' : '/1'}` : /^\d+$/.test(thread) && polling ? `https://t.me/${polling}` : undefined,
+    thread.startsWith('-100') ? `https://t.me/c/${thread.slice(4).replace(':', '/')}${thread.includes(':') ? '' : '/1'}` : /^\d+(:\d+)?$/.test(thread) && polling ? `https://t.me/${polling}` : undefined,
   main: MAIN,
   general: true,
   hexDir: process.env.HEX_DIR,

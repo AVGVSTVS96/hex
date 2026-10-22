@@ -141,7 +141,8 @@ function log(rows: Row[]) {
     const at = Temporal.Instant.from(row.at).toZonedDateTimeISO(zone).toPlainDateTime().toString().slice(0, 16).replace('T', ' ')
     const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : ''
     const body = row.from === 't3' && row.author === 'owner' ? asked(row.body) : row.body
-    const thread = named[row.to] ? `${named[row.to]} (${row.to})` : row.to
+    const name = named[`${row.from}:${row.to}`] ?? named[row.to]
+    const thread = name ? `${name} (${row.to})` : row.to
     const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
     const who = row.meta?.user && (row.author === 'prompt' || row.author === 'other') ? `${row.author} (${row.meta.user})` : row.author
     return `## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`

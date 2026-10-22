@@ -16,8 +16,8 @@ const BUSY = new Set(['busy', 'shell'])
 export const busy = (session?: Session) => !!session && BUSY.has(session.status)
 const busyness = (status: string) => (status === 'busy' ? 2 : status === 'shell' ? 1 : 0)
 
-// Every running session by id. Two records of one session count as the busiest: mid-turn, then a
-// shell still running, then anything else.
+// Every running session by id. Two records of one session count as the busiest (mid-turn, then a
+// shell still running, then anything else), and of two as busy, the newer.
 export function running(claude = CLAUDE): Map<string, Session> {
   const sessions = new Map<string, Session>()
   const dir = join(claude, 'sessions')
@@ -26,11 +26,12 @@ export function running(claude = CLAUDE): Map<string, Session> {
     const record = readJson(join(dir, name))
     if (!record?.sessionId || !alive(record.pid)) continue
     const { sessionId: id, pid, status = 'idle', kind, name: title, cwd, startedAt = 0 } = record
-    const before = sessions.get(id)
-    if (before && busyness(before.status) >= busyness(status)) continue
+    const at = record.statusUpdatedAt ?? startedAt
+    const kept = sessions.get(id)
+    if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && kept.at >= at))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    sessions.set(id, { id, pid, status, ...job, kind, name: title, cwd, started: startedAt, at: record.statusUpdatedAt ?? startedAt })
+    sessions.set(id, { id, pid, status, ...job, kind, name: title, cwd, started: startedAt, at })
   }
   const byPid = new Map([...sessions.values()].map(session => [session.pid, session.id]))
   const parents = processParents()

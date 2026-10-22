@@ -202,9 +202,9 @@ DM), `https://discord.com/channels/<server>/<thread>`, `buzz://message?channel=.
 (`buzz://channel/...` for the DM) or `<scheme>://threads/<environment>/<thread>` for T3 Code,
 the app's URL scheme being `t3code` unless `T3_APP_SCHEME` says otherwise
 (`t3code-preview`, `t3code-dev`). Each app's hub keeps its threads' links in
-hex.db (`hex threads --json`), so a T3 thread's scheme is the T3 hub's
-`T3_APP_SCHEME`; voice's own sets it for the T3 threads a thread hands off. A
-thread whose app can't say where it lives has no `link`.
+hex.db (`hex threads --json`). `T3_APP_SCHEME` goes in the `env` of hex's
+`.claude/settings.json`, which the T3 hub and voice both run with. A thread
+whose app can't say where it lives has no `link`.
 
 Claude Code starts a job's timeline over whenever its session respawns or renews, so the engine
 keeps each thread's `track` for a week in `state/voice/tracks.json`.
@@ -322,7 +322,6 @@ them with hex) gets Claude walking the list in order.
    VOICE_MODEL=...    # the OpenAI live model that talks; gpt-live-1 if unset
    VOICE_PORT=8790    # the call page's local port
    VOICE_TOKEN=...    # if set, /session, /calls and /phone need "Authorization: Bearer <token>"
-   T3_APP_SCHEME=...  # the T3 Code app's URL scheme for the T3 threads a thread hands off; t3code if unset
    OPENAI_BASE_URL=... # another endpoint that speaks OpenAI's live API; https://api.openai.com/v1 if unset
    ```
 
