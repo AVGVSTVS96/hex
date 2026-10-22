@@ -160,10 +160,10 @@ test('a thread is found by its id or its name, in any app but voice', () => {
   expect(findThread(state, 'voice')).toBeUndefined()
 })
 
-test('a name more than one thread has finds none of them, and says where they are', () => {
+test('a name more than one thread has finds none of them, and each by its id', () => {
   threads('buzz', { 'buzz-id': { name: 'hex', session: 's1' } })
   threads('discord', { 'discord-id': { name: 'hex', session: 's2' } })
-  expect(() => findThread(state, 'hex')).toThrow('more than one hex thread is named hex, in buzz and discord: pass its id, from hex threads')
+  expect(findThread(state, 'hex')).toBeUndefined()
   expect(findThread(state, 'discord-id')).toMatchObject({ app: 'discord', name: 'hex' })
 })
 

@@ -638,20 +638,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       save()
     }
     const source = fork ?? (known.session ? undefined : known.from)
-    const continued = source ?? (fresh(thread) ? undefined : known.session)
-    // A session Claude Code no longer has the conversation of can't be resumed, so a new one starts
-    // and is told why when it connects, the note kept before the thread lets go of the old one.
-    const lost = continued && !claude.saved(continued)
-    if (lost) {
-      const body = `[hub] This thread's session ${continued} can't be resumed: Claude Code no longer has its conversation. You're a new session without it; say so when you reply.`
-      const key = `hub:${thread}:lost:${continued}`
-      kept(store => store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), false)
-      runOf(thread).handed.add(key)
-      if (continued === known.session) delete known.session
-      delete known.from
-      save()
-    }
-    const resume = lost ? [] : source ? ['--resume', source, '--fork-session'] : continued ? ['--resume', continued] : []
+    const resume = source ? ['--resume', source, '--fork-session'] : known.session && !fresh(thread) ? ['--resume', known.session] : []
     try {
       watchJob(thread, await claude.start(launcher, ['--channels', channel, '--name', known.name, ...resume, ...launchArgs, '--settings', settingsOf(thread), ...(prompt ? [prompt] : [])], { cwd: known.cwd ?? hexDir, env: inherited }))
     } catch (error) {
@@ -685,6 +672,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const { phase } = run
     if (phase.is !== 'launching') return
     become(run, { is: 'stopped' })
+    if (lost(thread, reason)) return void launch(thread, threads[thread]!.name, { again: phase.again })
     if (run.renew === 'underway') run.renew = undefined
     const failing = (run.failing ??= { count: 0 })
     failing.count++
@@ -697,6 +685,24 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? 'hex', { content, author: 'prompt', meta: { user: 'hub' } })
     }
     setState(thread, false)
+  }
+
+  // Claude Code no longer has the conversation of the session a start resumed or forked, so the
+  // thread lets go of it once a note is kept that tells its next session why it starts without it.
+  function lost(thread: string, reason: string) {
+    const known = threads[thread]
+    const run = runOf(thread)
+    const session = reason.match(/source session (\S+) not found/)?.[1]
+    if (!known || !session || ![known.session, known.from, run.opening?.fork].includes(session)) return false
+    const key = `hub:${thread}:lost:${session}`
+    const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to resume, so you're a new session without it; say so when you reply.`
+    if (!kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
+    run.handed.add(key)
+    if (known.session === session) delete known.session
+    if (known.from === session) delete known.from
+    if (run.opening?.fork === session) delete run.opening.fork
+    save()
+    return true
   }
 
   // The store while it opens and writes; without it the hub goes on from memory, as it did before

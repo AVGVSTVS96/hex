@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'child_process'
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'fs'
+import { closeSync, fstatSync, openSync, readFileSync, readSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
 import { sleep } from './clock.ts'
@@ -293,12 +293,6 @@ export function settingsOf(agent: Agent): Launch | undefined {
 
 export function transcript(cwd: string, session: string) {
   return join(home(), 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${session}.jsonl`)
-}
-
-// Whether any project folder has the session's conversation; one with none has nothing to resume.
-export function saved(session: string) {
-  const projects = join(home(), 'projects')
-  return existsSync(projects) && readdirSync(projects).some(project => existsSync(join(projects, project, `${session}.jsonl`)))
 }
 
 // From the newest usage or compaction in the session's transcript.
