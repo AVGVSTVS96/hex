@@ -1035,14 +1035,16 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (run.turn === 'done' && agent.state !== 'working') return
     const deadline = new AbortController()
     const timer = clock.setTimeout(() => deadline.abort(), PRESS)
+    const pressed = new Date().toISOString()
     const how = await claude
       .interrupt(cwdOf(thread), session, AbortSignal.any([deadline.signal, closing.signal]))
       .catch(error => void process.stderr.write(`hub: couldn't interrupt ${thread}'s turn: ${error}\n`))
       .finally(() => clock.clearTimeout(timer))
     if (closing.signal.aborted || current(thread) !== session) return
     if (how === 'interrupted') {
-      // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it.
-      kept(store => store.turned(session, false), undefined)
+      // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it, as of
+      // the press: a turn begun since then is left running.
+      kept(store => store.turned(session, false, pressed), undefined)
       setState(thread, false, true)
       if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') setState(thread, false)
       return
