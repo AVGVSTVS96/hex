@@ -28,8 +28,6 @@ type Turn = {
   client: AgentContext
   reader?: ReturnType<typeof follow>
   sent: Promise<unknown>
-  // What the session said in T3 this turn, kept as hex's reply once the turn ends.
-  said: string[]
   done: boolean
   since: number
   compaction?: string
@@ -94,7 +92,7 @@ const hub = startHub({
   // Its turn is done once a stop leaves no background agent working.
   state: (thread, busy, background) => {
     const turn = turns.get(thread)
-    if (!turn) return void (!busy && !background && hub.turned(thread))
+    if (!turn) return
     turn.done = !busy && !background
     const session = hub.session(thread)
     if (busy && session && !turn.reader) turn.reader = reader(thread, session, turn, turn.since)
@@ -143,7 +141,6 @@ function reader(thread: string, session: string, turn: Turn, since?: number) {
 
 function send(turn: Turn, notification: SessionNotification) {
   const { update } = notification
-  if (update.sessionUpdate === 'agent_message_chunk' && update.content.type === 'text') turn.said.push(update.content.text)
   turn.sent = turn.sent.then(() => turn.client.notify('session/update', notification)).catch(() => {})
 }
 
@@ -151,13 +148,18 @@ function compaction(turn: Turn, thread: string, status: string, error?: string) 
   send(turn, { sessionId: thread, update: { sessionUpdate: 'compaction_update', compactionId: turn.compaction!, status, ...(error && { error }) } })
 }
 
+// The session's Stop hook keeps a turn's words and queues its pass. A turn cut short runs none and,
+// like an interrupted turn in any app, keeps no words, so its pass is queued here.
+function cut(thread: string) {
+  hub.turned(thread)
+  finish(thread, 'cancelled')
+}
+
 function finish(thread: string, stopReason: StopReason, error?: string) {
   const turn = turns.get(thread)
   if (!turn) return
   turns.delete(thread)
   turn.reader?.close()
-  if (turn.said.length) hub.sent(thread, { content: turn.said.join('\n\n'), meta: { stop: stopReason, ...(error && { error }) } })
-  hub.turned(thread)
   if (turn.compaction) compaction(turn, thread, error ? 'failed' : stopReason === 'cancelled' ? 'cancelled' : 'completed', error)
   void turn.sent.then(() => (error ? turn.reject(RequestError.internalError(undefined, error)) : turn.resolve({ stopReason })))
 }
@@ -211,12 +213,12 @@ function compacting(blocks: ContentBlock[]) {
 }
 
 function track(thread: string, client: AgentContext, signal: AbortSignal, resolve: Turn['resolve'], reject: Turn['reject'], since: number, compact = false) {
-  const turn: Turn = { client, sent: Promise.resolve(), said: [], done: false, since, resolve, reject, ...(compact && { compaction: randomUUID() }) }
+  const turn: Turn = { client, sent: Promise.resolve(), done: false, since, resolve, reject, ...(compact && { compaction: randomUUID() }) }
   turns.set(thread, turn)
   signal.addEventListener('abort', () => {
     if (turns.get(thread) !== turn) return
+    cut(thread)
     void hub.stop(thread)
-    finish(thread, 'cancelled')
   }, { once: true })
   return turn
 }
@@ -305,7 +307,12 @@ function cancel(thread: string) {
   const turn = turns.get(thread)
   if (!turn) return
   if (steering(thread)) return finish(thread, 'cancelled')
-  void hub.interrupt(thread).finally(() => turns.get(thread) === turn && finish(thread, 'cancelled'))
+  stop(thread)
+}
+
+function stop(thread: string) {
+  const turn = turns.get(thread)
+  void hub.interrupt(thread).finally(() => turns.get(thread) === turn && cut(thread))
 }
 
 // Images and binary files land in the inbox, so the session reads them by path.
@@ -453,10 +460,7 @@ clients.set('t3', {
   place,
   backfill,
   waits: true,
-  stop: thread => {
-    void hub.interrupt(thread)
-    finish(thread, 'cancelled')
-  },
+  stop,
 })
 
 rmSync(SOCKET, { force: true })

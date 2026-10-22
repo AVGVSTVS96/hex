@@ -10,7 +10,7 @@ const WORKING = new Set(['subagent', 'workflow'])
 // as its own prompt, so only the opening tag is hex's: one further in is the message's own words.
 const KEY = /^<channel source="[^"]*" key="([^"]+)"/
 
-async function input(): Promise<{ prompt?: unknown; session_id?: string; background_tasks?: { type?: string }[] }> {
+async function input(): Promise<{ prompt?: unknown; session_id?: string; background_tasks?: { type?: string }[]; last_assistant_message?: string; hook_event_name?: string }> {
   try {
     return JSON.parse(await Bun.stdin.text())
   } catch {
@@ -18,7 +18,7 @@ async function input(): Promise<{ prompt?: unknown; session_id?: string; backgro
   }
 }
 
-const { prompt, session_id = '', background_tasks } = await input()
+const { prompt, session_id = '', background_tasks, last_assistant_message, hook_event_name } = await input()
 const fromChat = typeof prompt === 'string' && prompt.startsWith('<channel source=')
 const background = !busy && !!background_tasks?.some(task => WORKING.has(task.type ?? ''))
 const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined
@@ -40,7 +40,7 @@ if (key) {
 
 // What's typed in a session's terminal is kept like any message, already taken by the session: the
 // owner's, except the prompt a job's session opens on (the hub keeps the prompt it starts a session
-// with itself; observe.ts keeps a terminal's answers). Typed into a job's session later, by someone
+// with itself; a turn's end, below, keeps its answers). Typed into a job's session later, by someone
 // attached to it, it's the owner's again.
 const said = busy && typeof prompt === 'string' && !fromChat && !/^(\/|<(local-command|command-|system-reminder|task-notification|(agent|cross-session|teammate)-message[\s>]))/.test(prompt) ? prompt : undefined
 if (said && session_id) {
@@ -51,6 +51,18 @@ if (said && session_id) {
     const started = author === 'owner' && store.said(to, 20).some(row => row.from === 'hub' && row.body.trim() === said.trim())
     if (!started) store.deliver({ key: `terminal:${crypto.randomUUID()}`, to, from: 'terminal', author, body: said, meta: { session: session_id } }, session_id)
   } catch {}
+}
+
+// A turn that ended is kept and queued for memories before the hub hears of it (observe.ts). One
+// that failed keeps nothing: its last message is the API's error, and the session's next pass takes
+// what it had taken.
+if (!busy && session_id && hook_event_name === 'Stop') {
+  try {
+    const { ended } = await import('./observe.ts')
+    ended(stateDir(), session_id, last_assistant_message)
+  } catch (error) {
+    process.stderr.write(`hex couldn't keep this turn: ${error}\n`)
+  }
 }
 
 if (HEX_HUB && HEX_THREAD && (!busy || fromChat)) {

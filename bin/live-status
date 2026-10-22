@@ -103,9 +103,6 @@ def threads():
             continue
         app, name = apps[id]
         author, body, at = row["author"], row["body"], row["at"]
-        if row["from"] == "t3" and author == "owner":
-            request = re.search(r"<user_request>\n?([\s\S]*?)\n?</user_request>", body)
-            body = request.group(1) if request else re.sub(r"^<([a-z0-9_]+)>[\s\S]*?</\1>$", "", body, flags=re.M)
         said = " ".join(re.sub(r"[*`]", "", body).split())
         where = ", ".join(filter(None, [app, states.get(sessions[id])]))
         at = datetime.fromisoformat(at.replace("Z", "+00:00")).timestamp()

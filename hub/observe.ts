@@ -42,7 +42,6 @@ const SCHEMA = {
 }
 export type Answer = { notes: string[]; profile: string | null }
 
-type Hook = { session_id?: string; last_assistant_message?: string }
 export type Pass = { session: string; by: string; thread?: string }
 
 export async function observe(state: string, session: string, { ask = claude, memo = MEMO, by = new Date().toISOString(), thread = undefined as string | undefined } = {}) {
@@ -259,28 +258,26 @@ export function queue(state: string, pass: Pass) {
   }
 }
 
-// The Stop hook queues the turn and hands the queue to a process of its own, since Claude Code ends
-// a hook still running when its session exits, and a hex session often exits right after a turn (a
-// restart, an update, a call that ended). A pass takes only what the session had taken when its
-// turn ended, not the next turn's message, and what an earlier pass in its thread left unfinished.
-// Errors go to state/observe.log.
-if (import.meta.main) {
-  const { HEX_PASS, HEX_THREAD, HEX_CHANNEL } = process.env
-  const state = stateDir()
-  if (HEX_PASS) await drain(state)
-  else {
-    const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
-    // A turn's last words in the terminal are kept before the turn is queued: a session no app holds
-    // answers there, and an app's session sums up there what its replies may not say. In T3 Code the
-    // terminal is the conversation, which T3's bot keeps as hex's reply.
-    const t3 = HEX_CHANNEL?.startsWith('plugin:t3@')
-    const answer = t3 ? undefined : hook.last_assistant_message?.trim()
-    try {
-      if (hook.session_id && answer) open(state).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id, ...(HEX_CHANNEL && { unsent: 'true' }) } }, hook.session_id)
-    } catch (error) {
-      process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
-    }
-    // A T3 turn's reply is kept once T3's bot sees the turn end, after this hook, so T3's bot queues its pass then.
-    if (hook.session_id && !t3) queue(state, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
+// A turn that ended, from the session's Stop hook (state.ts), in this order: its last words are kept,
+// the turn is queued for a pass, and only then does the hub hear the session is idle, so the words
+// land before anything the turn's end lets in, and its pass sees them. A session no app holds answers
+// in the terminal, and an app's session sums up there what its replies may not say. In T3 Code the
+// terminal is the conversation, so there they are hex's reply in T3. The queue goes to a process of
+// its own, since Claude Code ends a hook still running when its session exits, and a hex session
+// often exits right after a turn (a restart, an update, a call that ended). A pass takes only what
+// the session had taken when its turn ended, and what an earlier pass in its thread left unfinished.
+export function ended(state: string, session: string, last?: string) {
+  const { HEX_THREAD, HEX_CHANNEL } = process.env
+  const t3 = HEX_CHANNEL?.startsWith('plugin:t3@')
+  const from = t3 ? 't3' : 'terminal'
+  const answer = last?.trim()
+  try {
+    if (answer) open(state).deliver({ key: `${from}:${crypto.randomUUID()}`, to: HEX_THREAD ?? session, from, author: 'hex', body: answer, meta: { session, ...(HEX_CHANNEL && !t3 && { unsent: 'true' }) } }, session)
+  } catch (error) {
+    process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
   }
+  queue(state, { session, by: new Date().toISOString(), thread: HEX_THREAD })
 }
+
+// The memory agent, which works through the queued turns. Errors go to state/observe.log.
+if (import.meta.main && process.env.HEX_PASS) await drain(stateDir())

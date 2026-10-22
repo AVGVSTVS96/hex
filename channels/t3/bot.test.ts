@@ -167,6 +167,10 @@ async function kept(agent: Awaited<ReturnType<typeof t3>>['agent']) {
   hex.write(prompt, reply, done)
   await hex.idle()
   await first
+  // What the session's Stop hook keeps of the turn: its answer, as hex's reply in T3.
+  const db = new Database(join(dir, 'hex', 'state', 'hex.db'))
+  db.query(`insert into messages (key, "to", "from", author, body, at, taken_by, taken_at) values ('t3:answer', ?1, 't3', 'hex', 'hi from hex', ?2, ?3, ?2)`).run(sessionId, new Date().toISOString(), SESSION)
+  db.close()
   return { sessionId, hex }
 }
 
@@ -433,7 +437,8 @@ test('a prompt a hub restart lost before its session took it reaches the session
   await hex.idle()
   expect(await answer).toEqual({ stopReason: 'end_turn' })
   expect(hex.inbound.map(message => message.content)).toEqual(['hi'])
-  expect(new Database(join(dir, 'hex', 'state', 'hex.db')).query('select author, count(*) as n from messages group by author order by author').all()).toEqual([{ author: 'hex', n: 1 }, { author: 'owner', n: 1 }])
+  // hex's reply is the session's Stop hook's to keep (state.ts), which this session doesn't run.
+  expect(new Database(join(dir, 'hex', 'state', 'hex.db')).query('select author, count(*) as n from messages group by author order by author').all()).toEqual([{ author: 'owner', n: 1 }])
 })
 
 test('a prompt the old hub never read before a restart reaches the session once hex is back', async () => {

@@ -72,7 +72,7 @@ test("a job a job session starts is its owner's too", () => {
 test("a job session's prompt is hex's words in hex.db, its answer too, what the owner types in a terminal or into the job is theirs, and an app session's terminal words are kept as unsent", () => {
   const state = join(home, 'state')
   const hook = (step: string, input: object, extra: Record<string, string> = {}) =>
-    Bun.spawnSync(['bun', join(HEX, step === 'busy' ? 'hub/state.ts' : 'hub/observe.ts'), step], { stdin: Buffer.from(JSON.stringify(input)), env: { ...env, HEX_STORE: state, MEMORY_DIR: '', ...extra } })
+    Bun.spawnSync(['bun', join(HEX, 'hub/state.ts'), step], { stdin: Buffer.from(JSON.stringify(input)), env: { ...env, HEX_STORE: state, MEMORY_DIR: '', ...extra } })
   hook('busy', { session_id: 'job-1', prompt: 'Build the deck tab.' }, { HEX_OWNER: 't3:stray-key' })
   hook('idle', { hook_event_name: 'Stop', session_id: 'job-1', last_assistant_message: 'Built.' }, { HEX_OWNER: 't3:stray-key' })
   hook('busy', { session_id: 'job-1', prompt: 'make the tab blue' }, { HEX_OWNER: 't3:stray-key' })
