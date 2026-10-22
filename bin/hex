@@ -41,6 +41,7 @@ case "${1:-}" in
         printf '%s\n' "$consent" > "$user"
       fi
     fi
+    "$hex/bin/migrate"
     "$hex/bin/optmem"
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
     HEX_STORE="$home/state" MEMORY_DIR="$home/memory" "$hex/bin/wake" || :

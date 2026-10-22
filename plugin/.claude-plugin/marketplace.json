@@ -1,0 +1,7 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "hex-hooks",
+  "description": "hex's hooks, for the hex folder's own settings to load",
+  "owner": { "name": "AVGVSTVS96" },
+  "plugins": [{ "name": "hex", "description": "hex's hooks", "source": "./" }]
+}

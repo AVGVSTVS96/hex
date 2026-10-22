@@ -6,7 +6,7 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 done="$home/state/migrated"
 
-steps=3
+steps=4
 
 step1() {
   [ -f "$home/schedules.json" ] || return 0
@@ -24,6 +24,13 @@ step2() {
 
 step3() {
   bun "$hex/hub/past.ts" "$home"
+}
+
+# The hex folder's settings load hex's hooks, so a `claude` started there by hand runs them too.
+step4() {
+  settings="$home/.claude/settings.json"
+  [ -f "$settings" ] || return 0
+  jq --arg plugin "$hex/plugin" '.extraKnownMarketplaces["hex-hooks"] = {source: {source: "directory", path: $plugin}} | .enabledPlugins["hex@hex-hooks"] = true' "$settings" > "$settings.new" && mv "$settings.new" "$settings"
 }
 
 n=$(cat "$done" 2>/dev/null) || n=0
