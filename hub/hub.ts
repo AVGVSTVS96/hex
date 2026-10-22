@@ -637,6 +637,13 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       known.launched = launched
       save()
     }
+    // Claude Code can't resume a session whose conversation it no longer keeps.
+    if (known.session && !fresh(thread) && !existsSync(claude.transcript(cwdOf(thread), known.session))) {
+      const content = `[hub] This thread's session ${known.session} can't be resumed: Claude Code no longer has its conversation. You're a new session without it; say so when you reply.`
+      delete known.session
+      save()
+      deliver(thread, known.name, { content, author: 'prompt', meta: { user: 'hub' } })
+    }
     const source = fork ?? (known.session ? undefined : known.from)
     const resume = source ? ['--resume', source, '--fork-session'] : known.session && !fresh(thread) ? ['--resume', known.session] : []
     try {

@@ -380,7 +380,9 @@ export function followAgent(agent: string, session: string | undefined, onStep: 
 export function findThread(state: string, wanted: string): Thread | undefined {
   const lower = wanted.toLowerCase()
   const all = open(state).threads({ open: true }).filter(({ app }) => app !== 'voice')
-  const found = all.find(({ thread }) => thread === wanted) ?? all.find(({ name }) => name.toLowerCase() === lower)
+  const named = all.filter(({ name }) => name.toLowerCase() === lower)
+  const found = all.find(({ thread }) => thread === wanted) ?? (named.length === 1 ? named[0] : undefined)
+  if (!found && named.length > 1) throw new Error(`more than one hex thread is named ${wanted}, in ${[...new Set(named.map(({ app }) => app))].join(' and ')}: pass its id, from hex threads`)
   return found && { app: found.app, id: found.thread, name: found.name, cwd: found.cwd, state }
 }
 
