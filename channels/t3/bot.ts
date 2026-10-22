@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
 import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptRequest, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
 import { startHub, clients, begin, move, title, family, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
-import { asked } from '../../hub/store.ts'
+import { asked, open, stateDir as storeOf } from '../../hub/store.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
 import { withT3, projectAt, linkTo, promptedBy, steering, appThreads } from './t3code.ts'
@@ -60,16 +60,57 @@ const servers = new Map<string, string>()
 
 mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 
-// A thread's link, once T3 Code has recorded it. A save asks for every thread at once, so T3's
-// records are read once per save.
-let recorded: Map<string, string> | undefined
+// T3 Code's records, read once per save, since a save asks for every thread's link at once: null
+// until read, undefined with none to go by. They give a thread its link and its name, T3's title for
+// it. A thread T3 deleted closes here too, as does one T3 never recorded (hex has no link for it),
+// once T3 has had a few minutes to record what hex kept: since it kept it, or since this hub started
+// for one an older hub kept. Records that have none of the threads hex has links for may be another
+// install's, so they close nothing, and neither does a thread with a link that they lack.
+const RECORDING = Number(process.env.T3_RECORDING_MS) || 5 * 60_000
+const started = Date.now()
+const kept = new Map<string, number>()
+const closing = new Set<string>()
+let recorded: ReturnType<typeof appThreads> | null = null
 function link(thread: string) {
-  if (!recorded) {
-    recorded = appThreads()
-    queueMicrotask(() => (recorded = undefined))
+  if (recorded === null) {
+    queueMicrotask(() => {
+      try {
+        mirror(recorded)
+      } catch (error) {
+        process.stderr.write(`t3: couldn't match hex's threads to T3's: ${error}\n`)
+      } finally {
+        recorded = null
+      }
+    })
+    try {
+      recorded = appThreads()
+    } catch (error) {
+      recorded = undefined
+      throw error
+    }
   }
-  const opened = recorded.get(thread)
-  return opened && linkTo(opened)
+  const opened = recorded?.get(thread)
+  return opened && !opened.deleted ? linkTo(opened.thread) : undefined
+}
+
+function mirror(records: ReturnType<typeof appThreads>) {
+  const links = new Map(open(storeOf(STATE_DIR)).threads({ app: 't3' }).map(({ thread, link }) => [thread, link]))
+  const threads = hub.threads()
+  if (!records || !threads.some(thread => links.get(thread) && records.get(thread)?.deleted === false)) return
+  for (const thread of threads) {
+    const record = records.get(thread)
+    if (record && !record.deleted) {
+      kept.delete(thread)
+      hub.rename(thread, record.title || hub.name(thread)!)
+    } else if ((record || !links.get(thread)) && !turns.has(thread) && !closing.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) {
+      closing.add(thread)
+      kept.delete(thread)
+      hub
+        .retire(thread)
+        .catch(error => process.stderr.write(`t3: couldn't close ${thread}: ${error}\n`))
+        .finally(() => closing.delete(thread))
+    }
+  }
 }
 
 const hub = startHub({
@@ -181,6 +222,7 @@ function keep(thread: string) {
   const waiting = opened.get(thread)
   if (!waiting) return
   opened.delete(thread)
+  kept.set(thread, Date.now())
   const folder = folderFor(waiting.cwd)
   hub.register(thread, basename(folder ?? HEX_DIR), folder)
   hub.configure(thread, waiting.settings)
@@ -364,6 +406,7 @@ async function place(name: string, _where?: string, _about?: string, cwd?: strin
   if (!projectId) throw new Error(`T3 Code has no project for ${root}`)
   const thread = randomUUID()
   const { threadId } = await withT3(call => call('server.importAcpRegistrySession', { instanceId: INSTANCE, projectId, sessionId: thread, title: name }))
+  kept.set(thread, Date.now())
   hub.register(thread, name, cwd)
   placed.add(thread)
   writeFileSync(PLACED_FILE, JSON.stringify([...placed].filter(known => hub.name(known))))
