@@ -665,8 +665,9 @@ export class Store {
 
   // Runs take with what an older hex keeps in a file, under a name of its own, when the file says
   // something else than when hex.db last took it in, with what it said then: the first time, and after
-  // an older hex (rolled back to) wrote it again. A copy, move or touch of the same words changes nothing.
-  takeIn(name: string, file: string, take: (now: string, before?: string) => void) {
+  // an older hex (rolled back to) wrote it again. A copy, move or touch of the same words changes
+  // nothing, and words take can't read (it returns false) aren't kept as taken in.
+  takeIn(name: string, file: string, take: (now: string, before?: string) => boolean | void) {
     let now: string
     try {
       now = readFileSync(file, 'utf8')
@@ -676,7 +677,7 @@ export class Store {
     this.write(() => {
       const before = (this.db.query('select body from files where name = ?').get(name) as { body: string } | null)?.body
       if (before === now) return
-      take(now, before)
+      if (take(now, before) === false) return
       this.db.query('insert into files (name, body) values (?, ?) on conflict (name) do update set body = excluded.body').run(name, now)
     })
   }

@@ -58,6 +58,11 @@ test('what an older hex changed in ledger.json comes in, and nothing else, and a
   expect(ledger.pin('-100:8')).toMatchObject({ message: 12, text: 'rolled back' })
   expect(ledger.pin('-100:7')).toBeUndefined()
   expect(ledger.pin('-100:9')).toMatchObject({ message: 20, text: 'pinned after the move' })
+  ledger.pinned('-100:8', 30, 'pinned again here')
+  writeFileSync(file, JSON.stringify({ pins: { '-100:8': { message: 12, text: 'edited there', at: '2026-10-20T09:00:00.000Z' } } }))
+  expect(new Ledger(file, 'telegram').pin('-100:8')).toMatchObject({ message: 30, text: 'pinned again here' })
+  writeFileSync(file, JSON.stringify({ pins: {} }))
+  expect(new Ledger(file, 'telegram').pin('-100:8')).toMatchObject({ message: 30 })
 })
 
 test('a question stays open through an edit and leaves the waiting list only when answered or settled, and a pin keeps its latest text', () => {

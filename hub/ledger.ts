@@ -16,7 +16,7 @@ export class Ledger {
 
   // file: the app's ledger.json, where an older hex kept these. Whenever it says something else than
   // when hex.db last took it in, what it changed since (the older hex's doing) comes in: each pin it
-  // set or took away, and each question it added.
+  // took away or moved to another message, an edit to a pin hex.db still has, and each question it added.
   constructor(
     file: string,
     private readonly app: string,
@@ -24,12 +24,12 @@ export class Ledger {
     this.store = open(storeDir(dirname(file)))
     this.store.takeIn(`${app}/ledger.json`, file, (now, before) => {
       const [book, was] = [now, before ?? '{}'].map(text => read(text, file))
-      if (!book) return
-      for (const thread of new Set([...Object.keys(book.pins), ...Object.keys(was?.pins ?? {})])) {
-        const pin = book.pins[thread]
-        if (JSON.stringify(pin) === JSON.stringify(was?.pins[thread])) continue
-        if (pin) keep(() => this.store.pinned({ ...pin, app, thread }), pin)
-        else this.store.unpinned(app, thread)
+      if (!book) return false
+      for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
+        const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)]
+        if (JSON.stringify(pin) === JSON.stringify(old)) continue
+        if (!pin) this.store.unpinned(app, thread, old!.message)
+        else if (pin.message !== old?.message || this.store.pin(app, thread)?.message === old.message) keep(() => this.store.pinned({ ...pin, app, thread }), pin)
       }
       const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
       for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => this.store.ask({ app, ...question }), question)
@@ -146,12 +146,12 @@ export class Ledger {
   }
 }
 
-type Book = { pins: Record<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
+type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
 
 function read(text: string, file: string): Book | undefined {
   try {
     const book = JSON.parse(text) ?? {}
-    return { pins: book.pins && typeof book.pins === 'object' ? book.pins : {}, asks: Array.isArray(book.asks) ? book.asks : [] }
+    return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries(book.pins) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
   } catch (error) {
     process.stderr.write(`hub: ${file} is unreadable, so hex.db left it out: ${error}\n`)
   }
