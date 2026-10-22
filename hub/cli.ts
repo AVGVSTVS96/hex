@@ -18,6 +18,7 @@ const USAGE = `usage:
   hex task <task> [--json]
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
   hex questions [--thread <thread> | --all] [--json]
+  hex pins [--thread <thread> | --all] [--json]
   hex threads [--json]
   hex running [--json]
   hex message <key>
@@ -175,6 +176,13 @@ try {
       const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
       if (flags.json) console.log(JSON.stringify(questions, null, 1))
       else console.log(questions.map(question => waiting(question, store.names())).join('\n') || 'no questions waiting')
+      break
+    }
+    case 'pins': {
+      const pins = store.pins({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD) })
+      const names = new Map(store.threads().map(({ app, thread, name }) => [`${app}:${thread}`, name]))
+      if (flags.json) console.log(JSON.stringify(pins, null, 1))
+      else console.log(pins.map(pin => `${pin.app} · ${names.get(`${pin.app}:${pin.thread}`) ?? pin.thread} · message ${pin.message} · ${(pin.note || pin.text).trim().split('\n')[0]}`).join('\n') || 'no pins')
       break
     }
     case 'threads': {

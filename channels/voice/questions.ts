@@ -100,7 +100,6 @@ export class Questions extends Changes {
     this.links = new Links(state, () => this.schedule(), t3Home)
     this.marks = readMarks(join(state, 'voice', 'marks.json'))
     this.t3 = new T3(() => this.schedule(), t3Database)
-    for (const app of apps(state)) this.stops.push(watchDir(join(state, app), file => file === 'ledger.json' && this.schedule()))
     this.stops.push(store(state).watch(() => this.schedule()))
     this.stops.push(watchDir(join(state, 'voice'), file => file === 'check.json' && this.schedule()))
     this.build()
@@ -233,11 +232,8 @@ export class Questions extends Changes {
     this.pins.clear()
     const questions = store(this.state).questions()
     for (const { app, thread, name } of store(this.state).threads()) this.names.set(`${app}:${thread}`, name)
-    for (const app of apps(this.state)) {
-      const book = readJson(join(this.state, app, 'ledger.json'))
-      this.ledgers.set(app, questions.filter(question => question.app === app))
-      for (const [thread, pin] of Object.entries<any>(book?.pins ?? {})) if (pin.text) this.pins.set(`${app}:${thread}`, pin)
-    }
+    for (const app of apps(this.state)) this.ledgers.set(app, questions.filter(question => question.app === app))
+    for (const pin of store(this.state).pins()) if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin)
     this.links.load()
     this.result = readJson(join(this.state, 'voice', 'check.json'))
     this.notice()

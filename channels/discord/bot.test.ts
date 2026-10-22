@@ -201,7 +201,7 @@ async function session(thread: string) {
   return { received: line.received, call: line.call, send, ask: line.ask }
 }
 
-const book = () => JSON.parse(readFileSync(join(state, 'ledger.json'), 'utf8'))
+const book = () => ({ pins: Object.fromEntries(open(state).pins({ app: 'discord' }).map(pin => [pin.thread, pin])) })
 const question = (message: string) => open(state).questions({ app: 'discord' }).find(question => question.message === message)!
 const labels = (components: any[]) => components[0].toJSON().components.map((c: any) => c.label)
 

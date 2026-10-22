@@ -129,7 +129,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.db.run('drop index said; drop table profiles')
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
-  store.db.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
@@ -297,7 +297,7 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
   new Store(dir).db.close()
   const old = new Database(join(dir, 'hex.db'))
-  old.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  old.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   old.run("insert into threads values ('telegram', '-100:9', 'Errands')")
   old.run('pragma user_version = 16')
   old.close()
@@ -357,6 +357,19 @@ test('hex task makes a task from a message by its key, and the owner is the thre
   expect((await hex('message', ask.key)).out).toBe(`${ask.body}\n`)
 })
 
+test("hex pins lists the asking thread's pinned post, or every thread's with --all, as text or JSON", async () => {
+  const store = open(dir)
+  store.pinned({ app: 'telegram', thread: 'chat:3', message: 9, text: 'Site: example.com\n\n🔴 **Blocked on you**', note: 'Site: example.com' })
+  store.pinned({ app: 'discord', thread: '1561', message: '1562', text: 'Status: by hand' })
+  const hex = async (...args: string[]) => {
+    const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'pins', ...args], { stdout: 'pipe', env: { ...process.env, HEX_THREAD: 'chat:3', HEX_MAIN: '' } })
+    return (await new Response(cli.stdout).text()).trim()
+  }
+  expect(await hex()).toBe('telegram · chat:3 · message 9 · Site: example.com')
+  expect((await hex('--all')).split('\n')).toEqual(['discord · 1561 · message 1562 · Status: by hand', 'telegram · chat:3 · message 9 · Site: example.com'])
+  expect(JSON.parse(await hex('--thread', '1561', '--json'))).toEqual([{ app: 'discord', thread: '1561', message: '1562', text: 'Status: by hand', at: expect.any(String) }])
+})
+
 test("a question keeps its first answer, a poll's vote replaces the one before, and taking one back says whether there was one", () => {
   const store = new Store(dir)
   const question = { app: 'telegram', thread: '-100:7', message: 41, text: 'Deploy now?', options: ['Deploy', 'Wait'] }
@@ -389,7 +402,7 @@ test('an answer and the message that wakes its thread with it land together or n
 
 test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
   const store = new Store(dir)
-  store.db.run('drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('create index unauthored on messages (n) where author = \'\'; pragma user_version = 15')
   const kept = (key: string, from: string, author: string, meta?: object) => store.db.query('insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)').run(key, '-100:7', from, author, 'hi', meta ? JSON.stringify(meta) : null, '2026-10-21T10:00:00.000Z')
   kept('telegram:1', 'telegram', 'hex General', { user: 'hex General' })

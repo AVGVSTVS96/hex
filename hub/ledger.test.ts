@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Ledger } from './ledger.ts'
@@ -18,8 +18,9 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("an older hex's questions move from ledger.json into hex.db once, answers and all, and the file keeps its pins", () => {
+test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all, and the file stays where it is", () => {
   const pin = { message: 9, text: 'Status: shipping', at: '2026-10-18T09:00:00.000Z' }
+  const post = { message: '12', text: 'Site: example.com\n\nmore', note: 'Site: example.com', at: '2026-10-18T09:30:00.000Z' }
   writeFileSync(
     file,
     JSON.stringify({
@@ -29,7 +30,7 @@ test("an older hex's questions move from ledger.json into hex.db once, answers a
         { thread: '-100:7', message: 43, text: 'Broken', options: 'not a list', at: '2026-10-18T08:07:00.000Z' },
         { thread: '-100:7', message: 44, text: 'Blank buttons', options: [null], at: '2026-10-18T08:08:00.000Z' },
       ],
-      pins: { '-100:7': pin },
+      pins: { '-100:7': pin, '-100:8': post },
     }),
   )
   const ledger = new Ledger(file, 'telegram')
@@ -37,8 +38,31 @@ test("an older hex's questions move from ledger.json into hex.db once, answers a
   expect(ledger.byPoll('p-42')!.answer).toMatchObject({ label: 'B', via: 'telegram' })
   expect(ledger.find('-100:7', 43)).toBeUndefined()
   expect(ledger.find('-100:7', 44)).toBeUndefined()
-  expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({ pins: { '-100:7': pin } })
+  expect(ledger.pin('-100:7')).toEqual({ app: 'telegram', thread: '-100:7', ...pin })
+  expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', ...post })
+  expect(ledger.posts()).toEqual(['-100:8'])
+  expect(existsSync(file)).toBe(true)
   expect(new Ledger(file, 'telegram').questions).toHaveLength(2)
+  expect(open(join(dir, 'telegram')).pins()).toHaveLength(2)
+})
+
+test('what an older hex changed in ledger.json comes in, and nothing else, and a file that says the same, though touched, stays out', () => {
+  writeFileSync(file, JSON.stringify({ pins: { '-100:7': { message: 9, text: 'old', at: '2026-10-18T09:00:00.000Z' } } }))
+  new Ledger(file, 'telegram').unpinned('-100:7', 9)
+  expect(new Ledger(file, 'telegram').pin('-100:7')).toBeUndefined()
+  utimesSync(file, new Date(), new Date(Date.now() + 1000))
+  expect(new Ledger(file, 'telegram').pin('-100:7')).toBeUndefined()
+  new Ledger(file, 'telegram').pinned('-100:9', 20, 'pinned after the move')
+  writeFileSync(file, JSON.stringify({ pins: { '-100:7': { message: 9, text: 'old', at: '2026-10-18T09:00:00.000Z' }, '-100:8': { message: 12, text: 'rolled back', at: '2026-10-19T09:00:00.000Z' } } }))
+  const ledger = new Ledger(file, 'telegram')
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 12, text: 'rolled back' })
+  expect(ledger.pin('-100:7')).toBeUndefined()
+  expect(ledger.pin('-100:9')).toMatchObject({ message: 20, text: 'pinned after the move' })
+  ledger.pinned('-100:8', 30, 'pinned again here')
+  writeFileSync(file, JSON.stringify({ pins: { '-100:8': { message: 12, text: 'edited there', at: '2026-10-20T09:00:00.000Z' } } }))
+  expect(new Ledger(file, 'telegram').pin('-100:8')).toMatchObject({ message: 30, text: 'pinned again here' })
+  writeFileSync(file, JSON.stringify({ pins: { '-100:5': null, '-100:6': { text: 'no message' } } }))
+  expect(new Ledger(file, 'telegram').pin('-100:8')).toMatchObject({ message: 30 })
 })
 
 test('a question stays open through an edit and leaves the waiting list only when answered or settled, and a pin keeps its latest text', () => {
@@ -90,5 +114,5 @@ test("a pin with a note is the thread's status post: hex rewrites it from hex.db
     await edit(...args)
   }
   await ledger.rewrite('-100:8', 4096, slow, 'Site: example.net')
-  expect(ledger.pin('-100:8')).toEqual({ message: 11, text: 'Status: by hand again', at: expect.any(String) })
+  expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', message: 11, text: 'Status: by hand again', at: expect.any(String) })
 })
