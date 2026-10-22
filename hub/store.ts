@@ -1,5 +1,4 @@
 import { Database } from 'bun:sqlite'
-import { createHash } from 'crypto'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 
@@ -208,7 +207,7 @@ const migrations: (string | ((store: Store) => void))[] = [
     at text not null check (at ${UTC}),
     primary key (app, thread)
   );
-  create table files (name text primary key, digest text not null);`,
+  create table files (name text primary key, body text not null);`,
 ]
 
 const now = () => new Date().toISOString()
@@ -665,20 +664,20 @@ export class Store {
   }
 
   // Runs take with what an older hex keeps in a file, under a name of its own, when the file says
-  // something else than when hex.db last took it in: the first time, and after an older hex (rolled
-  // back to) wrote it again. A copy, move or touch of the same words changes nothing.
-  takeIn(name: string, file: string, take: (text: string) => void) {
-    let text: string
+  // something else than when hex.db last took it in, with what it said then: the first time, and after
+  // an older hex (rolled back to) wrote it again. A copy, move or touch of the same words changes nothing.
+  takeIn(name: string, file: string, take: (now: string, before?: string) => void) {
+    let now: string
     try {
-      text = readFileSync(file, 'utf8')
+      now = readFileSync(file, 'utf8')
     } catch {
       return
     }
-    const digest = createHash('sha256').update(text).digest('hex')
     this.write(() => {
-      if ((this.db.query('select digest from files where name = ?').get(name) as { digest: string } | null)?.digest === digest) return
-      take(text)
-      this.db.query('insert into files (name, digest) values (?, ?) on conflict (name) do update set digest = excluded.digest').run(name, digest)
+      const before = (this.db.query('select body from files where name = ?').get(name) as { body: string } | null)?.body
+      if (before === now) return
+      take(now, before)
+      this.db.query('insert into files (name, body) values (?, ?) on conflict (name) do update set body = excluded.body').run(name, now)
     })
   }
 

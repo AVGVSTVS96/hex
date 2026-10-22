@@ -46,16 +46,18 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(open(join(dir, 'telegram')).pins()).toHaveLength(2)
 })
 
-test('a ledger.json an older hex wrote again comes in again, and one that says the same, though touched, stays out', () => {
+test('what an older hex changed in ledger.json comes in, and nothing else, and a file that says the same, though touched, stays out', () => {
   writeFileSync(file, JSON.stringify({ pins: { '-100:7': { message: 9, text: 'old', at: '2026-10-18T09:00:00.000Z' } } }))
   new Ledger(file, 'telegram').unpinned('-100:7', 9)
   expect(new Ledger(file, 'telegram').pin('-100:7')).toBeUndefined()
   utimesSync(file, new Date(), new Date(Date.now() + 1000))
   expect(new Ledger(file, 'telegram').pin('-100:7')).toBeUndefined()
-  writeFileSync(file, JSON.stringify({ pins: { '-100:8': { message: 12, text: 'rolled back', at: '2026-10-19T09:00:00.000Z' } } }))
+  new Ledger(file, 'telegram').pinned('-100:9', 20, 'pinned after the move')
+  writeFileSync(file, JSON.stringify({ pins: { '-100:7': { message: 9, text: 'old', at: '2026-10-18T09:00:00.000Z' }, '-100:8': { message: 12, text: 'rolled back', at: '2026-10-19T09:00:00.000Z' } } }))
   const ledger = new Ledger(file, 'telegram')
   expect(ledger.pin('-100:8')).toMatchObject({ message: 12, text: 'rolled back' })
   expect(ledger.pin('-100:7')).toBeUndefined()
+  expect(ledger.pin('-100:9')).toMatchObject({ message: 20, text: 'pinned after the move' })
 })
 
 test('a question stays open through an edit and leaves the waiting list only when answered or settled, and a pin keeps its latest text', () => {
