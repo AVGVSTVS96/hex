@@ -134,6 +134,7 @@ const live = (where: Channel) => ({ inGuild: () => true, channel: where, mention
 class Client {
   user = { id: BOT, tag: 'hex#0000', displayName: 'hex', displayAvatarURL: () => 'https://cdn/hex.png' }
   channels = {
+    cache: channels,
     fetch: async (id: string) => {
       if (!channels.has(id)) throw Object.assign(new Error('Unknown Channel'), { code: 10003 })
       return channels.get(id)
@@ -567,7 +568,7 @@ test('a question with buttons goes in the ledger: a tap answers it there, and on
   expect(question(later.id).settled).toBeUndefined()
   await call('pin', { message_id: later.id })
   await call('edit_message', { message_id: later.id, text: 'Status: shipping' })
-  expect(book().pins[here.id]).toMatchObject({ message: later.id, text: 'Status: shipping' })
+  expect(book().pins[here.id]).toMatchObject({ message: later.id, note: 'Status: shipping' })
   await send({ type: 'settle', thread: here.id, message: later.id, note: 'Settled: shipped' })
   await until(() => question(later.id).settled)
   expect(labels(done.findLast(d => d.edit === later.id).options.components)).toEqual(['Settled: shipped'])
@@ -731,21 +732,21 @@ test('back online, the bot reads what was said while it was away, archived threa
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
   await call('reply', { text: 'Site: example.com' })
   const post = here.posted.at(-1)
-  await call('pin', { message_id: post.id, status: true })
+  await call('pin', { message_id: post.id })
   const edits = () => done.filter(d => d.edit === post.id).map(d => d.options.content as string)
-  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n🔴 **Blocked on you**'))
+  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n**🔴 Blocked on you:** nothing'))
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.com' })
 
   await call('reply', { text: 'Rename the site?', buttons: ['Yes', 'No'] })
-  await until(() => edits().at(-1)?.includes('. Rename the site? [Yes | No]'))
+  await until(() => /\n- \[?Rename the site\?/.test(edits().at(-1) ?? ''))
 
   const count = edits().length
   expect((await call('edit_message', { message_id: post.id, text: 'Site: example.org' })).text).toStartWith("edited the status post's note")
   expect(edits()).toHaveLength(count + 1)
-  expect(edits().at(-1)).toStartWith('Site: example.org\n\n🔴 **Blocked on you**')
+  expect(edits().at(-1)).toStartWith('Site: example.org\n\n**🔴 Blocked on you**')
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.org' })
 
-  await call('pin', { message_id: post.id, status: true })
+  await call('pin', { message_id: post.id })
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.org' })
   const file = join(state, 'inbox', 'chart.png')
   mkdirSync(join(state, 'inbox'), { recursive: true })

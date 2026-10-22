@@ -62,7 +62,7 @@ export function pending(state: string, thread?: string, room = ROOM): { text: st
     ...questions.map(question => [`${question.app}:${question.thread}:${question.message}`, waiting(question, named)]),
     ...tasks.map(task => [task.id, entry(task, named)]),
   ])
-  return { text: fit(sections, room), seen }
+  return { text: fit(sections.filter(section => section.items.length), room), seen }
 }
 
 // What changed between two pushes: each new or edited entry in full, and a line for each one that
