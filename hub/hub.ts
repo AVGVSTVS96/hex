@@ -672,6 +672,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const { phase } = run
     if (phase.is !== 'launching') return
     become(run, { is: 'stopped' })
+    if (lost(thread, reason)) return void launch(thread, threads[thread]!.name, { again: phase.again })
     if (run.renew === 'underway') run.renew = undefined
     const failing = (run.failing ??= { count: 0 })
     failing.count++
@@ -684,6 +685,26 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? 'hex', { content, author: 'prompt', meta: { user: 'hub' } })
     }
     setState(thread, false)
+  }
+
+  // Claude Code failed a start for not finding the session it resumed or forked, and no project
+  // folder has its conversation, so the thread lets go of it once a note is kept that tells its
+  // next session why it starts without it. One another folder has fails as any start does.
+  function lost(thread: string, reason: string) {
+    const known = threads[thread]
+    const run = runOf(thread)
+    const session = reason.match(/source session (\S+) not found/)?.[1]
+    if (!known || !session || ![known.session, known.from, run.opening?.fork].includes(session) || claude.saved(session)) return false
+    const key = `hub:${thread}:lost:${session}`
+    const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`
+    if (!kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
+    run.handed.add(key)
+    process.stderr.write(`hub: ${thread} lets go of session ${session}, which Claude Code can't find, and starts a new one\n`)
+    if (known.session === session) delete known.session
+    if (known.from === session) delete known.from
+    if (run.opening?.fork === session) delete run.opening.fork
+    save()
+    return true
   }
 
   // The store while it opens and writes; without it the hub goes on from memory, as it did before

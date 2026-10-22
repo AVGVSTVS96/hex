@@ -160,6 +160,13 @@ test('a thread is found by its id or its name, in any app but voice', () => {
   expect(findThread(state, 'voice')).toBeUndefined()
 })
 
+test('a name more than one thread has finds none of them, and says where they are', () => {
+  threads('buzz', { 'buzz-id': { name: 'hex', session: 's1' } })
+  threads('discord', { 'discord-id': { name: 'hex', session: 's2' } })
+  expect(() => findThread(state, 'hex')).toThrow('more than one hex thread is named hex, in buzz and discord: pass its id, from hex threads')
+  expect(findThread(state, 'discord-id')).toMatchObject({ app: 'discord', name: 'hex' })
+})
+
 test("a message sent to a thread shows that thread's steps once it takes the message in, its agents' too, and is done when a turn ends with no agent out", async () => {
   mkdirSync(project, { recursive: true })
   const path = join(project, 's1.jsonl')
