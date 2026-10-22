@@ -76,6 +76,7 @@ type Live = {
   changes: Changes
   spoke: number
   warning?: ReturnType<typeof setTimeout>
+  quiet?: ReturnType<typeof setTimeout>
   speak?: (audio: string) => void
 }
 type Placed = { to: string; why?: string; started: string; session?: string }
@@ -329,6 +330,12 @@ function hear(call: Live, who: Speaker, event: { delta: string; start_ms: number
   call.call.hear({ who, text: event.delta, start: event.start_ms, end: event.end_ms })
   call.changes.changed()
   while (call.rings[0] && call.rings[0].offset <= event.start_ms) ring(call, call.rings.shift()!)
+  waitForQuiet(call)
+}
+
+function waitForQuiet(call: Live) {
+  clearTimeout(call.quiet)
+  if (call.rings.length) call.quiet = setTimeout(() => live === call && call.rings.splice(0).forEach(due => ring(call, due)), 1500)
 }
 
 const ENDINGS: Record<Ending, string> = {
@@ -346,6 +353,7 @@ function finish(call: Live, reason: string, by?: string) {
   live = undefined
   ended = call.id
   clearTimeout(call.warning)
+  clearTimeout(call.quiet)
   const end = ending(reason, by)
   for (const pending of call.pending.values()) pending.reject(new Error(`the call ended (${reason})`))
   for (const pending of call.rings) ring(call, pending)
@@ -476,12 +484,8 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
         return hear(call, 'voice', event)
       case 'session.delegation.created':
         if (event.delegation?.target === 'client') {
-          const pending = { delegation: event.delegation.id, offset: event.offset_ms }
-          call.rings.push(pending)
-          setTimeout(() => {
-            const at = call.rings.indexOf(pending)
-            if (live === call && at >= 0) for (const due of call.rings.splice(0, at + 1)) ring(call, due)
-          }, 1500)
+          call.rings.push({ delegation: event.delegation.id, offset: event.offset_ms })
+          waitForQuiet(call)
         }
         return
       case 'session.commentary.appended':

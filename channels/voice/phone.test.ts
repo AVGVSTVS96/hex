@@ -181,14 +181,15 @@ test("a call's words reach the voice session only once the last call's renew is 
   expect(record.claude).toBe('brain')
 }, 20_000)
 
-test('a handoff with no words after it still reaches Claude', async () => {
+test('a handoff with no words after it reaches Claude once the transcript goes quiet', async () => {
   await using call = await phoneCall()
   const phone = await dialIn(call.base)
   await live(call.base)
   await until(() => call.steps.find(step => step.step === 'renewal'))
   call.renewed()
-  call.say('you', 'thanks, bye', 1000)
   call.delegate('d1', 1400)
+  await Bun.sleep(1000)
+  call.say('you', 'thanks, bye', 1000)
   await until(() => call.steps.find(step => step.meta?.delegation_id === 'd1'))
   expect(call.steps.find(step => step.meta?.delegation_id === 'd1')).toMatchObject({ content: expect.stringContaining('thanks, bye') })
   phone.send(JSON.stringify({ event: 'stop' }))
