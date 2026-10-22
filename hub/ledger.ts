@@ -28,8 +28,8 @@ export class Ledger {
       for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
         const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)]
         if (JSON.stringify(pin) === JSON.stringify(old)) continue
-        if (!pin) this.store.unpinned(app, thread, old!.message)
-        else if (pin.message !== old?.message || this.store.pin(app, thread)?.message === old.message) keep(() => this.store.pinned({ ...pin, app, thread }), pin)
+        if (!pin) this.store.unpinned(app, thread, old?.message)
+        else if (pin.message !== old?.message || this.store.pin(app, thread)?.message === old?.message) keep(() => this.store.pinned({ ...pin, app, thread }), pin)
       }
       const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
       for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => this.store.ask({ app, ...question }), question)
@@ -151,7 +151,8 @@ type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Questio
 function read(text: string, file: string): Book | undefined {
   try {
     const book = JSON.parse(text) ?? {}
-    return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries(book.pins) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
+    const pinned = ([, pin]: [string, any]) => ['number', 'string'].includes(typeof pin?.message)
+    return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries<any>(book.pins).filter(pinned) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
   } catch (error) {
     process.stderr.write(`hub: ${file} is unreadable, so hex.db left it out: ${error}\n`)
   }

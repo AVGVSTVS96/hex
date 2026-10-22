@@ -61,7 +61,7 @@ test('what an older hex changed in ledger.json comes in, and nothing else, and a
   ledger.pinned('-100:8', 30, 'pinned again here')
   writeFileSync(file, JSON.stringify({ pins: { '-100:8': { message: 12, text: 'edited there', at: '2026-10-20T09:00:00.000Z' } } }))
   expect(new Ledger(file, 'telegram').pin('-100:8')).toMatchObject({ message: 30, text: 'pinned again here' })
-  writeFileSync(file, JSON.stringify({ pins: {} }))
+  writeFileSync(file, JSON.stringify({ pins: { '-100:5': null, '-100:6': { text: 'no message' } } }))
   expect(new Ledger(file, 'telegram').pin('-100:8')).toMatchObject({ message: 30 })
 })
 
