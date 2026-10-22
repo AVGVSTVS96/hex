@@ -640,11 +640,13 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const source = fork ?? (known.session ? undefined : known.from)
     const continued = source ?? (fresh(thread) ? undefined : known.session)
     // A session Claude Code no longer has the conversation of can't be resumed, so a new one starts
-    // and is told why, the note kept before the thread lets go of the old one.
+    // and is told why when it connects, the note kept before the thread lets go of the old one.
     const lost = continued && !claude.saved(continued)
     if (lost) {
       const body = `[hub] This thread's session ${continued} can't be resumed: Claude Code no longer has its conversation. You're a new session without it; say so when you reply.`
-      kept(store => store.deliver({ key: `hub:${thread}:lost:${continued}`, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), false)
+      const key = `hub:${thread}:lost:${continued}`
+      kept(store => store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), false)
+      runOf(thread).handed.add(key)
       if (continued === known.session) delete known.session
       delete known.from
       save()
