@@ -23,10 +23,15 @@ function named(word: string): string | undefined {
 
 if (mode === "--ended") {
   const [unit, owner] = rest as [string, string]
+  const key = store.key(owner)
+  if (!store.threads().some(({ thread }) => thread === key)) {
+    console.error(`job: ${unit} ended, but no app has the thread ${owner} to wake`)
+    process.exit(1)
+  }
   const result = process.env.SERVICE_RESULT ?? "unknown"
   const status = process.env.EXIT_STATUS ?? "?"
   const content = `[job] ${unit} ended: ${result} (exit ${status}). Check its output and report it.`
-  await $`${import.meta.dir}/hex deliver job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to=${owner} --user=job ${content}`
+  await $`${import.meta.dir}/hex deliver job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to=${key} --user=job ${content}`
 } else {
   const given = rest.length > 1 ? named(rest[0]!) : undefined
   const owner = given ?? served()

@@ -87,7 +87,7 @@ if (import.meta.main) {
       const store = open(stateDir())
       if (source === 'compact' || source === 'clear') store.unshow(session_id, 'tasks')
       // A job's session works for the thread that started it.
-      const owner = served()
+      const owner = process.env.HEX_THREAD || served()
       const thread = process.env.HEX_MAIN || !owner ? undefined : store.key(owner)
       const { text, seen } = pending(stateDir(), thread)
       // Diffs since the last whole list add up in sent; once they'd pass its length, the whole list

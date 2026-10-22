@@ -104,13 +104,10 @@ function gather(state: string) {
   const now = Date.now()
   const recent = new Date(now - RECENT).toISOString()
   const names: Record<string, string> = {}
-  const ledgers: Record<string, Asked[]> = {}
   const pins: { pin: Ref; topic: string; text: string }[] = []
   const questions = store(state).questions()
   for (const { app, thread, name } of store(state).threads()) if (app !== 'voice') names[`${app}:${thread}`] = name
-  for (const app of readdirSync(state).filter(app => app !== 'voice')) {
-    ledgers[app] = questions.filter(question => question.app === app)
-  }
+  const ledgers = Object.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app) as Record<string, Asked[]>
   for (const pin of store(state).pins()) {
     const text = noteOf(pin)
     if (text) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(text, LONG) })

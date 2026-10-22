@@ -22,7 +22,7 @@ afterEach(() => {
 })
 
 async function hook(input: object, env: Record<string, string> = {}) {
-  const run = Bun.spawn(['bun', join(import.meta.dir, 'tasks.ts')], { stdin: new Blob([JSON.stringify(input)]), stdout: 'pipe', env: { PATH: process.env.PATH!, HEX_STORE: dir, HEX_CHANNEL: 'plugin:telegram@hex', ...env } })
+  const run = Bun.spawn(['bun', join(import.meta.dir, 'tasks.ts')], { stdin: new Blob([JSON.stringify(input)]), stdout: 'pipe', env: { PATH: process.env.PATH!, HEX_STORE: dir, ...env } })
   expect(await run.exited).toBe(0)
   return new Response(run.stdout).text()
 }

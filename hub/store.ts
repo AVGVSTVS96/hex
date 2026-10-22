@@ -221,9 +221,11 @@ const migrations: (string | ((store: Store) => void))[] = [
   create table relays ("from" text not null, thread text not null, run text not null, at text not null check (at ${UTC}), primary key ("from", thread));`,
   carryRelays,
   // A thread's key is hex's name for it everywhere (Telegram chat ids, Discord snowflakes, Buzz
-  // hashes, T3 Code UUIDs never meet), so messages, tasks, questions and pins keep it bare.
-  `create unique index if not exists threads_key on threads (thread);`,
-  ({ dir }: Store) => rename(join(dir, 'telegram', 'bot.json')),
+  // hashes, T3 Code UUIDs never meet), so messages, tasks, questions and pins keep it bare. A key
+  // two apps had anyway keeps its open, then newest, row.
+  `delete from threads where exists (select 1 from threads other where other.thread = threads.thread and (other.open, other.rowid) > (threads.open, threads.rowid));
+  create unique index if not exists threads_key on threads (thread);`,
+  ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -637,10 +639,10 @@ export class Store {
       this.db.query('update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))').run(app, JSON.stringify(Object.keys(open)))
       const keep = this.db.query(
         `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork, link) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
-        on conflict (app, thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
+        on conflict (thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
           effort = excluded.effort, launched = excluded.launched, fork = excluded.fork, link = coalesce(excluded.link, link)
-        where (name, open, session, cwd, model, effort, launched, fork) is not (excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
-          or coalesce(excluded.link, link) is not link`,
+        where threads.app = excluded.app and ((name, open, session, cwd, model, effort, launched, fork) is not (excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
+          or coalesce(excluded.link, link) is not link)`,
       )
       for (const [thread, { name, session, cwd, model, effort, launched, fork, link }] of Object.entries(open))
         keep.run(app, thread, name, session ?? null, cwd ?? null, model ?? null, effort ?? null, launched ?? null, fork ?? null, link ?? null)
@@ -667,8 +669,8 @@ export class Store {
 
   // A thread's key from its id, <app>:<key>, or from the key itself.
   key(id: string): string {
-    const app = id.slice(0, Math.max(0, id.indexOf(':')))
-    return app && this.db.query('select 1 from threads where app = ? limit 1').get(app) ? id.slice(app.length + 1) : id
+    const split = id.indexOf(':')
+    return split > 0 && this.db.query('select 1 from threads where app = ? and thread = ?').get(id.slice(0, split), id.slice(split + 1)) ? id.slice(split + 1) : id
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
