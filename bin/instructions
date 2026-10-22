@@ -1,14 +1,14 @@
 #!/usr/bin/env bun
 import { homedir } from 'os'
 import { join, resolve } from 'path'
-import { handover, split } from '../hub/fit.ts'
+import { ROOM } from '../hub/fit.ts'
 import { loaded } from './identity'
 
 // The instruction files Claude Code loads into a hex session, rendered the way it
 // renders them. A DM or voice turn carries them at the end of its system prompt,
 // where the cache reads them, and has Claude Code skip them (claudeMdExcludes),
 // which also keeps them from its subagents, so SubagentStart hands them over here,
-// a part per hook.
+// a hook-sized part per hook, split at line ends.
 
 const home = resolve(import.meta.dir, '../..')
 const intro = 'The user\'s instruction files are below. Follow them as written; they take precedence over default behavior.'
@@ -23,9 +23,21 @@ export function rendered() {
   return all.length ? [intro, ...all.map(file => `Contents of ${file.path} (${file.kind}):\n\n${file.text.trim()}`)].join('\n\n') : ''
 }
 
+function parts(text: string) {
+  const parts = ['']
+  for (const line of text.split('\n')) {
+    if (parts.at(-1) && parts.at(-1)!.length + line.length + 1 > ROOM) parts.push('')
+    parts[parts.length - 1] += `${line}\n`
+  }
+  return parts
+}
+
 function subagent(n: number, last: boolean) {
-  const text = handover(split(rendered()), n, last, 'Your instruction files.', `Read the files themselves and follow them: ${files().map(file => file.path).join(', ')}.`)
-  if (text) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: text } }))
+  const all = parts(rendered())
+  if (!all[n - 1]?.trim()) return
+  const lead = all.length > 1 ? `Your instruction files, part ${n} of ${all.length}; read the parts in order.` : 'Your instruction files.'
+  const more = last && all.length > n ? `\nThat's all the hooks can show. Read the files themselves and follow them: ${files().map(file => file.path).join(', ')}.\n` : ''
+  console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: `${lead}\n\n${all[n - 1]}${more}` } }))
 }
 
 if (import.meta.main) {

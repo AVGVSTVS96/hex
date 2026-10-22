@@ -15,7 +15,7 @@ Your memory is OptMem:
 OptMem outlives every session, compaction, model and vendor change.
 Without it you do not know who you are, or what was decided and tried.
 
-### At startup: activating OptMem (mandatory)
+### At startup: hex loads it for you
 
 hex keeps what `.hex/vendor/memo wake` prints, after my profile (who I am
 and my plans that hold for a while, which the memory agent keeps current in

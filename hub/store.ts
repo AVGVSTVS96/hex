@@ -365,8 +365,9 @@ export class Store {
     }
   }
 
-  // Bun's fs.watch drops a change that lands within about a millisecond of the one it just reported,
-  // so each ring is heard again once that has passed, if hex.db moved since.
+  // Bun's fs.watch on Linux drops a change that lands within about a millisecond of the one it just
+  // reported (https://github.com/oven-sh/bun/issues/45954), so each ring is heard again once that has
+  // passed, if hex.db moved since.
   private rang() {
     const seen = this.moved()
     for (const each of this.listeners) each()

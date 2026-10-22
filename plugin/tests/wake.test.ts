@@ -72,13 +72,6 @@ test('memory off leaves no file, and a wake that failed or stopped for a compres
   expect(wake({})).toBeUndefined()
 })
 
-test("the launcher and a memory pass write it the same way, with memory where the hex folder's settings put it", () => {
-  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
-  mkdirSync(join(home, '.claude'))
-  writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { MEMORY_DIR: join(home, 'memory') } }))
-  expect(body(wake({})!)).toBe(LABEL + '#0 2026-10-06 First note.\nYou are awake.\n')
-})
-
 test("memory is fenced, so Claude Code reads no `@path` in it as an import", () => {
   memo(['#0 2026-10-06 He pasted @.env and ```code```.\nYou are awake.\n'])
   const text = wake()!
@@ -86,27 +79,3 @@ test("memory is fenced, so Claude Code reads no `@path` in it as an import", () 
   expect(text).toEndWith('You are awake.\n````\n')
 })
 
-test('settings that do not parse keep the last wake, and memory is off only when neither settings nor the environment name it', () => {
-  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
-  const good = wake()!
-  mkdirSync(join(home, '.claude'))
-  writeFileSync(join(home, '.claude/settings.json'), '{ "env": ')
-  expect(wake()).toBe(good)
-  writeFileSync(join(home, '.claude/settings.json'), '{}')
-  expect(wake()).toBe(good)
-  expect(wake({})).toBeUndefined()
-})
-
-test('a session started under the old six wake hooks gets nothing from them', () => {
-  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
-  expect(Bun.spawnSync([join(home, '.hex/bin/wake'), '1'], { cwd: home, env: { ...clean, MEMORY_DIR: join(home, 'memory') } }).stdout.toString()).toBe('')
-  expect(existsSync(file)).toBe(false)
-})
-
-test('a wake waits for one already writing, and takes over a lock its owner left behind', () => {
-  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
-  mkdirSync(join(home, 'state/wake/CLAUDE.md.lock'), { recursive: true })
-  writeFileSync(join(home, 'state/wake/CLAUDE.md.lock/pid'), '999999999')
-  expect(body(wake()!)).toBe(LABEL + '#0 2026-10-06 First note.\nYou are awake.\n')
-  expect(existsSync(join(home, 'state/wake/CLAUDE.md.lock'))).toBe(false)
-})

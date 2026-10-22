@@ -24,6 +24,8 @@ beforeEach(() => {
   chmodSync(join(home, '.hex/vendor/memo'), 0o755)
   writeFileSync(join(home, '.claude/CLAUDE.md'), '# Global\n')
   writeFileSync(join(home, 'AGENTS.md'), '- Keep it short.\n\n@state/wake/CLAUDE.md\n')
+  mkdirSync(join(home, 'state/wake'), { recursive: true })
+  writeFileSync(join(home, 'state/wake/CLAUDE.md'), '#0 a memory\n')
   mkdirSync(join(home, 'fake'))
   mkdirSync(join(home, 'config/jobs/job12345'), { recursive: true })
   writeFileSync(join(home, 'fake/claude'), `#!/bin/sh

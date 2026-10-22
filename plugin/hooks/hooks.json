@@ -15,10 +15,7 @@
       { "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 1" },
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 2" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 3" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 4" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 5" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 6 last" }
+        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 3 last" }
       ] }
     ],
     "PreToolUse": [

@@ -24,7 +24,6 @@ for try in 1 2 3 4 5; do
   sleep 0.2
 done
 untrusted && echo "hex couldn't mark $here trusted in $config" >&2
-"$hex/bin/wake"
 # Outside the hex folder, hex's settings come only through --settings.
 [ -n "${away:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 for arg; do
