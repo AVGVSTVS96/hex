@@ -44,6 +44,8 @@ echo "backgrounded · job12345 · test"`)
     HEX_LAUNCHER: join(dir, 'launch'),
     CLAUDE_CONFIG_DIR: join(dir, 'config'),
     MEMORY_DIR: '',
+    // How long T3 has to record a thread hex kept before hex counts it as gone.
+    T3_RECORDING_MS: '2000',
   }
   await start()
 })
@@ -561,7 +563,7 @@ function recorded(threads: [string, string, boolean?][]) {
   db.close()
 }
 
-test('a thread T3 deleted or never recorded closes in hex, and one T3 has goes by its T3 title', async () => {
+test('a thread T3 deleted or never recorded closes in hex once T3 has had time to record it, and one T3 has goes by its T3 title', async () => {
   const gone = 'deleted-0000-4000-8000-000000000000'
   const never = 'never-00-0000-4000-8000-000000000000'
   const live = 'live-000-0000-4000-8000-000000000000'
@@ -569,7 +571,12 @@ test('a thread T3 deleted or never recorded closes in hex, and one T3 has goes b
     hexdb(join(dir, 'hex', 'state')).keepThreads('t3', { [gone]: { name: 'project' }, [never]: { name: 'project' }, [live]: { name: 'project' } })
     recorded([[gone, 'old work', true], [live, 'voice: one line per file']])
   })
-  await until(() => Object.keys(registered()).length === 1)
+  expect(Object.keys(registered()).sort()).toEqual([gone, live, never].sort())
+  await Bun.sleep(2100)
+  const { agent } = await t3()
+  const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
+  agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
+  await until(() => !registered()[gone] && !registered()[never])
   expect(registered()[live]).toMatchObject({ name: 'voice: one line per file', link: `t3code://threads/env-1/thread%3A${live}` })
   expect(hexdb(join(dir, 'hex', 'state')).threads({ app: 't3' }).find(thread => thread.thread === gone)).toMatchObject({ open: false, name: 'project' })
 })

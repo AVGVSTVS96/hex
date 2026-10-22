@@ -769,14 +769,6 @@ test('a thread that would fork a session Claude Code no longer has starts a new 
   expect(failures).toEqual([])
 })
 
-test('a fork of a session just started, whose conversation is not on disk yet, still forks it', async () => {
-  start({ agents: [{ id: 'job12345', sessionId: SESSION, pid: EXITED, status: 'busy' }] })
-  hub.fork('chat:7', 'Desk anchors', SESSION, 'carry on')
-  const args = await launched()
-  expect(args.slice(args.indexOf('--resume'), args.indexOf('--resume') + 3)).toEqual(['--resume', SESSION, '--fork-session'])
-  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
-})
-
 test('a thread whose session failed to start starts again once another session connects, and gets the message that waited', async () => {
   start()
   const starts = () => calls().filter(args => args[0] === '--bg')
@@ -2015,6 +2007,19 @@ test('a mirror opens a backfilled copy that follows the session, and leaves the 
       ['follow', 'far:1', 'Desk anchors', SESSION, '/work/anchors'],
     ])
     expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, cwd: '/work/anchors' })
+  } finally {
+    clients.delete('elsewhere')
+  }
+})
+
+test('a mirror of a thread whose session has no conversation saved yet opens nothing, so no copy forks a conversation that is not there', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
+  rmSync(join(dir, 'projects'), { recursive: true })
+  const placed: string[] = []
+  clients.set('elsewhere', { hub: {} as any, place: async name => (placed.push(name), { thread: 'far:1', link: 'https://far/1' }) })
+  try {
+    await expect(mirror(hub, 'chat:7', 'elsewhere')).rejects.toThrow('no conversation saved yet')
+    expect(placed).toEqual([])
   } finally {
     clients.delete('elsewhere')
   }

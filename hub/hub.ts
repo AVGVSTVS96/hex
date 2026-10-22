@@ -191,16 +191,15 @@ export function tappable(text: string): string {
 
 // A thread's chat, oldest first: what the owner said that a session took in, with others' prompts
 // too if asked (a job's, another agent's, the app's own, for the app that shows the session its own
-// conversation; the hub's own notes stay out), and
-// hex's replies as first sent; with a session, from the first message that session took, the
-// conversation it has.
+// conversation; the hub's own notes stay out), and hex's replies as first sent; with a session, from
+// the first message that session took, the conversation it has.
 export function history(store: Store, thread: string, session?: string, prompts = false): Turn[] {
   const rows = store.said(thread)
   const start = session ? (rows.find(row => row.taken?.by === session)?.at ?? '9') : ''
   return rows.flatMap(row => {
     if (row.from === 'terminal' || !row.taken || row.at < start) return []
     if (replied(row)) return shown(row) ? [{ from: 'hex', text: row.body } as Turn] : []
-    const said = (spoken(row) && row.author === 'owner') || (prompts && (row.author === 'prompt' || row.author === 'other') && row.from !== 'hub') ? row.body : ''
+    const said = (spoken(row) && row.author === 'owner') || (prompts && (row.author === 'prompt' || row.author === 'other') && row.meta?.user !== 'hub') ? row.body : ''
     const text = row.from === 't3' ? asked(said) : said
     return text ? [{ from: 'me', text } as Turn] : []
   })
@@ -629,11 +628,9 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   async function start(thread: string, prompt?: string, fork?: string) {
     const known = threads[thread]!
-    const { phase } = runOf(thread)
-    let source = fork ?? (known.session ? undefined : known.from)
-    if (source && (await lost(thread, source, phase))) source = undefined
-    const session = !source && known.session && !fresh(thread) && !(await lost(thread, known.session, phase)) ? known.session : undefined
-    if (runs.get(thread)?.phase !== phase) return
+    const resumable = (session?: string) => (session && !lost(thread, session) ? session : undefined)
+    const source = resumable(fork ?? (known.session ? undefined : known.from))
+    const session = !source && !fresh(thread) ? resumable(known.session) : undefined
     writeSettings(thread)
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (prompt) kept(store => store.deliver({ key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`, to: thread, from: 'hub', author: 'prompt', body: prompt, meta: {} }, 'hub'), false)
@@ -691,15 +688,14 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     setState(thread, false)
   }
 
-  // A session with no conversation on disk that Claude Code isn't running either can't be resumed or
-  // forked, so the thread lets go of it once a note is kept that tells its next session why it starts
-  // without it. A session just started has no conversation on disk yet, but it runs. hex sets a
-  // thread's session only once its conversation is in the folder this reads (claim).
-  async function lost(thread: string, session: string, phase: Phase) {
-    if (claude.saved(session) || (await claude.listing(session))) return false
+  // A session with no conversation on disk has nothing to resume or fork, since Claude Code reads
+  // both from there, so the thread lets go of it once a note is kept that tells its next session why
+  // it starts without it. hex sets a thread's session only once its conversation is in the folder
+  // this reads (claim), and a move or mirror forks only one that is (carry).
+  function lost(thread: string, session: string) {
+    if (claude.saved(session)) return false
     const known = threads[thread]
-    const run = runs.get(thread)
-    if (!run || run.phase !== phase) return false
+    const run = runOf(thread)
     const key = `hub:${thread}:lost:${session}`
     const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`
     if (!known || !kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
@@ -1173,6 +1169,7 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
   const target = client(to)
   const session = from.session(thread)
   if (!session) throw new Error('this thread has no session yet')
+  if (!claude.saved(session)) throw new Error("this thread's new session has no conversation saved yet; try again once it has answered")
   const cwd = from.cwd(thread)
   const { thread: dest, link } = await target.place(name, where, undefined, cwd)
   const filled = Promise.resolve(target.backfill?.(dest, from.history(thread))).catch(error => {
