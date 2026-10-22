@@ -826,10 +826,13 @@ export class Store {
 
 const stores = new Map<string, Store>()
 
-// hex's folder, and the state folder in it that every hex process shares: the one the hub names in
-// HEX_STORE, else this hex's. A hub outside a hex, which has neither, keeps hex.db in its own.
+// hex's folder, and the state folder hex.db is in. A hub's (own: its app's folder) is its hex's, or
+// outside a hex its own; it names it in HEX_STORE for its sessions, whose hooks and commands read it.
 export const hexDir = () => process.env.HEX_DIR || join(import.meta.dir, '..', '..')
-export const stateDir = (own?: string) => process.env.HEX_STORE || (own && !process.env.HEX_DIR ? own : join(hexDir(), 'state'))
+export function stateDir(own?: string) {
+  if (own) return process.env.HEX_DIR ? join(process.env.HEX_DIR, 'state') : own
+  return process.env.HEX_STORE || join(hexDir(), 'state')
+}
 
 // The store in dir (a hex's state/), one per process.
 export function open(dir: string): Store {
