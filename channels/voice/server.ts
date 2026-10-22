@@ -55,11 +55,13 @@ Generate <|SpawnThinking|> when:
 - A correction changes the work already requested.
 
 Do not generate <|SpawnThinking|> when:
+- The caller greets or thanks you.
 - You can answer from the conversation or a still-current result.
 - You need a brief clarification to understand the request.
 
 Generate <|SpawnThinking|> before giving an answer that depends on backend work.
-Do not guess the result while waiting.`
+Do not guess the result while waiting.
+Say something is done only when the backend says so.`
 
 type Pending = { resolve: () => void; reject: (error: Error) => void }
 type Ring = { delegation: string; offset: number }
@@ -429,7 +431,7 @@ function walkTopic(questions: Question[]): Topic {
       `The caller tapped Go through them with hex: walk them through the ${questions.length} things waiting on them, one at a time, in this order. For each, put it on screen with ask, say it in a sentence or two with hex's pick if it has one, and listen. When they say a choice, answer sends it to the thread that asked; when they tap the card instead, a message tells you. Move on when they skip one. Say so when a choice costs money or goes out in their name.`,
       ...list,
     ].join('\n'),
-    voice: `The caller wants to go through what's waiting on them, one at a time. Say you'll start with the first one, and hand off to the backend now: it brings each one up.`,
+    voice: `The caller wants to go through what's waiting on them, one at a time. Say you'll start with the first one, then generate <|SpawnThinking|> now: the backend brings each one up.`,
   }
 }
 
