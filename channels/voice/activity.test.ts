@@ -165,6 +165,7 @@ test('a name more than one thread has finds none of them, and says where they ar
   threads('discord', { 'discord-id': { name: 'hex', session: 's2' } })
   expect(() => findThread(state, 'hex')).toThrow('more than one hex thread is named hex, in buzz and discord: pass its id, from hex threads')
   expect(findThread(state, 'discord-id')).toMatchObject({ app: 'discord', name: 'hex' })
+  expect(findThread(state, 'buzz:buzz-id')).toMatchObject({ app: 'buzz', id: 'buzz-id', name: 'hex' })
 })
 
 test("a message sent to a thread shows that thread's steps once it takes the message in, its agents' too, and is done when a turn ends with no agent out", async () => {
