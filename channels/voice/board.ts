@@ -236,10 +236,10 @@ export class Board extends Changes {
       .map(session => ({ app: 'claude', id: short(session.id), name: session.name ?? short(session.id), session: session.id, cwd: session.cwd }))
   }
 
-  // The busy sessions whose work counts toward a thread: started below its session or by a job it
-  // owns, and not another thread's own.
+  // The busy sessions whose work counts toward a thread, or a loose run: started below its session
+  // or by a job it owns, and not another thread's own.
   private started(thread: Thread) {
-    const held = this.held()
+    const held = new Map([...this.held(), ...this.loose().map(loose => [loose.session!, `${loose.app}:${loose.id}`] as [string, string])])
     const key = `${thread.app}:${thread.id}`
     return [...this.sessions.values()].filter(session => session.id !== thread.session && busy(session) && serving(session, this.sessions, held) === key)
   }

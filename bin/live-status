@@ -58,23 +58,23 @@ def one_offs():
 
 @cache
 def running():
-    return json.loads(subprocess.run([str(home / ".hex/bin/hex"), "running", "--json"], capture_output=True, text=True, timeout=5, check=True).stdout)
+    try:
+        return json.loads(subprocess.run([str(home / ".hex/bin/hex"), "running", "--json"], capture_output=True, text=True, timeout=5, check=True).stdout)
+    except Exception:
+        return []
 
 
 def sessions():
     by_state = {}
     for a in sorted(running(), key=lambda a: -a.get("started", 0)):
         if a.get("kind") == "bg" and (a.get("cwd", "") + "/").startswith(f"{home}/"):
-            by_state.setdefault(a.get("status", "?"), []).append(a.get("name") or a["id"][:8])
+            by_state.setdefault(a.get("state") or a.get("status", "?"), []).append(a.get("name") or a["id"][:8])
     return [f"- {state} ({len(names)}): " + ", ".join(names[:8]) + (f", +{len(names) - 8} more" if len(names) > 8 else "")
             for state, names in sorted(by_state.items())]
 
 
 def threads():
-    try:
-        states = {a["id"]: a.get("status") for a in running()}
-    except Exception:
-        states = {}
+    states = {a["id"]: a.get("state") or a.get("status") for a in running()}
     listed = subprocess.run([str(home / ".hex/bin/hex"), "threads", "--json"], capture_output=True, text=True, timeout=5, check=True).stdout
     open_threads = [thread for thread in json.loads(listed) if thread["open"]]
     sessions = {thread["thread"]: thread.get("session") for thread in open_threads}
@@ -113,7 +113,7 @@ sys.stdin.read()
 sections = "".join([
     section("Unmerged hex branches, newest first", lambda: capped(branches(), 8)),
     section("Upcoming one-off jobs in schedules.json", lambda: capped(one_offs(), 6)),
-    section("hex background sessions running, by status (`hex running`)", sessions),
+    section("hex background sessions running, by state (`hex running`)", sessions),
     section("Threads active in the last day, newest first, with their last message (`hex log`)", lambda: capped(threads(), 8)),
 ])
 if sections:

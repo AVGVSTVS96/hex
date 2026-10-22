@@ -85,9 +85,11 @@ test("lists each thread active in the last day with its last message, skipping w
   said('terminal:1', '1', 'hex', 'watered', 88)
   said('telegram:3', '2', 'owner', 'old', 3000)
   said('discord:4', '3', 'owner', 'fire it\nat noon', 5)
-  running([{ kind: 'bg', status: 'busy', sessionId: 'cccccccc-1', cwd: home }])
+  running([{ kind: 'bg', status: 'idle', sessionId: 'cccccccc-1', cwd: home }])
+  mkdirSync(join(home, '.claude/jobs/cccccccc'), { recursive: true })
+  writeFileSync(join(home, '.claude/jobs/cccccccc/state.json'), JSON.stringify({ state: 'blocked' }))
   const out = hook()
-  expect(out).toContain('- Kiln (discord, busy, 5m ago) owner: fire it at noon\n- Garden (telegram, 1h ago) hex: Done. Beds watered. ## not a header\n')
+  expect(out).toContain('- Kiln (discord, blocked, 5m ago) owner: fire it at noon\n- Garden (telegram, 1h ago) hex: Done. Beds watered. ## not a header\n')
   expect(out).not.toContain('Stale')
 })
 
@@ -96,7 +98,7 @@ test('drops a section it cannot read, and says none for one that is empty', () =
   const out = hook()
   expect(out).toContain('Unmerged hex branches')
   expect(out).not.toContain('Upcoming one-off jobs')
-  expect(out).toContain('background sessions running, by status (`hex running`):\n- none')
+  expect(out).toContain('background sessions running, by state (`hex running`):\n- none')
 })
 
 test('stays quiet and exits 0 when neither git nor claude can run', () => {
