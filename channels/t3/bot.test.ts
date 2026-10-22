@@ -595,17 +595,19 @@ test('a thread hex just kept stays open while T3 has yet to record it', async ()
   expect(registered()[sessionId]).toMatchObject({ name: 'project' })
 })
 
-test("records of T3's that have none of hex's threads close nothing", async () => {
-  const mine = 'mine-000-0000-4000-8000-000000000000'
+test('a thread T3 recorded once and has no record of now stays open, since the records may be another install\'s', async () => {
+  const linked = 'linked-0-0000-4000-8000-000000000000'
   await restart(() => {
-    hexdb(join(dir, 'hex', 'state')).keepThreads('t3', { [mine]: { name: 'project' } })
+    hexdb(join(dir, 'hex', 'state')).keepThreads('t3', { [linked]: { name: 'project', link: 't3code://threads/env-0/thread%3Aold' } })
     recorded([['someone-else', 'not hex']])
   })
+  await Bun.sleep(2100)
   const { agent } = await t3()
   const { sessionId } = await agent.request('session/new', { cwd: project, mcpServers: [] })
   agent.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: 'hi' }] }).catch(() => {})
   await until(() => lines('launched').length)
-  expect(Object.keys(registered()).sort()).toEqual([mine, sessionId].sort())
+  await Bun.sleep(100)
+  expect(Object.keys(registered()).sort()).toEqual([linked, sessionId].sort())
 })
 
 test('a chat with no project works in hex\'s folder', async () => {

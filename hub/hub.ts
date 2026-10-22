@@ -625,9 +625,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   async function start(thread: string, prompt?: string, fork?: string) {
     const known = threads[thread]!
-    const resumable = (session?: string) => (session && !lost(thread, session) ? session : undefined)
-    const source = resumable(fork ?? (known.session ? undefined : known.from))
-    const session = !source && !fresh(thread) ? resumable(known.session) : undefined
     writeSettings(thread)
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (prompt) kept(store => store.deliver({ key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`, to: thread, from: 'hub', author: 'prompt', body: prompt, meta: {} }, 'hub'), false)
@@ -637,7 +634,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       known.launched = launched
       save()
     }
-    const resume = source ? ['--resume', source, '--fork-session'] : session ? ['--resume', session] : []
+    const source = fork ?? (known.session ? undefined : known.from)
+    const resume = source ? ['--resume', source, '--fork-session'] : known.session && !fresh(thread) ? ['--resume', known.session] : []
     try {
       watchJob(thread, await claude.start(launcher, ['--channels', channel, '--name', known.name, ...resume, ...launchArgs, '--settings', settingsOf(thread), ...(prompt ? [prompt] : [])], { cwd: known.cwd ?? hexDir, env: inherited }))
     } catch (error) {
@@ -671,6 +669,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const { phase } = run
     if (phase.is !== 'launching') return
     become(run, { is: 'stopped' })
+    if (lost(thread, reason)) return void launch(thread, threads[thread]!.name, { again: phase.again })
     if (run.renew === 'underway') run.renew = undefined
     const failing = (run.failing ??= { count: 0 })
     failing.count++
@@ -685,19 +684,19 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     setState(thread, false)
   }
 
-  // A session with no conversation on disk has nothing to resume or fork, since Claude Code reads
-  // both from there, so the thread lets go of it once a note is kept that tells its next session why
-  // it starts without it. hex sets a thread's session only once its conversation is in the folder
-  // this reads (claim).
-  function lost(thread: string, session: string) {
-    if (claude.saved(session)) return false
+  // Claude Code failed a start for not finding the session it resumed or forked, and no project
+  // folder has its conversation, so the thread lets go of it once a note is kept that tells its
+  // next session why it starts without it. One another folder has fails as any start does.
+  function lost(thread: string, reason: string) {
     const known = threads[thread]
     const run = runOf(thread)
+    const session = reason.match(/source session (\S+) not found/)?.[1]
+    if (!known || !session || ![known.session, known.from, run.opening?.fork].includes(session) || claude.saved(session)) return false
     const key = `hub:${thread}:lost:${session}`
     const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`
-    if (!known || !kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
+    if (!kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
     run.handed.add(key)
-    process.stderr.write(`hub: ${thread} lets go of session ${session}, which Claude Code doesn't have, and starts a new one\n`)
+    process.stderr.write(`hub: ${thread} lets go of session ${session}, which Claude Code can't find, and starts a new one\n`)
     if (known.session === session) delete known.session
     if (known.from === session) delete known.from
     if (run.opening?.fork === session) delete run.opening.fork

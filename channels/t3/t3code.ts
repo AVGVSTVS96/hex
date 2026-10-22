@@ -131,32 +131,30 @@ export function promptedBy(session: string, asked: string): Author {
   }
 }
 
-// The T3 Code thread each hex session serves (hex's key for a T3 thread is its ACP session) and its
-// title, from T3's own records, read only; none without them. A thread T3 deleted is left out, and
-// one it archived is kept.
-export function appThreads(): Map<string, { thread: string; title: string }> | undefined {
+// The T3 Code thread each hex session serves (hex's key for a T3 thread is its ACP session), its
+// title and whether T3 deleted it, from T3's own records, read only; none without them.
+export function appThreads(): Map<string, { thread: string; title: string; deleted: boolean }> | undefined {
   const file = join(USERDATA, 'statev2.sqlite')
   if (!existsSync(file)) return
   const db = new Database(file, { readonly: true })
   try {
     const rows = db
-      .query<{ key: string; thread: string; title: string }, []>(
-        `select json_extract(p.payload_json, '$.nativeThreadRef.nativeId') as key, t.thread_id as thread, t.title
+      .query<{ key: string; thread: string; title: string; deleted: number }, []>(
+        `select json_extract(p.payload_json, '$.nativeThreadRef.nativeId') as key, t.thread_id as thread, t.title, t.deleted_at is not null as deleted
          from orchestration_v2_projection_provider_threads p
          join orchestration_v2_projection_threads t on t.thread_id = json_extract(p.payload_json, '$.appThreadId')
-         where p.driver = 'acpRegistry' and t.deleted_at is null
+         where p.driver = 'acpRegistry'
          order by p.updated_at`,
       )
       .all()
-    return new Map(rows.map(({ key, thread, title }) => [key, { thread, title }]))
+    return new Map(rows.map(({ key, thread, title, deleted }) => [key, { thread, title, deleted: !!deleted }]))
   } finally {
     db.close()
   }
 }
 
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
-let environment: string | undefined
 export function linkTo(thread: string) {
-  environment ??= readFileSync(join(USERDATA, 'environment-id'), 'utf8').trim()
+  const environment = readFileSync(join(USERDATA, 'environment-id'), 'utf8').trim()
   return `${process.env.T3_APP_SCHEME || 't3code'}://threads/${environment}/${encodeURIComponent(thread)}`
 }

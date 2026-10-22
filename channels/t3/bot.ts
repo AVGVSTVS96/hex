@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
 import { agent, ndJsonStream, PROTOCOL_VERSION, RequestError, type AgentContext, type ContentBlock, type McpServer, type PromptRequest, type PromptResponse, type SessionConfigOption, type SessionNotification, type StopReason } from '@agentclientprotocol/sdk'
 import { startHub, clients, begin, move, title, family, MODELS, EFFORTS, type Settings, type Turn as Said } from '../../hub/hub.ts'
-import { asked } from '../../hub/store.ts'
+import { asked, open, stateDir as storeOf } from '../../hub/store.ts'
 import { server } from './channel.ts'
 import { follow, transcriptPath } from './transcript.ts'
 import { withT3, projectAt, linkTo, promptedBy, steering, appThreads } from './t3code.ts'
@@ -62,9 +62,10 @@ mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 
 // T3 Code's records, read once per save, since a save asks for every thread's link at once: null
 // until read, undefined with none to go by. They give a thread its link and its name, T3's title for
-// it. A thread T3 deleted closes here too, as does one T3 never recorded, once T3 has had a few
-// minutes to record what hex kept (since it kept it, or since this hub started for one an older hub
-// kept). Records that have none of hex's threads aren't T3's records of them, so nothing closes.
+// it. A thread T3 deleted closes here too, as does one T3 never recorded (hex has no link for it),
+// once T3 has had a few minutes to record what hex kept: since it kept it, or since this hub started
+// for one an older hub kept. One T3 recorded and has no record of now stays, since T3's records may
+// be another install's.
 const RECORDING = Number(process.env.T3_RECORDING_MS) || 5 * 60_000
 const started = Date.now()
 const kept = new Map<string, number>()
@@ -87,14 +88,13 @@ function link(thread: string) {
 }
 
 function mirror(records: ReturnType<typeof appThreads>) {
-  const threads = hub.threads()
-  if (!records || !threads.some(thread => records.has(thread))) return
-  for (const thread of threads) {
+  if (!records) return
+  for (const { thread, link } of open(storeOf(STATE_DIR)).threads({ app: 't3', open: true })) {
     const record = records.get(thread)
-    if (record) {
+    if (record && !record.deleted) {
       kept.delete(thread)
       hub.rename(thread, record.title || hub.name(thread)!)
-    } else if (!turns.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) void hub.retire(thread)
+    } else if ((record || !link) && !turns.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) void hub.retire(thread)
   }
 }
 
