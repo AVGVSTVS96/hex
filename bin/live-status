@@ -57,24 +57,36 @@ def one_offs():
 
 
 @cache
-def running():
+def read_running():
     try:
-        return json.loads(subprocess.run([str(home / ".hex/bin/hex"), "running", "--json"], capture_output=True, text=True, timeout=5, check=True).stdout)
-    except Exception:
-        return []
+        return json.loads(subprocess.run([str(home / ".hex/bin/hex"), "running", "--json"], capture_output=True, text=True, timeout=5, check=True).stdout), None
+    except Exception as error:
+        return None, error
+
+
+def running():
+    sessions, error = read_running()
+    if error:
+        raise error
+    return sessions
+
+
+# A session's live status, or blocked while its job waits on the owner.
+def state(session):
+    return "blocked" if session.get("state") == "blocked" else session.get("status", "?")
 
 
 def sessions():
     by_state = {}
     for a in sorted(running(), key=lambda a: -a.get("started", 0)):
         if a.get("kind") == "bg" and (a.get("cwd", "") + "/").startswith(f"{home}/"):
-            by_state.setdefault(a.get("state") or a.get("status", "?"), []).append(a.get("name") or a["id"][:8])
+            by_state.setdefault(state(a), []).append(a.get("name") or a["id"][:8])
     return [f"- {state} ({len(names)}): " + ", ".join(names[:8]) + (f", +{len(names) - 8} more" if len(names) > 8 else "")
             for state, names in sorted(by_state.items())]
 
 
 def threads():
-    states = {a["id"]: a.get("state") or a.get("status") for a in running()}
+    states = {a["id"]: state(a) for a in read_running()[0] or []}
     listed = subprocess.run([str(home / ".hex/bin/hex"), "threads", "--json"], capture_output=True, text=True, timeout=5, check=True).stdout
     open_threads = [thread for thread in json.loads(listed) if thread["open"]]
     sessions = {thread["thread"]: thread.get("session") for thread in open_threads}
