@@ -132,4 +132,4 @@ Ask them to say hi in General. hex should answer within a few seconds. Then show
 
 ## Backups
 
-Every night at 3:00 on their clock, General's hub copies `state/hex.db` to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back: run `~/hex/.hex/bin/hex stop` and stop any app that follows hex with `hex watch`, copy the backup over `~/hex/state/hex.db`, delete `hex.db-wal` and `hex.db-shm` beside it, then run `~/hex/.hex/bin/hex start`.
+Every night at 3:00 on their clock, General's hub copies `state/hex.db` to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back: `~/hex/.hex/bin/hex stop`, copy it over `~/hex/state/hex.db`, delete `hex.db-wal` and `hex.db-shm` beside it, then `~/hex/.hex/bin/hex start`.

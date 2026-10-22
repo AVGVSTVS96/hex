@@ -1,4 +1,4 @@
-import { realpathSync } from 'fs'
+import { appendFileSync, realpathSync, statSync, watch } from 'fs'
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
@@ -60,6 +60,8 @@ if (args.length > takes) {
   console.error(`hex: ${stray(args[takes]!)}`)
   process.exit(1)
 }
+// hex watch never opens hex.db, so a restore can replace it underneath.
+if (command === 'watch') await follow(join(state, 'hex.bell'))
 const store = open(state)
 // A thread named the way every --json output names it, <app>:<key>, is the bare key hex.db's
 // messages, tasks, questions and pins keep.
@@ -111,6 +113,27 @@ function withThread<T>(rows: T[], key: (row: T) => string) {
 function keyOf(id: string) {
   const split = id.indexOf(':')
   return split > 0 && store.threads({ app: id.slice(0, split) }).some(({ thread }) => thread === id.slice(split + 1)) ? id.slice(split + 1) : id
+}
+
+// A line once it's listening, then one each time hex.bell grows, as every commit to hex.db makes it:
+// an app reads what it shows again at each. A line still queued stands for the changes after it too,
+// and writing one once the app is gone ends the watch. Each ring is checked again 5ms on, since Bun's
+// fs.watch on Linux drops a change within about a millisecond of the last one (https://github.com/oven-sh/bun/issues/45954).
+function follow(bell: string): Promise<never> {
+  appendFileSync(bell, '')
+  let size = -1
+  let queued = false
+  const ring = () => {
+    const now = statSync(bell).size
+    if (now === size || queued) return
+    size = now
+    queued = true
+    process.stdout.write(`${new Date().toISOString()}\n`, error => (error ? process.exit((error as NodeJS.ErrnoException).code === 'EPIPE' ? 0 : 1) : (queued = false)))
+    setTimeout(ring, 5)
+  }
+  watch(bell, ring)
+  ring()
+  return new Promise(() => {})
 }
 
 function stray(word: string) {
@@ -268,14 +291,6 @@ try {
       const thread = args[0] && threadOf(args[0])
       const rows = thread ? store.said(thread, flags.last ? Number(flags.last) : -1) : store.since(since)
       log(rows.filter(row => row.at > since && (!flags.taken || row.taken)))
-      break
-    }
-    case 'watch': {
-      // A line once it's listening, then one each time any hex process changes hex.db: an app reads
-      // what it shows again at each. Once the app stops reading, the next line ends it.
-      const line = () => process.stdout.write(`${new Date().toISOString()}\n`, error => error && process.exit())
-      store.watch(line)
-      line()
       break
     }
     case 'recall':
