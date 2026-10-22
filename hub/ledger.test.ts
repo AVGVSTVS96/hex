@@ -50,7 +50,7 @@ test('a hex.db that took a ledger in at each start brings in only what an older 
   const store = new Store(dir)
   store.pinned({ app: 'telegram', thread: '-100:8', message: 30, text: 'pinned again here' })
   store.pinned({ app: 'telegram', thread: '-100:9', message: 20, text: 'pinned after the move' })
-  store.db.run('create table files (name text primary key, body text not null); create table shown (session text primary key, digest text not null); alter table seen drop column at; pragma user_version = 19')
+  store.db.run('drop table turns; drop table relays; create table files (name text primary key, body text not null); create table shown (session text primary key, digest text not null); alter table seen drop column at; pragma user_version = 19')
   const taken = { pins: { '-100:7': { message: 9, text: 'old', at: '2026-10-18T09:00:00.000Z' }, '-100:8': { message: 12, text: 'rolled back', at: '2026-10-19T09:00:00.000Z' } } }
   store.db.query('insert into files (name, body) values (?, ?)').run('telegram/ledger.json', JSON.stringify(taken))
   store.db.close()

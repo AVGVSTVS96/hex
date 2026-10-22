@@ -130,6 +130,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
   store.db.run('drop table pins; create table shown (session text primary key, digest text not null); drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table turns; drop table relays')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
@@ -299,6 +300,7 @@ test("each app's threads.json comes into hex.db once, as that app's open threads
   const old = new Database(join(dir, 'hex.db'))
   old.run('drop table pins; create table shown (session text primary key, digest text not null); alter table seen drop column at; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   old.run("insert into threads values ('telegram', '-100:9', 'Errands')")
+  old.run('drop table turns; drop table relays')
   old.run('pragma user_version = 16')
   old.close()
   mkdirSync(join(dir, 'telegram'))
@@ -323,12 +325,42 @@ test("a session that ended loses what it was shown, and log/'s turns headed t be
   shown.run('live', 'tasks', 'now')
   shown.run('live', 'rules', '{}')
   store.db.query('insert into messages (key, "to", "from", author, body, at) values (?, ?, ?, ?, ?, ?)').run('t:past:abc:0', 'abc', 't', 'owner', 'Quick test from T3', '2026-10-08T10:16:00.000Z')
+  store.db.run('drop table turns; drop table relays')
   store.db.run('pragma user_version = 20')
   store.db.close()
   const after = new Store(dir)
   expect([after.seen('ended', 'tasks'), after.seen('live', 'tasks'), after.seen('live', 'rules')]).toEqual(['', 'now', '{}'])
   expect(after.message('t3:past:abc:0')).toMatchObject({ from: 't3', author: 'owner' })
   expect(after.message('t:past:abc:0')).toBeNull()
+})
+
+test("each app's relays.jsonl comes into hex.db once, the newest run per pair of threads", () => {
+  mkdirSync(join(dir, 'discord'))
+  const lines = [
+    { at: '2026-10-21T10:00:00.000Z', from: 'fix', thread: 'thread-prims', run: 'run-1' },
+    { at: '2026-10-21T10:05:00.000Z', from: 'fix', thread: 'thread-codex', run: 'run-2' },
+    { at: '2026-10-21T10:10:00.000Z', from: 'fix', thread: 'thread-prims', run: 'run-3' },
+  ]
+  writeFileSync(join(dir, 'discord', 'relays.jsonl'), [...lines.map(line => JSON.stringify(line)), 'not json', ''].join('\n'))
+  expect(new Store(dir).relays()).toEqual([
+    { from: 'discord:fix', thread: 'thread-codex', run: 'run-2' },
+    { from: 'discord:fix', thread: 'thread-prims', run: 'run-3' },
+  ])
+  expect(existsSync(join(dir, 'discord', 'relays.jsonl'))).toBe(false)
+  expect(existsSync(join(dir, 'discord', 'relays.jsonl.moved-to-hex.db'))).toBe(true)
+})
+
+test("a session's turns: one begins, ends, and the next begins again, and one not heard from in two days goes", () => {
+  const store = new Store(dir)
+  store.turned('s-1', true, 't3:x')
+  expect(store.turn('s-1')).toEqual({ thread: 't3:x', began: expect.any(String) })
+  store.turned('s-1', false, 't3:x')
+  const { began, ended } = store.turn('s-1')
+  expect(ended! >= began!).toBe(true)
+  store.db.run("update turns set began = '2026-01-01T00:00:00.000Z', ended = '2026-01-01T00:00:01.000Z'")
+  store.turned('s-2', true)
+  expect(store.turn('s-1')).toEqual({})
+  expect(store.turn('s-2')).toEqual({ began: expect.any(String) })
 })
 
 test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
@@ -435,6 +467,7 @@ test('an answer and the message that wakes its thread with it land together or n
 test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
   const store = new Store(dir)
   store.db.run('drop table pins; create table shown (session text primary key, digest text not null); alter table seen drop column at; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table turns; drop table relays')
   store.db.run('create index unauthored on messages (n) where author = \'\'; pragma user_version = 15')
   const kept = (key: string, from: string, author: string, meta?: object) => store.db.query('insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)').run(key, '-100:7', from, author, 'hi', meta ? JSON.stringify(meta) : null, '2026-10-21T10:00:00.000Z')
   kept('telegram:1', 'telegram', 'hex General', { user: 'hex General' })

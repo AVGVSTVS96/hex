@@ -1,4 +1,5 @@
 import { connect } from 'net'
+import { served } from './running.ts'
 import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
@@ -35,6 +36,13 @@ if (key) {
       console.error(`hex gave this session ${key} already`)
       process.exit(2)
     }
+  } catch {}
+}
+
+// The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
+if (session_id) {
+  try {
+    open(stateDir()).turned(session_id, busy, served())
   } catch {}
 }
 

@@ -1,10 +1,10 @@
-import { appendFileSync } from 'fs'
-import { dirname, join } from 'path'
+import { served } from './running.ts'
+import { open, stateDir } from './store.ts'
 
-// A hex session's message to a T3 Code thread (t3_thread_send, t3_thread_launch) is kept beside its
-// hub as one line of relays.jsonl: T3 Code records who sent it only as "an agent", and this says which
-// thread did, so the voice app's Tasks shows the run it started under that thread.
-const { HEX_HUB, HEX_THREAD } = process.env
+// A hex session's message to a T3 Code thread (t3_thread_send, t3_thread_launch) is kept in hex.db's
+// relays: T3 Code records who sent it only as "an agent", and this says which thread did, so the
+// voice app's Tasks shows the run it started under that thread.
+const from = served()
 
 type Ran = { threadId: string; runId: string }
 
@@ -24,7 +24,7 @@ function ran(response: unknown): Ran | undefined {
   return typeof threadId === 'string' && typeof runId === 'string' ? { threadId, runId } : ran(structuredContent)
 }
 
-if (HEX_HUB && HEX_THREAD) {
+if (from) {
   const run = ran(JSON.parse((await Bun.stdin.text()) || '{}').tool_response)
-  if (run) appendFileSync(join(dirname(HEX_HUB), 'relays.jsonl'), JSON.stringify({ at: new Date().toISOString(), from: HEX_THREAD, thread: run.threadId, run: run.runId }) + '\n')
+  if (run) open(stateDir()).relayed(from, run.threadId, run.runId)
 }

@@ -1,23 +1,26 @@
 #!/usr/bin/env bun
-// quiet: returns once no hex session has been mid-turn for a few seconds, by the records of them
-// hub/running.ts reads, so an update lands between turns instead of under one. hex starts every
-// session in the background, so those are the ones it waits on. An argument <session id>@<ms> names the session
-// that asked for this wait at that time: it's left out for the busy turn it asked from, which only
-// ends after the wait, and counts again from its next turn on.
+// quiet: returns once no hex session has been mid-turn for a few seconds, so an update lands between
+// turns instead of under one. hex starts every session in the background, so those are the ones it
+// waits on: each that Claude Code calls busy, unless hex's own record says its turn ended (Claude
+// Code keeps a session busy while its background agents or shells run). An argument
+// <session id>@<ms> names the session that asked for this wait at that time: it's left out for the
+// turn it asked from, which only ends after the wait, and counts again from its next turn on.
 import { mkdirSync, watch } from "node:fs"
 import { join } from "node:path"
-import { CLAUDE, records, type SessionRecord } from "../hub/running.ts"
+import { CLAUDE, running, type Session } from "../hub/running.ts"
+import { open, stateDir } from "../hub/store.ts"
 
+const store = open(stateDir())
 const sessions = join(CLAUDE, "sessions")
 const settle = Number(process.env.HEX_QUIET_MS ?? 10_000)
 const [asker, asked] = (process.argv[2] ?? "").split("@")
-const asking = (record: SessionRecord) => record.id === asker && (record.updated ?? Infinity) <= Number(asked)
+const asking = (session: Session) => session.id === asker && !!session.began && Date.parse(session.began) <= Number(asked)
 mkdirSync(sessions, { recursive: true })
 
 function busy() {
-  return records()
-    .filter((record) => record.kind === "bg" && record.status === "busy" && !asking(record))
-    .map((record) => record.name ?? record.id)
+  return [...running(store).values()]
+    .filter((session) => session.kind === "bg" && session.status === "busy" && !session.ended && !asking(session))
+    .map((session) => session.name ?? session.id)
     .sort()
     .join(", ")
 }
@@ -39,6 +42,7 @@ await new Promise<void>((done) => {
     }, settle)
   }
   watch(sessions, look)
+  store.watch(look)
   look()
 })
 process.exit(0)

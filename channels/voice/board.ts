@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { join } from 'path'
 import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
 import { busy, CLAUDE, running, serving, type Session } from '../../hub/running.ts'
@@ -73,7 +73,6 @@ const FINE = 60 * 60_000
 const GRAIN = 50
 const SAVE = 2000
 const ORDER: State[] = ['needs', 'working', 'done', 'failed', 'idle']
-const RECORDS = new Set(['relays.jsonl'])
 const STATES: Record<string, State> = { working: 'working', blocked: 'needs', done: 'done', failed: 'failed' }
 const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progress: 'running', pending: 'pending' }
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
@@ -86,7 +85,7 @@ const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'faile
 // running, hex.db's open threads for their names and where their apps open them, and `links.ts` for T3 Code's side.
 // A session another one started (a topic's `claude -p` build), or a job a thread owns (bin/job),
 // counts toward it as one of its agents; a running session nothing holds is a run of its own while it works. So does each T3 Code
-// thread a hex T3 thread handed work to, which shows only under it. It wakes when hex.db's threads or one of those files
+// thread a hex T3 thread handed work to, which shows only under it. It wakes when hex.db or one of those files
 // (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
 // bumps a version on any change.
 // The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
@@ -99,7 +98,6 @@ export class Board extends Changes {
   private jobs = new Map<string, { job?: Job; timeline: Entry[] }>()
   private sessions = new Map<string, Session>()
   private watchers = new Map<string, FSWatcher>()
-  private appWatchers = new Map<string, () => void>()
   private followers = new Map<string, Follower>()
   private stretches = new Map<string, Stretch>()
   private pending?: ReturnType<typeof setTimeout>
@@ -117,8 +115,8 @@ export class Board extends Changes {
     super()
     this.tracks = readJson(join(state, 'voice', 'tracks.json')) ?? {}
     this.links = new Links(state, () => this.schedule(), t3)
-    this.stops.push(watchDir(state, file => file && APPS[file] && this.mark('threads')))
-    this.stops.push(open(state).watch(() => JSON.stringify(this.stored()) !== JSON.stringify(this.threads) && this.mark('threads')))
+    // hex.db holds the threads, the relays links.ts reads, and the turns running.ts reads.
+    this.stops.push(open(state).watch(() => (this.mark('threads'), this.mark('sessions'))))
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
     this.stops.push(watchDir(join(claude, 'jobs'), file => this.jobChanged(file, true)))
     this.build()
@@ -141,7 +139,7 @@ export class Board extends Changes {
     clearTimeout(this.pending)
     if (this.saving) this.saveTracks()
     this.links.close()
-    for (const stop of [...this.stops, ...this.appWatchers.values()]) stop()
+    for (const stop of this.stops) stop()
     for (const watcher of this.watchers.values()) watcher.close()
     for (const follower of this.followers.values()) follower.stop()
   }
@@ -209,9 +207,7 @@ export class Board extends Changes {
   }
 
   private readThreads() {
-    for (const app of apps(this.state))
-      if (!this.appWatchers.has(app)) this.appWatchers.set(app, watchDir(join(this.state, app), file => !!file && RECORDS.has(file) && this.mark('threads')))
-    this.links.load(apps(this.state))
+    this.links.load()
     this.threads = this.stored()
   }
 
@@ -230,9 +226,9 @@ export class Board extends Changes {
   // Running sessions no thread holds, owns, or started, named as Claude Code named them.
   private loose(): Thread[] {
     const held = this.held()
-    const owners = new Set(this.threads.map(thread => `${thread.app}:${thread.id}`))
+    const threads = new Set(this.threads.map(thread => `${thread.app}:${thread.id}`))
     return [...this.sessions.values()]
-      .filter(session => !session.parent && !held.has(session.id) && !(session.owner && owners.has(session.owner)))
+      .filter(session => !held.has(session.id) && !(session.thread && threads.has(session.thread)))
       .map(session => ({ app: 'claude', id: short(session.id), name: session.name ?? short(session.id), session: session.id, cwd: session.cwd }))
   }
 
@@ -241,7 +237,7 @@ export class Board extends Changes {
   private started(thread: Thread) {
     const held = new Map([...this.held(), ...this.loose().map(loose => [loose.session!, `${loose.app}:${loose.id}`] as [string, string])])
     const key = `${thread.app}:${thread.id}`
-    return [...this.sessions.values()].filter(session => session.id !== thread.session && busy(session) && serving(session, this.sessions, held) === key)
+    return [...this.sessions.values()].filter(session => session.id !== thread.session && busy(session) && serving(session, held) === key)
   }
 
   private wanted() {
@@ -268,7 +264,7 @@ export class Board extends Changes {
   }
 
   private readSessions() {
-    this.sessions = running(this.claude)
+    this.sessions = running(open(this.state), this.claude)
   }
 
   private job(session: string) {
@@ -300,7 +296,7 @@ export class Board extends Changes {
     const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(0).toISOString()
     const needs = state === 'needs' ? plain(job?.needs ?? job?.detail ?? '') || undefined : undefined
     const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
-    const began = Math.min(...started.map(one => one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? session!.at : Infinity)
+    const began = Math.min(...started.map(one => one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? Date.parse(session!.began ?? '') || session!.started : Infinity)
     const since =
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
     const { link } = thread
@@ -504,10 +500,6 @@ function count(runs: Run[], state: State) {
   return runs.filter(run => run.state === state).length
 }
 
-function apps(state: string) {
-  return list(state).filter(app => APPS[app])
-}
-
 function where(thread: Thread) {
   if (thread.app === 'telegram' && !thread.id.includes(':')) return thread.id.startsWith('-') ? 'General' : 'DM'
   return APPS[thread.app]
@@ -649,14 +641,6 @@ export function watchDir(dir: string, changed: (file: string | null) => void) {
     return () => watcher.close()
   } catch {
     return () => {}
-  }
-}
-
-function list(dir: string) {
-  try {
-    return readdirSync(dir)
-  } catch {
-    return []
   }
 }
 

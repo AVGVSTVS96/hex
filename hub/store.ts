@@ -217,6 +217,9 @@ const migrations: (string | ((store: Store) => void))[] = [
   alter table seen add column at text not null default '1970-01-01T00:00:00.000Z' check (at ${UTC});
   update seen set at = strftime('%Y-%m-%dT%H:%M:%fZ');
   update messages set "from" = 't3', key = 't3' || substr(key, 2) where "from" = 't' and key not in (select message from words) and 't3' || substr(key, 2) not in (select key from messages);`,
+  `create table turns (session text primary key, thread text, began text check (began ${UTC}), ended text check (ended ${UTC}));
+  create table relays ("from" text not null, thread text not null, run text not null, at text not null check (at ${UTC}), primary key ("from", thread));`,
+  carryRelays,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -258,6 +261,21 @@ function carryLedgers(store: Store) {
     const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
     for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => store.ask({ app, ...question }), question)
     rename(join(folder, 'ledger.json'))
+  }
+}
+
+// Each app's relays.jsonl, a line per message one of its threads sent a T3 Code thread, newest last.
+function carryRelays(store: Store) {
+  for (const [app, folder] of apps(store.dir)) {
+    const file = either(join(folder, 'relays.jsonl'))
+    if (!file) continue
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      try {
+        const { at, from, thread, run } = JSON.parse(line)
+        store.relayed(`${app}:${from}`, thread, run, at)
+      } catch {}
+    }
+    rename(join(folder, 'relays.jsonl'))
   }
 }
 
@@ -770,6 +788,34 @@ export class Store {
   // The session's context lost what it was shown of a kind: a compaction, a clear, or for its rules, its end.
   unshow(session: string, kind: string) {
     this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
+  }
+
+  // A session's turn began (busy) or ended, and the thread it works for, as <app>:<key>. Claude Code
+  // keeps a session busy while its background agents or shells run, after its turn ended; this is
+  // hex's own record of the turn. A session not heard from for SEEN goes.
+  turned(session: string, busy: boolean, thread?: string) {
+    const at = now()
+    this.write(() => {
+      this.db
+        .query('insert into turns (session, thread, began, ended) values (?1, ?2, ?3, ?4) on conflict (session) do update set thread = excluded.thread, began = coalesce(?3, began), ended = ?4')
+        .run(session, thread ?? null, busy ? at : null, busy ? null : at)
+      this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - SEEN).toISOString())
+    })
+  }
+
+  turn(session: string): { thread?: string; began?: string; ended?: string } {
+    const row = this.db.query('select thread, began, ended from turns where session = ?').get(session) as Record<string, string | null> | null
+    return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
+  }
+
+  // A thread (<app>:<key>) sent a T3 Code thread a message, which started or steered its run: the newest per pair is kept.
+  relayed(from: string, thread: string, run: string, at = now()) {
+    if (![from, thread, run].every(word => typeof word === 'string' && word)) return
+    this.write(() => this.db.query('insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at').run(from, thread, run, at))
+  }
+
+  relays(): { from: string; thread: string; run: string }[] {
+    return this.db.query('select "from", thread, run from relays order by at').all() as { from: string; thread: string; run: string }[]
   }
 
   private quote(task: string, message: string, quote?: string) {

@@ -3,6 +3,7 @@ import { existsSync, readFileSync, watch } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { MessageId } from '../../hub/ledger.ts'
+import { open } from '../../hub/store.ts'
 import type { Item } from './activity.ts'
 
 // Work a hex thread handed to another T3 Code thread with delegate_task: the child thread, the task
@@ -72,15 +73,9 @@ export class Links {
     this.db?.close()
   }
 
-  // Each app's relays, newest per thread pair; read again whenever the threads are.
-  load(apps: string[] = []) {
-    const relays = new Map<string, Relay>()
-    for (const app of apps)
-      for (const line of readFile(join(this.state, app, 'relays.jsonl'))?.split('\n') ?? []) {
-        const { from, thread, run } = parse(line) ?? {}
-        if (word(from) && word(thread) && word(run)) relays.set(`${app}:${from} ${thread}`, { from: `${app}:${from}`, thread, run })
-      }
-    this.relays = [...relays.values()]
+  // hex.db's relays, newest per thread pair; read again whenever the threads are.
+  load() {
+    this.relays = open(this.state).relays()
     if (this.db) this.read()
   }
 
@@ -224,12 +219,6 @@ function word(value: unknown) {
 function readFile(path: string) {
   try {
     return readFileSync(path, 'utf8')
-  } catch {}
-}
-
-function parse(text: string) {
-  try {
-    return JSON.parse(text)
   } catch {}
 }
 

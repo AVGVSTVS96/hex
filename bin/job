@@ -8,6 +8,7 @@
 // so it has hex's rules, memory and hooks.
 import { $ } from "bun"
 import { basename } from "node:path"
+import { served } from "../hub/running.ts"
 import { open, stateDir } from "../hub/store.ts"
 
 const [mode, ...rest] = process.argv.slice(2)
@@ -26,14 +27,6 @@ function named(word: string, here?: { app: string; key: string }): string | unde
     process.exit(2)
   }
   return holders.length ? `${holders[0]}:${word}` : undefined
-}
-
-// The hex session running this, from what its hub gave it, or the owner of the job it runs in.
-function caller() {
-  const app = process.env.HEX_CHANNEL?.match(/^plugin:([^@]+)/)?.[1]
-  const key = process.env.HEX_THREAD
-  if (app && key) return { app, key }
-  return process.env.HEX_OWNER?.includes(":") ? parts(process.env.HEX_OWNER) : undefined
 }
 
 function parts(owner: string) {
@@ -55,9 +48,9 @@ if (mode === "--ended") {
   // Kept as from its owner's app, so only that app's hub delivers it, even to a key two apps share.
   await $`${import.meta.dir}/hex deliver ${app}:job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to=${key} --user=job ${content}`
 } else {
-  const here = caller()
-  const given = rest.length > 1 ? named(rest[0]!, here) : undefined
-  const owner = given ?? (here && `${here.app}:${here.key}`)
+  const mine = served()
+  const given = rest.length > 1 ? named(rest[0]!, mine ? parts(mine) : undefined) : undefined
+  const owner = given ?? mine
   const command = given ? rest.slice(1) : rest
   if (!mode || !command.length) {
     console.error("usage: job <unit> [<thread>] <command...>")
