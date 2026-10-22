@@ -623,11 +623,15 @@ async function reopenQuestion(thread: string, message: number, via: string) {
   if (reopened) await draw(thread, message)
 }
 
+// The bot's name once it polls, which a DM's link opens.
+let polling: string | undefined
+
 const hub = startHub({
   stateDir: STATE_DIR,
   channel: 'plugin:telegram@hex',
   server,
-  link: thread => (thread.startsWith('-100') ? `https://t.me/c/${thread.slice(4).replace(':', '/')}${thread.includes(':') ? '' : '/1'}` : undefined),
+  link: thread =>
+    thread.startsWith('-100') ? `https://t.me/c/${thread.slice(4).replace(':', '/')}${thread.includes(':') ? '' : '/1'}` : /^\d+(:\d+)?$/.test(thread) && polling ? `https://t.me/${polling}` : undefined,
   main: MAIN,
   general: true,
   hexDir: process.env.HEX_DIR,
@@ -1078,7 +1082,8 @@ for (let attempt = 1; ; attempt++) {
       onStart: info => {
         attempt = 0
         process.stderr.write(`telegram hub: polling as @${info.username}\n`)
-        writeFileSync(join(STATE_DIR, 'bot.json'), JSON.stringify({ username: info.username }) + '\n')
+        polling = info.username
+        hub.save()
         keeping ??= ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
       },
     })

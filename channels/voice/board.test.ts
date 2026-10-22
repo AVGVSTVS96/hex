@@ -53,8 +53,8 @@ function back(path: string, id: string, content: string, more: object = {}) {
 mkdirSync(join(claude, 'jobs'), { recursive: true })
 mkdirSync(join(claude, 'sessions'), { recursive: true })
 const telegram = {
-  '-1001234567890': { name: 'hex', session: 'aaaaaaaa-general' },
-  '-1001234567890:908': { name: 'autofork', session: 'bbbbbbbb-autofork' },
+  '-1001234567890': { name: 'hex', session: 'aaaaaaaa-general', link: 'https://t.me/c/1234567890/1' },
+  '-1001234567890:908': { name: 'autofork', session: 'bbbbbbbb-autofork', link: 'https://t.me/c/1234567890/908' },
   '-1001234567890:2583': { name: 'voiceapp', session: 'cccccccc-voiceapp' },
   '-1001234567890:65': { name: 'Theo clips', session: 'dddddddd-theo' },
   '-1001234567890:72': { name: 'Leisure time', session: 'eeeeeeee-leisure' },
@@ -254,61 +254,26 @@ test('a change to a session wakes the list, and the counts move only when a coun
   expect(board.runs[0].name).toBe('hex')
 })
 
-test('a new thread shows up when its app keeps it in hex.db, once its session has records, and links once Discord has said which server it is in', async () => {
+test('a new thread shows up when its app keeps it in hex.db, once its session has records, and links where its app keeps it opening there', async () => {
   threads('discord', { d1: { name: 'Latest Claude', session: '99999999-latest' } })
   job('99999999-latest', { state: 'failed', detail: "You've hit your weekly limit", updatedAt: ago(0) })
   await until(() => board.get('discord:d1')?.state === 'failed')
   expect(board.get('discord:d1')).toMatchObject({ where: 'Discord', line: "You've hit your weekly limit" })
   expect(board.get('discord:d1')!.link).toBeUndefined()
-  writeFileSync(join(state, 'discord', 'guild.json'), JSON.stringify({ id: '3000' }))
+  threads('discord', { d1: { name: 'Latest Claude', session: '99999999-latest', link: 'https://discord.com/channels/3000/d1' } })
   await until(() => board.get('discord:d1')?.link === 'https://discord.com/channels/3000/d1')
 })
 
-test("a Buzz thread links to its message in the channel the bot recorded, a DM to its channel, and a thread with no channel to nothing", async () => {
-  const [anchors, lost, dm, channel] = ['a'.repeat(64), 'b'.repeat(64), '5c0f9a6e-3b1d-4e7a-9c2f-7d8e1a4b6c30', '0d6f2c1e-5a4b-4c3d-8e9f-123456789abc']
-  threads('buzz', {
-    [anchors]: { name: 'Anchors', session: 'b0000001-anchors' },
-    [lost]: { name: 'Lost', session: 'b0000002-lost' },
-    [dm]: { name: 'bassim', session: 'b0000003-dm' },
-  })
-  for (const session of ['b0000001-anchors', 'b0000002-lost', 'b0000003-dm']) job(session, { state: 'done', detail: 'ok', updatedAt: ago(1) })
-  await until(() => [anchors, lost, dm].every(thread => board.get(`buzz:${thread}`)))
-  expect(board.get(`buzz:${anchors}`)!.link).toBeUndefined()
-  writeFileSync(join(state, 'buzz', 'channels.json'), JSON.stringify({ [anchors]: channel }))
-  await until(() => board.get(`buzz:${anchors}`)?.link === `buzz://message?channel=${channel}&id=${anchors}`)
-  expect(board.get(`buzz:${dm}`)!.link).toBe(`buzz://channel/${dm}`)
-  expect(board.get(`buzz:${lost}`)!.link).toBeUndefined()
-})
-
-test("a Telegram DM links to the bot once the bot has said its name", async () => {
-  threads('telegram', { ...telegram, '2000100': { name: 'DM', session: '20001000-dm' } })
-  job('20001000-dm', { state: 'done', detail: 'ok', updatedAt: ago(1) })
-  await until(() => !!board.get('telegram:2000100'))
-  expect(board.get('telegram:2000100')).toMatchObject({ where: 'DM' })
-  expect(board.get('telegram:2000100')!.link).toBeUndefined()
-  writeFileSync(join(state, 'telegram', 'bot.json'), JSON.stringify({ username: 'hex_bot' }))
-  await until(() => board.get('telegram:2000100')?.link === 'https://t.me/hex_bot')
-})
-
-test("a T3 Code thread links to T3's own thread for it, once T3 has one, and the app's environment; deleted threads and other drivers give no link", async () => {
+test("a T3 Code thread is placed by T3's own title for it, where T3 has one", async () => {
   threads('t3', {
-    mapped: { name: 'Voice app', session: 'd3000001-mapped' },
-    later: { name: 'Later', session: 'd3000002-later' },
-    gone: { name: 'Gone', session: 'd3000003-gone' },
-    other: { name: 'Other', session: 'd3000004-other' },
+    mapped: { name: 'Voice app', session: 'd3000001-mapped', link: 't3code://threads/env-1/4a1e7c52' },
     unmapped: { name: 'Unmapped', session: 'd3000005-unmapped' },
   })
-  for (const session of ['d3000001-mapped', 'd3000002-later', 'd3000003-gone', 'd3000004-other', 'd3000005-unmapped']) job(session, { state: 'done', detail: 'ok', updatedAt: ago(1) })
-  mapped('mapped', '4a1e7c52-9b3d-4f60-8a2e-5d6c7b8e9f01', { title: 'Voice app restyle' })
-  mapped('gone', 'thread-gone', { deleted: ago(5) })
-  mapped('other', 'thread-other', { driver: 'claudeAgent' })
-  await until(() => !!board.get('t3:mapped')?.link)
-  expect(board.get('t3:mapped')).toMatchObject({ link: 't3code://threads/env-1/4a1e7c52-9b3d-4f60-8a2e-5d6c7b8e9f01', place: 'Voice app restyle', name: 'Voice app' })
+  for (const session of ['d3000001-mapped', 'd3000005-unmapped']) job(session, { state: 'done', detail: 'ok', updatedAt: ago(1) })
+  mapped('mapped', '4a1e7c52', { title: 'Voice app restyle' })
+  await until(() => board.get('t3:mapped')?.place === 'Voice app restyle')
+  expect(board.get('t3:mapped')).toMatchObject({ link: 't3code://threads/env-1/4a1e7c52', name: 'Voice app' })
   expect(board.get('t3:unmapped')!.place).toBe('Unmapped')
-  for (const key of ['later', 'gone', 'other', 'unmapped']) expect(board.get(`t3:${key}`)!.link).toBeUndefined()
-  mapped('later', 'thread:delegated task')
-  await until(() => !!board.get('t3:later')?.link)
-  expect(board.get('t3:later')!.link).toBe('t3code://threads/env-1/thread%3Adelegated%20task')
 })
 
 test("a hex T3 thread's delegations are its agents, one on hex only under it with its own transcript's steps, and the thread works while any of them does", async () => {

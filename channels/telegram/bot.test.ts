@@ -101,7 +101,7 @@ async function update(fields: Record<string, any>) {
 
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
-  open(state).keepThreads('telegram', { [DESK]: { name: 'desk' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } })
+  open(state).keepThreads('telegram', { [DESK]: { name: 'desk' }, [String(OWNER)]: { name: 'Bassim' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } })
   Object.assign(process.env, { PATH: noClaude(), TELEGRAM_STATE_DIR: state, TELEGRAM_BOT_TOKEN: 'token', HEX_LAUNCHER: 'false', HEX_MAIN_THREAD: String(FORUM), TRANSCRIBE_URL: TRANSCRIBER, TRANSCRIBE_MODEL: 'whisper' })
   const fetch = globalThis.fetch
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
@@ -467,8 +467,9 @@ test("a status post is the session's note over lines hex keeps current from the 
   expect((await call('edit_message', { message_id: String(id), text: 'Site', file: join(state, 'access.json') })).error).toBe('a status post is text: send the file in its own message')
 })
 
-test('once polling the bot leaves its name in bot.json, so the voice app can link a DM', () => {
-  expect(JSON.parse(readFileSync(join(state, 'bot.json'), 'utf8'))).toEqual({ username: 'hex_bot' })
+test("a thread's link is where Telegram opens it: a topic, General, or for a DM, the bot", () => {
+  expect(saved()[DESK]?.link).toBe('https://t.me/c/1234/5')
+  expect(saved()[String(OWNER)]).toMatchObject({ link: 'https://t.me/hex_bot' })
 })
 
 test('a backfill quotes the owner under their name and posts hex as itself, silently, split to fit and waiting out the rate limit', async () => {

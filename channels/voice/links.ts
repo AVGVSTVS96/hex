@@ -37,16 +37,11 @@ const REFRESH = 500
 const ITEMS = 40
 const SHOWN = ['command_execution', 'web_search', 'file_change', 'dynamic_tool', 'reasoning', 'assistant_message', 'subagent', 'error']
 
-// Where a hex thread lives in its own app. Each bot leaves what its links need in its state folder
-// (Discord's server, Telegram's bot name, the channel of every Buzz thread), and T3 Code's own database,
-// read only, says which T3 thread a hex thread is and what it's called there. An app that can't say gives no link.
-// The same database says what each hex T3 thread handed off, and the turns of those that don't run on
-// hex, read when asked and again whenever T3 Code writes.
+// What T3 Code's own database, read only, says of hex's T3 threads: what each is called there, what
+// it handed off, and the turns of those that don't run on hex, read when asked and again whenever T3
+// Code writes. Where a thread opens in its own app is hex.db's (Thread.link): linkAt only adds a message.
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
 export class Links {
-  private guild?: string
-  private bot?: string
-  private channels: Record<string, string> = {}
   private threads = new Map<string, { thread: string; title: string }>()
   private handed: Delegation[] = []
   private relays: Relay[] = []
@@ -77,12 +72,8 @@ export class Links {
     this.db?.close()
   }
 
-  // The small files the bots keep, and each app's relays, newest per thread pair; read again
-  // whenever the threads are.
+  // Each app's relays, newest per thread pair; read again whenever the threads are.
   load(apps: string[] = []) {
-    this.guild = word(readJson(join(this.state, 'discord', 'guild.json'))?.id)
-    this.bot = word(readJson(join(this.state, 'telegram', 'bot.json'))?.username)
-    this.channels = readJson(join(this.state, 'buzz', 'channels.json')) ?? {}
     const relays = new Map<string, Relay>()
     for (const app of apps)
       for (const line of readFile(join(this.state, app, 'relays.jsonl'))?.split('\n') ?? []) {
@@ -91,27 +82,6 @@ export class Links {
       }
     this.relays = [...relays.values()]
     if (this.db) this.read()
-  }
-
-  // A message's own link where its app has one (a Telegram group's, a Discord thread's), else its thread's.
-  of(app: string, id: string, message?: MessageId): string | undefined {
-    switch (app) {
-      case 'telegram': {
-        if (!id.includes(':') && !id.startsWith('-')) return this.bot && `https://t.me/${this.bot}`
-        if (!id.startsWith('-100')) return
-        const [chat, topic] = id.slice(4).split(':')
-        return message === undefined ? `https://t.me/c/${chat}/${topic ?? 1}` : `https://t.me/c/${chat}/${topic ? `${topic}/` : ''}${message}`
-      }
-      case 'discord':
-        return this.guild && `https://discord.com/channels/${this.guild}/${id}${message === undefined ? '' : `/${message}`}`
-      case 'buzz': {
-        if (id.includes('-')) return `buzz://channel/${id}`
-        const channel = word(this.channels[id])
-        return channel && `buzz://message?channel=${channel}&id=${id}`
-      }
-      case 't3':
-        return this.deep(this.threads.get(id)?.thread)
-    }
   }
 
   // What the thread is called in its own app, where hex knows it by another name: T3 Code's title.
@@ -257,12 +227,17 @@ function readFile(path: string) {
   } catch {}
 }
 
-function readJson(path: string) {
-  return parse(readFile(path) ?? '')
-}
-
 function parse(text: string) {
   try {
     return JSON.parse(text)
   } catch {}
+}
+
+// A message's own link where its app has one (in a Telegram group or topic, or a Discord thread), else
+// its thread's.
+export function linkAt(app: string, link: string | undefined, message?: MessageId) {
+  if (!link || message === undefined) return link
+  if (app === 'discord') return `${link}/${message}`
+  if (app === 'telegram' && link.startsWith('https://t.me/c/')) return `${link.replace(/\/1$/, '')}/${message}`
+  return link
 }

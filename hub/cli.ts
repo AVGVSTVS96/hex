@@ -1,3 +1,4 @@
+import { realpathSync } from 'fs'
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
@@ -59,6 +60,9 @@ if (args.length > takes) {
   process.exit(1)
 }
 const store = open(state)
+// A thread named the way every --json output names it, <app>:<key>, is the bare key hex.db's
+// messages, tasks, questions and pins keep.
+for (const flag of ['owner', 'thread', 'to'] as const) flags[flag] &&= keyOf(flags[flag])
 
 function usage(): never {
   console.error(USAGE)
@@ -67,7 +71,7 @@ function usage(): never {
 
 // One task in full, with the owner's words; a list as one clean entry per task.
 function show(tasks: Task[], full = true) {
-  if (flags.json) return console.log(JSON.stringify(tasks, null, 1))
+  if (flags.json) return json(withThread(tasks, task => task.owner))
   const named = store.names()
   console.log(tasks.map(task => (full ? render(task, named) : entry(task, named))).join(full ? '\n\n' : '\n') || 'no tasks')
 }
@@ -92,12 +96,29 @@ async function recall(pattern: string) {
   process.exitCode = await memo.exited
 }
 
+// Every --json output names a thread one way, as <app>:<key>: a thread's id, and the threadId of what
+// belongs to one (a task's owner, a message's thread, a question, a pin), where hex.db knows the app.
+function json(value: unknown) {
+  console.log(JSON.stringify(value, null, 1))
+}
+
+function withThread<T>(rows: T[], key: (row: T) => string) {
+  const ids = store.ids()
+  return rows.map(row => ({ ...row, ...(ids[key(row)] && { threadId: ids[key(row)] }) }))
+}
+
+function keyOf(id: string) {
+  const split = id.indexOf(':')
+  return split > 0 && store.threads({ app: id.slice(0, split) }).some(({ thread }) => thread === id.slice(split + 1)) ? id.slice(split + 1) : id
+}
+
 function stray(word: string) {
   return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`
 }
 
 // A thread by its id, or by its name the way the hub finds one: any case, and only one thread.
-function threadOf(nameOrThread: string) {
+function threadOf(named: string) {
+  const nameOrThread = keyOf(named)
   const threads = store.threads()
   if (threads.some(({ thread }) => thread === nameOrThread)) return nameOrThread
   const wanted = nameOrThread.trim().toLowerCase()
@@ -113,14 +134,18 @@ function threadOf(nameOrThread: string) {
 function log(rows: Row[]) {
   const room = flags.room === undefined ? Infinity : Number(flags.room)
   if (!(room === Infinity || (Number.isInteger(room) && room > 0)) || (flags.room !== undefined && flags.json)) usage()
-  if (flags.json) return console.log(JSON.stringify(rows, null, 1))
+  if (flags.json) {
+    const named = store.names()
+    return json(withThread(rows, row => row.to).map(row => (named[`${row.from}:${row.to}`] ? { ...row, threadId: `${row.from}:${row.to}` } : row)))
+  }
   const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
   const named = open(state!).names()
   const entries = rows.map(row => {
     const at = Temporal.Instant.from(row.at).toZonedDateTimeISO(zone).toPlainDateTime().toString().slice(0, 16).replace('T', ' ')
     const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : ''
     const body = row.from === 't3' && row.author === 'owner' ? asked(row.body) : row.body
-    const thread = named[row.to] ? `${named[row.to]} (${row.to})` : row.to
+    const name = named[`${row.from}:${row.to}`] ?? named[row.to]
+    const thread = name ? `${name} (${row.to})` : row.to
     const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
     const who = row.meta?.user && (row.author === 'prompt' || row.author === 'other') ? `${row.author} (${row.meta.user})` : row.author
     return `## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`
@@ -188,20 +213,21 @@ try {
       break
     case 'questions': {
       const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
-      if (flags.json) console.log(JSON.stringify(questions, null, 1))
+      if (flags.json) json(questions.map(question => ({ ...question, threadId: `${question.app}:${question.thread}` })))
       else console.log(questions.map(question => waiting(question, store.names())).join('\n') || 'no questions waiting')
       break
     }
     case 'pins': {
       const pins = store.pins({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD) })
       const names = new Map(store.threads().map(({ app, thread, name }) => [`${app}:${thread}`, name]))
-      if (flags.json) console.log(JSON.stringify(pins, null, 1))
+      if (flags.json) json(pins.map(pin => ({ ...pin, threadId: `${pin.app}:${pin.thread}` })))
       else console.log(pins.map(pin => `${pin.app} · ${names.get(`${pin.app}:${pin.thread}`) ?? pin.thread} · message ${pin.message} · ${(pin.note || pin.text).trim().split('\n')[0]}`).join('\n') || 'no pins')
       break
     }
     case 'threads': {
       const threads = store.threads()
-      console.log(flags.json ? JSON.stringify(threads, null, 1) : threads.map(({ app, thread, name, open }) => `${app} ${thread} ${name}${open ? '' : ' (closed)'}`).join('\n'))
+      if (flags.json) json(threads.map(thread => ({ id: `${thread.app}:${thread.thread}`, ...thread })))
+      else console.log(threads.map(({ app, thread, name, open }) => `${app} ${thread} ${name}${open ? '' : ' (closed)'}`).join('\n'))
       break
     }
     case 'profile': {
@@ -216,9 +242,13 @@ try {
       const held = new Map(threads.flatMap(({ app, thread, session }) => (session ? [[session, `${app}:${thread}`] as [string, string]] : [])))
       const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]))
       const sessions = running()
+      const home = realpathSync(dirname(state!))
       const rows = [...sessions.values()].map(session => ({ ...session, thread: serving(session, sessions, held) }))
       if (flags.json) console.log(JSON.stringify(rows, null, 1))
-      else console.log(rows.map(({ id, status, name, thread }) => `${status} ${id.slice(0, 8)} ${name ?? ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}`).join('\n') || 'nothing running')
+      else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs }) => {
+        const now = (state === 'blocked' && needs) || detail
+        return `${status} ${id.slice(0, 8)} ${name ?? ''}${cwd && cwd !== home ? ` in ${cwd}` : ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, ' ')}` : ''}` : ''}`
+      }).join('\n') || 'nothing running')
       break
     }
     case 'message': {

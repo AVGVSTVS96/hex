@@ -632,9 +632,17 @@ export class Store {
     return rows.map(({ open, ...row }) => ({ ...(Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Omit<Thread, 'open'>), open: !!open }))
   }
 
-  // Each thread's name by its id, as threads() keeps them.
+  // Each thread's name by its id, <app>:<key>, and by its bare key where only one app has that key.
   names(): Record<string, string> {
-    return Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name]))
+    const threads = this.threads()
+    const apps = Object.groupBy(threads, ({ thread }) => thread)
+    return Object.fromEntries(threads.flatMap(({ app, thread, name }) => [[`${app}:${thread}`, name], ...(apps[thread]!.length === 1 ? [[thread, name]] : [])]))
+  }
+
+  // Each bare key's thread as <app>:<key>, where only one app has that key.
+  ids(): Record<string, string> {
+    const apps = Object.groupBy(this.threads(), ({ thread }) => thread)
+    return Object.fromEntries(Object.entries(apps).flatMap(([key, threads]) => (threads!.length === 1 ? [[key, `${threads![0]!.app}:${key}`]] : [])))
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.

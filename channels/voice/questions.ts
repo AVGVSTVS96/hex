@@ -3,10 +3,10 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { noteOf, type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
 import { statusPost } from '../../hub/status.ts'
-import { open as store } from '../../hub/store.ts'
+import { open as store, type Thread } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
 import { Check } from './check.ts'
-import { Links } from './links.ts'
+import { linkAt, Links } from './links.ts'
 import { relay } from './relay.ts'
 import { T3, type Fresh, type Stuck } from './t3.ts'
 
@@ -78,7 +78,7 @@ export class Questions extends Changes {
   view: Omit<View, 'version'> = { asks: [], stuck: [], fresh: [], check: null }
   counts = new Changes()
   private ledgers = new Map<string, Asked[]>()
-  private names = new Map<string, string>()
+  private threads = new Map<string, Thread>()
   private pins = new Map<string, Pin>()
   private links: Links
   private calls: string
@@ -217,7 +217,7 @@ export class Questions extends Changes {
   }
 
   private general() {
-    const general = [...this.names.keys()].find(id => /^telegram:-\d+$/.test(id))
+    const general = [...this.threads.keys()].find(id => /^telegram:-\d+$/.test(id))
     if (!general) throw new Error('hex has no Telegram General to send this to')
     return general
   }
@@ -228,13 +228,12 @@ export class Questions extends Changes {
   }
 
   private build() {
-    this.names.clear()
+    this.threads.clear()
     this.pins.clear()
     const questions = store(this.state).questions()
-    for (const { app, thread, name } of store(this.state).threads()) this.names.set(`${app}:${thread}`, name)
+    for (const thread of store(this.state).threads()) this.threads.set(`${thread.app}:${thread.thread}`, thread)
     for (const app of apps(this.state)) this.ledgers.set(app, questions.filter(question => question.app === app))
     for (const pin of store(this.state).pins()) if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin)
-    this.links.load()
     this.result = readJson(join(this.state, 'voice', 'check.json'))
     this.notice()
     const used = new Set<string>()
@@ -281,7 +280,7 @@ export class Questions extends Changes {
     return {
       ...question,
       app: app!,
-      topic: this.names.get(question.task) ?? thread.at(-1)!,
+      topic: this.threads.get(question.task)?.name ?? thread.at(-1)!,
       options: options.filter(option => !option.url),
       ...(pages.length && { links: pages }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(':') }]),
@@ -314,8 +313,8 @@ export class Questions extends Changes {
   // A thread's place, and when it asked there: the question's or the pinned post's time.
   private thread(app: string, thread: string, message?: MessageId): Place & { at?: string } {
     const key = `${app}:${thread}`
-    const place = app === 'telegram' && !thread.includes(':') ? (thread.startsWith('-') ? 'General' : 'DM') : (this.links.title(app, thread) ?? this.names.get(key) ?? thread)
-    const link = this.links.of(app, thread, message)
+    const place = app === 'telegram' && !thread.includes(':') ? (thread.startsWith('-') ? 'General' : 'DM') : (this.links.title(app, thread) ?? this.threads.get(key)?.name ?? thread)
+    const link = linkAt(app, this.threads.get(key)?.link, message)
     const pin = this.pins.get(key)
     const at = message === undefined ? undefined : pin && String(pin.message) === String(message) ? pin.at : this.asked({ app, thread, message })?.at
     return { app, place, task: key, ...(link && { link }), at }

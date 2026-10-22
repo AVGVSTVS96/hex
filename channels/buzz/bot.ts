@@ -193,7 +193,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   const start = now()
   const http = url.replace(/^ws/, 'http').replace(/\/$/, '')
   const channels = new Map<string, { name: string; dm: boolean; forum: boolean }>()
-  // The channel of every thread, kept for the voice app, which links a task to its thread with it.
+  // The channel of every thread, which its link in hex.db needs, kept in channels.json across restarts.
   const homes = new Map(Object.entries(load<Record<string, string>>(CHANNELS_FILE, {})))
   const names = new Map<string, Promise<string>>()
   const triggers = new Map<string, string[]>()
@@ -234,6 +234,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     if (homes.get(thread) === channel) return
     homes.set(thread, channel)
     keep(CHANNELS_FILE, Object.fromEntries(homes))
+    hub.save()
   }
 
   async function channelOf(thread: string): Promise<string> {

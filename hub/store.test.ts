@@ -344,6 +344,16 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
   expect(store.threads({ app: 'telegram', open: true }).map(thread => thread.thread)).toEqual(['-100:7'])
 })
 
+test("a thread is named by <app>:<key>, and by its bare key only where one app has that key", async () => {
+  const store = new Store(dir)
+  store.keepThreads('discord', { '1561': { name: 'Fixhex' }, '1562': { name: 'Deck' } })
+  store.keepThreads('buzz', { '1561': { name: 'Lab' } })
+  expect(store.names()).toEqual({ 'discord:1561': 'Fixhex', 'discord:1562': 'Deck', '1562': 'Deck', 'buzz:1561': 'Lab' })
+  expect(store.ids()).toEqual({ '1562': 'discord:1562' })
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'threads', '--json'], { stdout: 'pipe' })
+  expect(JSON.parse(await new Response(cli.stdout).text()).map(({ id }: { id: string }) => id)).toEqual(['buzz:1561', 'discord:1561', 'discord:1562'])
+})
+
 test("what a session was shown is kept per kind, until its context loses it", () => {
   const store = new Store(dir)
   expect(store.seen('session-a', 'tasks')).toBe('')
@@ -387,7 +397,9 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
   }
   expect(await hex()).toBe('telegram · chat:3 · message 9 · Site: example.com')
   expect((await hex('--all')).split('\n')).toEqual(['discord · 1561 · message 1562 · Status: by hand', 'telegram · chat:3 · message 9 · Site: example.com'])
-  expect(JSON.parse(await hex('--thread', '1561', '--json'))).toEqual([{ app: 'discord', thread: '1561', message: '1562', text: 'Status: by hand', at: expect.any(String) }])
+  expect(JSON.parse(await hex('--thread', '1561', '--json'))).toEqual([{ app: 'discord', thread: '1561', message: '1562', text: 'Status: by hand', at: expect.any(String), threadId: 'discord:1561' }])
+  open(dir).keepThreads('discord', { '1561': { name: 'Fixhex' } })
+  expect(await hex('--thread', 'discord:1561', '--json')).toBe(await hex('--thread', '1561', '--json'))
 })
 
 test("a question keeps its first answer, a poll's vote replaces the one before, and taking one back says whether there was one", () => {

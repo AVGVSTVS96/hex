@@ -188,9 +188,8 @@ same ones `claude agents --json` prints) and wakes when one of them changes.
  ~/.claude/jobs/<id>/state.json      working, blocked or done; its status line; what it needs
  ~/.claude/jobs/<id>/timeline.jsonl  each change, with its time
  ~/.claude/sessions/<pid>.json       which sessions are running
- state/hex.db threads                each open thread's name and current session
- state/<app>/{guild,bot,channels}.json  what each bot knows of where its threads live
- ~/.t3/userdata/statev2.sqlite       which T3 Code thread a hex thread is, what it handed off,
+ state/hex.db threads                each open thread's name, current session and link
+ ~/.t3/userdata/statev2.sqlite       what T3 Code calls a hex thread, what it handed off,
                                      and the turns of handed-off threads that don't run on hex
  <session>.jsonl transcripts         a working thread's newest steps and their results, its agents' too
                     │
@@ -202,10 +201,10 @@ A run's `link` is `https://t.me/...` (a topic, General, or the bot for the
 DM), `https://discord.com/channels/<server>/<thread>`, `buzz://message?channel=...&id=...`
 (`buzz://channel/...` for the DM) or `<scheme>://threads/<environment>/<thread>` for T3 Code,
 the app's URL scheme being `t3code` unless `T3_APP_SCHEME` says otherwise
-(`t3code-preview`, `t3code-dev`). The bots leave what these need in their state
-folders when they start (Discord's `guild.json`, Telegram's `bot.json`) and as
-they see threads (Buzz's `channels.json`); a thread whose app can't say where it
-lives has no `link`.
+(`t3code-preview`, `t3code-dev`). Each app's hub keeps its threads' links in
+hex.db (`hex threads --json`). `T3_APP_SCHEME` goes in the `env` of hex's
+`.claude/settings.json`, which the T3 hub and voice both run with. A thread
+whose app can't say where it lives has no `link`.
 
 Claude Code starts a job's timeline over whenever its session respawns or renews, so the engine
 keeps each thread's `track` for a week in `state/voice/tracks.json`.
@@ -323,7 +322,6 @@ them with hex) gets Claude walking the list in order.
    VOICE_MODEL=...    # the OpenAI live model that talks; gpt-live-1 if unset
    VOICE_PORT=8790    # the call page's local port
    VOICE_TOKEN=...    # if set, /session, /calls and /phone need "Authorization: Bearer <token>"
-   T3_APP_SCHEME=...  # the T3 Code app's URL scheme for task links; t3code if unset
    OPENAI_BASE_URL=... # another endpoint that speaks OpenAI's live API; https://api.openai.com/v1 if unset
    ```
 
