@@ -234,6 +234,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     if (homes.get(thread) === channel) return
     homes.set(thread, channel)
     keep(CHANNELS_FILE, Object.fromEntries(homes))
+    hub.save()
   }
 
   async function channelOf(thread: string): Promise<string> {

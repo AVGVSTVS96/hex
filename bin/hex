@@ -104,7 +104,7 @@ case "${1:-}" in
     ;;
   status)
     if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi
-    bun "$hex/hub/cli.ts" "$home/state" running
+    bun "$hex/hub/cli.ts" "$home/state" running || echo "sessions: hex running failed"
     units=$(systemctl --user list-units --type=service --state=running --no-legend --plain 2>/dev/null | awk '{print $1}')
     if [ -n "$units" ]; then
       systemctl --user show $units -p Id,ActiveEnterTimestamp,ExecStopPost 2>/dev/null | awk -F= -v job=" $(cd "$hex" && pwd -P)/bin/job --ended " '

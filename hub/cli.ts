@@ -1,3 +1,4 @@
+import { realpathSync } from 'fs'
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
@@ -59,6 +60,9 @@ if (args.length > takes) {
   process.exit(1)
 }
 const store = open(state)
+// A thread named the way every --json output names it, <app>:<key>, is the bare key hex.db's
+// messages, tasks, questions and pins keep.
+for (const flag of ['owner', 'thread', 'to'] as const) flags[flag] &&= keyOf(flags[flag])
 
 function usage(): never {
   console.error(USAGE)
@@ -103,12 +107,18 @@ function withThread<T>(rows: T[], key: (row: T) => string) {
   return rows.map(row => ({ ...row, ...(ids[key(row)] && { threadId: ids[key(row)] }) }))
 }
 
+function keyOf(id: string) {
+  const split = id.indexOf(':')
+  return split > 0 && store.threads({ app: id.slice(0, split) }).some(({ thread }) => thread === id.slice(split + 1)) ? id.slice(split + 1) : id
+}
+
 function stray(word: string) {
   return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`
 }
 
 // A thread by its id, or by its name the way the hub finds one: any case, and only one thread.
-function threadOf(nameOrThread: string) {
+function threadOf(named: string) {
+  const nameOrThread = keyOf(named)
   const threads = store.threads()
   if (threads.some(({ thread }) => thread === nameOrThread)) return nameOrThread
   const wanted = nameOrThread.trim().toLowerCase()
@@ -228,9 +238,13 @@ try {
       const held = new Map(threads.flatMap(({ app, thread, session }) => (session ? [[session, `${app}:${thread}`] as [string, string]] : [])))
       const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]))
       const sessions = running()
+      const home = realpathSync(dirname(state!))
       const rows = [...sessions.values()].map(session => ({ ...session, thread: serving(session, sessions, held) }))
       if (flags.json) console.log(JSON.stringify(rows, null, 1))
-      else console.log(rows.map(({ id, status, name, thread, state, detail, needs }) => `${status} ${id.slice(0, 8)} ${name ?? ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${state ? ` · ${state}${needs || detail ? `: ${needs || detail}` : ''}` : ''}`).join('\n') || 'nothing running')
+      else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs }) => {
+        const now = (state === 'blocked' && needs) || detail
+        return `${status} ${id.slice(0, 8)} ${name ?? ''}${cwd && cwd !== home ? ` in ${cwd}` : ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, ' ')}` : ''}` : ''}`
+      }).join('\n') || 'nothing running')
       break
     }
     case 'message': {
