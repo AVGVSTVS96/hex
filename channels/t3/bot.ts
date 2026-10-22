@@ -94,17 +94,21 @@ function link(thread: string) {
 }
 
 function mirror(records: ReturnType<typeof appThreads>) {
-  const threads = open(storeOf(STATE_DIR)).threads({ app: 't3', open: true })
-  if (!records || !threads.some(({ thread, link }) => link && records.get(thread)?.deleted === false)) return
-  for (const { thread, link } of threads) {
+  const links = new Map(open(storeOf(STATE_DIR)).threads({ app: 't3' }).map(({ thread, link }) => [thread, link]))
+  const threads = hub.threads()
+  if (!records || !threads.some(thread => links.get(thread) && records.get(thread)?.deleted === false)) return
+  for (const thread of threads) {
     const record = records.get(thread)
     if (record && !record.deleted) {
       kept.delete(thread)
       hub.rename(thread, record.title || hub.name(thread)!)
-    } else if ((record || !link) && !turns.has(thread) && !closing.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) {
+    } else if ((record || !links.get(thread)) && !turns.has(thread) && !closing.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) {
       closing.add(thread)
       kept.delete(thread)
-      void hub.retire(thread).finally(() => closing.delete(thread))
+      hub
+        .retire(thread)
+        .catch(error => process.stderr.write(`t3: couldn't close ${thread}: ${error}\n`))
+        .finally(() => closing.delete(thread))
     }
   }
 }
