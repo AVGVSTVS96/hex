@@ -1097,7 +1097,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     keep,
     renew: renewAsked,
     session: current,
-    // A channel that keeps a turn's reply only once the turn has ended queues its memory pass then.
+    // A turn cut short, which runs no Stop hook, queues its memory pass here.
     turned: (thread: string) => {
       const session = current(thread)
       if (session) queue(storeDir, { session, by: new Date().toISOString(), thread })

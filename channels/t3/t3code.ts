@@ -105,8 +105,9 @@ export function steering(session: string) {
 // Who wrote the prompt T3 just sent this session, from T3's own records, read only: the owner, in
 // T3 Code's web or mobile app; T3 itself (a PR watch, a delegated task's result, a restart); or
 // another agent through T3's tools, which is hex. ACP's prompt says nothing of who wrote it, so as
-// with steering() only T3's records can tell. A prompt T3 hasn't recorded, or a read that fails, is
-// the owner's, as every T3 prompt was before hex kept authors.
+// with steering() only T3's records can tell. T3 commits a prompt's message before it sends the
+// prompt, so a prompt not among its last five is one whose text T3 recorded otherwise or one queued
+// behind five more; that, or a read that fails, is the owner's, as every T3 prompt was before hex kept authors.
 const AUTHORS: Record<string, Author> = { 'user/web': 'owner', 'user/mobile': 'owner', 'agent/mcp': 'prompt', 'user/server': 'prompt', 'agent/server': 'other', 'agent/provider': 'other' }
 export function promptedBy(session: string, asked: string): Author {
   const file = join(USERDATA, 'statev2.sqlite')

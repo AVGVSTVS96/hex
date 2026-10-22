@@ -173,6 +173,17 @@ test("an app session's last words in its terminal reach the pass as what the own
   expect(asked[0]).toContain('hex, in its terminal, which the owner does not see,')
 })
 
+test("the Stop hook keeps a T3 turn's answer as hex's reply in T3, whatever prompted the turn", async () => {
+  const hook = Bun.spawn([process.execPath, join(import.meta.dir, 'state.ts'), 'idle'], {
+    stdin: new Blob([JSON.stringify({ hook_event_name: 'Stop', session_id: 's', last_assistant_message: 'Shipped, and checked live.' })]),
+    env: { ...process.env, HEX_STORE: dir, HEX_THREAD: 't3-thread', HEX_CHANNEL: 'plugin:t3@hex', HEX_HUB: '', MEMORY_DIR: '' },
+  })
+  expect(await hook.exited).toBe(0)
+  const [answer] = open(dir).said('t3-thread')
+  expect(answer).toMatchObject({ from: 't3', author: 'hex', body: 'Shipped, and checked live.', taken: { by: 's' } })
+  expect(answer!.meta).toEqual({ session: 's' })
+})
+
 test('turns wait in hex.db and one drainer works through them oldest first, while a lease is held the turn waits for its holder', async () => {
   const store = open(dir)
   const seen: string[] = []

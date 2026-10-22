@@ -131,9 +131,11 @@ function threadOf(named: string) {
 
 // Messages as markdown, one heading each, in the owner's time zone, for rg to search. Within room,
 // the newest whole messages that fit, or the newest's heading and the end of its words when none does.
+// A T3 prompt of the owner's shows only what they asked, without T3's context around it.
 function log(rows: Row[]) {
   const room = flags.room === undefined ? Infinity : Number(flags.room)
   if (!(room === Infinity || (Number.isInteger(room) && room > 0)) || (flags.room !== undefined && flags.json)) usage()
+  rows = rows.map(row => (row.from === 't3' && row.author === 'owner' ? { ...row, body: asked(row.body) } : row))
   if (flags.json) {
     const named = store.names()
     return json(withThread(rows, row => row.to).map(row => (named[`${row.from}:${row.to}`] ? { ...row, threadId: `${row.from}:${row.to}` } : row)))
@@ -143,12 +145,11 @@ function log(rows: Row[]) {
   const entries = rows.map(row => {
     const at = Temporal.Instant.from(row.at).toZonedDateTimeISO(zone).toPlainDateTime().toString().slice(0, 16).replace('T', ' ')
     const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : ''
-    const body = row.from === 't3' && row.author === 'owner' ? asked(row.body) : row.body
     const name = named[`${row.from}:${row.to}`] ?? named[row.to]
     const thread = name ? `${name} (${row.to})` : row.to
     const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
     const who = row.meta?.user && (row.author === 'prompt' || row.author === 'other') ? `${row.author} (${row.meta.user})` : row.author
-    return `## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`
+    return `## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${row.body}\n`
   })
   let start = entries.length
   for (let size = 0; start && (size += entries[start - 1]!.length + 1) <= room; ) start--
