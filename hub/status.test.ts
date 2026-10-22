@@ -24,7 +24,7 @@ const said = (store: Store, n: number, body: string) => {
 test("a status post is the note over the thread's waiting questions, open tasks and the last five done", () => {
   const store = new Store(dir)
   const note = 'Site: https://example.com'
-  expect(statusPost(store, '-100:7', note, 4096)).toBe(`${note}\n\n🔴 **Blocked on you**\n- nothing\n\n🟡 **Pending**\n- nothing\n\n🟢 **Done**\n- nothing`)
+  expect(statusPost(store, '-100:7', note, 4096)).toBe(`${note}\n\n**🔴 Blocked on you:** nothing\n\n**🟡 Pending:** nothing\n\n**🟢 Done:** nothing`)
 
   store.ask({ app: 'telegram', thread: '-100:7', message: 60, text: 'Ship today?\nCI is green.', options: ['Yes', 'No'] })
   store.ask({ app: 'telegram', thread: '-100:8', message: 61, text: 'Elsewhere?', options: ['Yes', 'No'] })
@@ -33,15 +33,16 @@ test("a status post is the note over the thread's waiting questions, open tasks 
   const done = store.createTask({ title: 'Blur the logo less', message: said(store, 51, 'Blur the logo less'), owner: '-100:7' })
   store.createTask({ title: 'Not this thread', message: said(store, 53, 'Not this thread'), owner: '-100:8' })
   store.editTask(old.id, { status: 'done', proof: 'gh repo rename' })
-  store.editTask(done.id, { status: 'done', proof: 'shipped in abc123' })
+  store.editTask(done.id, { status: 'done', proof: 'shipped in abc123, https://example.com/pull/3.' })
 
   expect(statusPost(store, '-100:7', note, 4096)).toBe(
-    [note, '🔴 **Blocked on you**\n1. Ship today? [Yes | No]', `🟡 **Pending**\n- Fix the login page (${open.id})`, `🟢 **Done**\n- Blur the logo less (${done.id}) · shipped in abc123\n- Rename the repo (${old.id}) · gh repo rename`].join('\n\n'),
+    [note, '**🔴 Blocked on you**\n- Ship today?', '**🟡 Pending**\n- Fix the login page', '**🟢 Done**\n- [Blur the logo less](https://example.com/pull/3)\n- Rename the repo'].join('\n\n'),
   )
+  expect(statusPost(store, '-100:7', note, 4096, (thread, message) => `https://t.me/c/${thread}/${message}`)).toContain('**🔴 Blocked on you**\n- [Ship today?](https://t.me/c/-100:7/60)\n\n')
 
   for (let n = 54; n < 58; n++) store.editTask(store.createTask({ title: `Later ${n}`, message: said(store, n, `Later ${n}`), owner: '-100:7' }).id, { status: 'done', proof: 'ok' })
   const latest = statusPost(store, '-100:7', note, 4096)
-  expect(latest).toContain(`- Blur the logo less (${done.id})`)
+  expect(latest).toContain('- [Blur the logo less]')
   expect(latest).not.toContain('Rename the repo')
 })
 
@@ -51,7 +52,7 @@ test('a status post fits the room the app gives one message, saying how many mor
   for (let room = 300; room <= 2100; room += 7) expect(statusPost(store, '-100:7', 'Note', room).length).toBeLessThanOrEqual(room)
   const long = statusPost(store, '-100:7', 'x'.repeat(3000), 2000)
   expect(long.length).toBeLessThanOrEqual(2000)
-  expect(long).toMatch(/^x+…\n\n🔴 \*\*Blocked on you\*\*\n- nothing\n\n🟡 \*\*Pending\*\*\n…and 40 more\n\n🟢 \*\*Done\*\*\n- nothing$/)
+  expect(long).toMatch(/^x+…\n\n\*\*🔴 Blocked on you:\*\* nothing\n\n\*\*🟡 Pending\*\*\n…and 40 more\n\n\*\*🟢 Done:\*\* nothing$/)
   const text = statusPost(store, '-100:7', 'Note', 2000)
-  expect(text).toMatch(/\n…and \d+ more\n\n🟢 \*\*Done\*\*\n- nothing$/)
+  expect(text).toMatch(/\n…and \d+ more\n\n\*\*🟢 Done:\*\* nothing$/)
 })

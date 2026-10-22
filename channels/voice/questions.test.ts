@@ -19,13 +19,13 @@ let hub: Server
 let lines: any[]
 let checks: string[]
 
-function ledger(kept: Omit<Question, 'app'>[], pins: Record<string, Omit<Pin, 'app' | 'thread'>> = {}) {
+function ledger(kept: Omit<Question, 'app'>[], pins: Record<string, Omit<Pin, 'app' | 'thread' | 'note'> & { note?: string }> = {}) {
   const store = open(state)
   store.write(() => {
     store.db.run('delete from questions')
     store.db.run('delete from pins')
     for (const question of kept) store.ask({ app: 'telegram', ...question })
-    for (const [thread, pin] of Object.entries(pins)) store.pinned({ app: 'telegram', thread, ...pin })
+    for (const [thread, pin] of Object.entries(pins)) store.pinned({ app: 'telegram', thread, note: pin.text, ...pin })
   })
 }
 
@@ -303,15 +303,15 @@ test('a check written before places and links were typed still gives each questi
 })
 
 test("a status post's page is read from hex.db as it opens, and only a new note starts a check, not the lines hex rewrites", async () => {
-  const pin = { message: 7, text: 'Site: example.com\n\n🔴 **Blocked on you**\n- nothing', at: '2026-10-13T10:00:00.000Z', note: 'Site: example.com' }
+  const pin = { message: 7, text: 'Site: example.com\n\n**🔴 Blocked on you:** nothing', at: '2026-10-13T10:00:00.000Z', note: 'Site: example.com' }
   const byHand = { message: 2, text: 'Status: by hand', at: '2026-10-13T10:00:00.000Z' }
   ledger([asked(1, 'Ship it?', ['Yes', 'No'])], { [DESK]: pin, [GROUP]: byHand })
   const store = open(state)
   store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', author: 'owner', meta: { user: 'owner' } })
   const task = store.createTask({ title: 'Fix the login page', message: 'telegram:-1001234:40', owner: DESK })
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  expect(questions.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]\n\n🟡 **Pending**\n- Fix the login page (${task.id})\n\n🟢 **Done**\n- nothing`)
-  expect(questions.of(`telegram:${GROUP}`).pin).toBe('Status: by hand')
+  expect(questions.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n**🔴 Blocked on you**\n- Ship it?\n\n**🟡 Pending**\n- ${task.title}\n\n**🟢 Done:** nothing`)
+  expect(questions.of(`telegram:${GROUP}`).pin).toBe('Status: by hand\n\n**🔴 Blocked on you:** nothing\n\n**🟡 Pending:** nothing\n\n**🟢 Done:** nothing')
 
   store.pinned({ app: 'telegram', thread: DESK, ...pin, text: questions.of(`telegram:${DESK}`).pin! })
   await Bun.sleep(150)

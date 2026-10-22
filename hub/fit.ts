@@ -9,12 +9,12 @@ const more = ({ gap, rest }: Section, left: number) => `${gap}…and ${left} mor
 
 // Each item in the first of its forms that still fits, and a line for the ones that didn't, within
 // room: an item goes in only if the lines that would still follow it fit too. With no room, it's
-// the least the sections can take: their headers and a line counting each one's items.
+// the least the sections can take: their headers and a line counting each one's items. A section
+// with no items is its header alone.
 export function fit(sections: Section[], room: number): string {
-  const shown = sections.filter(section => section.items.length)
-  const least = shown.map((section, n) => (n ? 2 : 0) + section.header.length + more(section, section.items.length).length)
+  const least = sections.map((section, n) => (n ? 2 : 0) + section.header.length + (section.items.length ? more(section, section.items.length).length : 0))
   let text = ''
-  shown.forEach((section, n) => {
+  sections.forEach((section, n) => {
     const after = least.slice(n + 1).reduce((sum, length) => sum + length, 0)
     const { header, items, gap } = section
     text += `${text && '\n\n'}${header}`
