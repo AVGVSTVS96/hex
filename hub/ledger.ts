@@ -1,11 +1,11 @@
-import { statusPost } from './status.ts'
+import { statusPost, type Link } from './status.ts'
 import { open, stateDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
 
 export type { Answer, MessageId, Pin, Question } from './store.ts'
 
-// What a pin says in its session's own words: a status post's note, or all of a pin written by hand.
-export const noteOf = (pin: Pin) => pin.note ?? pin.text
-type Edit = (thread: string, message: MessageId, text: string) => Promise<unknown>
+// How an app shows a status post: the room one message has, how it puts new words in place and
+// where it shows a thread's message.
+export type Post = { room: number; edit: (thread: string, message: MessageId, text: string) => Promise<unknown>; link: Link }
 
 // One app's questions and each thread's pinned post, which hex.db keeps (store.ts) so every reader
 // sees the same ones. The client that sends and edits the messages keeps them.
@@ -29,24 +29,19 @@ export class Ledger {
     return this.store.pin(this.app, thread) ?? undefined
   }
 
-  // The threads whose pin is their status post.
-  posts(): string[] {
-    return this.store.pins({ app: this.app }).flatMap(pin => (pin.note === undefined ? [] : [pin.thread]))
-  }
-
   // Rewrites the thread's status post if what it should say changed: a new note, or its questions
   // and tasks in hex.db. One rewrite at a time per thread, so two changes can't race, and a pin
   // made while the app was editing stands.
-  rewrite(thread: string, room: number, edit: Edit, note?: string): Promise<void> {
+  rewrite(thread: string, post: Post, note?: string): Promise<void> {
     const next = (this.rewriting.get(thread) ?? Promise.resolve())
       .catch(() => {})
       .then(async () => {
         const pin = this.pin(thread)
-        const said = note ?? pin?.note
-        if (!pin || said === undefined) return
-        const text = statusPost(this.store, thread, said, room)
+        if (!pin) return
+        const said = note ?? pin.note
+        const text = statusPost(this.store, thread, said, post.room, post.link)
         if (text === pin.text && said === pin.note) return
-        if (text !== pin.text) await edit(thread, pin.message, text)
+        if (text !== pin.text) await post.edit(thread, pin.message, text)
         this.store.write(() => {
           const still = this.pin(thread)
           if (still?.message !== pin.message || still.note !== pin.note) return
@@ -58,9 +53,9 @@ export class Ledger {
   }
 
   // Keeps every status post current: now, and after each change to hex.db from any process.
-  keep(room: number, edit: Edit, failed: (thread: string, error: unknown) => void): () => void {
+  keep(post: Post, failed: (thread: string, error: unknown) => void): () => void {
     const all = () => {
-      for (const thread of this.posts()) this.rewrite(thread, room, edit).catch(error => failed(thread, error))
+      for (const { thread } of this.store.pins({ app: this.app })) this.rewrite(thread, post).catch(error => failed(thread, error))
     }
     all()
     return this.store.watch(all)
@@ -90,18 +85,16 @@ export class Ledger {
     return this.store.reopened(this.app, thread, message)
   }
 
-  // A question's or a pinned post's latest words. A question stays open through an edit: it's
-  // settled only by saying so.
+  // A question's latest words. A question stays open through an edit: it's settled only by saying so.
   edited(thread: string, message: MessageId, text: string) {
-    this.store.write(() => {
-      this.store.reworded(this.app, thread, message, text)
-      const pin = this.pin(thread)
-      if (pin?.message === message) this.store.pinned({ app: this.app, thread, message, text, note: pin.note })
-    })
+    this.store.reworded(this.app, thread, message, text)
   }
 
-  pinned(thread: string, message: MessageId, text = '', note?: string) {
-    this.store.pinned({ app: this.app, thread, message, text, note })
+  // The thread's status post is now this message, under the note: the message's own words, or the
+  // note the post had when it's pinned again.
+  pinned(thread: string, message: MessageId, text: string) {
+    const pin = this.pin(thread)
+    this.store.pinned({ app: this.app, thread, message, text, note: pin?.message === message ? pin.note : text })
   }
 
   unpinned(thread: string, message: MessageId) {

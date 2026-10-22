@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { basename, join, extname, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, EFFORTS, MODELS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
-import { Ledger, type MessageId } from '../../hub/ledger.ts'
+import { Ledger, type Post } from '../../hub/ledger.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -161,9 +161,15 @@ const topicNames = new Map<string, string>()
 
 const ledger = new Ledger(STATE_DIR, 'telegram')
 
-// Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
-async function editPost(thread: string, message: MessageId, text: string) {
-  await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) })
+// How a status post shows here; the ledger decides when it changes (Ledger.rewrite). Only a
+// supergroup's messages have links.
+const post: Post = {
+  room: MAX_CHUNK_LIMIT,
+  edit: async (thread, message, text) => void (await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) })),
+  link: (thread, message) => {
+    const [chat, topic] = thread.split(':')
+    return chat!.startsWith('-100') ? `https://t.me/c/${[chat!.slice(4), topic, message].filter(Boolean).join('/')}` : undefined
+  },
 }
 
 // What hex posts in a thread is kept in hex.db as its own words, under Telegram's id for the message.
@@ -388,10 +394,9 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const id = Number(args.message_id)
       const text = args.text != null ? tappable(args.text as string) : undefined
       const file = args.file as string | undefined
-      const pinned = ledger.pin(thread)
-      if (pinned?.note !== undefined && Number(pinned.message) === id && text != null) {
+      if (Number(ledger.pin(thread)?.message) === id && text != null) {
         if (file) throw new Error("a status post is text: send the file in its own message")
-        await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost, text)
+        await ledger.rewrite(thread, post, text)
         if (args.settled) await settleQuestion(thread, id, '✓ Settled')
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
@@ -432,11 +437,8 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         ledger.unpinned(thread, id)
       } else {
         await bot.api.pinChatMessage(chat_id, id)
-        const text = hub.said(`${chat_id}:${id}`)?.body
-        const pinned = ledger.pin(thread)
-        const kept = pinned && Number(pinned.message) === id ? pinned.note : undefined
-        ledger.pinned(thread, id, text, args.status ? (kept ?? text ?? '') : undefined)
-        if (args.status) await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost)
+        ledger.pinned(thread, id, hub.said(`${chat_id}:${id}`)?.body ?? '')
+        await ledger.rewrite(thread, post)
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }
@@ -1084,7 +1086,7 @@ for (let attempt = 1; ; attempt++) {
         process.stderr.write(`telegram hub: polling as @${info.username}\n`)
         polling = info.username
         hub.save()
-        keeping ??= ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
+        keeping ??= ledger.keep(post, (thread, err) => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
       },
     })
     break

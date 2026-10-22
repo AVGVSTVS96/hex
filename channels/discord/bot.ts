@@ -49,7 +49,7 @@ import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSy
 import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
-import { Ledger, type MessageId, type Question } from '../../hub/ledger.ts'
+import { Ledger, type MessageId, type Post, type Question } from '../../hub/ledger.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
 
@@ -59,6 +59,7 @@ const GUILD_FILE = join(STATE_DIR, 'guild.json')
 const CURSOR_FILE = join(STATE_DIR, 'cursor.json')
 const ENV_FILE = join(STATE_DIR, '.env')
 const INBOX_DIR = join(STATE_DIR, 'inbox')
+const MAX_CHUNK_LIMIT = 2000
 
 try {
   chmodSync(ENV_FILE, 0o600)
@@ -103,7 +104,6 @@ function loadAccess(): Access {
   }
 }
 
-const MAX_CHUNK_LIMIT = 2000
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 const READ = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
 
@@ -298,9 +298,21 @@ function serve(token: string) {
 
   const nameOf = (ch: ThreadChannel | DMChannel) => ch.isThread() ? ch.name : 'DM'
 
-  // Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
-  async function editPost(thread: string, id: MessageId, text: string) {
-    await (await message(await threadChannel(thread), String(id))).edit({ content: text })
+  // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
+  const post: Post = {
+    room: MAX_CHUNK_LIMIT,
+    edit: async (thread, id, text) => void (await (await message(await threadChannel(thread), String(id))).edit({ content: text })),
+    link: (thread, id) => {
+      const at = shown(thread)
+      return at && `${at}/${id}`
+    },
+  }
+
+  // Where Discord shows a thread the bot has seen.
+  function shown(thread: string) {
+    const channel = client.channels.cache.get(thread)
+    if (channel?.isDMBased()) return `https://discord.com/channels/@me/${thread}`
+    if (channel && 'guildId' in channel) return `https://discord.com/channels/${channel.guildId}/${thread}`
   }
 
   function inThread(ch: ThreadChannel | DMChannel): ThreadChannel {
@@ -649,9 +661,9 @@ function serve(token: string) {
       }
       case 'edit_message': {
         const pinned = ledger.pin(thread)
-        if (pinned?.note !== undefined && pinned.message === args.message_id && args.text !== undefined) {
+        if (pinned?.message === args.message_id && args.text !== undefined) {
           if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
-          await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost, tappable(args.text as string))
+          await ledger.rewrite(thread, post, tappable(args.text as string))
           if (args.settled) await settleQuestion(thread, pinned.message, '✓ Settled')
           return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
         }
@@ -686,10 +698,8 @@ function serve(token: string) {
         await (args.unpin ? msg.unpin() : msg.pin())
         if (args.unpin) ledger.unpinned(thread, msg.id)
         else {
-          const pinned = ledger.pin(thread)
-          const kept = pinned?.message === msg.id ? pinned.note : undefined
-          ledger.pinned(thread, msg.id, msg.content, args.status ? (kept ?? msg.content) : undefined)
-          if (args.status) await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost)
+          ledger.pinned(thread, msg.id, msg.content)
+          await ledger.rewrite(thread, post)
         }
         return args.unpin ? 'unpinned' : 'pinned'
       }
@@ -748,11 +758,7 @@ function serve(token: string) {
     stateDir: STATE_DIR,
     channel: 'plugin:discord@hex',
     server,
-    link: thread => {
-      const channel = client.channels.cache.get(thread)
-      if (channel?.isDMBased()) return `https://discord.com/channels/@me/${thread}`
-      if (channel && 'guildId' in channel) return `https://discord.com/channels/${channel.guildId}/${thread}`
-    },
+    link: shown,
     call,
     state: settle,
     fresh: thread => dms.has(thread),
@@ -1154,7 +1160,7 @@ function serve(token: string) {
     if (id) writeFileSync(GUILD_FILE, JSON.stringify({ id }) + '\n')
     hub.save()
     void c.application?.commands.set(COMMANDS).catch(failure('registering slash commands'))
-    ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
+    ledger.keep(post, (thread, err) => process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
   })
 
   // discord.js reconnects a session it has, but not a first login that fails, as when the

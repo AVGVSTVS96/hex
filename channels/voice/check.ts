@@ -3,7 +3,7 @@ import { createHash } from 'crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
-import { noteOf, type Question as Asked } from '../../hub/ledger.ts'
+import type { Question as Asked } from '../../hub/ledger.ts'
 import { open as store } from '../../hub/store.ts'
 import type { CheckResult, Curated, Ref, Source } from './questions.ts'
 import { relay } from './relay.ts'
@@ -108,10 +108,7 @@ function gather(state: string) {
   const questions = store(state).questions()
   for (const { app, thread, name } of store(state).threads()) if (app !== 'voice') names[`${app}:${thread}`] = name
   const ledgers = Object.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app) as Record<string, Asked[]>
-  for (const pin of store(state).pins()) {
-    const text = noteOf(pin)
-    if (text) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(text, LONG) })
-  }
+  for (const pin of store(state).pins()) if (pin.note) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(pin.note, LONG) })
   const shown = (app: string, question: Asked) => ({
     ref: { app, thread: question.thread, message: question.message },
     topic: names[`${app}:${question.thread}`] ?? question.thread,
