@@ -189,18 +189,15 @@ export function tappable(text: string): string {
   return text.replace(/buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/g, url => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`)
 }
 
-// A thread's chat, oldest first: what the owner said that a session took in, with others' prompts
-// too if asked (a job's, another agent's, the app's own, for the app that shows the session its own
-// conversation; the hub's own notes stay out), and hex's replies as first sent; with a session, from
-// the first message that session took, the conversation it has.
-export function history(store: Store, thread: string, session?: string, prompts = false): Turn[] {
+// A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as
+// first sent; with a session, from the first message that session took, the conversation it has.
+export function history(store: Store, thread: string, session?: string): Turn[] {
   const rows = store.said(thread)
   const start = session ? (rows.find(row => row.taken?.by === session)?.at ?? '9') : ''
   return rows.flatMap(row => {
     if (row.from === 'terminal' || !row.taken || row.at < start) return []
     if (replied(row)) return shown(row) ? [{ from: 'hex', text: row.body } as Turn] : []
-    const said = (spoken(row) && row.author === 'owner') || (prompts && (row.author === 'prompt' || row.author === 'other') && row.meta?.user !== 'hub') ? row.body : ''
-    const text = row.from === 't3' ? asked(said) : said
+    const text = spoken(row) && row.author === 'owner' ? (row.from === 't3' ? asked(row.body) : row.body) : ''
     return text ? [{ from: 'me', text } as Turn] : []
   })
 }
@@ -691,7 +688,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // A session with no conversation on disk has nothing to resume or fork, since Claude Code reads
   // both from there, so the thread lets go of it once a note is kept that tells its next session why
   // it starts without it. hex sets a thread's session only once its conversation is in the folder
-  // this reads (claim), and a move or mirror forks only one that is (carry).
+  // this reads (claim).
   function lost(thread: string, session: string) {
     if (claude.saved(session)) return false
     const known = threads[thread]
@@ -1120,7 +1117,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     release,
     adopt,
     follow,
-    history: (thread: string, prompts = false) => kept(store => history(store, thread, current(thread), prompts), []),
+    history: (thread: string) => kept(store => history(store, thread, current(thread)), []),
     retire,
     find,
     rename,
@@ -1169,7 +1166,6 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
   const target = client(to)
   const session = from.session(thread)
   if (!session) throw new Error('this thread has no session yet')
-  if (!claude.saved(session)) throw new Error("this thread's new session has no conversation saved yet; try again once it has answered")
   const cwd = from.cwd(thread)
   const { thread: dest, link } = await target.place(name, where, undefined, cwd)
   const filled = Promise.resolve(target.backfill?.(dest, from.history(thread))).catch(error => {

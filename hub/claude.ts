@@ -10,7 +10,7 @@ export type Agent = { sessionId: string; id?: string; pid: number; status?: stri
 // The context a session's last request sent and when; short: it wrote the five-minute cache.
 export type Usage = { sent: number; at?: number; short?: boolean }
 
-const home = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+const home = () => process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 const short = (session: string) => session.slice(0, 8)
 
 // What a Claude process the hub starts never inherits from it: the bots' tokens and hex's own settings.
@@ -295,20 +295,20 @@ export function transcript(cwd: string, session: string) {
   return join(home(), 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${session}.jsonl`)
 }
 
-// Whether any project folder has the session's conversation, or it can't be told.
+// Whether any project folder has the session's conversation, or it can't be told: with no projects
+// folder at all, or one it can't read, Claude Code's config isn't where the hub looks.
 export function saved(session: string) {
   const projects = join(home(), 'projects')
-  const untold = (error: unknown) => !['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code!)
   try {
     return readdirSync(projects).some(project => {
       try {
         return !!statSync(join(projects, project, `${session}.jsonl`))
       } catch (error) {
-        return untold(error)
+        return !['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code!)
       }
     })
-  } catch (error) {
-    return untold(error)
+  } catch {
+    return true
   }
 }
 

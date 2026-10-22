@@ -172,6 +172,12 @@ function job(id: string, record: object) {
   return seen.then(settled)
 }
 
+// Claude Code's project folders, with no conversation left in them.
+function forgot() {
+  rmSync(join(dir, 'projects'), { recursive: true })
+  mkdirSync(join(dir, 'projects'))
+}
+
 function saved(id = SESSION, folder = join(dir, 'hex')) {
   const project = join(dir, 'projects', folder.replace(/[^a-zA-Z0-9]/g, '-'))
   mkdirSync(project, { recursive: true })
@@ -749,7 +755,7 @@ test('a session that fails to start is reported with its reason, and the next me
 
 test('a thread whose session Claude Code no longer has starts a new one, which hears why when it connects', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [] })
-  rmSync(join(dir, 'projects'), { recursive: true })
+  forgot()
   hub.deliver('chat:7', 'Desk anchors', message)
   expect(await launched()).not.toContain('--resume')
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
@@ -762,7 +768,7 @@ test('a thread whose session Claude Code no longer has starts a new one, which h
 
 test('a thread that would fork a session Claude Code no longer has starts a new one instead', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', from: SESSION } }, agents: [] })
-  rmSync(join(dir, 'projects'), { recursive: true })
+  forgot()
   hub.deliver('chat:7', 'Desk anchors', message)
   expect(await launched()).not.toContain('--resume')
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
@@ -1914,7 +1920,7 @@ function stored(rows: { author: string; body: string; from?: string; meta?: Reco
   for (const [i, { from = 'buzz', ...row }] of rows.entries()) store.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, session)
 }
 
-test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits, prompts only when asked for, and a session's is what it took", () => {
+test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits, and a session's is what it took", () => {
   stored([
     { author: 'owner', body: 'how full is your context?' },
     { author: 'hex', body: 'Roomy.\n\n## What loads\n\nthe rules' },
@@ -1931,7 +1937,6 @@ test("a thread's history is what the owner said and hex replied, headings and al
     { from: 'hex', text: 'Roomy.\n\n## What loads\n\nthe rules' },
     { from: 'me', text: 'thanks' },
   ])
-  expect(history(open(dir), 'chat:7', undefined, true).map(turn => turn.text)).toEqual(['how full is your context?', 'Roomy.\n\n## What loads\n\nthe rules', 'thanks', 'From General: the build passed.'])
   expect(history(open(dir), 'chat:9')).toEqual([])
   open(dir).db.query("update messages set at = '2026-10-01T00:00:00.000Z' where key = 'buzz:chat:7-0'").run()
   open(dir).db.query("update messages set taken_by = 'older-session' where key = 'buzz:chat:7-0'").run()
@@ -2007,19 +2012,6 @@ test('a mirror opens a backfilled copy that follows the session, and leaves the 
       ['follow', 'far:1', 'Desk anchors', SESSION, '/work/anchors'],
     ])
     expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION, cwd: '/work/anchors' })
-  } finally {
-    clients.delete('elsewhere')
-  }
-})
-
-test('a mirror of a thread whose session has no conversation saved yet opens nothing, so no copy forks a conversation that is not there', async () => {
-  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } } })
-  rmSync(join(dir, 'projects'), { recursive: true })
-  const placed: string[] = []
-  clients.set('elsewhere', { hub: {} as any, place: async name => (placed.push(name), { thread: 'far:1', link: 'https://far/1' }) })
-  try {
-    await expect(mirror(hub, 'chat:7', 'elsewhere')).rejects.toThrow('no conversation saved yet')
-    expect(placed).toEqual([])
   } finally {
     clients.delete('elsewhere')
   }

@@ -91,8 +91,9 @@ function mirror(records: ReturnType<typeof appThreads>) {
   if (!threads.some(thread => records?.has(thread))) return
   for (const thread of threads) {
     const record = records.get(thread)
+    if (record) kept.delete(thread)
     if (record) hub.rename(thread, record.title || hub.name(thread)!)
-    else if (Date.now() - (kept.get(thread) ?? started) > RECORDING) void hub.retire(thread)
+    else if (!turns.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) void hub.retire(thread)
   }
 }
 
@@ -458,7 +459,7 @@ function serve(socket: Socket) {
     }))
     .onRequest('session/load', async ({ params, client }) => {
       remember(reopen(params.sessionId, params.cwd, socket), params.mcpServers)
-      for (const [i, { from, text }] of hub.history(params.sessionId, true).entries()) {
+      for (const [i, { from, text }] of hub.history(params.sessionId).entries()) {
         await client.notify('session/update', { sessionId: params.sessionId, update: { sessionUpdate: from === 'me' ? 'user_message_chunk' : 'agent_message_chunk', messageId: `${hub.session(params.sessionId)}:${i}`, content: { type: 'text', text } } })
       }
       advertise(client, params.sessionId)
