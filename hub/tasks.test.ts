@@ -65,10 +65,7 @@ test('after the first list, main gets only what changed, until the changes add u
   expect(third).toContain('t-2 (open, Errands): Buy a power adapter\n  done when: it charges the laptop')
 })
 
-test('a session outside hex, or one with no tasks, hears nothing', async () => {
-  const outside = Bun.spawn(['bun', join(import.meta.dir, 'tasks.ts')], { stdin: new Blob(['{"session_id":"x"}']), stdout: 'pipe', env: { PATH: process.env.PATH! } })
-  expect(await outside.exited).toBe(0)
-  expect(await new Response(outside.stdout).text()).toBe('')
+test('a session with no tasks hears nothing', async () => {
   expect(await hook({ session_id: 'b' }, { HEX_THREAD: '-100:404' })).toBe('')
 })
 
@@ -98,4 +95,8 @@ test('the questions still waiting on the owner come with the tasks, and leave on
   expect(shown).not.toContain('below the cutoff')
   open(dir).answered('telegram', '-100:7', 3935, 'Remove', 'telegram')
   expect(await hook({ session_id: 'q' }, { HEX_THREAD: '-100:7' })).not.toContain('waiting on my answer')
+})
+
+test("a job's session gets the list of the thread that started it", async () => {
+  expect(await hook({ session_id: 'j' }, { HEX_OWNER: 'telegram:-100:7' })).toContain("This thread's open tasks")
 })

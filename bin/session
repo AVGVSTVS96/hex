@@ -24,25 +24,12 @@ for try in 1 2 3 4 5; do
   sleep 0.2
 done
 untrusted && echo "hex couldn't mark $here trusted in $config" >&2
-# Memory goes in whole as a file Claude Code loads at startup and again after compacting, since a hook's output is cut past 10,000 characters.
-wake="$home/state/wake"
-mkdir -p "$wake"
-if ! MEMORY_DIR=$(jq -r '.env.MEMORY_DIR // empty' "$home/.claude/settings.json" 2>/dev/null) "$hex/bin/wake" all > "$wake/CLAUDE.md.$$"; then
-  # A wake that stopped to ask for a compression keeps the last one, which still holds the memory.
-  rm -f "$wake/CLAUDE.md.$$"
-elif [ -s "$wake/CLAUDE.md.$$" ]; then
-  mv "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
-else
-  # With memory off or failing, wake prints nothing, and no wake file stays.
-  rm -f "$wake/CLAUDE.md.$$" "$wake/CLAUDE.md"
-fi
-if [ -s "$wake/CLAUDE.md" ]; then woke="$wake/CLAUDE.md"; else unset HEX_WAKE; fi
+"$hex/bin/wake"
 # Outside the hex folder, hex's settings come only through --settings.
 [ -n "${away:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 for arg; do
   shift
   if [ "${flag:-}" = --settings ]; then
-    given=1
     # The hub hands its settings over as a file, which keeps its token out of the process list.
     file=
     [ -f "$arg" ] && file=$arg && arg=$(cat "$file")
@@ -51,8 +38,6 @@ for arg; do
     voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
     [ -n "${away:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg home "$home" --argjson hex "$(cat "$home/.claude/settings.json" 2>/dev/null || echo '{}')" '. as $hub | $hex | .permissions.deny |= (. // [] | map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/"))) | . * $hub')
-    # A background session gets only the environment its settings give it, so the hooks learn here that memory came as a file.
-    [ -n "${woke:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg woke "$woke" '.env.HEX_WAKE = $woke')
     # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.
     # A chat turn lists skills by name only; the Skill tool still loads any of them.
     [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files | .skillListingBudgetFraction = 0.0001')
@@ -70,14 +55,14 @@ mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2
 # The main session can run a stronger model than the topics and agents it hands work to.
 main_model=$(jq -r '.env.HEX_MAIN_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "${main:-}" ] && [ -n "$main_model" ] && set -- --model "$main_model" "$@"
-[ -n "${woke:-}" ] && set -- --add-dir "$wake" "$@"
-[ -n "${woke:-}" ] && [ -z "${given:-}" ] && export HEX_WAKE="$woke"
 if [ -n "${chat:-}" ]; then
   # The chat's prompt replaces Claude Code's, which names each background job's own folder and so would end the cache before the view.
   system=$(env $chat "$hex/bin/chat" turn) || exit
   set -- --mcp-config "$(jq -cn --arg chat "$hex/bin/chat" --arg dir "$(dirname "$system")" '{mcpServers: {chat: {command: $chat, args: ["mcp", $dir]}}}')" --system-prompt-file "$system" --add-dir "$(dirname "$system")/tail" --disallowedTools Artifact,AskUserQuestion,EnterWorktree,Workflow,ScheduleWakeup,ReportFindings "$@"
 fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
+# A DM turn skips the instruction files and a session away from the hex folder never reads them, so HEX.md's import of the wake reaches neither: it goes as a file Claude Code loads at start and after compacting.
+[ -n "${away:-}${chat:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ] && set -- --add-dir "$home/state/wake" "$@"
 # With several Claude accounts pooled by tokenmaxxing (github.com/anaclumos/tokenmaxxing), each session starts on the one with the most headroom left.
 [ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1

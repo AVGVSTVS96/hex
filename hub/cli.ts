@@ -22,7 +22,7 @@ const USAGE = `usage:
   hex running [--json]
   hex message <key>
   hex profile [--all] [--json]
-  hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--json]
+  hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--room <characters>] [--json]
   hex recall <regex>`
 
 const { values: flags, positionals } = parseArgs({
@@ -45,6 +45,7 @@ const { values: flags, positionals } = parseArgs({
     since: { type: 'string' },
     last: { type: 'string' },
     taken: { type: 'boolean' },
+    room: { type: 'string' },
   },
 })
 const [state, command, ...args] = positionals
@@ -106,20 +107,33 @@ function threadOf(nameOrThread: string) {
   throw new Error(`no thread named "${nameOrThread}"`)
 }
 
-// Messages as markdown, one heading each, in the owner's time zone, for rg to search.
+// Messages as markdown, one heading each, in the owner's time zone, for rg to search. Within room,
+// the newest whole messages that fit, or the newest's heading and the end of its words when none does.
 function log(rows: Row[]) {
+  const room = flags.room === undefined ? Infinity : Number(flags.room)
+  if (!(room === Infinity || (Number.isInteger(room) && room > 0)) || (flags.room !== undefined && flags.json)) usage()
   if (flags.json) return console.log(JSON.stringify(rows, null, 1))
   const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
   const named = open(state!).names()
-  for (const row of rows) {
+  const entries = rows.map(row => {
     const at = Temporal.Instant.from(row.at).toZonedDateTimeISO(zone).toPlainDateTime().toString().slice(0, 16).replace('T', ' ')
     const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : ''
     const body = row.from === 't3' && row.author === 'owner' ? asked(row.body) : row.body
     const thread = named[row.to] ? `${named[row.to]} (${row.to})` : row.to
     const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
     const who = row.meta?.user && (row.author === 'prompt' || row.author === 'other') ? `${row.author} (${row.meta.user})` : row.author
-    console.log(`## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`)
-  }
+    return `## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${body}\n`
+  })
+  let start = entries.length
+  for (let size = 0; start && (size += entries[start - 1]!.length + 1) <= room; ) start--
+  for (const entry of start < entries.length || !entries.length ? entries.slice(start) : [end(entries.at(-1)!, room)]) console.log(entry)
+}
+
+function end(entry: string, room: number) {
+  const head = entry.slice(0, entry.indexOf('\n\n') + 2)
+  let from = Math.max(head.length, entry.length - Math.max(0, room - head.length - 2))
+  if (/[\uDC00-\uDFFF]/.test(entry[from] ?? '')) from++
+  return `${head}…${entry.slice(from)}`
 }
 
 function task(verb: string | undefined, id: string | undefined, key: string | undefined) {

@@ -1,9 +1,9 @@
 import { spawn } from 'child_process'
-import { closeSync, existsSync, openSync, renameSync, writeFileSync } from 'fs'
-import { dirname, join, resolve } from 'path'
+import { closeSync, existsSync, openSync } from 'fs'
+import { join, resolve } from 'path'
 import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { zoneOf } from './schedule.ts'
-import { open, replied, shown, type Row, type Store } from './store.ts'
+import { open, replied, shown, stateDir, type Row, type Store } from './store.ts'
 
 // The owner's profile, which this agent keeps current after every turn in hex.db; bin/wake puts it in
 // front of the memory every session starts with. It never passes PROFILE.
@@ -207,13 +207,8 @@ async function summarize(prompt: string) {
 
 // A session reloads its memory file after compacting, so each pass leaves it current: the profile
 // and memory as they are now, not as they were when the newest session started.
-export function refresh(wake = join(hexDir, 'state', 'wake', 'CLAUDE.md')) {
-  if (!existsSync(dirname(wake))) return
-  const text = Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake'), 'all'], { stdout: 'pipe', stderr: 'ignore' }).stdout.toString()
-  // A wake that stopped to ask for a compression holds no memory, so the file keeps the one it has.
-  if (!text.includes('You are awake.')) return
-  writeFileSync(`${wake}.${process.pid}`, text)
-  renameSync(`${wake}.${process.pid}`, wake)
+export function refresh() {
+  Bun.spawnSync([join(import.meta.dir, '..', 'bin', 'wake')], { stdout: 'ignore', stderr: 'ignore' })
 }
 
 // A pass looks over the turn, does the compressions its notes made due, and leaves the memory file current.
@@ -271,8 +266,9 @@ export function queue(state: string, pass: Pass) {
 // turn ended, not the next turn's message, and what an earlier pass in its thread left unfinished.
 // Errors go to state/observe.log.
 if (import.meta.main) {
-  const { HEX_STORE = join(hexDir, 'state'), HEX_PASS, HEX_THREAD, HEX_CHANNEL } = process.env
-  if (HEX_PASS) await drain(HEX_STORE)
+  const { HEX_PASS, HEX_THREAD, HEX_CHANNEL } = process.env
+  const state = stateDir()
+  if (HEX_PASS) await drain(state)
   else {
     const hook = JSON.parse((await Bun.stdin.text()) || '{}') as Hook
     // A turn's last words in the terminal are kept before the turn is queued: a session no app holds
@@ -281,11 +277,11 @@ if (import.meta.main) {
     const t3 = HEX_CHANNEL?.startsWith('plugin:t3@')
     const answer = t3 ? undefined : hook.last_assistant_message?.trim()
     try {
-      if (hook.session_id && answer) open(HEX_STORE).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id, ...(HEX_CHANNEL && { unsent: 'true' }) } }, hook.session_id)
+      if (hook.session_id && answer) open(state).deliver({ key: `terminal:${crypto.randomUUID()}`, to: HEX_THREAD ?? hook.session_id, from: 'terminal', author: 'hex', body: answer, meta: { session: hook.session_id, ...(HEX_CHANNEL && { unsent: 'true' }) } }, hook.session_id)
     } catch (error) {
       process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`)
     }
     // A T3 turn's reply is kept once T3's bot sees the turn end, after this hook, so T3's bot queues its pass then.
-    if (hook.session_id && !t3) queue(HEX_STORE, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
+    if (hook.session_id && !t3) queue(state, { session: hook.session_id, by: new Date().toISOString(), thread: HEX_THREAD })
   }
 }

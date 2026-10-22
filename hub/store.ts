@@ -735,6 +735,9 @@ const stores = new Map<string, Store>()
 const hexState = process.env.HEX_DIR && join(process.env.HEX_DIR, 'state')
 export const storeDir = (stateDir: string) => hexState || stateDir
 
+// The state folder a hook or command reads: the one the hub names in HEX_STORE, or this hex's own.
+export const stateDir = () => process.env.HEX_STORE || join(import.meta.dir, '..', '..', 'state')
+
 // The store in dir (a hex's state/), one per process.
 export function open(dir: string): Store {
   let store = stores.get(dir)

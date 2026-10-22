@@ -1,10 +1,11 @@
 import { closeSync, fstatSync, openSync, readFileSync, readSync, statSync } from 'fs'
 import { homedir } from 'os'
-import { dirname, join, relative, resolve } from 'path'
+import { join, relative } from 'path'
 import { randomUUID } from 'crypto'
 import { decrypt, encrypt, getConversationKey } from 'nostr-tools/nip44'
 import type { Event } from 'nostr-tools/pure'
 import { stripLocalCommandMetadata, toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
+import { loaded } from '../../hub/loaded.ts'
 import { interrupted } from '../../hub/claude.ts'
 import type { Relay } from './relay.ts'
 
@@ -181,25 +182,9 @@ export function startActivity({ relay, secretKey, owner, hexDir, cancel }: {
   }
 
   function instructions() {
-    const files = loaded('AGENTS.md', new Set())
-    const body = files.map(([path, text]) => `── ${path} ──\n${text.trim()}`).join('\n\n')
+    const files = loaded(join(hexDir, 'AGENTS.md'))
+    const body = files.map(([path, text]) => `── ${relative(hexDir, path)} ──\n${text.trim()}`).join('\n\n')
     return `<workspace>\n${hexDir}\n</workspace>\n\n<agent-instructions>\n${body}\n</agent-instructions>`
-  }
-
-  // AGENTS.md as Claude Code loads it: the file, then each `@path` it imports
-  // (relative to the importing file, `~/` for home), five levels deep at most.
-  function loaded(path: string, seen: Set<string>, depth = 0): [string, string][] {
-    const file = resolve(hexDir, path)
-    if (seen.has(file) || depth > 5) return []
-    seen.add(file)
-    let text
-    try {
-      text = readFileSync(file, 'utf8')
-    } catch {
-      return []
-    }
-    const imports = [...text.matchAll(/(?:^|\s)@(\S+)/g)].map(([, target]) => target!.startsWith('~/') ? join(homedir(), target!.slice(2)) : resolve(dirname(file), target!))
-    return [[relative(hexDir, file), text], ...imports.flatMap(target => loaded(target, seen, depth + 1))]
   }
 
   function control(event: Event) {
