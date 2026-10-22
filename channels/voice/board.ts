@@ -97,6 +97,7 @@ export class Board extends Changes {
   private links: Links
   private jobs = new Map<string, { job?: Job; timeline: Entry[] }>()
   private sessions = new Map<string, Session>()
+  private kept = ''
   private watchers = new Map<string, FSWatcher>()
   private followers = new Map<string, Follower>()
   private stretches = new Map<string, Stretch>()
@@ -116,7 +117,7 @@ export class Board extends Changes {
     this.tracks = readJson(join(state, 'voice', 'tracks.json')) ?? {}
     this.links = new Links(state, () => this.schedule(), t3)
     // hex.db holds the threads, the relays links.ts reads, and the turns running.ts reads.
-    this.stops.push(open(state).watch(() => (this.mark('threads'), this.mark('sessions'))))
+    this.stops.push(open(state).watch(() => (this.mark('sessions'), this.known() !== this.kept && this.mark('threads'))))
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
     this.stops.push(watchDir(join(claude, 'jobs'), file => this.jobChanged(file, true)))
     this.build()
@@ -207,8 +208,13 @@ export class Board extends Changes {
   }
 
   private readThreads() {
+    this.kept = this.known()
     this.links.load()
     this.threads = this.stored()
+  }
+
+  private known() {
+    return JSON.stringify([this.stored(), open(this.state).relays()])
   }
 
   private stored(): Thread[] {
@@ -296,7 +302,7 @@ export class Board extends Changes {
     const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(0).toISOString()
     const needs = state === 'needs' ? plain(job?.needs ?? job?.detail ?? '') || undefined : undefined
     const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
-    const began = Math.min(...started.map(one => one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? Date.parse(session!.began ?? '') || session!.started : Infinity)
+    const began = Math.min(...started.map(one => one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? (session!.updated ?? session!.started) : Infinity)
     const since =
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
     const { link } = thread

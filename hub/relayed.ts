@@ -5,6 +5,7 @@ import { open, stateDir } from './store.ts'
 // relays: T3 Code records who sent it only as "an agent", and this says which thread did, so the
 // voice app's Tasks shows the run it started under that thread.
 const from = served()
+const at = new Date().toISOString()
 
 type Ran = { threadId: string; runId: string }
 
@@ -26,5 +27,5 @@ function ran(response: unknown): Ran | undefined {
 
 if (from) {
   const run = ran(JSON.parse((await Bun.stdin.text()) || '{}').tool_response)
-  if (run) open(stateDir()).relayed(from, run.threadId, run.runId)
+  if (run) open(stateDir()).relayed(from, run.threadId, run.runId, at)
 }

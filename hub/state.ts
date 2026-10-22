@@ -3,6 +3,7 @@ import { served } from './running.ts'
 import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
+const at = new Date().toISOString()
 const busy = process.argv[2] === 'busy'
 
 // Claude Code counts a session with these running as still working, and shells or monitors as not.
@@ -42,7 +43,7 @@ if (key) {
 // The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
 if (session_id) {
   try {
-    open(stateDir()).turned(session_id, busy, served())
+    open(stateDir()).turned(session_id, busy, served(), at)
   } catch {}
 }
 

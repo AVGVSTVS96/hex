@@ -272,7 +272,7 @@ function carryRelays(store: Store) {
     for (const line of readFileSync(file, 'utf8').split('\n')) {
       try {
         const { at, from, thread, run } = JSON.parse(line)
-        store.relayed(`${app}:${from}`, thread, run, at)
+        if (typeof from === 'string' && from) store.relayed(`${app}:${from}`, thread, run, at)
       } catch {}
     }
     rename(join(folder, 'relays.jsonl'))
@@ -293,6 +293,7 @@ function bookOf(text: () => string, file: string): Book | undefined {
 
 const now = () => new Date().toISOString()
 const SEEN = 2 * 24 * 60 * 60 * 1000
+const TURNS = 30 * 24 * 60 * 60 * 1000
 
 // The profile and its history moved into hex.db from state/profile.md and profile.md.history, where
 // each version it replaced is a JSON line with when it was replaced: when the next was put in place.
@@ -790,16 +791,15 @@ export class Store {
     this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
   }
 
-  // A session's turn began (busy) or ended, and the thread it works for, as <app>:<key>. Claude Code
-  // keeps a session busy while its background agents or shells run, after its turn ended; this is
-  // hex's own record of the turn. A session not heard from for SEEN goes.
-  turned(session: string, busy: boolean, thread?: string) {
-    const at = now()
+  // A session's turn began (busy) or ended at a time its hook took as it started, and the thread it
+  // works for, as <app>:<key>. Claude Code keeps a session busy while its background agents or shells
+  // run, after its turn ended; this is hex's own record of the turn. An end from before the turn's
+  // begin (a late hook) is old news. A session not heard from in TURNS goes.
+  turned(session: string, busy: boolean, thread?: string, at = now()) {
     this.write(() => {
-      this.db
-        .query('insert into turns (session, thread, began, ended) values (?1, ?2, ?3, ?4) on conflict (session) do update set thread = excluded.thread, began = coalesce(?3, began), ended = ?4')
-        .run(session, thread ?? null, busy ? at : null, busy ? null : at)
-      this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - SEEN).toISOString())
+      if (busy) this.db.query('insert into turns (session, thread, began) values (?, ?, ?) on conflict (session) do update set thread = excluded.thread, began = excluded.began, ended = null').run(session, thread ?? null, at)
+      else this.db.query('insert into turns (session, thread, ended) values (?, ?, ?) on conflict (session) do update set thread = excluded.thread, ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, thread ?? null, at)
+      this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
     })
   }
 
@@ -808,10 +808,10 @@ export class Store {
     return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
   }
 
-  // A thread (<app>:<key>) sent a T3 Code thread a message, which started or steered its run: the newest per pair is kept.
+  // A thread (<app>:<key>) sent a T3 Code thread a message at a time, which started or steered its run: the newest per pair is kept.
   relayed(from: string, thread: string, run: string, at = now()) {
     if (![from, thread, run].every(word => typeof word === 'string' && word)) return
-    this.write(() => this.db.query('insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at').run(from, thread, run, at))
+    this.write(() => this.db.query('insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at where excluded.at >= relays.at').run(from, thread, run, at))
   }
 
   relays(): { from: string; thread: string; run: string }[] {

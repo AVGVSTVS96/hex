@@ -6,9 +6,10 @@ import type { Store } from './store.ts'
 // A Claude Code session whose process runs, from the record Claude Code keeps of it while it lives
 // (sessions/<pid>.json): its status (busy, shell, idle) and kind (bg for a background session), and
 // a background session's job state (working, blocked on the owner, done), status line and what it
-// needs, from jobs/<id>/state.json. From hex's own record of its turns (hex.db's turns): the thread
-// it works for, as <app>:<key>, when its latest turn began, and when that turn ended, if it has.
-export type Session = { id: string; pid: number; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; thread?: string; began?: string; ended?: string }
+// needs, from jobs/<id>/state.json, and when Claude Code last changed its status, where it says.
+// From hex's own record of its turns (hex.db's turns): the thread it works for, as <app>:<key>, when
+// its latest turn began, and when that turn ended, if it has.
+export type Session = { id: string; pid: number; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number; thread?: string; began?: string; ended?: string }
 
 export const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 const BUSY = new Set(['busy', 'shell'])
@@ -24,12 +25,13 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   for (const file of list(dir)) {
     const record = file.endsWith('.json') ? readJson(join(dir, file)) : undefined
     if (!record?.sessionId || !alive(record.pid)) continue
-    const { sessionId: id, pid, status = 'idle', kind, name, cwd, startedAt: started = 0 } = record
+    const { sessionId: id, pid, status = 'idle', kind, name, cwd, startedAt: started = 0, statusUpdatedAt } = record
     const kept = sessions.get(id)
     if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && kept.started >= started))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...store.turn(id) })
+    const updated = typeof statusUpdatedAt === 'number' ? { updated: statusUpdatedAt } : {}
+    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...updated, ...store.turn(id) })
   }
   return sessions
 }

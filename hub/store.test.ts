@@ -350,13 +350,16 @@ test("each app's relays.jsonl comes into hex.db once, the newest run per pair of
   expect(existsSync(join(dir, 'discord', 'relays.jsonl.moved-to-hex.db'))).toBe(true)
 })
 
-test("a session's turns: one begins, ends, and the next begins again, and one not heard from in two days goes", () => {
+test("a session's turns: one begins, ends, and the next begins again, an end from before its begin is old news, and one not heard from in 30 days goes", () => {
   const store = new Store(dir)
   store.turned('s-1', true, 't3:x')
   expect(store.turn('s-1')).toEqual({ thread: 't3:x', began: expect.any(String) })
   store.turned('s-1', false, 't3:x')
   const { began, ended } = store.turn('s-1')
   expect(ended! >= began!).toBe(true)
+  store.turned('s-1', true, 't3:x', '2026-10-21T10:00:00.000Z')
+  store.turned('s-1', false, 't3:x', '2026-10-21T09:59:59.000Z')
+  expect(store.turn('s-1')).toEqual({ thread: 't3:x', began: '2026-10-21T10:00:00.000Z' })
   store.db.run("update turns set began = '2026-01-01T00:00:00.000Z', ended = '2026-01-01T00:00:01.000Z'")
   store.turned('s-2', true)
   expect(store.turn('s-1')).toEqual({})
