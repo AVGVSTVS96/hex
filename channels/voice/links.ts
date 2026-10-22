@@ -3,7 +3,7 @@ import { existsSync, readFileSync, watch } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { MessageId } from '../../hub/ledger.ts'
-import { open } from '../../hub/store.ts'
+import { open, type Relay } from '../../hub/store.ts'
 import type { Item } from './activity.ts'
 
 // Work a hex thread handed to another T3 Code thread with delegate_task: the child thread, the task
@@ -29,8 +29,6 @@ export type Delegation = {
   latest: boolean
   relay?: boolean
 }
-
-type Relay = { from: string; thread: string; run: string }
 
 const T3_HOME = join(homedir(), '.t3', 'userdata')
 const DATABASE = 'statev2.sqlite'

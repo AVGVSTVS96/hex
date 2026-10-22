@@ -30,8 +30,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && kept.started >= started))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    const updated = typeof statusUpdatedAt === 'number' ? { updated: statusUpdatedAt } : {}
-    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...updated, ...store.turn(id) })
+    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }), ...store.turn(id) })
   }
   return sessions
 }

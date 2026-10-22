@@ -46,6 +46,7 @@ export type Question = {
 // the session a new thread forks from at its first start, and where its app opens it.
 export type Thread = { app: string; thread: string; name: string; open: boolean; session?: string; cwd?: string; model?: string; effort?: string; launched?: string; fork?: string; link?: string }
 export type Kept = Omit<Thread, 'app' | 'thread' | 'open'>
+export type Relay = { from: string; thread: string; run: string }
 // A thread's pinned post in its app, as last written. A pin with a note is the thread's status post:
 // hex writes it as the note over the thread's questions and tasks (status.ts).
 export type Pin = { app: string; thread: string; message: MessageId; text: string; at: string; note?: string }
@@ -272,7 +273,7 @@ function carryRelays(store: Store) {
     for (const line of readFileSync(file, 'utf8').split('\n')) {
       try {
         const { at, from, thread, run } = JSON.parse(line)
-        if (typeof from === 'string' && from) store.relayed(`${app}:${from}`, thread, run, at)
+        if ([from, thread, run].every(word => typeof word === 'string' && word)) store.relayed(`${app}:${from}`, thread, run, at)
       } catch {}
     }
     rename(join(folder, 'relays.jsonl'))
@@ -791,10 +792,9 @@ export class Store {
     this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
   }
 
-  // A session's turn began (busy) or ended at a time its hook took as it started, and the thread it
-  // works for, as <app>:<key>. Claude Code keeps a session busy while its background agents or shells
-  // run, after its turn ended; this is hex's own record of the turn. An end from before the turn's
-  // begin (a late hook) is old news. A session not heard from in TURNS goes.
+  // hex's own record of a session's turn: it began (busy) or ended at the time its hook started, and
+  // the thread it works for, as <app>:<key>. An end from before the turn's begin is a late hook's,
+  // so old news. A session not heard from in TURNS goes.
   turned(session: string, busy: boolean, thread?: string, at = now()) {
     this.write(() => {
       if (busy) this.db.query('insert into turns (session, thread, began) values (?, ?, ?) on conflict (session) do update set thread = excluded.thread, began = excluded.began, ended = null').run(session, thread ?? null, at)
@@ -810,12 +810,11 @@ export class Store {
 
   // A thread (<app>:<key>) sent a T3 Code thread a message at a time, which started or steered its run: the newest per pair is kept.
   relayed(from: string, thread: string, run: string, at = now()) {
-    if (![from, thread, run].every(word => typeof word === 'string' && word)) return
     this.write(() => this.db.query('insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at where excluded.at >= relays.at').run(from, thread, run, at))
   }
 
-  relays(): { from: string; thread: string; run: string }[] {
-    return this.db.query('select "from", thread, run from relays order by at').all() as { from: string; thread: string; run: string }[]
+  relays(): Relay[] {
+    return this.db.query('select "from", thread, run from relays order by at').all() as Relay[]
   }
 
   private quote(task: string, message: string, quote?: string) {

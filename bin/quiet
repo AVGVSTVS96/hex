@@ -1,11 +1,10 @@
 #!/usr/bin/env bun
 // quiet: returns once no hex session has been mid-turn for a few seconds, so an update lands between
-// turns instead of under one. hex starts every session in the background, so those are the ones it
-// waits on: each that Claude Code calls busy, unless hex's own record says its turn ended since
-// Claude Code last changed its status (it keeps a session busy while its background agents or
-// shells run, and a turn whose start went unrecorded began after that end). An argument
-// <session id>@<ms> names the session that asked for this wait at that time: it's left out for the
-// turn it asked from, which only ends after the wait, and counts again from its next turn on.
+// turns. hex starts every session in the background, so it waits on each Claude Code calls busy,
+// unless hex's own record says its turn ended since Claude Code's last status change (Claude Code
+// keeps a session busy while its background agents or shells run). An argument <session id>@<ms>
+// names the session that asked for this wait at that time: it's left out for the turn it asked
+// from, which only ends after the wait, and counts again from its next turn on.
 import { mkdirSync, watch } from "node:fs"
 import { join } from "node:path"
 import { CLAUDE, running, type Session } from "../hub/running.ts"
