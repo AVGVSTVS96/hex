@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // job <unit> [<thread>] <command...>: run a long job as its own systemd unit, so hex restarts don't
 // stop it, and wake the thread that owns it when it ends. The owner is the hex session that runs it,
-// or <thread>: an open thread's key in one app (hex threads), or <app>:<key>. The job's Claude Code
+// or <thread>: an open thread's key or <app>:<key> id (hex threads). The job's Claude Code
 // sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them under it, and are
 // named <owner>/<unit> unless they name themselves. A job whose command is claude runs as a hex
 // session in the folder it was started from, through the launcher the hub starts sessions with,
@@ -12,45 +12,24 @@ import { served } from "../hub/running.ts"
 import { open, stateDir } from "../hub/store.ts"
 
 const [mode, ...rest] = process.argv.slice(2)
-const threads = open(stateDir()).threads({ open: true })
-const nameOf = (app: string, key: string) => threads.find((thread) => thread.app === app && thread.thread === key)?.name
+const store = open(stateDir())
 
-// The thread a word names, as <app>:<key>. A bare key must be in exactly one app's list: one in two
-// is a stray, and guessing between them sends wakes to the wrong session.
-function named(word: string, here?: { app: string; key: string }): string | undefined {
-  if (here && word === here.key) return `${here.app}:${word}`
-  const split = word.indexOf(":")
-  if (split > 0 && nameOf(word.slice(0, split), word.slice(split + 1))) return word
-  const holders = threads.filter((thread) => thread.thread === word).map((thread) => thread.app)
-  if (holders.length > 1) {
-    console.error(`job: ${word} is a thread in ${holders.join(" and ")}; name it as <app>:${word}`)
-    process.exit(2)
-  }
-  return holders.length ? `${holders[0]}:${word}` : undefined
-}
-
-function parts(owner: string) {
-  const split = owner.indexOf(":")
-  return { app: owner.slice(0, split), key: owner.slice(split + 1) }
+// The open thread a word names, by its key or id, as its id.
+function named(word: string): string | undefined {
+  const key = store.key(word)
+  const thread = store.threads({ open: true }).find(({ thread }) => thread === key)
+  return thread && `${thread.app}:${key}`
 }
 
 if (mode === "--ended") {
-  const [unit, thread] = rest as [string, string]
-  const owner = named(thread) ?? (/^[a-z0-9]+:/.test(thread) ? thread : undefined)
-  if (!owner) {
-    console.error(`job: ${unit} ended, but no app has the thread ${thread} to wake`)
-    process.exit(1)
-  }
-  const { app, key } = parts(owner)
+  const [unit, owner] = rest as [string, string]
   const result = process.env.SERVICE_RESULT ?? "unknown"
   const status = process.env.EXIT_STATUS ?? "?"
   const content = `[job] ${unit} ended: ${result} (exit ${status}). Check its output and report it.`
-  // Kept as from its owner's app, so only that app's hub delivers it, even to a key two apps share.
-  await $`${import.meta.dir}/hex deliver ${app}:job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to=${key} --user=job ${content}`
+  await $`${import.meta.dir}/hex deliver job:${unit}@${process.env.INVOCATION_ID ?? Date.now()} --to=${owner} --user=job ${content}`
 } else {
-  const mine = served()
-  const given = rest.length > 1 ? named(rest[0]!, mine ? parts(mine) : undefined) : undefined
-  const owner = given ?? mine
+  const given = rest.length > 1 ? named(rest[0]!) : undefined
+  const owner = given ?? served()
   const command = given ? rest.slice(1) : rest
   if (!mode || !command.length) {
     console.error("usage: job <unit> [<thread>] <command...>")
@@ -60,7 +39,8 @@ if (mode === "--ended") {
     console.error("job: run it from a hex session, or name the thread that owns it")
     process.exit(2)
   }
-  const name = `${nameOf(parts(owner).app, parts(owner).key) ?? parts(owner).key}/${mode}`
+  const key = store.key(owner)
+  const name = `${store.names()[key] ?? key}/${mode}`
   const agent = basename(command[0]!) === "claude"
   if (!agent && /(^|[\s;&|(/])claude(\s|$)/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it from its folder as: job ${mode} claude -p "<prompt>"`)
   const run = agent ? [`${import.meta.dir}/session`, "-n", name, ...command.slice(1)] : command

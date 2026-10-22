@@ -1,4 +1,5 @@
 import { clip, fit, ROOM } from './fit.ts'
+import { served } from './running.ts'
 import { open, stateDir, type Question, type Task } from './store.ts'
 
 function facts(task: Task, named: Record<string, string>, said?: string) {
@@ -30,7 +31,7 @@ export function entry(task: Task, named: Record<string, string>, done = true) {
 
 // A question as a session reads it: where it was asked, its first line, and its buttons.
 export function waiting(question: Question, named: Record<string, string> = {}): string {
-  return `- ${question.app} · ${named[`${question.app}:${question.thread}`] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
+  return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
 }
 
 // What a session should have before it acts: the questions still waiting on the owner, then the open
@@ -80,14 +81,14 @@ export function changes(before: Record<string, string>, now: Record<string, stri
 // The UserPromptSubmit and SessionStart hook: a session gets the whole list the first time and once a
 // compaction or a clear took it away, and after that only what changed.
 if (import.meta.main) {
-  const { HEX_THREAD, HEX_MAIN, HEX_OWNER } = process.env
   try {
     const { session_id, source } = JSON.parse((await Bun.stdin.text()) || '{}') as { session_id?: string; source?: string }
     if (session_id) {
       const store = open(stateDir())
       if (source === 'compact' || source === 'clear') store.unshow(session_id, 'tasks')
-      // A job's session works for the thread that started it (HEX_OWNER is <app>:<thread>).
-      const thread = HEX_MAIN ? undefined : HEX_THREAD || (HEX_OWNER?.includes(':') ? HEX_OWNER.slice(HEX_OWNER.indexOf(':') + 1) : undefined)
+      // A job's session works for the thread that started it.
+      const owner = served()
+      const thread = process.env.HEX_MAIN || !owner ? undefined : store.key(owner)
       const { text, seen } = pending(stateDir(), thread)
       // Diffs since the last whole list add up in sent; once they'd pass its length, the whole list
       // goes again, so a session that lost a push catches up.

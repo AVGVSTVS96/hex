@@ -158,8 +158,6 @@ let reached: (hub: Hub) => void
 export const up = new Promise<Hub>(resolve => (reached = resolve))
 
 export const PORT = Number(process.env.HEX_PORT ?? 8789)
-// The apps whose hubs run in this process: a message one of them kept is its own to deliver.
-const apps = new Set<string>()
 
 // Each hub's channel under its plugin's name, behind the one HTTP listener serve.ts opens.
 const channels = new Map<string, (request: Request) => Promise<Response>>()
@@ -308,7 +306,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   const app = path.slice(1)
   let store: Store | undefined
   const threads: Record<string, Saved> = read()
-  apps.add(app)
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 })
   save()
   const token = tokenOf(stateDir)
@@ -761,23 +758,20 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     void launch(thread, name)
   }
 
-  // A message another app's hub kept is that hub's to deliver; one kept by anything else (a job, a
-  // schedule, the hex command) goes to the hub that serves its thread.
-  const mine = (row: Row) => row.from === app || !apps.has(row.from)
   // The key goes first on the channel tag, where the session's hook reads it (state.ts).
   const toMessage = (row: Row): Message => ({ content: row.body, author: row.author, meta: { key: row.key, ...row.meta } })
 
   // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   function waiting(thread: string): Message[] {
     const rows = kept(store => store.untaken(thread), [])
-    return [...rows.filter(mine).map(toMessage), ...runOf(thread).queue.filter(message => !message.meta.key)]
+    return [...rows.map(toMessage), ...runOf(thread).queue.filter(message => !message.meta.key)]
   }
 
   // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any
   // that no session took before the hub stopped.
   function wake() {
     if (closed) return
-    for (const row of kept(store => store.untaken(), [])) if (threads[row.to] && mine(row)) pass(row.to, threads[row.to]!.name, toMessage(row))
+    for (const row of kept(store => store.untaken(), [])) if (threads[row.to]) pass(row.to, threads[row.to]!.name, toMessage(row))
   }
 
   // A thread whose session failed to start keeps its prompt and the messages it was handed waiting,
@@ -1009,9 +1003,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     )
   }
 
-  // A local message reaches a thread this hub already has. A key from another app's list would
-  // otherwise open a stray thread here, under the same key, that later wakes find first.
-  function inbound(thread: string, message: Message) {
+  // A local message reaches a thread this hub already has, named by its key or its <app>:<key> id.
+  // Any other would open a stray thread here that later wakes find first.
+  function inbound(id: string, message: Message) {
+    const thread = id.startsWith(`${app}:`) ? id.slice(app.length + 1) : id
     if (Object.hasOwn(threads, thread)) return deliver(thread, threads[thread]!.name, message)
     process.stderr.write(`hub: no open ${app} thread ${thread}, so a message for it from ${message.meta?.user ?? 'a local tool'} was dropped\n`)
   }
@@ -1131,7 +1126,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       unschedule()
       retries.delete(retry)
       if (generalHub === api) generalHub = undefined
-      apps.delete(app)
       sock.close()
       if (channels.get(path) === serve) channels.delete(path)
       closing.abort()

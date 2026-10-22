@@ -18,7 +18,7 @@ beforeAll(() => {
   for (const file of ['bin/job', 'bin/hex', 'bin/session', 'hub/cli.ts', 'hub/fit.ts', 'hub/notes.ts', 'hub/tasks.ts', 'hub/schedule.ts', 'hub/clock.ts', 'hub/store.ts', 'hub/running.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
   for (const [app, threads] of Object.entries({
     t3: { 'stray-key': { name: 'hex' } },
-    telegram: { 'stray-key': { name: 'stray-key' }, '-100123:908': { name: 'autofork' } },
+    telegram: { '-100123:908': { name: 'autofork' } },
     discord: { '555': { name: 'fix hex NOW' } },
   })) {
     open(join(home, 'state')).keepThreads(app, threads)
@@ -94,14 +94,11 @@ test("a job session's prompt is hex's words in hex.db, its answer too, what the 
   expect(open(state).said('-100:1')[0]?.meta).toEqual({ session: 'chat-1', unsent: 'true' })
 })
 
-test("a named owner is a key in one app's list, or <app>:<key>; a key in two lists is refused instead of guessed", () => {
+test("a named owner is an open thread's key or its <app>:<key> id", () => {
   expect(value(run(['build', '-100123:908', 'make'], session).args, 'HEX_OWNER')).toBe('telegram:-100123:908')
   expect(value(run(['build', 'discord:555', 'make']).args, 'HEX_OWNER')).toBe('discord:555')
   expect(value(run(['build', '555', 'make']).args, 'CLAUDE_CODE_SESSION_NAME')).toBe('fix hex NOW/build')
-  const twice = run(['build', 'stray-key', 'make'])
-  expect(twice.code).toBe(2)
-  expect(twice.error).toContain('stray-key is a thread in t3 and telegram')
-  expect(value(run(['build', 'telegram:stray-key', 'make']).args, 'HEX_OWNER')).toBe('telegram:stray-key')
+  expect(value(run(['build', 'telegram:-100123:908', 'make']).args, 'CLAUDE_CODE_SESSION_NAME')).toBe('autofork/build')
 })
 
 test('a job with no owner, or no command, is refused', () => {
@@ -109,16 +106,15 @@ test('a job with no owner, or no command, is refused', () => {
   expect(run(['build'], session).code).toBe(2)
 })
 
-test("a job's end is kept for its owner's app while no hub runs, and an older unit's bare key goes to the one app that has it", async () => {
+test("a job's end is kept for its owner's thread while no hub runs, by its id or an older unit's bare key", async () => {
   const end = (...args: string[]) => Bun.spawn(['bun', job, '--ended', ...args], { env: { ...env, SERVICE_RESULT: 'success', EXIT_STATUS: '0' }, stderr: 'pipe' }).exited
   expect(await end('round3', 't3:stray-key')).toBe(0)
   expect(await end('older', '555')).toBe(0)
-  expect(await end('older', 'stray-key')).toBe(2)
-  expect(await end('topic', '-100123:908')).toBe(0)
+  expect(await end('topic', 'telegram:-100123:908')).toBe(0)
   const rows = new Database(join(home, 'state/hex.db')).query('select "to", "from", body, meta from messages where taken_at is null order by rowid').all()
   expect(rows).toEqual([
-    { to: 'stray-key', from: 't3', body: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: JSON.stringify({ user: 'job' }) },
-    { to: '555', from: 'discord', body: expect.stringContaining('[job] older ended'), meta: JSON.stringify({ user: 'job' }) },
-    { to: '-100123:908', from: 'telegram', body: expect.stringContaining('[job] topic ended'), meta: JSON.stringify({ user: 'job' }) },
+    { to: 'stray-key', from: 'job', body: expect.stringContaining('[job] round3 ended: success (exit 0).'), meta: JSON.stringify({ user: 'job' }) },
+    { to: '555', from: 'job', body: expect.stringContaining('[job] older ended'), meta: JSON.stringify({ user: 'job' }) },
+    { to: '-100123:908', from: 'job', body: expect.stringContaining('[job] topic ended'), meta: JSON.stringify({ user: 'job' }) },
   ])
 })

@@ -220,6 +220,10 @@ const migrations: (string | ((store: Store) => void))[] = [
   `create table turns (session text primary key, began text check (began ${UTC}), ended text check (ended ${UTC}));
   create table relays ("from" text not null, thread text not null, run text not null, at text not null check (at ${UTC}), primary key ("from", thread));`,
   carryRelays,
+  // A thread's key is hex's name for it everywhere (Telegram chat ids, Discord snowflakes, Buzz
+  // hashes, T3 Code UUIDs never meet), so messages, tasks, questions and pins keep it bare.
+  `create unique index if not exists threads_key on threads (thread);`,
+  ({ dir }: Store) => rename(join(dir, 'telegram', 'bot.json')),
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -651,17 +655,20 @@ export class Store {
     return rows.map(({ open, ...row }) => ({ ...(Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Omit<Thread, 'open'>), open: !!open }))
   }
 
-  // Each thread's name by its id, <app>:<key>, and by its bare key where only one app has that key.
+  // Each thread's name by its key.
   names(): Record<string, string> {
-    const threads = this.threads()
-    const apps = Object.groupBy(threads, ({ thread }) => thread)
-    return Object.fromEntries(threads.flatMap(({ app, thread, name }) => [[`${app}:${thread}`, name], ...(apps[thread]!.length === 1 ? [[thread, name]] : [])]))
+    return Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name]))
   }
 
-  // Each bare key's thread as <app>:<key>, where only one app has that key.
+  // Each thread's id, <app>:<key>, the way every --json output names it, by its key.
   ids(): Record<string, string> {
-    const apps = Object.groupBy(this.threads(), ({ thread }) => thread)
-    return Object.fromEntries(Object.entries(apps).flatMap(([key, threads]) => (threads!.length === 1 ? [[key, `${threads![0]!.app}:${key}`]] : [])))
+    return Object.fromEntries(this.threads().map(({ app, thread }) => [thread, `${app}:${thread}`]))
+  }
+
+  // A thread's key from its id, <app>:<key>, or from the key itself.
+  key(id: string): string {
+    const app = id.slice(0, Math.max(0, id.indexOf(':')))
+    return app && this.db.query('select 1 from threads where app = ? limit 1').get(app) ? id.slice(app.length + 1) : id
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
