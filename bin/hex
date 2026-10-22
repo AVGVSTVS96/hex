@@ -98,7 +98,7 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
-  deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall)
+  deliver|task|tasks|questions|pins|threads|running|message|profile|log|recall|watch)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;

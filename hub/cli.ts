@@ -25,7 +25,8 @@ const USAGE = `usage:
   hex message <key>
   hex profile [--all] [--json]
   hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--room <characters>] [--json]
-  hex recall <regex>`
+  hex recall <regex>
+  hex watch`
 
 const { values: flags, positionals } = parseArgs({
   allowPositionals: true,
@@ -269,6 +270,11 @@ try {
       log(rows.filter(row => row.at > since && (!flags.taken || row.taken)))
       break
     }
+    case 'watch':
+      // A line each time any hex process changes hex.db, for an app to read again what it shows; once
+      // the app stops reading, the next line ends it.
+      store.watch(() => process.stdout.write(`${new Date().toISOString()}\n`, error => error && process.exit()))
+      break
     case 'recall':
       if (!args[0]) usage()
       await recall(args[0])
