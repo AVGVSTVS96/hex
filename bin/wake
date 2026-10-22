@@ -5,8 +5,8 @@ import { open, stateDir } from '../hub/store.ts'
 
 // What a session knows as it starts and after a compaction: the owner's profile, which hex's memory
 // agent keeps current, then memory. It goes in state/wake/CLAUDE.md, which HEX.md imports, so Claude
-// Code loads it into every session in the hex folder. `hex init` writes the first and each memory pass
-// rewrites it; passes run one at a time, so two wakes never race.
+// Code loads it into every session in the hex folder. `hex init` writes the first, each memory pass
+// rewrites it, one pass at a time, and an update or a launch that finds none or memory off writes it.
 
 const memo = resolve(import.meta.dir, '../vendor/memo')
 const home = resolve(import.meta.dir, '../..')

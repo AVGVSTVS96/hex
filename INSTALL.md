@@ -92,7 +92,7 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
 
 ## 8. Make it theirs
 
-- Ask their name, what they do, and anything they want hex to know from day one, and save each fact as a memory: `MEMORY_DIR=~/hex/memory ~/hex/.hex/vendor/memo note "<fact>"`.
+- Ask their name, what they do, and anything they want hex to know from day one, and save each fact as a memory: `MEMORY_DIR=~/hex/memory ~/hex/.hex/vendor/memo note "<fact>"`. Then run `MEMORY_DIR=~/hex/memory ~/hex/.hex/bin/wake`, so the next session starts with them.
 - Ask what time zone they're in. If `date` here shows another one, set `env.TZ` in `~/hex/.claude/settings.json` to theirs (like `America/New_York`), so schedules fire on their clock. The hourly check runs from 8:45 to 22:45; if they keep other hours, change the heartbeat's `cron` in `~/hex/schedules.json`.
 - **Voice notes (optional):** `.hex/bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
 - **Connectors (optional):** every connector on their Claude account works in every hex session, nothing to set up on this machine. They add them at claude.ai → Settings → Connectors **(you)**. Mail lets the hourly check read their inbox. Some that suit hex: [Executor](https://executor.sh) puts many accounts behind one connector (`https://executor.sh/mcp`), and [AgentMail](https://agentmail.to) gives hex an inbox of its own (`https://mcp.agentmail.to/mcp`).

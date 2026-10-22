@@ -43,7 +43,7 @@ case "${1:-}" in
     fi
     "$hex/bin/optmem"
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
-    HEX_STORE="$home/state" MEMORY_DIR="$home/memory" "$hex/bin/wake" || :
+    (. "$hex/bin/settings"; HEX_STORE="$home/state" "$hex/bin/wake") || :
     chmod 700 "$home" "$home/state"
     [ -d "$home/.git" ] || { git -C "$home" init -q && git -C "$home" add -A && git -C "$home" commit -qm "A new hex"; }
     echo "hex is set up in $home"
