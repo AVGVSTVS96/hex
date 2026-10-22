@@ -64,8 +64,8 @@ other apps:
 
    Each tool returns once OpenAI acknowledges the update.
 5. The voice hands questions and requests to Claude, following OpenAI's
-   GPT-Live template, then says it's on it, which starts the handoff (step 3),
-   and says what Claude answers. Claude is a dispatcher with work in background
+   GPT-Live template, then says it's on it, so words follow the handoff and
+   step 3 sends it on, and says what Claude answers. Claude is a dispatcher with work in background
    subagents, so answering never stops running work; the board keeps the
    voice aware of it.
 6. When the call ends, Claude gets the last words and a "call ended" message,
