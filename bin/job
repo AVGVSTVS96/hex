@@ -7,12 +7,11 @@
 // session in the folder it was started from, through the launcher the hub starts sessions with,
 // so it has hex's rules, memory and hooks.
 import { $ } from "bun"
-import { basename, resolve } from "node:path"
-import { open } from "../hub/store.ts"
+import { basename } from "node:path"
+import { open, stateDir } from "../hub/store.ts"
 
-const home = resolve(import.meta.dir, "../..")
 const [mode, ...rest] = process.argv.slice(2)
-const threads = open(`${home}/state`).threads({ open: true })
+const threads = open(stateDir()).threads({ open: true })
 const nameOf = (app: string, key: string) => threads.find((thread) => thread.app === app && thread.thread === key)?.name
 
 // The thread a word names, as <app>:<key>. A bare key must be in exactly one app's list: one in two

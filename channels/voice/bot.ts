@@ -1,11 +1,11 @@
 import { mkdirSync } from 'fs'
 import { join } from 'path'
 import { engine, startHub } from '../../hub/hub.ts'
+import { hexDir, stateDir as hexState } from '../../hub/store.ts'
 import { server } from './channel.ts'
 import { serve, take, tool } from './server.ts'
 
-const HEX_DIR = process.env.HEX_DIR ?? process.cwd()
-const STATE = join(HEX_DIR, 'state')
+const STATE = hexState()
 const THREAD = 'voice'
 const stateDir = process.env.VOICE_STATE_DIR ?? join(STATE, THREAD)
 mkdirSync(stateDir, { recursive: true })
@@ -18,7 +18,7 @@ const hub = startHub({
   server,
   main: THREAD,
   mainName: THREAD,
-  hexDir: HEX_DIR,
+  hexDir: hexDir(),
   fresh: () => true,
   limits: { capacity: 0 },
   launcher: process.env.HEX_LAUNCHER,

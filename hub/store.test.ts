@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { basename, join } from 'path'
 import { open, Store } from './store.ts'
@@ -129,7 +129,7 @@ test('a task from before titles gets its first words as its title', () => {
   store.db.run('drop index said; drop table profiles')
   store.db.run('alter table messages drop column author')
   store.db.run('drop table seen')
-  store.db.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; create table shown (session text primary key, digest text not null); drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('pragma user_version = 10')
   store.db.close()
   expect(new Store(dir).task('t-1')!.title).toBe('Fix the login page. It 500s on submit.')
@@ -297,7 +297,7 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
   new Store(dir).db.close()
   const old = new Database(join(dir, 'hex.db'))
-  old.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  old.run('drop table pins; create table shown (session text primary key, digest text not null); alter table seen drop column at; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   old.run("insert into threads values ('telegram', '-100:9', 'Errands')")
   old.run('pragma user_version = 16')
   old.close()
@@ -311,6 +311,24 @@ test("each app's threads.json comes into hex.db once, as that app's open threads
     { app: 'telegram', thread: '-100:9', name: 'Errands', open: false },
     { app: basename(dir), thread: '7', name: 'Outside a hex', open: true },
   ].sort((a, b) => a.app.localeCompare(b.app) || a.thread.localeCompare(b.thread)))
+  expect(['telegram/threads.json', 'threads.json'].map(file => existsSync(join(dir, file)))).toEqual([false, false])
+  expect(readFileSync(join(dir, 'telegram', 'threads.json.moved-to-hex.db'), 'utf8')).toContain('Desk')
+})
+
+test("a session that ended loses what it was shown, and log/'s turns headed t become T3's", () => {
+  const store = new Store(dir)
+  store.db.run('create table files (name text primary key, body text not null); create table shown (session text primary key, digest text not null); alter table seen drop column at')
+  const shown = store.db.query('insert into seen (session, kind, record) values (?, ?, ?)')
+  shown.run('ended', 'tasks', 'old')
+  shown.run('live', 'tasks', 'now')
+  shown.run('live', 'rules', '{}')
+  store.db.query('insert into messages (key, "to", "from", author, body, at) values (?, ?, ?, ?, ?, ?)').run('t:past:abc:0', 'abc', 't', 'owner', 'Quick test from T3', '2026-10-08T10:16:00.000Z')
+  store.db.run('pragma user_version = 20')
+  store.db.close()
+  const after = new Store(dir)
+  expect([after.seen('ended', 'tasks'), after.seen('live', 'tasks'), after.seen('live', 'rules')]).toEqual(['', 'now', '{}'])
+  expect(after.message('t3:past:abc:0')).toMatchObject({ from: 't3', author: 'owner' })
+  expect(after.message('t:past:abc:0')).toBeNull()
 })
 
 test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
@@ -335,6 +353,8 @@ test("what a session was shown is kept per kind, until its context loses it", ()
   expect(store.seen('session-a', 'tasks')).toBe('one')
   store.unshow('session-a', 'tasks')
   expect([store.seen('session-a', 'tasks'), store.seen('session-a', 'rules'), store.seen('session-b', 'tasks')]).toEqual(['', '{}', 'two'])
+  store.show('session-c', 'tasks', 'three', new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString())
+  expect([store.seen('session-a', 'rules'), store.seen('session-b', 'tasks'), store.seen('session-c', 'tasks')]).toEqual(['', '', 'three'])
 })
 
 test('hex task makes a task from a message by its key, and the owner is the thread asking', async () => {
@@ -402,7 +422,7 @@ test('an answer and the message that wakes its thread with it land together or n
 
 test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
   const store = new Store(dir)
-  store.db.run('drop table pins; drop table files; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
+  store.db.run('drop table pins; create table shown (session text primary key, digest text not null); alter table seen drop column at; drop table threads; create table threads (app text not null, thread text not null, name text not null, primary key (app, thread))')
   store.db.run('create index unauthored on messages (n) where author = \'\'; pragma user_version = 15')
   const kept = (key: string, from: string, author: string, meta?: object) => store.db.query('insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)').run(key, '-100:7', from, author, 'hi', meta ? JSON.stringify(meta) : null, '2026-10-21T10:00:00.000Z')
   kept('telegram:1', 'telegram', 'hex General', { user: 'hex General' })

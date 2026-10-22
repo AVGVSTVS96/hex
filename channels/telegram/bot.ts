@@ -159,7 +159,7 @@ function target(thread: string) {
 
 const topicNames = new Map<string, string>()
 
-const ledger = new Ledger(join(STATE_DIR, 'ledger.json'), 'telegram')
+const ledger = new Ledger(STATE_DIR, 'telegram')
 
 // Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
 async function editPost(thread: string, message: MessageId, text: string) {

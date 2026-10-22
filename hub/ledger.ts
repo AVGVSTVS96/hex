@@ -1,6 +1,5 @@
-import { dirname } from 'path'
 import { statusPost } from './status.ts'
-import { open, storeDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
+import { open, stateDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
 
 export type { Answer, MessageId, Pin, Question } from './store.ts'
 
@@ -14,34 +13,12 @@ export class Ledger {
   private readonly store: Store
   private rewriting = new Map<string, Promise<void>>()
 
-  // file: the app's ledger.json, where an older hex kept these. Whenever it says something else than
-  // when hex.db last took it in, what it changed since (the older hex's doing) comes in: each pin it
-  // took away or moved to another message, an edit to a pin hex.db still has, and each question it added.
+  // dir: the app's state folder, whose hex.db it is outside a hex.
   constructor(
-    file: string,
+    dir: string,
     private readonly app: string,
   ) {
-    this.store = open(storeDir(dirname(file)))
-    this.store.takeIn(`${app}/ledger.json`, file, (now, before) => {
-      const [book, was] = [now, before ?? '{}'].map(text => read(text, file))
-      if (!book) return false
-      for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
-        const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)]
-        if (JSON.stringify(pin) === JSON.stringify(old)) continue
-        if (!pin) this.store.unpinned(app, thread, old?.message)
-        else if (pin.message !== old?.message || this.store.pin(app, thread)?.message === old?.message) keep(() => this.store.pinned({ ...pin, app, thread }), pin)
-      }
-      const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
-      for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => this.store.ask({ app, ...question }), question)
-    })
-
-    function keep(take: () => unknown, kept: unknown) {
-      try {
-        take()
-      } catch (error) {
-        process.stderr.write(`hub: left out ${JSON.stringify(kept)} from ${file}, which hex.db refuses: ${error}\n`)
-      }
-    }
+    this.store = open(stateDir(dir))
   }
 
   get questions(): readonly Question[] {
@@ -143,17 +120,5 @@ export class Ledger {
       this.store.unask(this.app, thread)
       this.store.unpinned(this.app, thread)
     })
-  }
-}
-
-type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
-
-function read(text: string, file: string): Book | undefined {
-  try {
-    const book = JSON.parse(text) ?? {}
-    const pinned = ([, pin]: [string, any]) => ['number', 'string'].includes(typeof pin?.message)
-    return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries<any>(book.pins).filter(pinned) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
-  } catch (error) {
-    process.stderr.write(`hub: ${file} is unreadable, so hex.db left it out: ${error}\n`)
   }
 }

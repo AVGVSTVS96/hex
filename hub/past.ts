@@ -56,7 +56,9 @@ export function importLogs(store: Store, dir: string, zone: string): number {
     let today = Temporal.PlainDate.from(day)
     let clock = ''
     heads.forEach((head, i) => {
-      const [, who, via, dated, hour, minute] = head as unknown as string[]
+      const [, who, headed, dated, hour, minute] = head as unknown as string[]
+      // Older logs headed T3's prompts with a cut-short "t".
+      const via = headed === 't' ? 't3' : headed
       const time = `${hour!.padStart(2, '0')}:${minute}`
       if (!dated && clock && time < clock) today = today.add({ days: 1 })
       clock = time
