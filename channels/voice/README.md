@@ -233,7 +233,7 @@ names it, so `send` can reach that thread.
 ## Questions
 
 Everything waiting on you, in one list the app answers in place. The Telegram
-hub keeps a ledger in hex.db (`hub/ledger.ts`, read with `hex questions` and `hex pins`): every
+hub keeps a ledger in hex.db (`hub/ledger.ts`; `hex questions` lists the waiting ones, `hex pins` the pins): every
 question a thread asks with buttons or a poll, what became of it (tapped,
 answered in the app or on a call, settled, edited away), and each thread's
 pinned status post as last written. `questions.ts` reads it, with T3 Code's own

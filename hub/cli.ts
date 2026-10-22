@@ -180,9 +180,9 @@ try {
     }
     case 'pins': {
       const pins = store.pins({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD) })
-      const named = store.names()
+      const names = new Map(store.threads().map(({ app, thread, name }) => [`${app}:${thread}`, name]))
       if (flags.json) console.log(JSON.stringify(pins, null, 1))
-      else console.log(pins.map(pin => `${named[pin.thread] ?? pin.thread} · message ${pin.message} · ${(pin.note ?? pin.text).trim().split('\n')[0]}`).join('\n') || 'no pins')
+      else console.log(pins.map(pin => `${pin.app} · ${names.get(`${pin.app}:${pin.thread}`) ?? pin.thread} · message ${pin.message} · ${(pin.note || pin.text).trim().split('\n')[0]}`).join('\n') || 'no pins')
       break
     }
     case 'threads': {

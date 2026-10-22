@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { dirname, join } from 'path'
+import { join } from 'path'
 import { Ledger } from './ledger.ts'
 import { open } from './store.ts'
 
@@ -18,7 +18,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all, and the file stays beside it", () => {
+test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all, and the file stays where it is", () => {
   const pin = { message: 9, text: 'Status: shipping', at: '2026-10-18T09:00:00.000Z' }
   const post = { message: '12', text: 'Site: example.com\n\nmore', note: 'Site: example.com', at: '2026-10-18T09:30:00.000Z' }
   writeFileSync(
@@ -41,8 +41,7 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.pin('-100:7')).toEqual({ app: 'telegram', thread: '-100:7', ...pin })
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', ...post })
   expect(ledger.posts()).toEqual(['-100:8'])
-  expect(existsSync(file)).toBe(false)
-  expect(JSON.parse(readFileSync(join(dirname(file), readdirSync(dirname(file)).find(name => name.startsWith('ledger.json.moved-'))!), 'utf8')).pins['-100:7']).toEqual(pin)
+  expect(existsSync(file)).toBe(true)
   expect(new Ledger(file, 'telegram').questions).toHaveLength(2)
   expect(open(join(dir, 'telegram')).pins()).toHaveLength(2)
 })

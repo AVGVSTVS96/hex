@@ -207,6 +207,33 @@ const migrations: (string | ((store: Store) => void))[] = [
     at text not null check (at ${UTC}),
     primary key (app, thread)
   );`,
+  // The pins, and any questions not moved yet, that an older hex kept in each app's ledger.json: in a
+  // hex's state/<app>/, or in the app's own state folder outside a hex. The file stays where it is.
+  ({ db, dir }: Store) => {
+    const pin = db.query('insert into pins (app, thread, message, text, note, at) values (?, ?, ?, ?, ?, ?) on conflict do nothing')
+    const ask = db.query('insert into questions (app, thread, message, text, options, poll, multiple, answer, settled, at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing')
+    const json = (value: unknown) => (value === undefined ? null : JSON.stringify(value))
+    for (const [app, file] of [[basename(dir), join(dir, 'ledger.json')], ...readdirSync(dir).map(app => [app, join(dir, app, 'ledger.json')])] as const) {
+      if (!existsSync(file)) continue
+      let book: { pins?: Record<string, any>; asks?: any[] }
+      try {
+        book = JSON.parse(readFileSync(file, 'utf8')) ?? {}
+      } catch (error) {
+        process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`)
+        continue
+      }
+      const keep = (kept: unknown, put: () => unknown) => {
+        try {
+          put()
+        } catch (error) {
+          process.stderr.write(`hex.db left out ${JSON.stringify(kept)} from ${file}: ${error}\n`)
+        }
+      }
+      for (const [thread, kept] of Object.entries(book.pins ?? {})) keep(kept, () => pin.run(app, thread, kept.message, kept.text ?? '', kept.note ?? null, kept.at))
+      for (const kept of Array.isArray(book.asks) ? book.asks : [])
+        keep(kept, () => ask.run(app, kept.thread, kept.message, kept.text, json(kept.options), kept.poll ?? null, kept.multiple ? 1 : 0, json(kept.answer), json(kept.settled), kept.at))
+    }
+  },
 ]
 
 const now = () => new Date().toISOString()

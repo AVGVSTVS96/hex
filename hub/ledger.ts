@@ -1,4 +1,3 @@
-import { existsSync, readFileSync, renameSync } from 'fs'
 import { dirname } from 'path'
 import { statusPost } from './status.ts'
 import { open, storeDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
@@ -15,29 +14,12 @@ export class Ledger {
   private readonly store: Store
   private rewriting = new Map<string, Promise<void>>()
 
+  // file: the app's state/<app>/ledger.json, where an older hex kept these, which hex.db took in once.
   constructor(
     file: string,
     private readonly app: string,
   ) {
     this.store = open(storeDir(dirname(file)))
-    // An older hex kept these in this file (state/<app>/ledger.json): they move into hex.db, a pin
-    // only when it's newer than the one hex.db has, and the file stays beside it as ledger.json.moved-<time>.
-    const book = read(file)
-    if (!book) return
-    this.store.write(() => {
-      for (const question of book.asks ?? []) keep(() => this.store.ask({ app: this.app, ...question }), 'a question', question)
-      for (const [thread, pin] of Object.entries<any>(book.pins ?? {}))
-        keep(() => (this.store.pin(this.app, thread)?.at ?? '') < pin.at && this.store.pinned({ ...pin, app: this.app, thread }), 'a pin', pin)
-    })
-    renameSync(file, `${file}.moved-${Date.now()}`)
-
-    function keep(move: () => unknown, what: string, kept: unknown) {
-      try {
-        move()
-      } catch (error) {
-        process.stderr.write(`hub: left out ${what} ${file} kept that hex.db refuses (${error}): ${JSON.stringify(kept)}\n`)
-      }
-    }
   }
 
   get questions(): readonly Question[] {
@@ -115,7 +97,7 @@ export class Ledger {
     this.store.write(() => {
       this.store.reworded(this.app, thread, message, text)
       const pin = this.pin(thread)
-      if (pin?.message === message) this.store.pinned({ ...pin, text })
+      if (pin?.message === message) this.store.pinned({ app: this.app, thread, message, text, note: pin.note })
     })
   }
 
@@ -139,18 +121,5 @@ export class Ledger {
       this.store.unask(this.app, thread)
       this.store.unpinned(this.app, thread)
     })
-  }
-}
-
-// What an older hex kept in the file, if there's one; an unreadable one is moved aside.
-function read(file: string): { pins?: Record<string, unknown>; asks?: Omit<Question, 'app'>[] } | undefined {
-  if (!existsSync(file)) return
-  try {
-    const book = JSON.parse(readFileSync(file, 'utf8'))
-    return { pins: book?.pins ?? {}, asks: Array.isArray(book?.asks) ? book.asks : [] }
-  } catch (error) {
-    const aside = `${file}.corrupt-${Date.now()}`
-    renameSync(file, aside)
-    process.stderr.write(`hub: ${file} is unreadable (${error}), moved it to ${aside}\n`)
   }
 }
