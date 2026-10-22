@@ -217,6 +217,9 @@ const migrations: (string | ((store: Store) => void))[] = [
   alter table seen add column at text not null default '1970-01-01T00:00:00.000Z' check (at ${UTC});
   update seen set at = strftime('%Y-%m-%dT%H:%M:%fZ');
   update messages set "from" = 't3', key = 't3' || substr(key, 2) where "from" = 't' and key not in (select message from words) and 't3' || substr(key, 2) not in (select key from messages);`,
+  `create table turns (session text primary key, began text check (began ${UTC}), ended text check (ended ${UTC}));
+  create table relays ("from" text not null, thread text not null, run text not null, at text not null check (at ${UTC}), primary key ("from", thread));`,
+  carryRelays,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -261,6 +264,21 @@ function carryLedgers(store: Store) {
   }
 }
 
+// Each app's relays.jsonl, a line per message one of its threads sent a T3 Code thread, newest last.
+function carryRelays(store: Store) {
+  for (const [app, folder] of apps(store.dir)) {
+    const file = either(join(folder, 'relays.jsonl'))
+    if (!file) continue
+    for (const line of readFileSync(file, 'utf8').split('\n')) {
+      try {
+        const { at, from, thread, run } = JSON.parse(line)
+        if ([at, from, thread, run].every(word => typeof word === 'string' && word)) store.relayed(`${app}:${from}`, thread, run, at)
+      } catch {}
+    }
+    rename(join(folder, 'relays.jsonl'))
+  }
+}
+
 type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
 
 function bookOf(text: () => string, file: string): Book | undefined {
@@ -275,6 +293,7 @@ function bookOf(text: () => string, file: string): Book | undefined {
 
 const now = () => new Date().toISOString()
 const SEEN = 2 * 24 * 60 * 60 * 1000
+const TURNS = 30 * 24 * 60 * 60 * 1000
 
 // The profile and its history moved into hex.db from state/profile.md and profile.md.history, where
 // each version it replaced is a JSON line with when it was replaced: when the next was put in place.
@@ -770,6 +789,30 @@ export class Store {
   // The session's context lost what it was shown of a kind: a compaction, a clear, or for its rules, its end.
   unshow(session: string, kind: string) {
     this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
+  }
+
+  // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
+  // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes.
+  turned(session: string, busy: boolean, at = now()) {
+    this.write(() => {
+      if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
+      else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
+      this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
+    })
+  }
+
+  turn(session: string): { began?: string; ended?: string } {
+    const row = this.db.query('select began, ended from turns where session = ?').get(session) as Record<string, string | null> | null
+    return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
+  }
+
+  // A thread (<app>:<key>) sent a T3 Code thread a message at a time, which started or steered its run: the newest per pair is kept.
+  relayed(from: string, thread: string, run: string, at = now()) {
+    this.write(() => this.db.query('insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at where excluded.at >= relays.at').run(from, thread, run, at))
+  }
+
+  relays() {
+    return this.db.query('select "from", thread, run from relays order by at').all() as { from: string; thread: string; run: string }[]
   }
 
   private quote(task: string, message: string, quote?: string) {

@@ -2,6 +2,7 @@ import { connect } from 'net'
 import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
+const at = new Date().toISOString()
 const busy = process.argv[2] === 'busy'
 
 // Claude Code counts a session with these running as still working, and shells or monitors as not.
@@ -36,6 +37,15 @@ if (key) {
       process.exit(2)
     }
   } catch {}
+}
+
+// The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
+if (session_id) {
+  try {
+    open(stateDir()).turned(session_id, busy, at)
+  } catch (error) {
+    console.error(`hex couldn't record this turn: ${error}`)
+  }
 }
 
 // What's typed in a session's terminal is kept like any message, already taken by the session: the

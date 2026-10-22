@@ -390,19 +390,14 @@ test('a running session no thread holds is a run of its own while it works', asy
 })
 
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
-  const shell = Bun.spawn(['sh', '-c', 'sleep 30 >/dev/null & echo $!; wait'], { stdout: 'pipe' })
-  const { value } = await shell.stdout.getReader().read()
-  const build = Number(new TextDecoder().decode(value))
-  afterAll(() => {
-    process.kill(build)
-    shell.kill()
-  })
+  const build = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-1001234567890:3275' } })
+  afterAll(() => build.kill())
   threads('telegram', { ...telegram, '-1001234567890:3275': { name: 'lab', session: '32753275-lab' } })
   job('32753275-lab', { state: 'done', detail: 'started the build', updatedAt: ago(1) })
-  running('32753275-lab', 'idle', shell.pid)
+  running('32753275-lab', 'idle')
   const lab = () => board.get('telegram:-1001234567890:3275')
   await until(() => lab()?.state === 'done')
-  running('78787878-build', 'busy', build, { kind: 'interactive', name: 'lab-build-c0', cwd: '/scratch/build', startedAt: Date.now() })
+  running('78787878-build', 'busy', build.pid, { kind: 'interactive', name: 'lab-build-c0', cwd: '/scratch/build', startedAt: Date.now() })
   await until(() => lab()?.state === 'working')
   expect(lab()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['78787878-build', 'lab-build-c0', 'working']])
   expect(board.get('claude:78787878')).toBeUndefined()
@@ -410,7 +405,7 @@ test("a thread stays working while a session it started runs, that session one o
   await until(() => lab()?.agents[0]?.line === 'Reading plan.md')
   rmSync(join(claude, 'sessions', '78787878.json'))
   await until(() => lab()?.state === 'done')
-  running('32753275-lab', 'shell', shell.pid)
+  running('32753275-lab', 'shell')
   await until(() => lab()?.state === 'working')
   expect(lab()!.running).toBe(false)
 })
@@ -544,15 +539,9 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
   const first = run('thread-prims', 1, { status: 'completed', since: ago(60), end: ago(50) })
   const relayed = run('thread-prims', 2, { since: ago(2) })
   const second = run('thread-codex', 1, { status: 'completed', since: ago(4), end: ago(1), said: 'Looks **sound**.' })
-  writeFileSync(
-    join(state, 'discord', 'relays.jsonl'),
-    [
-      { at: ago(55), from: 'fix', thread: 'thread-prims', run: first },
-      { at: ago(2), from: 'fix', thread: 'thread-prims', run: relayed },
-      { at: ago(4), from: 'fix', thread: 'thread-codex', run: second },
-      'not json',
-    ].map(line => (typeof line === 'string' ? line : JSON.stringify(line)) + '\n').join(''),
-  )
+  open(state).relayed('discord:fix', 'thread-prims', first, ago(55))
+  open(state).relayed('discord:fix', 'thread-prims', relayed, ago(2))
+  open(state).relayed('discord:fix', 'thread-codex', second, ago(4))
   const fix = () => board.get('discord:fix')
   await until(() => fix()?.agents.length === 2)
   expect(fix()!.state).toBe('working')
@@ -573,13 +562,8 @@ test("two T3 threads that send each other work each show on their own, the other
   mapped('pong', 'thread-pong', { title: 'pong' })
   const toPong = run('thread-pong', 1, { since: ago(3) })
   const toPing = run('thread-ping', 1, { since: ago(1) })
-  writeFileSync(
-    join(state, 't3', 'relays.jsonl'),
-    [
-      { at: ago(3), from: 'ping', thread: 'thread-pong', run: toPong },
-      { at: ago(1), from: 'pong', thread: 'thread-ping', run: toPing },
-    ].map(line => JSON.stringify(line) + '\n').join(''),
-  )
+  open(state).relayed('t3:ping', 'thread-pong', toPong, ago(3))
+  open(state).relayed('t3:pong', 'thread-ping', toPing, ago(1))
   await until(() => board.get('t3:ping')?.agents.length && board.get('t3:pong')?.agents.length)
   expect(board.get('t3:ping')!.agents.map(agent => [agent.label, agent.state])).toEqual([['pong', 'working']])
   expect(board.get('t3:pong')!.agents.map(agent => [agent.label, agent.state])).toEqual([['ping', 'working']])
