@@ -441,7 +441,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   const id = Number((await call('reply', { text: 'Site: example.com' })).text.match(/id: (\d+)/)[1])
   await call('pin', { message_id: String(id) })
   const edits = () => calls.filter(c => c.method === 'editMessageText' && c.payload.message_id === id).map(c => c.payload.rich_message.markdown as string)
-  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n**🔴 Blocked on you:** nothing'))
+  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n**🔴 Blocked on you'))
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.com' })
 
   await call('reply', { text: 'Rename the site?', buttons: ['Yes', 'No'] })

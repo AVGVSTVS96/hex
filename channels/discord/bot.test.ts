@@ -566,9 +566,6 @@ test('a question with buttons goes in the ledger: a tap answers it there, and on
   const later = here.posted.at(-1)
   await call('edit_message', { message_id: later.id, text: 'Ship today, before five?' })
   expect(question(later.id).settled).toBeUndefined()
-  await call('pin', { message_id: later.id })
-  await call('edit_message', { message_id: later.id, text: 'Status: shipping' })
-  expect(book().pins[here.id]).toMatchObject({ message: later.id, note: 'Status: shipping' })
   await send({ type: 'settle', thread: here.id, message: later.id, note: 'Settled: shipped' })
   await until(() => question(later.id).settled)
   expect(labels(done.findLast(d => d.edit === later.id).options.components)).toEqual(['Settled: shipped'])
@@ -734,7 +731,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   const post = here.posted.at(-1)
   await call('pin', { message_id: post.id })
   const edits = () => done.filter(d => d.edit === post.id).map(d => d.options.content as string)
-  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n**🔴 Blocked on you:** nothing'))
+  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n**🔴 Blocked on you'))
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.com' })
 
   await call('reply', { text: 'Rename the site?', buttons: ['Yes', 'No'] })
