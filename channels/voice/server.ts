@@ -186,7 +186,7 @@ async function pass(name: string, about: string, text: string, app?: string, whe
     thread = { app, id: opened.thread, name, state: HEX_STATE }
   }
   if (call && id) {
-    await mark(call, { id, state: 'running', text: about, to: thread!.name, agent: thread!.id })
+    await mark(call, { id, state: 'running', text: about, to: thread!.name, agent: `${thread!.app}:${thread!.id}` })
     watch(call, id, thread!, !!app)
   }
   if (!app) {
@@ -209,7 +209,12 @@ function resume() {
     if (Date.parse(started) < since) break
     const latest = new Map(past(call).tasks.map(task => [task.id, task]))
     for (const task of latest.values()) {
-      const thread = task.state === 'running' && task.to && task.agent && findThread(HEX_STATE, task.agent)
+      let thread
+      try {
+        thread = task.state === 'running' && task.to && task.agent && findThread(HEX_STATE, task.agent)
+      } catch (error) {
+        process.stderr.write(`voice: ${call}'s task ${task.id} isn't followed again: ${error}\n`)
+      }
       if (thread) watch(call, task.id, thread, true)
     }
   }
@@ -899,7 +904,7 @@ async function showActivity(url: URL) {
 function elsewhere(call: Live): (Task & { line?: string })[] {
   const following = new Set(call.call.activity().flatMap(task => (task.state === 'running' && task.agent ? [task.agent] : [])))
   return board.runs
-    .filter(row => row.state === 'working' && row.app !== 'voice' && !following.has(row.thread))
+    .filter(row => row.state === 'working' && row.app !== 'voice' && !following.has(`${row.app}:${row.thread}`))
     .map(row => ({ id: row.id, state: 'running', text: row.name, to: row.name, line: newest(row) }))
 }
 

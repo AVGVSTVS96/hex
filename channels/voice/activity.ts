@@ -376,13 +376,15 @@ export function followAgent(agent: string, session: string | undefined, onStep: 
       return followTranscript(path, 0, (_, updates) => lines(updates(), onStep))
 }
 
-// An open hex thread (a Telegram topic, a Discord, Buzz or T3 Code thread) by its id or name, from hex.db.
+// An open hex thread (a Telegram topic, a Discord, Buzz or T3 Code thread) from hex.db, by its id as
+// `hex threads --json` gives it (app:key), else its bare key, else its name.
 export function findThread(state: string, wanted: string): Thread | undefined {
   const lower = wanted.toLowerCase()
   const all = open(state).threads({ open: true }).filter(({ app }) => app !== 'voice')
-  const named = all.filter(({ name }) => name.toLowerCase() === lower)
-  const found = all.find(({ thread }) => thread === wanted) ?? (named.length === 1 ? named[0] : undefined)
-  if (!found && named.length > 1) throw new Error(`more than one hex thread is named ${wanted}, in ${[...new Set(named.map(({ app }) => app))].join(' and ')}: pass its id, from hex threads`)
+  const ways = [all.filter(({ app, thread }) => `${app}:${thread}` === wanted), all.filter(({ thread }) => thread === wanted), all.filter(({ name }) => name.toLowerCase() === lower)]
+  const matches = ways.find(found => found.length) ?? []
+  if (matches.length > 1) throw new Error(`more than one hex thread goes by ${wanted}, in ${[...new Set(matches.map(({ app }) => app))].join(' and ')}: pass its app:key id, from hex threads --json`)
+  const found = matches[0]
   return found && { app: found.app, id: found.thread, name: found.name, cwd: found.cwd, state }
 }
 
