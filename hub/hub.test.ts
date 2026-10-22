@@ -1054,15 +1054,17 @@ function working() {
   return [{ sessionId: SESSION, pid: process.pid, status: 'busy' }]
 }
 
-test("the owner's interrupt presses Esc in a busy session, which keeps running, and ends the turn", async () => {
+test("the owner's interrupt presses Esc in a busy session, which keeps running, and ends the turn, in hex's record of it too", async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: working() })
   const transcript = conversation()
   const { send } = await session('chat:7')
   await send({ type: 'state', thread: 'chat:7', busy: true })
   await until(() => states.length)
+  open(dir).turned(SESSION, true)
   await hub.interrupt('chat:7')
   expect(transcript()).toContain('[Request interrupted by user')
   expect(states.at(-1)).toEqual(['chat:7', false])
+  expect(open(dir).turn(SESSION).ended).toBeDefined()
   expect(calls().some(args => args[0] === 'stop')).toBe(false)
 })
 
