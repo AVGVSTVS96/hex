@@ -7,8 +7,10 @@ import type { Store } from './store.ts'
 // (sessions/<pid>.json): its status (busy, shell, idle) and kind (bg for a background session), and
 // a background session's job state (working, blocked on the owner, done), status line and what it
 // needs, from jobs/<id>/state.json, and when Claude Code last changed its status, where it says. The
-// thread it works for, as <app>:<key>, from the environment it started with (served). From hex's own
-// record of its turns (hex.db's turns): when its latest turn began, and when that turn ended, if it has.
+// thread it works for, as <app>:<key>, from the environment it started with (served), unless it's a
+// background session: Claude Code's daemon starts those with its own environment, whoever started
+// it. From hex's own record of its turns (hex.db's turns): when its latest turn began, and when that
+// turn ended, if it has.
 export type Session = { id: string; pid: number; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number; thread?: string; began?: string; ended?: string }
 
 export const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
@@ -30,7 +32,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && (kept.updated ?? kept.started) >= (statusUpdatedAt ?? started)))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }), thread: served(environ(pid)), ...store.turn(id) })
+    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }), thread: kind === 'bg' ? undefined : served(environ(pid)), ...store.turn(id) })
   }
   return sessions
 }

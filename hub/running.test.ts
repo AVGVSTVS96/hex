@@ -14,17 +14,19 @@ function record(name: string, session: object) {
   writeFileSync(join(claude, 'sessions', `${name}.json`), JSON.stringify(session))
 }
 
-test("a session runs while its process lives, works for the thread it serves or the one it started for, and its turns are hex's record", () => {
+test("a session runs while its process lives, works for the thread it serves or the one it started for (a background session has the daemon's environment), and its turns are hex's record", () => {
   const job = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_CHANNEL: '', HEX_THREAD: '', HEX_OWNER: 'telegram:-100:65' } })
   afterAll(() => job.kill())
   record('thread', { pid: process.pid, sessionId: 'aaaaaaaa-1', status: 'idle', kind: 'bg', name: 'General', cwd: '/hex', startedAt: 1 })
-  record('job', { pid: job.pid, sessionId: 'bbbbbbbb-1', status: 'busy', kind: 'bg', startedAt: 2 })
+  record('job', { pid: job.pid, sessionId: 'bbbbbbbb-1', status: 'busy', kind: 'interactive', startedAt: 2 })
+  record('worker', { pid: job.pid, sessionId: 'ffffffff-1', status: 'busy', kind: 'bg', startedAt: 3 })
   record('gone', { pid: 2 ** 22 + 1, sessionId: 'cccccccc-1', status: 'busy' })
   record('old', { pid: process.pid, sessionId: 'dddddddd-1', status: 'idle' })
   record('new', { pid: process.pid, sessionId: 'dddddddd-1', status: 'busy' })
   store.turned('bbbbbbbb-1', true)
   const sessions = running(store, claude)
-  expect([...sessions.keys()].sort()).toEqual(['aaaaaaaa-1', 'bbbbbbbb-1', 'dddddddd-1'])
+  expect([...sessions.keys()].sort()).toEqual(['aaaaaaaa-1', 'bbbbbbbb-1', 'dddddddd-1', 'ffffffff-1'])
+  expect(sessions.get('ffffffff-1')!.thread).toBeUndefined()
   expect(sessions.get('aaaaaaaa-1')).toMatchObject({ status: 'idle', kind: 'bg', name: 'General', cwd: '/hex', started: 1 })
   expect(sessions.get('bbbbbbbb-1')).toMatchObject({ thread: 'telegram:-100:65', began: expect.any(String) })
   expect(sessions.get('bbbbbbbb-1')!.ended).toBeUndefined()
