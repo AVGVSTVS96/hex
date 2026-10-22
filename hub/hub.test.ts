@@ -745,7 +745,7 @@ test('a session that fails to start is reported with its reason, and the next me
   await until(() => calls().filter(args => args[0] === '--bg').length === 2)
 })
 
-// A launcher whose resumes fail as Claude Code fails one of a session it no longer has.
+// A launcher whose resumes fail as Claude Code fails one of a session no project folder has.
 function forgetting() {
   const launcher = join(dir, 'launch')
   writeFileSync(launcher, `#!/bin/sh
@@ -754,6 +754,7 @@ exec claude "$@"
 `)
   chmodSync(launcher, 0o755)
   mkdirSync(join(dir, 'jobs', 'jobgone1'))
+  mkdirSync(join(dir, 'projects'))
   writeFileSync(join(dir, 'jobs', 'jobgone1', 'state.json'), JSON.stringify({ state: 'failed', detail: `source session ${SESSION} not found` }))
   return launcher
 }
@@ -765,9 +766,18 @@ test('a thread whose session Claude Code no longer has starts a new one, which h
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
   const { received } = await session('chat:7', '2c3d4e5f-0000-4000-8000-000000000000')
   await until(() => received.length === 2)
-  const note = `[hub] Claude Code no longer has the conversation of session ${SESSION}, which this thread was to resume, so you're a new session without it; say so when you reply.`
+  const note = `[hub] Claude Code no longer has the conversation of session ${SESSION}, which this thread was to continue, so you're a new session without it; say so when you reply.`
   expect(received).toEqual([inbound(message), { type: 'inbound', content: note, meta: { key: `hub:chat:7:lost:${SESSION}`, user: 'hub' } }])
   expect(failures).toEqual([])
+})
+
+test("a resume Claude Code can't find, of a session another project folder has, fails and keeps the session", async () => {
+  start({ launcher: forgetting(), registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [] })
+  saved(SESSION, join(dir, 'elsewhere'))
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await until(() => failures.length)
+  expect(failures).toEqual([['chat:7', `source session ${SESSION} not found`]])
+  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', session: SESSION })
 })
 
 test('a thread that would fork a session Claude Code no longer has starts a new one instead', async () => {

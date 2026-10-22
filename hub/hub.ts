@@ -687,15 +687,16 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     setState(thread, false)
   }
 
-  // Claude Code no longer has the conversation of the session a start resumed or forked, so the
-  // thread lets go of it once a note is kept that tells its next session why it starts without it.
+  // Claude Code failed a start for not finding the session it resumed or forked, and no project
+  // folder has that conversation, so the thread lets go of it once a note is kept that tells its
+  // next session why it starts without it.
   function lost(thread: string, reason: string) {
     const known = threads[thread]
     const run = runOf(thread)
     const session = reason.match(/source session (\S+) not found/)?.[1]
-    if (!known || !session || ![known.session, known.from, run.opening?.fork].includes(session)) return false
+    if (!known || !session || ![known.session, known.from, run.opening?.fork].includes(session) || claude.saved(session)) return false
     const key = `hub:${thread}:lost:${session}`
-    const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to resume, so you're a new session without it; say so when you reply.`
+    const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`
     if (!kept(store => (store.deliver({ key, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), true), false)) return false
     run.handed.add(key)
     if (known.session === session) delete known.session

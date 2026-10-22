@@ -177,7 +177,7 @@ async function task(id: string, state: Task['state'], text: string, call = live?
 // app: no thread has the work yet, so one named name opens there with it.
 async function pass(name: string, about: string, text: string, app?: string, where?: string, call = live?.id ?? ended) {
   const known = app ? undefined : findThread(HEX_STATE, name)
-  if (!app && !known) throw new Error(`no hex thread, or more than one, is named ${name}; pass its id from hex threads, or app to open one`)
+  if (!app && !known) throw new Error(`no hex thread is named ${name}; pass app to open one`)
   const id = call && fresh(call, about)
   const meta = { user: 'hex voice', ...(id && { voice_task: `${call}:${id}` }) }
   let thread = known
