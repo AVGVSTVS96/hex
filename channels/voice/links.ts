@@ -49,6 +49,7 @@ export class Links {
   private db?: Database
   private watcher?: ReturnType<typeof watch>
   private unwatch?: () => void
+  private relays = ''
   private pending?: ReturnType<typeof setTimeout>
 
   constructor(
@@ -62,7 +63,7 @@ export class Links {
     this.environment = word(readFile(join(t3, 'environment-id'))?.trim())
     this.db = new Database(database, { readonly: true })
     this.watcher = watch(t3, (_, file) => file?.startsWith(DATABASE) && this.schedule())
-    this.unwatch = open(state).watch(() => this.schedule())
+    this.unwatch = open(state).watch(() => this.relays !== (this.relays = JSON.stringify(open(state).relays())) && this.schedule())
     this.read()
   }
 

@@ -24,15 +24,6 @@ const fromChat = typeof prompt === 'string' && prompt.startsWith('<channel sourc
 const background = !busy && !!background_tasks?.some(task => WORKING.has(task.type ?? ''))
 const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined
 
-// The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
-if (session_id) {
-  try {
-    open(stateDir()).turned(session_id, busy, at)
-  } catch (error) {
-    console.error(`hex couldn't record this turn: ${error}`)
-  }
-}
-
 // The session takes the message its prompt brings in, in the store itself while it can reach it,
 // or else through the hub. One that was taken already is a second copy (the hub sends again what it
 // can't tell a session took), so Claude Code drops it.
@@ -46,6 +37,15 @@ if (key) {
       process.exit(2)
     }
   } catch {}
+}
+
+// The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
+if (session_id) {
+  try {
+    open(stateDir()).turned(session_id, busy, at)
+  } catch (error) {
+    console.error(`hex couldn't record this turn: ${error}`)
+  }
 }
 
 // What's typed in a session's terminal is kept like any message, already taken by the session: the

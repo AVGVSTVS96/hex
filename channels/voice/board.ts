@@ -83,9 +83,9 @@ const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'faile
 // Every hex thread as a run, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
 // running, hex.db's open threads for their names and where their apps open them, and `links.ts` for T3 Code's side.
-// A session another one started (a topic's `claude -p` build), or a job a thread owns (bin/job),
+// A session a thread's session started (a topic's `claude -p` build), or a job a thread owns (bin/job),
 // counts toward it as one of its agents; a running session nothing holds is a run of its own while it works. So does each T3 Code
-// thread a hex T3 thread handed work to, which shows only under it. It wakes when hex.db or one of those files
+// thread a hex T3 thread handed work to, which shows only under it. It wakes when hex.db's threads or one of those files
 // (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
 // bumps a version on any change.
 // The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
@@ -115,8 +115,7 @@ export class Board extends Changes {
     super()
     this.tracks = readJson(join(state, 'voice', 'tracks.json')) ?? {}
     this.links = new Links(state, () => this.schedule(), t3)
-    // hex.db holds the threads and the turns running.ts reads (links.ts watches it for relays).
-    this.stops.push(open(state).watch(() => (this.mark('sessions'), JSON.stringify(this.stored()) !== JSON.stringify(this.threads) && this.mark('threads'))))
+    this.stops.push(open(state).watch(() => JSON.stringify(this.stored()) !== JSON.stringify(this.threads) && this.mark('threads')))
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
     this.stops.push(watchDir(join(claude, 'jobs'), file => this.jobChanged(file, true)))
     this.build()
@@ -231,10 +230,10 @@ export class Board extends Changes {
       .map(session => ({ app: 'claude', id: short(session.id), name: session.name ?? short(session.id), session: session.id, cwd: session.cwd }))
   }
 
-  // The busy sessions whose work counts toward a thread, or a loose run: started below its session
-  // or by a job it owns, and not another thread's own.
+  // The busy sessions whose work counts toward a thread: started from its session's shell (with its
+  // environment) or by a job it owns, and not another thread's own. A loose run has none.
   private started(thread: Thread) {
-    const held = new Map([...this.held(), ...this.loose().map(loose => [loose.session!, `${loose.app}:${loose.id}`] as [string, string])])
+    const held = this.held()
     const key = `${thread.app}:${thread.id}`
     return [...this.sessions.values()].filter(session => session.id !== thread.session && busy(session) && serving(session, held) === key)
   }

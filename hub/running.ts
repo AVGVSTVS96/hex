@@ -27,7 +27,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     if (!record?.sessionId || !alive(record.pid)) continue
     const { sessionId: id, pid, status = 'idle', kind, name, cwd, startedAt: started = 0, statusUpdatedAt } = record
     const kept = sessions.get(id)
-    if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && kept.started >= started))) continue
+    if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && (kept.updated ?? kept.started) >= (statusUpdatedAt ?? started)))) continue
     const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
     const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
     sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(typeof statusUpdatedAt === 'number' && { updated: statusUpdatedAt }), thread: served(environ(pid)), ...store.turn(id) })
