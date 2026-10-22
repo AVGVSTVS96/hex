@@ -25,7 +25,7 @@ for try in 1 2 3 4 5; do
 done
 untrusted && echo "hex couldn't mark $here trusted in $config" >&2
 # Memory passes keep the wake current; a launch writes it only when there's none yet, and removes it once memory is off.
-(. "$hex/bin/settings"; [ -n "$settings_unread" ] || { [ -n "${MEMORY_DIR:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ]; } || "$hex/bin/wake")
+(. "$hex/bin/settings"; { [ -n "${MEMORY_DIR:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ]; } || wake)
 # Outside the hex folder, hex's settings come only through --settings.
 [ -n "${away:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 for arg; do
