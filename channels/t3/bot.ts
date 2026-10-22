@@ -65,7 +65,7 @@ mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 // it. A thread T3 deleted closes here too, as does one T3 never recorded, once T3 has had a few
 // minutes to record what hex kept (since it kept it, or since this hub started for one an older hub
 // kept). Records that have none of hex's threads aren't T3's records of them, so nothing closes.
-const RECORDING = Number(process.env.T3_RECORDING_MS ?? 5 * 60_000)
+const RECORDING = Number(process.env.T3_RECORDING_MS) || 5 * 60_000
 const started = Date.now()
 const kept = new Map<string, number>()
 let recorded: ReturnType<typeof appThreads> | null = null

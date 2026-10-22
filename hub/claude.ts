@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'child_process'
-import { closeSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'fs'
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
 import { sleep } from './clock.ts'
@@ -295,20 +295,14 @@ export function transcript(cwd: string, session: string) {
   return join(home(), 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'), `${session}.jsonl`)
 }
 
-// Whether any project folder has the session's conversation, or it can't be told: with no projects
-// folder at all, or one it can't read, Claude Code's config isn't where the hub looks.
+// Whether any project folder has the session's conversation, or it can't be told. Claude Code reads
+// the same folders as this user, so one it can't read holds nothing it could resume.
 export function saved(session: string) {
   const projects = join(home(), 'projects')
   try {
-    return readdirSync(projects).some(project => {
-      try {
-        return !!statSync(join(projects, project, `${session}.jsonl`))
-      } catch (error) {
-        return !['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code!)
-      }
-    })
-  } catch {
-    return true
+    return readdirSync(projects).some(project => existsSync(join(projects, project, `${session}.jsonl`)))
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT'
   }
 }
 

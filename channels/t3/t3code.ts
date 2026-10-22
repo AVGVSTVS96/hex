@@ -155,7 +155,8 @@ export function appThreads(): Map<string, { thread: string; title: string }> | u
 }
 
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
+let environment: string | undefined
 export function linkTo(thread: string) {
-  const environment = readFileSync(join(USERDATA, 'environment-id'), 'utf8').trim()
+  environment ??= readFileSync(join(USERDATA, 'environment-id'), 'utf8').trim()
   return `${process.env.T3_APP_SCHEME || 't3code'}://threads/${environment}/${encodeURIComponent(thread)}`
 }
