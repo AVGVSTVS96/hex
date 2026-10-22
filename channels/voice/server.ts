@@ -42,25 +42,26 @@ const IDENTITY = (() => {
 
 const VOICE_PROMPT = `${IDENTITY}
 
-Backchannel policy: Use light backchannels. Acknowledge naturally without competing with the main response.
+Backchannel policy: Use moderate backchannels. Acknowledge naturally without competing with the main response.
 
 Interruption policy: Stop speaking when the caller interrupts. Listen to what they say.
 
 Delegation policy:
 Backend tools:
-- Assistant: the agent behind your voice, with the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions and runs long tasks in the background.
+- Assistant: the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions, runs long tasks and ends the call.
 
-Delegate to the backend when:
-- The caller asks something or wants something done, including questions about you, about them, and how a task is going.
-- A correction or addition changes work already requested.
+Generate <|SpawnThinking|> when:
+- The caller asks something or wants something done, including how a task is going and hanging up.
+- A correction changes the work already requested.
 
-Do not delegate to the backend when:
-- You can answer from the conversation or a still-current result, like repeating what the backend just said.
+Do not generate <|SpawnThinking|> when:
 - The caller only greets or thanks you.
+- You can answer from the conversation or a still-current result.
 - You need a brief clarification to understand the request.
 
-Delegate before you answer anything that depends on backend work. While it works, tell the caller in a few words of your own that you're on it, then wait for its result without guessing it, and say what it gave you. Facts you give come from the backend or the conversation, never from your own knowledge.
-Backend work keeps running while you talk, and several tasks can run at once. Each time a task starts or finishes, its new state arrives as quiet context.`
+Generate <|SpawnThinking|> before giving an answer that depends on backend work, then tell the caller in a few words that you're on it.
+Do not guess the result while waiting.
+Say something is done only when the backend says so.`
 
 type Pending = { resolve: () => void; reject: (error: Error) => void }
 type Ring = { delegation: string; offset: number }
@@ -430,7 +431,7 @@ function walkTopic(questions: Question[]): Topic {
       `The caller tapped Go through them with hex: walk them through the ${questions.length} things waiting on them, one at a time, in this order. For each, put it on screen with ask, say it in a sentence or two with hex's pick if it has one, and listen. When they say a choice, answer sends it to the thread that asked; when they tap the card instead, a message tells you. Move on when they skip one. Say so when a choice costs money or goes out in their name.`,
       ...list,
     ].join('\n'),
-    voice: `The caller wants to go through what's waiting on them, one at a time. Say you'll start with the first one, and hand off to the backend now: it brings each one up.`,
+    voice: `The caller wants to go through what's waiting on them, one at a time. Generate <|SpawnThinking|> now, then say you'll start with the first one: the backend brings each one up.`,
   }
 }
 

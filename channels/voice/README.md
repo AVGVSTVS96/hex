@@ -63,8 +63,8 @@ other apps:
    | `hang_up` | `session.close`, once the voice stops talking | ending the call |
 
    Each tool returns once OpenAI acknowledges the update.
-5. The voice hands every question to Claude, status questions included, and
-   only says Claude's answers. Claude is a dispatcher with work in background
+5. The voice hands questions and requests to Claude, following OpenAI's
+   GPT-Live template, and says Claude's answers. Claude is a dispatcher with work in background
    subagents, so answering never stops running work; the board keeps the
    voice aware of it.
 6. When the call ends, Claude gets the last words and a "call ended" message,
