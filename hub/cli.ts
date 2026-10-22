@@ -1,6 +1,7 @@
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
+import { running, serving } from './running.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
 import { asked, open, type Row, type Status, type Task } from './store.ts'
@@ -18,6 +19,7 @@ const USAGE = `usage:
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
   hex questions [--thread <thread> | --all] [--json]
   hex threads [--json]
+  hex running [--json]
   hex message <key>
   hex profile [--all] [--json]
   hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--json]
@@ -185,6 +187,16 @@ try {
       const versions = flags.all ? store.profiles() : store.profiles().slice(0, 1)
       if (flags.json) console.log(JSON.stringify(flags.all ? versions : (versions[0] ?? null), null, 1))
       else console.log(versions.map(({ at, body }) => (flags.all ? `--- ${at}\n${body}\n` : body)).join('\n') || 'no profile yet')
+      break
+    }
+    case 'running': {
+      const threads = store.threads({ open: true })
+      const held = new Map(threads.flatMap(({ app, thread, session }) => (session ? [[session, `${app}:${thread}`] as [string, string]] : [])))
+      const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]))
+      const sessions = running()
+      const rows = [...sessions.values()].map(session => ({ ...session, thread: serving(session, sessions, held) }))
+      if (flags.json) console.log(JSON.stringify(rows, null, 1))
+      else console.log(rows.map(({ id, status, name, thread }) => `${status} ${id.slice(0, 8)} ${name ?? ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}`).join('\n') || 'nothing running')
       break
     }
     case 'message': {
