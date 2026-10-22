@@ -383,7 +383,7 @@ export function findThread(state: string, wanted: string): Thread | undefined {
   const all = open(state).threads({ open: true }).filter(({ app }) => app !== 'voice')
   const ways = [all.filter(({ app, thread }) => `${app}:${thread}` === wanted), all.filter(({ thread }) => thread === wanted), all.filter(({ name }) => name.toLowerCase() === lower)]
   const matches = ways.find(found => found.length) ?? []
-  if (matches.length > 1) throw new Error(`more than one hex thread goes by ${wanted}, in ${[...new Set(matches.map(({ app }) => app))].join(' and ')}: pass its id, from hex threads`)
+  if (matches.length > 1) throw new Error(`more than one hex thread goes by ${wanted}, in ${[...new Set(matches.map(({ app }) => app))].join(' and ')}: pass its app:key id, from hex threads --json`)
   const found = matches[0]
   return found && { app: found.app, id: found.thread, name: found.name, cwd: found.cwd, state }
 }
