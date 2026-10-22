@@ -69,6 +69,7 @@ mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 const RECORDING = Number(process.env.T3_RECORDING_MS) || 5 * 60_000
 const started = Date.now()
 const kept = new Map<string, number>()
+const closing = new Set<string>()
 let recorded: ReturnType<typeof appThreads> | null = null
 function link(thread: string) {
   if (recorded === null) {
@@ -89,7 +90,7 @@ function link(thread: string) {
     }
   }
   const opened = recorded?.get(thread)
-  return opened && !opened.deleted && linkTo(opened.thread)
+  return opened && !opened.deleted ? linkTo(opened.thread) : undefined
 }
 
 function mirror(records: ReturnType<typeof appThreads>) {
@@ -100,7 +101,11 @@ function mirror(records: ReturnType<typeof appThreads>) {
     if (record && !record.deleted) {
       kept.delete(thread)
       hub.rename(thread, record.title || hub.name(thread)!)
-    } else if ((record || !link) && !turns.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) void hub.retire(thread)
+    } else if ((record || !link) && !turns.has(thread) && !closing.has(thread) && Date.now() - (kept.get(thread) ?? started) > RECORDING) {
+      closing.add(thread)
+      kept.delete(thread)
+      void hub.retire(thread).finally(() => closing.delete(thread))
+    }
   }
 }
 
