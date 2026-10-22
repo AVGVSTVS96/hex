@@ -144,7 +144,7 @@ export function appThreads(): Map<string, { thread: string; title: string; delet
          from orchestration_v2_projection_provider_threads p
          join orchestration_v2_projection_threads t on t.thread_id = json_extract(p.payload_json, '$.appThreadId')
          where p.driver = 'acpRegistry'
-         order by p.updated_at`,
+         order by t.deleted_at is null, p.updated_at`,
       )
       .all()
     return new Map(rows.map(({ key, thread, title, deleted }) => [key, { thread, title, deleted: !!deleted }]))

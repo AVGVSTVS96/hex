@@ -64,8 +64,8 @@ mkdirSync(INBOX_DIR, { recursive: true, mode: 0o700 })
 // until read, undefined with none to go by. They give a thread its link and its name, T3's title for
 // it. A thread T3 deleted closes here too, as does one T3 never recorded (hex has no link for it),
 // once T3 has had a few minutes to record what hex kept: since it kept it, or since this hub started
-// for one an older hub kept. One T3 recorded and has no record of now stays, since T3's records may
-// be another install's.
+// for one an older hub kept. Records that have none of the threads hex has links for may be another
+// install's, so they close nothing, and neither does a thread with a link that they lack.
 const RECORDING = Number(process.env.T3_RECORDING_MS) || 5 * 60_000
 const started = Date.now()
 const kept = new Map<string, number>()
@@ -73,8 +73,13 @@ let recorded: ReturnType<typeof appThreads> | null = null
 function link(thread: string) {
   if (recorded === null) {
     queueMicrotask(() => {
-      mirror(recorded)
-      recorded = null
+      try {
+        mirror(recorded)
+      } catch (error) {
+        process.stderr.write(`t3: couldn't match hex's threads to T3's: ${error}\n`)
+      } finally {
+        recorded = null
+      }
     })
     try {
       recorded = appThreads()
@@ -84,12 +89,13 @@ function link(thread: string) {
     }
   }
   const opened = recorded?.get(thread)
-  return opened && linkTo(opened.thread)
+  return opened && !opened.deleted && linkTo(opened.thread)
 }
 
 function mirror(records: ReturnType<typeof appThreads>) {
-  if (!records) return
-  for (const { thread, link } of open(storeOf(STATE_DIR)).threads({ app: 't3', open: true })) {
+  const threads = open(storeOf(STATE_DIR)).threads({ app: 't3', open: true })
+  if (!records || !threads.some(({ thread, link }) => link && records.get(thread)?.deleted === false)) return
+  for (const { thread, link } of threads) {
     const record = records.get(thread)
     if (record && !record.deleted) {
       kept.delete(thread)
