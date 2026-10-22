@@ -176,16 +176,16 @@ const migrations: (string | ((store: Store) => void))[] = [
   alter table threads add column launched text;
   alter table threads add column fork text;
   alter table threads add column link text;`,
-  // Each app's threads.json, as its hub last wrote it, becomes that app's open threads: in a hex's
-  // state/<app>/, or in the app's own state folder outside a hex, named for the app. The file stays
-  // where it is, read by nothing newer, so an older hex rolled back to still has it.
+  // Each app's threads.json, as its hub last wrote it, becomes that app's open threads (a later step
+  // renames the file).
   ({ db, dir }: Store) => {
     const keep = db.query(
       `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
       on conflict (app, thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model, effort = excluded.effort, launched = excluded.launched, fork = excluded.fork`,
     )
     const text = (value: unknown) => (typeof value === 'string' ? value : null)
-    for (const [app, file] of [[basename(dir), join(dir, 'threads.json')], ...readdirSync(dir).map(app => [app, join(dir, app, 'threads.json')])] as const) {
+    for (const [app, folder] of apps(dir)) {
+      const file = join(folder, 'threads.json')
       if (!existsSync(file)) continue
       let saved: Record<string, any>
       try {
@@ -208,9 +208,73 @@ const migrations: (string | ((store: Store) => void))[] = [
     primary key (app, thread)
   );
   create table files (name text primary key, body text not null);`,
+  carryLedgers,
+  // What kept the moved files for a rollback goes, what a session was shown is kept with when (the
+  // ended ones, whose end cleared their rules, go now), and log/'s turns headed "t" become T3's.
+  `drop table files;
+  drop table shown;
+  delete from seen where session not in (select session from seen where kind = 'rules');
+  alter table seen add column at text not null default '1970-01-01T00:00:00.000Z' check (at ${UTC});
+  update seen set at = strftime('%Y-%m-%dT%H:%M:%fZ');
+  update messages set "from" = 't3', key = 't3' || substr(key, 2) where "from" = 't' and key not in (select message from words) and 't3' || substr(key, 2) not in (select key from messages);`,
 ]
 
+// Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
+const apps = (dir: string) => [[basename(dir), dir], ...readdirSync(dir).flatMap(app => (statSync(join(dir, app), { throwIfNoEntry: false })?.isDirectory() ? [[app, join(dir, app)]] : []))] as [string, string][]
+
+// A file hex kept something in before hex.db moves in once, by a step below, and is renamed, so
+// whatever still reads it fails loudly instead of reading something stale. A rollback brings back
+// code, not data. A step that failed after renaming reads the renamed file when it runs again.
+const moved = (path: string) => `${path}.moved-to-hex.db`
+const either = (path: string) => [path, moved(path)].find(each => existsSync(each))
+const rename = (path: string) => existsSync(path) && renameSync(path, moved(path))
+
+// Each app's pins and questions moved from its ledger.json: what it says beyond what hex.db last took
+// from it (the files table, while hex re-read it at each start): each pin it took away or moved to
+// another message, an edit to a pin hex.db still has, and each question it added. threads.json was
+// taken in by an earlier step, so it's only renamed.
+function carryLedgers(store: Store) {
+  for (const [app, folder] of apps(store.dir)) {
+    rename(join(folder, 'threads.json'))
+    const file = either(join(folder, 'ledger.json'))
+    if (!file) continue
+    const before = (store.db.query('select body from files where name = ?').get(`${app}/ledger.json`) as { body: string } | null)?.body ?? '{}'
+    const [book, was] = [() => readFileSync(file, 'utf8'), () => before].map(text => bookOf(text, file))
+    // One that can't be read stays where it is, for whoever looks into why.
+    if (!book) continue
+    const keep = (take: () => unknown, kept: unknown) => {
+      try {
+        take()
+      } catch (error) {
+        process.stderr.write(`hex.db left out ${JSON.stringify(kept)} from ${file}, which it refuses: ${error}\n`)
+      }
+    }
+    for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
+      const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)]
+      if (JSON.stringify(pin) === JSON.stringify(old)) continue
+      if (!pin) keep(() => store.unpinned(app, thread, old?.message), old)
+      else if (pin.message !== old?.message || store.pin(app, thread)?.message === old?.message) keep(() => store.pinned({ ...pin, app, thread }), pin)
+    }
+    const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
+    for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => store.ask({ app, ...question }), question)
+    rename(join(folder, 'ledger.json'))
+  }
+}
+
+type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
+
+function bookOf(text: () => string, file: string): Book | undefined {
+  try {
+    const book = JSON.parse(text()) ?? {}
+    const pinned = ([, pin]: [string, any]) => ['number', 'string'].includes(typeof pin?.message)
+    return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries<any>(book.pins).filter(pinned) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
+  } catch (error) {
+    process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`)
+  }
+}
+
 const now = () => new Date().toISOString()
+const SEEN = 2 * 24 * 60 * 60 * 1000
 
 // The profile and its history moved into hex.db from state/profile.md and profile.md.history, where
 // each version it replaced is a JSON line with when it was replaced: when the next was put in place.
@@ -219,11 +283,9 @@ const now = () => new Date().toISOString()
 // renamed ones when it runs again.
 function carryProfile(store: Store) {
   const [file, history] = ['profile.md', 'profile.md.history'].map(name => join(store.dir, name))
-  const moved = (path: string) => `${path}.moved-to-hex.db`
-  const from = (path: string) => [path, moved(path)].find(each => existsSync(each))
-  const current = from(file!)
+  const current = either(file!)
   if (!current || !readFileSync(current, 'utf8').trim()) return
-  const before = from(history!)
+  const before = either(history!)
   const when = (at: unknown) => (typeof at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at) ? at : statSync(before!).mtime.toISOString())
   const replaced = (before ? readFileSync(before, 'utf8').split('\n').filter(Boolean) : []).map(line => {
     try {
@@ -238,7 +300,7 @@ function carryProfile(store: Store) {
   const keep = store.db.query('insert into profiles (at, body) values (?, ?)')
   let last = ''
   for (const { at, body } of versions) if (body && body !== last) keep.run(at, (last = body))
-  for (const each of [file!, history!]) if (existsSync(each)) renameSync(each, moved(each))
+  for (const each of [file!, history!]) rename(each)
 }
 
 // state/hex.db, the records every hex process shares: the hub, each session's hooks, the hex
@@ -330,12 +392,6 @@ export class Store {
       const at = this.db.query('update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1')
       for (const [key, when] of times) at.run(key, when)
     })
-  }
-
-  // Buzz rows from before #69 that name their sender only by key became other, since the store can't
-  // know the owner's key; the Buzz hub, which does, hands back the owner's.
-  own(from: string, userId: string) {
-    this.write(() => this.db.query(`update messages set author = 'owner' where "from" = ? and author = 'other' and json_extract(meta, '$.user_id') = ?`).run(from, userId))
   }
 
   // A session took the message into its conversation. False when one already had, or it isn't kept.
@@ -663,25 +719,6 @@ export class Store {
     })
   }
 
-  // Runs take with what an older hex keeps in a file, under a name of its own, when the file says
-  // something else than when hex.db last took it in, with what it said then: the first time, and after
-  // an older hex (rolled back to) wrote it again. A copy, move or touch of the same words changes
-  // nothing, and words take can't read (it returns false) aren't kept as taken in.
-  takeIn(name: string, file: string, take: (now: string, before?: string) => boolean | void) {
-    let now: string
-    try {
-      now = readFileSync(file, 'utf8')
-    } catch {
-      return
-    }
-    this.write(() => {
-      const before = (this.db.query('select body from files where name = ?').get(name) as { body: string } | null)?.body
-      if (before === now) return
-      if (take(now, before) === false) return
-      this.db.query('insert into files (name, body) values (?, ?) on conflict (name) do update set body = excluded.body').run(name, now)
-    })
-  }
-
   pin(app: string, thread: string): Pin | null {
     const row = this.db.query('select * from pins where app = ? and thread = ?').get(app, thread) as StoredPin | null
     return row && toPin(row)
@@ -712,8 +749,13 @@ export class Store {
     return (this.db.query('select record from seen where session = ? and kind = ?').get(session, kind) as { record: string } | null)?.record ?? ''
   }
 
-  show(session: string, kind: string, record: string) {
-    this.write(() => this.db.query('insert into seen (session, kind, record) values (?, ?, ?) on conflict (session, kind) do update set record = excluded.record').run(session, kind, record))
+  // A tasks record nobody changed for SEEN goes, since a session's end leaves it (a resume still has
+  // the list): a session that's still there gets its whole list again. Rules records go at the end.
+  show(session: string, kind: string, record: string, at = now()) {
+    this.write(() => {
+      this.db.query('insert into seen (session, kind, record, at) values (?, ?, ?, ?) on conflict (session, kind) do update set record = excluded.record, at = excluded.at').run(session, kind, record, at)
+      this.db.query("delete from seen where kind <> 'rules' and at < ?").run(new Date(Date.parse(at) - SEEN).toISOString())
+    })
   }
 
   // The session's context lost what it was shown of a kind: a compaction, a clear, or for its rules, its end.
@@ -789,12 +831,13 @@ export class Store {
 
 const stores = new Map<string, Store>()
 
-// Where an app's hub keeps hex.db: the hex's own state/, or the app's state folder outside a hex.
-const hexState = process.env.HEX_DIR && join(process.env.HEX_DIR, 'state')
-export const storeDir = (stateDir: string) => hexState || stateDir
-
-// The state folder a hook or command reads: the one the hub names in HEX_STORE, or this hex's own.
-export const stateDir = () => process.env.HEX_STORE || join(import.meta.dir, '..', '..', 'state')
+// hex's folder, and the state folder hex.db is in. A hub's (own: its app's folder) is its hex's, or
+// outside a hex its own; it names it in HEX_STORE for its sessions, whose hooks and commands read it.
+export const hexDir = () => process.env.HEX_DIR || join(import.meta.dir, '..', '..')
+export function stateDir(own?: string) {
+  if (own) return process.env.HEX_DIR ? join(process.env.HEX_DIR, 'state') : own
+  return process.env.HEX_STORE || join(hexDir(), 'state')
+}
 
 // The store in dir (a hex's state/), one per process.
 export function open(dir: string): Store {

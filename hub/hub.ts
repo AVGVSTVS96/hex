@@ -8,7 +8,7 @@ import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { queue } from './observe.ts'
 import { schedule, zoneOf } from './schedule.ts'
-import { asked, isAuthor, open, replied, shown, spoken, storeDir as storeOf, type Author, type MessageId, type Row, type Store } from './store.ts'
+import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf, type Author, type MessageId, type Row, type Store } from './store.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
@@ -1065,7 +1065,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     deliver,
     sent,
     said: (key: string) => kept(store => store.latest(`${app}:${key}`), null),
-    own: (userId: string) => kept(store => store.own(app, userId), undefined),
     command: restart,
     configure,
     settings: (thread: string): Settings => ({ model: threads[thread]?.model, effort: threads[thread]?.effort }),

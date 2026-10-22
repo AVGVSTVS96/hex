@@ -1,9 +1,9 @@
 import { spawn } from 'child_process'
 import { closeSync, existsSync, openSync } from 'fs'
-import { join, resolve } from 'path'
+import { join } from 'path'
 import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
 import { zoneOf } from './schedule.ts'
-import { open, replied, shown, stateDir, type Row, type Store } from './store.ts'
+import { hexDir, open, replied, shown, stateDir, type Row, type Store } from './store.ts'
 
 // The owner's profile, which this agent keeps current after every turn in hex.db; bin/wake puts it in
 // front of the memory every session starts with. It never passes PROFILE.
@@ -22,7 +22,6 @@ const NEWEST = 40
 // How many of the thread's messages before the turn the pass reads, for what the turn answers.
 const BEFORE = 10
 const CALL = 5 * 60_000
-const hexDir = process.env.HEX_DIR ?? resolve(import.meta.dir, '../..')
 const MEMO = join(import.meta.dir, '..', 'vendor', 'memo')
 // An entry in state/observe.log, which a pass's errors go to: stamped with when it was written, its
 // further lines indented under it.
@@ -61,7 +60,7 @@ export async function observe(state: string, session: string, { ask = claude, me
     let wrong = ''
     let reasons = ''
     if (taken.length) {
-      const zone = zoneOf(hexDir) ?? Temporal.Now.timeZoneId()
+      const zone = zoneOf(hexDir()) ?? Temporal.Now.timeZoneId()
       const threads = store.names()
       const place = taken[0]?.to ?? thread
       const whose = (row: Row) => (row.meta?.unsent ? 'hex, in its terminal, which the owner does not see,' : replied(row) ? 'hex replied,' : row.author === 'prompt' ? "hex's words to the session," : `From ${row.meta?.user ?? row.from}, not the owner,`)
@@ -156,7 +155,7 @@ async function call(input: string, system: string, args: string[]) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
   const run = Bun.spawn(
     ['claude', '-p', '--safe-mode', '--model', MODEL, ...args, '--system-prompt', system, '--output-format', 'json', '--no-session-persistence'],
-    { cwd: hexDir, env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
+    { cwd: hexDir(), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
   )
   const [out, err, code] = await Promise.all([new Response(run.stdout).text(), new Response(run.stderr).text(), run.exited])
   const result = JSON.parse(out || '{}')

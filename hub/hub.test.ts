@@ -1673,7 +1673,7 @@ exec claude "$@"
   chmodSync(launcher, 0o755)
   process.env.TELEGRAM_BOT_TOKEN = 'secret'
   process.env.BUZZ_PRIVATE_KEY = 'secret'
-  process.env.HEX_DIR = 'somewhere'
+  process.env.HEX_DIR = join(dir, 'somewhere')
   try {
     start({ launcher })
     hub.open('chat:7', 'Desk anchors', 'go')

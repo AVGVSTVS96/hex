@@ -56,7 +56,7 @@ Every hex session shares this memory.
 
 When I state a lasting rule, work my intent into the line of `AGENTS.md` it belongs to. A note about something I said quotes my words and ends with my message's key, like `[telegram:-100123:3601]`; `.hex/bin/hex recall <regex>` shows my words under each note.
 
-`.hex/bin/hex log` prints every conversation from hex.db as markdown, or one thread's when you name it after `--` (`.hex/bin/hex log -- '<thread>'`; pipe it to `rg`); `log/`, where there is one, keeps older ones. Search them and memory before saying you don't know.
+`.hex/bin/hex log` prints every conversation from hex.db as markdown, or one thread's when you name it after `--` (`.hex/bin/hex log -- '<thread>'`; pipe it to `rg`), older ones included; `log/`, where there is one, still has the few hex.db left out. Search them and memory before saying you don't know.
 
 ## Chat
 

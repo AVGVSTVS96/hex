@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from 'bun'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
@@ -23,13 +23,10 @@ try {
     process.exit(0)
   }
   const now: Record<string, string> = Object.fromEntries(files().map(file => [file.path, file.text]))
-  // A session that started before hex kept this record in hex.db has it in a file until it ends.
-  const legacy = join(process.env.TMPDIR ?? tmpdir(), `hex-rules-${session_id}.json`)
   const kept = store.seen(session_id, 'rules')
-  const seen = kept || (existsSync(legacy) ? readFileSync(legacy, 'utf8') : '')
   let out = ''
-  if (hook_event_name !== 'SessionStart' && seen) {
-    const before: Record<string, string> = JSON.parse(seen)
+  if (hook_event_name !== 'SessionStart' && kept) {
+    const before: Record<string, string> = JSON.parse(kept)
     const changed = [...new Set([...Object.keys(before), ...Object.keys(now)])].filter(file => before[file] !== now[file])
     if (changed.length) {
       const scratch = mkdtempSync(join(tmpdir(), 'hex-rules-'))

@@ -287,7 +287,7 @@ function serve(token: string) {
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildMessagePolls, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.MessageContent, GatewayIntentBits.DirectMessages, GatewayIntentBits.DirectMessageReactions, GatewayIntentBits.DirectMessagePolls],
     partials: [Partials.Channel, Partials.Message, Partials.Reaction, Partials.User, Partials.Poll, Partials.PollAnswer],
   })
-  const ledger = new Ledger(join(STATE_DIR, 'ledger.json'), 'discord')
+  const ledger = new Ledger(STATE_DIR, 'discord')
 
   // A session talks in a thread, or in a DM, which is one conversation.
   async function threadChannel(thread: string): Promise<ThreadChannel | DMChannel> {
