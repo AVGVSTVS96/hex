@@ -209,7 +209,12 @@ function resume() {
     if (Date.parse(started) < since) break
     const latest = new Map(past(call).tasks.map(task => [task.id, task]))
     for (const task of latest.values()) {
-      const thread = task.state === 'running' && task.to && task.agent && findThread(HEX_STATE, task.agent)
+      let thread
+      try {
+        thread = task.state === 'running' && task.to && task.agent && findThread(HEX_STATE, task.agent)
+      } catch (error) {
+        process.stderr.write(`voice: ${call}'s task ${task.id} isn't followed again: ${error}\n`)
+      }
       if (thread) watch(call, task.id, thread, true)
     }
   }
