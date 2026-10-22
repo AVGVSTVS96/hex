@@ -637,15 +637,19 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       known.launched = launched
       save()
     }
-    // Claude Code can't resume a session whose conversation it no longer keeps.
-    if (known.session && !fresh(thread) && !existsSync(claude.transcript(cwdOf(thread), known.session))) {
-      const content = `[hub] This thread's session ${known.session} can't be resumed: Claude Code no longer has its conversation. You're a new session without it; say so when you reply.`
-      delete known.session
-      save()
-      deliver(thread, known.name, { content, author: 'prompt', meta: { user: 'hub' } })
-    }
     const source = fork ?? (known.session ? undefined : known.from)
-    const resume = source ? ['--resume', source, '--fork-session'] : known.session && !fresh(thread) ? ['--resume', known.session] : []
+    const continued = source ?? (fresh(thread) ? undefined : known.session)
+    // A session Claude Code no longer has the conversation of can't be resumed, so a new one starts
+    // and is told why, the note kept before the thread lets go of the old one.
+    const lost = continued && !claude.saved(continued)
+    if (lost) {
+      const body = `[hub] This thread's session ${continued} can't be resumed: Claude Code no longer has its conversation. You're a new session without it; say so when you reply.`
+      kept(store => store.deliver({ key: `hub:${thread}:lost:${continued}`, to: thread, from: 'hub', author: 'prompt', body, meta: { user: 'hub' } }), false)
+      if (continued === known.session) delete known.session
+      delete known.from
+      save()
+    }
+    const resume = lost ? [] : source ? ['--resume', source, '--fork-session'] : continued ? ['--resume', continued] : []
     try {
       watchJob(thread, await claude.start(launcher, ['--channels', channel, '--name', known.name, ...resume, ...launchArgs, '--settings', settingsOf(thread), ...(prompt ? [prompt] : [])], { cwd: known.cwd ?? hexDir, env: inherited }))
     } catch (error) {

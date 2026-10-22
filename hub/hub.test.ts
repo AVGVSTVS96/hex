@@ -262,8 +262,16 @@ test("a thread whose session Claude Code no longer has starts a new one, which h
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
   const { received } = await session('chat:7', '2c3d4e5f-0000-4000-8000-000000000000')
   await until(() => received.length === 2)
-  expect(received).toEqual([inbound(message), { type: 'inbound', content: `[hub] This thread's session ${SESSION} can't be resumed: Claude Code no longer has its conversation. You're a new session without it; say so when you reply.`, meta: { key: expect.stringMatching(/^telegram:/), user: 'hub' } }])
+  expect(received).toEqual([inbound(message), { type: 'inbound', content: `[hub] This thread's session ${SESSION} can't be resumed: Claude Code no longer has its conversation. You're a new session without it; say so when you reply.`, meta: { key: `hub:chat:7:lost:${SESSION}`, user: 'hub' } }])
   expect(failures).toEqual([])
+})
+
+test('a thread that continues a session Claude Code no longer has starts a new one instead of forking it', async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', from: SESSION } }, agents: [] })
+  hub.deliver('chat:7', 'Desk anchors', message)
+  expect(await launched()).not.toContain('--resume')
+  expect(registry()['chat:7']).toEqual({ name: 'Desk anchors' })
+  expect(open(dir).untaken('chat:7').map(row => row.key)).toEqual([expect.stringMatching(/^telegram:/), `hub:chat:7:lost:${SESSION}`])
 })
 
 test('a thread whose session is still running is never relaunched', async () => {
@@ -780,6 +788,7 @@ test('a thread opened with a prompt, or as a fork, whose start failed starts aga
   start()
   const starts = () => calls().filter(args => args[0] === '--bg')
   mkdirSync(join(dir, 'work'))
+  saved()
   hub.open('chat:8', 'OpenAI', 'find the latest model', join(dir, 'work'))
   hub.fork('chat:10', 'Copy', SESSION, 'carry on')
   await until(() => starts().length === 2)
@@ -1793,6 +1802,7 @@ test('an adopted thread clears the old job record, then resumes its session in i
 
 test('a fork resumes a copy of the session without checking agents or clearing its job record', async () => {
   start()
+  saved()
   hub.fork('chat:7', 'Desk anchors', SESSION, 'carry on')
   const args = await launched()
   const resume = args.indexOf('--resume')
@@ -2012,6 +2022,7 @@ test('a mirror asked on hub.sock opens there, by the thread\'s name', async () =
 test('a thread that follows a session forks it with its first message, then keeps the fork as its own', async () => {
   const FORKED = '0a1b2c3d-2222-4000-8000-000000000000'
   start({ agents: [] })
+  saved()
   hub.follow('chat:7', 'Desk anchors', SESSION)
   expect(registry()['chat:7']).toEqual({ name: 'Desk anchors', from: SESSION })
   hub.deliver('chat:7', 'Desk anchors', message)
