@@ -79,3 +79,11 @@ test("memory is fenced, so Claude Code reads no `@path` in it as an import", () 
   expect(text).toEndWith('You are awake.\n````\n')
 })
 
+
+test("a wake waits for the one holding hex.db's wake lease, and goes once it's let go or runs out", () => {
+  memo(['#0 2026-10-06 First note.\nYou are awake.\n'])
+  open(join(home, 'state')).lease('wake', 'another wake', 500)
+  const started = Date.now()
+  expect(body(wake()!)).toBe(LABEL + '#0 2026-10-06 First note.\nYou are awake.\n')
+  expect(Date.now() - started).toBeGreaterThanOrEqual(400)
+})

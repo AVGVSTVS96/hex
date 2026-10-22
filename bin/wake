@@ -6,8 +6,7 @@ import { open, stateDir } from '../hub/store.ts'
 // What a session knows as it starts and after a compaction: the owner's profile, which hex's memory
 // agent keeps current, then memory. It goes in state/wake/CLAUDE.md, which HEX.md imports, so Claude
 // Code loads it into every session in the hex folder. `hex init` writes the first, each memory pass
-// and update rewrites it, and a launch that finds none or memory off writes it. Each write is a
-// rename, so a session never reads half of one.
+// and update rewrites it, and a launch that finds none or memory off writes it.
 
 const memo = resolve(import.meta.dir, '../vendor/memo')
 const home = resolve(import.meta.dir, '../..')
@@ -36,7 +35,7 @@ function memory(env: Record<string, string | undefined>) {
 // A profile hex.db can't give drops out of the wake, not the memory with it.
 function mine() {
   try {
-    return open(stateDir()).profile()
+    return store.profile()
   } catch (error) {
     process.stderr.write(`hex couldn't read the profile: ${error}\n`)
     return ''
@@ -58,10 +57,9 @@ function write(text: string) {
   renameSync(`${wake}.${process.pid}`, wake)
 }
 
-// With memory off there's no wake file. A wake that failed, or stopped to ask for a compression,
-// keeps the last one, which still holds the memory, and says so.
-if (!process.env.MEMORY_DIR) rmSync(wake, { force: true })
-else if (runs()) {
+// A wake that failed, or stopped to ask for a compression, keeps the last one, which still holds
+// the memory, and says so.
+function rewrite() {
   const { text, why } = memory(process.env)
   if (text) {
     const profile = mine()
@@ -72,5 +70,20 @@ else if (runs()) {
   } else if (existsSync(wake) && readFileSync(wake, 'utf8').includes(`\n\n`)) {
     const kept = readFileSync(wake, 'utf8')
     write(`${lead} It's the last one hex could load: \`.hex/vendor/memo wake\` has since said \`${why.replace(/`/g, "'")}\`, so newer memories may be missing; \`.hex/vendor/memo recall <regex>\` finds them.${kept.slice(kept.indexOf('\n\n'))}`)
+  }
+}
+
+// With memory off there's no wake file. Otherwise one wake runs at a time, under hex.db's lease, so
+// a slower one can't put older memory over a newer one; one still going after 3 minutes is stuck,
+// and the next goes ahead.
+const store = open(stateDir())
+if (!process.env.MEMORY_DIR) rmSync(wake, { force: true })
+else if (runs()) {
+  const holder = crypto.randomUUID()
+  for (const until = Date.now() + 3 * 60_000; !store.lease('wake', holder, 3 * 60_000) && Date.now() < until; ) Bun.sleepSync(100)
+  try {
+    rewrite()
+  } finally {
+    store.release('wake', holder)
   }
 }
