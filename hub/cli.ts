@@ -115,30 +115,26 @@ function keyOf(id: string) {
   return split > 0 && store.threads({ app: id.slice(0, split) }).some(({ thread }) => thread === id.slice(split + 1)) ? id.slice(split + 1) : id
 }
 
-// A line once it's listening, then one each time hex.bell grows, as every commit to hex.db makes it:
-// an app reads what it shows again at each. While a line waits for the app, it stands for the changes
-// after it, and the bell is checked again once it's written; writing one once the app is gone ends the
-// watch. Each ring is also checked again 5ms on, since Bun's fs.watch on Linux drops a change within
-// about a millisecond of the last one (https://github.com/oven-sh/bun/issues/45954).
+// A line once it's listening, then one within 50ms of each time hex.bell grows, as every commit to
+// hex.db makes it: an app reads what it shows again at each. A burst of commits gets one line, and
+// the bell is checked again 50ms after each line, so a change Bun's fs.watch drops right after the
+// last one (https://github.com/oven-sh/bun/issues/45954) still gets its own. Once the app is gone,
+// the next line ends the watch.
 function follow(bell: string): Promise<never> {
   mkdirSync(dirname(bell), { recursive: true })
   appendFileSync(bell, '')
   let size = -1
-  let queued = false
-  const ring = () => {
+  let timer: Timer | undefined
+  const check = () => {
+    timer = undefined
     const now = statSync(bell).size
-    if (now === size || queued) return
+    if (now === size) return
     size = now
-    queued = true
-    process.stdout.write(`${new Date().toISOString()}\n`, error => {
-      if (error) process.exit((error as NodeJS.ErrnoException).code === 'EPIPE' ? 0 : 1)
-      queued = false
-      ring()
-    })
-    setTimeout(ring, 5)
+    process.stdout.write(`${new Date().toISOString()}\n`, error => error && process.exit((error as NodeJS.ErrnoException).code === 'EPIPE' ? 0 : 1))
+    timer = setTimeout(check, 50)
   }
-  watch(bell, ring)
-  ring()
+  watch(bell, () => (timer ??= setTimeout(check, 50)))
+  check()
   return new Promise(() => {})
 }
 

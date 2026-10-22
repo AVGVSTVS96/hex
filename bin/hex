@@ -55,6 +55,8 @@ case "${1:-}" in
     export HEX_HOOKS="$hex/plugin/hooks/hooks.json"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     echo $$ > "$pidfile"
+    # Apps following hex with `hex watch` read it again as it starts, as after a restore of hex.db.
+    printf . >> "$home/state/hex.bell"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
     first= second= third=
