@@ -1,41 +1,23 @@
 #!/usr/bin/env bun
-// quiet: returns once no hex session has been busy for a few seconds, as Claude Code's own session
-// files say, so an update lands between turns instead of under one. hex starts every session in
-// the background, so those are the ones it waits on. An argument <session id>@<ms> names the session
+// quiet: returns once no hex session has been mid-turn for a few seconds, as hub/running.ts sees
+// them, so an update lands between turns instead of under one. hex starts every session in the
+// background, so those are the ones it waits on. An argument <session id>@<ms> names the session
 // that asked for this wait at that time: it's left out for the busy turn it asked from, which only
 // ends after the wait, and counts again from its next turn on.
-import { mkdirSync, readdirSync, readFileSync, watch } from "node:fs"
-import { homedir } from "node:os"
+import { mkdirSync, watch } from "node:fs"
 import { join } from "node:path"
+import { CLAUDE, running, type Session } from "../hub/running.ts"
 
-const sessions = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "sessions")
+const sessions = join(CLAUDE, "sessions")
 const settle = Number(process.env.HEX_QUIET_MS ?? 10_000)
 const [asker, asked] = (process.argv[2] ?? "").split("@")
-const asking = (session: Session) => session.sessionId === asker && (session.statusUpdatedAt ?? Infinity) <= Number(asked)
+const asking = (session: Session) => session.id === asker && session.at <= Number(asked)
 mkdirSync(sessions, { recursive: true })
 
-type Session = { pid: number; name?: string; sessionId: string; kind?: string; status?: string; statusUpdatedAt?: number }
-
-function read(file: string): Session | undefined {
-  try {
-    return JSON.parse(readFileSync(join(sessions, file), "utf8"))
-  } catch {}
-}
-
-function alive(pid: number) {
-  try {
-    return process.kill(pid, 0)
-  } catch {
-    return false
-  }
-}
-
 function busy() {
-  return readdirSync(sessions)
-    .filter((file) => file.endsWith(".json"))
-    .map(read)
-    .filter((session) => session?.kind === "bg" && session.status === "busy" && !asking(session) && alive(session.pid))
-    .map((session) => session!.name ?? session!.sessionId)
+  return [...running().values()]
+    .filter((session) => session.kind === "bg" && session.status === "busy" && !asking(session))
+    .map((session) => session.name ?? session.id)
     .sort()
     .join(", ")
 }

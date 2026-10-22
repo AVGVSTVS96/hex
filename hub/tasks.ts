@@ -30,7 +30,7 @@ export function entry(task: Task, named: Record<string, string>, done = true) {
 
 // A question as a session reads it: where it was asked, its first line, and its buttons.
 export function waiting(question: Question, named: Record<string, string> = {}): string {
-  return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
+  return `- ${question.app} · ${named[`${question.app}:${question.thread}`] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)} [${question.options.join(' | ')}]`
 }
 
 // What a session should have before it acts: the questions still waiting on the owner, then the open

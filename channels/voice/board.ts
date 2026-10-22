@@ -47,7 +47,7 @@ export type Run = {
   link?: string
 }
 
-type Thread = { app: string; id: string; name: string; session?: string; cwd?: string }
+type Thread = { app: string; id: string; name: string; session?: string; cwd?: string; link?: string }
 type Job = {
   state?: string
   detail?: string
@@ -73,7 +73,7 @@ const FINE = 60 * 60_000
 const GRAIN = 50
 const SAVE = 2000
 const ORDER: State[] = ['needs', 'working', 'done', 'failed', 'idle']
-const RECORDS = new Set(['guild.json', 'bot.json', 'channels.json', 'relays.jsonl'])
+const RECORDS = new Set(['relays.jsonl'])
 const STATES: Record<string, State> = { working: 'working', blocked: 'needs', done: 'done', failed: 'failed' }
 const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progress: 'running', pending: 'pending' }
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
@@ -83,7 +83,7 @@ const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'faile
 
 // Every hex thread as a run, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
-// running, and hex.db's open threads for their names and `links.ts` for where its app opens them.
+// running, hex.db's open threads for their names and where their apps open them, and `links.ts` for T3 Code's side.
 // A session another one started (a topic's `claude -p` build), or a job a thread owns (bin/job),
 // counts toward it as one of its agents; a running session nothing holds is a run of its own while it works. So does each T3 Code
 // thread a hex T3 thread handed work to, which shows only under it. It wakes when hex.db's threads or one of those files
@@ -219,7 +219,7 @@ export class Board extends Changes {
     return open(this.state)
       .threads({ open: true })
       .filter(({ app }) => APPS[app])
-      .map(({ app, thread, name, session, cwd }) => ({ app, id: thread, name, session, cwd }))
+      .map(({ app, thread, name, session, cwd, link }) => ({ app, id: thread, name, session, cwd, ...(link && { link }) }))
   }
 
   // Each thread's session, as the <app>:<key> of the thread it serves.
@@ -303,7 +303,7 @@ export class Board extends Changes {
     const began = Math.min(...started.map(one => one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? session!.at : Infinity)
     const since =
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
-    const link = this.links.of(thread.app, thread.id)
+    const { link } = thread
     const key = keyOf(thread)
     const steps = state === 'working' ? this.steps(key) : []
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []

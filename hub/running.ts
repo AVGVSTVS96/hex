@@ -4,10 +4,11 @@ import { join } from 'path'
 
 // A Claude Code session whose process runs, from the record Claude Code keeps of it while it lives
 // (sessions/<pid>.json): its status (busy, shell, idle) and kind (bg for a background session), and
-// a background session's job state (working, blocked on the owner, done) from jobs/<id>/state.json.
+// a background session's job state (working, blocked on the owner, done), status line and what it
+// needs, from jobs/<id>/state.json.
 // owner: the thread a bin/job job runs for, from its HEX_OWNER as <app>:<key>; parent, for any
 // other: the nearest running session above it in the process tree.
-export type Session = { id: string; pid: number; status: string; state?: string; kind?: string; name?: string; cwd?: string; started: number; at: number; owner?: string; parent?: string }
+export type Session = { id: string; pid: number; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; at: number; owner?: string; parent?: string }
 
 export const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 const BUSY = new Set(['busy', 'shell'])
@@ -23,8 +24,9 @@ export function running(claude = CLAUDE): Map<string, Session> {
     const record = readJson(join(dir, name))
     if (!record?.sessionId || !alive(record.pid) || busy(sessions.get(record.sessionId))) continue
     const { sessionId: id, pid, status = 'idle', kind, name: title, cwd, startedAt = 0 } = record
-    const state = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json'))?.state
-    sessions.set(id, { id, pid, status, ...(typeof state === 'string' && { state }), kind, name: title, cwd, started: startedAt, at: record.statusUpdatedAt ?? startedAt })
+    const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
+    const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
+    sessions.set(id, { id, pid, status, ...job, kind, name: title, cwd, started: startedAt, at: record.statusUpdatedAt ?? startedAt })
   }
   const byPid = new Map([...sessions.values()].map(session => [session.pid, session.id]))
   const parents = processParents()

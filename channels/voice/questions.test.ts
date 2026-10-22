@@ -37,7 +37,7 @@ beforeEach(async () => {
   state = mkdtempSync(join(tmpdir(), 'questions-'))
   mkdirSync(join(state, 'telegram'))
   mkdirSync(join(state, 'voice'))
-  open(state).keepThreads('telegram', { [GROUP]: { name: 'hex' }, [DESK]: { name: 'desk' } })
+  open(state).keepThreads('telegram', { [GROUP]: { name: 'hex', link: 'https://t.me/c/1234/1' }, [DESK]: { name: 'desk', link: 'https://t.me/c/1234/5' } })
   lines = []
   checks = []
   hub = createServer(socket => {
@@ -235,11 +235,9 @@ test("a closed thread's open question stays a check's ref, so answering the ques
 test('a question names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers', () => {
   const DM = '777'
   const THREAD = '1560277464146644992'
-  open(state).keepThreads('telegram', { [GROUP]: { name: 'hex' }, [DESK]: { name: 'desk' }, [DM]: { name: 'DM' } })
-  writeFileSync(join(state, 'telegram', 'bot.json'), JSON.stringify({ username: 'hexbot' }))
+  open(state).keepThreads('telegram', { [GROUP]: { name: 'hex', link: 'https://t.me/c/1234/1' }, [DESK]: { name: 'desk', link: 'https://t.me/c/1234/5' }, [DM]: { name: 'DM', link: 'https://t.me/hexbot' } })
   mkdirSync(join(state, 'discord'))
-  writeFileSync(join(state, 'discord', 'guild.json'), JSON.stringify({ id: '42' }))
-  open(state).keepThreads('discord', { [THREAD]: { name: 'fix hex NOW' } })
+  open(state).keepThreads('discord', { [THREAD]: { name: 'fix hex NOW', link: `https://discord.com/channels/42/${THREAD}` } })
   const calls = join(state, 'calls')
   mkdirSync(calls)
   writeFileSync(join(calls, 'live_1.json'), JSON.stringify({ id: 'live_1', title: 'Apple charges', started: '2026-10-13T18:00:00.000Z' }))
