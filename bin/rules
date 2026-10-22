@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
-import { open } from '../hub/store.ts'
+import { open, stateDir } from '../hub/store.ts'
 import { files } from './instructions'
 
 // Claude Code reads its instruction files only when a session starts, resumes or
@@ -17,7 +17,7 @@ const home = resolve(import.meta.dir, '../..')
 const { session_id, hook_event_name } = JSON.parse(await Bun.stdin.text())
 
 try {
-  const store = open(process.env.HEX_STORE ?? join(home, 'state'))
+  const store = open(stateDir())
   if (hook_event_name === 'SessionEnd') {
     store.unshow(session_id, 'rules')
     process.exit(0)

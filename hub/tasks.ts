@@ -1,5 +1,5 @@
 import { clip, fit, ROOM } from './fit.ts'
-import { open, type Question, type Task } from './store.ts'
+import { open, stateDir, type Question, type Task } from './store.ts'
 
 function facts(task: Task, named: Record<string, string>) {
   const facts = [task.status, named[task.owner] ?? task.owner, task.project && `project ${task.project}`, task.mergedInto && `merged into ${task.mergedInto}`]
@@ -81,30 +81,29 @@ export function changes(before: Record<string, string>, now: Record<string, stri
 // The UserPromptSubmit and SessionStart hook: a session gets the whole list the first time and once a
 // compaction or a clear took it away, and after that only what changed.
 if (import.meta.main) {
-  const { HEX_STORE, HEX_THREAD, HEX_MAIN } = process.env
-  if (HEX_STORE) {
-    try {
-      const { session_id, source } = JSON.parse((await Bun.stdin.text()) || '{}') as { session_id?: string; source?: string }
-      if (session_id) {
-        const store = open(HEX_STORE)
-        if (source === 'compact' || source === 'clear') store.unshow(session_id, 'tasks')
-        const thread = HEX_MAIN || !HEX_THREAD ? undefined : HEX_THREAD
-        const { text, seen } = pending(HEX_STORE, thread)
-        // Diffs since the last whole list add up in sent; once they'd pass its length, the whole list
-        // goes again, so a session that lost a push catches up.
-        const whole = text || 'No open tasks or questions waiting on me now.'
-        const last = store.seen(session_id, 'tasks')
-        const before = last.startsWith('{') ? (JSON.parse(last) as { seen: Record<string, string>; sent: number }) : null
-        const diff = before && changes(before.seen, seen)
-        const out = diff && before.sent + diff.length < whole.length ? diff : whole
-        const record = Object.keys(seen).length ? JSON.stringify({ seen, sent: out === diff ? before!.sent + diff.length : 0 }) : ''
-        if (before ? diff : record !== last) {
-          store.show(session_id, 'tasks', record)
-          console.log(out)
-        }
+  const { HEX_THREAD, HEX_MAIN, HEX_OWNER } = process.env
+  try {
+    const { session_id, source } = JSON.parse((await Bun.stdin.text()) || '{}') as { session_id?: string; source?: string }
+    if (session_id) {
+      const store = open(stateDir())
+      if (source === 'compact' || source === 'clear') store.unshow(session_id, 'tasks')
+      // A job's session works for the thread that started it (HEX_OWNER is <app>:<thread>).
+      const thread = HEX_MAIN ? undefined : HEX_THREAD || (HEX_OWNER?.includes(':') ? HEX_OWNER.slice(HEX_OWNER.indexOf(':') + 1) : undefined)
+      const { text, seen } = pending(stateDir(), thread)
+      // Diffs since the last whole list add up in sent; once they'd pass its length, the whole list
+      // goes again, so a session that lost a push catches up.
+      const whole = text || 'No open tasks or questions waiting on me now.'
+      const last = store.seen(session_id, 'tasks')
+      const before = last.startsWith('{') ? (JSON.parse(last) as { seen: Record<string, string>; sent: number }) : null
+      const diff = before && changes(before.seen, seen)
+      const out = diff && before.sent + diff.length < whole.length ? diff : whole
+      const record = Object.keys(seen).length ? JSON.stringify({ seen, sent: out === diff ? before!.sent + diff.length : 0 }) : ''
+      if (before ? diff : record !== last) {
+        store.show(session_id, 'tasks', record)
+        console.log(out)
       }
-    } catch (error) {
-      console.error(`hex couldn't read its tasks: ${error}`)
     }
+  } catch (error) {
+    console.error(`hex couldn't read its tasks: ${error}`)
   }
 }

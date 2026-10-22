@@ -1,22 +1,8 @@
 #!/usr/bin/env bun
-import { readFileSync } from 'fs'
-import { homedir } from 'os'
-import { dirname, join, relative, resolve } from 'path'
+import { join, relative, resolve } from 'path'
+import { loaded } from '../hub/loaded.ts'
 
-// AGENTS.md as Claude Code loads it: the file, then each `@path` it imports
-// (relative to the importing file, `~/` for home), five levels deep at most.
-export function loaded(file: string, seen = new Set<string>(), depth = 0, read = (path: string) => readFileSync(path, 'utf8')): [string, string][] {
-  if (seen.has(file) || depth > 5) return []
-  seen.add(file)
-  let text
-  try {
-    text = read(file)
-  } catch {
-    return []
-  }
-  const imports = [...text.matchAll(/(?:^|\s)@(\S+)/g)].map(([, target]) => target!.startsWith('~/') ? join(homedir(), target!.slice(2)) : resolve(dirname(file), target!))
-  return [[file, text], ...imports.flatMap(target => loaded(target, seen, depth + 1, read))]
-}
+export { loaded }
 
 if (import.meta.main) {
   const home = resolve(process.argv[2] ?? join(import.meta.dir, '../..'))

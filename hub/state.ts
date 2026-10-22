@@ -1,8 +1,7 @@
 import { connect } from 'net'
-import { join } from 'path'
-import { open } from './store.ts'
+import { open, stateDir } from './store.ts'
 
-const { HEX_HUB, HEX_THREAD, HEX_STORE, HEX_OWNER } = process.env
+const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
 const busy = process.argv[2] === 'busy'
 
 // Claude Code counts a session with these running as still working, and shells or monitors as not.
@@ -28,14 +27,14 @@ const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined
 // or else through the hub. One that was taken already is a second copy (the hub sends again what it
 // can't tell a session took), so Claude Code drops it.
 let untold = key
-if (key && HEX_STORE) {
+if (key) {
   try {
-    const store = open(HEX_STORE)
-    if (!store.take(key, session_id) && store.message(key)) {
+    const store = open(stateDir())
+    if (store.take(key, session_id)) untold = undefined
+    else if (store.message(key)) {
       console.error(`hex gave this session ${key} already`)
       process.exit(2)
     }
-    untold = undefined
   } catch {}
 }
 
@@ -46,7 +45,7 @@ if (key && HEX_STORE) {
 const said = busy && typeof prompt === 'string' && !fromChat && !/^(\/|<(local-command|command-|system-reminder|task-notification|(agent|cross-session|teammate)-message[\s>]))/.test(prompt) ? prompt : undefined
 if (said && session_id) {
   try {
-    const store = open(HEX_STORE ?? join(import.meta.dir, '..', '..', 'state'))
+    const store = open(stateDir())
     const to = HEX_THREAD ?? session_id
     const author = HEX_OWNER && !HEX_THREAD && !store.said(to, 1).length ? 'prompt' : 'owner'
     const started = author === 'owner' && store.said(to, 20).some(row => row.from === 'hub' && row.body.trim() === said.trim())

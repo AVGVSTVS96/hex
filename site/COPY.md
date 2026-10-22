@@ -127,7 +127,7 @@ Line: Every topic and thread gets its own Claude Code session, all on one hub bu
 - Arrows between neighbouring apps: hand off
 - hex hub · one bot, many sessions
 - Claude Code × 3 · ramen, clips, #dev › ci
-- SOUL.md · AGENTS.md · memory/ · log/
+- SOUL.md · AGENTS.md · memory/ · state/
 - Frame: your box
 
 ### Features
