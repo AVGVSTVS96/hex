@@ -8,4 +8,6 @@ for settings in "$home/.claude/settings.json" "$home/.claude/settings.local.json
   [ -f "$settings" ] || continue
   [ -s "$settings" ] && exports=$(jq -r '.env // {} | to_entries[] | "export \(.key)=\(.value | tostring | @sh)"' "$settings") && eval "$exports" || settings_unread=1
 done
-:
+# For a caller that has set $hex: rewrites the wake as these settings have it, except when one
+# couldn't be read, since memory would look off and the wake be removed.
+wake() { [ -n "$settings_unread" ] || "$hex/bin/wake"; }
