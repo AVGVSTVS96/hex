@@ -162,7 +162,7 @@ const topicNames = new Map<string, string>()
 
 const ledger = new Ledger(STATE_DIR, 'telegram')
 
-const NOT_A_POST = 'a status post is a text message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that'
+const NOT_A_POST = "a status post is a text message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note with format: 'markdown', then pin that"
 
 // How a status post shows here; the ledger decides when it changes (Ledger.rewrite). Only a
 // supergroup's messages have links.
