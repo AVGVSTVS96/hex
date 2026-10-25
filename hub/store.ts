@@ -225,10 +225,22 @@ const migrations: (string | ((store: Store) => void))[] = [
   `delete from threads where exists (select 1 from threads other where other.thread = threads.thread and (other.open, other.rowid) > (threads.open, threads.rowid));
   create unique index if not exists threads_key on threads (thread);`,
   ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
-  // Every pin is its thread's status post, which hex rewrites. One written by hand stays as written
-  // in its chat, out of hex.db until a session pins it again as its status post.
-  `delete from pins where note is null;`,
+  // Every pin is its thread's status post. One written by hand keeps its words above its own
+  // 🔴 🟡 🟢 lines as the note, under which hex writes those lines; one whose words hex never knew
+  // is left out, so nothing rewrites it.
+  (store: Store) => {
+    store.db.run("delete from pins where note is null and text = ''")
+    const pins = store.db.query('select app, thread, text from pins where note is null').all() as { app: string; thread: string; text: string }[]
+    for (const { app, thread, text } of pins) store.db.query('update pins set note = ? where app = ? and thread = ?').run(above(text), app, thread)
+  },
 ]
+
+// A hand-written status post's words above its first 🔴 🟡 🟢 line.
+function above(text: string) {
+  const lines = text.split('\n')
+  const first = lines.findIndex(line => /[🔴🟡🟢]/u.test(line))
+  return (first < 0 ? lines : lines.slice(0, first)).join('\n').trim()
+}
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
 const apps = (dir: string) => [[basename(dir), dir], ...readdirSync(dir).flatMap(app => (statSync(join(dir, app), { throwIfNoEntry: false })?.isDirectory() ? [[app, join(dir, app)]] : []))] as [string, string][]

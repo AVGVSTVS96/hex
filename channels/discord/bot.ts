@@ -698,7 +698,7 @@ function serve(token: string) {
           deleting.delete(msg.id)
           throw err
         })
-        ledger.deleted(thread, msg.id)
+        await ledger.deleted(thread, msg.id)
         return 'deleted'
       }
       case 'pin': {
@@ -707,7 +707,7 @@ function serve(token: string) {
         if (!args.unpin && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll || headed(words))) throw new Error('a status post is a message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that')
         if (args.unpin) {
           await msg.unpin()
-          ledger.unpinned(thread, msg.id)
+          await ledger.unpinned(thread, msg.id)
         } else await ledger.post(thread, msg.id, words, post, () => msg.pin(), async id => (await message(ch, String(id))).unpin())
         return args.unpin ? 'unpinned' : 'pinned'
       }
@@ -904,7 +904,7 @@ function serve(token: string) {
     if (deleting.delete(msg.id)) return
     const ch = await servedThread(msg)
     if (!ch) return
-    ledger.deleted(ch.id, msg.id)
+    void ledger.deleted(ch.id, msg.id)
     hub.deliver(ch.id, nameOf(ch), {
       author: 'other',
       content: '(deleted a message)',
@@ -1154,7 +1154,7 @@ function serve(token: string) {
 
   client.on('threadDelete', thread => {
     process.stderr.write(`discord hub: thread ${thread.id} was deleted, forgetting it\n`)
-    ledger.forget(thread.id)
+    void ledger.forget(thread.id)
     void hub.retire(thread.id)
   })
 

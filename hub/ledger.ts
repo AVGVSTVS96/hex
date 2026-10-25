@@ -131,21 +131,18 @@ export class Ledger {
     this.store.reworded(this.app, thread, message, text)
   }
 
-  unpinned(thread: string, message: MessageId) {
-    this.store.unpinned(this.app, thread, message)
+  // A pin goes in its turn, after any change to the thread's post still running.
+  unpinned(thread: string, message?: MessageId): Promise<void> {
+    return this.turn(thread, async () => this.store.unpinned(this.app, thread, message))
   }
 
-  deleted(thread: string, message: MessageId) {
-    this.store.write(() => {
-      this.store.unask(this.app, thread, message)
-      this.store.unpinned(this.app, thread, message)
-    })
+  deleted(thread: string, message: MessageId): Promise<void> {
+    this.store.unask(this.app, thread, message)
+    return this.unpinned(thread, message)
   }
 
-  forget(thread: string) {
-    this.store.write(() => {
-      this.store.unask(this.app, thread)
-      this.store.unpinned(this.app, thread)
-    })
+  forget(thread: string): Promise<void> {
+    this.store.unask(this.app, thread)
+    return this.unpinned(thread)
   }
 }

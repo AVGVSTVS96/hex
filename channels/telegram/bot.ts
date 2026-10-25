@@ -435,18 +435,19 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
     case 'delete_message': {
       const id = Number(args.message_id)
       await bot.api.deleteMessage(chat_id, id)
-      ledger.deleted(thread, id)
+      await ledger.deleted(thread, id)
       return `deleted (id: ${id})`
     }
     case 'pin': {
       const id = Number(args.message_id)
       if (args.unpin) {
         await bot.api.unpinChatMessage(chat_id, id)
-        ledger.unpinned(thread, id)
+        await ledger.unpinned(thread, id)
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
-        if (sent?.author !== 'hex' || sent.to !== thread || sent.meta?.format !== 'markdown' || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body)) throw new Error(NOT_A_POST)
-        await ledger.post(thread, id, sent.body, post, () => bot.api.pinChatMessage(chat_id, id), message => bot.api.unpinChatMessage(chat_id, Number(message)))
+        const current = Number(ledger.pin(thread)?.message) === id
+        if (!current && (sent?.author !== 'hex' || sent.to !== thread || sent.meta?.format !== 'markdown' || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body))) throw new Error(NOT_A_POST)
+        await ledger.post(thread, id, sent?.body ?? '', post, () => bot.api.pinChatMessage(chat_id, id), message => bot.api.unpinChatMessage(chat_id, Number(message)))
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }

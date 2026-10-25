@@ -18,8 +18,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all (a pin written by hand stays only in its chat), and the file is renamed", () => {
-  const pin = { message: 9, text: 'Status: shipping', at: '2026-10-18T09:00:00.000Z' }
+test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all (a pin written by hand keeps its words above its own 🔴 🟡 🟢 lines as its note), and the file is renamed", () => {
+  const pin = { message: 9, text: '📌 **desk**\nShipping today\n\n🔴 **Blocked on you**\n- old', at: '2026-10-18T09:00:00.000Z' }
   const post = { message: '12', text: 'Site: example.com\n\nmore', note: 'Site: example.com', at: '2026-10-18T09:30:00.000Z' }
   writeFileSync(
     file,
@@ -38,11 +38,11 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.byPoll('p-42')!.answer).toMatchObject({ label: 'B', via: 'telegram' })
   expect(ledger.find('-100:7', 43)).toBeUndefined()
   expect(ledger.find('-100:7', 44)).toBeUndefined()
-  expect(ledger.pin('-100:7')).toBeUndefined()
+  expect(ledger.pin('-100:7')).toEqual({ app: 'telegram', thread: '-100:7', ...pin, note: '📌 **desk**\nShipping today' })
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', ...post })
   expect(existsSync(file)).toBe(false)
   expect(readFileSync(`${file}.moved-to-hex.db`, 'utf8')).toContain('Deploy now?')
-  expect(open(dir).pins()).toHaveLength(1)
+  expect(open(dir).pins()).toHaveLength(2)
 })
 
 test('a hex.db that took a ledger in at each start brings in only what an older hex changed in it since, then renames it', () => {
@@ -56,6 +56,7 @@ test('a hex.db that took a ledger in at each start brings in only what an older 
   writeFileSync(file, JSON.stringify({ pins: { '-100:6': { message: 5, text: 'pinned there', at: '2026-10-20T09:00:00.000Z' }, '-100:8': { message: 12, text: 'edited there', at: '2026-10-20T09:00:00.000Z' } } }))
   const after = new Store(dir)
   expect(after.pins().map(({ thread, message, text }) => ({ thread, message, text }))).toEqual([
+    { thread: '-100:6', message: 5, text: 'pinned there' },
     { thread: '-100:8', message: 30, text: 'pinned again here' },
     { thread: '-100:9', message: 20, text: 'pinned after the move' },
   ])
@@ -69,7 +70,7 @@ test("a ledger.json that can't be read stays where it is", () => {
   expect(existsSync(file)).toBe(true)
 })
 
-test('a question stays open through an edit and leaves the waiting list only when answered or settled', () => {
+test('a question stays open through an edit and leaves the waiting list only when answered or settled', async () => {
   const ledger = new Ledger(dir, 'telegram')
   const store = open(dir)
   ledger.ask('-100:7', 41, 'Deploy now?', ['Deploy', 'Wait'])
@@ -82,7 +83,7 @@ test('a question stays open through an edit and leaves the waiting list only whe
   expect(ledger.find('-100:7', 41)).toMatchObject({ answer: { label: 'Deploy', via: 'app' } })
   expect(ledger.find('-100:7', 41)!.settled).toBeUndefined()
   open(dir).pinned({ app: 'telegram', thread: '-100:7', message: 9, text: 'Status: starting', note: 'Status: starting' })
-  ledger.forget('-100:7')
+  await ledger.forget('-100:7')
   expect(ledger.questions).toEqual([])
   expect(ledger.pin('-100:7')).toBeUndefined()
 })
