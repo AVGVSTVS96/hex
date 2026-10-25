@@ -302,7 +302,7 @@ function serve(token: string) {
   // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
-    // An archived thread's messages can't be edited; its post catches up when it's back (threadUpdate).
+    // An archived thread's messages can't be edited; its post catches up at the first change after it's back.
     edit: async (thread, id, text) => {
       const ch = await threadChannel(thread)
       if (ch.isThread() && ch.archived) return false
@@ -671,7 +671,7 @@ function serve(token: string) {
         if (pinned?.message === args.message_id && args.text !== undefined) {
           if (headed(args.text as string)) throw new Error("write only the status post's note: hex adds its 🔴 🟡 🟢 lines")
           if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
-          await ledger.rewrite(thread, post, tappable(args.text as string))
+          await ledger.rewrite(thread, post, tappable(args.text as string), pinned.message)
           said(thread, undefined, tappable(args.text as string), { edited: 'true', message_id: String(pinned.message) })
           return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
         }
@@ -708,7 +708,7 @@ function serve(token: string) {
         if (args.unpin) {
           await msg.unpin()
           ledger.unpinned(thread, msg.id)
-        } else await ledger.post(thread, msg.id, words, post, () => msg.pin())
+        } else await ledger.post(thread, msg.id, words, post, () => msg.pin(), () => msg.unpin())
         return args.unpin ? 'unpinned' : 'pinned'
       }
       case 'poll': {
@@ -1150,7 +1150,6 @@ function serve(token: string) {
 
   client.on('threadUpdate', (before, after) => {
     if (before.name !== after.name) hub.rename(after.id, after.name)
-    if (before.archived && !after.archived) ledger.rewrite(after.id, post).catch(err => process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`))
   })
 
   client.on('threadDelete', thread => {

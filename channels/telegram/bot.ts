@@ -404,7 +404,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       if (Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
         if (file || text == null) throw new Error("a status post is text: send the file in its own message")
         if (headed(text)) throw new Error("write only the status post's note: hex adds its 🔴 🟡 🟢 lines")
-        await ledger.rewrite(thread, post, text)
+        await ledger.rewrite(thread, post, text, id)
         said(thread, undefined, text, { edited: 'true', message_id: String(id) })
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
@@ -446,7 +446,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
         if (sent?.author !== 'hex' || sent.to !== thread || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body)) throw new Error(NOT_A_POST)
-        await ledger.post(thread, id, sent.body, post, () => bot.api.pinChatMessage(chat_id, id))
+        await ledger.post(thread, id, sent.body, post, () => bot.api.pinChatMessage(chat_id, id), () => bot.api.unpinChatMessage(chat_id, id))
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }

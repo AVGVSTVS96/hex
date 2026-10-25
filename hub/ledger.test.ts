@@ -92,36 +92,35 @@ test("a pinned message becomes the thread's status post, rewritten from hex.db u
   const done: unknown[] = []
   const post = { room: 4096, edit: async (thread: string, message: unknown, text: string) => void done.push(['edit', message, text]), link: () => undefined }
   const pin = (message: number) => async () => void done.push(['pin', message])
+  const unpin = (message: number) => async () => void done.push(['unpin', message])
   ledger.ask('-100:8', 10, 'Ship it?', ['Yes', 'No'])
-  await ledger.post('-100:8', 12, 'Site: example.com', post, pin(12))
-  const [[, message, text], pinned] = done as [[string, unknown, string], unknown]
-  expect(message).toBe(12)
+  await ledger.post('-100:8', 12, 'Site: example.com', post, pin(12), unpin(12))
+  const [pinned, [, message, text]] = done as [unknown, [string, unknown, string]]
   expect(pinned).toEqual(['pin', 12])
+  expect(message).toBe(12)
   expect(text).toStartWith('Site: example.com\n\n**🔴 Blocked on you**\n- Ship it?')
   expect(ledger.pin('-100:8')).toMatchObject({ message: 12, text, note: 'Site: example.com' })
   await ledger.rewrite('-100:8', post)
   expect(done).toHaveLength(2)
 
-  await ledger.rewrite('-100:8', post, 'Site: example.org')
+  await ledger.rewrite('-100:8', post, 'Site: example.org', 12)
   expect(new Ledger(dir, 'telegram').pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
-  await ledger.post('-100:8', 12, 'Site: example.org\n\nwhat the post said', post, pin(12))
+  await expect(ledger.rewrite('-100:8', post, 'Site: elsewhere', 99)).rejects.toThrow('no longer the status post')
+  await ledger.post('-100:8', 12, 'Site: example.org\n\nwhat the post said', post, pin(12), unpin(12))
   expect(ledger.pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
-  expect(done).toHaveLength(4)
+  expect(done.slice(-1)).toEqual([['pin', 12]])
 
   const refused = { ...post, edit: async () => Promise.reject(new Error('there is no text in the message to edit')) }
-  await expect(ledger.post('-100:8', 13, 'A photo', refused, pin(13))).rejects.toThrow('no text')
-  expect(ledger.pin('-100:8')).toMatchObject({ message: 12 })
-  expect(done).not.toContainEqual(['pin', 13])
-
-  const unpinnable = async () => Promise.reject(new Error('not enough rights to pin a message'))
-  await expect(ledger.post('-100:8', 14, 'Another post', post, unpinnable)).rejects.toThrow('rights')
-  expect(done.slice(-2)).toEqual([['edit', 14, expect.stringContaining('**🟢 Done')], ['edit', 14, 'Another post']])
+  await expect(ledger.post('-100:8', 13, 'A photo', refused, pin(13), unpin(13))).rejects.toThrow('no text')
+  expect(done.slice(-2)).toEqual([['pin', 13], ['unpin', 13]])
   expect(ledger.pin('-100:8')).toMatchObject({ message: 12 })
 
   const closed = { ...post, edit: async () => false }
-  await ledger.rewrite('-100:8', closed, 'Site: closed')
-  expect(ledger.pin('-100:8')).toMatchObject({ note: 'Site: closed', text: ledger.pin('-100:8')!.text })
-  expect(ledger.pin('-100:8')!.text).toStartWith('Site: example.org')
+  const before = ledger.pin('-100:8')!
+  ledger.ask('-100:8', 15, 'Rename it?', ['Yes', 'No'])
+  await ledger.rewrite('-100:8', closed)
+  expect(ledger.pin('-100:8')).toEqual(before)
+  await expect(ledger.rewrite('-100:8', closed, 'Site: closed', 12)).rejects.toThrow('closed')
 
   const slow = {
     ...post,

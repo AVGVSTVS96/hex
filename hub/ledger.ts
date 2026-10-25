@@ -13,6 +13,8 @@ export type Post = {
   ready?: (thread: string) => Promise<unknown>
 }
 
+const CLOSED = "the thread is closed, so its status post can't change now"
+
 // One app's questions and each thread's pinned post, which hex.db keeps (store.ts) so every reader
 // sees the same ones. The client that sends and edits the messages keeps them.
 export class Ledger {
@@ -36,37 +38,43 @@ export class Ledger {
   }
 
   // Makes the message the thread's status post, its words the note (pinning the post again keeps
-  // its note). It's rewritten before it's pinned, and gets its words back if the pin fails, so a
-  // message the app won't edit or pin stays as it was.
-  post(thread: string, message: MessageId, words: string, post: Post, pin: () => Promise<unknown>): Promise<void> {
+  // its note). An edit the app refuses leaves the message as it was, and unpinned again.
+  post(thread: string, message: MessageId, words: string, post: Post, pin: () => Promise<unknown>, unpin: () => Promise<unknown>): Promise<void> {
     return this.turn(thread, async () => {
       const was = this.pin(thread)
       const same = String(was?.message) === String(message) ? was : undefined
       const note = same?.note ?? words
       const text = await this.render(thread, note, post)
-      if (text !== same?.text && (await post.edit(thread, message, text)) === false) throw new Error("the thread is closed, so its post can't change now")
-      await pin().catch(async error => {
-        if (!same) await post.edit(thread, message, words).catch(() => {})
+      await pin()
+      try {
+        if (text !== same?.text && (await post.edit(thread, message, text)) === false) throw new Error(CLOSED)
+      } catch (error) {
+        if (!same) await unpin().catch(() => {})
         throw error
-      })
+      }
       this.store.pinned({ app: this.app, thread, message, text, note })
     })
   }
 
-  // Rewrites the thread's status post if what it should say changed: a new note, or its questions
-  // and tasks in hex.db. A pin made while the app was editing stands.
-  rewrite(thread: string, post: Post, note?: string): Promise<void> {
+  // Rewrites the thread's status post if what it should say changed: a new note for the post that
+  // message is, or its questions and tasks in hex.db. A closed thread's post waits for the first
+  // change after it opens again, and a pin made while the app was editing stands.
+  rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
     return this.turn(thread, async () => {
       const pin = this.pin(thread)
+      if (message !== undefined && String(pin?.message) !== String(message)) throw new Error('that message is no longer the status post')
       if (!pin) return
       const said = note ?? pin.note
       const text = await this.render(thread, said, post)
       if (text === pin.text && said === pin.note) return
-      const shown = text === pin.text || (await post.edit(thread, pin.message, text)) !== false
+      if (text !== pin.text && (await post.edit(thread, pin.message, text)) === false) {
+        if (note !== undefined) throw new Error(CLOSED)
+        return
+      }
       this.store.write(() => {
         const still = this.pin(thread)
         if (still?.message !== pin.message || still.note !== pin.note) return
-        this.store.pinned({ app: this.app, thread, message: pin.message, text: shown ? text : pin.text, note: said })
+        this.store.pinned({ app: this.app, thread, message: pin.message, text, note: said })
       })
     })
   }
