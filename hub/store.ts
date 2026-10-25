@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
+import { above } from './fit.ts'
 
 // One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
 // it. from: the app it was said in. author: who said it, set once by whatever kept it: the owner,
@@ -46,10 +47,9 @@ export type Question = {
 // the session a new thread forks from at its first start, and where its app opens it.
 export type Thread = { app: string; thread: string; name: string; open: boolean; session?: string; cwd?: string; model?: string; effort?: string; launched?: string; fork?: string; link?: string }
 export type Kept = Omit<Thread, 'app' | 'thread' | 'open'>
-// A thread's pinned post in its app, as last written. A pin with a note is the thread's status post:
-// hex writes it as the note over the thread's questions and tasks (status.ts).
-export type Pin = { app: string; thread: string; message: MessageId; text: string; at: string; note?: string }
-type StoredPin = Omit<Pin, 'note'> & { note: string | null }
+// A thread's pinned post in its app, as last written: its status post, which hex writes as the
+// session's note over the thread's questions and tasks (status.ts).
+export type Pin = { app: string; thread: string; message: MessageId; text: string; at: string; note: string }
 export type NewQuestion = Omit<Question, 'at'> & { at?: string }
 type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
 type StoredTask = { n: number; title: string; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
@@ -226,6 +226,20 @@ const migrations: (string | ((store: Store) => void))[] = [
   `delete from threads where exists (select 1 from threads other where other.thread = threads.thread and (other.open, other.rowid) > (threads.open, threads.rowid));
   create unique index if not exists threads_key on threads (thread);`,
   ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
+  // Every pin is its thread's status post. One written by hand keeps its words above its own
+  // 🔴 🟡 🟢 lines as the note, under which hex writes those lines. One hex can't rewrite is left
+  // out: its words unknown, a question, or a message hex.db says someone else wrote (Telegram keys
+  // a message by chat and id, Discord by id); one it can't tell drops out at its first refused edit.
+  (store: Store) => {
+    const pins = store.db.query('select app, thread, message, text from pins where note is null').all() as { app: string; thread: string; message: MessageId; text: string }[]
+    for (const { app, thread, message, text } of pins) {
+      const key = `${app}:${app === 'telegram' ? `${thread.split(':')[0]}:` : ''}${message}`
+      const author = store.message(key)?.author
+      const kept = text !== '' && !store.question(app, thread, message) && (author === undefined || author === 'hex')
+      if (kept) store.db.query('update pins set note = ? where app = ? and thread = ?').run(above(text), app, thread)
+      else store.db.query('delete from pins where app = ? and thread = ?').run(app, thread)
+    }
+  },
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -758,14 +772,12 @@ export class Store {
   }
 
   pin(app: string, thread: string): Pin | null {
-    const row = this.db.query('select * from pins where app = ? and thread = ?').get(app, thread) as StoredPin | null
-    return row && toPin(row)
+    return this.db.query('select * from pins where app = ? and thread = ?').get(app, thread) as Pin | null
   }
 
   // Every thread's pin, or one app's or one thread's.
   pins({ app, thread }: { app?: string; thread?: string } = {}): Pin[] {
-    const rows = this.db.query('select * from pins where (?1 is null or app = ?1) and (?2 is null or thread = ?2) order by app, thread').all(app ?? null, thread ?? null) as StoredPin[]
-    return rows.map(toPin)
+    return this.db.query('select * from pins where (?1 is null or app = ?1) and (?2 is null or thread = ?2) order by app, thread').all(app ?? null, thread ?? null) as Pin[]
   }
 
   // The thread's pin is now this message; at comes only with one an older hex kept elsewhere.
@@ -914,10 +926,6 @@ function number(id: string): number {
   const n = Number(id.replace(/^t-/, ''))
   if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`)
   return n
-}
-
-function toPin({ note, ...pin }: StoredPin): Pin {
-  return { ...pin, ...(note !== null && { note }) }
 }
 
 function toQuestion(row: StoredQuestion): Question {

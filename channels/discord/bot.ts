@@ -49,7 +49,7 @@ import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSy
 import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
-import { Ledger, type MessageId, type Question } from '../../hub/ledger.ts'
+import { Ledger, type MessageId, type Post, type Question } from '../../hub/ledger.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
 
@@ -59,6 +59,7 @@ const GUILD_FILE = join(STATE_DIR, 'guild.json')
 const CURSOR_FILE = join(STATE_DIR, 'cursor.json')
 const ENV_FILE = join(STATE_DIR, '.env')
 const INBOX_DIR = join(STATE_DIR, 'inbox')
+const MAX_CHUNK_LIMIT = 2000
 
 try {
   chmodSync(ENV_FILE, 0o600)
@@ -103,7 +104,6 @@ function loadAccess(): Access {
   }
 }
 
-const MAX_CHUNK_LIMIT = 2000
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 const READ = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory]
 
@@ -298,9 +298,49 @@ function serve(token: string) {
 
   const nameOf = (ch: ThreadChannel | DMChannel) => ch.isThread() ? ch.name : 'DM'
 
-  // Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
-  async function editPost(thread: string, id: MessageId, text: string) {
-    await (await message(await threadChannel(thread), String(id))).edit({ content: text })
+  // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
+  const post: Post = {
+    room: MAX_CHUNK_LIMIT,
+    send: async (thread, text) => {
+      const sent = await (await threadChannel(thread)).send({ content: text, flags: MessageFlags.SuppressEmbeds })
+      said(thread, sent.id, text)
+      return sent.id
+    },
+    pin: async (thread, id) => (await message(await threadChannel(thread), String(id))).pin(),
+    // A message that's gone (10008) is unpinned already.
+    unpin: async (thread, id) => {
+      try {
+        await (await message(await threadChannel(thread), String(id))).unpin()
+      } catch (err) {
+        if ((err as { code?: number }).code !== 10008) throw err
+      }
+    },
+    // An archived thread's messages can't be edited (50083, or archived as far as the bot knows):
+    // its post catches up when it's back. One that's someone else's (50005) or gone (10008) never will be.
+    edit: async (thread, id, text) => {
+      const ch = await threadChannel(thread)
+      if (ch.isThread() && ch.archived) return false
+      try {
+        await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
+      } catch (err) {
+        const { code } = err as { code?: number }
+        if (code === 50083) return false
+        if (code === 50005 || code === 10008) return null
+        throw err
+      }
+    },
+    link: (thread, id) => {
+      const at = shown(thread)
+      return at && `${at}/${id}`
+    },
+    ready: threadChannel,
+  }
+
+  // Where Discord shows a thread the bot has seen.
+  function shown(thread: string) {
+    const channel = client.channels.cache.get(thread)
+    if (channel?.isDMBased()) return `https://discord.com/channels/@me/${thread}`
+    if (channel && 'guildId' in channel) return `https://discord.com/channels/${channel.guildId}/${thread}`
   }
 
   function inThread(ch: ThreadChannel | DMChannel): ThreadChannel {
@@ -595,6 +635,7 @@ function serve(token: string) {
     if (tool === 'close_thread' && (await client.channels.fetch(thread).then(() => false, err => err?.code === RESTJSONErrorCodes.UnknownChannel))) {
       const name = hub.name(thread) ?? thread
       void hub.retire(thread)
+      void ledger.forget(thread)
       return `forgot "${name}": its Discord thread no longer exists`
     }
     const ch = await threadChannel(thread)
@@ -649,10 +690,10 @@ function serve(token: string) {
       }
       case 'edit_message': {
         const pinned = ledger.pin(thread)
-        if (pinned?.note !== undefined && pinned.message === args.message_id && args.text !== undefined) {
-          if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
-          await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost, tappable(args.text as string))
-          if (args.settled) await settleQuestion(thread, pinned.message, '✓ Settled')
+        if (pinned?.message === args.message_id && args.text !== undefined) {
+          if (args.files) throw new Error('a status post is text: send the file in its own message')
+          await ledger.rewrite(thread, post, tappable(args.text as string), pinned.message)
+          said(thread, undefined, tappable(args.text as string), { edited: 'true', message_id: String(pinned.message) })
           return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
         }
         const msg = await message(ch, args.message_id as string)
@@ -678,20 +719,16 @@ function serve(token: string) {
           deleting.delete(msg.id)
           throw err
         })
-        ledger.deleted(thread, msg.id)
+        await ledger.deleted(thread, msg.id)
         return 'deleted'
       }
       case 'pin': {
-        const msg = await message(ch, args.message_id as string)
-        await (args.unpin ? msg.unpin() : msg.pin())
-        if (args.unpin) ledger.unpinned(thread, msg.id)
-        else {
-          const pinned = ledger.pin(thread)
-          const kept = pinned?.message === msg.id ? pinned.note : undefined
-          ledger.pinned(thread, msg.id, msg.content, args.status ? (kept ?? msg.content) : undefined)
-          if (args.status) await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost)
+        if (args.unpin) {
+          const was = await ledger.unpin(thread, post, args.message_id as string | undefined)
+          return was === undefined ? 'this thread has no status post' : `unpinned the status post (id: ${was})`
         }
-        return args.unpin ? 'unpinned' : 'pinned'
+        if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or unpin: true")
+        return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
       case 'poll': {
         const sent = await ch.send({
@@ -748,11 +785,7 @@ function serve(token: string) {
     stateDir: STATE_DIR,
     channel: 'plugin:discord@hex',
     server,
-    link: thread => {
-      const channel = client.channels.cache.get(thread)
-      if (channel?.isDMBased()) return `https://discord.com/channels/@me/${thread}`
-      if (channel && 'guildId' in channel) return `https://discord.com/channels/${channel.guildId}/${thread}`
-    },
+    link: shown,
     call,
     state: settle,
     fresh: thread => dms.has(thread),
@@ -890,7 +923,7 @@ function serve(token: string) {
     if (deleting.delete(msg.id)) return
     const ch = await servedThread(msg)
     if (!ch) return
-    ledger.deleted(ch.id, msg.id)
+    void ledger.deleted(ch.id, msg.id)
     hub.deliver(ch.id, nameOf(ch), {
       author: 'other',
       content: '(deleted a message)',
@@ -1136,11 +1169,12 @@ function serve(token: string) {
 
   client.on('threadUpdate', (before, after) => {
     if (before.name !== after.name) hub.rename(after.id, after.name)
+    if (before.archived && !after.archived) ledger.rewrite(after.id, post).catch(err => process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`))
   })
 
   client.on('threadDelete', thread => {
     process.stderr.write(`discord hub: thread ${thread.id} was deleted, forgetting it\n`)
-    ledger.forget(thread.id)
+    void ledger.forget(thread.id)
     void hub.retire(thread.id)
   })
 
@@ -1154,7 +1188,7 @@ function serve(token: string) {
     if (id) writeFileSync(GUILD_FILE, JSON.stringify({ id }) + '\n')
     hub.save()
     void c.application?.commands.set(COMMANDS).catch(failure('registering slash commands'))
-    ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
+    ledger.keep(post, (thread, err) => process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
   })
 
   // discord.js reconnects a session it has, but not a first login that fails, as when the

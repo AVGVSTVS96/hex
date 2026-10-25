@@ -92,15 +92,15 @@ export const server: ChannelServer = {
     },
     {
       name: 'pin',
-      description: 'Pin a message in this thread, or unpin it.',
+      description: "Post this thread's status post: hex sends the note (what the project is, its links, where it stands, in markdown) with its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines under it, kept current from the thread's waiting questions and tasks, and pins it in place of the last one. edit_message on the post changes the note. unpin: true unpins it.",
       inputSchema: {
         type: 'object',
         properties: {
-          message_id: { type: 'string' },
+          note: { type: 'string', description: "the status post's note, in markdown" },
+          message_id: { type: 'string', description: 'with unpin: a message to unpin other than the status post' },
           unpin: { type: 'boolean' },
-          status: { type: 'boolean', description: "true to make it this thread's status post: hex keeps its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines current from the thread's waiting questions and its tasks, under the message's own text as the note. Write only the note (what the project is, its links, where it stands); edit_message on the post changes the note." },
         },
-        required: ['message_id'],
+        required: [],
       },
     },
     {

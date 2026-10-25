@@ -428,43 +428,37 @@ test('a poll answered in the app closes, and its vote reaches the thread', async
   expect((await inbound(line => line.meta.poll_message_id === String(id) && line.meta.answered_in)).meta).toMatchObject({ vote: 'B', answered_in: 'on a call', user: 'hex call' })
 })
 
-test('a pinned post keeps its latest text in the ledger', async () => {
-  const id = Number((await call('reply', { text: 'Status: starting' })).text.match(/id: (\d+)/)[1])
-  await call('pin', { message_id: String(id) })
-  expect(ledger().pins[DESK]).toMatchObject({ message: id, text: 'Status: starting' })
-  await call('edit_message', { message_id: String(id), text: 'Status: shipped' })
-  expect(ledger().pins[DESK]).toMatchObject({ message: id, text: 'Status: shipped' })
-})
-
-test('a message edited before it is pinned or forwarded goes with its new text', async () => {
+test('a message edited before it is forwarded goes with its new text', async () => {
   const id = Number((await call('reply', { text: 'Status: drafting' })).text.match(/id: (\d+)/)[1])
   await call('edit_message', { message_id: String(id), text: 'Status: live' })
-  await call('pin', { message_id: String(id) })
-  expect(ledger().pins[DESK]).toMatchObject({ message: id, text: 'Status: live' })
   const forwarded = Number((await call('forward', { message_id: String(id), thread: 'notes' })).text.match(/id: (\d+)/)[1])
   expect(open(state).message(`telegram:${FORUM}:${forwarded}`)?.body).toBe('Status: live')
 })
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
-  const id = Number((await call('reply', { text: 'Site: example.com' })).text.match(/id: (\d+)/)[1])
-  await call('pin', { message_id: String(id), status: true })
-  const edits = () => calls.filter(c => c.method === 'editMessageText' && c.payload.message_id === id).map(c => c.payload.rich_message.markdown as string)
-  await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n🔴 **Blocked on you**'))
+  const id = Number((await call('pin', { note: 'Site: example.com' })).text.match(/id: (\d+)/)[1])
+  const sent = await called('sendRichMessage', p => p.rich_message.markdown.startsWith('Site: example.com'))
+  expect(sent.rich_message.markdown).toStartWith('Site: example.com\n\n**🔴 Blocked on you')
+  expect(await called('pinChatMessage', p => p.message_id === id)).toBeTruthy()
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.com' })
 
+  const edits = () => calls.filter(c => c.method === 'editMessageText' && c.payload.message_id === id).map(c => c.payload.rich_message.markdown as string)
   await call('reply', { text: 'Rename the site?', buttons: ['Yes', 'No'] })
-  await until(() => edits().at(-1)?.includes('. Rename the site? [Yes | No]'))
+  await until(() => /\n- \[Rename the site\?\]\(https:\/\/t\.me\/c\/\d+\/\d+\/\d+\)/.test(edits().at(-1) ?? ''))
 
   const count = edits().length
   expect((await call('edit_message', { message_id: String(id), text: 'Site: example.org' })).text).toStartWith("edited the status post's note")
   expect(edits()).toHaveLength(count + 1)
-  expect(edits().at(-1)).toStartWith('Site: example.org\n\n🔴 **Blocked on you**')
-  expect(edits().at(-1)).toContain('Rename the site? [Yes | No]')
-  expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
-
-  await call('pin', { message_id: String(id), status: true })
+  expect(edits().at(-1)).toStartWith('Site: example.org\n\n**🔴 Blocked on you**')
+  expect(edits().at(-1)).toContain('[Rename the site?]')
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
   expect((await call('edit_message', { message_id: String(id), text: 'Site', file: join(state, 'access.json') })).error).toBe('a status post is text: send the file in its own message')
+
+  const next = Number((await call('pin', { note: 'Site: v2' })).text.match(/id: (\d+)/)[1])
+  expect(await called('unpinChatMessage', p => p.message_id === id)).toBeTruthy()
+  expect(ledger().pins[DESK]).toMatchObject({ message: next, note: 'Site: v2' })
+  expect((await call('pin', { unpin: true })).text).toBe(`unpinned the status post (id: ${next})`)
+  expect(ledger().pins[DESK]).toBeUndefined()
 })
 
 test("a thread's link is where Telegram opens it: a topic, General, or for a DM, the bot", () => {

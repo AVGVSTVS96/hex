@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { basename, join, extname, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, EFFORTS, MODELS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
-import { Ledger, type MessageId } from '../../hub/ledger.ts'
+import { Ledger, type Post } from '../../hub/ledger.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -161,9 +161,38 @@ const topicNames = new Map<string, string>()
 
 const ledger = new Ledger(STATE_DIR, 'telegram')
 
-// Puts a status post's new words in place; the ledger decides when (Ledger.rewrite).
-async function editPost(thread: string, message: MessageId, text: string) {
-  await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) })
+// How a status post shows here; the ledger decides when it changes (Ledger.rewrite). Only a
+// supergroup's messages have links.
+const post: Post = {
+  room: MAX_CHUNK_LIMIT,
+  send: async (thread, text) => {
+    const { chat_id, extra } = target(thread)
+    const sent = await bot.api.sendRichMessage(chat_id, { markdown: keepLines(text) }, { ...extra, link_preview_options: { is_disabled: true } })
+    said(thread, sent.message_id, text)
+    return sent.message_id
+  },
+  pin: (thread, message) => bot.api.pinChatMessage(target(thread).chat_id, Number(message)),
+  // A message that's gone is unpinned already.
+  unpin: async (thread, message) => {
+    await bot.api.unpinChatMessage(target(thread).chat_id, Number(message)).catch(err => {
+      if (!/message to unpin not found|message not found/.test(String(err))) throw err
+    })
+  },
+  // Waits out Telegram's rate limit. A message hex may not edit, one that's gone, or a chat the
+  // bot left never will be edited.
+  edit: async (thread, message, text) => {
+    try {
+      await paced(() => bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } }))
+    } catch (err) {
+      if (/message is not modified/.test(String(err))) return
+      if (/message can't be edited|message to edit not found|no text in the message|bot was kicked|chat not found/.test(String(err))) return null
+      throw err
+    }
+  },
+  link: (thread, message) => {
+    const [chat, topic] = thread.split(':')
+    return chat!.startsWith('-100') ? `https://t.me/c/${[chat!.slice(4), topic, message].filter(Boolean).join('/')}` : undefined
+  },
 }
 
 // What hex posts in a thread is kept in hex.db as its own words, under Telegram's id for the message.
@@ -370,7 +399,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         const sent = photos[i]
           ? await bot.api.sendPhoto(chat_id, input, opts)
           : await bot.api.sendDocument(chat_id, input, opts)
-        said(thread, sent.message_id, captioned ? caption : `(file: ${basename(files[i]!)})`)
+        said(thread, sent.message_id, captioned ? caption : `(file: ${basename(files[i]!)})`, { file: basename(files[i]!) })
         sentIds.push(sent.message_id)
         if (buttons.length && captioned) asked = sent.message_id
       }
@@ -388,11 +417,10 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const id = Number(args.message_id)
       const text = args.text != null ? tappable(args.text as string) : undefined
       const file = args.file as string | undefined
-      const pinned = ledger.pin(thread)
-      if (pinned?.note !== undefined && Number(pinned.message) === id && text != null) {
-        if (file) throw new Error("a status post is text: send the file in its own message")
-        await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost, text)
-        if (args.settled) await settleQuestion(thread, id, '✓ Settled')
+      if (Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
+        if (file || text == null) throw new Error("a status post is text: send the file in its own message")
+        await ledger.rewrite(thread, post, text, id)
+        said(thread, undefined, text, { edited: 'true', message_id: String(id) })
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
       const parseMode = args.format === 'markdownv2' ? { parse_mode: 'MarkdownV2' as const } : {}
@@ -422,23 +450,16 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
     case 'delete_message': {
       const id = Number(args.message_id)
       await bot.api.deleteMessage(chat_id, id)
-      ledger.deleted(thread, id)
+      await ledger.deleted(thread, id)
       return `deleted (id: ${id})`
     }
     case 'pin': {
-      const id = Number(args.message_id)
       if (args.unpin) {
-        await bot.api.unpinChatMessage(chat_id, id)
-        ledger.unpinned(thread, id)
-      } else {
-        await bot.api.pinChatMessage(chat_id, id)
-        const text = hub.said(`${chat_id}:${id}`)?.body
-        const pinned = ledger.pin(thread)
-        const kept = pinned && Number(pinned.message) === id ? pinned.note : undefined
-        ledger.pinned(thread, id, text, args.status ? (kept ?? text ?? '') : undefined)
-        if (args.status) await ledger.rewrite(thread, MAX_CHUNK_LIMIT, editPost)
+        const was = await ledger.unpin(thread, post, args.message_id === undefined ? undefined : Number(args.message_id))
+        return was === undefined ? 'this thread has no status post' : `unpinned the status post (id: ${was})`
       }
-      return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
+      if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or unpin: true")
+      return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
     }
     case 'forward': {
       const id = Number(args.message_id)
@@ -1084,7 +1105,7 @@ for (let attempt = 1; ; attempt++) {
         process.stderr.write(`telegram hub: polling as @${info.username}\n`)
         polling = info.username
         hub.save()
-        keeping ??= ledger.keep(MAX_CHUNK_LIMIT, editPost, (thread, err) => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
+        keeping ??= ledger.keep(post, (thread, err) => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
       },
     })
     break

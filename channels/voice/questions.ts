@@ -1,7 +1,7 @@
 import { readFileSync, renameSync, watch, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { noteOf, type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
+import { type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
 import { statusPost } from '../../hub/status.ts'
 import { open as store, type Thread } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
@@ -135,7 +135,7 @@ export class Questions extends Changes {
   of(id: string) {
     const pin = this.pins.get(id)
     const thread = id.slice(id.indexOf(':') + 1)
-    const text = pin && (pin.note === undefined ? pin.text : statusPost(store(this.state), thread, pin.note, Infinity))
+    const text = pin && statusPost(store(this.state), thread, pin.note, Infinity)
     return { asks: this.view.asks.filter(question => question.task === id), ...(text && { pin: text }) }
   }
 
@@ -266,7 +266,7 @@ export class Questions extends Changes {
   // A pinned post that changed or a T3 run that ended starts a check; the first read only takes note.
   private notice() {
     const now = {
-      pins: JSON.stringify([...this.pins].map(([id, pin]) => [id, noteOf(pin)])),
+      pins: JSON.stringify([...this.pins].map(([id, pin]) => [id, pin.note])),
       t3: JSON.stringify([this.t3.stuck, this.t3.fresh].map(items => items.map(item => item.id))),
     }
     const why = !this.seen ? undefined : now.pins !== this.seen.pins ? 'a pinned post changed' : now.t3 !== this.seen.t3 ? 'a T3 run ended' : undefined

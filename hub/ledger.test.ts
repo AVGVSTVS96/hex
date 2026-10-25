@@ -18,8 +18,8 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all, and the file is renamed", () => {
-  const pin = { message: 9, text: 'Status: shipping', at: '2026-10-18T09:00:00.000Z' }
+test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all (a pin written by hand keeps its words above its own 🔴 🟡 🟢 lines as its note), and the file is renamed", () => {
+  const pin = { message: 9, text: '📌 **desk**\nShipping today\n\n🔴 **Blocked on you**\n- old', at: '2026-10-18T09:00:00.000Z' }
   const post = { message: '12', text: 'Site: example.com\n\nmore', note: 'Site: example.com', at: '2026-10-18T09:30:00.000Z' }
   writeFileSync(
     file,
@@ -29,8 +29,9 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
         { thread: '-100:7', message: 42, text: 'Which take?', options: ['A', 'B'], at: '2026-10-18T08:05:00.000Z', poll: 'p-42', answer: { label: 'B', at: '2026-10-18T08:06:00.000Z', via: 'telegram' } },
         { thread: '-100:7', message: 43, text: 'Broken', options: 'not a list', at: '2026-10-18T08:07:00.000Z' },
         { thread: '-100:7', message: 44, text: 'Blank buttons', options: [null], at: '2026-10-18T08:08:00.000Z' },
+        { thread: '-100:9', message: 50, text: 'Rename it?', options: ['Yes', 'No'], at: '2026-10-18T08:09:00.000Z' },
       ],
-      pins: { '-100:7': pin, '-100:8': post },
+      pins: { '-100:7': pin, '-100:8': post, '-100:9': { message: 50, text: 'Rename it?', at: '2026-10-18T08:10:00.000Z' } },
     }),
   )
   const ledger = new Ledger(dir, 'telegram')
@@ -38,9 +39,9 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.byPoll('p-42')!.answer).toMatchObject({ label: 'B', via: 'telegram' })
   expect(ledger.find('-100:7', 43)).toBeUndefined()
   expect(ledger.find('-100:7', 44)).toBeUndefined()
-  expect(ledger.pin('-100:7')).toEqual({ app: 'telegram', thread: '-100:7', ...pin })
+  expect(ledger.pin('-100:7')).toEqual({ app: 'telegram', thread: '-100:7', ...pin, note: '📌 **desk**\nShipping today' })
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', ...post })
-  expect(ledger.posts()).toEqual(['-100:8'])
+  expect(ledger.pin('-100:9')).toBeUndefined()
   expect(existsSync(file)).toBe(false)
   expect(readFileSync(`${file}.moved-to-hex.db`, 'utf8')).toContain('Deploy now?')
   expect(open(dir).pins()).toHaveLength(2)
@@ -48,8 +49,8 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
 
 test('a hex.db that took a ledger in at each start brings in only what an older hex changed in it since, then renames it', () => {
   const store = new Store(dir)
-  store.pinned({ app: 'telegram', thread: '-100:8', message: 30, text: 'pinned again here' })
-  store.pinned({ app: 'telegram', thread: '-100:9', message: 20, text: 'pinned after the move' })
+  store.pinned({ app: 'telegram', thread: '-100:8', message: 30, text: 'pinned again here', note: 'pinned again here' })
+  store.pinned({ app: 'telegram', thread: '-100:9', message: 20, text: 'pinned after the move', note: 'pinned after the move' })
   store.db.run('drop table turns; drop table relays; create table files (name text primary key, body text not null); create table shown (session text primary key, digest text not null); alter table seen drop column at; pragma user_version = 19')
   const taken = { pins: { '-100:7': { message: 9, text: 'old', at: '2026-10-18T09:00:00.000Z' }, '-100:8': { message: 12, text: 'rolled back', at: '2026-10-19T09:00:00.000Z' } } }
   store.db.query('insert into files (name, body) values (?, ?)').run('telegram/ledger.json', JSON.stringify(taken))
@@ -71,7 +72,7 @@ test("a ledger.json that can't be read stays where it is", () => {
   expect(existsSync(file)).toBe(true)
 })
 
-test('a question stays open through an edit and leaves the waiting list only when answered or settled, and a pin keeps its latest text', () => {
+test('a question stays open through an edit and leaves the waiting list only when answered or settled', async () => {
   const ledger = new Ledger(dir, 'telegram')
   const store = open(dir)
   ledger.ask('-100:7', 41, 'Deploy now?', ['Deploy', 'Wait'])
@@ -83,44 +84,71 @@ test('a question stays open through an edit and leaves the waiting list only whe
   ledger.answered('-100:7', 41, 'Deploy', 'app')
   expect(ledger.find('-100:7', 41)).toMatchObject({ answer: { label: 'Deploy', via: 'app' } })
   expect(ledger.find('-100:7', 41)!.settled).toBeUndefined()
-  ledger.pinned('-100:7', 9, 'Status: starting')
-  ledger.edited('-100:7', 9, 'Status: shipped')
-  expect(ledger.pin('-100:7')).toMatchObject({ message: 9, text: 'Status: shipped' })
-  ledger.forget('-100:7')
+  open(dir).pinned({ app: 'telegram', thread: '-100:7', message: 9, text: 'Status: starting', note: 'Status: starting' })
+  await ledger.forget('-100:7')
   expect(ledger.questions).toEqual([])
   expect(ledger.pin('-100:7')).toBeUndefined()
 })
 
-test("a pin with a note is the thread's status post: hex rewrites it from hex.db under its note, and a pin made meanwhile stands", async () => {
+test("a status post is sent under its note and pinned in place of the last, rewritten from hex.db, and a pin made meanwhile stands", async () => {
   const ledger = new Ledger(dir, 'telegram')
-  const edits: [string, unknown, string][] = []
-  const edit = async (thread: string, message: unknown, text: string) => void edits.push([thread, message, text])
-  ledger.pinned('-100:7', 9, 'Status: by hand')
-  await ledger.rewrite('-100:7', 4096, edit)
-  expect(ledger.posts()).toEqual([])
-  expect(edits).toEqual([])
-
-  ledger.ask('-100:8', 10, 'Ship it?', ['Yes', 'No'])
-  ledger.pinned('-100:8', 10, 'Site: example.com', 'Site: example.com')
-  expect(ledger.posts()).toEqual(['-100:8'])
-  await ledger.rewrite('-100:8', 4096, edit)
-  const [[, message, text]] = edits as [[string, unknown, string]]
-  expect(message).toBe(10)
-  expect(text).toStartWith('Site: example.com\n\n🔴 **Blocked on you**\n1. Ship it? [Yes | No]')
-  expect(ledger.pin('-100:8')).toMatchObject({ text, note: 'Site: example.com' })
-  expect(ledger.find('-100:8', 10)!.text).toBe('Ship it?')
-  await ledger.rewrite('-100:8', 4096, edit)
-  expect(edits).toHaveLength(1)
-
-  await ledger.rewrite('-100:8', 4096, edit, 'Site: example.org')
-  expect(new Ledger(dir, 'telegram').pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
-
-  const slow = async (...args: [string, unknown, string]) => {
-    ledger.pinned('-100:8', 11, 'Status: by hand again')
-    await edit(...args)
+  const done: unknown[][] = []
+  let next = 20
+  const post = {
+    room: 4096,
+    link: () => undefined,
+    send: async (_: string, text: string) => (done.push(['send', ++next, text]), next),
+    edit: async (_: string, message: unknown, text: string) => void done.push(['edit', message, text]),
+    pin: async (_: string, message: unknown) => void done.push(['pin', message]),
+    unpin: async (_: string, message: unknown) => void done.push(['unpin', message]),
   }
-  await ledger.rewrite('-100:8', 4096, slow, 'Site: example.net')
-  expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', message: 11, text: 'Status: by hand again', at: expect.any(String) })
+  ledger.ask('-100:8', 10, 'Ship it?', ['Yes', 'No'])
+  expect(await ledger.post('-100:8', 'Site: example.com', post)).toBe(21)
+  const [[, , text]] = done as [[string, number, string]]
+  expect(text).toStartWith('Site: example.com\n\n**🔴 Blocked on you**\n- Ship it?')
+  expect(done[1]).toEqual(['pin', 21])
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 21, text, note: 'Site: example.com' })
+  await ledger.rewrite('-100:8', post)
+  expect(done).toHaveLength(2)
+
+  await ledger.rewrite('-100:8', post, 'Site: example.org\n\n**🔴 Blocked on you**\n- copied', 21)
+  expect(new Ledger(dir, 'telegram').pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
+  await expect(ledger.rewrite('-100:8', post, 'Site: elsewhere', 99)).rejects.toThrow('no longer the status post')
+
+  await expect(ledger.post('-100:8', 'Site: unpinnable', { ...post, pin: async () => Promise.reject(new Error('not enough rights')) })).rejects.toThrow('rights')
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 21 })
+  next = 21
+  expect(await ledger.post('-100:8', 'Site: moved', post)).toBe(22)
+  expect(done.slice(-2)).toEqual([['pin', 22], ['unpin', 21]])
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 22, note: 'Site: moved' })
+
+  const closed = { ...post, edit: async () => false }
+  const before = ledger.pin('-100:8')!
+  ledger.ask('-100:8', 15, 'Rename it?', ['Yes', 'No'])
+  await ledger.rewrite('-100:8', closed)
+  expect(ledger.pin('-100:8')).toEqual(before)
+  await expect(ledger.rewrite('-100:8', closed, 'Site: closed', 22)).rejects.toThrow('closed')
+
+  const slow = {
+    ...post,
+    edit: async (...args: [string, unknown, string]) => {
+      open(dir).pinned({ app: 'telegram', thread: '-100:8', message: 11, text: 'Status: another post', note: 'Status: another post' })
+      await post.edit(...args)
+    },
+  }
+  await ledger.rewrite('-100:8', slow, 'Site: example.net')
+  expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', message: 11, text: 'Status: another post', note: 'Status: another post', at: expect.any(String) })
+
+  await ledger.rewrite('-100:8', { ...post, edit: async () => null })
+  expect(ledger.pin('-100:8')).toBeUndefined()
+  expect(done.at(-1)).not.toEqual(['unpin', 11])
+  await ledger.post('-100:8', 'Site: again', post)
+  expect(await ledger.unpin('-100:8', post)).toBe(23)
+  expect(done.at(-1)).toEqual(['unpin', 23])
+  expect(await ledger.unpin('-100:8', post)).toBeUndefined()
+  expect(await ledger.unpin('-100:8', post, 7)).toBe(7)
+  expect(done.at(-1)).toEqual(['unpin', 7])
+  expect(ledger.pin('-100:8')).toBeUndefined()
 })
 
 test("Telegram's bot.json, which nothing reads now, is renamed", () => {

@@ -17,7 +17,7 @@ export const server: ChannelServer = {
     '',
     'This session is one Telegram thread: a forum topic, a group\'s General, or a direct chat. Its messages arrive as <channel source="telegram" chat_id="..." message_id="..." user="..." ts="...">, and everything you send with these tools lands back in that same thread. If the tag has an image_path attribute, Read that file — it is a photo the sender attached. If the tag has attachment_file_id, call download_attachment with that file_id to fetch the file, then Read the returned path. If the tag has reply_to_message_id, the sender replied to that earlier message: reply_to_text is its text or caption, reply_to_quote the part they highlighted, reply_to_image_path a photo it carried (Read it), and reply_to_attachment_file_id a file it carried (download_attachment). edited="true" means the sender edited the message with that message_id and this is its new text; forwarded_from names who a forwarded message came from. A photo album arrives as one message: image_path and the attachment_* attributes then list one value per file, separated by "; ". A reaction arrives as (reaction: 👍) or (reaction removed: 👍), with reaction, reaction_removed="true" when taken off, and reaction_to_message_id, reaction_to_user and reaction_to_text for the message it was on. A button tap arrives as the button\'s label with button="true" and button_message_id, and a poll vote as (vote: ...) or (vote removed), with vote (the chosen options), vote_removed="true", poll_message_id and poll (its question). Use reply_to (set to a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply.',
     '',
-    'For formatted replies use format: "markdown" and write ordinary Markdown (code blocks, diagrams, bold, links, lists, tables), no escaping needed. reply accepts file paths (files: ["/abs/path.png"]) for attachments, silent: true to send without a notification, and buttons: ["Yes", "No"] for tappable choices. Use react to add or remove emoji reactions, edit_message for interim progress updates or to change a file\'s caption or the file itself, and delete_message, pin, forward and poll as their names say. Edits don\'t trigger push notifications — when a long task completes, send a new reply so the user\'s device pings.',
+    'For formatted replies use format: "markdown" and write ordinary Markdown (code blocks, diagrams, bold, links, lists, tables), no escaping needed. reply accepts file paths (files: ["/abs/path.png"]) for attachments, silent: true to send without a notification, and buttons: ["Yes", "No"] for tappable choices. Use react to add or remove emoji reactions, edit_message for interim progress updates or to change a file\'s caption or the file itself, delete_message, forward and poll as their names say, and pin to post this thread\'s status post. Edits don\'t trigger push notifications — when a long task completes, send a new reply so the user\'s device pings.',
     '',
     'new_thread opens a new forum topic with its own fresh session and hands it your prompt. Use it for work the user will want to follow or talk to on its own. It only works in a group with topics, and rename_thread changes a topic\'s name or icon. With app: "discord" or "buzz" it opens a Discord or Buzz thread instead, the place for deep, long-form work. handoff moves this whole conversation to Discord or Buzz when the user asks: you stop here and continue there with your memory (from General, a copy continues there and you stay).',
   ].join('\n'),
@@ -108,15 +108,15 @@ export const server: ChannelServer = {
     {
       name: 'pin',
       _meta: { 'anthropic/alwaysLoad': true },
-      description: 'Pin a message in this thread, or unpin it.',
+      description: "Post this thread's status post: hex sends the note (what the project is, its links, where it stands, in markdown) with its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines under it, kept current from the thread's waiting questions and tasks, and pins it in place of the last one. edit_message on the post changes the note. unpin: true unpins it.",
       inputSchema: {
         type: 'object',
         properties: {
-          message_id: { type: 'string' },
+          note: { type: 'string', description: "the status post's note, in markdown" },
+          message_id: { type: 'string', description: 'with unpin: a message to unpin other than the status post' },
           unpin: { type: 'boolean' },
-          status: { type: 'boolean', description: "true to make it this thread's status post: hex keeps its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines current from the thread's waiting questions and its tasks, under the message's own text as the note. Write only the note (what the project is, its links, where it stands); edit_message on the post changes the note." },
         },
-        required: ['message_id'],
+        required: [],
       },
     },
     {
