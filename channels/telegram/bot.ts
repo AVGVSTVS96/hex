@@ -7,7 +7,7 @@ import { basename, join, extname, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, EFFORTS, MODELS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { Ledger, type Post } from '../../hub/ledger.ts'
-import { headed } from '../../hub/status.ts'
+import { above, headed } from '../../hub/status.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -162,16 +162,20 @@ const topicNames = new Map<string, string>()
 
 const ledger = new Ledger(STATE_DIR, 'telegram')
 
-const NOT_A_POST = "a status post is a text message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note with format: 'markdown', then pin that"
+const NOT_A_POST = "a status post is a text message hex sent here without buttons, with format: 'markdown': send its note that way, then pin it"
 
 // How a status post shows here; the ledger decides when it changes (Ledger.rewrite). Only a
 // supergroup's messages have links.
 const post: Post = {
   room: MAX_CHUNK_LIMIT,
   edit: async (thread, message, text) => {
-    await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } }).catch(err => {
-      if (!/message is not modified/.test(String(err))) throw err
-    })
+    try {
+      await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } })
+    } catch (err) {
+      if (/message is not modified/.test(String(err))) return
+      if (/message can't be edited|message to edit not found|no text in the message/.test(String(err))) return null
+      throw err
+    }
   },
   link: (thread, message) => {
     const [chat, topic] = thread.split(':')
@@ -361,7 +365,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
           const sent = markdown
             ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(chunks[i]!) }, opts)
             : await bot.api.sendMessage(chat_id, chunks[i]!, { ...opts, ...parseMode })
-          said(thread, sent.message_id, chunks[i], markdown ? { format: 'markdown' } : {})
+          said(thread, sent.message_id, chunks[i], { format: markdown ? 'markdown' : (args.format as string | undefined) ?? 'text' })
           sentIds.push(sent.message_id)
           if (buttons.length && i === chunks.length - 1) asked = sent.message_id
         }
@@ -445,8 +449,9 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
         const current = Number(ledger.pin(thread)?.message) === id
-        if (!current && (sent?.author !== 'hex' || sent.to !== thread || sent.meta?.format !== 'markdown' || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body))) throw new Error(NOT_A_POST)
-        await ledger.post(thread, id, sent?.body ?? '', post, () => bot.api.pinChatMessage(chat_id, id), message => bot.api.unpinChatMessage(chat_id, Number(message)))
+        const format = sent?.meta?.format ?? 'markdown'
+        if (!current && (sent?.author !== 'hex' || sent.to !== thread || format !== 'markdown' || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id))) throw new Error(NOT_A_POST)
+        await ledger.post(thread, id, above(sent?.body ?? ''), post, () => bot.api.pinChatMessage(chat_id, id), message => bot.api.unpinChatMessage(chat_id, Number(message)))
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }

@@ -24,6 +24,13 @@ export function statusPost(store: Store, thread: string, note: string, room: num
 // Whether a text has a status post's own 🔴 🟡 🟢 lines, which hex adds under a note.
 export const headed = (text: string) => /[🔴🟡🟢]/u.test(text)
 
+// A status post's words above its first 🔴 🟡 🟢 line: its note.
+export function above(text: string) {
+  const lines = text.split('\n')
+  const first = lines.findIndex(headed)
+  return (first < 0 ? lines : lines.slice(0, first)).join('\n').trim()
+}
+
 // The first link in a proof, without the markdown or punctuation around it.
 function url(proof: string) {
   let found = proof.match(/https?:\/\/[^\s<>[\]"'`]+/)?.[0]

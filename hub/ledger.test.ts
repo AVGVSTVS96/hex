@@ -138,6 +138,9 @@ test("a pinned message becomes the thread's status post, rewritten from hex.db u
   }
   await ledger.rewrite('-100:8', slow, 'Site: example.net')
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', message: 11, text: 'Status: another post', note: 'Status: another post', at: expect.any(String) })
+
+  await ledger.rewrite('-100:8', { ...post, edit: async () => null })
+  expect(ledger.pin('-100:8')).toBeUndefined()
 })
 
 test("Telegram's bot.json, which nothing reads now, is renamed", () => {

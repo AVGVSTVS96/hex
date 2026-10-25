@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { statusPost } from './status.ts'
+import { above, statusPost } from './status.ts'
 import { Store } from './store.ts'
 
 let dir: string
@@ -67,4 +67,9 @@ test("a done task links to the first link in its proof, without the markdown or 
     '- [Task 1](https://en.wikipedia.org/wiki/Foo_(bar))',
     '- [Task 0](https://github.com/o/r/pull/3)',
   ])
+})
+
+test("a status post's note is its words above its first 🔴 🟡 🟢 line", () => {
+  expect(above('📌 **desk**\nShipping today\n\n🔴 **Blocked on you**\n- old\n\n🟢 Done')).toBe('📌 **desk**\nShipping today')
+  expect(above('Just a note')).toBe('Just a note')
 })

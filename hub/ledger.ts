@@ -4,11 +4,12 @@ import { open, stateDir, type MessageId, type Pin, type Question, type Store } f
 export type { Answer, MessageId, Pin, Question } from './store.ts'
 
 // How an app shows a status post: the room one message has, how it puts new words in place (false
-// when it can't yet, like in a closed thread), where it shows a thread's message, and what it does
-// before the post is built (like fetching the thread the links name).
+// when it can't yet, like in a closed thread; null when it never can, like someone else's message
+// or a deleted one), where it shows a thread's message, and what it does before the post is built
+// (like fetching the thread the links name).
 export type Post = {
   room: number
-  edit: (thread: string, message: MessageId, text: string) => Promise<boolean | void>
+  edit: (thread: string, message: MessageId, text: string) => Promise<boolean | null | void>
   link: Link
   ready?: (thread: string) => Promise<unknown>
 }
@@ -48,7 +49,9 @@ export class Ledger {
       const text = await this.render(thread, note, post)
       await pin()
       try {
-        if (text !== same?.text && (await post.edit(thread, message, text)) === false) throw new Error(CLOSED)
+        const shown = text === same?.text || (await post.edit(thread, message, text))
+        if (shown === false) throw new Error(CLOSED)
+        if (shown === null) throw new Error("the app won't let hex edit that message, so it can't be a status post")
       } catch (error) {
         if (!same) await unpin(message).catch(() => {})
         throw error
@@ -60,7 +63,8 @@ export class Ledger {
 
   // Rewrites the thread's status post if what it should say changed: a new note for the post that
   // message is, or its questions and tasks in hex.db. A closed thread's post waits for the first
-  // change after it opens again, and a pin made while the app was editing stands.
+  // change after it opens again, one the app will never let hex edit stops being the post, and a
+  // pin made while the app was editing stands.
   rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
     return this.turn(thread, async () => {
       const pin = this.pin(thread)
@@ -69,7 +73,9 @@ export class Ledger {
       const said = note ?? pin.note
       const text = await this.render(thread, said, post)
       if (text === pin.text && said === pin.note) return
-      if (text !== pin.text && (await post.edit(thread, pin.message, text)) === false) {
+      const shown = text === pin.text || (await post.edit(thread, pin.message, text))
+      if (shown === null) return this.store.unpinned(this.app, thread, pin.message)
+      if (shown === false) {
         if (note !== undefined) throw new Error(CLOSED)
         return
       }

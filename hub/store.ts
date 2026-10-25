@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
+import { above } from './status.ts'
 
 // One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
 // it. from: the app it was said in. author: who said it, set once by whatever kept it: the owner,
@@ -227,8 +228,8 @@ const migrations: (string | ((store: Store) => void))[] = [
   ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
   // Every pin is its thread's status post. One written by hand keeps its words above its own
   // 🔴 🟡 🟢 lines as the note, under which hex writes those lines. One hex can't rewrite is left
-  // out: its words unknown, a question, or a message someone else wrote (Telegram keys a message
-  // by chat and id, Discord by id).
+  // out: its words unknown, a question, or a message hex.db says someone else wrote (Telegram keys
+  // a message by chat and id, Discord by id); one it can't tell drops out at its first refused edit.
   (store: Store) => {
     const pins = store.db.query('select app, thread, message, text from pins where note is null').all() as { app: string; thread: string; message: MessageId; text: string }[]
     for (const { app, thread, message, text } of pins) {
@@ -240,13 +241,6 @@ const migrations: (string | ((store: Store) => void))[] = [
     }
   },
 ]
-
-// A hand-written status post's words above its first 🔴 🟡 🟢 line.
-function above(text: string) {
-  const lines = text.split('\n')
-  const first = lines.findIndex(line => /[🔴🟡🟢]/u.test(line))
-  return (first < 0 ? lines : lines.slice(0, first)).join('\n').trim()
-}
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
 const apps = (dir: string) => [[basename(dir), dir], ...readdirSync(dir).flatMap(app => (statSync(join(dir, app), { throwIfNoEntry: false })?.isDirectory() ? [[app, join(dir, app)]] : []))] as [string, string][]

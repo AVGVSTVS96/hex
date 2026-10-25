@@ -50,7 +50,7 @@ import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { Ledger, type MessageId, type Post, type Question } from '../../hub/ledger.ts'
-import { headed } from '../../hub/status.ts'
+import { above, headed } from '../../hub/status.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
 
@@ -306,7 +306,13 @@ function serve(token: string) {
     edit: async (thread, id, text) => {
       const ch = await threadChannel(thread)
       if (ch.isThread() && ch.archived) return false
-      await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
+      try {
+        await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
+      } catch (err) {
+        // Someone else's message, or one that's gone.
+        if ((err as { code?: number }).code === 50005 || (err as { code?: number }).code === 10008) return null
+        throw err
+      }
     },
     link: (thread, id) => {
       const at = shown(thread)
@@ -705,9 +711,9 @@ function serve(token: string) {
         const msg = await message(ch, args.message_id as string)
         const words = hub.said(msg.id)?.body ?? msg.content
         const current = ledger.pin(thread)?.message === msg.id
-        if (!args.unpin && !current && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll || headed(words))) throw new Error('a status post is a message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that')
+        if (!args.unpin && !current && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll)) throw new Error('a status post is a message hex sent here without buttons: send its note, then pin that')
         if (args.unpin) await ledger.unpinned(thread, msg.id, () => msg.unpin())
-        else await ledger.post(thread, msg.id, words, post, () => msg.pin(), async id => (await message(ch, String(id))).unpin())
+        else await ledger.post(thread, msg.id, above(words), post, () => msg.pin(), async id => (await message(ch, String(id))).unpin())
         return args.unpin ? 'unpinned' : 'pinned'
       }
       case 'poll': {
