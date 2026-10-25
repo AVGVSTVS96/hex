@@ -303,15 +303,15 @@ test('a check written before places and links were typed still gives each questi
 })
 
 test("a status post's page is read from hex.db as it opens, and only a new note starts a check, not the lines hex rewrites", async () => {
-  const pin = { message: 7, text: 'Site: example.com\n\n**🔴 Blocked on you:** nothing', at: '2026-10-13T10:00:00.000Z', note: 'Site: example.com' }
+  const pin = { message: 7, text: 'Site: example.com\n\n**🔴 Blocked on you:** no questions waiting', at: '2026-10-13T10:00:00.000Z', note: 'Site: example.com' }
   const byHand = { message: 2, text: 'Status: by hand', at: '2026-10-13T10:00:00.000Z' }
   ledger([asked(1, 'Ship it?', ['Yes', 'No'])], { [DESK]: pin, [GROUP]: byHand })
   const store = open(state)
   store.deliver({ key: 'telegram:-1001234:40', to: DESK, from: 'telegram', body: 'Fix the login page', author: 'owner', meta: { user: 'owner' } })
   const task = store.createTask({ title: 'Fix the login page', message: 'telegram:-1001234:40', owner: DESK })
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  expect(questions.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n**🔴 Blocked on you**\n- Ship it?\n\n**🟡 Pending**\n- ${task.title}\n\n**🟢 Done:** nothing`)
-  expect(questions.of(`telegram:${GROUP}`).pin).toBe('Status: by hand\n\n**🔴 Blocked on you:** nothing\n\n**🟡 Pending:** nothing\n\n**🟢 Done:** nothing')
+  expect(questions.of(`telegram:${DESK}`).pin).toBe(`Site: example.com\n\n**🔴 Blocked on you**\n- Ship it?\n\n**🟡 Pending**\n- ${task.title}\n\n**🟢 Done:** no tasks done yet`)
+  expect(questions.of(`telegram:${GROUP}`).pin).toBe('Status: by hand\n\n**🔴 Blocked on you:** no questions waiting\n\n**🟡 Pending:** no open tasks\n\n**🟢 Done:** no tasks done yet')
 
   store.pinned({ app: 'telegram', thread: DESK, ...pin, text: questions.of(`telegram:${DESK}`).pin! })
   await Bun.sleep(150)

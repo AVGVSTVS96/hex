@@ -13,8 +13,8 @@ export function statusPost(store: Store, thread: string, note: string, room: num
   const waiting = store.questions({ thread, waiting: true }).map(question => `- ${linked(clip(question.text, 120), link(thread, question.message))}`)
   const open = store.tasks({ owner: thread, status: ['open'] }).map(task => `- ${clip(task.title, 120)}`)
   const done = store.lastDone(thread, 5).map(task => `- ${linked(clip(task.title, 120), task.proof!.match(/https?:\/\/[^\s)]+/)?.[0]?.replace(/[.,;:]+$/, ''))}`)
-  const section = (header: string, lines: string[]) => ({ header: lines.length ? `**${header}**` : `**${header}:** nothing`, items: lines.map(line => [line]), gap: '\n' })
-  const sections = [section('🔴 Blocked on you', waiting), section('🟡 Pending', open), section('🟢 Done', done)]
+  const section = (header: string, lines: string[], none: string) => ({ header: lines.length ? `**${header}**` : `**${header}:** ${none}`, items: lines.map(line => [line]), gap: '\n' })
+  const sections = [section('🔴 Blocked on you', waiting, 'no questions waiting'), section('🟡 Pending', open, 'no open tasks'), section('🟢 Done', done, 'no tasks done yet')]
   const space = room - fit(sections, 0).length - 2
   const trimmed = note.trim()
   const head = trimmed.length > space ? `${trimmed.slice(0, Math.max(0, space - 1))}…` : trimmed
