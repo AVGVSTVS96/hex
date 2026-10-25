@@ -113,6 +113,16 @@ test("a pinned message becomes the thread's status post, rewritten from hex.db u
   expect(ledger.pin('-100:8')).toMatchObject({ message: 12 })
   expect(done).not.toContainEqual(['pin', 13])
 
+  const unpinnable = async () => Promise.reject(new Error('not enough rights to pin a message'))
+  await expect(ledger.post('-100:8', 14, 'Another post', post, unpinnable)).rejects.toThrow('rights')
+  expect(done.slice(-2)).toEqual([['edit', 14, expect.stringContaining('**🟢 Done')], ['edit', 14, 'Another post']])
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 12 })
+
+  const closed = { ...post, edit: async () => false }
+  await ledger.rewrite('-100:8', closed, 'Site: closed')
+  expect(ledger.pin('-100:8')).toMatchObject({ note: 'Site: closed', text: ledger.pin('-100:8')!.text })
+  expect(ledger.pin('-100:8')!.text).toStartWith('Site: example.org')
+
   const slow = {
     ...post,
     edit: async (...args: [string, unknown, string]) => {

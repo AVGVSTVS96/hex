@@ -302,10 +302,11 @@ function serve(token: string) {
   // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
-    // An archived thread's messages can't be edited; its post catches up at the first change after it's back.
+    // An archived thread's messages can't be edited; its post catches up when it's back (threadUpdate).
     edit: async (thread, id, text) => {
       const ch = await threadChannel(thread)
-      if (!(ch.isThread() && ch.archived)) await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
+      if (ch.isThread() && ch.archived) return false
+      await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
     },
     link: (thread, id) => {
       const at = shown(thread)
@@ -1149,6 +1150,7 @@ function serve(token: string) {
 
   client.on('threadUpdate', (before, after) => {
     if (before.name !== after.name) hub.rename(after.id, after.name)
+    if (before.archived && !after.archived) ledger.rewrite(after.id, post).catch(err => process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`))
   })
 
   client.on('threadDelete', thread => {

@@ -3,10 +3,15 @@ import { open, stateDir, type MessageId, type Pin, type Question, type Store } f
 
 export type { Answer, MessageId, Pin, Question } from './store.ts'
 
-// How an app shows a status post: the room one message has, how it puts new words in place, where
-// it shows a thread's message, and what it does before the post is built (like fetching the thread
-// the links name).
-export type Post = { room: number; edit: (thread: string, message: MessageId, text: string) => Promise<unknown>; link: Link; ready?: (thread: string) => Promise<unknown> }
+// How an app shows a status post: the room one message has, how it puts new words in place (false
+// when it can't yet, like in a closed thread), where it shows a thread's message, and what it does
+// before the post is built (like fetching the thread the links name).
+export type Post = {
+  room: number
+  edit: (thread: string, message: MessageId, text: string) => Promise<boolean | void>
+  link: Link
+  ready?: (thread: string) => Promise<unknown>
+}
 
 // One app's questions and each thread's pinned post, which hex.db keeps (store.ts) so every reader
 // sees the same ones. The client that sends and edits the messages keeps them.
@@ -31,15 +36,19 @@ export class Ledger {
   }
 
   // Makes the message the thread's status post, its words the note (pinning the post again keeps
-  // its note). It's rewritten before it's pinned, so a message the app won't edit stays as it was.
+  // its note). It's rewritten before it's pinned, and gets its words back if the pin fails, so a
+  // message the app won't edit or pin stays as it was.
   post(thread: string, message: MessageId, words: string, post: Post, pin: () => Promise<unknown>): Promise<void> {
     return this.turn(thread, async () => {
       const was = this.pin(thread)
       const same = String(was?.message) === String(message) ? was : undefined
       const note = same?.note ?? words
       const text = await this.render(thread, note, post)
-      if (text !== same?.text) await post.edit(thread, message, text)
-      await pin()
+      if (text !== same?.text && (await post.edit(thread, message, text)) === false) throw new Error("the thread is closed, so its post can't change now")
+      await pin().catch(async error => {
+        if (!same) await post.edit(thread, message, words).catch(() => {})
+        throw error
+      })
       this.store.pinned({ app: this.app, thread, message, text, note })
     })
   }
@@ -53,11 +62,11 @@ export class Ledger {
       const said = note ?? pin.note
       const text = await this.render(thread, said, post)
       if (text === pin.text && said === pin.note) return
-      if (text !== pin.text) await post.edit(thread, pin.message, text)
+      const shown = text === pin.text || (await post.edit(thread, pin.message, text)) !== false
       this.store.write(() => {
         const still = this.pin(thread)
         if (still?.message !== pin.message || still.note !== pin.note) return
-        this.store.pinned({ app: this.app, thread, message: pin.message, text, note: said })
+        this.store.pinned({ app: this.app, thread, message: pin.message, text: shown ? text : pin.text, note: said })
       })
     })
   }

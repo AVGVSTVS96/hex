@@ -168,10 +168,11 @@ const NOT_A_POST = 'a status post is a text message hex sent here without button
 // supergroup's messages have links.
 const post: Post = {
   room: MAX_CHUNK_LIMIT,
-  edit: (thread, message, text) =>
-    bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } }).catch(err => {
+  edit: async (thread, message, text) => {
+    await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } }).catch(err => {
       if (!/message is not modified/.test(String(err))) throw err
-    }),
+    })
+  },
   link: (thread, message) => {
     const [chat, topic] = thread.split(':')
     return chat!.startsWith('-100') ? `https://t.me/c/${[chat!.slice(4), topic, message].filter(Boolean).join('/')}` : undefined
