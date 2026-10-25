@@ -225,10 +225,9 @@ const migrations: (string | ((store: Store) => void))[] = [
   `delete from threads where exists (select 1 from threads other where other.thread = threads.thread and (other.open, other.rowid) > (threads.open, threads.rowid));
   create unique index if not exists threads_key on threads (thread);`,
   ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
-  // Every pin is its thread's status post: one written by hand keeps its words as the note, and one
-  // whose words hex never knew is left out, so nothing rewrites it.
-  `delete from pins where note is null and text = '';
-  update pins set note = text where note is null;`,
+  // Every pin is its thread's status post, which hex rewrites. One written by hand stays as written
+  // in its chat, out of hex.db until a session pins it again as its status post.
+  `delete from pins where note is null;`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.

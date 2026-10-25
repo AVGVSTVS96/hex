@@ -18,7 +18,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all, and the file is renamed", () => {
+test("an older hex's questions and pins move from ledger.json into hex.db once, answers and notes and all (a pin written by hand stays only in its chat), and the file is renamed", () => {
   const pin = { message: 9, text: 'Status: shipping', at: '2026-10-18T09:00:00.000Z' }
   const post = { message: '12', text: 'Site: example.com\n\nmore', note: 'Site: example.com', at: '2026-10-18T09:30:00.000Z' }
   writeFileSync(
@@ -38,11 +38,11 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.byPoll('p-42')!.answer).toMatchObject({ label: 'B', via: 'telegram' })
   expect(ledger.find('-100:7', 43)).toBeUndefined()
   expect(ledger.find('-100:7', 44)).toBeUndefined()
-  expect(ledger.pin('-100:7')).toEqual({ app: 'telegram', thread: '-100:7', ...pin, note: pin.text })
+  expect(ledger.pin('-100:7')).toBeUndefined()
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', ...post })
   expect(existsSync(file)).toBe(false)
   expect(readFileSync(`${file}.moved-to-hex.db`, 'utf8')).toContain('Deploy now?')
-  expect(open(dir).pins()).toHaveLength(2)
+  expect(open(dir).pins()).toHaveLength(1)
 })
 
 test('a hex.db that took a ledger in at each start brings in only what an older hex changed in it since, then renames it', () => {
@@ -56,7 +56,6 @@ test('a hex.db that took a ledger in at each start brings in only what an older 
   writeFileSync(file, JSON.stringify({ pins: { '-100:6': { message: 5, text: 'pinned there', at: '2026-10-20T09:00:00.000Z' }, '-100:8': { message: 12, text: 'edited there', at: '2026-10-20T09:00:00.000Z' } } }))
   const after = new Store(dir)
   expect(after.pins().map(({ thread, message, text }) => ({ thread, message, text }))).toEqual([
-    { thread: '-100:6', message: 5, text: 'pinned there' },
     { thread: '-100:8', message: 30, text: 'pinned again here' },
     { thread: '-100:9', message: 20, text: 'pinned after the move' },
   ])
