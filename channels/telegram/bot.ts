@@ -445,17 +445,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
         if (sent?.author !== 'hex' || sent.to !== thread || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body)) throw new Error(NOT_A_POST)
-        const before = ledger.pin(thread)
-        await bot.api.pinChatMessage(chat_id, id)
-        ledger.pinned(thread, id, sent.body)
-        // A message Telegram won't edit as text (a file sent before files were marked) can't be a
-        // status post: it's unpinned again and the thread keeps the post it had.
-        await ledger.rewrite(thread, post).catch(async err => {
-          if (Number(before?.message) === id || !/no text in the message|can't be edited/.test(String(err))) throw err
-          ledger.restore(thread, before)
-          await bot.api.unpinChatMessage(chat_id, id).catch(() => {})
-          throw new Error(NOT_A_POST)
-        })
+        await ledger.post(thread, id, sent.body, post, () => bot.api.pinChatMessage(chat_id, id))
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }

@@ -302,8 +302,16 @@ function serve(token: string) {
   // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
-    edit: async (thread, id, text) => void (await (await message(await threadChannel(thread), String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })),
-    link: (thread, id) => `${shown(thread) ?? `https://discord.com/channels/${guild().id}/${thread}`}/${id}`,
+    // An archived thread's messages can't be edited; its post catches up at the first change after it's back.
+    edit: async (thread, id, text) => {
+      const ch = await threadChannel(thread)
+      if (!(ch.isThread() && ch.archived)) await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
+    },
+    link: (thread, id) => {
+      const at = shown(thread)
+      return at && `${at}/${id}`
+    },
+    ready: threadChannel,
   }
 
   // Where Discord shows a thread the bot has seen.
@@ -696,12 +704,10 @@ function serve(token: string) {
         const msg = await message(ch, args.message_id as string)
         const words = hub.said(msg.id)?.body ?? msg.content
         if (!args.unpin && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll || headed(words))) throw new Error('a status post is a message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that')
-        await (args.unpin ? msg.unpin() : msg.pin())
-        if (args.unpin) ledger.unpinned(thread, msg.id)
-        else {
-          ledger.pinned(thread, msg.id, words)
-          await ledger.rewrite(thread, post)
-        }
+        if (args.unpin) {
+          await msg.unpin()
+          ledger.unpinned(thread, msg.id)
+        } else await ledger.post(thread, msg.id, words, post, () => msg.pin())
         return args.unpin ? 'unpinned' : 'pinned'
       }
       case 'poll': {
