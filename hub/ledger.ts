@@ -58,7 +58,8 @@ export class Ledger {
 
   // Rewrites the thread's status post if what it should say changed: a new note for the post that
   // message is, or its questions and tasks in hex.db. A closed thread's post waits for the next
-  // change, a deleted one stops being the post, and a pin made while the app was editing stands.
+  // change; one the app will never edit stops being the post (it stays pinned in the chat, for
+  // the session to unpin), and a pin made while the app was editing stands.
   rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
     return this.turn(thread, async () => {
       const pin = this.pin(thread)
@@ -68,10 +69,7 @@ export class Ledger {
       const text = await this.render(thread, said, post)
       if (text === pin.text && said === pin.note) return
       const shown = text === pin.text || (await post.edit(thread, pin.message, text))
-      if (shown === null) {
-        this.store.unpinned(this.app, thread, pin.message)
-        await post.unpin(thread, pin.message).catch(() => {})
-      }
+      if (shown === null) this.store.unpinned(this.app, thread, pin.message)
       if (shown === null || shown === false) {
         if (note !== undefined) throw new Error(shown === null ? 'the status post is gone; post a new one with pin' : "the thread is closed, so its status post can't change now")
         return

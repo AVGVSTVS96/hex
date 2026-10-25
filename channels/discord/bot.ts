@@ -635,6 +635,7 @@ function serve(token: string) {
     if (tool === 'close_thread' && (await client.channels.fetch(thread).then(() => false, err => err?.code === RESTJSONErrorCodes.UnknownChannel))) {
       const name = hub.name(thread) ?? thread
       void hub.retire(thread)
+      void ledger.forget(thread)
       return `forgot "${name}": its Discord thread no longer exists`
     }
     const ch = await threadChannel(thread)

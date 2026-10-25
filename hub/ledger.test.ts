@@ -141,7 +141,7 @@ test("a status post is sent under its note and pinned in place of the last, rewr
 
   await ledger.rewrite('-100:8', { ...post, edit: async () => null })
   expect(ledger.pin('-100:8')).toBeUndefined()
-  expect(done.at(-1)).toEqual(['unpin', 11])
+  expect(done.at(-1)).not.toEqual(['unpin', 11])
   await ledger.post('-100:8', 'Site: again', post)
   expect(await ledger.unpin('-100:8', post)).toBe(23)
   expect(done.at(-1)).toEqual(['unpin', 23])

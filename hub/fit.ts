@@ -38,6 +38,6 @@ export const ROOM = 9_000
 // A status post's words above its first 🔴 Blocked on you, 🟡 Pending or 🟢 Done heading: its note.
 export function above(text: string) {
   const lines = text.split('\n')
-  const first = lines.findIndex(line => /^\s*(\*\*)?(🔴|🟡|🟢)\s*(\*\*)?\s*(Blocked on you|Pending|Done)\b/u.test(line))
+  const first = lines.findIndex(line => /^\s*(#+\s*)?(\*\*)?(🔴|🟡|🟢)\s*(\*\*)?\s*(Blocked on you|Pending|Done)\b/u.test(line))
   return (first < 0 ? lines : lines.slice(0, first)).join('\n').trim()
 }
