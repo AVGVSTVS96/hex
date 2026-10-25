@@ -92,12 +92,11 @@ export const server: ChannelServer = {
     },
     {
       name: 'pin',
-      description: "Post this thread's status post: hex sends the note (what the project is, its links, where it stands, in markdown) with its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines under it, kept current from the thread's waiting questions and tasks, and pins it in place of the last one. edit_message on the post changes the note. message_id with unpin: true unpins it.",
+      description: "Post this thread's status post: hex sends the note (what the project is, its links, where it stands, in markdown) with its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines under it, kept current from the thread's waiting questions and tasks, and pins it in place of the last one. edit_message on the post changes the note. unpin: true unpins it.",
       inputSchema: {
         type: 'object',
         properties: {
-          note: { type: 'string' },
-          message_id: { type: 'string' },
+          note: { type: 'string', description: "the status post's note, in markdown" },
           unpin: { type: 'boolean' },
         },
         required: [],

@@ -34,3 +34,10 @@ export function fit(sections: Section[], room: number): string {
 // a path and a preview it doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output),
 // so a hook's output stays under ROOM, which leaves space for the lines around it.
 export const ROOM = 9_000
+
+// A status post's words above its first 🔴 🟡 🟢 heading: its note.
+export function above(text: string) {
+  const lines = text.split('\n')
+  const first = lines.findIndex(line => /^\s*(\*\*|#+\s*)?[🔴🟡🟢]/u.test(line))
+  return (first < 0 ? lines : lines.slice(0, first)).join('\n').trim()
+}

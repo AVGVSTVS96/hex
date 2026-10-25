@@ -714,10 +714,10 @@ function serve(token: string) {
       }
       case 'pin': {
         if (args.unpin) {
-          await ledger.unpinned(thread, args.message_id as string, post)
-          return 'unpinned'
+          const was = await ledger.unpin(thread, post)
+          return was === undefined ? 'this thread has no status post' : `unpinned the status post (id: ${was})`
         }
-        if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or message_id with unpin: true")
+        if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or unpin: true")
         return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
       case 'poll': {

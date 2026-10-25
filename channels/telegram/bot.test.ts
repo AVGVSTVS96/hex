@@ -457,7 +457,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   const next = Number((await call('pin', { note: 'Site: v2' })).text.match(/id: (\d+)/)[1])
   expect(await called('unpinChatMessage', p => p.message_id === id)).toBeTruthy()
   expect(ledger().pins[DESK]).toMatchObject({ message: next, note: 'Site: v2' })
-  await call('pin', { message_id: String(next), unpin: true })
+  expect((await call('pin', { unpin: true })).text).toBe(`unpinned the status post (id: ${next})`)
   expect(ledger().pins[DESK]).toBeUndefined()
 })
 

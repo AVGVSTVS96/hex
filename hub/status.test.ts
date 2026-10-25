@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { above, statusPost } from './status.ts'
+import { above } from './fit.ts'
+import { statusPost } from './status.ts'
 import { Store } from './store.ts'
 
 let dir: string

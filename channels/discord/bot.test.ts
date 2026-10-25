@@ -749,6 +749,6 @@ test("a status post is the session's note over lines hex keeps current from the 
   const next = here.posted.at(-1)
   expect(done).toContainEqual({ unpin: post.id })
   expect(book().pins[here.id]).toMatchObject({ message: next.id, note: 'Site: v2' })
-  await call('pin', { message_id: next.id, unpin: true })
+  await call('pin', { unpin: true })
   expect(book().pins[here.id]).toBeUndefined()
 })

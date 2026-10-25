@@ -1,3 +1,4 @@
+import { above } from './fit.ts'
 import { statusPost, type Link } from './status.ts'
 import { open, stateDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
 
@@ -39,14 +40,17 @@ export class Ledger {
     return this.store.pin(this.app, thread) ?? undefined
   }
 
-  // Sends the thread's status post, the note over its lines, and pins it in place of the last one.
+  // Sends the thread's status post, the note over its lines, and pins it in place of the last one;
+  // if it can't be pinned, it's left a plain message and the last post stays. A note copied from a
+  // post keeps only its words above the post's lines.
   post(thread: string, note: string, post: Post): Promise<MessageId> {
     return this.turn(thread, async () => {
       const was = this.pin(thread)
-      const text = await this.render(thread, note, post)
+      const words = above(note)
+      const text = await this.render(thread, words, post)
       const message = await post.send(thread, text)
-      this.store.pinned({ app: this.app, thread, message, text, note })
       await post.pin(thread, message)
+      this.store.pinned({ app: this.app, thread, message, text, note: words })
       if (was) await post.unpin(thread, was.message).catch(() => {})
       return message
     })
@@ -60,7 +64,7 @@ export class Ledger {
       const pin = this.pin(thread)
       if (message !== undefined && String(pin?.message) !== String(message)) throw new Error('that message is no longer the status post')
       if (!pin) return
-      const said = note ?? pin.note
+      const said = note === undefined ? pin.note : above(note)
       const text = await this.render(thread, said, post)
       if (text === pin.text && said === pin.note) return
       const shown = text === pin.text || (await post.edit(thread, pin.message, text))
@@ -127,11 +131,15 @@ export class Ledger {
     this.store.reworded(this.app, thread, message, text)
   }
 
-  // Unpins the message in the app, then in hex.db, in the thread's turn.
-  unpinned(thread: string, message: MessageId, post: Post): Promise<void> {
+  // Unpins the thread's status post in the app, then in hex.db, in the thread's turn: the message
+  // it was, if there was one.
+  unpin(thread: string, post: Post): Promise<MessageId | undefined> {
     return this.turn(thread, async () => {
-      await post.unpin(thread, message)
-      this.store.unpinned(this.app, thread, message)
+      const pin = this.pin(thread)
+      if (!pin) return
+      await post.unpin(thread, pin.message)
+      this.store.unpinned(this.app, thread, pin.message)
+      return pin.message
     })
   }
 

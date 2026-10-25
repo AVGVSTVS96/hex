@@ -111,10 +111,13 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   await ledger.rewrite('-100:8', post)
   expect(done).toHaveLength(2)
 
-  await ledger.rewrite('-100:8', post, 'Site: example.org', 21)
+  await ledger.rewrite('-100:8', post, 'Site: example.org\n\n**🔴 Blocked on you**\n- copied', 21)
   expect(new Ledger(dir, 'telegram').pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
   await expect(ledger.rewrite('-100:8', post, 'Site: elsewhere', 99)).rejects.toThrow('no longer the status post')
 
+  await expect(ledger.post('-100:8', 'Site: unpinnable', { ...post, pin: async () => Promise.reject(new Error('not enough rights')) })).rejects.toThrow('rights')
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 21 })
+  next = 21
   expect(await ledger.post('-100:8', 'Site: moved', post)).toBe(22)
   expect(done.slice(-2)).toEqual([['pin', 22], ['unpin', 21]])
   expect(ledger.pin('-100:8')).toMatchObject({ message: 22, note: 'Site: moved' })
@@ -139,8 +142,9 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   await ledger.rewrite('-100:8', { ...post, edit: async () => null })
   expect(ledger.pin('-100:8')).toBeUndefined()
   await ledger.post('-100:8', 'Site: again', post)
-  await ledger.unpinned('-100:8', 23, post)
+  expect(await ledger.unpin('-100:8', post)).toBe(23)
   expect(done.at(-1)).toEqual(['unpin', 23])
+  expect(await ledger.unpin('-100:8', post)).toBeUndefined()
   expect(ledger.pin('-100:8')).toBeUndefined()
 })
 

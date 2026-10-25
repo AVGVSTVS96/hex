@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
-import { above } from './status.ts'
+import { above } from './fit.ts'
 
 // One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
 // it. from: the app it was said in. author: who said it, set once by whatever kept it: the owner,
