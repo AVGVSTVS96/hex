@@ -72,4 +72,5 @@ test("a done task links to the first link in its proof, without the markdown or 
 test("a status post's note is its words above its first 🔴 🟡 🟢 line", () => {
   expect(above('📌 **desk**\nShipping today\n\n🔴 **Blocked on you**\n- old\n\n🟢 Done')).toBe('📌 **desk**\nShipping today')
   expect(above('Just a note')).toBe('Just a note')
+  expect(above('Deploy is 🟢 for Friday\n- staging')).toBe('Deploy is 🟢 for Friday\n- staging')
 })

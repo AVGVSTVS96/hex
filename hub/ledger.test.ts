@@ -90,44 +90,41 @@ test('a question stays open through an edit and leaves the waiting list only whe
   expect(ledger.pin('-100:7')).toBeUndefined()
 })
 
-test("a pinned message becomes the thread's status post, rewritten from hex.db under its note, and a pin made meanwhile stands", async () => {
+test("a status post is sent under its note and pinned in place of the last, rewritten from hex.db, and a pin made meanwhile stands", async () => {
   const ledger = new Ledger(dir, 'telegram')
-  const done: unknown[] = []
-  const post = { room: 4096, edit: async (thread: string, message: unknown, text: string) => void done.push(['edit', message, text]), link: () => undefined }
-  const pin = (message: number) => async () => void done.push(['pin', message])
-  const unpin = async (message: unknown) => void done.push(['unpin', message])
+  const done: unknown[][] = []
+  let next = 20
+  const post = {
+    room: 4096,
+    link: () => undefined,
+    send: async (_: string, text: string) => (done.push(['send', ++next, text]), next),
+    edit: async (_: string, message: unknown, text: string) => void done.push(['edit', message, text]),
+    pin: async (_: string, message: unknown) => void done.push(['pin', message]),
+    unpin: async (_: string, message: unknown) => void done.push(['unpin', message]),
+  }
   ledger.ask('-100:8', 10, 'Ship it?', ['Yes', 'No'])
-  await ledger.post('-100:8', 12, 'Site: example.com', post, pin(12), unpin)
-  const [pinned, [, message, text]] = done as [unknown, [string, unknown, string]]
-  expect(pinned).toEqual(['pin', 12])
-  expect(message).toBe(12)
+  expect(await ledger.post('-100:8', 'Site: example.com', post)).toBe(21)
+  const [[, , text]] = done as [[string, number, string]]
   expect(text).toStartWith('Site: example.com\n\n**🔴 Blocked on you**\n- Ship it?')
-  expect(ledger.pin('-100:8')).toMatchObject({ message: 12, text, note: 'Site: example.com' })
+  expect(done[1]).toEqual(['pin', 21])
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 21, text, note: 'Site: example.com' })
   await ledger.rewrite('-100:8', post)
   expect(done).toHaveLength(2)
 
-  await ledger.rewrite('-100:8', post, 'Site: example.org', 12)
+  await ledger.rewrite('-100:8', post, 'Site: example.org', 21)
   expect(new Ledger(dir, 'telegram').pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
   await expect(ledger.rewrite('-100:8', post, 'Site: elsewhere', 99)).rejects.toThrow('no longer the status post')
-  await ledger.post('-100:8', 12, 'Site: example.org\n\nwhat the post said', post, pin(12), unpin)
-  expect(ledger.pin('-100:8')).toMatchObject({ note: 'Site: example.org' })
-  expect(done.slice(-1)).toEqual([['pin', 12]])
 
-  const refused = { ...post, edit: async () => Promise.reject(new Error('there is no text in the message to edit')) }
-  await expect(ledger.post('-100:8', 13, 'A photo', refused, pin(13), unpin)).rejects.toThrow('no text')
-  expect(done.slice(-2)).toEqual([['pin', 13], ['unpin', 13]])
-  expect(ledger.pin('-100:8')).toMatchObject({ message: 12 })
-
-  await ledger.post('-100:8', 14, 'Site: moved', post, pin(14), unpin)
-  expect(done.slice(-3).map(step => (step as unknown[]).slice(0, 2))).toEqual([['pin', 14], ['edit', 14], ['unpin', 12]])
-  expect(ledger.pin('-100:8')).toMatchObject({ message: 14, note: 'Site: moved' })
+  expect(await ledger.post('-100:8', 'Site: moved', post)).toBe(22)
+  expect(done.slice(-2)).toEqual([['pin', 22], ['unpin', 21]])
+  expect(ledger.pin('-100:8')).toMatchObject({ message: 22, note: 'Site: moved' })
 
   const closed = { ...post, edit: async () => false }
   const before = ledger.pin('-100:8')!
   ledger.ask('-100:8', 15, 'Rename it?', ['Yes', 'No'])
   await ledger.rewrite('-100:8', closed)
   expect(ledger.pin('-100:8')).toEqual(before)
-  await expect(ledger.rewrite('-100:8', closed, 'Site: closed', 14)).rejects.toThrow('closed')
+  await expect(ledger.rewrite('-100:8', closed, 'Site: closed', 22)).rejects.toThrow('closed')
 
   const slow = {
     ...post,
@@ -140,6 +137,10 @@ test("a pinned message becomes the thread's status post, rewritten from hex.db u
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', message: 11, text: 'Status: another post', note: 'Status: another post', at: expect.any(String) })
 
   await ledger.rewrite('-100:8', { ...post, edit: async () => null })
+  expect(ledger.pin('-100:8')).toBeUndefined()
+  await ledger.post('-100:8', 'Site: again', post)
+  await ledger.unpinned('-100:8', 23, post)
+  expect(done.at(-1)).toEqual(['unpin', 23])
   expect(ledger.pin('-100:8')).toBeUndefined()
 })
 

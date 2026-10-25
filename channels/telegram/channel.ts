@@ -108,14 +108,15 @@ export const server: ChannelServer = {
     {
       name: 'pin',
       _meta: { 'anthropic/alwaysLoad': true },
-      description: "Pin a message as this thread's status post, or unpin it. hex keeps the post's 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines current from the thread's waiting questions and its tasks, under the message's own words: the note (what the project is, its links, where it stands), sent with format: 'markdown'. edit_message on the post changes the note.",
+      description: "Post this thread's status post: hex sends the note (what the project is, its links, where it stands, in markdown) with its 🔴 Blocked on you, 🟡 Pending and 🟢 Done lines under it, kept current from the thread's waiting questions and tasks, and pins it in place of the last one. edit_message on the post changes the note. message_id with unpin: true unpins it.",
       inputSchema: {
         type: 'object',
         properties: {
+          note: { type: 'string' },
           message_id: { type: 'string' },
           unpin: { type: 'boolean' },
         },
-        required: ['message_id'],
+        required: [],
       },
     },
     {

@@ -50,7 +50,6 @@ import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { Ledger, type MessageId, type Post, type Question } from '../../hub/ledger.ts'
-import { above, headed } from '../../hub/status.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
 
@@ -302,15 +301,22 @@ function serve(token: string) {
   // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
-    // An archived thread's messages can't be edited; its post catches up at the first change after it's back.
+    send: async (thread, text) => {
+      const sent = await (await threadChannel(thread)).send({ content: text, flags: MessageFlags.SuppressEmbeds })
+      said(thread, sent.id, text)
+      return sent.id
+    },
+    pin: async (thread, id) => (await message(await threadChannel(thread), String(id))).pin(),
+    unpin: async (thread, id) => (await message(await threadChannel(thread), String(id))).unpin(),
+    // An archived thread's messages can't be edited (50083): its post catches up when it's back.
+    // One that's someone else's (50005) or gone (10008) never will be.
     edit: async (thread, id, text) => {
-      const ch = await threadChannel(thread)
-      if (ch.isThread() && ch.archived) return false
       try {
-        await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
+        await (await message(await threadChannel(thread), String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
       } catch (err) {
-        // Someone else's message, or one that's gone.
-        if ((err as { code?: number }).code === 50005 || (err as { code?: number }).code === 10008) return null
+        const { code } = err as { code?: number }
+        if (code === 50083) return false
+        if (code === 50005 || code === 10008) return null
         throw err
       }
     },
@@ -675,8 +681,7 @@ function serve(token: string) {
       case 'edit_message': {
         const pinned = ledger.pin(thread)
         if (pinned?.message === args.message_id && args.text !== undefined) {
-          if (headed(args.text as string)) throw new Error("write only the status post's note: hex adds its 🔴 🟡 🟢 lines")
-          if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
+          if (args.files) throw new Error('a status post is text: send the file in its own message')
           await ledger.rewrite(thread, post, tappable(args.text as string), pinned.message)
           said(thread, undefined, tappable(args.text as string), { edited: 'true', message_id: String(pinned.message) })
           return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
@@ -708,13 +713,12 @@ function serve(token: string) {
         return 'deleted'
       }
       case 'pin': {
-        const msg = await message(ch, args.message_id as string)
-        const words = hub.said(msg.id)?.body ?? msg.content
-        const current = ledger.pin(thread)?.message === msg.id
-        if (!args.unpin && !current && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll)) throw new Error('a status post is a message hex sent here without buttons: send its note, then pin that')
-        if (args.unpin) await ledger.unpinned(thread, msg.id, () => msg.unpin())
-        else await ledger.post(thread, msg.id, above(words), post, () => msg.pin(), async id => (await message(ch, String(id))).unpin())
-        return args.unpin ? 'unpinned' : 'pinned'
+        if (args.unpin) {
+          await ledger.unpinned(thread, args.message_id as string, post)
+          return 'unpinned'
+        }
+        if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or message_id with unpin: true")
+        return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
       case 'poll': {
         const sent = await ch.send({
@@ -1155,6 +1159,7 @@ function serve(token: string) {
 
   client.on('threadUpdate', (before, after) => {
     if (before.name !== after.name) hub.rename(after.id, after.name)
+    if (before.archived && !after.archived) ledger.rewrite(after.id, post).catch(err => process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`))
   })
 
   client.on('threadDelete', thread => {

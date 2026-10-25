@@ -7,7 +7,6 @@ import { basename, join, extname, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, EFFORTS, MODELS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { Ledger, type Post } from '../../hub/ledger.ts'
-import { above, headed } from '../../hub/status.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -162,12 +161,18 @@ const topicNames = new Map<string, string>()
 
 const ledger = new Ledger(STATE_DIR, 'telegram')
 
-const NOT_A_POST = "a status post is a text message hex sent here without buttons, with format: 'markdown': send its note that way, then pin it"
-
 // How a status post shows here; the ledger decides when it changes (Ledger.rewrite). Only a
 // supergroup's messages have links.
 const post: Post = {
   room: MAX_CHUNK_LIMIT,
+  send: async (thread, text) => {
+    const { chat_id, extra } = target(thread)
+    const sent = await bot.api.sendRichMessage(chat_id, { markdown: keepLines(text) }, { ...extra, link_preview_options: { is_disabled: true } })
+    said(thread, sent.message_id, text)
+    return sent.message_id
+  },
+  pin: (thread, message) => bot.api.pinChatMessage(target(thread).chat_id, Number(message)),
+  unpin: (thread, message) => bot.api.unpinChatMessage(target(thread).chat_id, Number(message)),
   edit: async (thread, message, text) => {
     try {
       await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } })
@@ -365,7 +370,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
           const sent = markdown
             ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(chunks[i]!) }, opts)
             : await bot.api.sendMessage(chat_id, chunks[i]!, { ...opts, ...parseMode })
-          said(thread, sent.message_id, chunks[i], { format: markdown ? 'markdown' : (args.format as string | undefined) ?? 'text' })
+          said(thread, sent.message_id, chunks[i])
           sentIds.push(sent.message_id)
           if (buttons.length && i === chunks.length - 1) asked = sent.message_id
         }
@@ -407,7 +412,6 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const file = args.file as string | undefined
       if (Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
         if (file || text == null) throw new Error("a status post is text: send the file in its own message")
-        if (headed(text)) throw new Error("write only the status post's note: hex adds its 🔴 🟡 🟢 lines")
         await ledger.rewrite(thread, post, text, id)
         said(thread, undefined, text, { edited: 'true', message_id: String(id) })
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
@@ -443,17 +447,12 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       return `deleted (id: ${id})`
     }
     case 'pin': {
-      const id = Number(args.message_id)
       if (args.unpin) {
-        await ledger.unpinned(thread, id, () => bot.api.unpinChatMessage(chat_id, id))
-      } else {
-        const sent = hub.said(`${chat_id}:${id}`)
-        const current = Number(ledger.pin(thread)?.message) === id
-        const format = sent?.meta?.format ?? 'markdown'
-        if (!current && (sent?.author !== 'hex' || sent.to !== thread || format !== 'markdown' || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id))) throw new Error(NOT_A_POST)
-        await ledger.post(thread, id, above(sent?.body ?? ''), post, () => bot.api.pinChatMessage(chat_id, id), message => bot.api.unpinChatMessage(chat_id, Number(message)))
+        await ledger.unpinned(thread, Number(args.message_id), post)
+        return `unpinned (id: ${args.message_id})`
       }
-      return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
+      if (typeof args.note !== 'string') throw new Error('pin takes the status post\'s note, or message_id with unpin: true')
+      return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
     }
     case 'forward': {
       const id = Number(args.message_id)

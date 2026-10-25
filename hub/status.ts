@@ -21,13 +21,10 @@ export function statusPost(store: Store, thread: string, note: string, room: num
   return [head, fit(sections, room - (head ? head.length + 2 : 0))].filter(Boolean).join('\n\n')
 }
 
-// Whether a text has a status post's own 🔴 🟡 🟢 lines, which hex adds under a note.
-export const headed = (text: string) => /[🔴🟡🟢]/u.test(text)
-
-// A status post's words above its first 🔴 🟡 🟢 line: its note.
+// A status post's words above its first 🔴 🟡 🟢 heading: its note.
 export function above(text: string) {
   const lines = text.split('\n')
-  const first = lines.findIndex(headed)
+  const first = lines.findIndex(line => /^\s*(\*\*|#+\s*)?[🔴🟡🟢]/u.test(line))
   return (first < 0 ? lines : lines.slice(0, first)).join('\n').trim()
 }
 

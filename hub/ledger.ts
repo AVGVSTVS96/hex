@@ -3,24 +3,25 @@ import { open, stateDir, type MessageId, type Pin, type Question, type Store } f
 
 export type { Answer, MessageId, Pin, Question } from './store.ts'
 
-// How an app shows a status post: the room one message has, how it puts new words in place (false
-// when it can't yet, like in a closed thread; null when it never can, like someone else's message
-// or a deleted one), where it shows a thread's message, and what it does before the post is built
-// (like fetching the thread the links name).
+// How an app shows a status post: the room one message has, where it shows a thread's message,
+// what it does before the post is built (like fetching the thread the links name), and how it
+// sends, edits, pins and unpins one. edit returns false when it can't edit yet (a closed thread),
+// and null when it never will (a deleted message).
 export type Post = {
   room: number
-  edit: (thread: string, message: MessageId, text: string) => Promise<boolean | null | void>
   link: Link
   ready?: (thread: string) => Promise<unknown>
+  send: (thread: string, text: string) => Promise<MessageId>
+  edit: (thread: string, message: MessageId, text: string) => Promise<boolean | null | void>
+  pin: (thread: string, message: MessageId) => Promise<unknown>
+  unpin: (thread: string, message: MessageId) => Promise<unknown>
 }
-
-const CLOSED = "the thread is closed, so its status post can't change now"
 
 // One app's questions and each thread's pinned post, which hex.db keeps (store.ts) so every reader
 // sees the same ones. The client that sends and edits the messages keeps them.
 export class Ledger {
   private readonly store: Store
-  private turns = new Map<string, Promise<void>>()
+  private turns = new Map<string, Promise<unknown>>()
 
   // dir: the app's state folder, whose hex.db it is outside a hex.
   constructor(
@@ -38,33 +39,22 @@ export class Ledger {
     return this.store.pin(this.app, thread) ?? undefined
   }
 
-  // Makes the message the thread's status post, its words the note (pinning the post again keeps
-  // its note), and unpins the post it replaces. An edit the app refuses leaves the message as it
-  // was, and unpinned again.
-  post(thread: string, message: MessageId, words: string, post: Post, pin: () => Promise<unknown>, unpin: (message: MessageId) => Promise<unknown>): Promise<void> {
+  // Sends the thread's status post, the note over its lines, and pins it in place of the last one.
+  post(thread: string, note: string, post: Post): Promise<MessageId> {
     return this.turn(thread, async () => {
       const was = this.pin(thread)
-      const same = String(was?.message) === String(message) ? was : undefined
-      const note = same?.note ?? words
       const text = await this.render(thread, note, post)
-      await pin()
-      try {
-        const shown = text === same?.text || (await post.edit(thread, message, text))
-        if (shown === false) throw new Error(CLOSED)
-        if (shown === null) throw new Error("the app won't let hex edit that message, so it can't be a status post")
-      } catch (error) {
-        if (!same) await unpin(message).catch(() => {})
-        throw error
-      }
+      const message = await post.send(thread, text)
       this.store.pinned({ app: this.app, thread, message, text, note })
-      if (was && !same) await unpin(was.message).catch(() => {})
+      await post.pin(thread, message)
+      if (was) await post.unpin(thread, was.message).catch(() => {})
+      return message
     })
   }
 
   // Rewrites the thread's status post if what it should say changed: a new note for the post that
-  // message is, or its questions and tasks in hex.db. A closed thread's post waits for the first
-  // change after it opens again, one the app will never let hex edit stops being the post, and a
-  // pin made while the app was editing stands.
+  // message is, or its questions and tasks in hex.db. A closed thread's post waits for the next
+  // change, a deleted one stops being the post, and a pin made while the app was editing stands.
   rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
     return this.turn(thread, async () => {
       const pin = this.pin(thread)
@@ -74,9 +64,9 @@ export class Ledger {
       const text = await this.render(thread, said, post)
       if (text === pin.text && said === pin.note) return
       const shown = text === pin.text || (await post.edit(thread, pin.message, text))
-      if (shown === null) return this.store.unpinned(this.app, thread, pin.message)
-      if (shown === false) {
-        if (note !== undefined) throw new Error(CLOSED)
+      if (shown === null) this.store.unpinned(this.app, thread, pin.message)
+      if (shown === null || shown === false) {
+        if (note !== undefined) throw new Error(shown === null ? 'the status post is gone; post a new one with pin' : "the thread is closed, so its status post can't change now")
         return
       }
       this.store.write(() => {
@@ -88,7 +78,7 @@ export class Ledger {
   }
 
   // One change to a thread's status post at a time, so two can't race.
-  private turn(thread: string, change: () => Promise<void>): Promise<void> {
+  private turn<T>(thread: string, change: () => Promise<T>): Promise<T> {
     const next = (this.turns.get(thread) ?? Promise.resolve()).catch(() => {}).then(change)
     this.turns.set(thread, next)
     return next
@@ -137,11 +127,10 @@ export class Ledger {
     this.store.reworded(this.app, thread, message, text)
   }
 
-  // Unpins the message in the app, then in hex.db, in the thread's turn, so a pin still running
-  // finishes first.
-  unpinned(thread: string, message: MessageId, unpin: () => Promise<unknown>): Promise<void> {
+  // Unpins the message in the app, then in hex.db, in the thread's turn.
+  unpinned(thread: string, message: MessageId, post: Post): Promise<void> {
     return this.turn(thread, async () => {
-      await unpin()
+      await post.unpin(thread, message)
       this.store.unpinned(this.app, thread, message)
     })
   }
