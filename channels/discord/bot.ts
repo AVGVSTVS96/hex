@@ -704,11 +704,10 @@ function serve(token: string) {
       case 'pin': {
         const msg = await message(ch, args.message_id as string)
         const words = hub.said(msg.id)?.body ?? msg.content
-        if (!args.unpin && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll || headed(words))) throw new Error('a status post is a message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that')
-        if (args.unpin) {
-          await msg.unpin()
-          await ledger.unpinned(thread, msg.id)
-        } else await ledger.post(thread, msg.id, words, post, () => msg.pin(), async id => (await message(ch, String(id))).unpin())
+        const current = ledger.pin(thread)?.message === msg.id
+        if (!args.unpin && !current && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll || headed(words))) throw new Error('a status post is a message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that')
+        if (args.unpin) await ledger.unpinned(thread, msg.id, () => msg.unpin())
+        else await ledger.post(thread, msg.id, words, post, () => msg.pin(), async id => (await message(ch, String(id))).unpin())
         return args.unpin ? 'unpinned' : 'pinned'
       }
       case 'poll': {

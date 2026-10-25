@@ -29,8 +29,9 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
         { thread: '-100:7', message: 42, text: 'Which take?', options: ['A', 'B'], at: '2026-10-18T08:05:00.000Z', poll: 'p-42', answer: { label: 'B', at: '2026-10-18T08:06:00.000Z', via: 'telegram' } },
         { thread: '-100:7', message: 43, text: 'Broken', options: 'not a list', at: '2026-10-18T08:07:00.000Z' },
         { thread: '-100:7', message: 44, text: 'Blank buttons', options: [null], at: '2026-10-18T08:08:00.000Z' },
+        { thread: '-100:9', message: 50, text: 'Rename it?', options: ['Yes', 'No'], at: '2026-10-18T08:09:00.000Z' },
       ],
-      pins: { '-100:7': pin, '-100:8': post },
+      pins: { '-100:7': pin, '-100:8': post, '-100:9': { message: 50, text: 'Rename it?', at: '2026-10-18T08:10:00.000Z' } },
     }),
   )
   const ledger = new Ledger(dir, 'telegram')
@@ -40,6 +41,7 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.find('-100:7', 44)).toBeUndefined()
   expect(ledger.pin('-100:7')).toEqual({ app: 'telegram', thread: '-100:7', ...pin, note: '📌 **desk**\nShipping today' })
   expect(ledger.pin('-100:8')).toEqual({ app: 'telegram', thread: '-100:8', ...post })
+  expect(ledger.pin('-100:9')).toBeUndefined()
   expect(existsSync(file)).toBe(false)
   expect(readFileSync(`${file}.moved-to-hex.db`, 'utf8')).toContain('Deploy now?')
   expect(open(dir).pins()).toHaveLength(2)

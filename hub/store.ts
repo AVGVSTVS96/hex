@@ -226,12 +226,18 @@ const migrations: (string | ((store: Store) => void))[] = [
   create unique index if not exists threads_key on threads (thread);`,
   ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
   // Every pin is its thread's status post. One written by hand keeps its words above its own
-  // 🔴 🟡 🟢 lines as the note, under which hex writes those lines; one whose words hex never knew
-  // is left out, so nothing rewrites it.
+  // 🔴 🟡 🟢 lines as the note, under which hex writes those lines. One hex can't rewrite is left
+  // out: its words unknown, a question, or a message someone else wrote (Telegram keys a message
+  // by chat and id, Discord by id).
   (store: Store) => {
-    store.db.run("delete from pins where note is null and text = ''")
-    const pins = store.db.query('select app, thread, text from pins where note is null').all() as { app: string; thread: string; text: string }[]
-    for (const { app, thread, text } of pins) store.db.query('update pins set note = ? where app = ? and thread = ?').run(above(text), app, thread)
+    const pins = store.db.query('select app, thread, message, text from pins where note is null').all() as { app: string; thread: string; message: MessageId; text: string }[]
+    for (const { app, thread, message, text } of pins) {
+      const key = `${app}:${app === 'telegram' ? `${thread.split(':')[0]}:` : ''}${message}`
+      const author = store.message(key)?.author
+      const kept = text !== '' && !store.question(app, thread, message) && (author === undefined || author === 'hex')
+      if (kept) store.db.query('update pins set note = ? where app = ? and thread = ?').run(above(text), app, thread)
+      else store.db.query('delete from pins where app = ? and thread = ?').run(app, thread)
+    }
   },
 ]
 

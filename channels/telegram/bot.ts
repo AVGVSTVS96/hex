@@ -441,8 +441,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
     case 'pin': {
       const id = Number(args.message_id)
       if (args.unpin) {
-        await bot.api.unpinChatMessage(chat_id, id)
-        await ledger.unpinned(thread, id)
+        await ledger.unpinned(thread, id, () => bot.api.unpinChatMessage(chat_id, id))
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
         const current = Number(ledger.pin(thread)?.message) === id
