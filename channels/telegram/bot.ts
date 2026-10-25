@@ -166,7 +166,7 @@ const ledger = new Ledger(STATE_DIR, 'telegram')
 const post: Post = {
   room: MAX_CHUNK_LIMIT,
   edit: (thread, message, text) =>
-    bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }).catch(err => {
+    bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } }).catch(err => {
       if (!/message is not modified/.test(String(err))) throw err
     }),
   link: (thread, message) => {
@@ -443,7 +443,12 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         if (sent?.author !== 'hex' || sent.to !== thread || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id)) throw new Error('a status post is a text message hex sent here without buttons: send its note, then pin that')
         await bot.api.pinChatMessage(chat_id, id)
         ledger.pinned(thread, id, sent.body)
-        await ledger.rewrite(thread, post)
+        // A message Telegram won't edit as text can't be a status post: it goes back to how it was.
+        await ledger.rewrite(thread, post).catch(async err => {
+          ledger.unpinned(thread, id)
+          await bot.api.unpinChatMessage(chat_id, id).catch(() => {})
+          throw err
+        })
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }

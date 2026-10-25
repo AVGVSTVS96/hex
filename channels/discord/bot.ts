@@ -301,7 +301,7 @@ function serve(token: string) {
   // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
-    edit: async (thread, id, text) => void (await (await message(await threadChannel(thread), String(id))).edit({ content: text })),
+    edit: async (thread, id, text) => void (await (await message(await threadChannel(thread), String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })),
     link: (thread, id) => {
       const at = shown(thread)
       return at && `${at}/${id}`
