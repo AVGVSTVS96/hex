@@ -12,11 +12,21 @@ export function statusPost(store: Store, thread: string, note: string, room: num
   const linked = (text: string, url: string | undefined) => (url ? `[${text.replace(/[[\]]/g, '')}](${url})` : text)
   const waiting = store.questions({ thread, waiting: true }).map(question => `- ${linked(clip(question.text, 120), link(thread, question.message))}`)
   const open = store.tasks({ owner: thread, status: ['open'] }).map(task => `- ${clip(task.title, 120)}`)
-  const done = store.lastDone(thread, 5).map(task => `- ${linked(clip(task.title, 120), task.proof!.match(/https?:\/\/[^\s()<>[\]"']+/)?.[0]?.replace(/[.,;:]+$/, ''))}`)
+  const done = store.lastDone(thread, 5).map(task => `- ${linked(clip(task.title, 120), url(task.proof!))}`)
   const section = (header: string, lines: string[], none: string) => ({ header: lines.length ? `**${header}**` : `**${header}:** ${none}`, items: lines.map(line => [line]), gap: '\n' })
   const sections = [section('🔴 Blocked on you', waiting, 'no questions waiting'), section('🟡 Pending', open, 'no open tasks'), section('🟢 Done', done, 'no tasks done yet')]
   const space = room - fit(sections, 0).length - 2
   const trimmed = note.trim()
   const head = trimmed.length > space ? `${trimmed.slice(0, Math.max(0, space - 1))}…` : trimmed
   return [head, fit(sections, room - (head ? head.length + 2 : 0))].filter(Boolean).join('\n\n')
+}
+
+// Whether a text has a status post's own 🔴 🟡 🟢 lines, which hex adds under a note.
+export const headed = (text: string) => /[🔴🟡🟢]/u.test(text)
+
+// The first link in a proof, without the markdown or punctuation around it.
+function url(proof: string) {
+  let found = proof.match(/https?:\/\/[^\s<>[\]"'`]+/)?.[0]
+  while (found && (/[*_!?.,;:]$/.test(found) || (found.endsWith(')') && found.split(')').length > found.split('(').length))) found = found.slice(0, -1)
+  return found
 }

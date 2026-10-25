@@ -56,3 +56,15 @@ test('a status post fits the room the app gives one message, saying how many mor
   const text = statusPost(store, '-100:7', 'Note', 2000)
   expect(text).toMatch(/\n…and \d+ more\n\n\*\*🟢 Done:\*\* no tasks done yet$/)
 })
+
+test("a done task links to the first link in its proof, without the markdown or punctuation around it", () => {
+  const store = new Store(dir)
+  const proofs = ['merged in `https://github.com/o/r/pull/3`.', '(see https://en.wikipedia.org/wiki/Foo_(bar))', '**https://example.com/a**', 'commit abc123']
+  proofs.forEach((proof, n) => store.editTask(store.createTask({ title: `Task ${n}`, message: said(store, 70 + n, `Task ${n}`), owner: '-100:7' }).id, { status: 'done', proof }))
+  expect(statusPost(store, '-100:7', 'Note', 4096).split('**🟢 Done**\n')[1]!.split('\n')).toEqual([
+    '- Task 3',
+    '- [Task 2](https://example.com/a)',
+    '- [Task 1](https://en.wikipedia.org/wiki/Foo_(bar))',
+    '- [Task 0](https://github.com/o/r/pull/3)',
+  ])
+})

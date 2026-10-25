@@ -95,6 +95,12 @@ export class Ledger {
     if (String(this.pin(thread)?.message) !== String(message)) this.store.pinned({ app: this.app, thread, message, text, note: text })
   }
 
+  // The thread's pin as it was before: that pin, or none.
+  restore(thread: string, pin: Pin | undefined) {
+    if (pin) this.store.pinned(pin)
+    else this.store.unpinned(this.app, thread)
+  }
+
   unpinned(thread: string, message: MessageId) {
     this.store.unpinned(this.app, thread, message)
   }

@@ -7,6 +7,7 @@ import { basename, join, extname, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, EFFORTS, MODELS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
 import { Ledger, type Post } from '../../hub/ledger.ts'
+import { headed } from '../../hub/status.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -160,6 +161,8 @@ function target(thread: string) {
 const topicNames = new Map<string, string>()
 
 const ledger = new Ledger(STATE_DIR, 'telegram')
+
+const NOT_A_POST = 'a status post is a text message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that'
 
 // How a status post shows here; the ledger decides when it changes (Ledger.rewrite). Only a
 // supergroup's messages have links.
@@ -399,6 +402,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const file = args.file as string | undefined
       if (Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
         if (file || text == null) throw new Error("a status post is text: send the file in its own message")
+        if (headed(text)) throw new Error("write only the status post's note: hex adds its 🔴 🟡 🟢 lines")
         await ledger.rewrite(thread, post, text)
         said(thread, undefined, text, { edited: 'true', message_id: String(id) })
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
@@ -440,14 +444,17 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         ledger.unpinned(thread, id)
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
-        if (sent?.author !== 'hex' || sent.to !== thread || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id)) throw new Error('a status post is a text message hex sent here without buttons: send its note, then pin that')
+        if (sent?.author !== 'hex' || sent.to !== thread || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body)) throw new Error(NOT_A_POST)
+        const before = ledger.pin(thread)
         await bot.api.pinChatMessage(chat_id, id)
         ledger.pinned(thread, id, sent.body)
-        // A message Telegram won't edit as text can't be a status post: it goes back to how it was.
+        // A message Telegram won't edit as text (a file sent before files were marked) can't be a
+        // status post: it's unpinned again and the thread keeps the post it had.
         await ledger.rewrite(thread, post).catch(async err => {
-          ledger.unpinned(thread, id)
+          if (Number(before?.message) === id || !/no text in the message|can't be edited/.test(String(err))) throw err
+          ledger.restore(thread, before)
           await bot.api.unpinChatMessage(chat_id, id).catch(() => {})
-          throw err
+          throw new Error(NOT_A_POST)
         })
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`

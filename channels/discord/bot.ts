@@ -50,6 +50,7 @@ import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { Ledger, type MessageId, type Post, type Question } from '../../hub/ledger.ts'
+import { headed } from '../../hub/status.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
 
@@ -302,10 +303,7 @@ function serve(token: string) {
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
     edit: async (thread, id, text) => void (await (await message(await threadChannel(thread), String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })),
-    link: (thread, id) => {
-      const at = shown(thread)
-      return at && `${at}/${id}`
-    },
+    link: (thread, id) => `${shown(thread) ?? `https://discord.com/channels/${guild().id}/${thread}`}/${id}`,
   }
 
   // Where Discord shows a thread the bot has seen.
@@ -662,6 +660,7 @@ function serve(token: string) {
       case 'edit_message': {
         const pinned = ledger.pin(thread)
         if (pinned?.message === args.message_id && args.text !== undefined) {
+          if (headed(args.text as string)) throw new Error("write only the status post's note: hex adds its 🔴 🟡 🟢 lines")
           if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
           await ledger.rewrite(thread, post, tappable(args.text as string))
           said(thread, undefined, tappable(args.text as string), { edited: 'true', message_id: String(pinned.message) })
@@ -695,11 +694,12 @@ function serve(token: string) {
       }
       case 'pin': {
         const msg = await message(ch, args.message_id as string)
-        if (!args.unpin && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll)) throw new Error('a status post is a message hex sent here without buttons: send its note, then pin that')
+        const words = hub.said(msg.id)?.body ?? msg.content
+        if (!args.unpin && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll || headed(words))) throw new Error('a status post is a message hex sent here without buttons, and hex adds its 🔴 🟡 🟢 lines: send just its note, then pin that')
         await (args.unpin ? msg.unpin() : msg.pin())
         if (args.unpin) ledger.unpinned(thread, msg.id)
         else {
-          ledger.pinned(thread, msg.id, hub.said(msg.id)?.body ?? msg.content)
+          ledger.pinned(thread, msg.id, words)
           await ledger.rewrite(thread, post)
         }
         return args.unpin ? 'unpinned' : 'pinned'
