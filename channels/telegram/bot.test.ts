@@ -457,6 +457,10 @@ test("a status post is the session's note over lines hex keeps current from the 
   await call('pin', { message_id: String(id) })
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
   expect((await call('edit_message', { message_id: String(id), text: 'Site', file: join(state, 'access.json') })).error).toBe('a status post is text: send the file in its own message')
+
+  const question = Number((await call('reply', { text: 'Ship it?', buttons: ['Yes', 'No'] })).text.match(/id: (\d+)/)[1])
+  for (const other of [question, 999999]) expect((await call('pin', { message_id: String(other) })).error).toStartWith('a status post is a text message hex sent here')
+  expect(ledger().pins[DESK]).toMatchObject({ message: id })
 })
 
 test("a thread's link is where Telegram opens it: a topic, General, or for a DM, the bot", () => {
