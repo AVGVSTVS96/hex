@@ -361,7 +361,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
           const sent = markdown
             ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(chunks[i]!) }, opts)
             : await bot.api.sendMessage(chat_id, chunks[i]!, { ...opts, ...parseMode })
-          said(thread, sent.message_id, chunks[i])
+          said(thread, sent.message_id, chunks[i], markdown ? { format: 'markdown' } : {})
           sentIds.push(sent.message_id)
           if (buttons.length && i === chunks.length - 1) asked = sent.message_id
         }
@@ -445,8 +445,8 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         ledger.unpinned(thread, id)
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
-        if (sent?.author !== 'hex' || sent.to !== thread || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body)) throw new Error(NOT_A_POST)
-        await ledger.post(thread, id, sent.body, post, () => bot.api.pinChatMessage(chat_id, id), () => bot.api.unpinChatMessage(chat_id, id))
+        if (sent?.author !== 'hex' || sent.to !== thread || sent.meta?.format !== 'markdown' || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id) || headed(sent.body)) throw new Error(NOT_A_POST)
+        await ledger.post(thread, id, sent.body, post, () => bot.api.pinChatMessage(chat_id, id), message => bot.api.unpinChatMessage(chat_id, Number(message)))
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
     }

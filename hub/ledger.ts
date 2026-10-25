@@ -38,8 +38,9 @@ export class Ledger {
   }
 
   // Makes the message the thread's status post, its words the note (pinning the post again keeps
-  // its note). An edit the app refuses leaves the message as it was, and unpinned again.
-  post(thread: string, message: MessageId, words: string, post: Post, pin: () => Promise<unknown>, unpin: () => Promise<unknown>): Promise<void> {
+  // its note), and unpins the post it replaces. An edit the app refuses leaves the message as it
+  // was, and unpinned again.
+  post(thread: string, message: MessageId, words: string, post: Post, pin: () => Promise<unknown>, unpin: (message: MessageId) => Promise<unknown>): Promise<void> {
     return this.turn(thread, async () => {
       const was = this.pin(thread)
       const same = String(was?.message) === String(message) ? was : undefined
@@ -49,10 +50,11 @@ export class Ledger {
       try {
         if (text !== same?.text && (await post.edit(thread, message, text)) === false) throw new Error(CLOSED)
       } catch (error) {
-        if (!same) await unpin().catch(() => {})
+        if (!same) await unpin(message).catch(() => {})
         throw error
       }
       this.store.pinned({ app: this.app, thread, message, text, note })
+      if (was && !same) await unpin(was.message).catch(() => {})
     })
   }
 

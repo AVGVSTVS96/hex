@@ -429,7 +429,7 @@ test('a poll answered in the app closes, and its vote reaches the thread', async
 })
 
 test('a message edited before it is pinned or forwarded goes with its new text', async () => {
-  const id = Number((await call('reply', { text: 'Status: drafting' })).text.match(/id: (\d+)/)[1])
+  const id = Number((await call('reply', { text: 'Status: drafting', format: 'markdown' })).text.match(/id: (\d+)/)[1])
   await call('edit_message', { message_id: String(id), text: 'Status: live' })
   await call('pin', { message_id: String(id) })
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Status: live' })
@@ -438,7 +438,7 @@ test('a message edited before it is pinned or forwarded goes with its new text',
 })
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
-  const id = Number((await call('reply', { text: 'Site: example.com' })).text.match(/id: (\d+)/)[1])
+  const id = Number((await call('reply', { text: 'Site: example.com', format: 'markdown' })).text.match(/id: (\d+)/)[1])
   await call('pin', { message_id: String(id) })
   const edits = () => calls.filter(c => c.method === 'editMessageText' && c.payload.message_id === id).map(c => c.payload.rich_message.markdown as string)
   await until(() => edits().at(-1)?.startsWith('Site: example.com\n\n**🔴 Blocked on you'))
@@ -460,7 +460,8 @@ test("a status post is the session's note over lines hex keeps current from the 
 
   expect((await call('edit_message', { message_id: String(id), text: 'Site\n\n🟡 Pending\n- by hand' })).error).toBe("write only the status post's note: hex adds its 🔴 🟡 🟢 lines")
   const question = Number((await call('reply', { text: 'Ship it?', buttons: ['Yes', 'No'] })).text.match(/id: (\d+)/)[1])
-  for (const other of [question, 999999]) expect((await call('pin', { message_id: String(other) })).error).toStartWith('a status post is a text message hex sent here')
+  const plain = Number((await call('reply', { text: 'Site: plain text' })).text.match(/id: (\d+)/)[1])
+  for (const other of [question, plain, 999999]) expect((await call('pin', { message_id: String(other) })).error).toStartWith('a status post is a text message hex sent here')
   expect(ledger().pins[DESK]).toMatchObject({ message: id })
 })
 

@@ -708,7 +708,7 @@ function serve(token: string) {
         if (args.unpin) {
           await msg.unpin()
           ledger.unpinned(thread, msg.id)
-        } else await ledger.post(thread, msg.id, words, post, () => msg.pin(), () => msg.unpin())
+        } else await ledger.post(thread, msg.id, words, post, () => msg.pin(), async id => (await message(ch, String(id))).unpin())
         return args.unpin ? 'unpinned' : 'pinned'
       }
       case 'poll': {
