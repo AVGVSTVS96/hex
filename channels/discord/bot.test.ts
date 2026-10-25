@@ -45,7 +45,7 @@ function channel(id: string, fields: Channel): Channel {
     send: async (input: string | Channel) => {
       const options = typeof input === 'string' ? { content: input } : input
       done.push({ send: options, in: id })
-      return say(ch, 59, options.content ?? '', { id: String(BigInt(snowflake(59)) + BigInt(++sent)), author: bot, components: options.components?.map((row: any) => row.toJSON()) })
+      return say(ch, 59, options.content ?? '', { id: String(BigInt(snowflake(59)) + BigInt(++sent)), author: bot, components: options.components?.map((row: any) => row.toJSON()) ?? [] })
     },
     fetchStarterMessage: async () => (ch.parent.isThreadOnly() ? ch : ch.parent).messages.fetch(id),
     posted: messages,
@@ -93,6 +93,7 @@ function say(where: Channel, minute: number, content: string, fields: Channel = 
     flags: new MessageFlagsBitField(),
     attachments: new Collection(),
     messageSnapshots: new Collection(),
+    components: [],
     stickers: new Collection(),
     poll: null,
     thread: null,

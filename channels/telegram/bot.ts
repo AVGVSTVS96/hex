@@ -165,7 +165,10 @@ const ledger = new Ledger(STATE_DIR, 'telegram')
 // supergroup's messages have links.
 const post: Post = {
   room: MAX_CHUNK_LIMIT,
-  edit: async (thread, message, text) => void (await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) })),
+  edit: (thread, message, text) =>
+    bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }).catch(err => {
+      if (!/message is not modified/.test(String(err))) throw err
+    }),
   link: (thread, message) => {
     const [chat, topic] = thread.split(':')
     return chat!.startsWith('-100') ? `https://t.me/c/${[chat!.slice(4), topic, message].filter(Boolean).join('/')}` : undefined
@@ -394,8 +397,8 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const id = Number(args.message_id)
       const text = args.text != null ? tappable(args.text as string) : undefined
       const file = args.file as string | undefined
-      if (Number(ledger.pin(thread)?.message) === id && text != null) {
-        if (file) throw new Error("a status post is text: send the file in its own message")
+      if (Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
+        if (file || text == null) throw new Error("a status post is text: send the file in its own message")
         await ledger.rewrite(thread, post, text)
         said(thread, undefined, text, { edited: 'true', message_id: String(id) })
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
@@ -437,7 +440,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         ledger.unpinned(thread, id)
       } else {
         const sent = hub.said(`${chat_id}:${id}`)
-        if (sent?.author !== 'hex' || sent.meta?.file || sent.meta?.forwarded || sent.meta?.poll || ledger.find(thread, id)) throw new Error('a status post is a text message hex sent here without buttons: send its note, then pin that')
+        if (sent?.author !== 'hex' || sent.to !== thread || ['file', 'forwarded', 'poll', 'permission'].some(kind => sent.meta?.[kind]) || ledger.find(thread, id)) throw new Error('a status post is a text message hex sent here without buttons: send its note, then pin that')
         await bot.api.pinChatMessage(chat_id, id)
         ledger.pinned(thread, id, sent.body)
         await ledger.rewrite(thread, post)

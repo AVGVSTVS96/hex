@@ -695,7 +695,7 @@ function serve(token: string) {
       }
       case 'pin': {
         const msg = await message(ch, args.message_id as string)
-        if (!args.unpin && (msg.author.id !== client.user!.id || ledger.find(thread, msg.id))) throw new Error('a status post is a message hex sent here without buttons: send its note, then pin that')
+        if (!args.unpin && (msg.author.id !== client.user!.id || msg.components.length || msg.messageSnapshots.size || msg.poll)) throw new Error('a status post is a message hex sent here without buttons: send its note, then pin that')
         await (args.unpin ? msg.unpin() : msg.pin())
         if (args.unpin) ledger.unpinned(thread, msg.id)
         else {
