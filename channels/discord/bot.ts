@@ -307,12 +307,21 @@ function serve(token: string) {
       return sent.id
     },
     pin: async (thread, id) => (await message(await threadChannel(thread), String(id))).pin(),
-    unpin: async (thread, id) => (await message(await threadChannel(thread), String(id))).unpin(),
-    // An archived thread's messages can't be edited (50083): its post catches up when it's back.
-    // One that's someone else's (50005) or gone (10008) never will be.
-    edit: async (thread, id, text) => {
+    // A message that's gone (10008) is unpinned already.
+    unpin: async (thread, id) => {
       try {
-        await (await message(await threadChannel(thread), String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
+        await (await message(await threadChannel(thread), String(id))).unpin()
+      } catch (err) {
+        if ((err as { code?: number }).code !== 10008) throw err
+      }
+    },
+    // An archived thread's messages can't be edited (50083, or archived as far as the bot knows):
+    // its post catches up when it's back. One that's someone else's (50005) or gone (10008) never will be.
+    edit: async (thread, id, text) => {
+      const ch = await threadChannel(thread)
+      if (ch.isThread() && ch.archived) return false
+      try {
+        await (await message(ch, String(id))).edit({ content: text, flags: MessageFlags.SuppressEmbeds })
       } catch (err) {
         const { code } = err as { code?: number }
         if (code === 50083) return false
@@ -714,7 +723,7 @@ function serve(token: string) {
       }
       case 'pin': {
         if (args.unpin) {
-          const was = await ledger.unpin(thread, post)
+          const was = await ledger.unpin(thread, post, args.message_id as string | undefined)
           return was === undefined ? 'this thread has no status post' : `unpinned the status post (id: ${was})`
         }
         if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or unpin: true")

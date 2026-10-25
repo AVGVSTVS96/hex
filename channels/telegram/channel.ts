@@ -113,6 +113,7 @@ export const server: ChannelServer = {
         type: 'object',
         properties: {
           note: { type: 'string', description: "the status post's note, in markdown" },
+          message_id: { type: 'string', description: 'with unpin: a message to unpin other than the status post' },
           unpin: { type: 'boolean' },
         },
         required: [],

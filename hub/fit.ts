@@ -35,9 +35,9 @@ export function fit(sections: Section[], room: number): string {
 // so a hook's output stays under ROOM, which leaves space for the lines around it.
 export const ROOM = 9_000
 
-// A status post's words above its first 🔴 🟡 🟢 heading: its note.
+// A status post's words above its first 🔴 Blocked on you, 🟡 Pending or 🟢 Done heading: its note.
 export function above(text: string) {
   const lines = text.split('\n')
-  const first = lines.findIndex(line => /^\s*(\*\*|#+\s*)?[🔴🟡🟢]/u.test(line))
+  const first = lines.findIndex(line => /^\s*(\*\*)?(🔴|🟡|🟢)\s*(\*\*)?\s*(Blocked on you|Pending|Done)\b/u.test(line))
   return (first < 0 ? lines : lines.slice(0, first)).join('\n').trim()
 }

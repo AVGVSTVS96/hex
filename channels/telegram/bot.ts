@@ -172,13 +172,20 @@ const post: Post = {
     return sent.message_id
   },
   pin: (thread, message) => bot.api.pinChatMessage(target(thread).chat_id, Number(message)),
-  unpin: (thread, message) => bot.api.unpinChatMessage(target(thread).chat_id, Number(message)),
+  // A message that's gone is unpinned already.
+  unpin: async (thread, message) => {
+    await bot.api.unpinChatMessage(target(thread).chat_id, Number(message)).catch(err => {
+      if (!/message to unpin not found|message not found/.test(String(err))) throw err
+    })
+  },
+  // Waits out Telegram's rate limit. A message hex may not edit, one that's gone, or a chat the
+  // bot left never will be edited.
   edit: async (thread, message, text) => {
     try {
-      await bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } })
+      await paced(() => bot.api.editMessageText(target(thread).chat_id, Number(message), { markdown: keepLines(text) }, { link_preview_options: { is_disabled: true } }))
     } catch (err) {
       if (/message is not modified/.test(String(err))) return
-      if (/message can't be edited|message to edit not found|no text in the message/.test(String(err))) return null
+      if (/message can't be edited|message to edit not found|no text in the message|bot was kicked|chat not found/.test(String(err))) return null
       throw err
     }
   },
@@ -448,7 +455,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
     }
     case 'pin': {
       if (args.unpin) {
-        const was = await ledger.unpin(thread, post)
+        const was = await ledger.unpin(thread, post, args.message_id === undefined ? undefined : Number(args.message_id))
         return was === undefined ? 'this thread has no status post' : `unpinned the status post (id: ${was})`
       }
       if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or unpin: true")

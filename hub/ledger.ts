@@ -68,7 +68,10 @@ export class Ledger {
       const text = await this.render(thread, said, post)
       if (text === pin.text && said === pin.note) return
       const shown = text === pin.text || (await post.edit(thread, pin.message, text))
-      if (shown === null) this.store.unpinned(this.app, thread, pin.message)
+      if (shown === null) {
+        this.store.unpinned(this.app, thread, pin.message)
+        await post.unpin(thread, pin.message).catch(() => {})
+      }
       if (shown === null || shown === false) {
         if (note !== undefined) throw new Error(shown === null ? 'the status post is gone; post a new one with pin' : "the thread is closed, so its status post can't change now")
         return
@@ -131,15 +134,15 @@ export class Ledger {
     this.store.reworded(this.app, thread, message, text)
   }
 
-  // Unpins the thread's status post in the app, then in hex.db, in the thread's turn: the message
-  // it was, if there was one.
-  unpin(thread: string, post: Post): Promise<MessageId | undefined> {
+  // Unpins a message, by default the thread's status post, in the app and then in hex.db, in the
+  // thread's turn: the message it unpinned, if any.
+  unpin(thread: string, post: Post, message?: MessageId): Promise<MessageId | undefined> {
     return this.turn(thread, async () => {
-      const pin = this.pin(thread)
-      if (!pin) return
-      await post.unpin(thread, pin.message)
-      this.store.unpinned(this.app, thread, pin.message)
-      return pin.message
+      const target = message ?? this.pin(thread)?.message
+      if (target === undefined) return
+      await post.unpin(thread, target)
+      this.store.unpinned(this.app, thread, target)
+      return target
     })
   }
 
