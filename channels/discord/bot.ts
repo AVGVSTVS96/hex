@@ -664,7 +664,7 @@ function serve(token: string) {
         if (pinned?.message === args.message_id && args.text !== undefined) {
           if (args.files) await (await message(ch, pinned.message)).edit({ files: sendable(args.files as string[]), attachments: [] })
           await ledger.rewrite(thread, post, tappable(args.text as string))
-          if (args.settled) await settleQuestion(thread, pinned.message, '✓ Settled')
+          said(thread, undefined, tappable(args.text as string), { edited: 'true', message_id: String(pinned.message) })
           return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
         }
         const msg = await message(ch, args.message_id as string)
@@ -695,10 +695,11 @@ function serve(token: string) {
       }
       case 'pin': {
         const msg = await message(ch, args.message_id as string)
+        if (!args.unpin && (msg.author.id !== client.user!.id || ledger.find(thread, msg.id))) throw new Error('a status post is a message hex sent here without buttons: send its note, then pin that')
         await (args.unpin ? msg.unpin() : msg.pin())
         if (args.unpin) ledger.unpinned(thread, msg.id)
         else {
-          ledger.pinned(thread, msg.id, msg.content)
+          ledger.pinned(thread, msg.id, hub.said(msg.id)?.body ?? msg.content)
           await ledger.rewrite(thread, post)
         }
         return args.unpin ? 'unpinned' : 'pinned'

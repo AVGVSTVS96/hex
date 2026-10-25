@@ -90,11 +90,9 @@ export class Ledger {
     this.store.reworded(this.app, thread, message, text)
   }
 
-  // The thread's status post is now this message, under the note: the message's own words, or the
-  // note the post had when it's pinned again.
+  // The thread's status post is now this message, its words the note; pinning the post again keeps it.
   pinned(thread: string, message: MessageId, text: string) {
-    const pin = this.pin(thread)
-    this.store.pinned({ app: this.app, thread, message, text, note: pin?.message === message ? pin.note : text })
+    if (String(this.pin(thread)?.message) !== String(message)) this.store.pinned({ app: this.app, thread, message, text, note: text })
   }
 
   unpinned(thread: string, message: MessageId) {

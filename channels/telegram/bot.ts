@@ -376,7 +376,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         const sent = photos[i]
           ? await bot.api.sendPhoto(chat_id, input, opts)
           : await bot.api.sendDocument(chat_id, input, opts)
-        said(thread, sent.message_id, captioned ? caption : `(file: ${basename(files[i]!)})`)
+        said(thread, sent.message_id, captioned ? caption : `(file: ${basename(files[i]!)})`, { file: basename(files[i]!) })
         sentIds.push(sent.message_id)
         if (buttons.length && captioned) asked = sent.message_id
       }
@@ -397,7 +397,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       if (Number(ledger.pin(thread)?.message) === id && text != null) {
         if (file) throw new Error("a status post is text: send the file in its own message")
         await ledger.rewrite(thread, post, text)
-        if (args.settled) await settleQuestion(thread, id, '✓ Settled')
+        said(thread, undefined, text, { edited: 'true', message_id: String(id) })
         return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
       }
       const parseMode = args.format === 'markdownv2' ? { parse_mode: 'MarkdownV2' as const } : {}
@@ -436,8 +436,10 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         await bot.api.unpinChatMessage(chat_id, id)
         ledger.unpinned(thread, id)
       } else {
+        const sent = hub.said(`${chat_id}:${id}`)
+        if (sent?.author !== 'hex' || sent.meta?.file || sent.meta?.forwarded || sent.meta?.poll || ledger.find(thread, id)) throw new Error('a status post is a text message hex sent here without buttons: send its note, then pin that')
         await bot.api.pinChatMessage(chat_id, id)
-        ledger.pinned(thread, id, hub.said(`${chat_id}:${id}`)?.body ?? '')
+        ledger.pinned(thread, id, sent.body)
         await ledger.rewrite(thread, post)
       }
       return `${args.unpin ? 'unpinned' : 'pinned'} (id: ${id})`
