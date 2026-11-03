@@ -273,7 +273,7 @@ test('a repeat that joined a call keeps it unheard, even when the first request 
 })
 
 test("a call whose client left while the hub was too busy to read it doesn't run", async () => {
-  const { ran, serve } = channel()
+  const { ran, serve, answer } = channel()
   const hub = Bun.serve({ port: 0, fetch: serve })
   const left = join(mkdtempSync(join(tmpdir(), 'mcp-')), 'left')
   try {
@@ -287,9 +287,48 @@ test("a call whose client left while the hub was too busy to read it doesn't run
       require('fs').writeFileSync(${JSON.stringify(left)}, '')`
     Bun.spawn(['bun', '-e', client], { stdout: 'ignore', stderr: 'ignore' })
     for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end; ) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)
+    expect(existsSync(left)).toBe(true)
     await Bun.sleep(200)
     expect(ran()).toBe(0)
+    const heard = fetch(`http://127.0.0.1:${hub.port}/telegram`, { method: 'POST', headers, body })
+    await answer()
+    expect(text((await (await heard).json()) as Answer)).toBe('sent (id: 5389)')
+    expect(ran()).toBe(1)
   } finally {
     hub.stop(true)
   }
+})
+
+test("an answer that came after the session's whole wait was missed, and outlasts the turn's end", async () => {
+  const time = manual(async () => {})
+  try {
+    const { ran, call, answer, reached, rested } = channel()
+    const first = call({ text: 'report' })
+    await reached()
+    await time.advance(5 * 60_000)
+    await answer()
+    await first
+    rested('-100:7')
+    expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
+    expect(ran()).toBe(1)
+  } finally {
+    time.restore()
+  }
+})
+
+test('the latest of several repeats says whether the session heard, so a later missed one keeps the call', async () => {
+  const { ran, call, answer, reached } = channel()
+  const gaveUp = new AbortController()
+  const first = call({ text: 'report' }, gaveUp)
+  await reached()
+  gaveUp.abort()
+  const heard = call({ text: 'report' })
+  const missed = new AbortController()
+  const last = call({ text: 'report' }, missed)
+  await Bun.sleep(5)
+  missed.abort()
+  await answer()
+  await Promise.all([first, heard, last])
+  expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
+  expect(ran()).toBe(1)
 })

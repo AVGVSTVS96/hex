@@ -19,20 +19,20 @@ type Hooks = {
 const REVISIONS = ['2025-11-25', '2025-06-18', '2025-03-26']
 const encoder = new TextEncoder()
 const NUDGE = 250
-// Claude Code gives up on a tool call after the timeout in the channel's .mcp.json (300000 ms),
-// while the hub still carries it out, and the session then makes the same call again before its
-// turn ends. A call stays unheard until the session hears its answer, and the same call in its
-// thread, until the thread's turn ends (rested), gets that answer instead of acting twice. A call
-// that reached the hub GAVE_UP before its answer counts as unheard even with no abort seen, since a
-// lagging hub accepts late and can miss the session leaving, and so does one a repeat joined. KEEP
-// after its start or answer lets a record go, for sessions whose turns the hub doesn't follow and
-// calls that never answer. A tool that only reads runs every time, and a
-// call the session gave up on before the hub read it doesn't run at all.
+// Claude Code gives up on a tool call after the timeout in the channel's .mcp.json, while the hub
+// still carries it out, and the session then makes the same call again. A call is kept until the
+// session hears its answer, and the same call in its thread meanwhile gets that answer instead of
+// acting twice. Whether the session heard is told by the latest request for the call: one aborted,
+// or answered WAITED after reaching the hub, was missed and is kept until KEEP after its start or
+// answer; one answered GAVE_UP after it may have been heard (a lagging hub accepts late and can miss
+// the session leaving), and is kept until the thread's turn ends (rested). A tool that only reads
+// runs every time, and a call the session gave up on before the hub read it doesn't run at all.
+const WAITED = 300_000
 const GAVE_UP = 120_000
 const KEEP = 15 * 60_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-type Run = { answer: Promise<Result>; at: number; done?: true; missed?: true; slow?: true }
+type Run = { answer: Promise<Result>; at: number; waiting: number; heard?: 'maybe' | 'no' }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -72,16 +72,19 @@ export function endpoint(name: string, channel: string, token: string, server: C
     unheard.set(scope, runs)
     const key = JSON.stringify([tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
     const repeat = runs.get(key)
-    const run: Run = repeat ?? { answer: call(thread, tool, args), at: arrived }
-    if (repeat) repeat.missed = true
-    else {
+    const run: Run = repeat ?? { answer: call(thread, tool, args), at: arrived, waiting: 0 }
+    run.waiting++
+    if (!repeat) {
       runs.set(key, run)
-      void run.answer.then(() => Object.assign(run, { done: true, at: clock.now() }))
+      void run.answer.then(() => (run.at = clock.now()))
     }
     return run.answer.then(answer => {
-      if (gone.aborted) run.missed = true
-      else if (clock.now() - arrived >= GAVE_UP) run.slow = true
-      else if ((repeat || !run.missed) && runs.get(key) === run) runs.delete(key)
+      const took = clock.now() - arrived
+      if (--run.waiting === 0 && runs.get(key) === run) {
+        if (gone.aborted || took >= WAITED) run.heard = 'no'
+        else if (took >= GAVE_UP) run.heard = 'maybe'
+        else runs.delete(key)
+      }
       if (!repeat) return answer
       return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
     })
@@ -198,11 +201,11 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
   }
 
-  // The thread's turn ended with nothing left working, so a call kept only for being slow was heard.
-  // One the session is known to have missed stays: its next turn may well make it again.
+  // The thread's turn ended with nothing left working, so a call that may have been heard was. One
+  // the session missed stays: its next turn may well make it again.
   function rested(thread: string) {
     const runs = unheard.get(thread)
-    for (const [key, run] of runs ?? []) if (run.done && !run.missed) runs!.delete(key)
+    for (const [key, run] of runs ?? []) if (run.heard === 'maybe') runs!.delete(key)
   }
 
   return Object.assign(handle, { rested })
