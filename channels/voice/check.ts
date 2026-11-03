@@ -109,7 +109,8 @@ function gather(state: string) {
   const pins: { pin: Ref; topic: string; text: string }[] = []
   const questions = store(state).questions()
   const threads = store(state).threads()
-  for (const thread of threads) if (thread.app !== 'voice') names[`${thread.app}:${thread.thread}`] = nameOf(thread, generalOf(threads))
+  const general = generalOf(threads)
+  for (const thread of threads) if (thread.app !== 'voice') names[`${thread.app}:${thread.thread}`] = nameOf(thread, general)
   const ledgers = Object.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app) as Record<string, Asked[]>
   for (const pin of store(state).pins()) if (pin.note) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(pin.note, LONG) })
   const shown = (app: string, question: Asked) => ({
@@ -239,8 +240,7 @@ function claude(input: string, hexDir: string, state: string) {
   const args = ['-p', '--model', MODEL, '--effort', 'medium', '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--setting-sources', 'project', '--no-session-persistence', '--add-dir', hexDir, join(homedir(), '.claude', 'projects')]
   const cwd = mkdtempSync(join(tmpdir(), 'hex-check-'))
   writeFileSync(join(cwd, 'messages.md'), messages(hexDir))
-  const threads = store(state).threads()
-  writeFileSync(join(cwd, 'threads.json'), JSON.stringify(threads.map(thread => ({ ...thread, name: nameOf(thread, generalOf(threads)) })), null, 1))
+  writeFileSync(join(cwd, 'threads.json'), JSON.stringify(store(state).threads(), null, 1))
   return new Promise<Verdict>((resolve, reject) => {
     const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE'))), CLAUDE_CODE_ENTRYPOINT: 'hex' }
     const child = spawn('claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })

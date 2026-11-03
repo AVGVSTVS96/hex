@@ -376,11 +376,13 @@ export function followAgent(agent: string, session: string | undefined, onStep: 
       return followTranscript(path, 0, (_, updates) => lines(updates(), onStep))
 }
 
-type Named = { app: string; thread: string; name: string }
+type Named = { app: string; thread: string; name: string; open?: boolean }
 
-// hex's General, out of every thread hex.db has had: its first Telegram group chat without a topic.
-export function generalOf<T extends Named>(threads: Iterable<T>) {
-  for (const thread of threads) if (thread.app === 'telegram' && /^-\d+$/.test(thread.thread)) return thread
+// hex's General: the Telegram group HEX_MAIN_THREAD names, the one its bot opens topics in, else
+// the first open group chat hex.db has, else the first it has had.
+export function generalOf<T extends Named>(threads: Iterable<T>, main = process.env.HEX_MAIN_THREAD) {
+  const groups = [...threads].filter(({ app, thread }) => app === 'telegram' && /^-\d+$/.test(thread))
+  return groups.find(({ thread }) => thread === main) ?? groups.find(({ open }) => open !== false) ?? groups[0]
 }
 
 // What a thread is called on screen: General is General, whatever hex.db names it.

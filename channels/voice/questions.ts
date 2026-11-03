@@ -322,7 +322,9 @@ export class Questions extends Changes {
   // A thread's place, and when it asked there: the question's or the pinned post's time.
   private thread(app: string, thread: string, message?: MessageId): Place & { at?: string } {
     const key = `${app}:${thread}`
-    const place = app === 'telegram' && !thread.includes(':') ? (thread.startsWith('-') ? 'General' : 'DM') : (this.links.title(app, thread) ?? this.threads.get(key)?.name ?? thread)
+    const general = generalOf(this.threads.values())
+    const dm = app === 'telegram' && !thread.includes(':') && !thread.startsWith('-')
+    const place = general && `${general.app}:${general.thread}` === key ? 'General' : dm ? 'DM' : (this.links.title(app, thread) ?? this.threads.get(key)?.name ?? thread)
     const link = linkAt(app, this.threads.get(key)?.link, message)
     const pin = this.pins.get(key)
     const at = message === undefined ? undefined : pin && String(pin.message) === String(message) ? pin.at : this.asked({ app, thread, message })?.at

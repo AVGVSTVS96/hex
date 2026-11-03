@@ -49,7 +49,7 @@ export type Run = {
   link?: string
 }
 
-type Thread = { app: string; id: string; name: string; session?: string; cwd?: string; link?: string }
+type Thread = { app: string; id: string; name: string; session?: string; cwd?: string; link?: string; general?: true }
 type Job = {
   state?: string
   detail?: string
@@ -128,18 +128,19 @@ export class Board extends Changes {
   }
 
   // Any thread hex.db has had: its run while it's on the board, else a read-only page from what was
-  // last kept for it, read fresh. A session another open thread holds now says nothing of this one.
+  // last kept for it, read fresh. A session another open thread holds now says nothing of this one,
+  // a question it was blocked on is no line, and a thread that shows only under another has no page.
   find(id: string): Run | Page | undefined {
     const kept = this.get(id)
     if (kept) return kept
     const all = open(this.state).threads()
     const row = all.find(({ app, thread }) => APPS[app] && `${app}:${thread}` === id)
-    if (!row) return
+    if (!row || this.links.delegated(row.app, row.thread)) return
     const thread = threadOf(row, generalOf(all))
     const own = row.session && !all.some(one => one !== row && one.open && one.session === row.session) ? row.session : undefined
     const job: Job | undefined = own && readJson(join(this.claude, 'jobs', short(own), 'state.json'))
     const at = job?.updatedAt ?? this.tracks[id]?.at(-1)?.at
-    const line = job?.state !== 'stopped' && job?.detail ? oneLine(plain(job.detail)) : undefined
+    const line = job?.detail && job.state !== 'stopped' && job.state !== 'blocked' ? oneLine(plain(job.detail)) : undefined
     return { id, app: thread.app, thread: thread.id, name: thread.name, where: where(thread), place: this.place(thread), ...(at && { at }), ...(line && { line }), ...(thread.link && { link: thread.link }) }
   }
 
@@ -518,7 +519,7 @@ export function opener(run: Run) {
 
 function threadOf(row: Stored, general?: Stored): Thread {
   const { app, thread, session, cwd, link } = row
-  return { app, id: thread, name: nameOf(row, general), session, cwd, ...(link && { link }) }
+  return { app, id: thread, name: nameOf(row, general), session, cwd, ...(link && { link }), ...(row === general && { general: true as const }) }
 }
 
 function count(runs: Run[], state: State) {
@@ -526,7 +527,8 @@ function count(runs: Run[], state: State) {
 }
 
 function where(thread: Thread) {
-  if (thread.app === 'telegram' && !thread.id.includes(':')) return thread.id.startsWith('-') ? 'General' : 'DM'
+  if (thread.general) return 'General'
+  if (thread.app === 'telegram' && !thread.id.includes(':') && !thread.id.startsWith('-')) return 'DM'
   return APPS[thread.app]
 }
 

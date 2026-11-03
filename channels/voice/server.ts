@@ -985,7 +985,7 @@ function runRoutes(request: Request, url: URL) {
   const key = id && decodeURIComponent(id)
   // A thread off the board is a page to read: its run, asks, pin and chat, and nothing to act on.
   const page = key && request.method === 'GET' && runs.find(key)
-  if (page && verb === 'chat') return showChat(url, page)
+  if (page && verb === 'chat') return showChat(url, page, !runs.get(key))
   if (page && !verb) return Response.json({ ...page, ...yours.of(page.id) })
   const run = key && runs.get(key)
   if (!run) return new Response('404', { status: 404 })
@@ -994,11 +994,13 @@ function runRoutes(request: Request, url: URL) {
   if (verb === 'stop' && request.method === 'POST') return done(() => chats.stop(run))
 }
 
-// A thread's chat, and with after, the next time it changes.
-async function showChat(url: URL, run: Run | Page) {
+// A thread's chat, and with after, the next time it changes. A page's is there to read, so it
+// never offers to send.
+async function showChat(url: URL, run: Run | Page, page = false) {
   const where = () => ({ ...run, session: board.session(run.id) })
   const after = url.searchParams.get('after')
-  return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where()))
+  const chat = after ? await chats.next(where, Number(after), 25_000) : chats.of(where())
+  return Response.json(page ? { ...chat, sends: false } : chat)
 }
 
 async function sendChat(request: Request, run: Run) {

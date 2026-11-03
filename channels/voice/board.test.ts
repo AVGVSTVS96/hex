@@ -577,7 +577,7 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
   job('abababab-gone', { state: 'blocked', detail: 'kit waits', needs: 'Pick a kit', updatedAt: ago(10 * 24 * 60) })
   threads('discord', {})
   await until(() => !open(state).threads({ app: 'discord', open: true }).length)
-  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', line: 'kit waits', link: 'https://discord.com/channels/1/gone' })
+  expect(board.find('discord:gone')).toEqual({ id: 'discord:gone', app: 'discord', thread: 'gone', name: 'Data kit', where: 'Discord', place: 'Data kit', at: JSON.parse(readFileSync(join(claude, 'jobs', 'abababab', 'state.json'), 'utf8')).updatedAt, link: 'https://discord.com/channels/1/gone' })
   expect(board.find('discord:never')).toBeUndefined()
   expect(board.runs.map(run => run.id)).not.toContainAnyValues(['buzz:b1', 'discord:gone'])
   expect(readFileSync(join(state, 'voice', 'tracks.json'), 'utf8')).toBe(lanes)
