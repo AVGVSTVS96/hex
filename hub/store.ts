@@ -823,18 +823,18 @@ export class Store {
 
   // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
   // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes.
-  // A heartbeat (the scheduler's hourly check) that opens a turn, because the last one ended or no
-  // prompt came since Claude Code marked the session busy (flipped), is that turn until it ends or
-  // another prompt joins it; one inside a turn is part of that turn. Each holds when the next prompt
-  // that isn't a heartbeat came (after), so a run of them reads as one. Beats are kept a week.
-  turned(session: string, busy: boolean, at = now(), heartbeat?: { flipped?: number }) {
+  // A heartbeat (the scheduler's hourly check) that opens a turn, because the last one ended, is
+  // that turn until it ends or another prompt joins it; one inside a turn is part of that turn. Each
+  // holds when the next prompt that isn't a heartbeat came (after), so a run of them reads as one,
+  // kept until a week after that prompt.
+  turned(session: string, busy: boolean, at = now(), heartbeat = false) {
     this.write(() => {
       const { began, ended } = this.turn(session)
-      const opens = heartbeat && (!began || !!ended || (heartbeat.flipped !== undefined && Date.parse(began) < heartbeat.flipped))
-      if (!heartbeat || opens) this.db.query('update beats set until = ? where session = ? and until is null').run(at, session)
+      const opens = heartbeat && (!began || !!ended)
+      if (!heartbeat || opens) this.db.query('update beats set until = ? where session = ? and until is null and began <= ?').run(at, session, at)
       if (busy && !heartbeat) this.db.query('update beats set after = ? where session = ? and after is null').run(at, session)
       if (opens) this.db.query('insert into beats (session, began) values (?, ?)').run(session, at)
-      this.db.query('delete from beats where coalesce(until, began) < ?').run(new Date(Date.parse(at) - BEATS).toISOString())
+      this.db.query('delete from beats where after < ?').run(new Date(Date.parse(at) - BEATS).toISOString())
       if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
       else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
       this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())

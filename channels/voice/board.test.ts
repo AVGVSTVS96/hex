@@ -394,13 +394,12 @@ test('a running session no thread holds is a run of its own while it works', asy
   await until(() => !board.get('claude:12121212') && !board.get('claude:56565656'))
 })
 
-// What hex's hook writes as a session takes a prompt: the message taken and the turn begun, with
-// when Claude Code marked the session busy for a heartbeat.
+// What hex's hook writes as a session takes a prompt: the message taken and the turn begun.
 function prompted(session: string, thread: string, body: string, heartbeat = false) {
   const store = open(state)
   const key = heartbeat ? `schedule:heartbeat@${crypto.randomUUID()}` : `telegram:${crypto.randomUUID()}`
   store.deliver({ key, to: thread, from: heartbeat ? 'schedule' : 'telegram', author: heartbeat ? 'prompt' : 'owner', body, ...(heartbeat && { meta: { user: 'schedule', schedule: 'heartbeat' } }) })
-  return (flipped?: number) => store.write(() => store.take(key, session) && store.turned(session, true, new Date().toISOString(), heartbeat ? { flipped } : undefined))
+  return () => store.write(() => store.take(key, session) && store.turned(session, true, new Date().toISOString(), heartbeat))
 }
 
 // The session's turn ends: Claude Code's Stop hook, then the session idle.
@@ -433,7 +432,7 @@ test("the hourly heartbeat is no turn of work: from the moment its session is bu
     await settle()
     expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', running: false })
     await Bun.sleep(5)
-    take(flipped)
+    take()
     said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
     step(transcript, 'Bash', { command: 'gh pr list' })
     timeline.push({ at: new Date().toISOString(), state: 'working', detail: 'Checking the inbox', text: '' })
@@ -445,12 +444,16 @@ test("the hourly heartbeat is no turn of work: from the moment its session is bu
     stopped(session)
     await settle()
     expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at, lately: [{ text: 'shipped the fix' }] })
+    rmSync(join(claude, 'sessions', `${session.slice(0, 8)}.json`))
+    await settle()
+    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix' })
+    running(session, 'idle')
     expect(board.counts.version).toBe(counted)
   }
   await Bun.sleep(5)
   const take = prompted(session, thread, 'Build the page')
   running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })
-  await Bun.sleep(5)
+  await until(() => pulse().state === 'working')
   take()
   timeline.push({ at: new Date().toISOString(), state: 'working', detail: 'Building the page', text: '' })
   job(session, { state: 'working', detail: 'Building the page', updatedAt: ago(0) }, timeline)
@@ -480,7 +483,7 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
   stopped(session, 'busy', flipped)
   await Bun.sleep(5)
 
-  prompted(session, thread, '[heartbeat] Hourly check', true)(flipped)
+  prompted(session, thread, '[heartbeat] Hourly check', true)()
   said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
   step(transcript, 'Bash', { command: 'gh pr list' })
   job(session, { state: 'working', detail: 'Checking the inbox', updatedAt: ago(0), fan: [agent] }, [building, { at: new Date().toISOString(), state: 'working', detail: 'Checking the inbox', text: '' }])
@@ -505,7 +508,7 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
   const again = Date.now()
   running(session, 'busy', process.pid, { statusUpdatedAt: again })
   await Bun.sleep(5)
-  check(again)
+  check()
   await Bun.sleep(5)
   const own = { id: 'sh', kind: 'shell', label: 'gh pr checks --watch', startedAt: Date.now() }
   const beaten = [building, built, { at: new Date().toISOString(), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' }]
@@ -513,7 +516,7 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
   stopped(session, 'shell')
   await settle()
   expect(work()).toMatchObject({ state: 'done', line: 'page built' })
-  job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0), fan: [{ ...own, startedAt: Date.now() - 120_000 }] }, beaten)
+  job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0), fan: [{ ...own, kind: 'monitor', startedAt: Date.now() - 120_000 }] }, beaten)
   await until(() => work().state === 'working')
   stopped(session)
   job(session, { state: 'done', detail: 'page built', updatedAt: ago(0) })

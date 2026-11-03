@@ -84,7 +84,7 @@ const STATES: Record<string, State> = { working: 'working', blocked: 'needs', do
 const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progress: 'running', pending: 'pending' }
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
 const WORK = new Set(['agent', 'workflow'])
-const RUNS = new Set([...WORK, 'shell'])
+const RUNS = new Set([...WORK, 'shell', 'monitor'])
 const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped', rolled_back: 'stopped' }
 const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'failed' }
 
@@ -321,7 +321,7 @@ export class Board extends Changes {
     const handed = this.links.delegations(thread.app, thread.id)
     const out = handed.filter(one => !HANDED[one.status])
     const beats = thread.session ? open(this.state).beats(thread.session) : []
-    const beat = session && this.beat(thread, session, beats)
+    const beat = this.beat(thread, beats, session)
     if (beat !== undefined && job?.state !== 'blocked') ({ job, timeline } = before(job, timeline, beat))
     const beating = beat !== undefined && !job?.fan?.some(fan => RUNS.has(fan.kind) && !fan.doneAt && (fan.startedAt ?? 0) < beat)
     const outside = (step: Step) => {
@@ -348,7 +348,7 @@ export class Board extends Changes {
     const steps = state === 'working' ? this.steps(key).filter(outside) : []
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
     const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && outside(step)) : undefined
-    const line = (said && (!detail || said.at >= at) ? said.text : undefined) ?? needs ?? detail ?? lately[0]?.text ?? ''
+    const line = (said && (!detail || said.at >= at) ? said.text : undefined) || needs || detail || lately[0]?.text || ''
     const agents = (
       state === 'working'
         ? [
@@ -386,12 +386,15 @@ export class Board extends Changes {
 
   // When the heartbeats began, while the session's latest turns are heartbeats': from the moment
   // Claude Code marks the session busy while a heartbeat waits for it as its only message, until a
-  // prompt that isn't one comes.
-  private beat(thread: Thread, session: Session, beats: Beat[]) {
+  // prompt that isn't one comes, or Claude Code marks it busy again with no heartbeat waiting.
+  private beat(thread: Thread, beats: Beat[], session?: Session) {
     const run = beats.slice(beats.findLastIndex(beat => beat.after) + 1)
-    if (run.length) return Date.parse(run[0]!.began)
+    const flipped = session ? (session.updated ?? session.started) : 0
+    const last = run.at(-1)
+    const next = !!last?.until && session?.status === 'busy' && flipped > Date.parse(last.until) && !this.awaited(thread)
+    if (run.length && !next) return Date.parse(run[0]!.began)
+    if (!session) return
     const { began } = open(this.state).turn(session.id)
-    const flipped = session.updated ?? session.started
     if (session.status === 'busy' && !(began && Date.parse(began) >= flipped) && this.awaited(thread)) return flipped
   }
 

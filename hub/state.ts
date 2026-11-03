@@ -1,5 +1,4 @@
 import { connect } from 'net'
-import { running } from './running.ts'
 import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
@@ -34,7 +33,7 @@ let recorded = false
 if (key) {
   try {
     const store = open(stateDir())
-    const heartbeat = store.message(key)?.meta?.schedule === 'heartbeat' ? { flipped: running(store).get(session_id)?.updated } : undefined
+    const heartbeat = store.message(key)?.meta?.schedule === 'heartbeat'
     if (store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat), (recorded = true)))) untold = undefined
     else if (store.message(key)) {
       console.error(`hex gave this session ${key} already`)
