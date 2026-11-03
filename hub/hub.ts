@@ -839,8 +839,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   // A session's channel connected over HTTP: its session is the one the hub started, or the one
   // Claude reports running for the thread. One that only reconnects still owes a renew it asked for.
+  // One that reconnects while it's being stopped gets nothing, since what it took would end with it.
   function welcome(thread: string, line: Line) {
     const run = runOf(thread)
+    if (run.ending) return
     const was = run.phase
     const job = was.is === 'launching' ? was.job : undefined
     become(run, { is: 'live', line })

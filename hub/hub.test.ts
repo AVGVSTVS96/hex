@@ -1414,14 +1414,34 @@ test('a call that finds its session still waiting for its first message starts i
   expect(hub.session('voice')).toBe('0a1b2c3d-0000-4000-8000-000000000009')
 })
 
-test("a call whose session's restart never gets through doesn't hold up the hub's own restart", async () => {
+test("a call whose session's restart never gets through doesn't hold up the hub's own restart, and the session being stopped takes nothing if it reconnects", async () => {
   const old = Bun.spawn(['sleep', '30'])
   start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
   await session('voice')
-  void hub.keep('voice')
+  let kept = false
+  void hub.keep('voice').then(() => (kept = true))
   await until(() => calls().find(args => args[0] === 'stop'))
   await free()
+  hub.deliver('voice', 'voice', message)
+  const again = await session('voice')
+  await time.advance(100)
+  expect(again.received).toEqual([])
+  expect(kept).toBe(false)
   old.kill()
+})
+
+test('a call whose restarted session fails to start goes on', async () => {
+  const old = Bun.spawn(['sleep', '30'])
+  start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
+  await session('voice')
+  let kept = false
+  void hub.keep('voice').then(() => (kept = true))
+  await until(() => calls().find(args => args[0] === 'stop'))
+  writeFileSync(join(dir, 'agents'), '[]')
+  old.kill()
+  await launched()
+  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'failed', detail: 'exit 1 before init' }))
+  await until(() => kept)
 })
 
 test('a call that comes while a renew is on its way takes the new session as it starts, without starting it over again', async () => {
