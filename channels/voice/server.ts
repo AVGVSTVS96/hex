@@ -608,8 +608,10 @@ function reattach({ id }: CallRecord) {
     })
   }
   socket.onclose = () => {
+    if (live?.id === id) return
     const record = calls.get(id)
-    if (live?.id !== id && record) closeOut(record)
+    if (record) closeOut(record)
+    else if (!live) toHub(hub.renew)
   }
 }
 
