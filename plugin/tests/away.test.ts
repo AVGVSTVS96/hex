@@ -46,9 +46,11 @@ const script = (path: string, body: string) => {
 
 beforeAll(() => {
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
+  mkdirSync(join(home, '.t3/userdata'), { recursive: true })
   cpSync(join(HEX, 'bin/away'), join(home, '.hex/bin/away'))
   script(join(home, '.hex/bin/identity'), 'echo "You are hex."')
-  writeFileSync(join(home, '.mcp.json'), JSON.stringify({ mcpServers: { 't3-code': { url: `${server.url.href}mcp`, headersHelper: `echo sign-in >> '${home}/signed'; echo {}` } } }))
+  script(join(home, '.hex/bin/t3-mcp-headers'), `echo "sign-in $*" >> "${home}/signed"; echo '{"Authorization":"Bearer t"}'`)
+  writeFileSync(join(home, '.t3/userdata/server-runtime.json'), JSON.stringify({ port: server.port }))
 })
 afterAll(() => {
   server.stop()
@@ -71,30 +73,30 @@ const reset = () => {
   rmSync(join(home, 'signed'), { force: true })
 }
 
-test("a job runs as a T3 Code thread on that machine, follows its run through timed-out and dropped waits, and prints the thread's last answer", async () => {
+test("a job runs as a T3 Code thread on that machine, follows its run through early and dropped waits, and prints the thread's last answer", async () => {
   reset()
-  waits = [{ status: 'running', timedOut: true }]
+  waits = [{ status: 'preparing', timedOut: false }, { status: 'running', timedOut: true }]
   drop = 1
   const { run, out } = away(['-p', 'Build the Usage tab.', '--model', 'opus', '--effort', 'high'], 'the log')
   expect(await run.exited).toBe(0)
   expect(await out()).toBe('hex/deck runs on mac as T3 Code thread <t3-thread://v2/env-mac/t1>\nBuilt the Usage tab.\n')
   const launch = calls.find(({ name }) => name === 't3_thread_launch')!.arguments
-  expect(launch).toMatchObject({ environmentId: 'env-mac', title: 'hex/deck', scratch: true, runtimeMode: 'full-access', clientRequestId: 'hex-job-hex/deck-inv1' })
+  expect(launch).toMatchObject({ environmentId: 'env-mac', title: 'hex/deck', scratch: true, runtimeMode: 'full-access', clientRequestId: 'hex-job-hex/deck-mac-inv1' })
   expect(launch.modelSelection).toEqual({ provider: 'claudeAgent', model: 'claude-opus-5-5', options: [{ id: 'effort', value: 'high' }] })
   expect(launch.message).toStartWith('You are hex.')
   expect(launch.message).toEndWith('Build the Usage tab.\n\nthe log')
   const waited = calls.filter(({ name }) => name === 't3_thread_wait')
-  expect(waited).toHaveLength(3)
+  expect(waited).toHaveLength(4)
   expect(waited.every(({ arguments: input }) => input.runId === 'r1')).toBe(true)
 }, 20_000)
 
-test('a refused sign-in is signed in again, and a tool error without a final code is retried', async () => {
+test('a refused token is renewed and a tool error without a final code is retried', async () => {
   reset()
   refused = 1
   flaky = 1
   const { run } = away(['-p', 'Build it.'])
   expect(await run.exited).toBe(0)
-  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in\nsign-in\nsign-in\n')
+  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in \nsign-in --refresh\n')
 }, 30_000)
 
 test('a job whose thread stops at a question ends there, with the question as its answer', async () => {
@@ -125,4 +127,16 @@ test('stopping the job stops its thread', async () => {
   run.kill('SIGTERM')
   expect(await run.exited).toBe(143)
   expect(calls.find(({ name }) => name === 't3_thread_interrupt')!.arguments).toMatchObject({ environmentId: 'env-mac', threadId: 't1', stop: true })
+})
+
+test("a sign-in that fails here is this machine's fault, named at once, and starts nothing", async () => {
+  reset()
+  const helper = join(home, '.hex/bin/t3-mcp-headers')
+  const kept = readFileSync(helper, 'utf8')
+  script(helper, 'echo "no pairing code" >&2; exit 1')
+  const { run, error } = away(['-p', 'Build it.'])
+  expect(await run.exited).toBe(77)
+  expect(await error()).toContain('this machine: couldn\'t sign in: no pairing code')
+  expect(calls).toHaveLength(0)
+  writeFileSync(helper, kept)
 })

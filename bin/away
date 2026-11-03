@@ -3,7 +3,8 @@
 // through this machine's T3 Code and its link to that one, so it starts the way T3 starts Claude Code, and follows it
 // the way `t3 thread start --wait` does: until its run ends, then prints its answer; it stops the thread if the job
 // stops. Having started nothing, it exits 76 when the job can't run there (claude flags a thread has no place for, no
-// Claude there, a link that's gone) and 77 when T3 Code doesn't answer; bin/place then tries the next machine.
+// Claude there, a link that's gone) and 77 when T3 Code, here or there, doesn't answer; bin/place then tries the next
+// machine.
 import { readFileSync } from 'node:fs'
 import { homedir, hostname, userInfo } from 'node:os'
 import { join } from 'node:path'
@@ -32,47 +33,64 @@ const piped = process.stdin.isTTY ? '' : (await Bun.stdin.text()).trim()
 const asked = [words.join(' '), piped].filter(Boolean).join('\n\n')
 if (!asked) quit(ELSEWHERE, 'the job has no prompt')
 
-// This machine's T3 Code, reached as hex's sessions reach it: the t3-code server in the hex folder's .mcp.json. Its
-// MCP tools are the only calls T3 forwards over a link to another machine.
 function parse(text: string): any {
   try {
     return JSON.parse(text)
   } catch {}
 }
-const server = (() => {
-  try {
-    return parse(readFileSync(join(home, '.mcp.json'), 'utf8'))?.mcpServers?.['t3-code'] as { url?: string; headersHelper?: string } | undefined
-  } catch {}
-})()
-if (!server?.url || !server.headersHelper) quit(ELSEWHERE, `${home}/.mcp.json has no t3-code server`)
 // T3's own split (RemoteDelegation): a revoked link or a thread or run that's gone is final, and so is a request it
-// can't take; the other machine asleep, a dropped route or T3 Code restarting is retried.
+// can't take. A fault on this machine is its own (Local), so it isn't charged to the other one. The other machine
+// asleep, a dropped route or T3 Code restarting is retried.
 const FINAL = ['capability_denied', 'thread_not_found', 'run_not_found', 'invalid_request']
 class Final extends Error {}
-// Signed in once per session, so stopping a thread as the unit stops starts no process systemd would kill first.
-let session: string | undefined
+class Local extends Error {}
+const here = (why: string) => new Local(`T3 Code on ${hostname()}, this machine: ${why}`)
+
+// This machine's T3 Code /mcp, signed in once; its MCP tools are the only calls T3 forwards over a link. A refused
+// token is renewed once. Signing in again only then means stopping a thread as the unit stops starts no process.
 let headers: Record<string, string> | undefined
-async function call(tool: string, input: Record<string, unknown>): Promise<any> {
-  if (!session) {
-    const helper = Bun.spawnSync(['sh', '-c', server!.headersHelper!.replaceAll('${HOME}', homedir())], { cwd: home })
-    if (helper.exitCode !== 0) throw new Error(`couldn't sign in to T3 Code on ${hostname()}: ${helper.stderr.toString().trim()}`)
-    headers = { ...parse(helper.stdout.toString()), 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
+function signIn(refresh = false) {
+  const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers'), ...(refresh ? ['--refresh'] : [])], { cwd: home, timeout: 60_000 })
+  const signed = parse(helper.stdout.toString())
+  if (helper.exitCode !== 0 || typeof signed?.Authorization !== 'string') throw here(`couldn't sign in: ${helper.stderr.toString().trim() || 'no sign-in printed'}`)
+  return { ...signed, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
+}
+const url = (() => {
+  try {
+    return `http://127.0.0.1:${JSON.parse(readFileSync(join(homedir(), '.t3/userdata/server-runtime.json'), 'utf8')).port}/mcp`
+  } catch {
+    quit(UNREACHABLE, here("it isn't running (no ~/.t3/userdata/server-runtime.json)").message)
   }
-  const post = (body: object) => fetch(server!.url!, { method: 'POST', headers: { ...headers, ...(session && { 'mcp-session-id': session }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }), signal: AbortSignal.timeout(120_000) })
-  if (!session) {
+})()!
+let session: string | undefined
+let connected = false
+async function post(body: object, renewed = false): Promise<Response> {
+  headers ??= signIn()
+  const answer = await fetch(url, { method: 'POST', headers: { ...headers, ...(session && { 'mcp-session-id': session }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }), signal: AbortSignal.timeout(120_000) })
+  if (answer.status === 401 && !renewed) {
+    headers = signIn(true)
+    return post(body, true)
+  }
+  // A refused sign-in, or a request T3 Code turns down, won't change by asking again; anything else might.
+  if (answer.status >= 400 && answer.status < 500 && ![404, 408, 429].includes(answer.status)) throw here(`HTTP ${answer.status} ${await answer.text()}`)
+  if (!answer.ok) throw new Error(`HTTP ${answer.status} from T3 Code on ${hostname()}`)
+  return answer
+}
+async function call(tool: string, input: Record<string, unknown>): Promise<any> {
+  if (!connected) {
     session = (await post({ id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'hex-away', version: '1' } } })).headers.get('mcp-session-id') ?? undefined
     await post({ method: 'notifications/initialized' })
+    connected = true
   }
   const answer = await post({ id: 1, method: 'tools/call', params: { name: tool, arguments: { environmentId, ...input } } })
-  if (!answer.ok) throw new Error(`${tool}: HTTP ${answer.status} from T3 Code on ${hostname()}`)
   // Streamable HTTP may answer as an event stream, whose last data line is the reply.
   const raw = await answer.text()
   const reply = answer.headers.get('content-type')?.startsWith('text/event-stream') ? (raw.split('\n').filter(line => line.startsWith('data:')).at(-1)?.slice(5) ?? '') : raw
   const { result, error } = parse(reply) ?? {}
-  if (error) throw new Final(`${tool}: ${error.message}`)
+  if (error) throw here(`${tool}: ${error.message}`)
   if (!result) throw new Error(`${tool}: an answer that is not JSON`)
   const text = result.content[0]?.text ?? ''
-  if (result.isError) throw FINAL.includes(parse(text)?.code) ? new Final(`${tool}: ${text}`) : Object.assign(new Error(`${tool}: ${text}`), { answered: true })
+  if (result.isError) throw FINAL.includes(parse(text)?.code) ? new Final(`${tool}: ${text}`) : new Error(`${tool}: ${text}`)
   return result.structuredContent ?? parse(text)
 }
 
@@ -91,17 +109,24 @@ async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<
     try {
       return await what()
     } catch (error) {
-      if (error instanceof Final || Date.now() + wait > until) throw error
+      if (error instanceof Final || error instanceof Local || Date.now() + wait > until) throw error
       console.error(`away: ${(error as Error).message}; trying again in ${wait / 1000} s`)
-      session = undefined
+      connected = false
       await Bun.sleep(wait)
       if (stopping && !threadId) process.exit(143)
     }
   }
 }
 
-// The first call starts nothing, so a machine that doesn't answer it in 5 minutes is left for the next one.
+// This machine's sign-in first, so its fault is named as its own at once.
+try {
+  headers = signIn()
+} catch (error) {
+  quit(UNREACHABLE, (error as Error).message)
+}
+// The first forwarded call starts nothing, so a machine that doesn't answer it in 5 minutes is left for the next one.
 const offered = await persist(() => call('orchestrator_capabilities', {}), 300_000).catch((error: Error) => quit(error instanceof Final ? ELSEWHERE : UNREACHABLE, error.message))
+if (stopping) process.exit(143)
 // A model goes by its alias, like opus, or its id, as that machine's Claude lists it, newest first; with none, the one hex's sessions run.
 const configured = (path: string) => {
   try {
@@ -120,32 +145,39 @@ You are running on ${machine}, in a T3 Code thread hex started there because ${h
 
 ${asked}`
 
-// A launch lost on the way is retried, and the same clientRequestId gets back the thread it may have started; one the
-// other machine answered with a refusal won't change by asking again.
-const launched = await persist(() =>
-  call('t3_thread_launch', {
-    title: name,
-    scratch: true,
-    message,
-    runtimeMode: 'full-access',
-    modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
-    clientRequestId: `hex-job-${name}-${process.env.INVOCATION_ID ?? process.pid}`,
-  }).catch(error => {
-    throw error.answered ? new Final(error.message) : error
-  }),
-).catch((error: Error) => quit(ELSEWHERE, error.message))
+// A launch that fails on the way is retried, and the same clientRequestId gets back the thread it may have started.
+// One that keeps failing for half an hour fails the job, rather than moving on to a machine where it could run twice.
+const launched = await persist(
+  () =>
+    call('t3_thread_launch', {
+      title: name,
+      scratch: true,
+      message,
+      runtimeMode: 'full-access',
+      modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
+      clientRequestId: `hex-job-${name}-${machine}-${process.env.INVOCATION_ID ?? process.pid}`,
+    }),
+  1_800_000,
+).catch((error: Error) => {
+  if (error instanceof Final) quit(ELSEWHERE, error.message)
+  if (error instanceof Local) quit(UNREACHABLE, error.message)
+  console.error(`away: ${name} couldn't start on ${machine}: ${error.message}`)
+  process.exit(1)
+})
 threadId = launched.threadId as string
 if (stopping) await stop(`hex stopped the job ${name}`).then(() => process.exit(143))
 console.log(`${name} runs on ${machine} as T3 Code thread ${launched.link}`)
 
-// As `t3 thread start --wait` does (T3's cli/thread.ts waitForRun): a wait that comes back before its timeout is the
-// run's end; one that times out on a thread with a pending request, checked once more, needs an answer a job can't give.
+// As `t3 thread start --wait` does (T3's cli/thread.ts waitForRun): a run that hasn't ended while its thread has a
+// pending request, checked once more, needs an answer a job can't give. With Claude, a pending request holds its turn.
+const runId = launched.runId ?? undefined
+const ENDED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back', ...(runId ? [] : ['idle'])]
 async function follow(): Promise<number> {
-  const slice = (timeoutMs: number) => persist(() => call('t3_thread_wait', { threadId, runId: launched.runId, timeoutMs }))
+  const slice = (timeoutMs: number) => persist(() => call('t3_thread_wait', { threadId, runId, timeoutMs }))
   let waited = await slice(50_000)
-  while (waited.timedOut) {
+  while (!ENDED.includes(waited.status)) {
     const { thread } = await persist(() => call('t3_thread_read', { threadId, limit: 1, runLimit: 1 }))
-    if (thread.pendingRequestCount > 0 && (await slice(1)).timedOut) {
+    if (thread.pendingRequestCount > 0 && !ENDED.includes((waited = await slice(1)).status)) {
       const { requestIds } = await call('t3_pending_request', { action: 'list', threadId }).catch(() => ({}))
       const read = requestIds?.length ? await call('t3_pending_request', { action: 'read', threadId, requestId: requestIds[0] }).catch(() => undefined) : undefined
       await stop(`the job ${name} has nobody to answer`)
@@ -153,8 +185,9 @@ async function follow(): Promise<number> {
       console.log(`${name} stopped on ${machine} at a question, which a job can't answer: ${question ?? `see ${launched.link}`}`)
       return 1
     }
-    waited = await slice(50_000)
+    if (!ENDED.includes(waited.status)) waited = await slice(50_000)
   }
+  if (stopping) return 143
   let last: { text: string } | undefined
   for (let after: number | undefined, more = true; more; ) {
     const page = await persist(() => call('t3_thread_read', { threadId, view: 'messages', limit: 100, maxCharsPerItem: 50_000, afterPosition: after }))
@@ -165,10 +198,9 @@ async function follow(): Promise<number> {
   return waited.status === 'completed' ? 0 : 1
 }
 // A thread this job can no longer follow is stopped, so nothing runs there unwatched.
-process.exit(
-  await follow().catch(async (error: Error) => {
-    console.error(`away: ${error.message}; stopping the thread`)
-    await stop(`hex lost track of the job ${name}`)
-    return 1
-  }),
-)
+const code = await follow().catch(async (error: Error) => {
+  console.error(`away: ${error.message}; stopping the thread`)
+  await stop(`hex lost track of the job ${name}`)
+  return 1
+})
+if (!stopping) process.exit(code)

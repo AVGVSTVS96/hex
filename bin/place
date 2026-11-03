@@ -77,7 +77,7 @@ $host: $measured"
         code=$?
         case $code in
           76) passed="$passed $host" ;;
-          77) readings="$readings (but its T3 Code didn't answer)" ;;
+          77) readings="$readings (but T3 Code, here or there, didn't answer)" ;;
           *) exit "$code" ;;
         esac
         flock 9
