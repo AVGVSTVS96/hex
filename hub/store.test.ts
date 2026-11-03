@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { basename, join } from 'path'
 import { open, Store } from './store.ts'
@@ -65,6 +65,25 @@ test('the first session to take a message has it, and it leaves what waits', () 
   expect(store.untaken().map(row => row.key)).toEqual(['telegram:-100:43', 'telegram:-100:44'])
 })
 
+test("some threads' untaken messages, and a mark that moves only when a thread's messages do", () => {
+  const store = new Store(dir)
+  store.deliver(message)
+  store.deliver({ ...message, key: 'telegram:-100:43', to: '-100:8' })
+  store.deliver({ ...message, key: 'telegram:-100:44', to: '-100:9' })
+  expect(store.untaken(['-100:9', '-100:7']).map(row => row.key)).toEqual([message.key, 'telegram:-100:44'])
+  const mark = store.mark('-100:7')
+  store.take('telegram:-100:43', 'session-a')
+  expect(store.mark('-100:7')).toBe(mark)
+  store.take(message.key, 'session-a')
+  const taken = store.mark('-100:7')
+  expect(taken).not.toBe(mark)
+  store.deliver({ ...message, key: 'telegram:-100:45' })
+  const kept = store.mark('-100:7')
+  expect(kept).not.toBe(taken)
+  expect(store.past([[{ ...message, key: 'telegram:-100:46' }, '2020-01-01T00:00:00.000Z']], 'session-a')).toEqual(['telegram:-100:46'])
+  expect(store.mark('-100:7')).not.toBe(kept)
+})
+
 test("a schedule's slot fires once, and its next slot fires whether or not the last was taken", () => {
   const store = new Store(dir)
   const minute = Date.UTC(2026, 9, 18, 21, 45) / 60_000
@@ -97,6 +116,21 @@ test('a change committed in another process rings the bell, and a write that cha
   const bell = readFileSync(join(dir, 'hex.bell'), 'utf8')
   expect(store.take('job:nothing:here', 'session-a')).toBe(false)
   expect(readFileSync(join(dir, 'hex.bell'), 'utf8')).toBe(bell)
+  stop()
+})
+
+test('a listener runs at the first ring, then once for each change, however many times the bell rings for it', async () => {
+  const store = open(dir)
+  let rang = 0
+  const stop = store.watch(() => rang++)
+  for (let ring = 0; ring < 5; ring++) appendFileSync(join(dir, 'hex.bell'), '.')
+  await until(() => rang > 0)
+  await Bun.sleep(100)
+  expect(rang).toBe(1)
+  store.deliver(message)
+  await until(() => rang > 1)
+  await Bun.sleep(100)
+  expect(rang).toBe(2)
   stop()
 })
 
@@ -245,6 +279,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   expect(store.message(ask.key)!.body).toBe(ask.body)
   expect(() => store.db.run("insert or replace into words (rowid, task, message, text) values (1, 1, 'telegram:-100:50', 'Fix the login page.')")).toThrow('never rewritten')
   expect(store.tasks().map(task => task.id)).toEqual(['t-2', 't-1'])
+  expect(store.tasks({ owner: '-100:7', status: ['open'], words: false })).toEqual(store.tasks({ owner: '-100:7', status: ['open'] }).map(({ words, ...task }) => task))
   expect(store.task('t-1')!.words[0]!.text).toBe(ask.body)
 })
 

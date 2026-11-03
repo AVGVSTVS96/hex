@@ -17,24 +17,28 @@ export type Where = { app: string; thread: string; session?: string }
 // the owner sent that no session has taken in yet. A wait for it ends when hex.db changes.
 export class Chats {
   private changes = new Changes()
-  private seen = new Map<string, { said: string; version: number }>()
+  private seen = new Map<string, { mark: string; said: string; chat: Chat }>()
   private stops: (() => void)[]
 
   constructor(private state: string) {
     this.stops = [store(state).watch(() => this.changes.changed())]
   }
 
+  // Read again only when the thread's messages, or whether it sends, changed since the last read.
   of(where: Where): Chat {
     const kept = store(this.state)
-    const turns = history(kept, where.thread)
-    const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at }) => ({ key, text: body, at }))
-    const chat = { sends: !!sendsThrough(where), total: turns.length, turns: turns.slice(-SHOWN), waiting }
-    const said = JSON.stringify(chat)
+    const sends = !!sendsThrough(where)
+    const mark = `${kept.mark(where.thread)}:${sends}`
     const id = `${where.app}:${where.thread}`
     const seen = this.seen.get(id)
-    const version = seen?.said === said ? seen.version : Math.max((seen?.version ?? 0) + 1, Date.now())
-    this.seen.set(id, { said, version })
-    return { version, ...chat }
+    if (seen?.mark === mark) return seen.chat
+    const turns = history(kept, where.thread)
+    const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at }) => ({ key, text: body, at }))
+    const fresh = { sends, total: turns.length, turns: turns.slice(-SHOWN), waiting }
+    const said = JSON.stringify(fresh)
+    const chat = seen?.said === said ? seen.chat : { version: Math.max((seen?.chat.version ?? 0) + 1, Date.now()), ...fresh }
+    this.seen.set(id, { mark, said, chat })
+    return chat
   }
 
   async next(where: () => Where, after: number, wait: number) {

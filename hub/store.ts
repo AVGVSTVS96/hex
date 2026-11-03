@@ -242,6 +242,10 @@ const migrations: (string | ((store: Store) => void))[] = [
   },
   `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}), after text check (after ${UTC}));
   create index if not exists beats_session on beats (session, began);`,
+  // A thread's tasks, which its status post reads at each change to hex.db, by state and when each closed.
+  'create index if not exists owned on tasks (owner, status, closed);',
+  // A thread's messages in the order they were kept, whose last says whether any came.
+  'create index if not exists thread on messages ("to", n);',
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -355,6 +359,7 @@ export class Store {
   private writing = false
   private readonly listeners = new Set<() => void>()
   private watcher?: FSWatcher
+  private heard = ''
 
   constructor(readonly dir: string) {
     mkdirSync(dir, { recursive: true })
@@ -409,11 +414,21 @@ export class Store {
 
   // Bun's fs.watch on Linux drops a change that lands within about a millisecond of the one it just
   // reported (https://github.com/oven-sh/bun/issues/45954), so each ring is heard again once that has
-  // passed, if hex.db moved since.
-  private rang() {
-    const seen = this.moved()
-    for (const each of this.listeners) each()
-    setTimeout(() => this.watcher && this.moved() !== seen && this.rang(), 5)
+  // passed. Listeners run once for each time hex.db moved, however many rings that took.
+  private rang(again = false) {
+    const moved = this.moved()
+    if (moved !== this.heard) {
+      this.heard = moved
+      for (const each of this.listeners)
+        try {
+          each()
+        } catch (error) {
+          queueMicrotask(() => {
+            throw error
+          })
+        }
+    } else if (again) return
+    setTimeout(() => this.watcher && this.rang(true), 5)
   }
 
   // Keeps a new message. A key that's kept already is its sender sending it again: false. by: the
@@ -429,11 +444,13 @@ export class Store {
     )
   }
 
-  // Messages brought in from log/ (hub/past.ts) keep the time it gave them, taken and looked over then.
-  past(times: [string, string][]) {
-    this.write(() => {
+  // Messages brought in from log/ (hub/past.ts), kept at the time it gave them, taken by its session and
+  // looked over then: the keys of those it didn't have. A kept message's time never moves, so a thread's
+  // mark moves with each one.
+  past(rows: [NewRow, string][], by: string): string[] {
+    return this.write(() => {
       const at = this.db.query('update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1')
-      for (const [key, when] of times) at.run(key, when)
+      return rows.filter(([row, when]) => this.deliver(row, by) && at.run(row.key, when)).map(([row]) => row.key)
     })
   }
 
@@ -504,13 +521,22 @@ export class Store {
     return this.db.query('select 1 from messages where taken_by = ? limit 1').get(session) !== null
   }
 
-  // What no session has taken yet, oldest first: every thread's, or one thread's.
-  untaken(thread?: string): Row[] {
+  // What no session has taken yet, oldest first: every thread's, or one thread's, or some threads'.
+  untaken(thread?: string | string[]): Row[] {
     const rows =
       thread === undefined
         ? this.db.query('select * from messages where taken_at is null order by n').all()
-        : this.db.query('select * from messages where taken_at is null and "to" = ? order by n').all(thread)
+        : this.db.query('select * from messages where taken_at is null and "to" in (select value from json_each(?)) order by n').all(JSON.stringify([thread].flat()))
     return (rows as Stored[]).map(toRow)
+  }
+
+  // Changes whenever the thread's messages do: one is kept (its n is the highest yet, whatever its
+  // time), or a session takes one (one fewer waits). It reads two index entries, so a reader can tell
+  // cheaply whether to read the messages again.
+  mark(thread: string): string {
+    const { last } = this.db.query('select max(n) as last from messages where "to" = ?').get(thread) as { last: number | null }
+    const { untaken } = this.db.query('select count(*) as untaken from messages indexed by untaken where taken_at is null and "to" = ?').get(thread) as { untaken: number }
+    return `${last}:${untaken}`
   }
 
   // Holds name for holder until it's released or ms pass, whichever comes first; false while another holds it.
@@ -644,18 +670,20 @@ export class Store {
     return row && this.toTask(row)
   }
 
-  // Newest first: every task, or one owner's, or those in some states.
-  tasks({ owner, status }: { owner?: string; status?: Status[] } = {}): Task[] {
-    const rows = this.db
-      .query('select * from tasks where (?1 is null or owner = ?1) and (?2 is null or status in (select value from json_each(?2))) order by at desc, n desc')
-      .all(owner ?? null, status ? JSON.stringify(status) : null) as StoredTask[]
-    return rows.map(row => this.toTask(row))
+  // Newest first: every task, or one owner's, or those in some states; without the owner's words,
+  // for a reader that shows only titles.
+  tasks(filter?: { owner?: string; status?: Status[]; words?: true }): Task[]
+  tasks(filter: { owner?: string; status?: Status[]; words: false }): Omit<Task, 'words'>[]
+  tasks({ owner, status, words = true }: { owner?: string; status?: Status[]; words?: boolean } = {}): Omit<Task, 'words'>[] {
+    const [where, params] = clause([owner !== undefined && ['owner = ?', owner], status && ['status in (select value from json_each(?))', JSON.stringify(status)]])
+    const rows = this.db.query(`select * from tasks ${where} order by at desc, n desc`).all(...params) as StoredTask[]
+    return rows.map(row => (words ? this.toTask(row) : toLine(row)))
   }
 
-  // The owner's last finished tasks, newest first.
-  lastDone(owner: string, count: number): Task[] {
+  // The owner's last finished tasks, newest first, without their words.
+  lastDone(owner: string, count: number): Omit<Task, 'words'>[] {
     const rows = this.db.query("select * from tasks where owner = ? and status = 'done' order by closed desc, n desc limit ?").all(owner, count) as StoredTask[]
-    return rows.map(row => this.toTask(row))
+    return rows.map(toLine)
   }
 
   // An app's open threads as its hub keeps them. A thread left out has closed: it keeps its row, with
@@ -721,10 +749,8 @@ export class Store {
 
   // Oldest first: every app's, or one app's or thread's, and only those still waiting on an answer.
   questions({ app, thread, waiting }: { app?: string; thread?: string; waiting?: boolean } = {}): Question[] {
-    const rows = this.db
-      .query('select * from questions where (?1 is null or app = ?1) and (?2 is null or thread = ?2) and (?3 is null or (answer is null and settled is null)) order by n')
-      .all(app ?? null, thread ?? null, waiting ? 1 : null) as StoredQuestion[]
-    return rows.map(toQuestion)
+    const [where, params] = clause([app !== undefined && ['app = ?', app], thread !== undefined && ['thread = ?', thread], waiting && ['answer is null and settled is null']])
+    return (this.db.query(`select * from questions ${where} order by n`).all(...params) as StoredQuestion[]).map(toQuestion)
   }
 
   // The owner's answer, unless one stands already: the first tap wins, and a later one changes
@@ -925,19 +951,7 @@ export class Store {
          from words join messages on messages.key = words.message where words.task = ? order by words.rowid`,
       )
       .all(row.n) as Words[]
-    return {
-      id: `t-${row.n}`,
-      title: row.title,
-      owner: row.owner,
-      status: row.status,
-      words,
-      at: row.at,
-      ...(row.project && { project: row.project }),
-      ...(row.done_when && { doneWhen: row.done_when }),
-      ...(row.proof && { proof: row.proof }),
-      ...(row.merged_into && { mergedInto: `t-${row.merged_into}` }),
-      ...(row.closed && { closed: row.closed }),
-    }
+    return { ...toLine(row), words }
   }
 
   private version() {
@@ -977,6 +991,27 @@ function number(id: string): number {
   const n = Number(id.replace(/^t-/, ''))
   if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`)
   return n
+}
+
+function toLine(row: StoredTask): Omit<Task, 'words'> {
+  return {
+    id: `t-${row.n}`,
+    title: row.title,
+    owner: row.owner,
+    status: row.status,
+    at: row.at,
+    ...(row.project && { project: row.project }),
+    ...(row.done_when && { doneWhen: row.done_when }),
+    ...(row.proof && { proof: row.proof }),
+    ...(row.merged_into && { mergedInto: `t-${row.merged_into}` }),
+    ...(row.closed && { closed: row.closed }),
+  }
+}
+
+// A where clause from the terms that apply, each with the value it binds, if any.
+function clause(terms: (false | undefined | [string, ...string[]])[]): [string, string[]] {
+  const kept = terms.filter(term => !!term)
+  return [kept.length ? `where ${kept.map(([sql]) => sql).join(' and ')}` : '', kept.flatMap(([, ...values]) => values)]
 }
 
 function toQuestion(row: StoredQuestion): Question {

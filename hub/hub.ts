@@ -773,7 +773,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // that no session took before the hub stopped.
   function wake() {
     if (closed) return
-    for (const row of kept(store => store.untaken(), [])) if (threads[row.to]) pass(row.to, threads[row.to]!.name, toMessage(row))
+    for (const row of kept(store => store.untaken(Object.keys(threads)), [])) if (threads[row.to]) pass(row.to, threads[row.to]!.name, toMessage(row))
   }
 
   // A thread whose session failed to start keeps its prompt and the messages it was handed waiting,

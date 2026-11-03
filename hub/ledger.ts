@@ -99,8 +99,14 @@ export class Ledger {
     const all = () => {
       for (const { thread } of this.store.pins({ app: this.app })) this.rewrite(thread, post).catch(error => failed(thread, error))
     }
-    all()
-    return this.store.watch(all)
+    const stop = this.store.watch(all)
+    try {
+      all()
+    } catch (error) {
+      stop()
+      throw error
+    }
+    return stop
   }
 
   find(thread: string, message: MessageId) {

@@ -11,7 +11,7 @@ export type Link = (thread: string, message: MessageId) => string | undefined
 export function statusPost(store: Store, thread: string, note: string, room: number, link: Link = () => undefined): string {
   const linked = (text: string, url: string | undefined) => (url ? `[${text.replace(/[[\]]/g, '')}](${url})` : text)
   const waiting = store.questions({ thread, waiting: true }).map(question => `- ${linked(clip(question.text, 120), link(thread, question.message))}`)
-  const open = store.tasks({ owner: thread, status: ['open'] }).map(task => `- ${clip(task.title, 120)}`)
+  const open = store.tasks({ owner: thread, status: ['open'], words: false }).map(task => `- ${clip(task.title, 120)}`)
   const done = store.lastDone(thread, 5).map(task => `- ${linked(clip(task.title, 120), url(task.proof!))}`)
   const section = (header: string, lines: string[], none: string) => ({ header: lines.length ? `**${header}**` : `**${header}:** ${none}`, items: lines.map(line => [line]), gap: '\n' })
   const sections = [section('🔴 Blocked on you', waiting, 'no questions waiting'), section('🟡 Pending', open, 'no open tasks'), section('🟢 Done', done, 'no tasks done yet')]
