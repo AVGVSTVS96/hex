@@ -15,7 +15,6 @@ test('meta without a time or a zone it can read passes through as it is', () => 
 
 const SERVER = { title: 'Telegram', instructions: '', tools: [
     { name: 'fetch_messages', description: 'Read.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
-    { name: 'react', description: 'React.', inputSchema: { type: 'object' }, annotations: { idempotentHint: true } },
   ],
 }
 const TOKEN = 'secret'
@@ -80,18 +79,16 @@ test('a call the session gave up on before the hub read it never runs, so its re
   expect(ran()).toBe(1)
 })
 
-test('a tool that only reads, or whose repeat changes nothing more, runs every time', async () => {
+test('a tool that only reads runs every time', async () => {
   const { ran, call, answer } = channel()
-  for (const tool of ['fetch_messages', 'react']) {
-    const gaveUp = new AbortController()
-    const first = call({ message_id: '1' }, gaveUp, tool)
-    await Bun.sleep(1)
-    gaveUp.abort()
-    const again = call({ message_id: '1' }, undefined, tool)
-    await answer()
-    await Promise.all([first, again])
-  }
-  expect(ran()).toBe(4)
+  const gaveUp = new AbortController()
+  const first = call({ chat: '1' }, gaveUp, 'fetch_messages')
+  await Bun.sleep(1)
+  gaveUp.abort()
+  const again = call({ chat: '1' }, undefined, 'fetch_messages')
+  await answer()
+  await Promise.all([first, again])
+  expect(ran()).toBe(2)
 })
 
 test("an answer the session missed answers its repeat until the thread's turn ends", async () => {
@@ -111,7 +108,7 @@ test("an answer the session missed answers its repeat until the thread's turn en
   expect(ran()).toBe(2)
 })
 
-test('a missed answer in a thread whose turns the hub never sees is let go half an hour after it came', async () => {
+test('a missed answer in a thread whose turns the hub never sees is let go a quarter of an hour after it came', async () => {
   const time = manual(async () => {})
   try {
     const { ran, call, answer } = channel()
@@ -124,10 +121,10 @@ test('a missed answer in a thread whose turns the hub never sees is let go half 
       await first
     }
     await miss()
-    await time.advance(30 * 60_000)
+    await time.advance(15 * 60_000)
     expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
     await miss()
-    await time.advance(30 * 60_000 + 1)
+    await time.advance(15 * 60_000 + 1)
     const later = call({ text: 'report' })
     await answer()
     expect(text(await later)).toBe('sent (id: 5389)')

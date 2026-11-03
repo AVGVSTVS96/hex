@@ -55,7 +55,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'react',
-      annotations: { idempotentHint: true },
       _meta: { 'anthropic/alwaysLoad': true },
       description: 'Add an emoji reaction to a Telegram message, or take yours off. Telegram only accepts a fixed whitelist (👍 👎 ❤ 🔥 👀 🎉 etc) — non-whitelisted emoji will be rejected.',
       inputSchema: {
@@ -82,7 +81,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'edit_message',
-      annotations: { idempotentHint: true },
       _meta: { 'anthropic/alwaysLoad': true },
       description: 'Edit a message the bot previously sent: its text, a file\'s caption, or the file itself. Useful for interim progress updates. Edits don\'t trigger push notifications — send a new reply when a long task completes so the user\'s device pings.',
       inputSchema: {
@@ -99,7 +97,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'delete_message',
-      annotations: { idempotentHint: true },
       description: 'Delete a message the bot sent.',
       inputSchema: {
         type: 'object',
@@ -151,7 +148,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'rename_thread',
-      annotations: { idempotentHint: true },
       description: 'Rename this topic, change its icon, or both.',
       inputSchema: {
         type: 'object',
@@ -163,7 +159,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'close_thread',
-      annotations: { idempotentHint: true },
       description: 'Close a forum topic whose work is done and stop its session once it is idle. Defaults to this thread. The user can still reopen it in Telegram, and a new message there resumes the session.',
       inputSchema: {
         type: 'object',

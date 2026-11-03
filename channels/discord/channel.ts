@@ -49,7 +49,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'react',
-      annotations: { idempotentHint: true },
       _meta: { 'anthropic/alwaysLoad': true },
       description: 'Add an emoji reaction to a Discord message, or take the bot\'s own off with remove. Unicode emoji work directly; custom emoji need the <:name:id> form.',
       inputSchema: {
@@ -64,7 +63,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'edit_message',
-      annotations: { idempotentHint: true },
       description: 'Edit a message the bot previously sent: its text, its files, or both. Useful for interim progress updates. Edits don\'t trigger push notifications — send a new reply when a long task completes so the user\'s device pings.',
       inputSchema: {
         type: 'object',
@@ -83,7 +81,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'delete_message',
-      annotations: { idempotentHint: true },
       description: 'Delete a message the bot sent.',
       inputSchema: {
         type: 'object',
@@ -181,7 +178,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'rename_thread',
-      annotations: { idempotentHint: true },
       description: 'Rename this thread.',
       inputSchema: {
         type: 'object',
@@ -193,7 +189,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'close_thread',
-      annotations: { idempotentHint: true },
       description: 'Archive a thread whose work is done and stop its session once it is idle. Defaults to this thread. A new message in it unarchives it and resumes the session.',
       inputSchema: {
         type: 'object',

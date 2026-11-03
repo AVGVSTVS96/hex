@@ -1,6 +1,6 @@
 import { clock } from './clock.ts'
 
-export type Tool = { name: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean; idempotentHint?: boolean }; _meta?: object }
+export type Tool = { name: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean }; _meta?: object }
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = { title: string; instructions: string; tools: Tool[]; permission?: boolean }
 export type Payload = { type: 'inbound'; content: string; meta: Record<string, string> } | { type: 'permission'; request_id: string; behavior: string }
@@ -25,11 +25,10 @@ const NUDGE = 250
 // thread, until the thread's turn ends (rested), gets that answer instead of acting twice. A call
 // that reached the hub GAVE_UP before its answer counts as unheard even with no abort seen, since a
 // lagging hub accepts late and can miss the session leaving. KEEP bounds a finished call's record
-// for sessions whose turns the hub doesn't follow. A tool that only reads, or whose repeat changes
-// nothing more (an edit, a reaction, a hang up), runs every time; a call the session gave up on
-// before the hub read it doesn't run at all.
+// for sessions whose turns the hub doesn't follow. A tool that only reads runs every time, and a
+// call the session gave up on before the hub read it doesn't run at all.
 const GAVE_UP = 120_000
-const KEEP = 30 * 60_000
+const KEEP = 15 * 60_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
 type Run = { answer: Promise<Result>; at: number; done?: true }
@@ -58,11 +57,11 @@ export function endpoint(name: string, channel: string, token: string, server: C
   }
 
   const unheard = new Map<string, Map<string, Run>>()
-  const repeatable = new Set(server.tools.filter(({ annotations: hint }) => hint?.readOnlyHint || hint?.idempotentHint).map(tool => tool.name))
+  const reads = new Set(server.tools.filter(tool => tool.annotations?.readOnlyHint).map(tool => tool.name))
 
   function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal, arrived: number): Promise<Result> {
     if (gone.aborted) return Promise.resolve({ content: [{ type: 'text', text: `${tool} didn't run: you stopped waiting before the hub read it` }], isError: true })
-    if (repeatable.has(tool)) return call(thread, tool, args)
+    if (reads.has(tool)) return call(thread, tool, args)
     for (const [scope, runs] of unheard) {
       for (const [key, run] of runs) if (run.done && clock.now() - run.at > KEEP) runs.delete(key)
       if (!runs.size) unheard.delete(scope)

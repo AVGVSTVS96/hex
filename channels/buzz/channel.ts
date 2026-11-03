@@ -48,7 +48,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'react',
-      annotations: { idempotentHint: true },
       _meta: { 'anthropic/alwaysLoad': true },
       description: 'Add an emoji reaction to a Buzz message, or take yours off.',
       inputSchema: {
@@ -63,7 +62,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'delete_message',
-      annotations: { idempotentHint: true },
       description: 'Delete a message the bot sent.',
       inputSchema: {
         type: 'object',
@@ -75,7 +73,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'edit_message',
-      annotations: { idempotentHint: true },
       description: 'Edit a message the bot previously sent. Useful for interim progress updates. Edits don\'t trigger push notifications — send a new reply when a long task completes so the user\'s device pings.',
       inputSchema: {
         type: 'object',
@@ -128,7 +125,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'canvas',
-      annotations: { idempotentHint: true },
       description: 'Read this channel\'s canvas, or replace it by passing text. Reading returns its Markdown and revision.',
       inputSchema: {
         type: 'object',
@@ -167,7 +163,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'rename_thread',
-      annotations: { idempotentHint: true },
       description: 'Name this thread. Buzz threads have no titles, so the name is for your thread list and handoffs; a thread you opened with new_thread also shows it as its first message.',
       inputSchema: {
         type: 'object',
@@ -179,7 +174,6 @@ export const server: ChannelServer = {
     },
     {
       name: 'close_thread',
-      annotations: { idempotentHint: true },
       description: 'Close a thread whose work is done and stop its session once it is idle. Defaults to this thread. Tagging the bot in it again starts a fresh session.',
       inputSchema: {
         type: 'object',
