@@ -345,7 +345,7 @@ test('a not needed with one hub down still reaches the rest and says what it mis
   await Bun.sleep(150)
   const discord = await discordHub()
   try {
-    expect(await questions.dismiss('check:twilio', 'app')).toEqual({ thread: `discord:${DESK}`, topic: '5', settled: 1, missed: 0 })
+    expect(await questions.dismiss('check:twilio', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 0 })
     await until(() => discord.heard.length === 2)
     expect(discord.heard.map(line => line.type)).toEqual(['inbound', 'settle'])
     expect(lines.map(line => line.type)).toEqual(['inbound', 'settle'])
@@ -372,12 +372,26 @@ test('an answer that missed a copy is finished by the same answer, which only se
   await expect(questions.dismiss('check:twilio', 'app')).rejects.toThrow('part of "Upgrade" went out')
   const discord = await discordHub()
   try {
-    expect(await questions.answer('check:twilio', 'Upgrade', 'app')).toMatchObject({ settled: 1, missed: 0 })
+    expect(await questions.answer('check:twilio', 'Upgrade', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 0 })
     await until(() => discord.heard.length === 1)
     expect(discord.heard).toEqual([{ type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: Upgrade' }])
   } finally {
     await discord.stop()
   }
+})
+
+test('a question asked again while an earlier answer missed a copy is answered on the new copy, and the missed one only settles', async () => {
+  ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Twilio?', ['Upgrade', 'Not yet']), app: 'discord' } as any, asked(3, 'Twilio, again?', ['Upgrade', 'Not yet'])])
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify(TWO_HUBS))
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await until(() => questions.find('check:twilio'))
+  await questions.answer('check:twilio', 'Upgrade', 'app')
+  ledger([{ ...asked(1, 'Twilio?', ['Upgrade', 'Not yet']), answer: { label: 'Upgrade', at: '', via: 'app' } }, { ...asked(2, 'Twilio?', ['Upgrade', 'Not yet']), app: 'discord' } as any, asked(3, 'Twilio, again?', ['Upgrade', 'Not yet'])])
+  const again = { ...TWO_HUBS, asks: [{ ...TWO_HUBS.asks[0]!, refs: [{ app: 'discord', thread: DESK, message: 2 }, { app: 'telegram', thread: DESK, message: 3 }] }] }
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify(again))
+  await Bun.sleep(150)
+  expect(await questions.answer('check:twilio', 'Not yet', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 1 })
+  expect(await until(() => lines.find(line => line.message === 3))).toEqual({ type: 'answer', thread: DESK, message: 3, label: 'Not yet', via: 'app' })
 })
 
 test('an undo with a hub down takes back what it can, keeps the rest, and finishes when tried again', async () => {
