@@ -3,11 +3,10 @@
 set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
 unread() { echo "hex couldn't read its settings" >&2; exit 1; }
-# However .env fails or exits, vault stops; what it prints stays out of what vault prints.
-load() { trap unread EXIT; . "$(dirname "$0")/settings" >&2; trap - EXIT; [ -z "$settings_unread" ] || unread; }
+# .env is shell code: a line that fails or exits stops vault, and it can't read or print into vault's streams.
+load() { trap unread EXIT; . "$(dirname "$0")/settings" </dev/null >&2; trap - EXIT; [ -z "$settings_unread" ] || unread; }
 if [ "${1:-}" = run ]; then
-  # What `vault run` starts keeps its caller's environment and gets the vault's secrets, but none of .env's:
-  # of hex's settings, it gets only HEX_NAME and enclave's own.
+  # The command gets its caller's environment and the secrets it asked for: of hex's settings, only enclave's.
   settings=$(
     load
     q="'"
