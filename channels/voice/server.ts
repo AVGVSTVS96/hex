@@ -261,7 +261,7 @@ function fresh(call: string, about: string) {
 
 function current(call: string, id: string): Task | undefined {
   if (live?.id === call) return live.call.task(id)
-  const moment = past(call).tasks.findLast(task => task.id === id)
+  const moment = calls.get(call)?.tasks.findLast(task => task.id === id)
   if (!moment) return
   const { at, ...task } = moment
   return task
@@ -878,7 +878,7 @@ async function interruption(request: Request, id: string) {
 
 // The app ends the call it started, by its id; one that already ended has nothing left to end.
 async function endSession(request: Request) {
-  const { sessionId } = (await request.json().catch(() => ({}))) as { sessionId?: unknown }
+  const { sessionId } = ((await request.json().catch(() => null)) ?? {}) as { sessionId?: unknown }
   if (typeof sessionId !== 'string') return new Response('Name the call to end with sessionId', { status: 400 })
   if (live?.id === sessionId) live.socket.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-app' }))
   return new Response(null, { status: 204 })
