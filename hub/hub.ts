@@ -928,17 +928,20 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // still running restarts in place (a turn it was on runs again) if it started before the wait
   // did, or else gets another window; a start that ended is reported, a gone main thread starts
   // again, and a thread whose messages waited on a session that has since ended resumes.
-  function recover(thread: string, since = clock.now()) {
+  // pid: the starting session's process, which the hub looks at itself until its wait is over.
+  function recover(thread: string, since = clock.now(), pid?: number) {
     const run = runOf(thread)
     const phase = run.phase
     if (closed || phase.is === 'stopped' || phase.is === 'live' || phase.deadline) return
     phase.deadline = clock.setTimeout(async () => {
       phase.deadline = undefined
+      const starting = phase.is === 'launching' && clock.now() - since < connect
+      if (starting && pid && claude.alive(pid)) return recover(thread, since, pid)
       const running = await sessionOf(thread)
       if (run.phase !== phase) return
       if (!running) return gone(thread)
       if ((running.startedAt ?? 0) >= since) return recover(thread)
-      if (phase.is === 'launching' && clock.now() - since < connect) return recover(thread, since)
+      if (starting) return recover(thread, since, running.pid)
       // A respawn starts from the flags the session started with, which read the thread's current
       // settings file only for a session the hub started that way.
       if (claude.settingsOf(running)) return respawn(thread, running)

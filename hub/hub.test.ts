@@ -428,6 +428,18 @@ test('a starting session gets as long as Claude Code is told to wait for its cha
   expect(failures).toEqual([])
 })
 
+test('a starting session still running once the wait for a slow hub is over restarts in place', async () => {
+  start({ reconnect: 50, connect: 200 })
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await launched()
+  bound('chat:7', SESSION, 'job12345')
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ id: 'job12345', sessionId: SESSION, pid: process.pid, startedAt: 1 }]))
+  await time.advance(150)
+  expect(calls().filter(args => args[0] === 'respawn')).toEqual([])
+  await time.advance(100)
+  expect(await until(() => calls().find(args => args[0] === 'respawn'))).toEqual(['respawn', 'job12345'])
+})
+
 test('a starting session that has ended is reported the next time the hub looks, not after the wait for a slow hub', async () => {
   start({ reconnect: 50, connect: 60_000, agents: [] })
   hub.deliver('chat:7', 'Desk anchors', message)

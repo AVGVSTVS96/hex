@@ -677,12 +677,24 @@ function react(chat_id: string, message_id: number, reaction: ReactionTypeEmoji[
   const key = `${chat_id}:${message_id}`
   if (reaction.length === 1 && reaction[0] === ASLEEP) asleep.add(key)
   else asleep.delete(key)
-  const set = (to: ReactionTypeEmoji[]) => paced(() => bot.api.setMessageReaction(chat_id, message_id, to))
+  const set = (to: ReactionTypeEmoji[]) => steady(() => paced(() => bot.api.setMessageReaction(chat_id, message_id, to)))
   const done = (reacting.get(key) ?? Promise.resolve()).catch(() => {}).then(() => (otherwise ? set(reaction).catch(() => set(otherwise)) : set(reaction)))
   reacting.set(key, done)
   const settled = () => void (reacting.get(key) === done && reacting.delete(key))
   done.then(settled, settled)
   return done
+}
+
+// A mark Telegram missed for a network or server error would stay wrong, since nothing sends it again.
+async function steady<T>(send: () => Promise<T>, tries = 3): Promise<T> {
+  for (let tried = 1; ; tried++) {
+    try {
+      return await send()
+    } catch (err) {
+      if (tried === tries || (err instanceof GrammyError && err.error_code < 500)) throw err
+      await Bun.sleep(1000 * tried)
+    }
+  }
 }
 
 // The bot's name once it polls, which a DM's link opens.

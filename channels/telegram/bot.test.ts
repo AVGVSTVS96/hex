@@ -347,6 +347,27 @@ test('a message no session has read shows it waits, until a session takes it', a
   expect(marks()).toBe(before)
 })
 
+test("a session's own reaction stays once the message it took stops waiting, and the ack comes back on the other", async () => {
+  writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)], ackReaction: '👀' }))
+  const reacted = message({ text: 'first', message_thread_id: 7 })
+  const plain = message({ text: 'second', message_thread_id: 7 })
+  await update({ message: reacted })
+  await update({ message: plain })
+  const on = (id: number) => () => calls.filter(c => c.method === 'setMessageReaction' && c.payload.message_id === id).map(c => c.payload.reaction.map((r: any) => r.emoji).join(''))
+  await until(() => on(reacted.message_id)().includes('😴') && on(plain.message_id)().includes('😴'))
+  const topic = await connectSession({ stateDir: state, path: '/telegram', channel: CHANNEL, thread: `${FORUM}:7` })
+  const first = await until(() => topic.received.find(line => line.meta?.message_id === String(reacted.message_id)))
+  const second = await until(() => topic.received.find(line => line.meta?.message_id === String(plain.message_id)))
+  await topic.call('react', { message_id: String(reacted.message_id), emoji: '🔥' })
+  open(state).take(first.meta.key, 'topic-session')
+  open(state).take(second.meta.key, 'topic-session')
+  await until(() => on(plain.message_id)().at(-1) === '👀' && on(plain.message_id)().length === 3)
+  expect(on(plain.message_id)()).toEqual(['👀', '😴', '👀'])
+  expect(on(reacted.message_id)()).toEqual(['👀', '😴', '🔥'])
+  topic.close()
+  writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
+})
+
 test('a DM is its own thread: it reaches the DM session, not the group, and replies go back to the DM', async () => {
   const dm = await connectSession({ stateDir: state, path: '/telegram', channel: CHANNEL, thread: String(OWNER) })
   const lines = dm.received
