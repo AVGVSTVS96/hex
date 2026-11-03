@@ -89,7 +89,7 @@ export const server: ChannelServer = {
           text: { type: 'string', description: 'New text, or new caption for a file.' },
           file: { type: 'string', description: 'Absolute path of a file to replace the sent one with.' },
           format: formatProperty,
-          settled: { type: 'boolean', description: 'true when the question this message asked with buttons or a poll is settled or no longer stands: its buttons come off or its poll closes, and it stops waiting on the user. Without it, an edit keeps a question\'s buttons. A poll\'s own text can\'t be edited.' },
+          settled: { type: 'boolean', description: 'true when the question this message asked with buttons or a poll is settled or no longer stands: it stops waiting on the user, its buttons come off, and a poll nobody has voted in closes. Without it, an edit keeps a question\'s buttons. A poll\'s own text can\'t be edited.' },
         },
         required: ['message_id'],
       },
@@ -139,7 +139,7 @@ export const server: ChannelServer = {
         type: 'object',
         properties: {
           question: { type: 'string', maxLength: 300 },
-          options: { type: 'array', items: { type: 'string', maxLength: 100 }, minItems: 2, maxItems: 12 },
+          options: { type: 'array', items: { type: 'string', maxLength: 100 }, maxItems: 12 },
           multiple: { type: 'boolean', description: 'Allow picking more than one option.' },
         },
         required: ['question', 'options'],
