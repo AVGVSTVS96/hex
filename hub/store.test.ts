@@ -479,8 +479,8 @@ test("each app's relays.jsonl comes into hex.db once, the newest run per pair of
   ]
   writeFileSync(join(dir, 'discord', 'relays.jsonl'), [...lines.map(line => JSON.stringify(line)), 'not json', ''].join('\n'))
   expect(new Store(dir).relays()).toEqual([
-    { from: 'discord:fix', thread: 'thread-codex', run: 'run-2' },
-    { from: 'discord:fix', thread: 'thread-prims', run: 'run-3' },
+    { from: 'discord:fix', thread: 'thread-codex', run: 'run-2', at: '2026-10-21T10:05:00.000Z' },
+    { from: 'discord:fix', thread: 'thread-prims', run: 'run-3', at: '2026-10-21T10:10:00.000Z' },
   ])
   expect(existsSync(join(dir, 'discord', 'relays.jsonl'))).toBe(false)
   expect(existsSync(join(dir, 'discord', 'relays.jsonl.moved-to-hex.db'))).toBe(true)

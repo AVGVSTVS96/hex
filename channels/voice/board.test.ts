@@ -334,6 +334,13 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
   const lead = () => board.get('t3:lead')
   await until(() => lead()?.agents.length === 4)
   expect(board.get('t3:kid')).toBeUndefined()
+  const kidBuild = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_CHANNEL: 'plugin:t3@hex', HEX_THREAD: 'kid', HEX_OWNER: '' } })
+  running('e5000004-kidbuild', 'busy', kidBuild.pid, { kind: 'interactive', name: 'kid build', startedAt: Date.now() })
+  await until(() => lead()!.agents.some(agent => agent.id === 'e5000004-kidbuild'))
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  rmSync(join(claude, 'sessions', 'e5000004.json'))
+  kidBuild.kill()
+  await until(() => lead()?.agents.length === 4)
   expect(lead()).toMatchObject({ state: 'working', since: kidSince, place: 'hex primitives' })
   expect(lead()!.agents.map(agent => [agent.label, agent.state, agent.via, agent.who])).toEqual([
     ['sol: second opinion', 'working', 't3', 'Sol'],
@@ -412,19 +419,16 @@ test("a thread whose turn ended stays working while its workflow runs, each work
   await until(() => antibody()?.agents[0].line === 'Reading bills.ts')
 })
 
-test('a running session no thread holds is a run of its own while it works', async () => {
+test("a running session that works for no thread isn't on the board", async () => {
   job('12121212-review', { state: 'working', detail: 'reviewing autofork', updatedAt: ago(0) })
-  job('34343434-probe', { state: 'done', detail: 'probe ran', updatedAt: ago(0) })
   running('12121212-review', 'busy', process.pid, { kind: 'bg', name: 'autofork-review', cwd: '/repo' })
-  running('34343434-probe', 'idle', process.pid, { kind: 'bg', name: 'probe' })
   running('56565656-terminal', 'busy', process.pid, { kind: 'interactive', name: 'bassim-1' })
-  await until(() => board.get('claude:12121212')?.state === 'working')
-  expect(board.get('claude:12121212')).toMatchObject({ name: 'autofork-review', where: 'Claude Code', line: 'reviewing autofork' })
-  expect(board.runs.filter(run => run.app === 'claude').map(run => run.name)).toEqual(['autofork-review', 'bassim-1'])
-  job('12121212-review', { state: 'done', detail: 'reviewed', updatedAt: ago(0) })
-  running('12121212-review', 'idle', process.pid, { kind: 'bg', name: 'autofork-review', cwd: '/repo' })
+  const version = board.version
+  job('aaaaaaaa-general', { state: 'done', detail: 'heartbeat ran again', updatedAt: ago(0) })
+  await until(() => board.version !== version)
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  rmSync(join(claude, 'sessions', '12121212.json'))
   rmSync(join(claude, 'sessions', '56565656.json'))
-  await until(() => !board.get('claude:12121212') && !board.get('claude:56565656'))
 })
 
 // What hex's hook writes as a session takes a prompt: the message taken and the turn begun.
@@ -590,6 +594,42 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
   job(session, { state: 'done', detail: 'page built', updatedAt: ago(0) })
 })
 
+test("a session whose process runs under a thread's session is one of its agents, and neither hex's own check there nor a session T3 Code runs there is", async () => {
+  const env = { ...process.env, HEX_CHANNEL: '', HEX_THREAD: '', HEX_OWNER: '' }
+  const topic = Bun.spawn(['sh', '-c', 'sleep 30 & HEX_HELPER=check sleep 30 & sleep 30 & wait'], { env })
+  const kids = await until(() => children(topic.pid).length === 3 && children(topic.pid))
+  afterAll(() => [topic.pid, ...kids].forEach(stop))
+  const helper = kids.find(pid => readFileSync(`/proc/${pid}/environ`, 'utf8').includes('HEX_HELPER=check'))!
+  const [build, t3run] = kids.filter(pid => pid !== helper)
+  threads('telegram', { ...telegram, '-1001234567890:4110': { name: 'review', session: '41104110-review' } })
+  job('41104110-review', { state: 'done', detail: 'started a build', updatedAt: ago(1) })
+  running('41104110-review', 'idle', topic.pid, { kind: 'bg' })
+  const review = () => board.get('telegram:-1001234567890:4110')
+  await until(() => review()?.state === 'done')
+  mapped('41034103-t3', 'thread-loner', { driver: 'claudeAgent', title: 'started in T3 Code' })
+  running('41014101-build', 'busy', build, { kind: 'interactive', name: 'review-build', startedAt: Date.now() })
+  running('41024102-check', 'busy', helper, { kind: 'interactive', name: 'hex-check-x', startedAt: Date.now() })
+  running('41034103-t3', 'busy', t3run, { kind: 'interactive', name: 'started in T3 Code', startedAt: Date.now() })
+  await until(() => review()?.state === 'working' && review()!.agents.length === 1)
+  expect(review()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['41014101-build', 'review-build', 'working']])
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  rmSync(join(claude, 'sessions', '41014101.json'))
+  await until(() => review()?.state === 'done')
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  rmSync(join(claude, 'sessions', '41024102.json'))
+  rmSync(join(claude, 'sessions', '41034103.json'))
+})
+
+function stop(pid: number) {
+  try {
+    process.kill(pid)
+  } catch {}
+}
+
+function children(pid: number) {
+  return readFileSync(`/proc/${pid}/task/${pid}/children`, 'utf8').trim().split(' ').filter(Boolean).map(Number)
+}
+
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
   const build = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-1001234567890:3275' } })
   afterAll(() => build.kill())
@@ -611,20 +651,27 @@ test("a thread stays working while a session it started runs, that session one o
   expect(lab()!.running).toBe(false)
 })
 
-test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a run of its own", async () => {
+test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a run of its own, with what it launched", async () => {
   const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:65' } })
-  const orphan = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:404' } })
-  afterAll(() => {
-    owned.kill()
-    orphan.kill()
-  })
+  const orphan = Bun.spawn(['sh', '-c', 'sleep 30 & wait'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:404' } })
+  const [sub] = await until(() => children(orphan.pid).length === 1 && children(orphan.pid))
+  afterAll(() => [owned.pid, orphan.pid, sub!].forEach(stop))
   const theo = () => board.get('telegram:-1001234567890:65')
+  const lastActive = Date.now() - 60_000
   job('91919191-clips', { state: 'working', detail: 'cutting clips', updatedAt: ago(0) })
-  job('92929292-lost', { state: 'working', detail: 'lost its thread', updatedAt: ago(0) })
   running('91919191-clips', 'busy', owned.pid, { kind: 'interactive', name: 'Theo clips/cut', startedAt: Date.now() })
-  running('92929292-lost', 'busy', orphan.pid, { kind: 'interactive', name: 'gone/job', startedAt: Date.now() })
+  running('92929292-lost', 'busy', orphan.pid, { kind: 'interactive', name: 'gone/job', startedAt: lastActive - 60_000, statusUpdatedAt: lastActive })
+  running('92939293-sub', 'busy', sub, { kind: 'interactive', name: 'gone/job-build', startedAt: Date.now() })
   await until(() => theo()?.state === 'working' && !!board.get('claude:92929292'))
   expect(theo()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['91919191-clips', 'Theo clips/cut', 'working']])
+  expect(board.get('claude:92929292')).toMatchObject({ name: 'gone/job', at: new Date(lastActive).toISOString() })
+  expect(board.runs.filter(run => run.app === 'claude').map(run => run.id)).toEqual(['claude:92929292'])
+  await until(() => board.get('claude:92929292')!.agents.length === 1)
+  expect(board.get('claude:92929292')!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['92939293-sub', 'gone/job-build', 'working']])
+  running('92929292-lost', 'idle', orphan.pid, { kind: 'interactive', name: 'gone/job', startedAt: lastActive - 60_000, statusUpdatedAt: Date.now() })
+  await until(() => board.get('claude:92929292')?.running === false)
+  expect(board.get('claude:92929292')!.state).toBe('working')
+  rmSync(join(claude, 'sessions', '92939293.json'))
   expect(board.get('claude:91919191')).toBeUndefined()
   rmSync(join(claude, 'sessions', '91919191.json'))
   rmSync(join(claude, 'sessions', '92929292.json'))
@@ -751,6 +798,12 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
     ['sol: a second look', 'done', 't3', 'Looks sound.'],
   ])
   expect(board.get('t3:prims')).toBeUndefined()
+  running('f2f2f2f2-prims', 'busy')
+  const version = board.version
+  job('f1f1f1f1-fix', { state: 'done', detail: 'sent it on, still', updatedAt: ago(0) })
+  await until(() => board.version !== version)
+  expect(board.get('claude:f2f2f2f2')).toBeUndefined()
+  running('f2f2f2f2-prims', 'idle')
   run('thread-prims', 2, { status: 'completed', since: ago(2), end: ago(0) })
   run('thread-prims', 3, { since: ago(0) })
   await until(() => !!board.get('t3:prims'))
@@ -801,4 +854,107 @@ test("another Telegram group keeps its own name and place, and only hex's Genera
   expect(board.get('telegram:-2002')).toMatchObject({ name: 'Family', where: 'Telegram', place: 'Family' })
   expect(board.get('telegram:-1001234567890')).toMatchObject({ name: 'General', where: 'General', place: 'General' })
   threads('telegram', telegram)
+})
+
+test("a T3 Code thread's session below one a hex thread handed work to works under that thread while it's busy, and one nothing handed off isn't on the board", async () => {
+  threads('telegram', { ...telegram, '-1001234567890:4210': { name: 'audit', session: '42104210-audit' } })
+  job('42104210-audit', { state: 'done', detail: 'sent the audit on', updatedAt: ago(3) })
+  running('42104210-audit', 'idle')
+  mapped('43104310-lead', 'thread-audit', { driver: 'claudeAgent', title: 'audit lead' })
+  mapped('44004400-fix', 'thread-fix', { driver: 'claudeAgent', title: 'audit: fixes' })
+  mapped('45004500-watch', 'thread-watch', { driver: 'claudeAgent', title: 'Server Watcher' })
+  open(state).relayed('telegram:-1001234567890:4210', 'thread-audit', run('thread-audit', 1, { since: ago(3) }), ago(3))
+  run('thread-audit', 2, { status: 'queued', since: ago(1) })
+  handed('task-fix', 'thread-audit', 'thread-fix', { driver: 'claudeAgent', title: 'audit: fixes', since: ago(2) })
+  running('43104310-lead', 'busy', process.pid, { kind: 'interactive', name: 'audit lead', startedAt: Date.now() })
+  running('44004400-fix', 'busy', process.pid, { kind: 'interactive', name: 'audit: fixes', startedAt: Date.now() })
+  running('45004500-watch', 'busy', process.pid, { kind: 'interactive', name: 'Server Watcher', startedAt: Date.now() })
+  const audit = () => board.get('telegram:-1001234567890:4210')
+  await until(() => audit()?.agents.length === 2)
+  expect(audit()!.state).toBe('working')
+  expect(audit()!.agents.map(agent => [agent.label, agent.via])).toEqual([
+    ['audit: fixes', 'claude'],
+    ['audit lead', 't3'],
+  ])
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  handed('task-fix', 'thread-audit', 'thread-fix', { driver: 'claudeAgent', status: 'completed', title: 'audit: fixes', since: ago(2), end: ago(0) })
+  run('thread-audit', 1, { status: 'completed', since: ago(3), end: ago(0) })
+  running('43104310-lead', 'idle', process.pid, { kind: 'interactive', name: 'audit lead', startedAt: Date.now() })
+  await until(() => audit()!.agents.every(agent => agent.via === 'claude' || agent.state !== 'working'))
+  expect(audit()!.state).toBe('working')
+  expect(audit()!.agents.filter(agent => agent.via === 'claude').map(agent => [agent.label, agent.state])).toEqual([['audit: fixes', 'working']])
+  running('44004400-fix', 'idle', process.pid, { kind: 'interactive', name: 'audit: fixes', startedAt: Date.now() })
+  await until(() => audit()!.state !== 'working')
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+})
+
+test("a T3 Code thread a hex thread delegated before and now sends more work to counts toward it while that run goes on", async () => {
+  threads('t3', { boss: { name: 'hex', session: '46004600-boss' } })
+  job('46004600-boss', { state: 'done', detail: 'sent it more', updatedAt: ago(1) })
+  running('46004600-boss', 'idle')
+  mapped('boss', 'thread-boss', { title: 'boss' })
+  mapped('47004700-again', 'thread-again', { driver: 'claudeAgent', title: 'again: round two' })
+  handed('task-again', 'thread-boss', 'thread-again', { driver: 'claudeAgent', status: 'completed', title: 'again: round two', since: ago(30), end: ago(20) })
+  open(state).relayed('t3:boss', 'thread-again', run('thread-again', 1, { since: ago(1) }), ago(1))
+  running('47004700-again', 'busy', process.pid, { kind: 'interactive', name: 'again: round two', startedAt: Date.now() })
+  const boss = () => board.get('t3:boss')
+  await until(() => boss()?.state === 'working')
+  expect(boss()!.agents.filter(agent => agent.via === 'claude').map(agent => agent.id)).toEqual(['47004700-again'])
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+})
+
+test("a T3 Code thread goes to the hex thread that sent it work last, by when hex sent it, not when its run began", async () => {
+  threads('discord', { early: { name: 'early', session: 'c1c1c1c1-early' }, late: { name: 'late', session: 'c2c2c2c2-late' } })
+  running('c1c1c1c1-early', 'idle')
+  running('c2c2c2c2-late', 'idle')
+  mapped('c3c3c3c3-steer', 'thread-steer', { driver: 'claudeAgent', title: 'steered' })
+  mapped('c4c4c4c4-kid', 'thread-steerkid', { driver: 'claudeAgent', title: 'steered: kid' })
+  const active = run('thread-steer', 1, { since: ago(10) })
+  open(state).relayed('discord:early', 'thread-steer', run('thread-steer', 2, { status: 'queued', since: ago(5) }), ago(5))
+  open(state).relayed('discord:late', 'thread-steer', active, ago(2))
+  handed('task-steerkid', 'thread-steer', 'thread-steerkid', { driver: 'claudeAgent', title: 'steered: kid', since: ago(1) })
+  running('c4c4c4c4-kid', 'busy', process.pid, { kind: 'interactive', name: 'steered: kid', startedAt: Date.now() })
+  await until(() => board.get('discord:late')?.agents.some(agent => agent.id === 'c4c4c4c4-kid'))
+  expect(board.get('discord:early')!.agents.map(agent => agent.id)).not.toContain('c4c4c4c4-kid')
+  running('c4c4c4c4-kid', 'idle', process.pid, { kind: 'interactive', name: 'steered: kid', startedAt: Date.now() })
+})
+
+test("what a session T3 Code runs launches goes by T3's handoffs, not the thread its inherited environment names", async () => {
+  const t3server = Bun.spawn(['sh', '-c', 'HEX_OWNER=telegram:-1001234567890:65 sleep 30 & wait'], { env: { ...process.env, HEX_CHANNEL: '', HEX_THREAD: '', HEX_OWNER: '' } })
+  const [kid] = await until(() => children(t3server.pid).length === 1 && children(t3server.pid))
+  afterAll(() => [t3server.pid, kid!].forEach(stop))
+  mapped('c5c5c5c5-loner', 'thread-loner2', { driver: 'claudeAgent', title: 'nobody handed this off' })
+  await Bun.sleep(800)
+  running('c5c5c5c5-loner', 'busy', t3server.pid, { kind: 'interactive', name: 'nobody handed this off', startedAt: Date.now() })
+  running('c6c6c6c6-build', 'busy', kid, { kind: 'interactive', name: 'loner build', startedAt: Date.now() })
+  const version = board.version
+  job('aaaaaaaa-general', { state: 'done', detail: 'heartbeat ran once more', updatedAt: ago(0) })
+  await until(() => board.version !== version)
+  expect(board.get('telegram:-1001234567890:65')?.agents.map(agent => agent.id) ?? []).not.toContain('c6c6c6c6-build')
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  rmSync(join(claude, 'sessions', 'c5c5c5c5.json'))
+  rmSync(join(claude, 'sessions', 'c6c6c6c6.json'))
+})
+
+test("a hex thread that sends its busy T3 Code thread more work, which T3 queues, keeps what that thread launched", async () => {
+  threads('discord', { again: { name: 'again', session: 'c7c7c7c7-again' } })
+  running('c7c7c7c7-again', 'idle')
+  mapped('c8c8c8c8-busy', 'thread-busy', { driver: 'claudeAgent', title: 'busy' })
+  mapped('c9c9c9c9-busykid', 'thread-busykid', { driver: 'claudeAgent', title: 'busy: kid' })
+  run('thread-busy', 1, { since: ago(10) })
+  open(state).relayed('discord:again', 'thread-busy', run('thread-busy', 2, { status: 'queued', since: ago(1) }), ago(1))
+  handed('task-busykid', 'thread-busy', 'thread-busykid', { driver: 'claudeAgent', title: 'busy: kid', since: ago(5) })
+  running('c9c9c9c9-busykid', 'busy', process.pid, { kind: 'interactive', name: 'busy: kid', startedAt: Date.now() })
+  await until(() => board.get('discord:again')?.agents.some(agent => agent.id === 'c9c9c9c9-busykid'))
+  running('c9c9c9c9-busykid', 'idle', process.pid, { kind: 'interactive', name: 'busy: kid', startedAt: Date.now() })
+})
+
+test("a thread's fresh background session works under it from its first turn, before hex.db holds it", async () => {
+  writeFileSync(join(home, 'leisure-settings.json'), JSON.stringify({ env: { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-1001234567890:72' } }))
+  job('d1d1d1d1-fresh', { state: 'working', detail: 'first turn', updatedAt: ago(0), respawnFlags: ['--settings', join(home, 'leisure-settings.json')] })
+  running('d1d1d1d1-fresh', 'busy', process.pid, { kind: 'bg', name: 'Leisure time', startedAt: Date.now() })
+  const leisure = () => board.get('telegram:-1001234567890:72')
+  await until(() => leisure()?.state === 'working' && leisure()!.agents.some(agent => agent.id === 'd1d1d1d1-fresh'))
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  rmSync(join(claude, 'sessions', 'd1d1d1d1.json'))
 })

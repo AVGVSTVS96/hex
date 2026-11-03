@@ -315,7 +315,8 @@ try {
       const held = new Map(threads.flatMap(({ app, thread, session }) => (session ? [[session, `${app}:${thread}`] as [string, string]] : [])))
       const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]))
       const home = realpathSync(dirname(state!))
-      const rows = [...running(store).values()].map(session => ({ ...session, thread: serving(session, held) }))
+      const sessions = running(store)
+      const rows = [...sessions.values()].map(session => ({ ...session, thread: serving(session, held, sessions) }))
       if (flags.json) console.log(JSON.stringify(rows, null, 1))
       else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs }) => {
         const now = (state === 'blocked' && needs) || detail
