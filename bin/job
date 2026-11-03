@@ -5,7 +5,8 @@
 // The job's Claude Code sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them
 // under it, and are named <owner>/<unit> unless they name themselves. A job whose command is claude runs
 // as a hex session in the folder it was started from, through the launcher the hub starts sessions with,
-// so it has hex's rules, memory and hooks.
+// so it has hex's rules, memory and hooks. When this machine is short on room, it runs on the first of
+// HEX_MACHINES, the ssh names of the owner's other machines, that has room (bin/away).
 import { $ } from "bun"
 import { basename } from "node:path"
 import { served } from "../hub/running.ts"
@@ -45,7 +46,8 @@ if (mode === "--ended") {
   const name = `${store.names()[key] ?? key}/${mode}`
   const agent = basename(command[0]!) === "claude"
   if (!agent && /(^|[\s;&|(/])claude(\s|$)/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it from its folder as: job ${mode} claude -p "<prompt>"`)
-  const run = agent ? [`${import.meta.dir}/session`, "-n", name, ...command.slice(1)] : command
+  const machine = agent ? await roomy() : undefined
+  const run = agent ? [...(machine ? [`${import.meta.dir}/away`, machine] : [`${import.meta.dir}/session`]), "-n", name, ...command.slice(1)] : command
   // Like claude -p, the job reads what comes on stdin after its prompt.
   const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
   const input = piped ? ["-p", `StandardInputData=${Buffer.from(piped).toString("base64")}`] : []
@@ -54,6 +56,21 @@ if (mode === "--ended") {
   const from = thread ? { HEX_FROM: thread, HEX_FROM_AT: new Date().toISOString() } : { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT }
   const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`]).concat(Object.entries(from).flatMap(([name, value]) => (value ? ["-E", `${name}=${value}`] : [])))
   await $`systemd-run --user --unit=${mode} --slice=hex-jobs.slice --same-dir ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
+}
+
+// Where an agent job goes when this machine is short on room: the first of HEX_MACHINES with room and fewer
+// than three hex jobs, since its owner may be using it, or nowhere, so it stays. One that doesn't answer is asleep.
+async function roomy() {
+  const machines = process.env.HEX_MACHINES?.split(/\s+/).filter(Boolean) ?? []
+  const room = `${import.meta.dir}/room`
+  const here = machines.length ? await $`${room}`.nothrow().quiet() : undefined
+  if (!here?.exitCode) return
+  console.error(`job: ${here.stdout.toString().trim()}`)
+  for (const machine of machines) {
+    const there = await $`ssh -o BatchMode=yes -o ConnectTimeout=10 ${machine} sh -s 3 < ${Bun.file(room)}`.nothrow().quiet()
+    console.error(`job: ${there.stdout.toString().trim() || `${machine} didn't answer`}${there.exitCode ? "" : `, so ${mode} runs there`}`)
+    if (!there.exitCode) return machine
+  }
 }
 
 // systemd expands $VARIABLE in a unit's command lines, which would rewrite a thread's name or prompt;

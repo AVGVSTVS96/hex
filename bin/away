@@ -1,0 +1,62 @@
+#!/usr/bin/env bun
+// away <machine> <claude args...>: what bin/session is for this machine, for another one reached with ssh.
+// The session there gets hex's instructions and the wake as its system prompt, with where it is, and
+// hex's hooks, which run back here, so its turns reach hex.db as a local session's do. Its answer comes
+// back on stdout, and it ends with the connection.
+import { homedir, hostname, userInfo } from "node:os"
+import { relative, resolve } from "node:path"
+import { loaded, WAKE } from "../hub/loaded.ts"
+
+const [machine, ...args] = process.argv.slice(2)
+if (!machine || !args.length) {
+  console.error("usage: away <machine> <claude args...>")
+  process.exit(2)
+}
+const hex = resolve(import.meta.dir, "..")
+const home = resolve(hex, "..")
+const here = `${userInfo().username}@${hostname()}`
+const quote = (word: string) => `'${word.replaceAll("'", `'\\''`)}'`
+const encoded = (text: string) => Buffer.from(text).toString("base64")
+// A script as an ssh command line that any login shell, fish included, hands to sh unchanged.
+const command = (script: string) => `sh -c "eval \\"\\$(echo ${encoded(script)} | base64 -d)\\""`
+
+const settings = async (file: string) => (await Bun.file(`${home}/.claude/${file}`).json().catch(() => ({}))) as { env?: Record<string, string>; permissions?: { defaultMode?: string } }
+const [shared, local] = await Promise.all([settings("settings.json"), settings("settings.local.json")])
+const job = Object.fromEntries(["PATH", "HEX_OWNER", "HEX_FROM", "HEX_FROM_AT", "CLAUDE_CODE_SESSION_NAME"].flatMap(name => (process.env[name] ? [[name, process.env[name]]] : [])))
+const env = { ...shared.env, ...local.env, ...job, CLAUDE_PLUGIN_ROOT: `${hex}/plugin` }
+const exports = Object.entries(env).map(([name, value]) => `export ${name}=${quote(String(value))}`)
+
+const { hooks } = (await Bun.file(`${hex}/plugin/hooks/hooks.json`).json()) as { hooks: Record<string, { hooks: { command: string }[] }[]> }
+for (const hook of Object.values(hooks).flat().flatMap(group => group.hooks)) {
+  hook.command = `ssh -o BatchMode=yes ${here} '${command([`cd ${quote(home)}`, ...exports, hook.command].join("\n"))}'`
+}
+
+const files = [...loaded(`${home}/AGENTS.md`), [`${home}/${WAKE}`, await Bun.file(`${home}/${WAKE}`).text().catch(() => "")]]
+const prompt = `You are hex, working on ${machine}, one of the owner's other machines, because ${hostname()}, where you live, was short on room. Your instructions below come from your folder there, ${home}, and paths in them and in your prompt are ${hostname()}'s (its ~ is ${homedir()}): read and write hex's files and run hex's commands there with \`ssh ${here} '<command>'\`. Do the work itself here: in this machine's own checkout of the repo you work on, under ~/Developer, with its builds and tests running here.
+
+${files.filter(([, text]) => text.trim()).map(([file, text]) => `── ${relative(home, file)} ──\n${text.trim()}`).join("\n\n")}`
+const input = process.stdin.isTTY ? "" : await Bun.stdin.text()
+const mode = local.permissions?.defaultMode ?? shared.permissions?.defaultMode
+
+// The session stops when the connection's input closes: when this job stops, or the machine drops off.
+const run = `exec 3<&0
+mkdir -p ~/.cache/hex && f=$(mktemp ~/.cache/hex/job.XXXXXX)
+trap 'rm -f "$f" "$f".*' EXIT
+echo ${encoded(prompt)} | base64 -d > "$f.md"
+echo ${encoded(JSON.stringify({ hooks }))} | base64 -d > "$f.json"
+echo ${encoded(input)} | base64 -d > "$f.in"
+cd
+CLAUDE_CODE_ENTRYPOINT=hex claude ${mode ? `--permission-mode ${quote(mode)} ` : ""}--strict-mcp-config --settings "$f.json" --append-system-prompt-file "$f.md" ${args.map(quote).join(" ")} < "$f.in" 3<&- &
+session=$!
+{ cat <&3 > /dev/null; kill $session; } 2> /dev/null &
+watch=$!
+wait $session
+code=$?
+exec 2> /dev/null
+kill $watch
+exit $code`
+
+const ssh = Bun.spawn(["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=30", "-o", "ServerAliveCountMax=4", machine, command(run)], { stdin: "pipe", stdout: "inherit", stderr: "inherit" })
+const code = await ssh.exited
+if (code === 255) console.error(`away: lost ${machine}; it may be asleep`)
+process.exit(code)

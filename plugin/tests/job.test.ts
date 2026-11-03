@@ -127,3 +127,23 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
     { to: '-100123:909', from: 'job', body: expect.stringContaining('[job] early ended'), meta: JSON.stringify({ user: 'job' }) },
   ])
 })
+
+test('an agent job runs on the first of HEX_MACHINES with room while this machine is short of it, and stays when none has', () => {
+  const room = join(home, '.hex/bin/room')
+  writeFileSync(room, '#!/bin/sh\necho "here: full"\nexit 1\n')
+  chmodSync(room, 0o755)
+  writeFileSync(join(home, 'fake/ssh'), '#!/bin/sh\ncat > /dev/null\ncase $5 in asleep) exit 255 ;; full) echo "full: full"; exit 1 ;; esac\necho "$5: room"\n')
+  chmodSync(join(home, 'fake/ssh'), 0o755)
+  const sent = run(['deck', 'claude', '-p', 'build it'], { ...session, HEX_MACHINES: 'asleep full mac' })
+  expect(sent.args.slice(sent.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/away'), 'mac', '-n', 'hex/deck', '-p', 'build it'])
+  expect(sent.error).toBe("job: here: full\njob: asleep didn't answer\njob: full: full\njob: mac: room, so deck runs there\n")
+  const local = [join(home, '.hex/bin/session'), '-n', 'hex/deck']
+  expect(run(['deck', 'claude', '-p', 'build it'], { ...session, HEX_MACHINES: 'full' }).args).toContain(local[0]!)
+  expect(run(['build', 'make', 'all'], { ...session, HEX_MACHINES: 'mac' }).args.slice(-3)).toEqual(['--', 'make', 'all'])
+  writeFileSync(room, '#!/bin/sh\nexit 0\n')
+  const roomy = run(['deck', 'claude', '-p', 'build it'], { ...session, HEX_MACHINES: 'mac' })
+  expect(roomy.args.slice(roomy.args.indexOf('--') + 1, roomy.args.indexOf('--') + 4)).toEqual(local)
+  expect(roomy.error).toBe('')
+  rmSync(room)
+  rmSync(join(home, 'fake/ssh'))
+})

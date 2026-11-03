@@ -133,3 +133,7 @@ Ask them to say hi in General. hex should answer within a few seconds. Then show
 ## Backups
 
 Every night at 3:00 on their clock, General's hub copies `state/hex.db` to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back: `~/hex/.hex/bin/hex stop`, copy it over `~/hex/state/hex.db`, delete `hex.db-wal` and `hex.db-shm` beside it, then `~/hex/.hex/bin/hex start`.
+
+## Other machines
+
+When the machine hex runs on is short on room (`.hex/bin/room`: under a third of its CPU idle, a fifth of its memory free or 25 GB of disk free), an agent job (`job <unit> claude -p …`) runs on another of their machines that has room and fewer than three hex jobs. List those machines by ssh name, first choice first, as `"HEX_MACHINES": "mac"` in the `env` of `~/hex/.claude/settings.json`. Each needs `claude` on its PATH, passwordless ssh both ways (hex's hooks run back here), and its own checkouts of the repos the jobs work on. A machine that doesn't answer is taken as asleep and skipped.

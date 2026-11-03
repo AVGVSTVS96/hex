@@ -1,0 +1,19 @@
+#!/bin/sh
+# room [<jobs>]: whether this machine has room for another agent: a third of its CPU idle, a fifth of its memory
+# free, 25 GB of disk free, and, given <jobs>, fewer than that many hex jobs already running on it. Prints what it
+# read and exits 0 when there's room. Runs as is on Linux and macOS, so a job checks another machine with
+# `ssh <machine> sh -s <jobs> < room`. It reads idle CPU rather than load: a Mac's load counts every simulator thread.
+if [ -r /proc/stat ]; then
+  cpu() { awk '/^cpu /{ print $5 + $6, $2 + $3 + $4 + $5 + $6 + $7 + $8 + $9 }' /proc/stat; }
+  set -- "${1:-}" $(cpu) && sleep 1 && set -- "$@" $(cpu)
+  idle=$(( ($4 - $2) * 100 / ($5 - $3) ))
+  memory=$(awk '/^MemTotal/{ t = $2 } /^MemAvailable/{ a = $2 } END { print int(a * 100 / t) }' /proc/meminfo)
+  jobs=$(pgrep -fc -- '--append-system-prompt-file [^ ]*/\.cache/hex/')
+else
+  idle=$(top -l 2 -n 0 -s 1 | awk '/CPU usage/{ v = $7 } END { print int(v) }')
+  memory=$(memory_pressure | awk '/free percentage/{ print int($NF) }')
+  jobs=$(pgrep -f -- '--append-system-prompt-file [^ ]*/\.cache/hex/' | wc -l | tr -d ' ')
+fi
+disk=$(df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1048576) }')
+echo "$(hostname -s): cpu ${idle}% idle, memory ${memory}% free, disk ${disk} GB free, ${jobs} hex jobs"
+[ "$idle" -ge 33 ] && [ "$memory" -ge 20 ] && [ "$disk" -ge 25 ] && { [ -z "${1:-}" ] || [ "$jobs" -lt "$1" ]; }
