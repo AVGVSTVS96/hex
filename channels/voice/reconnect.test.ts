@@ -161,6 +161,7 @@ test('a call hung up again or replaced before OpenAI says it closed gets a close
   expect((await engine.hangUp()).status).toBe(204)
   expect((await fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })).status).toBe(201)
   expect(await engine.call()).toMatchObject({ end: 'hex', reason: 'close_requested' })
+  await until(() => engine.closes.length >= 3)
   await Bun.sleep(200)
   expect(engine.closes.map(close => close.replace(/_\d+$/, ''))).toEqual([`${ID} close_hex`, `${ID} close-you-app`, `${ID} close-you-moved`])
 }, 20_000)
@@ -189,6 +190,17 @@ test('a call hung up while its connection comes back and then replaced is closed
   await until(() => engine.closes.length >= 2)
   await Bun.sleep(200)
   expect(engine.closes).toEqual([`${ID} close-you-app`, `${ID} close-you-app`])
+}, 20_000)
+
+test("OpenAI closing a call on a later hang-up's close still records the first hang-up", async () => {
+  await using engine = await appCall()
+  await started(engine)
+  engine.holdAcks()
+  expect(await engine.tool('hang_up')).toEqual({ result: 'hanging up' })
+  await until(() => engine.closes.length)
+  engine.acks()
+  expect((await engine.hangUp()).status).toBe(204)
+  expect(await ends(engine)).toMatchObject({ end: 'hex', reason: 'close_requested' })
 }, 20_000)
 
 test('a call a new one replaces before its connection opened is still closed', async () => {
