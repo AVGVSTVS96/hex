@@ -209,7 +209,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
   // the session missed stays: its next turn may well make it again.
   function rested(thread: string) {
     const runs = unheard.get(thread)
-    for (const [key, run] of runs ?? []) if (run.heard === 'maybe') runs!.delete(key)
+    for (const [key, run] of runs ?? []) if (run.heard === 'maybe' && !run.waiting) runs!.delete(key)
   }
 
   return Object.assign(handle, { rested })
