@@ -26,7 +26,7 @@ async function appCall({ open = false } = {}) {
   const openai = Bun.serve({
     port: 0,
     async fetch(request, server) {
-      if (request.method === 'POST') return Response.json({ session: { id: made++ ? `${ID}-${made}` : ID, expires_at: Date.now() / 1000 + 3600 }, transport: { sdp: 'answer' } }, { status: 201 })
+      if (request.method === 'POST') return Response.json({ session: { id: made++ || open ? `${ID}-${made}` : ID, expires_at: Date.now() / 1000 + 3600 }, transport: { sdp: 'answer' } }, { status: 201 })
       if (hold) {
         held = true
         await new Promise<void>(resolve => waiting.push(resolve))
@@ -181,11 +181,24 @@ test('hanging up a call the engine is attaching back to after a restart ends it 
     await using engine = await appCall({ open: true })
     await engine.attaching()
     await hangUp(engine)
+    expect(await engine.call()).toMatchObject({ end, reason: 'close_requested' })
+    expect(engine.closes).toEqual([])
     engine.back()
-    expect(await ends(engine)).toMatchObject({ end })
     await until(() => engine.closes.length)
     await Bun.sleep(200)
     expect(engine.closes).toHaveLength(1)
     expect(engine.closes[0]).toStartWith(`${ID} ${close}`)
   }
 }, 30_000)
+
+test('a call a new one replaces while the engine attaches back to it after a restart ends then, and is closed once attached', async () => {
+  await using engine = await appCall({ open: true })
+  await engine.attaching()
+  expect((await fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })).status).toBe(201)
+  expect(await engine.call()).toMatchObject({ end: 'you', reason: 'moved to a new call' })
+  engine.back()
+  await until(() => engine.closes.length)
+  await Bun.sleep(200)
+  expect(engine.closes).toEqual([`${ID} close-you-moved`])
+  expect(await engine.live()).toBe(`${ID}-1`)
+}, 20_000)
