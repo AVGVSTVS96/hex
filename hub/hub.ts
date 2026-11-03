@@ -364,6 +364,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     state(thread, working, background)
     claim(thread)
     run.turn = working ? 'busy' : background ? 'background' : 'done'
+    if (run.turn !== 'busy') serve.rested(thread)
     if (run.turn === 'done' && (run.renew === 'asked' || run.renew === 'stale')) void renew(thread, run.renew === 'asked')
     rest(thread, run.turn === 'done')
     letGo(thread)

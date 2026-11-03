@@ -43,7 +43,7 @@ function channel(fails = false) {
     await Bun.sleep(1)
     for (const resolve of waiting.splice(0)) resolve()
   }
-  return { ran: () => ran, call, answer }
+  return { ran: () => ran, call, answer, rested: serve.rested }
 }
 
 const text = (answer: Answer) => answer.result.content[0]!.text
@@ -89,7 +89,27 @@ test('a tool that only reads runs every time', async () => {
   expect(ran()).toBe(2)
 })
 
-test("an answer the session missed answers its repeat for three minutes", async () => {
+test("an answer the session missed answers its repeat until the thread's turn ends", async () => {
+  const { ran, call, answer, rested } = channel()
+  const gaveUp = new AbortController()
+  const first = call({ text: 'report' }, gaveUp)
+  await Bun.sleep(1)
+  gaveUp.abort()
+  await answer()
+  await first
+  const missedAgain = new AbortController()
+  const again = call({ text: 'report' }, missedAgain)
+  missedAgain.abort()
+  expect(text(await again)).toStartWith('this same reply call came before')
+  expect(ran()).toBe(1)
+  rested('-100:7')
+  const nextTurn = call({ text: 'report' })
+  await answer()
+  expect(text(await nextTurn)).toBe('sent (id: 5389)')
+  expect(ran()).toBe(2)
+})
+
+test('a missed answer in a thread whose turns the hub never sees is let go half an hour after it came', async () => {
   const time = manual(async () => {})
   try {
     const { ran, call, answer } = channel()
@@ -99,12 +119,8 @@ test("an answer the session missed answers its repeat for three minutes", async 
     gaveUp.abort()
     await answer()
     await first
-    await time.advance(3 * 60_000)
-    const missedAgain = new AbortController()
-    const again = call({ text: 'report' }, missedAgain)
-    missedAgain.abort()
-    expect(text(await again)).toStartWith('this same reply call came before')
-    expect(ran()).toBe(1)
+    await time.advance(30 * 60_000)
+    expect(text(await call({ text: 'report' }, gaveUp))).toStartWith('this same reply call came before')
     await time.advance(1)
     const later = call({ text: 'report' })
     await answer()
