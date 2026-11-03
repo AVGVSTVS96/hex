@@ -426,6 +426,12 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       const parseMode = args.format === 'markdownv2' ? { parse_mode: 'MarkdownV2' as const } : {}
       // A Telegram edit takes a message's buttons off unless it sends them again, and a question stays open until it's settled.
       const question = ledger.find(thread, id)
+      if (question?.poll && (text != null || file)) {
+        if (!args.settled) throw new Error("a poll's own text can't be edited: reply with what changed, or settle it with settled: true")
+        if (question.answer) return `the poll is already answered (${question.answer.label}), so it stays as it is; its own text can't be edited, so reply with what changed`
+        await settleQuestion(thread, id, '✓ Settled')
+        return `settled the poll (id: ${id}); its own text can't be edited, so reply with what changed`
+      }
       const keep = question && !question.poll && !question.answer && !question.settled && !args.settled ? { reply_markup: buttonsOf(question.options) } : {}
       if (file) {
         const caption = text != null ? { caption: text, ...parseMode } : {}
