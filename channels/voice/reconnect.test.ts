@@ -97,6 +97,7 @@ for await (const line of console) {
     // The engine's next attach waits until the test lets it.
     hold: () => void (hold = true),
     holdAcks: () => void (acking = false),
+    acks: () => void (acking = true),
     back: () => {
       hold = false
       for (const resolve of waiting.splice(0)) resolve()
@@ -135,6 +136,7 @@ test('hanging up while the connection to the call is coming back ends the call o
   expect(engine.closes).toEqual([])
   engine.back()
   expect(await ends(engine)).toMatchObject({ end: 'you' })
+  await Bun.sleep(200)
   expect(engine.closes).toEqual([`${ID} close-you-app`])
 }, 20_000)
 
@@ -146,6 +148,7 @@ test('hanging up a new call before its connection has opened ends it once open',
   expect((await engine.hangUp()).status).toBe(204)
   engine.back()
   expect(await ends(engine)).toMatchObject({ end: 'you' })
+  await Bun.sleep(200)
   expect(engine.closes).toEqual([`${ID} close-you-app`])
 }, 20_000)
 
@@ -161,6 +164,19 @@ test('a call hung up and replaced before OpenAI says it closed gets one close, a
   await Bun.sleep(200)
   expect(engine.closes).toHaveLength(1)
   expect(engine.closes[0]).toStartWith(`${ID} close_hex_`)
+}, 20_000)
+
+test('a hang-up sent on a connection that drops before OpenAI says it closed goes out again once the connection is back', async () => {
+  await using engine = await appCall()
+  await started(engine)
+  engine.holdAcks()
+  expect((await engine.hangUp()).status).toBe(204)
+  await until(() => engine.closes.length)
+  engine.acks()
+  await engine.drop()
+  engine.back()
+  expect(await ends(engine)).toMatchObject({ end: 'you', reason: 'close_requested' })
+  expect(engine.closes).toEqual([`${ID} close-you-app`, `${ID} close-you-app`])
 }, 20_000)
 
 test('a call a new one replaces before its connection opened is still closed', async () => {

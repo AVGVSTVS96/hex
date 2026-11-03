@@ -574,6 +574,8 @@ function reconnect(call: Live, attempt: number) {
   if (live !== call) return
   for (const pending of call.pending.values()) pending.reject(new Error('the connection to the voice dropped and is coming back; try again in a few seconds'))
   call.pending.clear()
+  // A close sent on the dropped connection may never have reached the session, so it goes out again.
+  delete call.closed
   if (call.speak || attempt >= RETRIES.length) return finish(call, call.closing ? 'close_requested' : 'connection_lost', call.closing)
   trace(`lost the connection to ${call.id}, reattaching (try ${attempt + 1})`)
   setTimeout(() => {
@@ -841,7 +843,7 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
         gone = true
         return openai.close()
       }
-      if (openai.readyState === WebSocket.OPEN) openai.send(JSON.stringify({ type: 'session.close', event_id: `close-you-${from}` }))
+      closeSocket(openai, `close-you-${from}`)
     },
   }
 }
@@ -901,8 +903,14 @@ function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
 }
 
 function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
-  const openai = twilio.data.openai
-  if (openai?.readyState === WebSocket.OPEN) openai.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-phone' }))
+  if (twilio.data.openai) closeSocket(twilio.data.openai, 'close-you-phone')
+}
+
+// A phone or Discord caller hangs up on the session socket itself: through the call once it's live,
+// so the call keeps one close.
+function closeSocket(openai: WebSocket, event: string) {
+  if (live?.socket === openai) close(live, event)
+  else if (openai.readyState === WebSocket.OPEN) openai.send(JSON.stringify({ type: 'session.close', event_id: event }))
 }
 
 function session(extra: object = {}, opening?: string) {
