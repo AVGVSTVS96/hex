@@ -373,15 +373,17 @@ function plain(text: string) {
     .replace(/^#+\s+/gm, '')
 }
 
-const SENTENCE_END = /(?:[?!]|(?<!(?:^|[^\p{L}\p{N}])(?:\p{L}|\p{N}+|vs|Mr|Mrs|Ms|Dr|St|approx))\.)["')\]”’]*(?=\s+["'“‘(\[]?[\p{Lu}\p{N}])/gu
-const ASKS = /\?["')\]”’]*(?=\s|$)/u
+const SENTENCE_END = /(?:[?!]+|(?<!(?:^|[^\p{L}\p{N}])\p{Ll}|\.\p{L}|\p{N}+|\b(?:vs|Mr|Mrs|Ms|Dr|St|approx))\.(?=["')\]”’]*\s+["'“‘(\[]?[\p{Lu}\p{N}]))["')\]”’]*(?=\s)/gu
+const ASKS = /\?[?!]*["')\]”’]*(?=\s|$)/u
 
 function cut(line: string, max: number): [string, string] {
   if (line.length <= max) return [line, '']
-  const ends = [...line.matchAll(SENTENCE_END)].map(found => ({ at: found.index + found[0].length, asks: found[0][0] === '?' })).filter(({ at }) => at <= max)
-  const end = ends.findLast(({ asks }) => asks)?.at ?? ends.findLast(({ at }) => at >= max / 2 && !ASKS.test(line.slice(at)))?.at
+  const ends = [...line.matchAll(SENTENCE_END)]
+    .map(found => ({ at: found.index + found[0].length, asks: found[0].includes('?') }))
+    .filter(({ at }) => at <= max && !ASKS.test(line.slice(at)))
+  const end = ends.findLast(({ asks }) => asks)?.at ?? ends.findLast(({ at }) => at >= max / 2)?.at
   if (end !== undefined) return [line.slice(0, end), line.slice(end).trim()]
-  const space = line.slice(0, max).lastIndexOf(' ')
+  const space = line.slice(0, max).search(/\s\S*$/)
   const at = space >= max / 2 ? space : max - 1 - Number(/[\uD800-\uDBFF]/.test(line[max - 2] ?? ''))
   return [`${line.slice(0, at).trimEnd()}…`, `…${line.slice(at).trim()}`]
 }
