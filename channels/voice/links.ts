@@ -34,6 +34,8 @@ const T3_HOME = join(homedir(), '.t3', 'userdata')
 const DATABASE = 'statev2.sqlite'
 const REFRESH = 500
 const ITEMS = 40
+// How a handoff that has ended went, by its status in T3 Code.
+export const HANDED: Record<string, 'done' | 'failed' | 'stopped'> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped', rolled_back: 'stopped' }
 const SHOWN = ['command_execution', 'web_search', 'file_change', 'dynamic_tool', 'reasoning', 'assistant_message', 'subagent', 'error']
 
 // What T3 Code's own database, read only, says of hex's T3 threads: what each is called there, what
@@ -43,6 +45,9 @@ const SHOWN = ['command_execution', 'web_search', 'file_change', 'dynamic_tool',
 export class Links {
   private threads = new Map<string, { thread: string; title: string }>()
   private handed: Delegation[] = []
+  private ran = new Map<string, string>()
+  private above = new Map<string, { parent: string; since: string }>()
+  private starts = new Map<string, { parent: string; since: string; shown: boolean }>()
   private items = new Map<string, Item[]>()
   private titles = new Map<string, string | undefined>()
   private environment?: string
@@ -91,6 +96,18 @@ export class Links {
     return app === 't3' && this.owners(id).some(owner => this.shows(owner, new Set([`t3:${id}`])))
   }
 
+  // The thread a hex T3 thread shows under, when it shows under another: the one that last handed
+  // its T3 thread work, as owner() has it, where that one shows and still counts as an owner; else
+  // the newest that does.
+  under(app: string, id: string) {
+    if (app !== 't3' || !this.delegated(app, id)) return
+    const shows = (parent?: string) => !!parent && this.shows(parent, new Set([`t3:${id}`]))
+    const last = this.starts.get(this.threads.get(id)?.thread ?? '')?.parent
+    if (last && this.owners(id).includes(last) && shows(last)) return last
+    const handoffs = this.handed.filter(one => one.hex === id && (!one.relay || one.latest) && shows(one.parent))
+    return handoffs.reduce<Delegation | undefined>((newest, one) => (!newest || (one.since ?? '') >= (newest.since ?? '') ? one : newest), undefined)?.parent
+  }
+
   private owners(id: string) {
     return this.handed.filter(one => one.hex === id && (!one.relay || one.latest)).map(one => one.parent)
   }
@@ -100,6 +117,25 @@ export class Links {
     if (passed.has(thread)) return false
     const owners = thread.startsWith('t3:') ? this.owners(thread.slice(3)) : []
     return !owners.length || owners.some(owner => this.shows(owner, new Set([...passed, thread])))
+  }
+
+  // Whether T3 Code runs this Claude Code session.
+  runs(session: string) {
+    return this.ran.has(session)
+  }
+
+  // The hex thread a Claude Code session T3 Code runs works for, as <app>:<key>: the one that last
+  // handed its T3 thread work, whatever came of it (then, while that handoff shows as a working
+  // delegation, handed); or, where another T3 thread handed it work since, whichever that one's goes to.
+  owner(session: string): { thread: string; handed: boolean } | undefined {
+    const seen = new Set<string>()
+    for (let thread = this.ran.get(session); thread && !seen.has(thread); ) {
+      const one = this.starts.get(thread)
+      const up = this.above.get(thread)
+      if (one && (!up || one.since >= up.since)) return { thread: one.parent, handed: !seen.size && one.shown }
+      seen.add(thread)
+      thread = up?.parent
+    }
   }
 
   // A T3 task or thread's title, by either id.
@@ -153,7 +189,7 @@ export class Links {
         .all()
       const threads = new Map(rows.map(({ key, thread, title }) => [key, { thread, title }]))
       const keys = new Map(rows.map(({ key, thread }) => [thread, key]))
-      const handed = this.db!
+      const subagents = this.db!
         .query<Omit<Delegation, 'hex' | 'link' | 'latest'> & { driver: string; latest: number | null }, []>(
           `select s.child_thread_id id, s.subagent_id task, s.thread_id parent, s.driver, s.status, s.started_at since, s.completed_at "end",
              coalesce(json_extract(s.payload_json, '$.title'), 'a task') title, json_extract(s.payload_json, '$.model') model,
@@ -165,6 +201,7 @@ export class Links {
            order by s.started_at`,
         )
         .all()
+      const handed = subagents
         .filter(row => keys.has(row.parent))
         .map(({ driver, latest, parent, ...row }): Delegation => {
           const hex = driver === 'acpRegistry' ? keys.get(row.id) : undefined
@@ -178,19 +215,44 @@ export class Links {
          from orchestration_v2_projection_runs r join orchestration_v2_projection_threads t on t.thread_id = r.thread_id
          where r.run_id = ? and t.deleted_at is null`,
       )
-      const relayed = open(this.state).relays().flatMap(({ from, thread, run: task }): Delegation[] => {
+      // The newest hex handoff to each T3 thread: a delegation by when it started, or a relay by when
+      // hex sent it, queued or not (one to a thread its sender delegated before shows as that
+      // delegation), and whether it shows as a working delegation.
+      const starts = new Map<string, { parent: string; since: string; shown: boolean }>()
+      const start = (thread: string, parent: string, since = '', shown = false) => {
+        if (since >= (starts.get(thread)?.since ?? '')) starts.set(thread, { parent, since, shown })
+      }
+      for (const one of handed) start(one.id, one.parent, one.since, !HANDED[one.status])
+      const relayed = open(this.state).relays().flatMap(({ from, thread, run: task, at }): Delegation[] => {
         const ran = run.get(task)
         const hex = keys.get(thread)
-        if (!ran || from === `t3:${hex}` || handed.some(one => one.parent === from && one.id === thread)) return []
-        return [omit({ ...ran, id: thread, task, parent: from, result: handedBack(ran.result), hex, link: this.deep(thread), latest: ran.latest === 1, relay: true })]
+        if (!ran || from === `t3:${hex}`) return []
+        const behind = handed.findLast(one => one.parent === from && one.id === thread)
+        start(thread, from, at, !HANDED[(behind ?? ran).status])
+        return behind ? [] : [omit({ ...ran, id: thread, task, parent: from, result: handedBack(ran.result), hex, link: this.deep(thread), latest: ran.latest === 1, relay: true })]
       })
       handed.push(...relayed)
+      const ran = new Map(
+        this.db!
+          .query<{ session: string; thread: string }, []>(
+            `select json_extract(payload_json, '$.nativeThreadRef.nativeId') session, json_extract(payload_json, '$.appThreadId') thread
+             from orchestration_v2_projection_provider_threads where driver = 'claudeAgent' order by updated_at`,
+          )
+          .all()
+          .map(({ session, thread }) => [session, thread]),
+      )
+      // The T3 thread that last handed off each one, and when.
+      const above = new Map(subagents.map(({ id, parent, since }) => [id, { parent, since: since ?? '' }]))
       const asked = this.items.size > 0
       this.items.clear()
       this.titles.clear()
-      if (!asked && JSON.stringify([[...threads], handed]) === JSON.stringify([[...this.threads], this.handed])) return false
+      const now = JSON.stringify([[...threads], handed, [...ran], [...above], [...starts]])
+      if (!asked && now === JSON.stringify([[...this.threads], this.handed, [...this.ran], [...this.above], [...this.starts]])) return false
       this.threads = threads
       this.handed = handed
+      this.ran = ran
+      this.above = above
+      this.starts = starts
       return true
     } catch (error) {
       process.stderr.write(`voice: links: couldn't read T3 Code's threads: ${error}\n`)

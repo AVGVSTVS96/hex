@@ -907,7 +907,7 @@ export class Store {
   }
 
   relays() {
-    return this.db.query('select "from", thread, run from relays order by at').all() as { from: string; thread: string; run: string }[]
+    return this.db.query('select "from", thread, run, at from relays order by at').all() as { from: string; thread: string; run: string; at: string }[]
   }
 
   private quote(task: string, message: string, quote?: string) {

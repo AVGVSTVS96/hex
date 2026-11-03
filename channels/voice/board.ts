@@ -3,7 +3,7 @@ import { join } from 'path'
 import { backOf, firstLine, followTranscript, generalOf, itemStep, nameOf, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
 import { busy, CLAUDE, running, serving, type Session } from '../../hub/running.ts'
 import { Changes } from './changes.ts'
-import { Links, type Delegation } from './links.ts'
+import { HANDED, Links, type Delegation } from './links.ts'
 import { open, type Thread as Stored } from '../../hub/store.ts'
 
 export type State = 'working' | 'needs' | 'done' | 'failed' | 'idle'
@@ -85,15 +85,17 @@ const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progre
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
 const WORK = new Set(['agent', 'workflow'])
 const RUNS = new Set([...WORK, 'shell', 'monitor'])
-const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped', rolled_back: 'stopped' }
 const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'failed' }
 
 // Every hex thread as a run, from the records Claude Code already keeps (the same ones
 // `claude agents --json` prints): each session's job state and timeline, which sessions are
 // running, hex.db's open threads for their names and where their apps open them, and `links.ts` for T3 Code's side.
-// A session a thread's session started (a topic's `claude -p` build), or a job a thread owns (bin/job),
-// counts toward it as one of its agents; a running session nothing holds is a run of its own while it works. So does each T3 Code
-// thread a hex T3 thread handed work to, which shows only under it. It wakes when hex.db's threads or one of those files
+// A session a thread's session started (a topic's `claude -p` build, found by its environment or
+// its process tree), a job a thread owns (bin/job), or a T3 Code thread's session below one the
+// thread handed off, counts toward it as one of its agents. So does each T3 Code thread a hex T3
+// thread handed work to, which shows only under it. A running session that works for no thread
+// (hex's own check, its memory agent, a terminal) isn't on the board; one whose thread is gone is
+// a run of its own while it works. It wakes when hex.db's threads or one of those files
 // (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
 // bumps a version on any change.
 // The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
@@ -110,6 +112,9 @@ export class Board extends Changes {
   private stretches = new Map<string, Stretch>()
   private pending?: ReturnType<typeof setTimeout>
   private stale = { threads: true, sessions: true }
+  private owners = new Map<string, string>()
+  private handed = new Set<string>()
+  private tops: Session[] = []
   private stops: (() => void)[] = []
   private tracks: Record<string, Turn[]>
   private saving?: ReturnType<typeof setTimeout>
@@ -200,7 +205,8 @@ export class Board extends Changes {
   private build() {
     if (this.stale.threads) this.readThreads()
     if (this.stale.sessions) this.readSessions()
-    if (this.stale.threads || this.stale.sessions) this.watchJobs()
+    this.own()
+    this.watchJobs()
     this.stale = { threads: false, sessions: false }
     this.beats = open(this.state).everyBeat()
     const since = new Date(Date.now() - KEEP).toISOString()
@@ -261,21 +267,72 @@ export class Board extends Changes {
     return new Map(this.threads.flatMap(thread => (thread.session ? [[thread.session, `${thread.app}:${thread.id}`] as [string, string]] : [])))
   }
 
-  // Running sessions no thread holds, owns, or started, named as Claude Code named them.
-  private loose(): Thread[] {
+  // The run each running session's work counts toward: the thread it works for (serving), with a T3
+  // Code thread's session counted toward the hex thread that last handed work to it, or to one above
+  // it; the sessions of T3 Code threads handed off themselves, which show as those delegations; and
+  // a run of its own (tops) for each session that works for a thread that isn't on the board
+  // (closed, or shown under another thread), which no thread holds and no such session launched;
+  // what it launched counts toward it.
+  private own() {
+    // What a hex T3 thread shown under another launched counts toward that one.
+    const shownAt = (thread: string, seen = new Set<string>()): string => {
+      const under = this.links.under(thread.slice(0, thread.indexOf(':')), thread.slice(thread.indexOf(':') + 1))
+      return under && !seen.has(under) ? shownAt(under, seen.add(thread)) : thread
+    }
     const held = this.held()
-    const threads = new Set(this.threads.map(thread => `${thread.app}:${thread.id}`))
-    return [...this.sessions.values()]
-      .filter(session => !held.has(session.id) && !(session.thread && threads.has(session.thread)))
-      .map(session => ({ app: 'claude', id: short(session.id), name: session.name ?? short(session.id), session: session.id, cwd: session.cwd }))
+    const known = new Map(held)
+    this.handed = new Set()
+    for (const id of this.sessions.keys()) {
+      const owner = !known.has(id) && this.links.owner(id)
+      if (!owner) continue
+      known.set(id, owner.thread)
+      if (owner.handed && shownAt(owner.thread) === owner.thread) this.handed.add(id)
+    }
+    // A session T3 Code runs, and what it launched, go only by its handoffs.
+    const below = (session: Session, seen = new Set<string>()): boolean => {
+      const up = session.parent ? this.sessions.get(session.parent) : undefined
+      return !!up && !seen.has(up.id) && (this.links.runs(up.id) || below(up, seen.add(session.id)))
+    }
+    const placed = new Map(
+      [...this.sessions].map(([id, session]) => [id, this.links.runs(id) ? { ...session, thread: undefined, parent: undefined } : below(session) ? { ...session, thread: undefined } : session]),
+    )
+    const owners = new Map([...placed.values()].flatMap(session => {
+      const thread = serving(session, known, placed)
+      return thread ? [[session.id, held.has(session.id) ? thread : shownAt(thread)] as [string, string]] : []
+    }))
+    const shown = new Set(this.threads.filter(thread => !this.links.delegated(thread.app, thread.id)).map(thread => `${thread.app}:${thread.id}`))
+    // The topmost session above this one that works for the same thread and no thread holds; this
+    // one itself where its launchers loop back to it.
+    const top = (session: Session, owner: string) => {
+      const seen = new Set([session.id])
+      let run = session
+      for (let up = run.parent ? placed.get(run.parent) : undefined; up && !held.has(up.id) && owners.get(up.id) === owner; up = up.parent ? placed.get(up.parent) : undefined) {
+        if (seen.has(up.id)) return session
+        seen.add(up.id)
+        run = up
+      }
+      return run
+    }
+    this.owners = new Map(owners)
+    this.tops = []
+    for (const session of this.sessions.values()) {
+      const owner = owners.get(session.id)
+      if (!owner || shown.has(owner) || held.has(session.id)) continue
+      const run = top(placed.get(session.id)!, owner)
+      if (run.id === session.id) this.tops.push(session)
+      else this.owners.set(session.id, `claude:${short(run.id)}`)
+    }
   }
 
-  // The busy sessions whose work counts toward a thread: started from its session's shell (with its
-  // environment) or by a job it owns, and not another thread's own. A loose run has none.
+  // The runs of their own, each named as Claude Code named its session.
+  private loose(): Thread[] {
+    return this.tops.map(session => ({ app: 'claude', id: short(session.id), name: session.name ?? short(session.id), session: session.id, cwd: session.cwd }))
+  }
+
+  // The busy sessions whose work counts toward a run, other than its own and a T3 Code delegation's.
   private started(thread: Thread) {
-    const held = this.held()
     const key = `${thread.app}:${thread.id}`
-    return [...this.sessions.values()].filter(session => session.id !== thread.session && busy(session) && serving(session, held) === key)
+    return [...this.sessions.values()].filter(session => session.id !== thread.session && busy(session) && this.owners.get(session.id) === key && !this.handed.has(session.id))
   }
 
   private wanted() {
@@ -338,10 +395,11 @@ export class Board extends Changes {
       .slice(-LATELY)
       .reverse()
       .map(entry => ({ at: entry.at, state: STATES[entry.state] ?? 'idle', text: plain(entry.detail!) }))
-    const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(0).toISOString()
+    const last = Math.max(session ? (session.updated ?? session.started) : 0, ...started.map(one => one.updated ?? one.started), ...out.map(one => (one.since ? Date.parse(one.since) : 0)))
+    const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(live ? last : 0).toISOString()
     const needs = state === 'needs' ? plain(job?.needs ?? job?.detail ?? '') || undefined : undefined
     const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
-    const began = Math.min(...started.map(one => one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? (session!.updated ?? session!.started) : Infinity)
+    const began = Math.min(...started.map(one => one.updated ?? one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? (session!.updated ?? session!.started) : Infinity)
     const since =
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
     const { link } = thread
@@ -356,7 +414,7 @@ export class Board extends Changes {
       state === 'working'
         ? [
             ...(job?.fan ?? []).filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since)) && !(beat !== undefined && (fan.startedAt ?? 0) >= beat)).map(fan => this.subagent(key, fan)),
-            ...started.map(one => this.agent(`${key} ${one.id}`, { id: one.id, label: one.name ?? short(one.id), state: 'working', via: 'claude', since: iso(one.started) })),
+            ...started.map(one => this.agent(`${key} ${one.id}`, { id: one.id, label: one.name ?? short(one.id), state: 'working', via: 'claude', since: iso(one.updated ?? one.started) })),
             ...handed.filter(one => !HANDED[one.status] || one.latest || !one.end || one.end >= since).map(one => this.delegation(key, one)),
           ]
         : []
