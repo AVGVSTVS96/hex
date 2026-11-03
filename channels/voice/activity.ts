@@ -439,7 +439,8 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     if (ended) return
     if (!picked) {
       const content = entry.message?.content
-      picked = entry.type === 'user' && entry.origin?.kind === 'channel' && (typeof content === 'string' ? content : JSON.stringify(content)).includes(tag)
+      const text = typeof content === 'string' ? content : Array.isArray(content) ? content.map(block => block?.text ?? '').join('') : ''
+      picked = entry.type === 'user' && entry.origin?.kind === 'channel' && text.includes(`voice_task="${tag}"`)
       return
     }
     const launched = entry.toolUseResult?.isAsync && entry.toolUseResult.agentId

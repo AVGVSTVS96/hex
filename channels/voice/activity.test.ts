@@ -208,6 +208,23 @@ test("a message sent to a thread shows that thread's steps once it takes the mes
   stop()
 })
 
+test("a message is picked by its own tag only, not by a tag it begins, in a string or in blocks", async () => {
+  threads('buzz', { b2: { name: 'Tags', session: 'tags' } })
+  const path = join(project, 'tags.jsonl')
+  const sent = (tag: string, blocks = false) => {
+    const text = `<channel source="telegram" user="hex voice" voice_task="${tag}">look</channel>`
+    return { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: blocks ? [{ type: 'text', text }] : text } }
+  }
+  write(path, sent('call:x-2'), said('The other one.'), ended)
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'tags')!, hex, 'call:x', true, step => steps.push(step))
+  expect(steps).toEqual([])
+  write(path, sent('call:x', true), said('This one.'), ended)
+  await until(() => steps.length === 2)
+  expect(steps).toEqual([{ line: 'This one.' }, { end: 'done' }])
+  stop()
+})
+
 test("a thread's new session is followed from its start, and a turn that ends on an API error fails", async () => {
   threads('discord', { d1: { name: 'Latest Claude', session: 'old' } })
   const steps: object[] = []
