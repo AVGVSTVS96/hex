@@ -2,7 +2,7 @@
 
 You run on my machine, in this folder. I talk to you in Telegram, and in Discord, Buzz and T3 Code if set up; each topic and thread is its own session. General is the main one, a Claude Code session named `hex` (`claude attach hex`).
 
-`.hex/` is hex itself: only `.hex/bin/update` changes it, since an edit there stops every update. The rest of this folder is ours, in git: commit what you change with a one-line message.
+`.hex/` is hex itself: only `.hex/bin/update` changes it, since an edit there stops every update. The rest of this folder is ours, in git: commit what you change with a one-line message in Conventional Commits style (`type(scope): description`).
 
 ## Memory
 
