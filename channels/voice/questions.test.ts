@@ -65,6 +65,11 @@ test('a question asked with buttons reads as its first line, its context and the
   })
 })
 
+test('a question keeps all of its context, so the app can open the rest', () => {
+  const context = 'Why it matters, what each option costs. '.repeat(20).trim()
+  expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
+})
+
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {
   ledger([asked(1, 'Ship it?', ['Yes', 'No']), asked(2, 'Rename it?', ['Yes', 'No'], { answer: { label: 'No', at: '', via: 'telegram' } }), asked(3, 'Which color?', ['Mint', 'Coral'])])
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })

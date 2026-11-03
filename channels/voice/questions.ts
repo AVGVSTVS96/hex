@@ -354,7 +354,7 @@ export function fromLedger(app: string, asked: Asked): Curated {
     task: `${app}:${asked.thread}`,
     at: asked.at,
     question: clip(lines[0] ?? '', 160).replace(/:$/, ''),
-    ...(context && { context: clip(context, 280) }),
+    ...(context && { context }),
     options,
     refs: [{ app, thread: asked.thread, message: asked.message }],
     from: [{ app, thread: asked.thread, message: asked.message }],
