@@ -150,3 +150,12 @@ test('every folder a background session starts in is trusted (a -p run never ask
   const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
   expect(JSON.parse(args[args.indexOf('--settings') + 1]!)).toMatchObject({ model: 'opus', permissions: { deny: [`Read(/${home}/.env)`] } })
 })
+
+test('a -p run says it is hex, over the entrypoint it inherited, and a background session keeps its own', () => {
+  writeFileSync(join(home, 'fake/claude'), `#!/bin/sh\nprintf '%s' "\${CLAUDE_CODE_ENTRYPOINT:-unset}" > "${home}/entrypoint"\n`)
+  const env = { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'cli' }
+  Bun.spawnSync([join(home, '.hex/bin/session'), '-p', 'build it'], { cwd: home, env })
+  expect(readFileSync(join(home, 'entrypoint'), 'utf8')).toBe('hex')
+  Bun.spawnSync([join(home, '.hex/bin/session'), '--bg', 'build it'], { cwd: home, env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: undefined } })
+  expect(readFileSync(join(home, 'entrypoint'), 'utf8')).toBe('unset')
+})

@@ -216,7 +216,7 @@ function claude(input: string, hexDir: string, state: string) {
   writeFileSync(join(cwd, 'messages.md'), messages(hexDir))
   writeFileSync(join(cwd, 'threads.json'), JSON.stringify(store(state).threads(), null, 1))
   return new Promise<Verdict>((resolve, reject) => {
-    const child = spawn('claude', args, { cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    const child = spawn('claude', args, { cwd, env: { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'hex' }, stdio: ['pipe', 'pipe', 'pipe'] })
     let out = ''
     let err = ''
     child.stdout.on('data', chunk => (out += chunk))

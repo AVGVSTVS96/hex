@@ -151,7 +151,7 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 // One call with no tools: its only effect is what it returns.
 // Its three tries end inside the pass's lease (4 calls long), so a hung call fails rather than racing the next pass.
 async function call(input: string, system: string, args: string[]) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE')))
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE'))), CLAUDE_CODE_ENTRYPOINT: 'hex' }
   const run = Bun.spawn(
     ['claude', '-p', '--safe-mode', '--model', MODEL, ...args, '--system-prompt', system, '--output-format', 'json', '--no-session-persistence'],
     { cwd: hexDir(), env, stdin: new Blob([input]), stdout: 'pipe', stderr: 'pipe', timeout: CALL },
