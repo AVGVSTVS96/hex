@@ -77,7 +77,9 @@ type Live = {
   spoke: number
   warning?: ReturnType<typeof setTimeout>
   speak?: (audio: string) => void
+  // The first hang-up asked, which the call ends by, and whether it went out.
   closing?: string
+  closed?: true
 }
 type Attaching = { id: string; closing?: string }
 type Placed = { to: string; why?: string; started: string; session?: string }
@@ -326,13 +328,19 @@ async function hangUpCall(call: Live) {
   return 'hanging up'
 }
 
-// The caller or hex hangs up: at once over an open connection to the voice, else kept as closing
-// until one opens, or until the call ends without one and a connection is opened just for it.
-// A phone or Discord call's socket is its session, so once that socket is going there's nothing left to close.
+// The caller or hex hangs up: at once over an open connection to the voice, else once one opens,
+// or, if the call ends without one, on a connection opened just for it. A phone or Discord call's
+// socket is its session, so once that socket is going there's nothing left to close.
 function close(call: Live, event: string) {
   const state = call.socket.readyState
-  if (state === WebSocket.OPEN) call.socket.send(JSON.stringify({ type: 'session.close', event_id: event }))
-  else if (state === WebSocket.CONNECTING || !call.speak) call.closing ??= event
+  if (call.closing || (call.speak && state !== WebSocket.OPEN && state !== WebSocket.CONNECTING)) return
+  call.closing = event
+  if (state === WebSocket.OPEN) sendClose(call)
+}
+
+function sendClose(call: Live) {
+  call.socket.send(JSON.stringify({ type: 'session.close', event_id: call.closing }))
+  call.closed = true
 }
 
 function closeSession(id: string, event: string) {
@@ -405,7 +413,7 @@ function finish(call: Live, reason: string, by?: string) {
   toHub(hub.renew)
   call.socket.onclose = null
   call.socket.close()
-  if (call.closing && !call.speak) closeSession(call.id, call.closing)
+  if (call.closing && !call.closed && !call.speak) closeSession(call.id, call.closing)
 }
 
 function failed(record: Pick<CallRecord, 'from' | 'end' | 'reason'> & Partial<CallRecord>, to?: string) {
@@ -428,7 +436,7 @@ function follow(socket: WebSocket, record: Live['record'], { call = new Call(), 
   if (live) {
     const by = live.closing
     close(live, 'close-you-moved')
-    finish(live, by ? 'close_requested' : 'moved to a new call', by ?? 'close-you-moved')
+    finish(live, by ? 'close_requested' : 'moved to a new call', live.closing ?? 'close-you-moved')
   }
   if (attaching) retire(attaching, 'close-you-moved')
   const current: Live = { id: record.id, shown: new Map(), socket, call, record, pending: new Map(), rings: [], changes: new Changes(), spoke: 0, speak }
@@ -521,9 +529,7 @@ async function answerQuestion(id: string, label: string, via: string) {
 function listen(call: Live, socket: WebSocket, attempt = 0) {
   const opened = Date.now()
   const hungUp = () => {
-    if (!call.closing || live !== call) return
-    socket.send(JSON.stringify({ type: 'session.close', event_id: call.closing }))
-    call.closing = undefined
+    if (call.closing && !call.closed && live === call) sendClose(call)
   }
   if (socket.readyState === WebSocket.OPEN) hungUp()
   else socket.addEventListener('open', hungUp, { once: true })

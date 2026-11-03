@@ -48,7 +48,7 @@ async function appCall({ open = false } = {}) {
   writeFileSync(join(voiceDir, '.env'), ['OPENAI_API_KEY=test', `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, 'VOICE_PORT=0'].join('\n'))
   if (open) writeFileSync(join(voiceDir, 'calls', `${ID}.json`), JSON.stringify({ id: ID, started: new Date().toISOString(), from: 'app', turns: [], tasks: [] }))
   const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, 'server.ts'))}
-const server = serve({ deliver() {}, keep: async () => {}, renew() {}, renewal: async () => {}, session: () => 'brain' }, ${JSON.stringify(state)})
+const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), renewal: async () => {}, session: () => 'brain' }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))
 for await (const line of console) {
   const { name, args } = JSON.parse(line)
@@ -57,6 +57,8 @@ for await (const line of console) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
   const plugin = Bun.spawn(['bun', '-e', engine], { env: { ...env, HOME: home, CLAUDE_CONFIG_DIR: join(home, 'claude') }, stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
   const answers: ((line: any) => void)[] = []
+  // What the engine asked of the hub, in order: each message it delivered, and each renew.
+  const told: { hub: string; content?: string; meta?: Record<string, string> }[] = []
   let listening!: (port: number) => void
   const port = new Promise<number>(resolve => (listening = resolve))
   void (async () => {
@@ -65,7 +67,7 @@ for await (const line of console) {
       buffer += new TextDecoder().decode(chunk)
       const lines = buffer.split('\n')
       buffer = lines.pop()!
-      for (const line of lines.map(line => JSON.parse(line))) line.port ? listening(line.port) : answers.shift()?.(line)
+      for (const line of lines.map(line => JSON.parse(line))) line.port ? listening(line.port) : line.hub ? told.push(line) : answers.shift()?.(line)
     }
   })()
   const base = `http://127.0.0.1:${await port}`
@@ -73,6 +75,7 @@ for await (const line of console) {
   return {
     base,
     closes,
+    told,
     call,
     live: async () => (await fetch(`${base}/calls`).then(r => r.json())).live,
     tool: (name: string, args: object = {}) => {
@@ -183,11 +186,13 @@ test('hanging up a call the engine is attaching back to after a restart ends it 
     await hangUp(engine)
     expect(await engine.call()).toMatchObject({ end, reason: 'close_requested' })
     expect(engine.closes).toEqual([])
+    expect(await engine.tool('task', { id: 'after', state: 'done', text: 'Named after the call' })).toEqual({ result: 'that call has ended, so only its record changed' })
     engine.back()
     await until(() => engine.closes.length)
     await Bun.sleep(200)
     expect(engine.closes).toHaveLength(1)
     expect(engine.closes[0]).toStartWith(`${ID} ${close}`)
+    expect(engine.told.map(({ hub, meta }) => meta?.ended ?? hub)).toEqual([end, 'renew'])
   }
 }, 30_000)
 
@@ -201,4 +206,5 @@ test('a call a new one replaces while the engine attaches back to it after a res
   await Bun.sleep(200)
   expect(engine.closes).toEqual([`${ID} close-you-moved`])
   expect(await engine.live()).toBe(`${ID}-1`)
+  expect(engine.told.map(({ hub, meta }) => (meta?.ended ? `${meta.call} ended` : meta?.call ? `${meta.call} told` : hub))).toEqual([`${ID} ended`, 'renew', `${ID}-1 told`])
 }, 20_000)
