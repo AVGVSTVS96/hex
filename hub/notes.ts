@@ -28,12 +28,15 @@ export type Verdict = { keys: Row[]; unknown: string[]; unquoted: string[]; quot
 
 export function verdict(note: string, store: Store): Verdict {
   const keys = keysOf(note)
-  const found = keys.map(key => store.latest(key)).filter((row): row is Row => !!row)
+  const found = keys.flatMap(key => {
+    const now = store.latest(key)
+    return now ? [{ ...now, key }] : []
+  })
   const words = quotesOf(note)
   return {
     keys: found,
     unknown: keys.filter(key => !found.some(row => row.key === key)),
-    unquoted: words.filter(each => !found.some(row => quotes(spoken(row) || row.body, each))),
+    unquoted: words.filter(each => !found.some(row => store.versions(row.key).some(version => quotes(spoken(version) || version.body, each)))),
     quoted: words.length > 0,
   }
 }

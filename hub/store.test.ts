@@ -638,4 +638,13 @@ test("hex message and hex recall give the owner's words as he last edited them",
   }
   expect(await run('message', 'telegram:-100:52')).toBe('Tell selfheal, so it can be fixed properly at the root next run')
   expect(verdict('He wants it "fixed properly at the root" [telegram:-100:52]', store).unquoted).toEqual([])
+  expect(verdict('He first said "so it can be fixed next run" [telegram:-100:52]', store).unquoted).toEqual([])
+  expect(verdict('He said "fixed properly at the root" [telegram:-100:52]', store).keys.map(row => row.key)).toEqual(['telegram:-100:52'])
+  const task = store.createTask({ title: 'Fix it at the root', message: 'telegram:-100:52', quote: 'fixed properly at the root', owner: '-100:7' })
+  store.addWords(task.id, 'telegram:-100:52', 'Tell selfheal')
+  expect(store.task(task.id)!.words).toMatchObject([
+    { message: 'telegram:-100:52@1', text: 'fixed properly at the root' },
+    { message: 'telegram:-100:52', text: 'Tell selfheal' },
+  ])
+  expect(() => store.addWords(task.id, 'telegram:-100:52', 'fixed later')).toThrow("isn't in telegram:-100:52 as written")
 })
