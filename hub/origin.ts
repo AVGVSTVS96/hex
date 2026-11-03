@@ -11,7 +11,7 @@ export function origin(store: Store, owner: string | undefined, hex = join(impor
   const thread = store.key(owner)
   const said = store.said(thread).filter(row => row.taken && spoken(row) && !row.meta?.reaction && !row.meta?.deleted).at(-1)
   const name = store.names()[thread]
-  const log = `\`${hex}/bin/hex log -- '${thread}'\` prints all of it`
+  const log = `\`${hex}/bin/hex log --last 100 -- '${thread}'\` prints its newest 100 messages (without --last, all of it)`
   return `This work comes from my conversation${name ? ` in ${name}` : ''}: ${said ? `${log}, and \`${hex}/bin/hex message ${said.key}\` my newest message there, word for word.` : `${log}.`}`
 }
 

@@ -98,6 +98,7 @@ test("a named owner is an open thread's key or its <app>:<key> id", () => {
   expect(value(run(['build', '-100123:908', 'make'], session).args, 'HEX_OWNER')).toBe('telegram:-100123:908')
   expect(value(run(['build', '-100123:908', 'make'], session).args, 'HEX_FROM')).toBe('t3:stray-key')
   expect(value(run(['build', 'make'], session).args, 'HEX_FROM')).toBeUndefined()
+  expect(value(run(['inner', 'make'], { HEX_OWNER: 'discord:555', HEX_FROM: 't3:stray-key' }).args, 'HEX_FROM')).toBe('t3:stray-key')
   expect(value(run(['build', 'discord:555', 'make']).args, 'HEX_OWNER')).toBe('discord:555')
   expect(value(run(['build', '555', 'make']).args, 'CLAUDE_CODE_SESSION_NAME')).toBe('fix hex NOW/build')
   expect(value(run(['build', 'telegram:-100123:908', 'make']).args, 'CLAUDE_CODE_SESSION_NAME')).toBe('autofork/build')

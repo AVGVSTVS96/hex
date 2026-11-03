@@ -35,7 +35,7 @@ test("a subagent of a thread's session is told the conversation it works for and
   const told = await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })
   expect(told.hookEventName).toBe('SubagentStart')
   expect(told.additionalContext).toContain("in Website: `")
-  expect(told.additionalContext).toContain("/bin/hex log -- '-100:7'`")
+  expect(told.additionalContext).toContain("/bin/hex log --last 100 -- '-100:7'`")
   expect(told.additionalContext).toContain('/bin/hex message telegram:-100:50`')
 })
 
@@ -56,5 +56,5 @@ test("a job started for another thread is told the conversation that started it"
 test("what the owner said on a call counts as their words, and a thread with none still gets its conversation", async () => {
   expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:voice@hex', HEX_THREAD: 'voice' })).additionalContext).toContain('/bin/hex message voice:c1:1`')
   const told = await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:8' })
-  expect(told.additionalContext).toEndWith("/bin/hex log -- '-100:8'` prints all of it.")
+  expect(told.additionalContext).toEndWith("/bin/hex log --last 100 -- '-100:8'` prints its newest 100 messages (without --last, all of it).")
 })
