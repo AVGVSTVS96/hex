@@ -1038,11 +1038,14 @@ async function questionRoutes(request: Request, url: URL) {
       return Response.json(sent)
     }
     if (kind === 'asks' && verb === 'undo') {
-      await questions.undo(key, 'app')
-      const call = onCall(heard)
-      if (call) {
-        remember(call, 'undone', 'Taken back', { ask: key })
-        activity.changed()
+      try {
+        await questions.undo(key, 'app')
+      } finally {
+        const call = !questions.answered(key) && onCall(heard)
+        if (call) {
+          remember(call, 'undone', 'Taken back', { ask: key })
+          activity.changed()
+        }
       }
       const card = onCall()
       if (card) deliver(`The caller took back what they gave on the card for ${key}; it's open again.`, { call: card.id })

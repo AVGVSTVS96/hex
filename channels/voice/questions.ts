@@ -252,6 +252,11 @@ export class Questions extends Changes {
     }
   }
 
+  // Whether an answer or a not needed from here still stands on the question.
+  answered(id: string) {
+    return !!this.marks.answers[id]
+  }
+
   // A stuck item's one action: hex's General is asked to do it, or it's put away until it changes.
   async act(id: string) {
     const item = this.view.stuck.find(item => item.id === id)
