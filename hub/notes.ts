@@ -36,7 +36,7 @@ export function verdict(note: string, store: Store): Verdict {
   return {
     keys: found,
     unknown: keys.filter(key => !found.some(row => row.key === key)),
-    unquoted: words.filter(each => !found.some(row => store.versions(row.key).some(version => quotes(spoken(version) || version.body, each)))),
+    unquoted: words.filter(each => !found.some(row => quotes(spoken(row) || row.body, each))),
     quoted: words.length > 0,
   }
 }

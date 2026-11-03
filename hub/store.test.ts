@@ -638,13 +638,22 @@ test("hex message and hex recall give the owner's words as he last edited them",
   }
   expect(await run('message', 'telegram:-100:52')).toBe('Tell selfheal, so it can be fixed properly at the root next run')
   expect(verdict('He wants it "fixed properly at the root" [telegram:-100:52]', store).unquoted).toEqual([])
-  expect(verdict('He first said "so it can be fixed next run" [telegram:-100:52]', store).unquoted).toEqual([])
   expect(verdict('He said "fixed properly at the root" [telegram:-100:52]', store).keys.map(row => row.key)).toEqual(['telegram:-100:52'])
   const task = store.createTask({ title: 'Fix it at the root', message: 'telegram:-100:52', quote: 'fixed properly at the root', owner: '-100:7' })
   store.addWords(task.id, 'telegram:-100:52', 'Tell selfheal')
+  store.deliver({ key: 'telegram:-100:52@2', to: '-100:7', from: 'telegram', author: 'owner', body: 'Tell selfheal, so it can be fixed properly at the root tonight', meta: { edited: 'true', message_id: '52' } })
+  expect(await run('message', 'telegram:-100:52@1')).toBe('Tell selfheal, so it can be fixed properly at the root tonight')
+  expect(verdict('He wants it "fixed properly at the root tonight" [telegram:-100:52@1]', store).unquoted).toEqual([])
+  expect(verdict('He wants it "fixed properly at the root next run" [telegram:-100:52]', store).unquoted).toEqual(['fixed properly at the root next run'])
+  store.addWords(task.id, 'telegram:-100:52', 'fixed properly at the root')
+  store.addWords(task.id, 'telegram:-100:52', 'tonight')
   expect(store.task(task.id)!.words).toMatchObject([
     { message: 'telegram:-100:52@1', text: 'fixed properly at the root' },
     { message: 'telegram:-100:52', text: 'Tell selfheal' },
+    { message: 'telegram:-100:52@2', text: 'tonight' },
   ])
-  expect(() => store.addWords(task.id, 'telegram:-100:52', 'fixed later')).toThrow("isn't in telegram:-100:52 as written")
+  expect(() => store.addWords(task.id, 'telegram:-100:52', 'next run')).toThrow("isn't in telegram:-100:52 as written")
+  const whole = store.createTask({ title: 'All of it', message: 'telegram:-100:52', owner: '-100:7' })
+  expect(whole.words).toMatchObject([{ message: 'telegram:-100:52@2', text: 'Tell selfheal, so it can be fixed properly at the root tonight' }])
+  expect(store.requote(whole.id, 'telegram:-100:52', 'tonight').words).toMatchObject([{ message: 'telegram:-100:52@2', text: 'tonight' }])
 })
