@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, mkdirSync, openSync, readSync, statSync, watch } from 'fs'
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
 import { toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
@@ -408,8 +408,10 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 // One message sent to a hex thread, followed through its session's transcript: it waits until the
 // session takes in the message carrying `tag`, shows each step after that (its background agents'
 // steps too), and ends when a turn ends with none of those agents still out. A new session for the
-// thread (a renewal or a restart) shows up in hex.db and is followed from its start; so is
-// the first one when following resumes a message sent earlier.
+// thread (a renewal or a restart) shows up in hex.db and is followed from its start, past the
+// entries it copied when resumed from the last one: a copy keeps their uuids. Following resumes a
+// message sent earlier from the start of the session that took it, as hex.db has it, then goes on
+// in the thread's session now, if that's another; a session between the two is skipped.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
   const agents = new Map<string, () => void>()
   let session: string | undefined
@@ -418,25 +420,30 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let picked = false
   let failed = false
   let ended = false
+  let copied = new Set<string>()
 
   const store = open(thread.state)
   const stopState = store.watch(locate)
   locate()
 
   function locate() {
-    const next = store.threads({ app: thread.app, open: true }).find(({ thread: id }) => id === thread.id)?.session
+    const current = store.threads({ app: thread.app, open: true }).find(({ thread: id }) => id === thread.id)?.session
+    const took = resumed && session === undefined ? store.taker(thread.id, 'voice_task', tag) : undefined
+    const next = took && ID.test(took) ? took : current
     if (ended || !next || next === session || !ID.test(next)) return
     const fresh = resumed || session !== undefined
     stopSession()
+    copied = session ? uuids(join(project, `${session}.jsonl`)) : new Set()
     session = next
     project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
     const stop = followTranscript(join(project, `${session}.jsonl`), fresh ? 0 : 'end', take)
     if (ended) stop()
     else stopSession = stop
+    if (!ended && next !== current) locate()
   }
 
   function take(entry: any, updates: () => Update[]) {
-    if (ended) return
+    if (ended || copied.has(entry.uuid)) return
     if (!picked) {
       const text = channelMessage(entry)
       picked = !!text && text.slice(0, text.indexOf('>') + 1).includes(` voice_task="${tag}"`)
@@ -467,6 +474,18 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   }
 
   return close
+}
+
+function uuids(path: string) {
+  const found = new Set<string>()
+  try {
+    for (const line of readFileSync(path, 'utf8').split('\n'))
+      try {
+        const uuid = JSON.parse(line).uuid
+        if (uuid) found.add(uuid)
+      } catch {}
+  } catch {}
+  return found
 }
 
 // A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its

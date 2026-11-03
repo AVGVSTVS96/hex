@@ -19,6 +19,7 @@ function tool(name: string, input: object) {
 }
 const said = (text: string, extra = {}) => ({ type: 'assistant', message: { id: 'msg_text', content: [{ type: 'text', text }] }, ...extra })
 const ended = { type: 'system', subtype: 'turn_duration' }
+const asked = (tag: string) => ({ type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: `<channel source="buzz" voice_task="${tag}">look</channel>` } })
 
 function write(path: string, ...entries: object[]) {
   appendFileSync(path, entries.map(entry => JSON.stringify(entry) + '\n').join(''))
@@ -235,6 +236,56 @@ test('a message the thread took while a turn ran, queued as an attachment, is pi
   write(path, { type: 'attachment', attachment: { type: 'queued_command', origin: { kind: 'channel' }, prompt: '<channel source="telegram" voice_task="call:queued">look</channel>' } }, said('Looking now.'), ended)
   await until(() => steps.length === 2)
   expect(steps).toEqual([{ line: 'Looking now.' }, { end: 'done' }])
+  stop()
+})
+
+test("following a message sent before a restart starts in the session that took it, though the thread has renewed since, and goes on in the new one", () => {
+  threads('buzz', { b3: { name: 'Renewed', session: 'renewed-now' } })
+  const sent = (tag: string, by: string) =>
+    open(state).deliver({ key: `buzz:${tag}`, to: 'b3', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: tag } }, by)
+  sent('call:finished', 'took-it')
+  write(join(project, 'took-it.jsonl'), asked('call:finished'), said('Done before the renewal.'), ended)
+  sent('call:cut-off', 'cut-off')
+  write(join(project, 'cut-off.jsonl'), asked('call:cut-off'), said('Starting on it.'))
+  write(join(project, 'renewed-now.jsonl'), said('Picked it up again.'), ended)
+
+  const finished: object[] = []
+  followThread(findThread(state, 'renewed')!, hex, 'call:finished', true, step => finished.push(step))
+  expect(finished).toEqual([{ line: 'Done before the renewal.' }, { end: 'done' }])
+  const cut: object[] = []
+  const stop = followThread(findThread(state, 'renewed')!, hex, 'call:cut-off', true, step => cut.push(step))
+  expect(cut).toEqual([{ line: 'Starting on it.' }, { line: 'Picked it up again.' }, { end: 'done' }])
+  stop()
+})
+
+// A session resumed from another copies its finished turns, uuids and all, then takes the message
+// of the turn that was cut off again and does it over.
+function resumedFrom(tag: string) {
+  const old = [said('An earlier turn.'), ended, asked(tag), said('Starting on it.')].map((entry, n) => ({ ...entry, uuid: `${tag}-${n}` }))
+  return { old, copy: [old[0], old[1], { ...asked(tag), uuid: `${tag}-again` }, { ...said('Finished it.'), uuid: `${tag}-4` }, { ...ended, uuid: `${tag}-5` }] }
+}
+
+test("a session resumed from the one that took the message is followed past what it copied, after a restart or live", async () => {
+  threads('buzz', { b4: { name: 'Copied', session: 'copy-now' } })
+  open(state).deliver({ key: 'buzz:copied', to: 'b4', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:copied' } }, 'copy-old')
+  const restart = resumedFrom('call:copied')
+  write(join(project, 'copy-old.jsonl'), ...restart.old)
+  write(join(project, 'copy-now.jsonl'), ...restart.copy)
+  const resumed: object[] = []
+  followThread(findThread(state, 'copied')!, hex, 'call:copied', true, step => resumed.push(step))
+  expect(resumed).toEqual([{ line: 'Starting on it.' }, { line: 'Finished it.' }, { end: 'done' }])
+
+  threads('buzz', { b6: { name: 'Live copy', session: 'live-old' } })
+  const live = resumedFrom('call:live')
+  write(join(project, 'live-old.jsonl'), live.old[0], live.old[1])
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'live copy')!, hex, 'call:live', false, step => steps.push(step))
+  write(join(project, 'live-old.jsonl'), live.old[2], live.old[3])
+  await until(() => steps.length === 1)
+  write(join(project, 'live-new.jsonl'), ...live.copy)
+  threads('buzz', { b6: { name: 'Live copy', session: 'live-new' } })
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Finished it.' }, { end: 'done' }])
   stop()
 })
 
