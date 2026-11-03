@@ -438,8 +438,8 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   function take(entry: any, updates: () => Update[]) {
     if (ended) return
     if (!picked) {
-      const content = entry.message?.content
-      picked = entry.type === 'user' && entry.origin?.kind === 'channel' && (typeof content === 'string' ? content : JSON.stringify(content)).includes(tag)
+      const text = channelMessage(entry)
+      picked = !!text && text.slice(0, text.indexOf('>') + 1).includes(` voice_task="${tag}"`)
       return
     }
     const launched = entry.toolUseResult?.isAsync && entry.toolUseResult.agentId
@@ -467,6 +467,15 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   }
 
   return close
+}
+
+// A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its
+// opening tag is the channel's; the rest is the message's own words.
+function channelMessage(entry: any): string | undefined {
+  const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
+  if (!(entry.type === 'user' && entry.origin?.kind === 'channel') && queued?.origin?.kind !== 'channel') return
+  const content = queued ? queued.prompt : entry.message?.content
+  return typeof content === 'string' ? content : Array.isArray(content) ? content.map(block => block?.text ?? '').join('') : ''
 }
 
 function lines(updates: Update[], onStep: (step: Step) => void) {
