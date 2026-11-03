@@ -23,7 +23,6 @@ else
   echo "cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free"
 fi
 [ "$busy" -le 50 ] && [ "$free" -ge 20 ] && [ "$disk" -ge 25 ] || room=1
-runtime=$HOME/.t3-hex/userdata/server-runtime.json
-pid=$(sed -n 's/.*"pid":\([0-9]*\).*/\1/p' "$runtime" 2>/dev/null)
-[ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && echo "t3 $(cat "$HOME/.t3-hex/userdata/environment-id")"
+origin=$(sed -n 's/.*"origin":"\([^"]*\)".*/\1/p' "$HOME/.t3-hex/userdata/server-runtime.json" 2>/dev/null)
+[ -n "$origin" ] && curl -fsm 3 -o /dev/null "$origin/.well-known/t3/environment" && echo "t3 $(cat "$HOME/.t3-hex/userdata/environment-id")"
 exit $room

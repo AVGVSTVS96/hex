@@ -45,7 +45,7 @@ let headers: Record<string, string> | undefined
 let refresh = false
 function signIn() {
   const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers'), ...(refresh ? ['--refresh'] : [])], { cwd: home })
-  if (helper.exitCode !== 0) throw new Final(`couldn't sign in to T3 Code: ${helper.stderr.toString().trim()}`)
+  if (helper.exitCode !== 0) throw new Error(`couldn't sign in to T3 Code: ${helper.stderr.toString().trim()}`)
   refresh = false
   return { ...JSON.parse(helper.stdout.toString()), 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
 }
@@ -82,12 +82,14 @@ function parse(text: string): any {
   } catch {}
 }
 
-async function persist<T>(what: () => Promise<T>): Promise<T> {
+// Before its thread exists a job gives up on a machine after 5 minutes and tries the next; after, it waits that machine out.
+async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<T> {
+  const until = Date.now() + patience
   for (let wait = 5_000; ; wait = Math.min(wait * 2, 120_000)) {
     try {
       return await what()
     } catch (error) {
-      if (error instanceof Final) throw error
+      if (error instanceof Final || Date.now() + wait > until) throw error
       console.error(`away: ${(error as Error).message}; trying ${machine} again in ${wait / 1000} s`)
       session = undefined
       await Bun.sleep(wait)
@@ -114,7 +116,7 @@ const configured = (path: string) => {
   } catch {}
 }
 const wanted = model ?? configured(join(home, '.claude/settings.json')) ?? configured(join(homedir(), '.claude/settings.json')) ?? 'opus'
-const offered = await persist(() => call('orchestrator_capabilities', {})).catch((error: Error) => elsewhere(error.message))
+const offered = await persist(() => call('orchestrator_capabilities', {}), 300_000).catch((error: Error) => elsewhere(error.message))
 const claude = (offered.providers as { providerInstanceId: string; models: { id: string }[] }[]).find(provider => provider.providerInstanceId === 'claudeAgent')
 const chosen = claude?.models.find(({ id }) => id === wanted) ?? claude?.models.filter(({ id }) => id.includes(wanted)).sort((a, b) => b.id.localeCompare(a.id))[0]
 if (!chosen) elsewhere(claude ? `its Claude has no ${wanted}` : 'its T3 Code has no Claude')
@@ -136,31 +138,40 @@ const launched = await persist(() =>
     modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
     clientRequestId: `hex-job-${name}-${process.env.INVOCATION_ID ?? process.pid}`,
   }),
+  300_000,
 ).catch((error: Error) => elsewhere(error.message))
 threadId = launched.threadId as string
 if (stopping) await stop()
 console.log(`${name} runs on ${machine} as T3 Code thread ${launched.link}`)
 
-// Following the run the launch started until it ends; a wait comes back early while that run is still starting.
-const ENDED = ['idle', 'completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']
+// Following the run the launch started until it ends. A run blocked on a question still reads as running, so each
+// wait that comes back without an end asks for the thread's questions, as `t3 thread --wait` does.
+const ENDED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']
 async function follow() {
   let ended: { status: string; timedOut: boolean }
+  let asking: string | undefined
   for (;;) {
     ended = await persist(() => call('t3_thread_wait', { threadId, runId: launched.runId, timeoutMs: 50_000 }))
-    if (ENDED.includes(ended.status) || ended.status === 'waiting') break
+    if (ENDED.includes(ended.status)) break
+    const { requestIds } = await persist(() => call('t3_pending_request', { action: 'list', threadId }))
+    if (requestIds?.length) {
+      const { questions } = await persist(() => call('t3_pending_request', { action: 'read', threadId, requestId: requestIds[0] }))
+      asking = (questions as { question?: string; header?: string }[]).map(({ question, header }) => question ?? header).join(' ')
+      break
+    }
     if (!ended.timedOut) await Bun.sleep(2_000)
+  }
+  // A job has nobody to answer a question its thread asks, so the thread stops there, and the question is the job's answer.
+  if (asking !== undefined) {
+    await call('t3_thread_interrupt', { threadId, stop: true, reason: `the job ${name} has nobody to answer` }).catch(() => {})
+    console.log(`${name} stopped on ${machine} at a question, which a job can't answer: ${asking}`)
+    return 1
   }
   let last: { text: string } | undefined
   for (let after: number | undefined, more = true; more; ) {
     const page = await persist(() => call('t3_thread_read', { threadId, view: 'messages', limit: 100, maxCharsPerItem: 50_000, afterPosition: after }))
     last = (page.items as { type: string; text: string }[]).filter(item => item.type === 'assistant_message').at(-1) ?? last
     ;[after, more] = [page.nextPosition, page.hasMore]
-  }
-  // A job has nobody to answer a question its thread asks, so the thread stops there, and the question is the job's answer.
-  if (ended.status === 'waiting') {
-    await call('t3_thread_interrupt', { threadId, stop: true, reason: `the job ${name} has nobody to answer` }).catch(() => {})
-    console.log(`${name} stopped on ${machine} at a question, which a job can't answer: ${last?.text ?? '(see the thread)'}`)
-    return 1
   }
   console.log(last?.text ?? `${name} ended on ${machine} with no answer`)
   return ended.status === 'completed' ? 0 : 1

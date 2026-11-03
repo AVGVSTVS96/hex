@@ -13,6 +13,7 @@ let drop = 0
 let refuse: string | undefined
 let running = false
 let refused = 0
+let asked: string[] = []
 let flaky = 0
 
 const server = Bun.serve({
@@ -32,6 +33,7 @@ const server = Bun.serve({
       t3_thread_wait: () => waits.shift() ?? (running ? { status: 'running', timedOut: true } : { status: 'completed', timedOut: false }),
       t3_thread_read: () => ({ items: [{ type: 'user_message', text: 'go' }, { type: 'assistant_message', text: 'Built the Usage tab.' }], hasMore: false }),
       t3_thread_interrupt: () => ({}),
+      t3_pending_request: () => (body.params.arguments.action === 'list' ? { requestIds: asked } : { requestId: asked[0], questions: [{ question: 'Which branch should I push to?' }] }),
     }
     return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify(answers[body.params.name]!()) }], isError: false } })
   },
@@ -67,6 +69,7 @@ const reset = () => {
   running = false
   refused = 0
   flaky = 0
+  asked = []
   rmSync(join(home, 'signed'), { force: true })
 }
 
@@ -98,10 +101,11 @@ test('a refused token is renewed and a tool error without a final code is retrie
 
 test('a job whose thread stops at a question ends there, with the question as its answer', async () => {
   reset()
-  waits = [{ status: 'waiting', timedOut: false }]
+  running = true
+  asked = ['q1']
   const { run, out } = away(['-p', 'Build it.'])
   expect(await run.exited).toBe(1)
-  expect(await out()).toEndWith("hex/deck stopped on mac at a question, which a job can't answer: Built the Usage tab.\n")
+  expect(await out()).toEndWith("hex/deck stopped on mac at a question, which a job can't answer: Which branch should I push to?\n")
   expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
 })
 
