@@ -973,5 +973,12 @@ test("a thread's fresh background session works under it from its first turn, be
   await until(() => fresh()?.state === 'working')
   expect(fresh()!.at).toBe(new Date(first).toISOString())
   rmSync(join(claude, 'sessions', 'd2d2d2d2.json'))
+  threads('telegram', { ...telegram, '-1001234567890:78': { name: 'quiet acp', session: 'd3d3d3d3-quiet' } })
+  running('d3d3d3d3-quiet', 'idle', process.pid, { kind: 'interactive', name: 'quiet acp', startedAt: Date.now() - 60_000, statusUpdatedAt: Date.now() })
+  const version = board.version
+  job('aaaaaaaa-general', { state: 'done', detail: 'heartbeat ran after the quiet one', updatedAt: ago(0) })
+  await until(() => board.version !== version)
+  expect(board.get('telegram:-1001234567890:78')).toBeUndefined()
+  rmSync(join(claude, 'sessions', 'd3d3d3d3.json'))
   threads('telegram', telegram)
 })

@@ -106,14 +106,16 @@ function stat(pid: number) {
 
 // Claude Code's sessions are this user's processes, so a pid this user can't signal is another's,
 // and, where /proc can be read, one that started at another time than the record says (procStart)
-// took over a dead session's pid.
+// took over a dead session's pid, and a zombie is dead.
 function alive(pid: unknown, procStart?: unknown) {
   try {
     if (!Number.isInteger(pid) || (pid as number) <= 0 || !process.kill(pid as number, 0)) return false
   } catch {
     return false
   }
-  return typeof procStart !== 'string' || !stat(process.pid) || stat(pid as number)?.[19] === procStart
+  const fields = stat(pid as number)
+  if (fields?.[0] === 'Z') return false
+  return typeof procStart !== 'string' || !stat(process.pid) || fields?.[19] === procStart
 }
 
 function list(dir: string) {

@@ -396,7 +396,7 @@ export class Board extends Changes {
       .reverse()
       .map(entry => ({ at: entry.at, state: STATES[entry.state] ?? 'idle', text: plain(entry.detail!) }))
     const last = Math.max(session ? (session.updated ?? session.started) : 0, ...started.map(one => one.updated ?? one.started), ...out.map(one => (one.since ? Date.parse(one.since) : 0)))
-    const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(last).toISOString()
+    const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(live ? last : 0).toISOString()
     const needs = state === 'needs' ? plain(job?.needs ?? job?.detail ?? '') || undefined : undefined
     const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
     const began = Math.min(...started.map(one => one.updated ?? one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? (session!.updated ?? session!.started) : Infinity)
