@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
-import { dirname, join } from 'path'
+import { dirname, join, resolve } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { settingsOf } from './claude.ts'
@@ -136,47 +136,52 @@ function stray(word: string) {
   return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`
 }
 
-// A thread by its id, or by its name the way the hub finds one: any case, and only one thread.
-function threadOf(named: string) {
+// A thread by its key or id, or by its name the way the hub finds one: any case, and only one thread,
+// an open one before any closed.
+function known(named: string) {
   const key = store.key(named)
   const threads = store.threads()
-  if (threads.some(({ thread }) => thread === key)) return key
+  const keyed = threads.find(({ thread }) => thread === key) ?? threads.find(({ thread }) => thread === key.toLowerCase())
+  if (keyed) return keyed
   const wanted = named.trim().toLowerCase()
-  const matches = [...new Set(threads.filter(({ name }) => name.toLowerCase() === wanted).map(({ thread }) => thread))]
-  if (matches.length > 1) throw new Error(`more than one thread is named "${named}": ${matches.join(', ')}`)
-  if (matches[0]) return matches[0]
+  const all = threads.filter(({ name }) => name.toLowerCase() === wanted)
+  const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all
+  if (matches.length > 1) throw new Error(`more than one thread is named "${named}": ${matches.map(({ thread }) => thread).join(', ')}`)
+  return matches[0]
+}
+
+function threadOf(named: string) {
+  const thread = known(named)?.thread
+  if (thread) return thread
   if (store.said(named, 1).length) return named
   throw new Error(`no thread named "${named}"`)
 }
 
-// Where a delivery goes: a thread, by its key or id, or the thread a session works for, by the
-// session's id or the 8 characters of it `hex running` prints. A session works for the thread that
-// holds it, or the one the hub started it for and hasn't saved yet; only those take messages, so one
-// to any other session would never be taken. A closed thread takes it once it opens again.
+// Where a delivery goes: a thread hex has, since only a thread's session takes messages. A closed
+// thread takes it once it opens again.
 function recipient(to: string): string {
-  const threads = store.threads()
-  const known = threads.find(({ thread }) => thread === to) ?? threads.find(({ thread }) => thread === to.toLowerCase())
-  if (known) return waits(known.thread, known.open)
-  if (/^[0-9a-f]{8}(-[0-9a-f-]*)?$/i.test(to)) {
-    const held = new Map(threads.filter(({ open, session }) => open && session).map(({ thread, session }) => [session!, thread]))
-    const live = running(store)
-    const named = (id: string) => (live.get(id)?.name ? `${id} (${live.get(id)!.name})` : id)
-    const matches = [...new Set([...held.keys(), ...live.keys()])].filter(id => id.startsWith(to.toLowerCase())).sort()
-    if (matches.length > 1) throw new Error(`${to} starts more than one session's id: ${matches.map(named).join(', ')}`)
-    const [id] = matches
-    const bound = id && settingsOf({ sessionId: id, pid: 0 })?.env
-    const thread = id && (held.get(id) ?? (bound?.HEX_CHANNEL && bound.HEX_THREAD))
-    if (thread) return waits(thread, threads.find(row => row.thread === thread)?.open)
-    if (id) throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
-    // A whole UUID can be a T3 thread hex hasn't kept yet, and digits alone a Telegram chat.
-    if (to.length < 36 && !/^[0-9]+$/.test(to)) throw new Error(`no thread or running session is ${to} (hex threads and hex running list them)`)
-  }
-  return waits(to)
+  const thread = known(to) ?? workingFor(to)
+  if (!thread.open) console.error(`hex: the thread ${thread.thread} is closed, so this waits until it opens again`)
+  return thread.thread
 }
 
-function waits(thread: string, open?: boolean) {
-  if (!open) console.error(`hex: ${open === false ? `the thread ${thread} is closed, so this waits until it opens` : `no thread is ${thread}, so only a thread with that very key will take this`} (hex threads lists them)`)
-  return thread
+// The thread a session works for, by the session's id or the 8 characters of it `hex running`
+// prints: the thread that holds it, or the one this hex started it for and hasn't saved yet.
+function workingFor(given: string) {
+  if (!/^[0-9a-f]{8}(-[0-9a-f-]*)?$/i.test(given)) throw new Error(`no thread is "${given}" (hex threads lists them)`)
+  const to = given.toLowerCase()
+  const threads = store.threads()
+  const held = new Map(threads.filter(({ session }) => session).sort((a, b) => Number(a.open) - Number(b.open)).map(thread => [thread.session!, thread]))
+  const live = running(store)
+  const named = (id: string) => (live.get(id)?.name ? `${id} (${live.get(id)!.name})` : id)
+  const matches = [...new Set([...held.keys(), ...live.keys()])].filter(id => id.startsWith(to)).sort()
+  if (matches.length > 1) throw new Error(`${given} starts more than one session's id: ${matches.map(named).join(', ')}`)
+  const [id] = matches
+  if (!id) throw new Error(`no thread or running session is ${given} (hex threads and hex running list them)`)
+  const bound = settingsOf({ sessionId: id, pid: 0 })?.env
+  const thread = held.get(id) ?? (bound?.HEX_STORE && resolve(bound.HEX_STORE) === resolve(state!) ? threads.find(({ thread }) => thread === bound.HEX_THREAD) : undefined)
+  if (thread) return thread
+  throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
 }
 
 // Messages as markdown, one heading each, in the owner's time zone, for rg to search. Within room,
