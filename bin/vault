@@ -4,14 +4,16 @@ set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
 . "$(dirname "$0")/settings"
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
-enclave="bunx enclave-link@^0.2.9"
-if command -v enclave >/dev/null; then
+
+pick() {
+  enclave="bunx enclave-link@^0.2.10"
+  installed=$(command -v enclave) || return 0
   version=$(enclave --version 2>/dev/null) || version=
   case $version in
-  0.2.9 | 0.2.[1-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave=enclave ;;
-  *) echo "hex needs enclave-link 0.2.9 or a later 0.2, and \`enclave --version\` here says '${version:-nothing (run it to see why)}': npm install -g enclave-link@^0.2.9 (or bun add -g enclave-link@^0.2.9)" >&2; exit 1 ;;
+  0.2.[1-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave=enclave ;;
+  *) echo "hex needs enclave-link 0.2.10 or a later 0.2, and \`$installed --version\` says '${version:-nothing (run it to see why)}': npm install -g enclave-link@^0.2.10 (or bun add -g enclave-link@^0.2.10)" >&2; exit 1 ;;
   esac
-fi
+}
 
 usage() {
   cat >&2 <<'EOF'
@@ -32,11 +34,15 @@ case ${1:-} in
 fill)
   [ $# -eq 3 ] || usage
   computer
+  pick
   value=$($enclave get "$2" "$3" && printf .)
   printf %s "${value%.}" |
     sprite exec -s "$HEX_COMPUTER" -- sh -c 'jq -Rsc "{scope: \"desktop\", text: .}" | DISPLAY=:1 ~/.local/bin/cua-driver call type_text >/dev/null'
   echo "typed $2's $3 on $HEX_COMPUTER"
   ;;
-ask | wait | passkey | list | run | get | save | rm | import) exec $enclave "$@" ;;
+ask | wait | passkey | list | run | get | save | rm | import)
+  pick
+  exec $enclave "$@"
+  ;;
 *) usage ;;
 esac
