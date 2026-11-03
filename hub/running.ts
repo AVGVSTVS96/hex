@@ -31,8 +31,8 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     const updated = typeof statusUpdatedAt === 'number' ? statusUpdatedAt : undefined
     const kept = sessions.get(id)
     if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && (kept.updated ?? kept.started) >= (updated ?? started)))) continue
-    const job = typeof jobId === 'string' ? jobId : kept?.job
-    const { state, detail, needs } = readJson(join(claude, 'jobs', job ?? id.slice(0, 8), 'state.json')) ?? {}
+    const job: string | undefined = (typeof jobId === 'string' && jobId) || kept?.job
+    const { state, detail, needs } = readJson(join(claude, 'jobs', job || id.slice(0, 8), 'state.json')) ?? {}
     const progress = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
     sessions.set(id, { id, pid, ...(job && { job }), status, ...progress, kind, name, cwd, started, ...(updated !== undefined && { updated }), thread: kind === 'bg' ? undefined : served(environ(pid)), ...store.turn(id) })
   }

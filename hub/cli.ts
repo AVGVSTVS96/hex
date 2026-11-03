@@ -178,8 +178,9 @@ function workingFor(given: string) {
   if (matches.length > 1) throw new Error(`${given} starts more than one session's id: ${matches.map(named).join(', ')}`)
   const [id] = matches
   if (!id) throw new Error(`no thread or running session is ${given} (hex threads and hex running list them)`)
-  const job = live.has(id) ? (live.get(id)!.job ?? id.slice(0, 8)) : undefined
-  const bound = job && record(job).sessionId === id ? settingsOf({ sessionId: id, id: job, pid: 0 })?.env : undefined
+  const job = live.get(id)?.job
+  const short = live.has(id) && !job && record(id.slice(0, 8)).sessionId === id
+  const bound = job || short ? settingsOf({ sessionId: id, id: job, pid: 0 })?.env : undefined
   const thread = held.get(id) ?? (bound?.HEX_STORE && real(bound.HEX_STORE) === real(state!) ? threads.find(({ thread }) => thread === bound.HEX_THREAD) : undefined)
   if (thread) return thread
   throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
