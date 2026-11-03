@@ -21,12 +21,11 @@ const encoder = new TextEncoder()
 const NUDGE = 250
 // Claude Code gives up on a tool call after the timeout in the channel's .mcp.json (300000 ms),
 // while the hub still carries it out, and the session then makes the same call again. A call stays
-// unheard until the session hears its answer, and a repeat of an unheard call gets that answer
-// instead of acting twice. A different call in the thread shows the session moved on from those
-// already answered, and REPEAT after its answer one is let go. A call that took GAVE_UP counts as
-// unheard: the session's clock started before the hub read it, and a lagging hub can miss the
-// session leaving. A tool that only reads runs every time.
-const REPEAT = 10 * 60_000
+// unheard until the session hears its answer, and the same call in its thread, while it runs or
+// within REPEAT of its answer, gets that answer instead of acting twice. A call that reached the hub
+// GAVE_UP ago counts as unheard even with no abort seen, since a lagging hub can miss the session
+// leaving. A tool that only reads runs every time.
+const REPEAT = 3 * 60_000
 const GAVE_UP = 240_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
@@ -55,26 +54,21 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return Response.json({ jsonrpc: '2.0', id, result: value })
   }
 
-  const unheard = new Map<string, Map<string, Run>>()
+  const unheard = new Map<string, Run>()
   const reads = new Set(server.tools.filter(tool => tool.annotations?.readOnlyHint).map(tool => tool.name))
 
-  function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal): Promise<Result> {
+  function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal, arrived: number): Promise<Result> {
     if (reads.has(tool)) return call(thread, tool, args)
-    const scope = String(thread)
-    if (!unheard.has(scope)) unheard.set(scope, new Map())
-    const runs = unheard.get(scope)!
-    const key = JSON.stringify([tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
-    for (const [each, run] of runs) if (run.done && clock.now() - run.at > REPEAT) runs.delete(each)
-    const repeat = runs.get(key)
-    const began = clock.now()
-    const run: Run = repeat ?? { answer: call(thread, tool, args), at: began }
+    for (const [each, run] of unheard) if (run.done && clock.now() - run.at > REPEAT) unheard.delete(each)
+    const key = JSON.stringify([thread, tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
+    const repeat = unheard.get(key)
+    const run: Run = repeat ?? { answer: call(thread, tool, args), at: arrived }
     if (!repeat) {
-      for (const [each, earlier] of runs) if (earlier.done) runs.delete(each)
-      runs.set(key, run)
+      unheard.set(key, run)
       void run.answer.then(() => Object.assign(run, { done: true, at: clock.now() }))
     }
     return run.answer.then(answer => {
-      if (!gone.aborted && clock.now() - began < GAVE_UP && runs.get(key) === run) runs.delete(key)
+      if (!gone.aborted && clock.now() - arrived < GAVE_UP && unheard.get(key) === run) unheard.delete(key)
       if (!repeat) return answer
       return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
     })
@@ -149,6 +143,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
   }
 
   return async (request: Request): Promise<Response> => {
+    const arrived = clock.now()
     // The token comes as Authorization: Claude Code then takes a refusal as a failed connection,
     // where with any other header it marks the server as needing a login for 15 minutes.
     if (request.headers.has('origin') || !['127.0.0.1', 'localhost'].includes(new URL(request.url).hostname) || request.headers.get('authorization') !== `Bearer ${token}`) return new Response('Forbidden', { status: 403 })
@@ -181,7 +176,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       listed(session)
       return result(id, { tools: server.tools })
     }
-    if (method === 'tools/call') return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal))
+    if (method === 'tools/call') return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, arrived))
     if (method === 'ping') return result(id, {})
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
   }

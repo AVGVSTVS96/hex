@@ -89,7 +89,7 @@ test('a tool that only reads runs every time', async () => {
   expect(ran()).toBe(2)
 })
 
-test("an answer the session missed answers its repeat for ten minutes", async () => {
+test("an answer the session missed answers its repeat for three minutes", async () => {
   const time = manual(async () => {})
   try {
     const { ran, call, answer } = channel()
@@ -99,7 +99,7 @@ test("an answer the session missed answers its repeat for ten minutes", async ()
     gaveUp.abort()
     await answer()
     await first
-    await time.advance(10 * 60_000)
+    await time.advance(3 * 60_000)
     const missedAgain = new AbortController()
     const again = call({ text: 'report' }, missedAgain)
     missedAgain.abort()
@@ -142,20 +142,18 @@ test('a repeat of a missed call that failed hears the failure instead of acting 
   expect(failing.ran()).toBe(2)
 })
 
-test('a different call shows the session moved on from a missed one, so the same call later runs again', async () => {
+test('another call in the thread, a read or a reaction, leaves a missed reply protected', async () => {
   const { ran, call, answer } = channel()
   const gaveUp = new AbortController()
-  const first = call({ emoji: '👍' }, gaveUp)
+  const first = call({ text: 'report' }, gaveUp)
   await Bun.sleep(1)
   gaveUp.abort()
   await answer()
   await first
-  const other = call({ emoji: '👍', remove: true })
+  const between = [call({ emoji: '👍' }), call({ chat: '1' }, undefined, 'fetch_messages')]
   await answer()
-  await other
-  const again = call({ emoji: '👍' })
-  await answer()
-  expect(text(await again)).toBe('sent (id: 5389)')
+  await Promise.all(between)
+  expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
   expect(ran()).toBe(3)
 })
 
