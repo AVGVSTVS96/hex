@@ -1060,11 +1060,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       // the press: a turn begun since then is left running.
       kept(store => store.turned(session, false, pressed), undefined)
       setState(thread, false, true)
-      const after = await claude.listing(session)
-      if (after?.state !== 'working' && run.turn === 'background') {
-        setState(thread, false)
-        if (after && after.state !== 'blocked' && current(thread) === session) serve.rested(thread)
-      }
+      if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') setState(thread, false)
       return
     }
     process.stderr.write(`hub: Esc didn't interrupt ${thread}'s turn\n`)
