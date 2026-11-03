@@ -1414,6 +1414,30 @@ test('a call that finds its session still waiting for its first message starts i
   expect(hub.session('voice')).toBe('0a1b2c3d-0000-4000-8000-000000000009')
 })
 
+test('a call that comes while a renew is on its way takes the new session as it starts, without starting it over again', async () => {
+  const old = Bun.spawn(['sleep', '30'])
+  start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'busy' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
+  const { send } = await session('voice')
+  said(500)
+  await send({ type: 'state', thread: 'voice', busy: true })
+  hub.renew('voice')
+  await settled()
+  let kept = false
+  void hub.renewal('voice').then(() => hub.keep('voice')).then(() => (kept = true))
+  await send({ type: 'state', thread: 'voice', busy: false })
+  await until(() => calls().find(args => args[0] === 'stop'))
+  writeFileSync(join(dir, 'agents'), '[]')
+  old.kill()
+  await launched()
+  await time.advance(50)
+  expect(kept).toBe(false)
+  await session('voice', '0a1b2c3d-0000-4000-8000-000000000009')
+  await until(() => kept)
+  await time.advance(150)
+  expect(calls().filter(args => args[0] === 'stop')).toHaveLength(1)
+  expect(hub.session('voice')).toBe('0a1b2c3d-0000-4000-8000-000000000009')
+})
+
 test('a call keeps the session it finds once that session has taken a message, like the one that placed the call', async () => {
   start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
   await session('voice')

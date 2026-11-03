@@ -105,6 +105,8 @@ type Run = {
   // A new session whose conversation Claude hasn't saved yet.
   unsaved?: string
   held: (() => void)[]
+  // A call waited for the session now connected to start, so it is as new as the call.
+  awaited?: boolean
   // The starts that failed in a row since the thread's session last connected; retried: another
   // session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean }
@@ -852,6 +854,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     for (const message of given) line.send({ type: 'inbound', ...message })
     run.handed = new Set(given.flatMap(message => message.meta.key ?? []))
     run.queue.length = 0
+    run.awaited = run.held.length > 0
     rest(thread)
     letGo(thread)
     if (stale(thread)) {
@@ -947,15 +950,15 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // A thread is on a call from its keep until its renew, which starts the next call in a new session.
   // That session starts when the last call ends and can wait hours for the next, so a call that finds
   // it still waiting for its first message starts it over, reading memory and live status as they are
-  // now. Resolves once the session the call runs in is connected.
-  async function keep(thread: string) {
+  // now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for
+  // the new session. Resolves once the session the call runs in is connected.
+  function keep(thread: string) {
     const run = runOf(thread)
     if (run.renew !== 'underway') run.renew = undefined
     onCall.add(run)
-    const session = current(thread)
-    if (session && run.phase.is === 'live' && run.turn === 'done' && warmFor(thread) === undefined) {
+    if (!run.awaited && current(thread) && run.phase.is === 'live' && run.turn === 'done' && warmFor(thread) === undefined) {
       run.renew = 'underway'
-      void cycle(thread, await claude.agent(session, serving))
+      void stop(thread).then(() => cycle(thread))
     }
     letGo(thread)
     return renewal(thread)
