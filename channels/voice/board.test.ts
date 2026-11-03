@@ -72,7 +72,8 @@ job('bbbbbbbb-autofork', { state: 'blocked', detail: 'needs music', needs: 'Pick
   { at: still, state: 'blocked', detail: 'still needs music', text: 'Still yours' },
 ])
 const [checking, checked, building] = [Date.now() - 9 * 60_000, Date.now() - 60_000, Date.now() - 5 * 60_000]
-job('cccccccc-voiceapp', { state: 'working', detail: 'building', updatedAt: ago(1), fan: [{ id: 'old', kind: 'agent', label: 'Earlier', doneAt: 1 }, { id: 'agent2', kind: 'agent', label: 'Check the server', startedAt: checking, doneAt: checked }, { id: 'agent1', kind: 'agent', label: 'Build the Tasks view', startedAt: building }, { id: 'sh', kind: 'shell', label: 'sleep' }] }, [
+const voiceFan = [{ id: 'old', kind: 'agent', label: 'Earlier', doneAt: 1 }, { id: 'agent2', kind: 'agent', label: 'Check the server', startedAt: checking, doneAt: checked }, { id: 'agent1', kind: 'agent', label: 'Build the Tasks view', startedAt: building }, { id: 'sh', kind: 'shell', label: 'sleep' }]
+job('cccccccc-voiceapp', { state: 'working', detail: 'building', updatedAt: ago(1), fan: voiceFan }, [
   { at: ago(14), state: 'working', detail: '', text: '' },
 ])
 job('dddddddd-theo', { state: 'stopped', detail: 'stopped', updatedAt: ago(30) }, [{ at: ago(100), state: 'done', detail: 'clips posted', text: 'done' }])
@@ -175,9 +176,17 @@ test("a working thread's line is its newest step in words, never a tool call, an
     ['read', 'Reading tasks.ts'],
   ])
   expect(voiceapp().line).toBe('building')
+  step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'cd ~/repo && git status --short && git log --oneline -3' })
+  const record = (detail: string) => job('cccccccc-voiceapp', { state: 'working', detail, updatedAt: ago(1), fan: voiceFan }, [{ at: ago(14), state: 'working', detail: '', text: '' }])
+  record('Running cd ~/repo && git status --short && git l…')
+  await until(() => voiceapp().steps[0]?.kind === 'run')
+  await Bun.sleep(50)
+  expect(voiceapp().line).not.toContain('Running')
+  record('building')
+  await until(() => voiceapp().line === 'building')
   said(join(project, 'cccccccc-voiceapp.jsonl'), { type: 'text', text: 'The **Tasks** view reads its rows now.' })
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'cd ~/repo && git commit -qm "fix: rows"' })
-  await until(() => voiceapp().steps[0]?.kind === 'run')
+  await until(() => voiceapp().steps[0]?.text.includes('git commit'))
   expect(voiceapp().line).toBe('The Tasks view reads its rows now.')
   step(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.jsonl'), 'Read', { file_path: '/repo/README.md' })
   await until(() => voiceapp().agents[0].line === 'Reading README.md')

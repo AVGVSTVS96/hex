@@ -2250,6 +2250,22 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
   expect(store.beats(SESSION)).toHaveLength(2)
 })
 
+test("hex.db counts a heartbeat from the busy flip after its turn's end, keeps a run's first beat a week on, and drops one a real prompt began before", () => {
+  const store = open(dir)
+  const at = (minutes: number) => new Date(Date.parse('2026-11-01T00:00:00.000Z') + minutes * 60_000).toISOString()
+  store.turned('beat-a', true, at(0))
+  store.turned('beat-a', false, at(1))
+  store.turned('beat-a', true, at(60), true, Date.parse(at(59.9)))
+  expect(store.beats('beat-a')).toEqual([{ began: at(59.9) }])
+  store.turned('beat-a', false, at(61))
+  store.turned('beat-a', true, at(8 * 24 * 60), true, Date.parse(at(8 * 24 * 60 - 0.1)))
+  expect(store.beats('beat-a').map(beat => beat.began)).toEqual([at(59.9), at(8 * 24 * 60 - 0.1)])
+  store.turned('beat-b', false, at(0))
+  store.turned('beat-b', true, at(2), true)
+  store.turned('beat-b', true, at(1.5))
+  expect(store.beats('beat-b')).toEqual([])
+})
+
 test("a task the heartbeat started reports back inside the heartbeat, and one started before it ends the run", async () => {
   const store = open(dir)
   const claude = mkdtempSync(join(tmpdir(), 'hex-claude-'))

@@ -114,6 +114,7 @@ export class Board extends Changes {
   private tracks: Record<string, Turn[]>
   private saving?: ReturnType<typeof setTimeout>
   private beaten = ''
+  private beats = new Map<string, Beat[]>()
 
   constructor(
     private state: string,
@@ -201,6 +202,7 @@ export class Board extends Changes {
     if (this.stale.sessions) this.readSessions()
     if (this.stale.threads || this.stale.sessions) this.watchJobs()
     this.stale = { threads: false, sessions: false }
+    this.beats = open(this.state).everyBeat()
     const since = new Date(Date.now() - KEEP).toISOString()
     const threads = this.threads
       .filter(thread => !this.links.delegated(thread.app, thread.id))
@@ -320,14 +322,12 @@ export class Board extends Changes {
     const started = this.started(thread)
     const handed = this.links.delegations(thread.app, thread.id)
     const out = handed.filter(one => !HANDED[one.status])
-    const beats = thread.session ? open(this.state).beats(thread.session) : []
+    const beats = (thread.session && this.beats.get(thread.session)) || []
     const beat = this.beat(thread, beats, session)
     if (beat !== undefined && job?.state !== 'blocked') ({ job, timeline } = before(job, timeline, beat))
     const beating = beat !== undefined && !job?.fan?.some(fan => RUNS.has(fan.kind) && !fan.doneAt && (fan.startedAt ?? 0) < beat)
-    const outside = (step: Step) => {
-      const at = written.get(step) ?? step.at
-      return !beats.some(beat => at >= beat.began && (!beat.until || at < beat.until))
-    }
+    const outside = (at: string) => !beats.some(beat => at >= beat.began && (!beat.until || at < beat.until))
+    const ours = (step: Step) => outside(written.get(step) ?? step.at)
     const known = job?.state ? STATES[job.state] : undefined
     const live = (busy(session) && !beating) || started.length > 0 || out.length > 0
     let state: State = live ? 'working' : (known ?? 'idle')
@@ -345,14 +345,15 @@ export class Board extends Changes {
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
     const { link } = thread
     const key = keyOf(thread)
-    const steps = state === 'working' ? this.steps(key).filter(outside) : []
+    const steps = state === 'working' ? this.steps(key).filter(ours) : []
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
-    const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && outside(step)) : undefined
-    const line = (said && (!detail || said.at >= at) ? said.text : undefined) || needs || detail || lately[0]?.text || ''
+    const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && ours(step)) : undefined
+    const summary = detail && !tooled(detail, this.followers.get(key)?.steps ?? []) ? detail : undefined
+    const line = said?.text || needs || summary || lately[0]?.text || ''
     const agents = (
       state === 'working'
         ? [
-            ...(job?.fan ?? []).filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since))).map(fan => this.subagent(key, fan)),
+            ...(job?.fan ?? []).filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since)) && outside(iso(fan.startedAt) ?? '')).map(fan => this.subagent(key, fan)),
             ...started.map(one => this.agent(`${key} ${one.id}`, { id: one.id, label: one.name ?? short(one.id), state: 'working', via: 'claude', since: iso(one.started) })),
             ...handed.filter(one => !HANDED[one.status] || one.latest || !one.end || one.end >= since).map(one => this.delegation(key, one)),
           ]
@@ -393,9 +394,9 @@ export class Board extends Changes {
     const last = run.at(-1)
     const next = !!last?.until && session?.status === 'busy' && flipped > Date.parse(last.until) && this.untaken(thread).some(row => row.meta?.schedule !== 'heartbeat')
     if (run.length && !next) return Date.parse(run[0]!.began)
-    if (!session) return
+    if (session?.status !== 'busy') return
     const { began, ended } = open(this.state).turn(session.id)
-    if (session.status === 'busy' && (!began || (!!ended && Date.parse(began) < flipped)) && this.awaited(thread)) return flipped
+    if ((!began || (!!ended && Date.parse(began) < flipped)) && this.awaited(thread)) return flipped
   }
 
   private untaken(thread: Thread) {
@@ -667,7 +668,18 @@ function toldOf(entry: any): [string, Told] | undefined {
 function before(job: Job | undefined, timeline: Entry[], from: number) {
   const kept = timeline.filter(entry => Date.parse(entry.at) < from)
   const last = kept.at(-1)
-  return { job: job && { ...job, state: last?.state, detail: last?.detail, needs: last?.state === 'blocked' ? job.needs : undefined, updatedAt: last?.at ?? job.updatedAt }, timeline: kept }
+  return { job: job && { ...job, state: last?.state, detail: last?.detail, needs: last?.state === 'blocked' ? job.needs : undefined, updatedAt: last?.at }, timeline: kept }
+}
+
+// Claude Code's own status line while it works is often the tool it's running, worded the way a
+// step is (Running <command>, cut short with …): a line in words leaves that out.
+function tooled(detail: string, steps: Step[]) {
+  const head = detail.replace(/…$/, '')
+  return steps.some(
+    step =>
+      !['say', 'think', 'plan'].includes(step.kind) &&
+      [step.text, step.detail && `Running ${firstLine(step.detail)}`].some(text => text && (plain(text) === detail || (head !== detail && plain(text).startsWith(head)))),
+  )
 }
 
 // Steps of a stretch that ended: one still running then never said how it went.

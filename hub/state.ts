@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'fs'
 import { connect } from 'net'
 import { join } from 'path'
-import { CLAUDE } from './running.ts'
+import { CLAUDE, running } from './running.ts'
 import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
@@ -33,13 +33,15 @@ const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined
 // A heartbeat's turn is recorded as it's taken, so no look at hex.db finds it taken but not yet a turn.
 let untold = key
 let recorded = false
+let heartbeat = false
 if (key) {
   try {
     const store = open(stateDir())
-    const heartbeat = store.message(key)?.meta?.schedule === 'heartbeat'
+    heartbeat = store.message(key)?.meta?.schedule === 'heartbeat'
+    const flipped = heartbeat ? running(store).get(session_id)?.updated : undefined
     let took: boolean
     try {
-      took = recorded = store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat), true))
+      took = recorded = store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat, flipped), true))
     } catch (error) {
       console.error(`hex couldn't record this turn: ${error}`)
       took = store.take(key, session_id)
@@ -84,7 +86,7 @@ function job(session: string): { sessionId?: string; fan?: { id: string; started
 if (session_id && !recorded) {
   try {
     const store = open(stateDir())
-    store.turned(session_id, busy, at, busy && heartbeats(store, session_id))
+    store.turned(session_id, busy, at, heartbeat || (busy && heartbeats(store, session_id)))
   } catch (error) {
     console.error(`hex couldn't record this turn: ${error}`)
   }
