@@ -341,9 +341,11 @@ test('a not needed with one hub down still reaches the rest and says what it mis
   await until(() => lines.length === 2)
   expect(lines.map(line => line.type)).toEqual(['inbound', 'settle'])
   await expect(questions.dismiss('check:twilio', 'app')).rejects.toThrow('already answered or settled')
+  expect(questions.find('check:twilio')!.partly).toBeUndefined()
 
   ledger([{ ...asked(1, 'Twilio?', ['Upgrade', 'Not yet']), settled: { note: '✓ Not needed, said in the app', at: '' } }, { ...asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), app: 'discord' } as any])
   await Bun.sleep(150)
+  expect(questions.find('check:twilio')).toMatchObject({ partly: 'Not needed' })
   const discord = await discordHub()
   try {
     expect(await questions.dismiss('check:twilio', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 0 })
@@ -369,6 +371,8 @@ test('an answer that missed a copy is finished by the same answer, which only se
   expect(await questions.answer('check:twilio', 'Upgrade', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 1 })
   ledger([{ ...asked(1, 'Twilio?', ['Upgrade', 'Not yet']), answer: { label: 'Upgrade', at: '', via: 'app' } }, { ...asked(2, 'Upgrade Twilio now?', ['Upgrade', 'Not yet']), app: 'discord' } as any])
   await Bun.sleep(150)
+  expect(questions.find('check:twilio')).toMatchObject({ partly: 'Upgrade' })
+  expect(questions.find('check:twilio')!.undoing).toBeUndefined()
   await expect(questions.answer('check:twilio', 'Not yet', 'app')).rejects.toThrow('part of "Upgrade" went out')
   await expect(questions.dismiss('check:twilio', 'app')).rejects.toThrow('part of "Upgrade" went out')
   const discord = await discordHub()
@@ -407,6 +411,8 @@ test('an undo with a hub down takes back what it can, keeps the rest, and finish
   await until(() => lines.some(line => line.type === 'reopen'))
   ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), app: 'discord', settled: { note: '✓ Answered in the app: Upgrade', at: '' } } as any])
   await Bun.sleep(150)
+  expect(questions.find('check:twilio')).toMatchObject({ undoing: true })
+  expect(questions.find('check:twilio')!.partly).toBeUndefined()
   await expect(questions.answer('check:twilio', 'Not yet', 'app')).rejects.toThrow('undo it again first')
   discord = await discordHub()
   try {

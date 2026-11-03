@@ -46,6 +46,11 @@ export type Question = {
   links?: Link[]
   tag?: string
   places: Place[]
+  // Left half done from here: partly, the answer (or "Not needed") that reached only some of its
+  // copies, which only it can finish, or undo; undoing, an undo that stopped partway, which only
+  // undoing again finishes.
+  partly?: string
+  undoing?: true
 }
 // hex's check rewrites the raw questions into these: one per decision, however many places asked
 // it (from; refs are the open questions with buttons among them, which an answer goes back to), in
@@ -342,6 +347,20 @@ export class Questions extends Changes {
     taken.told.push(thread)
   }
 
+  // What an answer or undo from here left half done on a question, by the same rules take holds
+  // it to: an undo that stopped partway, or an answer whose only open copies are ones it missed.
+  private half(id: string): Pick<Question, 'partly' | 'undoing'> {
+    const kept = this.marks.answers[id]
+    if (!kept) return {}
+    if (kept.undoing) return { undoing: true }
+    const marks = chain(kept)
+    const reached = new Set(marks.flatMap(mark => (mark.refs ?? []).map(refId)))
+    const missed = new Set(marks.flatMap(mark => (mark.missed ?? []).map(refId)))
+    const open = this.refs(id).filter(ref => this.open(ref))
+    const left = open.filter(ref => !reached.has(refId(ref)))
+    return open.length === left.length && left.length && left.every(ref => missed.has(refId(ref))) ? { partly: kept.label } : {}
+  }
+
   // Whether a copy is open, or was closed from here rather than by a tap in its own app or its thread.
   private ours(ref: Ref) {
     const asked = this.asked(ref)
@@ -404,12 +423,13 @@ export class Questions extends Changes {
     const used = new Set<string>()
     const curated = (this.result?.asks ?? []).flatMap((question: Written) => {
       for (const ref of question.refs ?? []) used.add(refId(ref))
-      const live = question.refs?.length ? question.refs.some(ref => this.open(ref)) : !this.marks.answers[question.id]
+      const kept = this.marks.answers[question.id]
+      const live = kept?.undoing || (question.refs?.length ? question.refs.some(ref => this.open(ref)) : !kept)
       return live ? [this.dress(question)] : []
     })
     const raw = [...this.ledgers].flatMap(([app, questions]) =>
       questions
-        .filter(question => !question.answer && !question.settled && !used.has(refId({ app, ...question })))
+        .filter(question => (this.marks.answers[refId({ app, ...question })]?.undoing || (!question.answer && !question.settled)) && !used.has(refId({ app, ...question })))
         .map(question => this.dress(fromLedger(app, question, before(store(this.state), app, question, Infinity).at(-1)))),
     )
     raw.sort((a, b) => b.at.localeCompare(a.at))
@@ -451,6 +471,7 @@ export class Questions extends Changes {
       options: options.filter(option => !option.url),
       ...(pages.length && { links: pages }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(':') }]),
+      ...this.half(question.id),
     }
   }
 
