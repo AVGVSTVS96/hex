@@ -26,7 +26,7 @@ function fake(name: string, body: string) {
 
 function vault(args: string[], caller: Record<string, string> = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('ENCLAVE_')))
-  const run = Bun.spawnSync([join(home, '.hex/bin/vault'), ...args], { env: { ...env, ...caller, PATH: `${join(home, 'fake')}:${env.PATH}` } })
+  const run = Bun.spawnSync([join(home, '.hex/bin/vault'), ...args], { env: { ...env, PATH: `${join(home, 'fake')}:${env.PATH}`, ...caller } })
   expect(run.exitCode).toBe(0)
   return run.stdout.toString()
 }
@@ -44,6 +44,14 @@ test('vault run hands the command enclave\'s settings and none of .env, even whe
 test('vault run works without a .env', () => {
   rmSync(join(home, '.env'))
   expect(vault(['run', 'GitHub', '--', 'env'])).toContain('ENCLAVE_FROM=herald\n')
+})
+
+test('bunx, when enclave isn\'t installed, gets none of .env either', () => {
+  rmSync(join(home, 'fake/enclave'))
+  fake('bunx', 'env')
+  const env = vault(['list'], { PATH: `${join(home, 'fake')}:/usr/bin:/bin`, TELEGRAM_BOT_TOKEN: 'bot-secret' })
+  expect(env).toContain('ENCLAVE_HOME=/vault-home\n')
+  expect(env).not.toContain('bot-secret')
 })
 
 test('vault fill still finds the computer in the settings', () => {
