@@ -6,8 +6,10 @@ home=$(cd "$(dirname "$0")/../.." && pwd)
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
 enclave="bunx enclave-link@^0.2.7"
 if installed=$(command -v enclave) && real=$(readlink -f "$installed"); then
-  case $(jq -r .version "${real%/*}/../package.json" 2>/dev/null) in
-  0.2.[7-9] | 0.2.[1-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave=enclave ;;
+  version=$(jq -r .version "${real%/*}/../package.json" 2>/dev/null) || version=
+  case $version in
+  "" | *[!0-9.]*) ;;
+  *) [ "$(printf '0.2.7\n%s\n' "$version" | sort -V | head -n 1)" = 0.2.7 ] && enclave=enclave ;;
   esac
 fi
 
