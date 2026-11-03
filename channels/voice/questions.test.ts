@@ -70,6 +70,13 @@ test('a question keeps all of its context, line by line, so the app can open the
   expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
 })
 
+test('a first line too long to show reads whole in its context', () => {
+  const first = `Which way? ${'One option costs this and the other takes that away. '.repeat(4).trim()}`
+  const question = fromLedger('telegram', asked(1, first, ['A', 'B']))
+  expect(question.question.endsWith('…')).toBe(true)
+  expect(question.context).toBe(first)
+})
+
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {
   ledger([asked(1, 'Ship it?', ['Yes', 'No']), asked(2, 'Rename it?', ['Yes', 'No'], { answer: { label: 'No', at: '', via: 'telegram' } }), asked(3, 'Which color?', ['Mint', 'Coral'])])
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
