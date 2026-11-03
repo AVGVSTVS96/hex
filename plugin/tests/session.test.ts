@@ -6,6 +6,8 @@ import { startHub } from '../../hub/hub.ts'
 
 // The hub starts every session through bin/session, so this runs the hub's real launch
 // against the real launcher, with a fake claude at the end that records what it was given.
+// Each hub gets state of its own: a later hub on the same state starts again every thread whose
+// message the fake never took, and those launches race the one a test is checking.
 
 const HEX = join(import.meta.dir, '../..')
 const saved = { ...process.env }
@@ -18,6 +20,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), 'session-'))
   for (const dir of ['bin', 'chat', 'hub']) cpSync(join(HEX, dir), join(home, '.hex', dir), { recursive: true })
   mkdirSync(join(home, '.claude'))
+  mkdirSync(join(home, 'state'))
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_MAIN_MODEL: 'claude-opus-5-5', MEMORY_DIR: join(home, 'memory') } }))
   mkdirSync(join(home, '.hex/vendor'))
   writeFileSync(join(home, '.hex/vendor/memo'), '#!/bin/sh\necho "#0 a memory"\necho "You are awake."\n')
@@ -49,7 +52,7 @@ afterEach(() => {
 
 async function launch(channel: string, thread: string, options: Partial<Parameters<typeof startHub>[0]> = {}, cwd?: string) {
   hub = startHub({
-    stateDir: join(home, 'state'),
+    stateDir: mkdtempSync(join(home, 'state/hub-')),
     channel,
     server: { title: 'Test', instructions: 'Messages arrive as <channel>.', tools: [] },
     port: listener.port,
