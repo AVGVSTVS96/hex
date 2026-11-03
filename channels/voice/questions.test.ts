@@ -5,7 +5,7 @@ import { createServer, type Server } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Questions, fromLedger } from './questions.ts'
-import { vet } from './check.ts'
+import { before, vet } from './check.ts'
 import { T3 } from './t3.ts'
 import { until } from '../../hub/until.ts'
 import type { Pin, Question } from '../../hub/ledger.ts'
@@ -107,6 +107,35 @@ test('a long first line is cut at a word when its only sentence end is an abbrev
 
 test('a short first line that ends in an ellipsis keeps no context of its own', () => {
   expect(fromLedger('telegram', asked(1, 'Ship it…', ['Yes', 'No'])).context).toBeUndefined()
+})
+
+// hex's messages in DESK before question 9 (asked at 2026-10-13T19:00), each at its minute past 18:00.
+function said(lines: [number, string, Partial<{ author: 'hex' | 'owner'; to: string; meta: Record<string, string> }>?][]) {
+  const store = open(state)
+  for (const [minute, body, { author = 'hex', to = DESK, meta } = {}] of lines) store.deliver({ key: `telegram:${GROUP}:${100 + minute}`, to, from: 'telegram', author, body, ...(meta && { meta }) }, 'session')
+  store.past(lines.map(([minute]) => [`telegram:${GROUP}:${100 + minute}`, `2026-10-13T18:${String(minute).padStart(2, '0')}:00.000Z`]))
+}
+
+test("a question comes with hex's last two messages before it in its thread, not its own parts, edits, files, the owner's words or other threads'", () => {
+  said([
+    [1, 'Old news.'],
+    [2, 'Caddy gives a short domain; Tailscale Services needs no server.'],
+    [3, 'which one?', { author: 'owner' }],
+    [4, '(file: plan.png)', { meta: { file: 'plan.png' } }],
+    [5, 'An edit of an older message.', { meta: { edited: 'true', message_id: '90' } }],
+    [6, 'Elsewhere.', { to: GROUP }],
+    [7, '**Which one serves the pages?**'],
+  ])
+  const question = asked(9, '**Which one serves the pages?**\nA or B', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })
+  expect(before(open(state), 'telegram', question)).toEqual(['Old news.', 'Caddy gives a short domain; Tailscale Services needs no server.'])
+  expect(before(open(state), 'telegram', question, 10)).toEqual(['Old news.', 'Caddy giv…'])
+})
+
+test("a question the check hasn't rewritten yet opens hex's message before it as context", () => {
+  said([[1, '**Caddy** gives a short domain.']])
+  ledger([asked(9, 'Caddy or Tailscale?\nCaddy is mine.', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.view.asks[0]!.context).toBe('Caddy is mine.\nCaddy gives a short domain.')
 })
 
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {
