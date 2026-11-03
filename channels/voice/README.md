@@ -292,9 +292,10 @@ back both. An undo that can't reach a hub keeps the rest and says so, nothing
 is answered over it, and undoing again finishes it.
 
 `GET /asks` marks an ask left half done: `partly` is the answer (or "Not
-needed") that reached only some of its copies, which sending it again finishes
-or undo takes back; `undoing: true` is an undo that stopped partway, which only
-undoing again finishes. The call's walk-through says the same.
+needed") that reached only some of its copies, which sending that label again
+finishes (by answer or dismiss, either way, as the verb it was) or undo takes
+back; `undoing: true` is an undo that stopped partway, which only undoing again
+finishes. The call's walk-through says the same.
 
 | Request | Answers |
 | --- | --- |
