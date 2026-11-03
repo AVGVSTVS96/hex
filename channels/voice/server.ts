@@ -10,7 +10,7 @@ import { Chats } from './chat.ts'
 import { PORT, STATE_DIR, env } from './env.ts'
 import { clip, Questions, type Question } from './questions.ts'
 import { relay } from './relay.ts'
-import { Board, opener, type Run } from './board.ts'
+import { Board, opener, type Page, type Run } from './board.ts'
 import { begin, title as oneWord, type Held, type VoiceLine } from '../../hub/hub.ts'
 import page from './page.html' with { type: 'text' }
 
@@ -416,12 +416,11 @@ function follow(socket: WebSocket, record: Live['record'], { call = new Call(), 
 // is told to do first.
 type Topic = { id: string; claude: string; voice: string }
 
-function runTopic(run: Run & { closed?: true }): Topic {
-  const about = `${opener(run)}${run.closed ? ' (The thread is closed.)' : ''}`
+function runTopic(run: Run): Topic {
   return {
     id: run.id,
-    claude: `The caller started it with Talk it through on a task. ${about}`,
-    voice: `The caller tapped Talk it through on a task, so bring it up now in a sentence or two, then listen. ${about}`,
+    claude: `The caller started it with Talk it through on a task. ${opener(run)}`,
+    voice: `The caller tapped Talk it through on a task, so bring it up now in a sentence or two, then listen. ${opener(run)}`,
   }
 }
 
@@ -919,7 +918,7 @@ function cards(call: Live) {
 
 function topicOf(about?: string): Topic | undefined {
   if (about === 'asks') return walkTopic(yours.view.asks)
-  const run = about ? board.find(about) : undefined
+  const run = about ? board.get(about) : undefined
   return run && runTopic(run)
 }
 
@@ -983,17 +982,20 @@ function runRoutes(request: Request, url: URL) {
   if (url.pathname === '/tasks' && request.method === 'GET') return showRuns(url, runs)
   if (url.pathname === '/tasks/summary' && request.method === 'GET') return showSummary(url, runs, yours)
   const [, id, verb] = url.pathname.match(/^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/) ?? []
-  const run = id && runs.find(decodeURIComponent(id))
+  const key = id && decodeURIComponent(id)
+  // A thread off the board is a page to read: its run, asks, pin and chat, and nothing to act on.
+  const page = key && request.method === 'GET' && runs.find(key)
+  if (page && verb === 'chat') return showChat(url, page)
+  if (page && !verb) return Response.json({ ...page, ...yours.of(page.id) })
+  const run = key && runs.get(key)
   if (!run) return new Response('404', { status: 404 })
   if (verb === 'talk' && request.method === 'POST') return talkAbout(runTopic(run))
-  if (verb === 'chat' && request.method === 'GET') return showChat(url, run)
   if (verb === 'chat' && request.method === 'POST') return sendChat(request, run)
   if (verb === 'stop' && request.method === 'POST') return done(() => chats.stop(run))
-  if (!verb && request.method === 'GET') return Response.json({ ...run, ...yours.of(run.id) })
 }
 
 // A thread's chat, and with after, the next time it changes.
-async function showChat(url: URL, run: Run) {
+async function showChat(url: URL, run: Run | Page) {
   const where = () => ({ ...run, session: board.session(run.id) })
   const after = url.searchParams.get('after')
   return Response.json(after ? await chats.next(where, Number(after), 25_000) : chats.of(where()))

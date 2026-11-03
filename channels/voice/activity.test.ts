@@ -7,7 +7,7 @@ import { open, type Kept } from '../../hub/store.ts'
 
 const home = mkdtempSync(join(tmpdir(), 'voice-activity-'))
 process.env.CLAUDE_CONFIG_DIR = join(home, 'claude')
-const { backOf, findThread, followAgent, followThread, followTranscript, headline, itemStep, past, stepOf } = await import('./activity.ts')
+const { backOf, findThread, followAgent, followThread, followTranscript, generalOf, headline, itemStep, nameOf, past, stepOf } = await import('./activity.ts')
 afterAll(() => rmSync(home, { recursive: true }))
 
 const hex = '/home/someone/hex'
@@ -152,16 +152,24 @@ test("a background subagent's steps come from its transcript as it writes them",
 })
 
 test('a thread is found by its id or its name, in any app but voice', () => {
-  threads('telegram', { '-100:452': { name: 'voiceapp', session: 's1' }, '-100': { name: 'main', session: 's0' } })
+  threads('telegram', { '-100:452': { name: 'voiceapp', session: 's1' } })
   threads('voice', { voice: { name: 'voice', session: 'v' } })
   threads('t3', { 't3-id': { name: 'commonplace', cwd: '/home/someone/Developer/commonplace' } })
   expect(findThread(state, 'VoiceApp')).toMatchObject({ app: 'telegram', id: '-100:452', name: 'voiceapp' })
+  expect(findThread(state, 't3-id')).toMatchObject({ app: 't3', cwd: '/home/someone/Developer/commonplace' })
+  expect(findThread(state, 'voice')).toBeUndefined()
+})
+
+test("General goes by General, found by that name too, and a second Telegram group keeps its own", () => {
+  threads('telegram', { '-100:452': { name: 'voiceapp', session: 's1' }, '-100': { name: 'main', session: 's0' }, '-200': { name: 'Family', session: 's3' } })
   expect(findThread(state, 'general')).toMatchObject({ app: 'telegram', id: '-100', name: 'General' })
+  expect(findThread(state, 'Family')).toMatchObject({ id: '-200', name: 'Family' })
+  const rows = [{ app: 'telegram', thread: '-100', name: 'main' }, { app: 'telegram', thread: '-200', name: 'Family' }]
+  expect(rows.map(row => nameOf(row, generalOf(rows)))).toEqual(['General', 'Family'])
   threads('discord', { 'discord-general': { name: 'general', session: 's9' } })
   expect(() => findThread(state, 'General')).toThrow('more than one hex thread goes by General, in discord and telegram')
   threads('discord', {})
-  expect(findThread(state, 't3-id')).toMatchObject({ app: 't3', cwd: '/home/someone/Developer/commonplace' })
-  expect(findThread(state, 'voice')).toBeUndefined()
+  threads('telegram', { '-100:452': { name: 'voiceapp', session: 's1' } })
 })
 
 test('a name more than one thread has finds none of them, and says where they are', () => {

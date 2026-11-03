@@ -569,37 +569,26 @@ test("two T3 threads that send each other work each show on their own, the other
   expect(board.get('t3:pong')!.agents.map(agent => [agent.label, agent.state])).toEqual([['ping', 'working']])
 })
 
-test("a thread off the board, one quiet for a week or closed, is still found as a run in the board's shape, and the board keeps leaving it out", async () => {
+test("a thread off the board, quiet for a week or closed, is a page of what was last kept for it, read without touching the board", async () => {
   expect(board.find('telegram:-1001234567890')).toBe(board.get('telegram:-1001234567890')!)
-  const quiet = board.find('buzz:b1')!
-  expect(quiet).toMatchObject({ id: 'buzz:b1', app: 'buzz', thread: 'b1', name: 'Old news', where: 'Buzz', place: 'Old news', state: 'done', line: 'long ago', agents: [], steps: [], lately: [] })
-  expect(Object.keys(quiet).sort()).toEqual(Object.keys(board.get('telegram:-1001234567890:65')!).filter(key => key !== 'link').sort())
-  threads('discord', { gone: { name: 'Data kit', session: 'abababab-gone' } })
-  job('abababab-gone', { state: 'blocked', detail: 'kit waits', needs: 'Pick a kit', updatedAt: ago(10 * 24 * 60) }, [
-    { at: ago(11 * 24 * 60), state: 'done', detail: 'kit built', text: 'built' },
-    { at: ago(10 * 24 * 60), state: 'blocked', detail: 'kit waits', text: 'yours' },
-  ])
+  const lanes = readFileSync(join(state, 'voice', 'tracks.json'), 'utf8')
+  expect(board.find('buzz:b1')).toEqual({ id: 'buzz:b1', app: 'buzz', thread: 'b1', name: 'Old news', where: 'Buzz', place: 'Old news', at: JSON.parse(readFileSync(join(claude, 'jobs', 'ffffffff', 'state.json'), 'utf8')).updatedAt, line: 'long ago' })
+  threads('discord', { gone: { name: 'Data kit', session: 'abababab-gone', link: 'https://discord.com/channels/1/gone' } })
+  job('abababab-gone', { state: 'blocked', detail: 'kit waits', needs: 'Pick a kit', updatedAt: ago(10 * 24 * 60) })
   threads('discord', {})
   await until(() => !open(state).threads({ app: 'discord', open: true }).length)
-  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', state: 'idle', line: 'kit built', lately: [], closed: true })
-  expect(board.find('discord:gone')).not.toContainKey('needs')
-  expect(board.find('buzz:b1')).not.toContainKey('closed')
-  expect(JSON.parse(readFileSync(join(state, 'voice', 'tracks.json'), 'utf8'))).not.toContainAnyKeys(['buzz:b1', 'discord:gone'])
-  expect(board.runs.map(run => run.id)).not.toContainAnyValues(['buzz:b1', 'discord:gone'])
+  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', line: 'kit waits', link: 'https://discord.com/channels/1/gone' })
   expect(board.find('discord:never')).toBeUndefined()
+  expect(board.runs.map(run => run.id)).not.toContainAnyValues(['buzz:b1', 'discord:gone'])
+  expect(readFileSync(join(state, 'voice', 'tracks.json'), 'utf8')).toBe(lanes)
 })
 
-test("a closed thread whose session moved to another app's thread shows none of that session's state", async () => {
-  job('acacacac-moved', { state: 'blocked', detail: 'needs a pick', needs: 'Pick one', updatedAt: ago(1) })
-  running('acacacac-moved', 'busy')
+test("a closed thread whose session another open thread holds now shows nothing of that session", async () => {
+  job('acacacac-moved', { state: 'blocked', detail: 'needs a pick', updatedAt: ago(1) })
   threads('discord', { topic: { name: 'Snailmail', session: 'acacacac-moved' } })
   threads('discord', {})
   threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' }, there: { name: 'Snailmail', session: 'acacacac-moved' } })
-  await until(() => board.get('buzz:there')?.state === 'working')
-  expect(board.find('discord:topic')).toMatchObject({ name: 'Snailmail', state: 'idle', running: false, line: '', agents: [] })
-  expect(board.find('discord:topic')).not.toContainKey('needs')
+  await until(() => !!board.get('buzz:there'))
+  expect(board.find('discord:topic')).toEqual({ id: 'discord:topic', app: 'discord', thread: 'topic', name: 'Snailmail', where: 'Discord', place: 'Snailmail' })
   threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' } })
-  await until(() => !board.get('buzz:there'))
-  expect(board.find('buzz:there')).toMatchObject({ closed: true, state: 'idle', running: false, line: '', steps: [] })
-  rmSync(join(claude, 'sessions', 'acacacac.json'))
 })
