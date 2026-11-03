@@ -142,14 +142,17 @@ export class Board extends Changes {
     if (lane) this.tracks[id] = lane
     else delete this.tracks[id]
     if (thread.session && !this.wanted().has(short(thread.session))) this.jobs.delete(short(thread.session))
-    if (!Date.parse(run.at) && lane?.length) run.at = run.since = lane.at(-1)!.at
+    if (!Date.parse(run.at) && lane?.length) {
+      run.at = lane.at(-1)!.at
+      if (run.state !== 'working') run.since = run.at
+    }
     if (row.open) {
       if (run.state !== 'working') this.keep(run)
       return run
     }
     const { needs, ...closed } = run
     if (run.state !== 'needs' && run.state !== 'working') return { ...closed, closed: true }
-    const line = run.lately.find(moment => moment.text !== needs)?.text ?? ''
+    const line = run.lately.find(moment => moment.state !== 'needs')?.text ?? ''
     return { ...closed, state: 'idle', running: false, line, since: run.at, lately: [], agents: [], steps: [], plan: [], closed: true }
   }
 

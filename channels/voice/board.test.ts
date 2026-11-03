@@ -575,10 +575,13 @@ test("a thread off the board, one quiet for a week or closed, is still found as 
   expect(quiet).toMatchObject({ id: 'buzz:b1', app: 'buzz', thread: 'b1', name: 'Old news', where: 'Buzz', place: 'Old news', state: 'done', line: 'long ago', agents: [], steps: [], lately: [] })
   expect(Object.keys(quiet).sort()).toEqual(Object.keys(board.get('telegram:-1001234567890:65')!).filter(key => key !== 'link').sort())
   threads('discord', { gone: { name: 'Data kit', session: 'abababab-gone' } })
-  job('abababab-gone', { state: 'blocked', detail: 'kit waits', needs: 'Pick a kit', updatedAt: ago(10 * 24 * 60) })
+  job('abababab-gone', { state: 'blocked', detail: 'kit waits', needs: 'Pick a kit', updatedAt: ago(10 * 24 * 60) }, [
+    { at: ago(11 * 24 * 60), state: 'done', detail: 'kit built', text: 'built' },
+    { at: ago(10 * 24 * 60), state: 'blocked', detail: 'kit waits', text: 'yours' },
+  ])
   threads('discord', {})
   await until(() => !open(state).threads({ app: 'discord', open: true }).length)
-  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', state: 'idle', line: '', closed: true })
+  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', state: 'idle', line: 'kit built', lately: [], closed: true })
   expect(board.find('discord:gone')).not.toContainKey('needs')
   expect(board.find('buzz:b1')).not.toContainKey('closed')
   expect(JSON.parse(readFileSync(join(state, 'voice', 'tracks.json'), 'utf8'))).not.toContainAnyKeys(['buzz:b1', 'discord:gone'])

@@ -238,7 +238,7 @@ function claude(input: string, hexDir: string, state: string) {
   const args = ['-p', '--model', MODEL, '--effort', 'medium', '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--setting-sources', 'project', '--no-session-persistence', '--add-dir', hexDir, join(homedir(), '.claude', 'projects')]
   const cwd = mkdtempSync(join(tmpdir(), 'hex-check-'))
   writeFileSync(join(cwd, 'messages.md'), messages(hexDir))
-  writeFileSync(join(cwd, 'threads.json'), JSON.stringify(store(state).threads(), null, 1))
+  writeFileSync(join(cwd, 'threads.json'), JSON.stringify(store(state).threads().map(row => ({ ...row, name: nameOf(row.app, row.thread, row.name) })), null, 1))
   return new Promise<Verdict>((resolve, reject) => {
     const env = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('CLAUDECODE'))), CLAUDE_CODE_ENTRYPOINT: 'hex' }
     const child = spawn('claude', args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
