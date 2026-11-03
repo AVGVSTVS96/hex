@@ -753,13 +753,16 @@ test('a local inbound request for a thread this hub doesn\'t have opens nothing'
   expect(Object.keys(registry())).toEqual(['chat:5'])
 })
 
-test('a start that stops before its channel connects is reported then, not after the wait for a slow hub', async () => {
-  start({ reconnect: 50, connect: 60_000 })
+test('a message a session was handed but never took shows it waits again once that session is gone', async () => {
+  start({ reconnect: 50 })
   hub.deliver('chat:7', 'Desk anchors', message)
   await launched()
-  writeFileSync(join(dir, 'jobs', 'job12345', 'state.json'), JSON.stringify({ state: 'stopped' }))
-  await until(() => failures.length)
-  expect(failures).toEqual([['chat:7', 'its session ended before its channel connected']])
+  const line = await session('chat:7')
+  await until(() => line.received.length)
+  expect(holds).toEqual([['chat:7', 'hi', true], ['chat:7', 'hi', false]])
+  line.close()
+  await until(() => holds.length === 3)
+  expect(holds[2]).toEqual(['chat:7', 'hi', true])
 })
 
 test('a message that waited from before this hub started stops showing it waits once a session has it', async () => {

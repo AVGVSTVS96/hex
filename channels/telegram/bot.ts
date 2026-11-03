@@ -673,7 +673,7 @@ const reacting = new Map<string, Promise<unknown>>()
 
 function react(chat_id: string, message_id: number, reaction: ReactionTypeEmoji[], otherwise?: ReactionTypeEmoji[]): Promise<unknown> {
   const key = `${chat_id}:${message_id}`
-  const set = (to: ReactionTypeEmoji[]) => bot.api.setMessageReaction(chat_id, message_id, to)
+  const set = (to: ReactionTypeEmoji[]) => paced(() => bot.api.setMessageReaction(chat_id, message_id, to))
   const done = (reacting.get(key) ?? Promise.resolve()).catch(() => {}).then(() => (otherwise ? set(reaction).catch(() => set(otherwise)) : set(reaction)))
   reacting.set(key, done)
   const settled = () => void (reacting.get(key) === done && reacting.delete(key))

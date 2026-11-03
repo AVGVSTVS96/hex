@@ -662,7 +662,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const check = () => {
       const { state: status, detail } = claude.record(job)
       if (status === 'failed') fail(thread, detail || 'the session failed to start')
-      else if (status === 'stopped') gone(thread)
     }
     try {
       phase.watch = claude.watchJob(job, check)
@@ -687,6 +686,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     failing.count++
     if (!phase.again) failing.retried = false
     process.stderr.write(`hub: ${thread}'s session failed to start, ${failing.count} in a row: ${reason}\n`)
+    for (const message of waiting(thread)) mark(thread, message)
     if (!phase.again || failing.count === 1) failed(thread, reason)
     if (failing.count >= TELL_AFTER && !failing.told && generalHub && !(general && thread === main)) {
       failing.told = true
@@ -771,8 +771,12 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
 
   function hold(thread: string, message: Message) {
+    runOf(thread).queue.push(message)
+    mark(thread, message)
+  }
+
+  function mark(thread: string, message: Message) {
     const run = runOf(thread)
-    run.queue.push(message)
     const { key } = message.meta
     if (!key || run.waiting.has(key)) return
     run.waiting.add(key)
@@ -872,7 +876,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const id = job && claude.record(job).sessionId
     if (id) note(thread, id)
     const given = waiting(thread)
-    // No session has these yet, so none has reacted to them, whichever hub told the client they wait.
+    // No session has these yet, so none has reacted to them, whichever hub told the client they
+    // wait. One that's still untaken when this line drops or the next start fails waits again.
     for (const message of given) {
       waits?.(thread, message, false)
       line.send({ type: 'inbound', ...message })
@@ -904,6 +909,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     become(run, { is: 'recovering' })
     setState(thread, false)
     if (run.leaving) return forget(thread)
+    for (const message of waiting(thread)) mark(thread, message)
     recover(thread)
   }
 
