@@ -38,7 +38,7 @@ Never edit or delete anything under `memory/`: the tool manages it.
 
 ### When you need an old memory: search, or navigate
 
-`.hex/vendor/memo recall <regex>` searches every memory, word for word.
+`.hex/vendor/memo recall '<regex>'` searches every memory for one regex, already ignoring case (it takes no flags, like `-i`).
 
 Your memories also form a binary tree: #0-1, #2-3 ... exist as one-line
 summaries, pairs of those as #0-3, and so on -- every `#a-b` line wake
