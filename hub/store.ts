@@ -244,12 +244,6 @@ const migrations: (string | ((store: Store) => void))[] = [
   create index if not exists beats_session on beats (session, began);`,
   // A thread's tasks, which its status post reads at each change to hex.db, by state and when each closed.
   'create index if not exists owned on tasks (owner, status, closed);',
-  // A thread's tasks, which its status post reads at each change to hex.db, by state and when each
-  // closed; and its messages in the order they were kept, whose last says whether any came.
-  `create index if not exists owned on tasks (owner, status, closed);
-  create index if not exists thread on messages ("to", n);`,
-  // A thread's tasks, which its status post reads at each change to hex.db, by state and when each closed.
-  'create index if not exists owned on tasks (owner, status, closed);',
   // A thread's messages in the order they were kept, whose last says whether any came.
   'create index if not exists thread on messages ("to", n);',
 ]
