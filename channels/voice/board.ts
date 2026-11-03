@@ -684,13 +684,14 @@ function shownSince(timeline: Entry[], summary: string) {
 
 // Claude Code's own status line while it works is often the tool it's running: a verb, then the
 // tool's command, path or query (Running cd … && git commit …, Writing ~/…/t3.ts), cut short with
-// …. A line in words leaves out one that names a tool call of the session's.
+// …. A line in words leaves out one that names a tool call of the session's; a tool's own
+// description in words stays.
 function tooled(detail: string, steps: Step[]) {
   const rest = detail.replace(/…$/, '').replace(/^(Searching for|\S+)\s+/, '')
   return steps.some(step => {
     if (['say', 'think', 'plan'].includes(step.kind)) return false
     const input = step.detail && plain(step.detail)
-    return plain(step.text) === detail || (!!input && rest.length > 3 && (shortened(rest, input) || (input.length > 3 && rest.endsWith(input))))
+    return !!input && rest.length > 3 && (shortened(rest, input) || (input.length > 3 && rest.endsWith(input)))
   })
 }
 
