@@ -42,16 +42,9 @@ clean() {
 clean
 trap clean EXIT
 git worktree add -q --detach "$check" "$incoming"
-# Under systemd, bin/check runs beside the sessions rather than among them, so a busy machine doesn't
-# time its tests out.
-beside() {
-  if command -v systemd-run >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
-    systemd-run --user --scope --quiet --collect --slice=hex.slice "$@"
-  else
-    "$@"
-  fi
-}
-if ! output=$(beside "$check/bin/check" 2>&1); then
+# As a job, the update runs its check ahead of the other jobs, so a busy machine doesn't time its tests out.
+[ "$mode" != --when-quiet ] || systemctl --user set-property --runtime hex-update.service CPUWeight=1000 2>/dev/null || :
+if ! output=$("$check/bin/check" 2>&1); then
   printf '%s\n' "$output"
   echo "not updated: hex $(git rev-parse --short "$incoming") fails bin/check"
   exit 1
