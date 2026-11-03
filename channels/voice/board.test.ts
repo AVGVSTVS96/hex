@@ -182,6 +182,16 @@ test("a working thread's line is its newest step in words, never a tool call, an
   await until(() => voiceapp().steps[0]?.kind === 'run')
   await Bun.sleep(50)
   expect(voiceapp().line).not.toContain('Running')
+  step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: "cd ~/repo && python3 -c '\nimport json\nprint(1)'" })
+  step(join(project, 'cccccccc-voiceapp.jsonl'), 'Write', { file_path: '/repo/src/rows.ts', content: 'x' })
+  await until(() => voiceapp().steps[0]?.kind === 'edit')
+  for (const tool of ["Running cd ~/repo && python3 -c ' import json print(1)'", 'Writing /repo/src/rows.ts', 'Reading src/tasks.ts']) {
+    record(tool)
+    await Bun.sleep(50)
+    expect(voiceapp().line).toBe('')
+  }
+  record('Tasks rows wired to the board')
+  await until(() => voiceapp().line === 'Tasks rows wired to the board')
   record('building')
   await until(() => voiceapp().line === 'building')
   said(join(project, 'cccccccc-voiceapp.jsonl'), { type: 'text', text: 'The **Tasks** view reads its rows now.' })

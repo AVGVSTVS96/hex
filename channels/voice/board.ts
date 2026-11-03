@@ -349,7 +349,8 @@ export class Board extends Changes {
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
     const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && ours(step)) : undefined
     const summary = detail && !tooled(detail, this.followers.get(key)?.steps ?? []) ? detail : undefined
-    const line = said?.text || needs || summary || lately[0]?.text || ''
+    const summed = (summary && timeline.findLast(entry => entry.detail && plain(entry.detail) === summary)?.at) ?? at
+    const line = (said && (!summary || said.at >= summed) ? said.text : undefined) || needs || summary || lately[0]?.text || ''
     const agents = (
       state === 'working'
         ? [
@@ -673,15 +674,16 @@ function before(job: Job | undefined, timeline: Entry[], from: number) {
   return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined, updatedAt: last.at }, timeline: kept }
 }
 
-// Claude Code's own status line while it works is often the tool it's running, worded the way a
-// step is (Running <command>, cut short with …): a line in words leaves that out.
+// Claude Code's own status line while it works is often the tool it's running: a verb, then the
+// tool's command, path or query (Running cd … && git commit …, Writing ~/…/t3.ts), cut short with
+// …. A line in words leaves out one that names a tool call of the session's.
 function tooled(detail: string, steps: Step[]) {
-  const head = detail.replace(/…$/, '')
-  return steps.some(
-    step =>
-      !['say', 'think', 'plan'].includes(step.kind) &&
-      [step.text, step.detail && `Running ${firstLine(step.detail)}`].some(text => text && (plain(text) === detail || (head !== detail && plain(text).startsWith(head)))),
-  )
+  const rest = detail.replace(/…$/, '').replace(/^\S+\s+(for\s+)?/, '')
+  return steps.some(step => {
+    if (['say', 'think', 'plan'].includes(step.kind)) return false
+    const input = step.detail && plain(step.detail)
+    return plain(step.text) === detail || (!!input && rest.length > 3 && (input.startsWith(rest) || input.endsWith(rest) || (input.length > 3 && rest.endsWith(input))))
+  })
 }
 
 // Steps of a stretch that ended: one still running then never said how it went.

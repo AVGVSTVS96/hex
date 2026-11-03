@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'fs'
 import { connect } from 'net'
 import { join } from 'path'
-import { CLAUDE, running } from './running.ts'
+import { CLAUDE } from './running.ts'
 import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
@@ -38,7 +38,7 @@ if (key) {
   try {
     const store = open(stateDir())
     heartbeat = store.message(key)?.meta?.schedule === 'heartbeat'
-    const flipped = heartbeat ? running(store).get(session_id)?.updated : undefined
+    const flipped = heartbeat ? busySince(session_id) : undefined
     let took: boolean
     try {
       took = recorded = store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat, flipped), true))
@@ -63,6 +63,22 @@ function heartbeats(store: ReturnType<typeof open>, session: string) {
   if (!first) return false
   const fan: { id: string; startedAt?: number }[] = job(session)?.fan ?? []
   return (fan.find(one => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began)
+}
+
+// When Claude Code last marked the session busy, from its own record of the session.
+function busySince(session: string): number | undefined {
+  try {
+    const dir = join(CLAUDE, 'sessions')
+    const times = readdirSync(dir).flatMap(file => {
+      try {
+        const record = JSON.parse(readFileSync(join(dir, file), 'utf8'))
+        return record.sessionId === session && record.status === 'busy' && typeof record.statusUpdatedAt === 'number' ? [record.statusUpdatedAt as number] : []
+      } catch {
+        return []
+      }
+    })
+    return times.length ? Math.max(...times) : undefined
+  } catch {}
 }
 
 // The session's job record: in the folder named for its id, or one a renewed job kept.
