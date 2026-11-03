@@ -240,7 +240,7 @@ const migrations: (string | ((store: Store) => void))[] = [
       else store.db.query('delete from pins where app = ? and thread = ?').run(app, thread)
     }
   },
-  `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}));
+  `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}), after text check (after ${UTC}));
   create index if not exists beats_session on beats (session, began);`,
 ]
 
@@ -823,12 +823,17 @@ export class Store {
 
   // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
   // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes.
-  // A heartbeat (the scheduler's hourly check) that opened its turn holds until the session's next
-  // prompt, so it holds that turn's records, and is kept a week.
-  turned(session: string, busy: boolean, at = now(), heartbeat = false) {
+  // A heartbeat (the scheduler's hourly check) that opens a turn, because the last one ended or no
+  // prompt came since Claude Code marked the session busy (flipped), is that turn until it ends or
+  // another prompt joins it; one inside a turn is part of that turn. Each holds when the next prompt
+  // that isn't a heartbeat came (after), so a run of them reads as one. Beats are kept a week.
+  turned(session: string, busy: boolean, at = now(), heartbeat?: { flipped?: number }) {
     this.write(() => {
-      if (busy) this.db.query('update beats set until = ? where session = ? and until is null').run(at, session)
-      if (heartbeat) this.db.query('insert into beats (session, began) values (?, ?)').run(session, at)
+      const { began, ended } = this.turn(session)
+      const opens = heartbeat && (!began || !!ended || (heartbeat.flipped !== undefined && Date.parse(began) < heartbeat.flipped))
+      if (!heartbeat || opens) this.db.query('update beats set until = ? where session = ? and until is null').run(at, session)
+      if (busy && !heartbeat) this.db.query('update beats set after = ? where session = ? and after is null').run(at, session)
+      if (opens) this.db.query('insert into beats (session, began) values (?, ?)').run(session, at)
       this.db.query('delete from beats where coalesce(until, began) < ?').run(new Date(Date.parse(at) - BEATS).toISOString())
       if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
       else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
@@ -836,13 +841,14 @@ export class Store {
     })
   }
 
-  beats(session: string): { began: string; until?: string }[] {
-    return (this.db.query('select began, until from beats where session = ? order by began').all(session) as { began: string; until: string | null }[]).map(({ began, until }) => (until ? { began, until } : { began }))
+  beats(session: string): { began: string; until?: string; after?: string }[] {
+    const rows = this.db.query('select began, until, after from beats where session = ? order by began').all(session) as Record<string, string | null>[]
+    return rows.map(row => Object.fromEntries(Object.entries(row).filter(([, value]) => value))) as { began: string; until?: string; after?: string }[]
   }
 
-  // Changes whenever a heartbeat begins or ends.
+  // Changes whenever a heartbeat or any turn begins or ends.
   beaten(): string {
-    return JSON.stringify(this.db.query('select max(rowid), count(until) from beats').values())
+    return JSON.stringify(this.db.query('select (select max(rowid) from beats), (select count(until) + count(after) from beats), (select max(coalesce(ended, began)) from turns)').values())
   }
 
   turn(session: string): { began?: string; ended?: string } {

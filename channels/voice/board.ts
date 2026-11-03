@@ -63,10 +63,13 @@ type Entry = { at: string; state: string; detail?: string; text?: string }
 type Told = { state: Agent['state']; result?: string }
 type Stretch = Pick<Run, 'steps' | 'plan' | 'agents'>
 type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string; said: Step[] }
-// A heartbeat, as hex.db keeps it: from the session taking it to its next prompt.
-type Beat = { began: string; until?: string }
+// A heartbeat's turn, as hex.db keeps it.
+type Beat = { began: string; until?: string; after?: string }
 
 const TAIL = 256 * 1024
+// When a step's transcript line was written, as hex's hook stamps a heartbeat: a tool call shows
+// from the line before it, which can be the prompt that came ahead of the hook.
+const written = new WeakMap<Step, string>()
 const LATELY = 5
 const STEPS = 24
 const AGENT_STEPS = 12
@@ -81,6 +84,7 @@ const STATES: Record<string, State> = { working: 'working', blocked: 'needs', do
 const PLANNED: Record<string, Planned['state']> = { completed: 'done', in_progress: 'running', pending: 'pending' }
 const APPS: Record<string, string> = { telegram: 'Telegram', discord: 'Discord', buzz: 'Buzz', t3: 'T3 Code', voice: 'Voice', claude: 'Claude Code' }
 const WORK = new Set(['agent', 'workflow'])
+const RUNS = new Set([...WORK, 'shell'])
 const HANDED: Record<string, Agent['state']> = { completed: 'done', idle: 'done', failed: 'failed', interrupted: 'stopped', cancelled: 'stopped', rolled_back: 'stopped' }
 const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'failed' }
 
@@ -317,9 +321,13 @@ export class Board extends Changes {
     const handed = this.links.delegations(thread.app, thread.id)
     const out = handed.filter(one => !HANDED[one.status])
     const beats = thread.session ? open(this.state).beats(thread.session) : []
-    const beating = !!session && this.beating(thread, session, beats, job)
-    const outside = (at: string) => !beats.some(beat => at >= beat.began && (!beat.until || at < beat.until))
-    if (beats.length) ({ job, timeline } = without(job, timeline, outside, beating))
+    const beat = session && this.beat(thread, session, beats)
+    if (beat !== undefined && job?.state !== 'blocked') ({ job, timeline } = before(job, timeline, beat))
+    const beating = beat !== undefined && !job?.fan?.some(fan => RUNS.has(fan.kind) && !fan.doneAt && (fan.startedAt ?? 0) < beat)
+    const outside = (step: Step) => {
+      const at = written.get(step) ?? step.at
+      return !beats.some(beat => at >= beat.began && (!beat.until || at < beat.until))
+    }
     const known = job?.state ? STATES[job.state] : undefined
     const live = (busy(session) && !beating) || started.length > 0 || out.length > 0
     let state: State = live ? 'working' : (known ?? 'idle')
@@ -337,10 +345,10 @@ export class Board extends Changes {
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
     const { link } = thread
     const key = keyOf(thread)
-    const steps = state === 'working' ? this.steps(key).filter(step => outside(step.at)) : []
+    const steps = state === 'working' ? this.steps(key).filter(outside) : []
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
-    const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && outside(step.at)) : undefined
-    const line = said?.text ?? needs ?? detail ?? lately[0]?.text ?? ''
+    const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && outside(step)) : undefined
+    const line = (said && (!detail || said.at >= at) ? said.text : undefined) ?? needs ?? detail ?? lately[0]?.text ?? ''
     const agents = (
       state === 'working'
         ? [
@@ -362,7 +370,7 @@ export class Board extends Changes {
       where: where(thread),
       place: this.place(thread),
       state,
-      running: session?.status === 'busy',
+      running: session?.status === 'busy' && !beating,
       line: oneLine(line),
       ...(needs && { needs }),
       since,
@@ -376,17 +384,15 @@ export class Board extends Changes {
     }
   }
 
-  // Whether the session's turn now is a heartbeat's, and nothing else of the thread's still runs from
-  // before it: from the moment Claude Code marks the session busy while the heartbeat waits for it
-  // as its only message, until its next prompt, through a shell the heartbeat itself started.
-  private beating(thread: Thread, session: Session, beats: Beat[], job?: Job) {
-    const flipped = session.updated ?? session.started
+  // When the heartbeats began, while the session's latest turns are heartbeats': from the moment
+  // Claude Code marks the session busy while a heartbeat waits for it as its only message, until a
+  // prompt that isn't one comes.
+  private beat(thread: Thread, session: Session, beats: Beat[]) {
+    const run = beats.slice(beats.findLastIndex(beat => beat.after) + 1)
+    if (run.length) return Date.parse(run[0]!.began)
     const { began } = open(this.state).turn(session.id)
-    const heard = !!began && Date.parse(began) >= flipped
-    const last = beats.at(-1)
-    const from = heard || session.status !== 'busy' ? (last && !last.until ? Date.parse(last.began) : undefined) : this.awaited(thread) ? flipped : undefined
-    if (from === undefined || (session.status === 'busy' && from < flipped)) return false
-    return !job?.fan?.some(fan => !fan.doneAt && (fan.startedAt ?? 0) < from)
+    const flipped = session.updated ?? session.started
+    if (session.status === 'busy' && !(began && Date.parse(began) >= flipped) && this.awaited(thread)) return flipped
   }
 
   // A heartbeat is the only message waiting for the thread.
@@ -532,11 +538,16 @@ export class Board extends Changes {
       const step = back && follower.steps.find(step => step.id === (update as { toolCallId: string }).toolCallId)
       if (step) Object.assign(step, back, { end: at, text: past(step.text) })
       const did = stepOf(update, id => this.links.name(id))
+      if (did?.kind === 'say' && did.text) {
+        const say = { ...did, text: oneLine(did.text), at }
+        written.set(say, at)
+        follower.said = [...follower.said, say].slice(-follower.keep)
+      }
       if (!did?.text || (did.id ? follower.steps.some(step => step.id === did.id) : did.text === follower.steps.at(-1)?.text)) continue
       const next = { ...did, text: oneLine(did.text), at: did.id ? began : at, ...(did.id && { state: 'running' as const }) }
+      written.set(next, at)
       follower.steps.push(next)
       if (follower.steps.length > follower.keep) follower.steps.shift()
-      if (next.kind === 'say') follower.said = [...follower.said, next].slice(-follower.keep)
     }
     this.schedule()
   }
@@ -645,14 +656,11 @@ function toldOf(entry: any): [string, Told] | undefined {
   return id ? [id, { state: TOLD[text.match(/<status>(\w+)<\/status>/)?.[1] ?? ''] ?? 'stopped', ...(said && { result: said }) }] : undefined
 }
 
-// A session's records without its heartbeats': while one runs or its newest record is one, it
-// stands as it did before.
-function without(job: Job | undefined, timeline: Entry[], outside: (at: string) => boolean, beating: boolean) {
-  const kept = timeline.filter(entry => outside(entry.at))
-  const newest = timeline.at(-1)
-  if (!job || (!beating && (!newest || outside(newest.at)))) return { job, timeline: kept }
+// A session's records as they stood when its heartbeat began.
+function before(job: Job | undefined, timeline: Entry[], from: number) {
+  const kept = timeline.filter(entry => Date.parse(entry.at) < from)
   const last = kept.at(-1)
-  return { job: { ...job, state: last?.state, detail: last?.detail, needs: last?.state === 'blocked' ? job.needs : undefined, updatedAt: last?.at ?? job.updatedAt }, timeline: kept }
+  return { job: job && { ...job, state: last?.state, detail: last?.detail, needs: last?.state === 'blocked' ? job.needs : undefined, updatedAt: last?.at ?? job.updatedAt }, timeline: kept }
 }
 
 // Steps of a stretch that ended: one still running then never said how it went.

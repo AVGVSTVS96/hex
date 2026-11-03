@@ -394,126 +394,128 @@ test('a running session no thread holds is a run of its own while it works', asy
   await until(() => !board.get('claude:12121212') && !board.get('claude:56565656'))
 })
 
-// What hex's hook writes as a session takes a prompt: the message taken, the turn begun, and for a
-// heartbeat that opens its turn, the heartbeat.
+// What hex's hook writes as a session takes a prompt: the message taken and the turn begun, with
+// when Claude Code marked the session busy for a heartbeat.
 function prompted(session: string, thread: string, body: string, heartbeat = false) {
   const store = open(state)
   const key = heartbeat ? `schedule:heartbeat@${crypto.randomUUID()}` : `telegram:${crypto.randomUUID()}`
   store.deliver({ key, to: thread, from: heartbeat ? 'schedule' : 'telegram', author: heartbeat ? 'prompt' : 'owner', body, ...(heartbeat && { meta: { user: 'schedule', schedule: 'heartbeat' } }) })
-  return () => {
-    store.take(key, session)
-    store.turned(session, true, new Date().toISOString(), heartbeat)
-  }
+  return (flipped?: number) => store.write(() => store.take(key, session) && store.turned(session, true, new Date().toISOString(), heartbeat ? { flipped } : undefined))
 }
 
-test("the hourly heartbeat is no turn of work: the thread stands as it did before it, in its line, lately and lane, from the moment it's busy", async () => {
+// The session's turn ends: Claude Code's Stop hook, then the session idle.
+function stopped(session: string, status: 'idle' | 'busy' | 'shell' = 'idle', flipped = Date.now()) {
+  open(state).turned(session, false)
+  running(session, status, process.pid, { statusUpdatedAt: flipped })
+}
+
+const settle = () => Bun.sleep(80)
+
+test("the hourly heartbeat is no turn of work: from the moment its session is busy, the thread stands as it did before it", async () => {
   threads('telegram', { ...telegram, '-1001234567890:4100': { name: 'pulse', session: '41004100-pulse' } })
   const session = '41004100-pulse'
+  const thread = '-1001234567890:4100'
   const transcript = join(project, `${session}.jsonl`)
-  const pulse = () => board.get('telegram:-1001234567890:4100')!
+  const pulse = () => board.get(`telegram:${thread}`)!
   const shipped = { at: ago(10), state: 'done', detail: 'shipped the fix', text: 'Shipped.' }
   const timeline = [shipped]
-  prompted(session, '-1001234567890:4100', 'Ship the fix')()
+  prompted(session, thread, 'Ship the fix')()
   said(transcript, { type: 'text', text: 'Shipped.' })
-  open(state).turned(session, false)
   job(session, { state: 'done', detail: 'shipped the fix', updatedAt: shipped.at }, timeline)
-  running(session, 'idle')
-  await until(() => board.get('telegram:-1001234567890:4100')?.state === 'done')
+  stopped(session)
+  await until(() => board.get(`telegram:${thread}`)?.state === 'done')
   const counted = board.counts.version
   for (const _ of [1, 2]) {
-    const take = prompted(session, '-1001234567890:4100', '[heartbeat] Hourly check', true)
-    running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })
-    await until(() => pulse().running)
-    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix' })
     await Bun.sleep(5)
-    take()
+    const take = prompted(session, thread, '[heartbeat] Hourly check', true)
+    const flipped = Date.now()
+    running(session, 'busy', process.pid, { statusUpdatedAt: flipped })
+    await settle()
+    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', running: false })
+    await Bun.sleep(5)
+    take(flipped)
     said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
+    step(transcript, 'Bash', { command: 'gh pr list' })
     timeline.push({ at: new Date().toISOString(), state: 'working', detail: 'Checking the inbox', text: '' })
     job(session, { state: 'working', detail: 'Checking the inbox', updatedAt: ago(0) }, timeline)
-    await Bun.sleep(50)
-    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at, steps: [] })
+    await settle()
+    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at, running: false, steps: [] })
     timeline.push({ at: new Date().toISOString(), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' })
     job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0) }, timeline)
-    open(state).turned(session, false)
-    running(session, 'idle', process.pid, { statusUpdatedAt: Date.now() })
-    await until(() => !pulse().running)
-    await Bun.sleep(50)
-    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at, lately: [{ text: 'shipped the fix' }], track: [{ at: shipped.at, state: 'done' }] })
+    stopped(session)
+    await settle()
+    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at, lately: [{ text: 'shipped the fix' }] })
     expect(board.counts.version).toBe(counted)
-    await Bun.sleep(5)
   }
-  const take = prompted(session, '-1001234567890:4100', 'Build the page')
+  await Bun.sleep(5)
+  const take = prompted(session, thread, 'Build the page')
   running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })
   await Bun.sleep(5)
   take()
   timeline.push({ at: new Date().toISOString(), state: 'working', detail: 'Building the page', text: '' })
   job(session, { state: 'working', detail: 'Building the page', updatedAt: ago(0) }, timeline)
   await until(() => pulse().state === 'working' && pulse().line === 'Building the page')
-  expect(pulse().lately.map(moment => moment.text)).toEqual(['shipped the fix'])
-  expect(pulse().track.map(turn => turn.state)).toEqual(['done', 'working'])
-  running(session, 'idle')
+  expect(pulse().running).toBe(true)
+  await Bun.sleep(5)
+  said(transcript, { type: 'text', text: 'Laying out the page.' })
+  await until(() => pulse().line === 'Laying out the page.')
+  stopped(session)
   job(session, { state: 'done', detail: 'page built', updatedAt: ago(0) }, timeline)
 })
 
-test("a heartbeat adds no steps to a thread still working, leaves what ran before it working, and a shell of its own is no work", async () => {
+test("a heartbeat while agents or shells from before it run leaves the thread working on its own words, and a shell of its own is no work", async () => {
   threads('telegram', { ...telegram, '-1001234567890:4200': { name: 'beatwork', session: '42004200-beatwork' } })
   const session = '42004200-beatwork'
   const thread = '-1001234567890:4200'
   const transcript = join(project, `${session}.jsonl`)
   const work = () => board.get(`telegram:${thread}`)!
+  const flipped = Date.now() - 60_000
   const building = { at: ago(1), state: 'working', detail: 'Building the page', text: '' }
   const agent = { id: 'page', kind: 'agent', label: 'Build the page', startedAt: Date.now() - 60_000 }
   prompted(session, thread, 'Build the page')()
   said(transcript, { type: 'text', text: 'Starting on the page.' })
-  job(session, { state: 'working', detail: 'Building the page', updatedAt: building.at, fan: [agent] }, [building])
-  running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() - 60_000 })
+  job(session, { state: 'working', detail: 'Building the page', updatedAt: ago(2), fan: [agent] }, [building])
+  running(session, 'busy', process.pid, { statusUpdatedAt: flipped })
   await until(() => board.get(`telegram:${thread}`)?.line === 'Starting on the page.')
-  open(state).turned(session, false)
-  running(session, 'idle', process.pid, { statusUpdatedAt: Date.now() })
+  stopped(session, 'busy', flipped)
   await Bun.sleep(5)
 
-  const take = prompted(session, thread, '[heartbeat] Hourly check', true)
-  running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })
-  await Bun.sleep(5)
-  take()
+  prompted(session, thread, '[heartbeat] Hourly check', true)(flipped)
   said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
   step(transcript, 'Bash', { command: 'gh pr list' })
   job(session, { state: 'working', detail: 'Checking the inbox', updatedAt: ago(0), fan: [agent] }, [building, { at: new Date().toISOString(), state: 'working', detail: 'Checking the inbox', text: '' }])
-  await until(() => work().running)
-  await Bun.sleep(50)
-  expect(work()).toMatchObject({ state: 'working', line: 'Starting on the page.' })
+  await settle()
+  expect(work()).toMatchObject({ state: 'working', line: 'Starting on the page.', running: true })
   expect(work().steps.map(step => step.text)).toEqual(['Starting on the page.'])
+  stopped(session, 'busy', flipped)
+  job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0), fan: [agent] }, [building, { at: new Date().toISOString(), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' }])
+  await settle()
+  expect(work()).toMatchObject({ state: 'working', line: 'Starting on the page.' })
 
-  open(state).turned(session, false)
-  running(session, 'idle', process.pid, { statusUpdatedAt: Date.now() })
   await Bun.sleep(5)
   const back = prompted(session, thread, '<task-notification>page built</task-notification>')
-  running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })
-  await Bun.sleep(5)
   back()
   const built = { at: new Date().toISOString(), state: 'done', detail: 'page built', text: 'Built.' }
   job(session, { state: 'done', detail: 'page built', updatedAt: built.at, fan: [{ ...agent, doneAt: Date.now() }] }, [building, built])
-  open(state).turned(session, false)
-  running(session, 'idle', process.pid, { statusUpdatedAt: Date.now() })
-  await until(() => work().state === 'done')
-  await Bun.sleep(5)
+  stopped(session)
+  await until(() => work().state === 'done' && work().line === 'page built')
 
-  const check = prompted(session, thread, '[heartbeat] Hourly check', true)
-  running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })
   await Bun.sleep(5)
-  check()
+  const check = prompted(session, thread, '[heartbeat] Hourly check', true)
+  const again = Date.now()
+  running(session, 'busy', process.pid, { statusUpdatedAt: again })
+  await Bun.sleep(5)
+  check(again)
   await Bun.sleep(5)
   const own = { id: 'sh', kind: 'shell', label: 'gh pr checks --watch', startedAt: Date.now() }
   const beaten = [building, built, { at: new Date().toISOString(), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' }]
-  job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0), fan: [{ ...agent, doneAt: Date.now() }, own] }, beaten)
-  open(state).turned(session, false)
-  running(session, 'shell', process.pid, { statusUpdatedAt: Date.now() })
-  await until(() => !work().running)
-  await Bun.sleep(50)
+  job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0), fan: [own] }, beaten)
+  stopped(session, 'shell')
+  await settle()
   expect(work()).toMatchObject({ state: 'done', line: 'page built' })
   job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0), fan: [{ ...own, startedAt: Date.now() - 120_000 }] }, beaten)
   await until(() => work().state === 'working')
-  running(session, 'idle')
+  stopped(session)
   job(session, { state: 'done', detail: 'page built', updatedAt: ago(0) })
 })
 

@@ -2216,14 +2216,14 @@ test("a channel tag in a message's own words takes nothing", async () => {
   expect(store.message('schedule:heartbeat@2026-10-18T21:45Z')!.taken).toBeUndefined()
 })
 
-test("a heartbeat that opens its session's turn is kept until the session's next prompt, and one inside a turn isn't", async () => {
+test("a heartbeat that opens its session's turn, after a flip or a turn's end, is kept until that turn ends or another prompt comes, and one inside a turn isn't", async () => {
   const store = open(dir)
   const claude = mkdtempSync(join(tmpdir(), 'hex-claude-'))
   mkdirSync(join(claude, 'sessions'))
   const flip = () => writeFileSync(join(claude, 'sessions', `${process.pid}.json`), JSON.stringify({ sessionId: SESSION, pid: process.pid, status: 'busy', statusUpdatedAt: Date.now() }))
-  const prompt = async (key: string, from: string, body: string, meta?: Record<string, string>) => {
+  const prompt = async (key: string, from: string, body: string, meta?: Record<string, string>, event = 'busy') => {
     store.deliver({ key, to: 'chat:7', from, author: from === 'telegram' ? 'owner' : 'prompt', body, ...(meta && { meta }) })
-    const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], {
+    const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), event], {
       env: { ...process.env, HEX_STORE: dir, CLAUDE_CONFIG_DIR: claude },
       stdin: new Blob([JSON.stringify({ prompt: `<channel source="plugin:telegram:telegram" key="${key}">\n${body}\n</channel>`, session_id: SESSION })]),
     })
@@ -2235,12 +2235,23 @@ test("a heartbeat that opens its session's turn is kept until the session's next
   await beat('2026-11-03T12:45Z')
   const [first] = store.beats(SESSION)
   expect(first).toEqual({ began: expect.any(String) })
+  await beat('2026-11-03T12:46Z')
+  expect(store.beats(SESSION)).toEqual([first])
+  store.turned(SESSION, false)
+  expect(store.beats(SESSION)).toEqual([{ began: first!.began, until: store.turn(SESSION).ended }])
+  await beat('2026-11-03T13:45Z')
+  const [, second] = store.beats(SESSION)
+  expect(second).toEqual({ began: expect.any(String) })
   flip()
   await Bun.sleep(5)
   await prompt('telegram:1:50', 'telegram', 'ship it')
-  expect(store.beats(SESSION)).toEqual([{ began: first!.began, until: expect.any(String) }])
-  await beat('2026-11-03T13:45Z')
-  expect(store.beats(SESSION)).toHaveLength(1)
+  const after = store.turn(SESSION).began
+  expect(store.beats(SESSION)).toEqual([
+    { began: first!.began, until: expect.any(String), after },
+    { began: second!.began, until: after, after },
+  ])
+  await beat('2026-11-03T14:45Z')
+  expect(store.beats(SESSION)).toHaveLength(2)
   rmSync(claude, { recursive: true })
 })
 

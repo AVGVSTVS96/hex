@@ -1,6 +1,6 @@
 import { connect } from 'net'
 import { running } from './running.ts'
-import { open, stateDir, type Store } from './store.ts'
+import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
 const at = new Date().toISOString()
@@ -28,11 +28,14 @@ const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined
 // The session takes the message its prompt brings in, in the store itself while it can reach it,
 // or else through the hub. One that was taken already is a second copy (the hub sends again what it
 // can't tell a session took), so Claude Code drops it.
+// A heartbeat's turn is recorded as it's taken, so no look at hex.db finds it taken but not yet a turn.
 let untold = key
+let recorded = false
 if (key) {
   try {
     const store = open(stateDir())
-    if (store.take(key, session_id)) untold = undefined
+    const heartbeat = store.message(key)?.meta?.schedule === 'heartbeat' ? { flipped: running(store).get(session_id)?.updated } : undefined
+    if (store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat), (recorded = true)))) untold = undefined
     else if (store.message(key)) {
       console.error(`hex gave this session ${key} already`)
       process.exit(2)
@@ -40,19 +43,10 @@ if (key) {
   } catch {}
 }
 
-// The heartbeat opens a turn of its own when it's the first prompt hex hears since Claude Code
-// marked the session busy; one that comes inside a turn is part of that turn.
-function opens(store: Store, session: string) {
-  const flipped = running(store).get(session)?.updated
-  const { began, ended } = store.turn(session)
-  return !began || (flipped === undefined ? !!ended : Date.parse(began) < flipped)
-}
-
 // The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
-if (session_id) {
+if (session_id && !recorded) {
   try {
-    const store = open(stateDir())
-    store.turned(session_id, busy, at, !!key && store.message(key)?.meta?.schedule === 'heartbeat' && opens(store, session_id))
+    open(stateDir()).turned(session_id, busy, at)
   } catch (error) {
     console.error(`hex couldn't record this turn: ${error}`)
   }
