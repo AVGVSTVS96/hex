@@ -420,8 +420,7 @@ export class Store {
 
   // Bun's fs.watch on Linux drops a change that lands within about a millisecond of the one it just
   // reported (https://github.com/oven-sh/bun/issues/45954), so each ring is heard again once that has
-  // passed. Listeners run once for each time hex.db moved, however many rings that took; the first
-  // ring always runs them, so nothing between a reader's first read and its watch goes unheard.
+  // passed. Listeners run once for each time hex.db moved, however many rings that took.
   private rang(again = false) {
     const moved = this.moved()
     if (moved !== this.heard) {
