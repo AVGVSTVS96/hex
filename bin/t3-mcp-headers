@@ -8,7 +8,7 @@ set -eu
 cache="$HOME/.claude/channels/hex/t3/mcp-token.json"
 mkdir -p "$(dirname "$cache")"
 exec 8>"$cache.lock"
-flock 8
+flock -w 45 8
 now=$(date +%s)
 base=http://127.0.0.1:$(jq -r .port "$HOME/.t3/userdata/server-runtime.json")
 if [ "${1:-}" = --refresh ] && [ "$(jq -r .access_token "$cache" 2>/dev/null)" = "${T3_REFUSED:-}" ]; then rm -f "$cache"; fi
@@ -18,24 +18,24 @@ if [ -s "$cache" ] && jq -e --arg base "$base" --argjson soon $((now + 86400)) '
 fi
 step() { [ -n "$2" ] && [ "$2" != null ] || { echo "t3-mcp-headers: T3 Code gave no $1" >&2; exit 1; }; }
 redirect=http://127.0.0.1:1/callback
-client=$(curl -sf "$base/oauth/mcp/register" -H 'content-type: application/json' -d "{\"client_name\":\"hex\",\"redirect_uris\":[\"$redirect\"]}") || client=
+client=$(curl -sf -m 20 "$base/oauth/mcp/register" -H 'content-type: application/json' -d "{\"client_name\":\"hex\",\"redirect_uris\":[\"$redirect\"]}" 8>&-) || client=
 client=$(printf %s "$client" | jq -r .client_id)
 step "client id" "$client"
 verifier=$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')
 challenge=$(printf %s "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
 t3=$(command -v t3 || echo "$HOME/.t3/bin/t3")
-code=$("$t3" auth pairing create --ttl 5m --label hex-mcp --json 2>/dev/null | jq -r .credential)
+code=$(timeout 30 "$t3" auth pairing create --ttl 5m --label hex-mcp --json 2>/dev/null 8>&- | jq -r .credential)
 step "pairing code" "$code"
 auth=$(jq -nc --arg c "$client" --arg r "$redirect" --arg ch "$challenge" --arg res "$base/mcp" \
   '{response_type:"code",client_id:$c,redirect_uri:$r,code_challenge:$ch,code_challenge_method:"S256",state:"hex",resource:$res}')
-to=$(curl -sf "$base/oauth/mcp/decision" -H 'content-type: application/json' \
-  -d "{\"authorization\":$auth,\"decision\":{\"_tag\":\"pairing-code\",\"access\":\"full-access\",\"code\":\"$code\"}}") || to=
+to=$(curl -sf -m 20 "$base/oauth/mcp/decision" -H 'content-type: application/json' \
+  -d "{\"authorization\":$auth,\"decision\":{\"_tag\":\"pairing-code\",\"access\":\"full-access\",\"code\":\"$code\"}}" 8>&-) || to=
 grant=$(printf %s "$to" | jq -r .redirectTo | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
 step "grant" "$grant"
-token=$(curl -sf "$base/oauth/mcp/token" --data-urlencode grant_type=authorization_code \
+token=$(curl -sf -m 20 "$base/oauth/mcp/token" --data-urlencode grant_type=authorization_code \
   --data-urlencode "code=$grant" --data-urlencode "redirect_uri=$redirect" \
   --data-urlencode "client_id=$client" --data-urlencode "code_verifier=$verifier" \
-  --data-urlencode "resource=$base/mcp") || token=
+  --data-urlencode "resource=$base/mcp" 8>&-) || token=
 step "token" "$(printf %s "$token" | jq -r .access_token)"
 tmp=$(mktemp "$cache.XXXXXX")
 printf %s "$token" | jq --argjson now "$now" --arg resource "$base/mcp" '{access_token, expires_at: ($now + .expires_in), resource: $resource}' >"$tmp"

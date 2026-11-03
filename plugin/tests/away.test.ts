@@ -122,6 +122,10 @@ test("a job can't run there, having started nothing, with claude flags a thread 
   refuse = 'orchestrator_capabilities'
   expect(await away(['-p', 'Build it.']).run.exited).toBe(76)
   expect(calls.some(({ name }) => name === 't3_thread_launch')).toBe(false)
+  refuse = 't3_thread_launch'
+  const refused = away(['-p', 'Build it.'])
+  expect(await refused.run.exited).toBe(76)
+  expect(await refused.error()).not.toContain('may have started')
 })
 
 test('stopping the job stops its thread', async () => {
