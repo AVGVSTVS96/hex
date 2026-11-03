@@ -378,7 +378,7 @@ const SENTENCE_END = /(?:[?!]+|(?<!(?:^|[^\p{L}\p{N}'’])\p{Ll}|\.\p{L}|(?:^|[^
 function cut(line: string, max: number): [string, string] {
   if (line.length <= max) return [line, '']
   const ends = [...line.matchAll(SENTENCE_END)].map(found => ({ at: found.index + found[0].length, asks: found[0].includes('?') }))
-  const lastAsk = [...line.matchAll(/\?[?!]*["')\]”’]*(?=\s|$)/g)].at(-1)?.index ?? 0
+  const lastAsk = line.search(/[?？][^?？]*$/)
   const fits = ends.filter(({ at }) => at >= lastAsk && at <= max)
   const end = fits.findLast(({ asks }) => asks)?.at ?? fits.findLast(({ at }) => at >= max / 2)?.at
   if (end !== undefined) return [line.slice(0, end), line.slice(end).trim()]
