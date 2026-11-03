@@ -244,6 +244,10 @@ const migrations: (string | ((store: Store) => void))[] = [
   create index if not exists beats_session on beats (session, began);`,
   // A thread's tasks, which its status post reads at each change to hex.db, by state and when each closed.
   'create index if not exists owned on tasks (owner, status, closed);',
+  // A thread's tasks, which its status post reads at each change to hex.db, by state and when each
+  // closed; and its messages in the order they were kept, whose last says whether any came.
+  `create index if not exists owned on tasks (owner, status, closed);
+  create index if not exists thread on messages ("to", n);`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -401,10 +405,7 @@ export class Store {
   // Calls back after each change any process commits, until the stop it returns is called.
   watch(listener: () => void): () => void {
     this.listeners.add(listener)
-    if (!this.watcher) {
-      this.heard = this.moved()
-      this.watcher = watch(this.bell, () => this.rang())
-    }
+    this.watcher ??= watch(this.bell, () => this.rang())
     return () => {
       this.listeners.delete(listener)
       if (this.listeners.size) return
@@ -415,13 +416,15 @@ export class Store {
 
   // Bun's fs.watch on Linux drops a change that lands within about a millisecond of the one it just
   // reported (https://github.com/oven-sh/bun/issues/45954), so each ring is heard again once that has
-  // passed. Listeners run once for each time hex.db moved, however many rings that took.
-  private rang() {
+  // passed. Listeners run once for each time hex.db moved, however many rings that took; the first
+  // ring always runs them, so nothing between a reader's first read and its watch goes unheard.
+  private rang(again = false) {
     const moved = this.moved()
-    if (moved === this.heard) return
-    this.heard = moved
-    for (const each of this.listeners) each()
-    setTimeout(() => this.watcher && this.rang(), 5)
+    if (moved !== this.heard) {
+      this.heard = moved
+      for (const each of this.listeners) each()
+    } else if (again) return
+    setTimeout(() => this.watcher && this.rang(true), 5)
   }
 
   // Keeps a new message. A key that's kept already is its sender sending it again: false. by: the
@@ -521,13 +524,13 @@ export class Store {
     return (rows as Stored[]).map(toRow)
   }
 
-  // Changes whenever the thread's messages do: a new one is kept (as its newest), or a session takes
-  // one (one fewer waits). It reads two entries of indexes, so a reader can tell cheaply whether to
-  // read the messages again.
+  // Changes whenever the thread's messages do: one is kept (its n is the highest yet, whatever its
+  // time), or a session takes one (one fewer waits). It reads two index entries, so a reader can tell
+  // cheaply whether to read the messages again.
   mark(thread: string): string {
-    const newest = this.db.query('select n from messages indexed by said where "to" = ? order by at desc, n desc limit 1').get(thread) as { n: number } | null
+    const { last } = this.db.query('select max(n) as last from messages indexed by thread where "to" = ?').get(thread) as { last: number | null }
     const { untaken } = this.db.query('select count(*) as untaken from messages indexed by untaken where taken_at is null and "to" = ?').get(thread) as { untaken: number }
-    return `${newest?.n}:${untaken}`
+    return `${last}:${untaken}`
   }
 
   // Holds name for holder until it's released or ms pass, whichever comes first; false while another holds it.

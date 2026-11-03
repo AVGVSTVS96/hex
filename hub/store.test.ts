@@ -78,7 +78,11 @@ test("some threads' untaken messages, and a mark that moves only when a thread's
   const taken = store.mark('-100:7')
   expect(taken).not.toBe(mark)
   store.deliver({ ...message, key: 'telegram:-100:45' })
-  expect(store.mark('-100:7')).not.toBe(taken)
+  const kept = store.mark('-100:7')
+  expect(kept).not.toBe(taken)
+  store.deliver({ ...message, key: 'telegram:-100:46' }, 'session-a')
+  store.past([['telegram:-100:46', '2020-01-01T00:00:00.000Z']])
+  expect(store.mark('-100:7')).not.toBe(kept)
 })
 
 test("a schedule's slot fires once, and its next slot fires whether or not the last was taken", () => {
@@ -116,17 +120,18 @@ test('a change committed in another process rings the bell, and a write that cha
   stop()
 })
 
-test('a listener runs once for each change, however many times the bell rings for it', async () => {
+test('a listener runs at the first ring, then once for each change, however many times the bell rings for it', async () => {
   const store = open(dir)
   let rang = 0
   const stop = store.watch(() => rang++)
   for (let ring = 0; ring < 5; ring++) appendFileSync(join(dir, 'hex.bell'), '.')
-  await Bun.sleep(100)
-  expect(rang).toBe(0)
-  store.deliver(message)
   await until(() => rang > 0)
   await Bun.sleep(100)
   expect(rang).toBe(1)
+  store.deliver(message)
+  await until(() => rang > 1)
+  await Bun.sleep(100)
+  expect(rang).toBe(2)
   stop()
 })
 
