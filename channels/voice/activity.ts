@@ -467,8 +467,7 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const launched = entry.toolUseResult?.isAsync && entry.toolUseResult.agentId
     if (launched && ID.test(launched) && !agents.has(launched))
       agents.set(launched, followTranscript(join(project, session!, 'subagents', `agent-${launched}.jsonl`), 0, (_, updates) => lines(updates(), onStep)))
-    const back = agentBack(entry)
-    if (back) {
+    for (const back of agentsBack(entry)) {
       agents.get(back)?.(true)
       agents.delete(back)
     }
@@ -519,13 +518,14 @@ function uuids(path: string, upTo: number) {
   return found
 }
 
-// The background agent a session was just told is back, as a turn of its own or queued while a
-// turn ran. A notice with no status says it was restarted with its session, and is still out.
-function agentBack(entry: any): string | undefined {
+// The background agents a session was just told are back, in a turn of its own or queued while a
+// turn ran; one notice can name several. A notice with no status says they were restarted with
+// their session, and are still out.
+function agentsBack(entry: any): string[] {
   const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
-  if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return
+  if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return []
   const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content) ?? ''
-  return notice.includes('<status>') ? notice.match(/<task-id>([\w-]+)<\/task-id>/)?.[1] : undefined
+  return notice.includes('<status>') ? Array.from(notice.matchAll(/<task-id>([\w-]+)<\/task-id>/g), match => match[1]) : []
 }
 
 // A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its

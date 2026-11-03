@@ -418,3 +418,12 @@ test('a live follow skips history older than itself in a session it switches to,
   expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Finished it.' }, { end: 'done' }])
   stop()
 })
+
+test('one notice naming several agents brings them all back', () => {
+  threads('buzz', { b17: { name: 'Both back', session: 'both-back' } })
+  const notice = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentb1</task-id>\n<task-id>agentb2</task-id>\n<status>failed</status>' } }
+  write(join(project, 'both-back.jsonl'), asked('call:both'), launched('agentb1'), launched('agentb2'), ended, notice, said('Both are back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'both back')!, hex, 'call:both', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Both are back.' }, { end: 'done' }])
+})
