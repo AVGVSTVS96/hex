@@ -62,12 +62,16 @@ type Fan = { id: string; kind: string; label: string; startedAt?: number; doneAt
 type Entry = { at: string; state: string; detail?: string; text?: string }
 type Told = { state: Agent['state']; result?: string }
 type Stretch = Pick<Run, 'steps' | 'plan' | 'agents'>
-type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string; beat?: string }
+type Start = (follow: (path: string) => () => void) => () => void
+type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string; turn?: boolean; beats: Beat[] }
+// A heartbeat, from the scheduler's message to the next message, so it holds its turn's records.
+type Beat = { from: string; to?: string }
 
 const TAIL = 256 * 1024
 const LATELY = 5
 const STEPS = 24
 const AGENT_STEPS = 12
+const BEATS = 48
 const RESULT = 600
 const KEEP = 7 * 24 * 60 * 60_000
 const TRACK = 7 * 24 * 60 * 60_000
@@ -187,6 +191,7 @@ export class Board extends Changes {
     if (this.stale.sessions) this.readSessions()
     if (this.stale.threads || this.stale.sessions) this.watchJobs()
     this.stale = { threads: false, sessions: false }
+    for (const [session, [keep, start]] of this.busy()) this.begin(session, keep, start)
     const since = new Date(Date.now() - KEEP).toISOString()
     const threads = this.threads
       .filter(thread => !this.links.delegated(thread.app, thread.id))
@@ -306,11 +311,12 @@ export class Board extends Changes {
     const started = this.started(thread)
     const handed = this.links.delegations(thread.app, thread.id)
     const out = handed.filter(one => !HANDED[one.status])
-    const beat = thread.session ? this.followers.get(thread.session)?.beat : undefined
-    const quiet = beat && !started.length && !out.length && !job?.fan?.some(fan => WORK.has(fan.kind) && !fan.doneAt)
-    if (quiet) ({ job, timeline } = before(job, timeline, beat))
+    const follower = thread.session ? this.followers.get(thread.session) : undefined
+    const beats = follower?.beats ?? []
+    const beating = session?.status === 'busy' && !!follower && beat(follower)
+    if (beats.length) ({ job, timeline } = without(job, timeline, beats, beating))
     const known = job?.state ? STATES[job.state] : undefined
-    const live = (busy(session) && !quiet) || started.length > 0 || out.length > 0
+    const live = (busy(session) && !beating) || started.length > 0 || out.length > 0
     let state: State = live ? 'working' : (known ?? 'idle')
     if (!live && ((state === 'working' && !session) || job?.detail?.startsWith('(idle'))) state = 'idle'
     const lately = timeline
@@ -328,7 +334,7 @@ export class Board extends Changes {
     const key = keyOf(thread)
     const steps = state === 'working' ? this.steps(key) : []
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
-    const line = steps.find(step => step.kind === 'say')?.text ?? needs ?? detail ?? lately[0]?.text ?? ''
+    const line = steps.find(step => step.kind === 'say' && step.at >= since)?.text ?? needs ?? detail ?? lately[0]?.text ?? ''
     const agents = (
       state === 'working'
         ? [
@@ -439,19 +445,17 @@ export class Board extends Changes {
   // A working thread's transcript, and those of its subagents, workflow agents and the sessions it
   // started from this stretch of work, give its steps.
   private follow(runs: Run[]) {
-    const wanted = new Map<string, [number, (path: (found: string) => () => void) => () => void]>()
+    const wanted = this.busy()
     const threads = [...this.threads, ...this.loose()]
     for (const run of runs) {
       const thread = threads.find(thread => `${thread.app}:${thread.id}` === run.id)!
       const { session } = thread
       const key = keyOf(thread)
-      if (run.state !== 'working' && !run.running && !this.followers.get(key)?.beat) continue
-      const job = session ? this.job(session).job : undefined
-      const project = this.project(job?.cwd ?? thread.cwd)
-      const subagents = join(project, key, 'subagents')
-      const handed = this.links.delegations(thread.app, thread.id)
-      if (session) wanted.set(session, [STEPS, follow => follow(join(project, `${session}.jsonl`))])
+      if (session && (run.state === 'working' || run.running || this.followers.get(session)?.beats.length)) wanted.set(session, this.transcript(thread))
       if (run.state !== 'working') continue
+      const job = session ? this.job(session).job : undefined
+      const subagents = join(this.project(job?.cwd ?? thread.cwd), key, 'subagents')
+      const handed = this.links.delegations(thread.app, thread.id)
       for (const agent of run.agents) {
         const started = this.sessions.get(agent.id)
         const hex = handed.find(one => one.id === agent.id)?.hex
@@ -475,15 +479,30 @@ export class Board extends Changes {
       follower.stop()
       this.followers.delete(key)
     }
-    for (const [key, [keep, start]] of wanted) {
-      if (this.followers.has(key)) continue
-      const follower: Follower = { stop: () => {}, keep, steps: [], plan: [], told: new Map() }
-      this.followers.set(key, follower)
-      follower.stop = start(path => {
-        follower.type = readJson(path.replace(/\.jsonl$/, '.meta.json'))?.agentType
-        return followTranscript(path, Math.max(0, sizeOf(path) - TAIL), (entry, updates) => this.take(follower, entry, updates()))
-      })
-    }
+    for (const [key, [keep, start]] of wanted) this.begin(key, keep, start)
+  }
+
+  // Thread sessions at work are followed before their runs are read, so a heartbeat is known from
+  // the first look.
+  private busy() {
+    return new Map(this.threads.flatMap(thread => (thread.session && busy(this.sessions.get(thread.session)) ? [[thread.session, this.transcript(thread)] as [string, [number, Start]]] : [])))
+  }
+
+  // A thread session's own transcript.
+  private transcript(thread: Thread): [number, Start] {
+    const project = this.project(this.job(thread.session!).job?.cwd ?? thread.cwd)
+    return [STEPS, follow => follow(join(project, `${thread.session}.jsonl`))]
+  }
+
+  // Following starts with the transcript's tail, read before this returns.
+  private begin(key: string, keep: number, start: Start) {
+    if (this.followers.has(key)) return
+    const follower: Follower = { stop: () => {}, keep, steps: [], plan: [], told: new Map(), beats: [] }
+    this.followers.set(key, follower)
+    follower.stop = start(path => {
+      follower.type = readJson(path.replace(/\.jsonl$/, '.meta.json'))?.agentType
+      return followTranscript(path, Math.max(0, sizeOf(path) - TAIL), (entry, updates) => this.take(follower, entry, updates()))
+    })
   }
 
   // One transcript line: its model, an agent it heard back from, its plan, its new steps, and the
@@ -496,8 +515,15 @@ export class Board extends Changes {
     if (entry.type === 'assistant' && who(entry.message?.model)) follower.model = entry.message.model
     const told = toldOf(entry)
     if (told) follower.told.set(...told)
-    if (prompted(entry)) follower.beat = beating(entry) ? at : undefined
-    if (follower.beat) return this.schedule()
+    if (prompted(entry)) {
+      const open = follower.beats.at(-1)
+      const scheduled = beating(entry)
+      if (open && !open.to && !(scheduled && follower.turn)) open.to = at
+      if (scheduled && !follower.turn) follower.beats = [...follower.beats, { from: at }].slice(-BEATS)
+      follower.turn = true
+    }
+    if (entry.type === 'system' && entry.subtype === 'turn_duration') follower.turn = false
+    if (beat(follower)) return this.schedule()
     for (const update of updates) {
       if (update.sessionUpdate === 'plan') follower.plan = update.entries.map(entry => ({ text: oneLine(entry.content), state: PLANNED[entry.status] ?? 'pending' }))
       const back = backOf(update)
@@ -615,12 +641,14 @@ function toldOf(entry: any): [string, Told] | undefined {
   return id ? [id, { state: TOLD[text.match(/<status>(\w+)<\/status>/)?.[1] ?? ''] ?? 'stopped', ...(said && { result: said }) }] : undefined
 }
 
-// A user line that starts a turn: a message from a channel, a notification or a person typing,
-// not a tool's result or a note Claude Code adds.
+// A user line that starts a turn or joins one: a message from a channel, a notification or a
+// person typing, not a tool's result, an interruption or a note Claude Code adds.
 function prompted(entry: any) {
   if (entry.type !== 'user' || entry.toolUseResult || entry.isCompactSummary) return false
+  if (entry.origin) return true
   const content = entry.message?.content
-  return entry.origin ? true : !entry.isMeta && !(Array.isArray(content) && content.some((block: any) => block?.type === 'tool_result'))
+  if (Array.isArray(content)) return !entry.isMeta && !content.some((block: any) => block?.type === 'tool_result' || /^\[Request interrupted/.test(block?.text ?? ''))
+  return !entry.isMeta && typeof content === 'string' && !content.startsWith('[Request interrupted')
 }
 
 // The hourly heartbeat hex's scheduler delivers, as its channel tag names it.
@@ -630,13 +658,20 @@ function beating(entry: any) {
   return entry.origin?.kind === 'channel' && /^\s*<channel\b[^>]*\sschedule="heartbeat"/.test(text)
 }
 
-// A session's records as they stood before its heartbeat began, so the check isn't a turn of work.
-// The heartbeat waits for the turn before it to end, so a working entry left at the end is its own.
-function before(job: Job | undefined, timeline: Entry[], beat: string): { job: Job | undefined; timeline: Entry[] } {
-  const kept = timeline.filter(entry => entry.at < beat)
-  while (kept.at(-1)?.state === 'working') kept.pop()
+// Whether the session's turn now is a heartbeat's.
+function beat(follower: Follower) {
+  return !!follower.turn && follower.beats.length > 0 && follower.beats.at(-1)!.to === undefined
+}
+
+// A session's records without its heartbeats': while one runs or its newest record is one, it
+// stands as it did before.
+function without(job: Job | undefined, timeline: Entry[], beats: Beat[], beating: boolean): { job: Job | undefined; timeline: Entry[] } {
+  const outside = (at: string) => !beats.some(beat => at >= beat.from && (beat.to === undefined || at < beat.to))
+  const kept = timeline.filter(entry => outside(entry.at))
+  const newest = timeline.at(-1)
+  if (!job || (!beating && (!newest || outside(newest.at)))) return { job, timeline: kept }
   const last = kept.at(-1)
-  return { job: job && { ...job, state: last?.state, detail: last?.detail, needs: undefined, updatedAt: last?.at }, timeline: kept }
+  return { job: { ...job, state: last?.state, detail: last?.detail, needs: last?.state === 'blocked' ? job.needs : undefined, updatedAt: last?.at }, timeline: kept }
 }
 
 // Steps of a stretch that ended: one still running then never said how it went.

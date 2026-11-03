@@ -394,48 +394,96 @@ test('a running session no thread holds is a run of its own while it works', asy
   await until(() => !board.get('claude:12121212') && !board.get('claude:56565656'))
 })
 
-test("the hourly heartbeat is no turn of work: it leaves a thread as it was, and adds no steps to one that's working", async () => {
+function ended(path: string) {
+  appendFileSync(path, JSON.stringify({ type: 'system', subtype: 'turn_duration', timestamp: new Date().toISOString() }) + '\n')
+}
+
+function beat(path: string) {
+  heard(path, `<channel source="plugin:telegram:telegram" key="schedule:heartbeat@${new Date().toISOString().slice(0, 16)}Z" user="schedule" schedule="heartbeat">\n[heartbeat] Hourly check`, {
+    isMeta: true,
+    origin: { kind: 'channel', server: 'plugin:telegram:telegram' },
+  })
+}
+
+test("the hourly heartbeat is no turn of work: the thread stands as it did before it, in its line, lately and lane, from the first look on", async () => {
   threads('telegram', { ...telegram, '-1001234567890:4100': { name: 'pulse', session: '41004100-pulse' } })
   const transcript = join(project, '41004100-pulse.jsonl')
-  const pulse = () => board.get('telegram:-1001234567890:4100')
-  const beat = (slot: string) =>
-    heard(transcript, `<channel source="plugin:telegram:telegram" key="schedule:heartbeat@${slot}" user="schedule" schedule="heartbeat">\n[heartbeat] Hourly check`, {
-      isMeta: true,
-      origin: { kind: 'channel', server: 'plugin:telegram:telegram' },
-    })
+  const pulse = () => board.get('telegram:-1001234567890:4100')!
+  heard(transcript, 'Ship the fix', { origin: { kind: 'channel', server: 'plugin:telegram:telegram' } })
+  said(transcript, { type: 'text', text: 'Shipped.' })
+  ended(transcript)
   const shipped = { at: ago(10), state: 'done', detail: 'shipped the fix', text: 'Shipped.' }
-  job('41004100-pulse', { state: 'done', detail: 'shipped the fix', updatedAt: shipped.at }, [shipped])
+  const timeline = [shipped]
+  job('41004100-pulse', { state: 'done', detail: 'shipped the fix', updatedAt: shipped.at }, timeline)
   running('41004100-pulse', 'idle')
-  await until(() => pulse()?.state === 'done')
-  beat('2026-11-03T13:45Z')
-  said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
-  job('41004100-pulse', { state: 'working', detail: 'Checking inbox', updatedAt: ago(0) }, [shipped, { at: ago(0), state: 'working', detail: 'Checking inbox', text: '' }])
+  await until(() => board.get('telegram:-1001234567890:4100')?.state === 'done')
+  const counted = board.counts.version
+  for (const round of [1, 2]) {
+    beat(transcript)
+    said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
+    timeline.push({ at: new Date().toISOString(), state: 'working', detail: 'Checking the inbox', text: '' })
+    job('41004100-pulse', { state: 'working', detail: 'Checking the inbox', updatedAt: ago(0) }, timeline)
+    running('41004100-pulse', 'busy')
+    await until(() => pulse().running)
+    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at, steps: [] })
+    timeline.push({ at: new Date().toISOString(), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' })
+    job('41004100-pulse', { state: 'done', detail: 'Nothing new', updatedAt: ago(0) }, timeline)
+    ended(transcript)
+    running('41004100-pulse', 'idle')
+    await until(() => !pulse().running)
+    await Bun.sleep(50)
+    expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at, lately: [{ text: 'shipped the fix' }], track: [{ at: shipped.at, state: 'done' }] })
+    expect(round && board.counts.version).toBe(counted)
+  }
+  heard(transcript, 'Build the page', { origin: { kind: 'channel', server: 'plugin:telegram:telegram' } })
+  timeline.push({ at: new Date().toISOString(), state: 'working', detail: 'Building the page', text: '' })
+  job('41004100-pulse', { state: 'working', detail: 'Building the page', updatedAt: ago(0) }, timeline)
   running('41004100-pulse', 'busy')
-  await until(() => pulse()?.running === true)
-  await Bun.sleep(100)
-  expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', steps: [] })
-  expect(board.runs.filter(run => run.state === 'working').map(run => run.name)).not.toContain('pulse')
-  job('41004100-pulse', { state: 'done', detail: 'Nothing new', updatedAt: ago(0) }, [shipped, { at: ago(0), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' }])
+  await until(() => pulse().state === 'working')
+  expect(pulse().line).toBe('Building the page')
+  expect(pulse().lately.map(moment => moment.text)).toEqual(['shipped the fix'])
+  expect(pulse().track.map(turn => turn.state)).toEqual(['done', 'working'])
+  ended(transcript)
   running('41004100-pulse', 'idle')
-  await until(() => pulse()?.running === false)
-  await Bun.sleep(100)
-  expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at })
-  expect(pulse()!.lately.map(moment => moment.text)).toEqual(['shipped the fix'])
+  job('41004100-pulse', { state: 'done', detail: 'page built', updatedAt: ago(0) }, timeline)
+})
 
-  running('41004100-pulse', 'busy')
-
-  job('41004100-pulse', { state: 'working', detail: 'Building the page', updatedAt: ago(0), fan: [{ id: 'page', kind: 'agent', label: 'Build the page', startedAt: Date.now() }] })
+test("a heartbeat adds no steps to a thread still working, and one that comes inside a real turn is part of it", async () => {
+  threads('telegram', { ...telegram, '-1001234567890:4200': { name: 'beatwork', session: '42004200-beatwork' } })
+  const transcript = join(project, '42004200-beatwork.jsonl')
+  const work = () => board.get('telegram:-1001234567890:4200')!
+  const building = { at: ago(1), state: 'working', detail: 'Building the page', text: '' }
+  const fan = [{ id: 'page', kind: 'agent', label: 'Build the page', startedAt: Date.now() }]
+  job('42004200-beatwork', { state: 'done', detail: 'ready', updatedAt: ago(2) })
+  running('42004200-beatwork', 'idle')
+  await until(() => board.get('telegram:-1001234567890:4200'))
   heard(transcript, 'Build the page', { origin: { kind: 'channel', server: 'plugin:telegram:telegram' } })
   said(transcript, { type: 'text', text: 'Starting on the page.' })
-  await until(() => pulse()?.line === 'Starting on the page.')
-  beat('2026-11-03T14:45Z')
+  job('42004200-beatwork', { state: 'working', detail: 'Building the page', updatedAt: building.at, fan }, [building])
+  running('42004200-beatwork', 'busy')
+  await until(() => work().line === 'Starting on the page.')
+  beat(transcript)
+  step(transcript, 'Bash', { command: 'gh run list' })
+  await until(() => work().steps[0]?.kind === 'run')
+  ended(transcript)
+  running('42004200-beatwork', 'idle')
+
+  beat(transcript)
   said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
+  heard(transcript, '[Request interrupted by user]')
   step(transcript, 'Bash', { command: 'gh pr list' })
-  await Bun.sleep(100)
-  expect(pulse()).toMatchObject({ state: 'working', line: 'Starting on the page.' })
-  expect(pulse()!.steps.map(step => step.text)).toEqual(['Starting on the page.'])
-  running('41004100-pulse', 'idle')
-  job('41004100-pulse', { state: 'done', detail: 'page built', updatedAt: ago(0) })
+  job('42004200-beatwork', { state: 'working', detail: 'Checking the inbox', updatedAt: ago(0), fan }, [building, { at: new Date().toISOString(), state: 'working', detail: 'Checking the inbox', text: '' }])
+  running('42004200-beatwork', 'busy')
+  await until(() => work().running)
+  await Bun.sleep(50)
+  expect(work()).toMatchObject({ state: 'working', line: 'Starting on the page.' })
+  expect(work().steps.map(step => step.text)).toEqual(['Running gh run list', 'Starting on the page.'])
+  ended(transcript)
+  running('42004200-beatwork', 'shell')
+  await until(() => !work().running)
+  expect(work().state).toBe('working')
+  running('42004200-beatwork', 'idle')
+  job('42004200-beatwork', { state: 'done', detail: 'page built', updatedAt: ago(0) })
 })
 
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
