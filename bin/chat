@@ -286,7 +286,7 @@ def too_long(line):
 
 def ask(first):
     """One compaction: a Haiku session that gets the task, and as many size retries as it needs."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(("HEX_", "CLAUDECODE"))}
+    env = {**{k: v for k, v in os.environ.items() if not k.startswith(("HEX_", "CLAUDECODE"))}, "CLAUDE_CODE_ENTRYPOINT": "hex"}
     proc = subprocess.Popen(
         [CLAUDE, "-p", "--safe-mode", "--model", "haiku", "--effort", "high", "--tools", "",
          "--system-prompt-file", str(PROMPT), "--input-format", "stream-json",

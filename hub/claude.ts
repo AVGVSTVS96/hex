@@ -13,8 +13,9 @@ export type Usage = { sent: number; at?: number; short?: boolean }
 const home = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 const short = (session: string) => session.slice(0, 8)
 
-// What a Claude process the hub starts never inherits from it: the bots' tokens and hex's own settings.
-const PRIVATE = /_BOT_TOKEN$|^HEX_|^BUZZ_/
+// What a Claude process the hub starts never inherits from it: the bots' tokens, hex's own settings, and the
+// label of whatever run started the hub, which Claude Code would report for every session its daemon starts.
+const PRIVATE = /_BOT_TOKEN$|^HEX_|^BUZZ_|^CLAUDE_CODE_ENTRYPOINT$/
 
 export function inherited(): Record<string, string | undefined> {
   return Object.fromEntries(Object.entries(process.env).filter(([name]) => !PRIVATE.test(name)))

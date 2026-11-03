@@ -150,3 +150,18 @@ test('every folder a background session starts in is trusted (a -p run never ask
   const args: string[] = JSON.parse(readFileSync(join(home, 'launched'), 'utf8'))
   expect(JSON.parse(args[args.indexOf('--settings') + 1]!)).toMatchObject({ model: 'opus', permissions: { deny: [`Read(/${home}/.env)`] } })
 })
+
+test('a run with no terminal says it is hex, over the label it inherited, and a background session drops it for its own', () => {
+  writeFileSync(join(home, 'fake/claude'), `#!/bin/sh\nprintf '%s' "\${CLAUDE_CODE_ENTRYPOINT:-unset}" > "${home}/entrypoint"\n`)
+  const env = { ...process.env, CLAUDE_CODE_ENTRYPOINT: 'sdk-cli' }
+  const launched = (...args: string[]) => {
+    rmSync(join(home, 'entrypoint'), { force: true })
+    expect(Bun.spawnSync([join(home, '.hex/bin/session'), ...args], { cwd: home, env }).exitCode).toBe(0)
+    return readFileSync(join(home, 'entrypoint'), 'utf8')
+  }
+  expect(launched('-p', 'build it')).toBe('hex')
+  expect(launched('build it')).toBe('hex')
+  expect(launched('-p', '--', '--bg')).toBe('hex')
+  expect(launched('--bg', 'build it')).toBe('unset')
+  expect(launched('--bg', '-p')).toBe('unset')
+})
