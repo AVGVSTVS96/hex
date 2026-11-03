@@ -100,7 +100,12 @@ export class Ledger {
       for (const { thread } of this.store.pins({ app: this.app })) this.rewrite(thread, post).catch(error => failed(thread, error))
     }
     const stop = this.store.watch(all)
-    all()
+    try {
+      all()
+    } catch (error) {
+      stop()
+      throw error
+    }
     return stop
   }
 
