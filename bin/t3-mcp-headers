@@ -1,8 +1,8 @@
 #!/bin/sh
-# t3-mcp-headers [--refresh <token>]: prints {"Authorization": "Bearer …"} for this machine's T3 Code /mcp, as a
+# t3-mcp-headers [--refresh]: prints {"Authorization": "Bearer …"} for this machine's T3 Code /mcp, as a
 # headersHelper does. /mcp takes only its own OAuth tokens (30 days, no refresh), and its MCP tools are the only
 # way into a linked machine, so this signs in as T3's own `t3 environment link` does: an OAuth client approved with
-# a one-time pairing code. The token is cached for the server it was issued by; --refresh drops it if it is still the refused one, so jobs
+# a one-time pairing code. The token is cached for the server it was issued by; --refresh drops it if it is still the refused one (T3_REFUSED), so jobs
 # refused together sign in once, one at a time.
 set -eu
 cache="$HOME/.claude/channels/hex/t3/mcp-token.json"
@@ -11,7 +11,7 @@ exec 8>"$cache.lock"
 flock 8
 now=$(date +%s)
 base=http://127.0.0.1:$(jq -r .port "$HOME/.t3/userdata/server-runtime.json")
-if [ "${1:-}" = --refresh ] && [ "$(jq -r .access_token "$cache" 2>/dev/null)" = "${2:-}" ]; then rm -f "$cache"; fi
+if [ "${1:-}" = --refresh ] && [ "$(jq -r .access_token "$cache" 2>/dev/null)" = "${T3_REFUSED:-}" ]; then rm -f "$cache"; fi
 if [ -s "$cache" ] && jq -e --arg base "$base" --argjson soon $((now + 86400)) '.expires_at > $soon and (.resource // "\($base)/mcp") == "\($base)/mcp"' "$cache" >/dev/null; then
   jq -c '{Authorization: ("Bearer " + .access_token)}' "$cache"
   exit

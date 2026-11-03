@@ -15,6 +15,7 @@ let running = false
 let refused = 0
 let asked: string[] = []
 let flaky = 0
+let launchDrop = 0
 
 const server = Bun.serve({
   port: 0,
@@ -25,6 +26,7 @@ const server = Bun.serve({
     if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: {} }, { headers: { 'mcp-session-id': 's1' } })
     if (body.method !== 'tools/call') return new Response(null, { status: 202 })
     calls.push(body.params)
+    if (body.params.name === 't3_thread_launch' && launchDrop-- > 0) return new Response('relay timed out', { status: 504 })
     if (body.params.name === 't3_thread_wait' && drop-- > 0) return new Response('gone', { status: 502 })
     if (body.params.name === 't3_thread_wait' && refused-- > 0) return new Response('expired', { status: 401 })
     if (body.params.name === 't3_thread_wait' && flaky-- > 0) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'mac is not answering' }], isError: true } })
@@ -51,7 +53,7 @@ beforeAll(() => {
   mkdirSync(join(home, '.t3/userdata'), { recursive: true })
   cpSync(join(HEX, 'bin/away'), join(home, '.hex/bin/away'))
   script(join(home, '.hex/bin/identity'), 'echo "You are hex."')
-  script(join(home, '.hex/bin/t3-mcp-headers'), `echo "sign-in $*" >> "${home}/signed"; echo '{"Authorization":"Bearer t"}'`)
+  script(join(home, '.hex/bin/t3-mcp-headers'), `echo "sign-in $*\${T3_REFUSED:+ refused=\$T3_REFUSED}" >> "${home}/signed"; echo '{"Authorization":"Bearer t"}'`)
   writeFileSync(join(home, '.t3/userdata/server-runtime.json'), JSON.stringify({ port: server.port }))
 })
 afterAll(() => {
@@ -71,6 +73,7 @@ const reset = () => {
   running = false
   refused = 0
   flaky = 0
+  launchDrop = 0
   asked = []
   rmSync(join(home, 'signed'), { force: true })
 }
@@ -98,7 +101,7 @@ test('a refused token is renewed and a tool error without a final code is retrie
   flaky = 1
   const { run } = away(['-p', 'Build it.'])
   expect(await run.exited).toBe(0)
-  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in \nsign-in --refresh t\n')
+  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in \nsign-in --refresh refused=t\n')
 }, 30_000)
 
 test('a job whose thread stops at a question ends there, with the question as its answer', async () => {
@@ -142,3 +145,16 @@ test("a sign-in that fails here is this machine's fault, named at once, and star
   expect(calls).toHaveLength(0)
   writeFileSync(helper, kept)
 })
+
+test('a job stopped while its launch may have reached the other machine gets that thread back and stops it', async () => {
+  reset()
+  launchDrop = 1
+  const { run, error } = away(['-p', 'Build it.'])
+  while (!calls.some(({ name }) => name === 't3_thread_launch')) await Bun.sleep(50)
+  await Bun.sleep(200)
+  run.kill('SIGTERM')
+  expect(await run.exited).toBe(143)
+  expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(2)
+  expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
+  expect(await error()).toContain('trying again')
+}, 20_000)

@@ -50,7 +50,8 @@ const here = (why: string) => new Local(`T3 Code on ${hostname()}, this machine:
 // token is renewed once. Signing in again only then means stopping a thread as the unit stops starts no process.
 let headers: Record<string, string> | undefined
 function signIn(refused?: string) {
-  const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers'), ...(refused ? ['--refresh', refused] : [])], { cwd: home, timeout: 60_000 })
+  const env = { ...process.env, ...(refused && { T3_REFUSED: refused }) }
+  const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers'), ...(refused ? ['--refresh'] : [])], { cwd: home, env, timeout: 60_000 })
   const signed = parse(helper.stdout.toString())
   if (helper.exitCode !== 0 || typeof signed?.Authorization !== 'string') throw here(`couldn't sign in: ${helper.stderr.toString().trim() || 'no sign-in printed'}`)
   return { ...signed, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
@@ -62,8 +63,10 @@ const url = (() => {
     quit(UNREACHABLE, here("it isn't running (no ~/.t3/userdata/server-runtime.json)").message)
   }
 })()!
+// One MCP session at a time, each request with its own id, since a stop can run beside a wait.
 let session: string | undefined
-let connected = false
+let opening: Promise<void> | undefined
+let ids = 0
 async function post(body: object, renewed = false): Promise<Response> {
   headers ??= signIn()
   const answer = await fetch(url, { method: 'POST', headers: { ...headers, ...(session && { 'mcp-session-id': session }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }), signal: AbortSignal.timeout(120_000) })
@@ -73,16 +76,27 @@ async function post(body: object, renewed = false): Promise<Response> {
   }
   // A refused sign-in, or a request T3 Code turns down, won't change by asking again; anything else might.
   if (answer.status >= 400 && answer.status < 500 && ![404, 408, 429].includes(answer.status)) throw here(`HTTP ${answer.status} ${await answer.text()}`)
-  if (!answer.ok) throw new Error(`HTTP ${answer.status} from T3 Code on ${hostname()}`)
+  if (!answer.ok) throw Object.assign(new Error(`HTTP ${answer.status} from T3 Code on ${hostname()}`), { status: answer.status })
   return answer
 }
-async function call(tool: string, input: Record<string, unknown>): Promise<any> {
-  if (!connected) {
-    session = (await post({ id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'hex-away', version: '1' } } })).headers.get('mcp-session-id') ?? undefined
+const open = () =>
+  (opening ??= (async () => {
+    session = undefined
+    session = (await post({ id: ++ids, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'hex-away', version: '1' } } })).headers.get('mcp-session-id') ?? undefined
     await post({ method: 'notifications/initialized' })
-    connected = true
-  }
-  const answer = await post({ id: 1, method: 'tools/call', params: { name: tool, arguments: { environmentId, ...input } } })
+  })().catch(error => {
+    opening = undefined
+    throw error
+  }))
+// reached() runs once the call may have reached the other machine: it got an answer, or T3 Code here timed out or
+// failed on it.
+async function call(tool: string, input: Record<string, unknown>, reached?: () => void): Promise<any> {
+  await open()
+  const answer = await post({ id: ++ids, method: 'tools/call', params: { name: tool, arguments: { environmentId, ...input } } }).catch(error => {
+    if (error.name === 'TimeoutError' || error.status >= 500) reached?.()
+    throw error
+  })
+  reached?.()
   // Streamable HTTP may answer as an event stream, whose last data line is the reply.
   const raw = await answer.text()
   const reply = answer.headers.get('content-type')?.startsWith('text/event-stream') ? (raw.split('\n').filter(line => line.startsWith('data:')).at(-1)?.slice(5) ?? '') : raw
@@ -96,7 +110,7 @@ async function call(tool: string, input: Record<string, unknown>): Promise<any> 
 
 let threadId: string | undefined
 let stopping = false
-let launches = 0
+let sent = false
 const requestId = `hex-job-${name}-${machine}-${process.env.INVOCATION_ID ?? process.pid}`
 const stop = (reason: string) => call('t3_thread_interrupt', { threadId, stop: true, reason }).catch(error => console.error(`away: couldn't stop the thread: ${error.message}`))
 for (const signal of ['SIGTERM', 'SIGINT'] as const)
@@ -104,6 +118,16 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const)
     stopping = true
     if (threadId) void stop(`hex stopped the job ${name}`).then(() => process.exit(143))
   })
+// A job stopped while starting ends; a launch that may have reached the other machine is asked for again, which gets
+// back the thread it started, if any, so it can be stopped.
+async function abandon(): Promise<never> {
+  const started = sent && (await launch().catch(() => undefined))
+  if (started) {
+    threadId = started.threadId
+    await stop(`hex stopped the job ${name}`)
+  } else if (sent) console.error(`away: ${name} stopped while starting; a thread may have started on ${machine} under ${requestId}`)
+  process.exit(143)
+}
 // A call is retried with backoff until it's final or patience runs out; a job stopped before its thread exists just ends.
 async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<T> {
   const until = Date.now() + patience
@@ -113,12 +137,9 @@ async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<
     } catch (error) {
       if (error instanceof Final || error instanceof Local || Date.now() + wait > until) throw error
       console.error(`away: ${(error as Error).message}; trying again in ${wait / 1000} s`)
-      ;[connected, session] = [false, undefined]
+      opening = undefined
       await Bun.sleep(wait)
-      if (stopping && !threadId) {
-        if (launches) console.error(`away: ${name} stopped while starting; a thread may have started on ${machine} under ${requestId}`)
-        process.exit(143)
-      }
+      if (stopping && !threadId) await abandon()
     }
   }
 }
@@ -153,23 +174,23 @@ ${asked}`
 // A launch that fails on the way is retried, and the same clientRequestId gets back the thread it may have started.
 // Once one may have reached the other machine, a launch that keeps failing fails the job, rather than moving on to a
 // machine where it could run twice.
-const launched = await persist(
-  () => {
-    launches++
-    return call('t3_thread_launch', {
+const launch = () =>
+  call(
+    't3_thread_launch',
+    {
       title: name,
       scratch: true,
       message,
       runtimeMode: 'full-access',
       modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
       clientRequestId: requestId,
-    })
-  },
-  1_800_000,
-).catch((error: Error) => {
-  if (launches === 1 && error instanceof Final) quit(ELSEWHERE, error.message)
-  if (launches === 1 && error instanceof Local) quit(UNREACHABLE, error.message)
-  console.error(`away: ${name} couldn't start on ${machine}: ${error.message}${launches > 1 ? `; a thread may have started there under ${requestId}` : ''}`)
+    },
+    () => (sent = true),
+  )
+const launched = await persist(launch, 1_800_000).catch((error: Error) => {
+  if (!sent && error instanceof Final) quit(ELSEWHERE, error.message)
+  if (!sent) quit(UNREACHABLE, error.message)
+  console.error(`away: ${name} couldn't start on ${machine}: ${error.message}; a thread may have started there under ${requestId}`)
   process.exit(1)
 })
 threadId = launched.threadId as string
