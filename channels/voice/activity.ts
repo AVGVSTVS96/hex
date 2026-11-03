@@ -413,11 +413,11 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 // thread (a renewal or a restart) shows up in hex.db and is followed from its start, past the
 // entries it copied when resumed from an earlier one: a copy keeps their uuids. The last session's
 // background agents end with it: Claude Code tells only the session that started an agent when
-// it's back. Following resumes a
-// message sent earlier from the start of the session that took it, as hex.db has it, then goes on
-// in the thread's session now, if that's another; a session between the two is skipped.
+// it's back. Following resumes a message sent earlier from the start of the session that took it,
+// as hex.db has it, then goes on in the thread's session now, if that's another. A session between
+// the two isn't read, though what the session now copied from it is, as its own.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
-  const agents = new Map<string, () => void>()
+  const agents = new Map<string, (last?: boolean) => void>()
   let session: string | undefined
   let project = ''
   let stopSession = (_last?: boolean) => {}
@@ -438,7 +438,7 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const fresh = resumed || session !== undefined
     stopSession(true)
     if (ended) return
-    for (const stop of agents.values()) stop()
+    for (const stop of agents.values()) stop(true)
     agents.clear()
     if (session) for (const uuid of uuids(join(project, `${session}.jsonl`))) copied.add(uuid)
     session = next
@@ -483,8 +483,6 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   return close
 }
 
-// Every entry's uuid in a transcript, found by its key rather than by parsing each line: a
-// transcript can run to a hundred megabytes.
 function uuids(path: string) {
   try {
     return Array.from(readFileSync(path, 'utf8').matchAll(/"uuid":"([^"]+)"/g), match => match[1])
@@ -497,7 +495,7 @@ function uuids(path: string) {
 // turn ran.
 function agentBack(entry: any): string | undefined {
   const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
-  if ((queued ?? entry).origin?.kind !== 'task-notification') return
+  if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return
   return JSON.stringify(queued ? queued.prompt : entry.message?.content).match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
 }
 

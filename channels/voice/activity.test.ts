@@ -333,6 +333,15 @@ test('an agent that comes back while another turn runs, queued as an attachment,
   expect(steps).toEqual([{ line: 'Another turn.' }, { line: 'It is back.' }, { end: 'done' }])
 })
 
+test('an agent back in the older queued form, by command mode, is back', () => {
+  threads('buzz', { b10: { name: 'Agent queued old', session: 'agent-queued-old' } })
+  const notice = { type: 'attachment', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>agento</task-id>\n<status>completed</status>' } }
+  write(join(project, 'agent-queued-old.jsonl'), asked('call:queued-old'), launched('agento'), ended, said('Another turn.'), notice, said('It is back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'agent queued old')!, hex, 'call:queued-old', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Another turn.' }, { line: 'It is back.' }, { end: 'done' }])
+})
+
 test("an agent still out when its session ended doesn't hold the task open in the next one", () => {
   threads('buzz', { b8: { name: 'Agent cut', session: 'agent-new' } })
   open(state).deliver({ key: 'buzz:agent-cut', to: 'b8', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:agent-cut' } }, 'agent-old')
