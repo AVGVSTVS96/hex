@@ -113,6 +113,7 @@ export class Board extends Changes {
   private stops: (() => void)[] = []
   private tracks: Record<string, Turn[]>
   private saving?: ReturnType<typeof setTimeout>
+  private beaten = ''
 
   constructor(
     private state: string,
@@ -126,7 +127,9 @@ export class Board extends Changes {
     this.stops.push(
       open(state).watch(() => {
         if (JSON.stringify(this.stored()) !== JSON.stringify(this.threads)) this.mark('threads')
-        this.schedule()
+        const beaten = open(state).beaten()
+        if (beaten !== this.beaten) this.schedule()
+        this.beaten = beaten
       }),
     )
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))

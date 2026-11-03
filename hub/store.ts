@@ -846,6 +846,13 @@ export class Store {
     return rows.map(row => Object.fromEntries(Object.entries(row).filter(([, value]) => value))) as { began: string; until?: string; after?: string }[]
   }
 
+  // Changes whenever a heartbeat begins, ends or is followed, or a turn of a session that has had one.
+  beaten(): string {
+    return JSON.stringify(
+      this.db.query('select max(rowid), count(until), count(after), (select max(coalesce(ended, began)) from turns where session in (select session from beats)) from beats').values(),
+    )
+  }
+
   turn(session: string): { began?: string; ended?: string } {
     const row = this.db.query('select began, ended from turns where session = ?').get(session) as Record<string, string | null> | null
     return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
