@@ -664,11 +664,12 @@ function toldOf(entry: any): [string, Told] | undefined {
   return id ? [id, { state: TOLD[text.match(/<status>(\w+)<\/status>/)?.[1] ?? ''] ?? 'stopped', ...(said && { result: said }) }] : undefined
 }
 
-// A session's records as they stood when its heartbeat began. With none from before it (Claude Code
-// starts a job's timeline over when its session renews), it's idle, still listed by its own time.
+// A session's records as they stood when its heartbeat began, at rest: work still running then keeps
+// it working through its agents and shells. With none from before it (Claude Code starts a job's
+// timeline over when its session renews), it's idle, still listed by its own time.
 function before(job: Job | undefined, timeline: Entry[], from: number) {
   const kept = timeline.filter(entry => Date.parse(entry.at) < from)
-  const last = kept.at(-1)
+  const last = kept.findLast(entry => entry.state !== 'working')
   if (!job || !last) return { job: job && { ...job, state: undefined, detail: undefined, needs: undefined }, timeline: kept }
   return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined, updatedAt: last.at }, timeline: kept }
 }
@@ -689,8 +690,21 @@ function tooled(detail: string, steps: Step[]) {
   return steps.some(step => {
     if (['say', 'think', 'plan'].includes(step.kind)) return false
     const input = step.detail && plain(step.detail)
-    return plain(step.text) === detail || (!!input && rest.length > 3 && (input.startsWith(rest) || input.endsWith(rest) || (input.length > 3 && rest.endsWith(input))))
+    return plain(step.text) === detail || (!!input && rest.length > 3 && (shortened(rest, input) || (input.length > 3 && rest.endsWith(input))))
   })
+}
+
+// Whether shown is input shortened with … at its end or in its middle: its pieces appear in order,
+// from input's start or up to its end.
+function shortened(shown: string, input: string) {
+  const pieces = shown.split('…').map(piece => piece.trim())
+  let at = 0
+  for (const piece of pieces) {
+    const found = input.indexOf(piece, at)
+    if (found < 0) return false
+    at = found + piece.length
+  }
+  return input.startsWith(pieces[0]!) || input.endsWith(pieces.at(-1)!)
 }
 
 // Steps of a stretch that ended: one still running then never said how it went.

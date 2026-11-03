@@ -186,7 +186,7 @@ test("a working thread's line is its newest step in words, never a tool call, an
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Write', { file_path: '/repo/src/rows.ts', content: 'x' })
   await until(() => voiceapp().steps[0]?.kind === 'edit')
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'for r in a b; do echo $r; done' })
-  for (const tool of ["Running cd ~/repo && python3 -c ' import json print(1)'", 'Writing /repo/src/rows.ts', 'Reading src/tasks.ts', 'Running for r in a b; do ec…']) {
+  for (const tool of ["Running cd ~/repo && python3 -c ' import json print(1)'", 'Writing /repo/src/rows.ts', 'Reading src/tasks.ts', 'Running for r in a b; do ec…', 'Writing /repo/…/rows.ts']) {
     record(tool)
     await Bun.sleep(50)
     expect(voiceapp().line).toBe('')
