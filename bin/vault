@@ -11,8 +11,8 @@ usage() {
 vault ask <name> <field…>      a link to send me; a totp field asks for a 2FA setup key
 vault wait <name>              wait for me to fill it in, then save it
 vault fill <name> <field>      type a saved value (totp: the current 2FA code) on your computer
-vault passkey <name> [field]   let your computer's browser sign in once with a saved passkey
-vault list | run | get | rm | import   the same as enclave's
+vault passkey <name> [field]   let your computer's browser sign in once with a saved passkey, in the next 5 minutes
+vault list [search] | run | get | save | rm | import   the same as enclave's
 EOF
   exit 2
 }
@@ -30,6 +30,6 @@ fill)
     sprite exec -s "$HEX_COMPUTER" -- sh -c 'jq -Rsc "{scope: \"desktop\", text: .}" | DISPLAY=:1 ~/.local/bin/cua-driver call type_text >/dev/null'
   echo "typed $2's $3 on $HEX_COMPUTER"
   ;;
-ask | wait | passkey | list | run | get | rm | import) exec $enclave "$@" ;;
+ask | wait | passkey | list | run | get | save | rm | import) exec $enclave "$@" ;;
 *) usage ;;
 esac
