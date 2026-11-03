@@ -4,12 +4,12 @@ set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
 . "$(dirname "$0")/settings"
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
-enclave="bunx enclave-link@^0.2.8"
+enclave="bunx enclave-link@^0.2.9"
 if command -v enclave >/dev/null; then
   version=$(enclave --version 2>/dev/null) || version=
   case $version in
-  0.2.[89] | 0.2.[1-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave=enclave ;;
-  *) echo "hex needs enclave-link 0.2.8 or a later 0.2, and the enclave here says '${version:-no version}': npm install -g enclave-link@^0.2.8 (or bun add -g)" >&2; exit 1 ;;
+  0.2.9 | 0.2.[1-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave=enclave ;;
+  *) echo "hex needs enclave-link 0.2.9 or a later 0.2, and the enclave here says '${version:-no version}': npm install -g enclave-link@^0.2.9 (or bun add -g)" >&2; exit 1 ;;
   esac
 fi
 
