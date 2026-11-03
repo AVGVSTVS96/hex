@@ -24,7 +24,7 @@ step "client id" "$client"
 verifier=$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')
 challenge=$(printf %s "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
 t3=$(command -v t3 || echo "$HOME/.t3/bin/t3")
-code=$(timeout 30 "$t3" auth pairing create --ttl 5m --label hex-mcp --json 2>/dev/null 8>&- | jq -r .credential)
+code=$(timeout -k 5 30 "$t3" auth pairing create --ttl 5m --label hex-mcp --json 2>/dev/null 8>&- | jq -r .credential 8>&-)
 step "pairing code" "$code"
 auth=$(jq -nc --arg c "$client" --arg r "$redirect" --arg ch "$challenge" --arg res "$base/mcp" \
   '{response_type:"code",client_id:$c,redirect_uri:$r,code_challenge:$ch,code_challenge_method:"S256",state:"hex",resource:$res}')
