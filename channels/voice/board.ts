@@ -664,11 +664,13 @@ function toldOf(entry: any): [string, Told] | undefined {
   return id ? [id, { state: TOLD[text.match(/<status>(\w+)<\/status>/)?.[1] ?? ''] ?? 'stopped', ...(said && { result: said }) }] : undefined
 }
 
-// A session's records as they stood when its heartbeat began.
+// A session's records as they stood when its heartbeat began. With none from before it (Claude Code
+// starts a job's timeline over when its session renews), it keeps its own, just not as work.
 function before(job: Job | undefined, timeline: Entry[], from: number) {
   const kept = timeline.filter(entry => Date.parse(entry.at) < from)
   const last = kept.at(-1)
-  return { job: job && { ...job, state: last?.state, detail: last?.detail, needs: last?.state === 'blocked' ? job.needs : undefined, updatedAt: last?.at }, timeline: kept }
+  if (!job || !last) return { job: job && { ...job, state: job.state === 'working' ? undefined : job.state }, timeline: kept }
+  return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined, updatedAt: last.at }, timeline: kept }
 }
 
 // Claude Code's own status line while it works is often the tool it's running, worded the way a
