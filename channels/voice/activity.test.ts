@@ -342,7 +342,7 @@ test('an agent back in the older queued form, by command mode, is back', () => {
   expect(steps).toEqual([{ line: 'Another turn.' }, { line: 'It is back.' }, { end: 'done' }])
 })
 
-test("an agent still out when its session ended doesn't hold the task open in the next one", () => {
+test("a task only an agent held open fails once the agent's session ends, since the agent ended with it", () => {
   threads('buzz', { b8: { name: 'Agent cut', session: 'agent-new' } })
   open(state).deliver({ key: 'buzz:agent-cut', to: 'b8', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:agent-cut' } }, 'agent-old')
   const old = [asked('call:agent-cut'), launched('agentx'), said('Started an agent.'), ended].map((entry, n) => ({ ...entry, uuid: `agent-cut-${n}` }))
@@ -350,7 +350,7 @@ test("an agent still out when its session ended doesn't hold the task open in th
   write(join(project, 'agent-new.jsonl'), ...old, said('The next turn.'), ended)
   const steps: object[] = []
   const stop = followThread(findThread(state, 'agent cut')!, hex, 'call:agent-cut', true, step => steps.push(step))
-  expect(steps).toEqual([{ line: 'Started an agent.' }, { line: 'The next turn.' }, { end: 'done' }])
+  expect(steps).toEqual([{ line: 'Started an agent.' }, { end: 'failed' }])
   stop()
 })
 

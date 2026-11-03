@@ -424,6 +424,8 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let picked = false
   let failed = false
   let ended = false
+  // A turn ended while agents were out, so only they hold the task open.
+  let waiting = false
   const copied = new Set<string>()
 
   const store = open(thread.state)
@@ -439,6 +441,10 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     stopSession(true)
     if (ended) return
     for (const stop of agents.values()) stop(true)
+    if (waiting && agents.size) {
+      close()
+      return onStep({ end: 'failed' })
+    }
     agents.clear()
     if (session) for (const uuid of uuids(join(project, `${session}.jsonl`))) copied.add(uuid)
     session = next
@@ -461,14 +467,17 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
       agents.set(launched, followTranscript(join(project, session!, 'subagents', `agent-${launched}.jsonl`), 0, (_, updates) => lines(updates(), onStep)))
     const back = agentBack(entry)
     if (back) {
-      agents.get(back)?.()
+      agents.get(back)?.(true)
       agents.delete(back)
     }
     if (entry.type === 'assistant') failed = entry.isApiErrorMessage === true
     lines(updates(), onStep)
-    if (entry.type === 'system' && entry.subtype === 'turn_duration' && !agents.size) {
-      close()
-      onStep({ end: failed ? 'failed' : 'done' })
+    if (entry.type === 'system' && entry.subtype === 'turn_duration') {
+      waiting = agents.size > 0
+      if (!waiting) {
+        close()
+        onStep({ end: failed ? 'failed' : 'done' })
+      }
     }
   }
 
@@ -483,12 +492,25 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   return close
 }
 
+// Read as bytes and searched a stretch of whole lines at a time: a transcript can outgrow the
+// longest string JavaScript can hold.
 function uuids(path: string) {
+  let data: Buffer
   try {
-    return Array.from(readFileSync(path, 'utf8').matchAll(/"uuid":"([^"]+)"/g), match => match[1])
-  } catch {
+    data = readFileSync(path)
+  } catch (error: any) {
+    if (error.code !== 'ENOENT') logger.error(`couldn't read ${path}: ${error.message}`)
     return []
   }
+  const found: string[] = []
+  for (let start = 0; start < data.length; ) {
+    let end = Math.min(data.length, start + 2 ** 26)
+    const line = end < data.length ? data.lastIndexOf(10, end - 1) : -1
+    if (line >= start) end = line + 1
+    for (const match of data.toString('utf8', start, end).matchAll(/"uuid":"([^"]+)"/g)) found.push(match[1])
+    start = end
+  }
+  return found
 }
 
 // The background agent a session was just told is back, as a turn of its own or queued while a
