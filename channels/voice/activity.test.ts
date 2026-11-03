@@ -158,7 +158,7 @@ test('a thread is found by its id or its name, in any app but voice', () => {
   expect(findThread(state, 'VoiceApp')).toMatchObject({ app: 'telegram', id: '-100:452', name: 'voiceapp' })
   expect(findThread(state, 'general')).toMatchObject({ app: 'telegram', id: '-100', name: 'General' })
   threads('discord', { 'discord-general': { name: 'general', session: 's9' } })
-  expect(findThread(state, 'General')).toMatchObject({ app: 'discord', id: 'discord-general', name: 'general' })
+  expect(() => findThread(state, 'General')).toThrow('more than one hex thread goes by General, in discord and telegram')
   threads('discord', {})
   expect(findThread(state, 't3-id')).toMatchObject({ app: 't3', cwd: '/home/someone/Developer/commonplace' })
   expect(findThread(state, 'voice')).toBeUndefined()

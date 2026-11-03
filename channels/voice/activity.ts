@@ -382,13 +382,13 @@ export function nameOf(app: string, thread: string, name: string) {
 }
 
 // An open hex thread (a Telegram topic, a Discord, Buzz or T3 Code thread) from hex.db, by its key or
-// its id as `hex threads --json` gives it (app:key), else by its name as hex.db keeps it, else as it's shown.
+// its id as `hex threads --json` gives it (app:key), else by its name, as hex.db keeps it or as it's shown.
 export function findThread(state: string, wanted: string): Thread | undefined {
   const store = open(state)
   const key = store.key(wanted)
   const all = store.threads({ open: true }).filter(({ app }) => app !== 'voice')
   const is = (name: string) => name.toLowerCase() === wanted.toLowerCase()
-  const ways = [all.filter(({ thread }) => thread === key), all.filter(({ name }) => is(name)), all.filter(({ app, thread, name }) => is(nameOf(app, thread, name)))]
+  const ways = [all.filter(({ thread }) => thread === key), all.filter(({ app, thread, name }) => is(name) || is(nameOf(app, thread, name)))]
   const matches = ways.find(found => found.length) ?? []
   if (matches.length > 1) throw new Error(`more than one hex thread goes by ${wanted}, in ${[...new Set(matches.map(({ app }) => app))].join(' and ')}: pass its app:key id, from hex threads --json`)
   const found = matches[0]

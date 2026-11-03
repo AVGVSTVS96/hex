@@ -4,7 +4,7 @@ import { backOf, firstLine, followTranscript, itemStep, nameOf, past, sizeOf, st
 import { busy, CLAUDE, running, serving, type Session } from '../../hub/running.ts'
 import { Changes } from './changes.ts'
 import { Links, type Delegation } from './links.ts'
-import { open } from '../../hub/store.ts'
+import { open, type Thread as Stored } from '../../hub/store.ts'
 
 export type State = 'working' | 'needs' | 'done' | 'failed' | 'idle'
 export type Step = Did & { at: string; end?: string }
@@ -126,17 +126,23 @@ export class Board extends Changes {
   }
 
   // Any thread hex.db knows, as a run: the board's while it's on it, else built now, so a thread
-  // that left the board or closed still opens from an old ask. A closed thread whose session moved
-  // on with it to another app has none of its own left, and what's read for it isn't kept.
-  find(id: string) {
+  // that left the board or closed still opens from an old ask. What's read for it isn't kept, and a
+  // closed thread whose session another thread took has none of its own left.
+  find(id: string): (Run & { closed?: true }) | undefined {
     const kept = this.get(id)
     if (kept) return kept
-    const thread = this.stored(true).find(thread => `${thread.app}:${thread.id}` === id)
-    if (!thread) return
-    const moved = this.threads.some(one => one.session === thread.session && `${one.app}:${one.id}` !== id)
-    const run = this.run(moved ? { ...thread, session: undefined } : thread)
+    const all = open(this.state).threads().filter(({ app }) => APPS[app])
+    const row = all.find(({ app, thread }) => `${app}:${thread}` === id)
+    if (!row) return
+    const taken = !row.open && !!row.session && all.some(one => one !== row && one.session === row.session)
+    const thread = threadOf(row)
+    const lane = this.tracks[id]
+    const run = this.run(taken ? { ...thread, session: undefined } : thread)
+    if (lane) this.tracks[id] = lane
+    else delete this.tracks[id]
     if (thread.session && !this.wanted().has(short(thread.session))) this.jobs.delete(short(thread.session))
-    return run
+    if (run.state !== 'working') this.keep(run)
+    return row.open ? run : { ...run, closed: true }
   }
 
   // The Claude Code session a run's thread runs in, whose log holds its chat.
@@ -223,12 +229,11 @@ export class Board extends Changes {
     this.threads = this.stored()
   }
 
-  // hex.db's open threads, or with all, every one it has had.
-  private stored(all = false): Thread[] {
+  private stored(): Thread[] {
     return open(this.state)
-      .threads(all ? {} : { open: true })
+      .threads({ open: true })
       .filter(({ app }) => APPS[app])
-      .map(({ app, thread, name, session, cwd, link }) => ({ app, id: thread, name: nameOf(app, thread, name), session, cwd, ...(link && { link }) }))
+      .map(threadOf)
   }
 
   // Each thread's session, as the <app>:<key> of the thread it serves.
@@ -507,6 +512,10 @@ export function opener(run: Run) {
     idle: `It's idle${run.line ? `; last: ${run.line}` : ''}`,
   }[run.state]
   return `The task is the hex thread ${run.name} (${run.where}, thread id ${run.thread}). ${state}`
+}
+
+function threadOf({ app, thread, name, session, cwd, link }: Stored): Thread {
+  return { app, id: thread, name: nameOf(app, thread, name), session, cwd, ...(link && { link }) }
 }
 
 function count(runs: Run[], state: State) {
