@@ -31,7 +31,7 @@ const server = Bun.serve({
       orchestrator_capabilities: () => ({ providers: [{ providerInstanceId: 'claudeAgent', models: [{ id: 'claude-opus-4-1' }, { id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }] }] }),
       t3_thread_launch: () => ({ threadId: 't1', runId: 'r1', link: '<t3-thread://v2/env-mac/t1>' }),
       t3_thread_wait: () => waits.shift() ?? (running ? { status: 'running', timedOut: true } : { status: 'completed', timedOut: false }),
-      t3_thread_read: () => ({ items: [{ type: 'user_message', text: 'go' }, { type: 'assistant_message', text: 'Built the Usage tab.' }], hasMore: false }),
+      t3_thread_read: () => ({ thread: { pendingRequestCount: asked.length }, items: [{ type: 'user_message', text: 'go' }, { type: 'assistant_message', text: 'Built the Usage tab.' }], hasMore: false }),
       t3_thread_interrupt: () => ({}),
       t3_pending_request: () => (body.params.arguments.action === 'list' ? { requestIds: asked } : { requestId: asked[0], questions: [{ question: 'Which branch should I push to?' }] }),
     }

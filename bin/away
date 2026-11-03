@@ -2,8 +2,9 @@
 // away <machine> <environment> <name> <claude args...>: runs an agent job as a T3 Code thread on another machine,
 // through this machine's T3 Code and its link to that one, so it starts the way T3 starts Claude Code, and follows it
 // the way T3 follows a task it delegates: waits until its run ends, prints its last answer, and stops it if the job
-// stops. It exits 76, having started nothing, when the job can't run there: claude flags a thread has no place for,
-// no Claude on that machine, or a link that's gone; bin/place then tries the next machine.
+// stops. Having started nothing, it exits 76 when the job can't run there (claude flags a thread has no place for, no
+// Claude on that machine, a link that's gone) and 77 when that machine doesn't answer for 5 minutes; bin/place then
+// tries the next machine.
 import { readFileSync } from 'node:fs'
 import { homedir, hostname, userInfo } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +12,7 @@ import { join } from 'node:path'
 const [machine, environmentId, name, ...args] = process.argv.slice(2) as [string, string, string, ...string[]]
 const home = join(import.meta.dir, '../..')
 const ELSEWHERE = 76
+const UNREACHABLE = 77
 
 function elsewhere(why: string): never {
   console.error(`away: ${name} can't run on ${machine}: ${why}`)
@@ -82,7 +84,7 @@ function parse(text: string): any {
   } catch {}
 }
 
-// Before its thread exists a job gives up on a machine after 5 minutes and tries the next; after, it waits that machine out.
+// A job gives up on a machine that doesn't answer its first call for 5 minutes; after that, it waits the machine out.
 async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<T> {
   const until = Date.now() + patience
   for (let wait = 5_000; ; wait = Math.min(wait * 2, 120_000)) {
@@ -116,7 +118,11 @@ const configured = (path: string) => {
   } catch {}
 }
 const wanted = model ?? configured(join(home, '.claude/settings.json')) ?? configured(join(homedir(), '.claude/settings.json')) ?? 'opus'
-const offered = await persist(() => call('orchestrator_capabilities', {}), 300_000).catch((error: Error) => elsewhere(error.message))
+const offered = await persist(() => call('orchestrator_capabilities', {}), 300_000).catch((error: Error) => {
+  if (error instanceof Final) elsewhere(error.message)
+  console.error(`away: ${machine} doesn't answer: ${error.message}`)
+  process.exit(UNREACHABLE)
+})
 const claude = (offered.providers as { providerInstanceId: string; models: { id: string }[] }[]).find(provider => provider.providerInstanceId === 'claudeAgent')
 const chosen = claude?.models.find(({ id }) => id === wanted) ?? claude?.models.filter(({ id }) => id.includes(wanted)).sort((a, b) => b.id.localeCompare(a.id))[0]
 if (!chosen) elsewhere(claude ? `its Claude has no ${wanted}` : 'its T3 Code has no Claude')
@@ -138,25 +144,25 @@ const launched = await persist(() =>
     modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
     clientRequestId: `hex-job-${name}-${process.env.INVOCATION_ID ?? process.pid}`,
   }),
-  300_000,
 ).catch((error: Error) => elsewhere(error.message))
 threadId = launched.threadId as string
 if (stopping) await stop()
 console.log(`${name} runs on ${machine} as T3 Code thread ${launched.link}`)
 
-// Following the run the launch started until it ends. A run blocked on a question still reads as running, so each
-// wait that comes back without an end asks for the thread's questions, as `t3 thread --wait` does.
-const ENDED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']
+// Following the run the launch started until it ends. A run blocked on a question or another request still reads as
+// running, so each wait that comes back without an end checks the thread for requests, as `t3 thread --wait` does.
+const ENDED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back', ...(launched.runId ? [] : ['idle'])]
 async function follow() {
   let ended: { status: string; timedOut: boolean }
   let asking: string | undefined
   for (;;) {
-    ended = await persist(() => call('t3_thread_wait', { threadId, runId: launched.runId, timeoutMs: 50_000 }))
+    ended = await persist(() => call('t3_thread_wait', { threadId, runId: launched.runId ?? undefined, timeoutMs: 50_000 }))
     if (ENDED.includes(ended.status)) break
-    const { requestIds } = await persist(() => call('t3_pending_request', { action: 'list', threadId }))
-    if (requestIds?.length) {
-      const { questions } = await persist(() => call('t3_pending_request', { action: 'read', threadId, requestId: requestIds[0] }))
-      asking = (questions as { question?: string; header?: string }[]).map(({ question, header }) => question ?? header).join(' ')
+    const { thread } = await persist(() => call('t3_thread_read', { threadId, limit: 1, maxCharsPerItem: 1 }))
+    if (thread.pendingRequestCount > 0) {
+      const { requestIds } = await persist(() => call('t3_pending_request', { action: 'list', threadId }))
+      const read = requestIds?.length ? await persist(() => call('t3_pending_request', { action: 'read', threadId, requestId: requestIds[0] })) : undefined
+      asking = read ? (read.questions as { question?: string; header?: string }[]).map(({ question, header }) => question ?? header).join(' ') : 'a request only a person can answer in T3 Code'
       break
     }
     if (!ended.timedOut) await Bun.sleep(2_000)
@@ -174,7 +180,7 @@ async function follow() {
     ;[after, more] = [page.nextPosition, page.hasMore]
   }
   console.log(last?.text ?? `${name} ended on ${machine} with no answer`)
-  return ended.status === 'completed' ? 0 : 1
+  return ended.status === 'completed' || (ended.status === 'idle' && last) ? 0 : 1
 }
 // A thread this job can no longer follow is stopped, so nothing runs there unwatched.
 process.exit(

@@ -73,6 +73,13 @@ test('held slots, a machine without a hex T3 Code, and one where the job could n
   expect(code).toBe(0)
 })
 
+test("a machine whose T3 Code doesn't answer is passed over for that round only", () => {
+  machine(here, 'cpu 80% busy', 1)
+  machine('mini', 'cpu 1% busy\nt3 env-mini', 0, 77)
+  machine('mac', 'cpu 20% busy\nt3 env-mac', 0)
+  expect(place({ HEX_MACHINES: 'mini:1 mac:3' }).out).toBe('hex/deck runs on mini\naway mini env-mini hex/deck -p build it the log\nhex/deck runs on mac\naway mac env-mac hex/deck -p build it the log\n')
+})
+
 test('with no room anywhere a job waits, and its owner hears it once, with every reading', () => {
   machine(here, 'cpu 80% busy', 1)
   machine('mac', '', 255)
