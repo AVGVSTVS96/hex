@@ -3,22 +3,28 @@
 set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
 unread() { echo "hex couldn't read its settings" >&2; exit 1; }
+# However .env fails or exits, vault stops; what it prints stays out of what vault prints.
+load() { trap unread EXIT; . "$(dirname "$0")/settings" >&2; trap - EXIT; [ -z "$settings_unread" ] || unread; }
 if [ "${1:-}" = run ]; then
   # What `vault run` starts keeps its caller's environment and gets the vault's secrets, but none of .env's:
-  # of hex's settings, it gets only enclave's and the name it asks as.
+  # of hex's settings, it gets only HEX_NAME and enclave's own.
   settings=$(
-    . "$(dirname "$0")/settings" >&2
-    [ -z "$settings_unread" ] || unread
+    load
+    q="'"
     for name in HEX_NAME ENCLAVE_HOME ENCLAVE_RELAY; do
-      if value=$(printenv "$name"); then printf "export %s='%s'\n" "$name" "$(printf %s "$value" | LC_ALL=C sed "s/'/'\\\\''/g")"; fi
+      eval "[ -n \"\${$name+set}\" ]" || continue
+      eval "rest=\$$name"
+      quoted=
+      while [ "${rest#*"$q"}" != "$rest" ]; do
+        quoted="$quoted${rest%%"$q"*}$q\\$q$q"
+        rest=${rest#*"$q"}
+      done
+      printf "export %s='%s'\n" "$name" "$quoted$rest"
     done
-    echo settings_read=1
   )
   eval "$settings"
-  [ -n "${settings_read:-}" ] || unread
 else
-  . "$(dirname "$0")/settings" >&2
-  [ -z "$settings_unread" ] || unread
+  load
 fi
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
 

@@ -33,8 +33,8 @@ function fake(name: string, body: string) {
 }
 
 function vault(args: string[], caller: Record<string, string> = {}) {
-  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('HEX_') && !name.startsWith('ENCLAVE_')))
-  const run = Bun.spawnSync([join(home, '.hex/bin/vault'), ...args], { env: { ...env, PATH: `${join(home, 'fake')}:${env.PATH}`, ...caller } })
+  const env = { PATH: `${join(home, 'fake')}:${process.env.PATH}`, HOME: home, ...caller }
+  const run = Bun.spawnSync([join(home, '.hex/bin/vault'), ...args], { env })
   return { code: run.exitCode, out: run.stdout.toString(), err: run.stderr.toString() }
 }
 
@@ -45,6 +45,15 @@ test('vault run hands the command its caller\'s environment and enclave\'s setti
   expect(out).toContain('ENCLAVE_HOME=/vault home/it\'s $x\n')
   expect(out).toContain('LANG=C.UTF-8\n')
   for (const kept of ['bot-secret', 'speech-secret', 'TRANSCRIBE_URL', 'HEX_COMPUTER', 'PRINTED']) expect(out).not.toContain(kept)
+})
+
+test('vault run keeps a setting exactly', () => {
+  writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_NAME: 'herald', ENCLAVE_RELAY: 'https://relay`$(id)`\n' } }))
+  appendFileSync(join(home, '.env'), "ENCLAVE_HOME=$(printf '/v\\377\\303')\n")
+  const run = Bun.spawnSync([join(home, '.hex/bin/vault'), 'run', 'GitHub', '--', 'env'], { env: { PATH: `${join(home, 'fake')}:${process.env.PATH}`, LANG: 'en_US.UTF-8' } })
+  const out = Buffer.from(run.stdout)
+  expect(out.includes(Buffer.from('ENCLAVE_RELAY=https://relay`$(id)`\n\n'))).toBe(true)
+  expect(out.includes(Buffer.from([...Buffer.from('ENCLAVE_HOME=/v'), 0o377, 0o303, 10]))).toBe(true)
 })
 
 test('vault run works without a .env', () => {
@@ -72,10 +81,12 @@ test('vault run stops on a .env that doesn\'t parse', () => {
   expect(out).toBe('')
 })
 
-test('vault run stops on a .env that exits early', () => {
-  appendFileSync(join(home, '.env'), 'exit 0\n')
-  expect(vault(['run', 'GitHub', '--', 'env'])).toEqual({ code: 1, out: '', err: 'export PRINTED=1\nhex couldn\'t read its settings\n' })
-})
+for (const line of ['exit 0', 'false', 'X=$(false)', '. ./missing']) {
+  test(`every vault command stops on a .env line \`${line}\``, () => {
+    appendFileSync(join(home, '.env'), `${line}\n`)
+    for (const args of [['run', 'GitHub', '--', 'env'], ['get', 'GitHub', 'password']]) expect(vault(args)).toMatchObject({ code: 1, out: '' })
+  })
+}
 
 test('every vault command stops on settings it can\'t read', () => {
   writeFileSync(join(home, '.claude/settings.json'), '{')
