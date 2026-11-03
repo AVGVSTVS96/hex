@@ -80,8 +80,7 @@ test("some threads' untaken messages, and a mark that moves only when a thread's
   store.deliver({ ...message, key: 'telegram:-100:45' })
   const kept = store.mark('-100:7')
   expect(kept).not.toBe(taken)
-  store.deliver({ ...message, key: 'telegram:-100:46' }, 'session-a')
-  store.past([['telegram:-100:46', '2020-01-01T00:00:00.000Z']])
+  expect(store.past([[{ ...message, key: 'telegram:-100:46' }, '2020-01-01T00:00:00.000Z']], 'session-a')).toEqual(['telegram:-100:46'])
   expect(store.mark('-100:7')).not.toBe(kept)
 })
 

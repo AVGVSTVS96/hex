@@ -84,9 +84,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
       last = last && last >= minuteAt ? new Date(Date.parse(last) + 1).toISOString() : minuteAt
       rows.push([{ key: `${via}:past:${id}:${i}`, to, from: via!, author, body, meta: { log: file.slice(dir.length + 1), ...(author === 'prompt' && { user: who! }) } }, last])
     })
-    const fresh = rows.filter(([row]) => store.deliver(row, id)).map(([row, at]) => [row.key, at] as [string, string])
-    store.past(fresh)
-    return fresh.length
+    return store.past(rows, id).length
   }
 }
 

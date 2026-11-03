@@ -114,8 +114,7 @@ type Said = [string, string, Partial<{ id: number; author: 'hex' | 'owner'; to: 
 function said(lines: Said[]) {
   const store = open(state)
   const key = (n: number, id?: number) => `telegram:${GROUP}:${id ?? 100 + n}`
-  lines.forEach(([, body, { id, author = 'hex', to = DESK, meta } = {}], n) => store.deliver({ key: key(n, id), to, from: 'telegram', author, body, ...(meta && { meta }) }, 'session'))
-  store.past(lines.map(([time, , { id } = {}], n) => [key(n, id), `2026-10-13T${time}.000Z`]))
+  store.past(lines.map(([time, body, { id, author = 'hex', to = DESK, meta } = {}], n) => [{ key: key(n, id), to, from: 'telegram', author, body, ...(meta && { meta }) }, `2026-10-13T${time}.000Z`]), 'session')
 }
 
 test("a question comes with hex's last two messages in the hour before it in its thread, and only what the owner read there as hex's explanation", () => {

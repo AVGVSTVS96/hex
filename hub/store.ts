@@ -426,7 +426,14 @@ export class Store {
     const moved = this.moved()
     if (moved !== this.heard) {
       this.heard = moved
-      for (const each of this.listeners) each()
+      for (const each of this.listeners)
+        try {
+          each()
+        } catch (error) {
+          queueMicrotask(() => {
+            throw error
+          })
+        }
     } else if (again) return
     setTimeout(() => this.watcher && this.rang(true), 5)
   }
@@ -444,11 +451,13 @@ export class Store {
     )
   }
 
-  // Messages brought in from log/ (hub/past.ts) keep the time it gave them, taken and looked over then.
-  past(times: [string, string][]) {
-    this.write(() => {
+  // Messages brought in from log/ (hub/past.ts), kept at the time it gave them, taken by its session and
+  // looked over then: the keys of those it didn't have. A kept message's time never moves, so a thread's
+  // mark moves with each one.
+  past(rows: [NewRow, string][], by: string): string[] {
+    return this.write(() => {
       const at = this.db.query('update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1')
-      for (const [key, when] of times) at.run(key, when)
+      return rows.filter(([row, when]) => this.deliver(row, by) && at.run(row.key, when)).map(([row]) => row.key)
     })
   }
 
@@ -532,7 +541,7 @@ export class Store {
   // time), or a session takes one (one fewer waits). It reads two index entries, so a reader can tell
   // cheaply whether to read the messages again.
   mark(thread: string): string {
-    const { last } = this.db.query('select max(n) as last from messages indexed by thread where "to" = ?').get(thread) as { last: number | null }
+    const { last } = this.db.query('select max(n) as last from messages where "to" = ?').get(thread) as { last: number | null }
     const { untaken } = this.db.query('select count(*) as untaken from messages indexed by untaken where taken_at is null and "to" = ?').get(thread) as { untaken: number }
     return `${last}:${untaken}`
   }
