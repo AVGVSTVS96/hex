@@ -373,12 +373,17 @@ function plain(text: string) {
     .replace(/^#+\s+/gm, '')
 }
 
+const SENTENCE_END = /(?<!\b\p{L}|\b\d+)[.?!]["')\]]*(?=\s+["'(\[]?\p{Lu})/gu
+
 function cut(line: string, max: number): [string, string] {
   if (line.length <= max) return [line, '']
-  const end = [...line.matchAll(/[.?!](?=\s)/g)].filter(found => found.index < max).at(-1)?.index
-  if (end) return [line.slice(0, end + 1), line.slice(end + 1).trim()]
+  const end = [...line.matchAll(SENTENCE_END)]
+    .map(found => found.index + found[0].length)
+    .filter(at => at >= max / 2 && at <= max)
+    .at(-1)
+  if (end !== undefined && (line.slice(0, end).includes('?') || !line.slice(end).includes('?'))) return [line.slice(0, end), line.slice(end).trim()]
   const space = line.slice(0, max).lastIndexOf(' ')
-  const at = space > 0 ? space : max - 1
+  const at = space > 0 ? space : max - 1 - Number(/[\uD800-\uDBFF]/.test(line[max - 2] ?? ''))
   return [`${line.slice(0, at).trimEnd()}…`, `…${line.slice(at).trim()}`]
 }
 
