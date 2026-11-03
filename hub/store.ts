@@ -831,7 +831,7 @@ export class Store {
     this.write(() => {
       const { began, ended } = this.turn(session)
       const opens = heartbeat && (!began || !!ended)
-      if (!heartbeat || opens) this.db.query('update beats set until = ? where session = ? and until is null and began <= ?').run(at, session, at)
+      if ((!heartbeat && (busy || !began || at >= began)) || opens) this.db.query('update beats set until = ? where session = ? and until is null and began <= ?').run(at, session, at)
       if (busy && !heartbeat) this.db.query('update beats set after = ? where session = ? and after is null').run(at, session)
       if (opens) this.db.query('insert into beats (session, began) values (?, ?)').run(session, at)
       this.db.query('delete from beats where after < ?').run(new Date(Date.parse(at) - BEATS).toISOString())

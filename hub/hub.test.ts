@@ -2237,6 +2237,8 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
   await beat('2026-11-03T13:45Z')
   const [, second] = store.beats(SESSION)
   expect(second).toEqual({ began: expect.any(String) })
+  store.turned(SESSION, false, first!.began)
+  expect(store.beats(SESSION)[1]).toEqual(second)
   await Bun.sleep(5)
   await prompt('telegram:1:50', 'telegram', 'ship it')
   const after = store.turn(SESSION).began
