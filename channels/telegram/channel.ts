@@ -134,12 +134,12 @@ export const server: ChannelServer = {
     {
       name: 'poll',
       _meta: { 'anthropic/alwaysLoad': true },
-      description: 'Send a poll. Each vote comes back as a message.',
+      description: 'Send a poll. Each vote comes back as a message. Telegram takes a question of up to 300 characters and up to 12 options of up to 100 each, so what a choice needs explained goes in a reply before it.',
       inputSchema: {
         type: 'object',
         properties: {
-          question: { type: 'string' },
-          options: { type: 'array', items: { type: 'string' } },
+          question: { type: 'string', maxLength: 300 },
+          options: { type: 'array', items: { type: 'string', maxLength: 100 }, minItems: 2, maxItems: 12 },
           multiple: { type: 'boolean', description: 'Allow picking more than one option.' },
         },
         required: ['question', 'options'],
