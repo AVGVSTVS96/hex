@@ -430,6 +430,12 @@ test("edit_message settles a poll even with text, which a poll can't change, and
   expect((await call('edit_message', { message_id: String(id), text: 'Settled: shipped', settled: true })).text).toContain('settled the poll')
   expect(await called('stopPoll', p => p.message_id === id)).toBeTruthy()
   expect(asked(id).settled).toMatchObject({ note: '✓ Settled' })
+
+  const voted = Number((await call('poll', { question: 'Ship it today?', options: ['Yes', 'No'] })).text.match(/id: (\d+)/)[1])
+  await update({ poll_answer: { poll_id: `poll-${voted}`, user: owner, option_ids: [1] } })
+  await until(() => asked(voted).answer)
+  expect((await call('edit_message', { message_id: String(voted), text: 'Settled', settled: true })).text).toContain('already answered (No)')
+  expect(calls.some(c => c.method === 'stopPoll' && c.payload.message_id === voted)).toBe(false)
 })
 
 test('a poll answered in the app closes, and its vote reaches the thread', async () => {
