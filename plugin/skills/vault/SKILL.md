@@ -35,8 +35,8 @@ A saved passkey signs in through enclave's Chrome extension, which sends the sit
 
 The computer's browser reaches the vault over `ssh`, with a key and no password, so set that up from the computer to here first. Then:
 
-1. Here, with node 22 or newer, run `npm install -g enclave-link@latest`, then `node -p process.execPath` and `echo "$(npm root -g)/enclave-link/dist/enclave.js"` for the two paths to sign with. A command over ssh gets a short PATH, so it needs both in full; after a node upgrade here or on the computer, run steps 1 and 2 again.
-2. Inside the computer (it needs node too), clone enclave and run `extension/install ssh -o BatchMode=yes <user>@<this machine> <node path> <enclave path> sign`, then restart Chrome. If `ENCLAVE_HOME` is set here (in the environment or hex's `.env`), put `env ENCLAVE_HOME=<it>` before the node path.
+1. Here, with node 22 or newer, run `npm install -g enclave-link@^0.2.7` (the range `.hex/bin/vault` uses, so both run one version), then `node -p process.execPath` and `echo "$(npm root -g)/enclave-link/dist/enclave.js"` for the two paths to sign with. A command over ssh gets a short PATH, so it needs both in full; after a node upgrade here or on the computer, run steps 1 and 2 again.
+2. Inside the computer (it needs node too), clone enclave and run `extension/install ssh -o BatchMode=yes <user>@<this machine> <node path> <enclave path> sign`, then restart Chrome. If `ENCLAVE_HOME` is set here (in the environment, hex's `.env` or `.claude/settings.json`'s env), put `env ENCLAVE_HOME=<it>` before the node path.
 3. Check the installed signer: here, run `.hex/bin/vault passkey <name>` for a site they have a passkey for. Inside the computer, `echo '{"origin":"https://<the passkey's domain, like google.com rather than accounts.google.com>","challenge":"AA"}' | sh -c "$(jq -r '.command | @sh' "${XDG_DATA_HOME:-$HOME/.local/share}/enclave-extension/host.json")"` should print a signed answer starting with `{"id":`.
 4. Once that works, run `.hex/bin/vault passkey <name>` again and sign in on that site once.
 
