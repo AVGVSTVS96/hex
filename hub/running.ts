@@ -74,8 +74,8 @@ export function served(env = process.env): string | undefined {
 // file or the settings themselves.
 function launched(flags: unknown): Record<string, string> {
   const at = Array.isArray(flags) ? flags.lastIndexOf('--settings') : -1
-  const settings = at >= 0 ? String(flags[at + 1]) : ''
-  const env = (settings.startsWith('{') ? parse(settings) : readJson(settings))?.env
+  const settings = at >= 0 && typeof flags[at + 1] === 'string' ? (flags[at + 1] as string) : ''
+  const env = (settings.startsWith('{') ? parse(settings) : settings.startsWith('/') ? readJson(settings) : undefined)?.env
   return env && typeof env === 'object' ? Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {}
 }
 
