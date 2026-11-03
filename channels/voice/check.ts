@@ -3,8 +3,9 @@ import { createHash } from 'crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
+import { above } from '../../hub/fit.ts'
 import type { Question as Asked } from '../../hub/ledger.ts'
-import { open as store } from '../../hub/store.ts'
+import { open as store, shown, type Row, type Store } from '../../hub/store.ts'
 import type { CheckResult, Curated, Ref, Source } from './questions.ts'
 import { relay } from './relay.ts'
 import { T3, type Stuck } from './t3.ts'
@@ -119,7 +120,7 @@ function gather(state: string) {
     ...(question.answer && { answer: question.answer }),
     ...(question.settled && { settled: question.settled }),
   })
-  const open = Object.entries(ledgers).flatMap(([app, questions]) => questions.filter(question => !question.answer && !question.settled).map(question => shown(app, question)))
+  const open = Object.entries(ledgers).flatMap(([app, questions]) => questions.filter(question => !question.answer && !question.settled).map(question => ({ ...shown(app, question), before: before(store(state), app, question) })))
   const closed = Object.entries(ledgers).flatMap(([app, questions]) => questions.filter(question => (question.answer || question.settled) && question.at > recent).map(question => shown(app, question)))
   const t3 = new T3(() => {})
   const t3Now = t3.query(now)
@@ -132,6 +133,28 @@ function gather(state: string) {
   return { now: new Date(now).toISOString(), threads: names, open, closed, pins, calls, t3: t3Now, previous: json(join(state, 'voice', 'check.json')), ledgers }
 }
 
+// What hex said in a thread in the hour before it asked a question there, where its explanation
+// usually is: its last two messages there, oldest first. Left out are the rows the owner never read
+// as hex's words there (failed sends, edits, permission prompts, files without a caption, forwards, status posts), the
+// thread's questions, and the question's own earlier parts, sent with it a moment before.
+export function before(store: Store, app: string, question: Asked, max = 700) {
+  const rows = store.said(question.thread, -1, question.at, new Date(Date.parse(question.at) - 60 * 60_000).toISOString())
+  const id = (row: Row) => row.key.slice(row.key.lastIndexOf(':') + 1)
+  const asked = Date.parse(rows.find(row => id(row) === String(question.message))?.at ?? question.at)
+  const questions = new Set(store.questions({ app, thread: question.thread }).map(other => String(other.message)))
+  const part = (row: Row) => !!bare(row.body) && Date.parse(row.at) > asked - 60_000 && bare(question.text).includes(bare(row.body))
+  return rows
+    .filter(row => row.from === app && row.author === 'hex' && shown(row) && !/^\(file: .*\)$/.test(row.body) && !row.meta?.forwarded && above(row.body) === row.body.trim())
+    .filter(row => !questions.has(id(row)) && !part(row))
+    .slice(-2)
+    .map(row => clip(row.body, max))
+}
+
+// A message's words without the code fences a long message gains where it's cut into parts.
+function bare(text: string) {
+  return text.replace(/^```.*$/gm, '').trim()
+}
+
 // What a pass reads, as one fingerprint: the same records give the same verdict.
 export function digest({ open, closed, pins, calls, t3 }: ReturnType<typeof gather>) {
   return createHash('sha256').update(JSON.stringify({ open, closed, pins, calls, t3 })).digest('hex')
@@ -142,12 +165,12 @@ function prompt({ ledgers, ...records }: ReturnType<typeof gather>, hexDir: stri
 
 It's there so the owner can manage their tasks with hex: by going through the transcripts, gathering, auditing and checking on work other agents did, including older work from a day or two ago that might not be done, it shows what needs to get done so they can ship more and get unblocked.
 
-The records are below as JSON: every open question asked with buttons or a poll (open, each with its ref), the ones answered or settled lately (closed), each thread's pinned post (pins, each with its own ref), calls' wrap-ups (calls, each with its id), what T3 Code shows as stuck or newly finished (t3; the app lists those already), and your previous pass (previous). To confirm something before you settle it, read their records: every message hex.db holds in messages.md in your folder (one heading per message: author, app, thread, time, key; rg it), every thread hex has had in threads.json in your folder (app, thread, name, open, session, cwd, link), session transcripts under ~/.claude/projects/, project notes under ${hexDir}/projects/. In a transcript, the owner's messages arrive as <channel source="..." chat_id="..." message_id="..."> and hex's own replies come back as "sent (id: N)", so a question asked in plain words has a message id there.
+The records are below as JSON: every open question asked with buttons or a poll (open, each with its ref and before: what hex said in its thread just before asking), the ones answered or settled lately (closed), each thread's pinned post (pins, each with its own ref), calls' wrap-ups (calls, each with its id), what T3 Code shows as stuck or newly finished (t3; the app lists those already), and your previous pass (previous). To confirm something before you settle it, read their records: every message hex.db holds in messages.md in your folder (one heading per message: author, app, thread, time, key; rg it), every thread hex has had in threads.json in your folder (app, thread, name, open, session, cwd, link), session transcripts under ~/.claude/projects/, project notes under ${hexDir}/projects/. In a transcript, the owner's messages arrive as <channel source="..." chat_id="..." message_id="..."> and hex's own replies come back as "sent (id: N)", so a question asked in plain words has a message id there.
 
 Return:
-- asks: one entry per decision or action that is still theirs, however many places asked it. from lists every place that asked it, so they can open each one: an open question (copy its ref), a pinned post (copy the pin's ref), a plain message you found ({app, thread, message} with its id, or {app, thread} when you can't find the id), or a call ({app: "voice", call: its id}); thread is a key of threads without its "<app>:" prefix. Leave none out: an ask from a pinned post and a call has both. id is "check:" plus a short slug, the same slug as in your previous pass for the same thing. task is the thread it belongs to ("<app>:<thread id>", from threads). question is one short plain line (60 characters at most). context is one or two plain sentences on what it unblocks or costs. options are their possible answers, as short labels, each one telling the thread something; mark the thread's own pick with pick (one at most, only where the thread made one); when an option stands for a button, value is that button's exact text from the first open question in from. links are the pages it points to, never answers: label names the page in one to three words without a verb ("Apple Store", "PR #2", "Paper file"), url opens it. kind is pick (one of several), yesno (two ways), do (only their hands can do it, like a sign-in, a purchase, a recording: options like Done and Later, its page in links) or look (something to watch or read: options like Seen and Later, its page in links). tag is "money" when an option spends money, or "unblocks N" when N other things wait on it. Order: what unblocks the most first, even when it costs money, then the quickest; other money and anything sent in their name last. An ask's task is the thread it belongs to, even when only a pinned post or a call asked it.
+- asks: one entry per decision or action that is still theirs, however many places asked it. from lists every place that asked it, so they can open each one: an open question (copy its ref), a pinned post (copy the pin's ref), a plain message you found ({app, thread, message} with its id, or {app, thread} when you can't find the id), or a call ({app: "voice", call: its id}); thread is a key of threads without its "<app>:" prefix. Leave none out: an ask from a pinned post and a call has both. id is "check:" plus a short slug, the same slug as in your previous pass for the same thing. task is the thread it belongs to ("<app>:<thread id>", from threads). question is one short plain line (60 characters at most). context is a few short plain sentences they can follow cold, without opening the thread: what the thing is, what its terms mean, and what each option means for them, in words rather than message numbers. options are their possible answers, as short labels, each one telling the thread something; mark the thread's own pick with pick (one at most, only where the thread made one); when an option stands for a button, value is that button's exact text from the first open question in from. links are the pages it points to, never answers: label names the page in one to three words without a verb ("Apple Store", "PR #2", "Paper file"), url opens it. kind is pick (one of several), yesno (two ways), do (only their hands can do it, like a sign-in, a purchase, a recording: options like Done and Later, its page in links) or look (something to watch or read: options like Seen and Later, its page in links). tag is "money" when an option spends money, or "unblocks N" when N other things wait on it. Order: what unblocks the most first, even when it costs money, then the quickest; other money and anything sent in their name last. An ask's task is the thread it belongs to, even when only a pinned post or a call asked it.
 - settle: open questions the records show are already decided or done: decided in a conversation or a call, replaced by a later question, or the thing already happened. note is what the question's buttons in Telegram or Discord will say instead, like "Settled: Pro is on" (40 characters at most). Settle only what the records show; anything you're unsure of stays an ask.
-- fixed: what you settled or merged, the way they'd read it: title (the thing), text (the evidence, with message numbers), did (what you did, in a few words).
+- fixed: what you settled or merged, the way they'd read it: title (the thing), text (the evidence in plain words: who said or did what, and when), did (what you did, in a few words).
 - flagged: what they should look at that you can't settle yourself, like the same thing asked with different options, or a question days old whose work has stalled: title and text.
 - stuck: work stopped with nobody moving it that the t3 list doesn't already show, like a failing service a pinned post mentions: id (a short slug), title, why (one sentence), action (one or two words, like Restore or Look), mark (paused or failed), at, and request: what hex should do when they tap the action, as a message to hex.
 
@@ -295,7 +318,7 @@ function list(dir: string) {
 }
 
 function clip(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+  return text.length > max ? `${text.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, '').trimEnd()}…` : text
 }
 
 function alive(pid: number) {

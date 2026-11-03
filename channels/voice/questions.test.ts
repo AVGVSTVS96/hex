@@ -5,7 +5,7 @@ import { createServer, type Server } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Questions, fromLedger } from './questions.ts'
-import { vet } from './check.ts'
+import { before, vet } from './check.ts'
 import { T3 } from './t3.ts'
 import { until } from '../../hub/until.ts'
 import type { Pin, Question } from '../../hub/ledger.ts'
@@ -107,6 +107,46 @@ test('a long first line is cut at a word when its only sentence end is an abbrev
 
 test('a short first line that ends in an ellipsis keeps no context of its own', () => {
   expect(fromLedger('telegram', asked(1, 'Ship it…', ['Yes', 'No'])).context).toBeUndefined()
+})
+
+// Messages kept in DESK on Oct 13, each at its time ('18:01:00') and with its id in the chat.
+type Said = [string, string, Partial<{ id: number; author: 'hex' | 'owner'; to: string; meta: Record<string, string> }>?]
+function said(lines: Said[]) {
+  const store = open(state)
+  const key = (n: number, id?: number) => `telegram:${GROUP}:${id ?? 100 + n}`
+  lines.forEach(([, body, { id, author = 'hex', to = DESK, meta } = {}], n) => store.deliver({ key: key(n, id), to, from: 'telegram', author, body, ...(meta && { meta }) }, 'session'))
+  store.past(lines.map(([time, , { id } = {}], n) => [key(n, id), `2026-10-13T${time}.000Z`]))
+}
+
+test("a question comes with hex's last two messages in the hour before it in its thread, and only what the owner read there as hex's explanation", () => {
+  said([
+    ['16:59:00', 'Too old.'],
+    ['18:01:00', 'Old news.'],
+    ['18:02:00', 'Caddy gives a short domain.', { id: 50 }],
+    ['18:03:00', 'which one?', { author: 'owner' }],
+    ['18:04:00', '(file: plan.png)', { meta: { file: 'plan.png' } }],
+    ['18:04:30', 'The plan, A on the left.', { meta: { file: 'plan.png' } }],
+    ['18:05:00', 'Caddy gives a short domain, Tailscale none.', { meta: { edited: 'true', message_id: '50' } }],
+    ['18:06:00', 'Elsewhere.', { to: GROUP }],
+    ['18:07:00', '🔐 Bash: rm -rf build', { meta: { permission: 'p1' } }],
+    ['18:08:00', 'Forwarded words.', { meta: { forwarded: 'true' } }],
+    ['18:09:00', 'Pages\n\n**🔴 Blocked on you**\n- Ship it?'],
+    ['18:10:00', 'Ship it?', { id: 8 }],
+    ['18:59:58', '**Which one serves the pages?**'],
+    ['18:59:59', 'A or B', { id: 9 }],
+  ])
+  ledger([asked(8, 'Ship it?', ['Yes', 'No'])])
+  const question = asked(9, '**Which one serves the pages?**\nA or B', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })
+  expect(before(open(state), 'telegram', question)).toEqual(['Caddy gives a short domain.', 'The plan, A on the left.'])
+  expect(before(open(state), 'telegram', question, 10)).toEqual(['Caddy giv…', 'The plan,…'])
+  expect(before(open(state), 'telegram', { ...question, at: '2026-10-13T18:01:30.000Z' })).toEqual(['Old news.'])
+})
+
+test("a question the check hasn't rewritten yet opens hex's message before it as context", () => {
+  said([['18:30:00', '**Caddy** gives a short domain.\n\n  It needs a server.']])
+  ledger([asked(9, 'Caddy or Tailscale?\nCaddy is mine.', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.view.asks[0]!.context).toBe('Caddy is mine.\nCaddy gives a short domain.\nIt needs a server.')
 })
 
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {

@@ -5,7 +5,7 @@ import { type Question as Asked, type MessageId, type Pin } from '../../hub/ledg
 import { statusPost } from '../../hub/status.ts'
 import { open as store, type Thread } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
-import { Check } from './check.ts'
+import { before, Check } from './check.ts'
 import { linkAt, Links } from './links.ts'
 import { relay } from './relay.ts'
 import { T3, type Fresh, type Stuck } from './t3.ts'
@@ -243,7 +243,9 @@ export class Questions extends Changes {
       return live ? [this.dress(question)] : []
     })
     const raw = [...this.ledgers].flatMap(([app, questions]) =>
-      questions.filter(question => !question.answer && !question.settled && !used.has(refId({ app, ...question }))).map(question => this.dress(fromLedger(app, question))),
+      questions
+        .filter(question => !question.answer && !question.settled && !used.has(refId({ app, ...question })))
+        .map(question => this.dress(fromLedger(app, question, before(store(this.state), app, question, Infinity).at(-1)))),
     )
     raw.sort((a, b) => b.at.localeCompare(a.at))
     const checked = this.result?.at ?? ''
@@ -337,8 +339,9 @@ export class Questions extends Changes {
 }
 
 // A question as its thread asked it: its first line is the question (what's cut from a long one opens
-// its context) and the rest its context; the option the thread marked as its pick wears it.
-export function fromLedger(app: string, asked: Asked): Curated {
+// its context) and the rest its context, then what hex said just before asking it (lead); the option
+// the thread marked as its pick wears it.
+export function fromLedger(app: string, asked: Asked, lead?: string): Curated {
   const lines = plain(asked.text)
     .split('\n')
     .map(line => line.trim())
@@ -348,7 +351,15 @@ export function fromLedger(app: string, asked: Asked): Curated {
     return { label, value, ...(label !== value && { pick: true }) }
   })
   const [question, rest] = cut(lines[0] ?? '', 160)
-  const context = [...(rest ? [rest] : []), ...lines.slice(1)].join('\n')
+  const said = clip(
+    plain(lead ?? '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .join('\n'),
+    500,
+  )
+  const context = [...(rest ? [rest] : []), ...lines.slice(1), ...(said ? [said] : [])].join('\n')
   return {
     id: refId({ app, ...asked }),
     kind: asked.options.length <= 2 ? 'yesno' : 'pick',
