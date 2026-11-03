@@ -88,6 +88,7 @@ test('a change committed in another process rings the bell, and a write that cha
   const store = open(dir)
   expect(open(dir)).toBe(store)
   let rang = 0
+  store.keepThreads('telegram', { general: { name: 'General' } })
   const stop = store.watch(() => rang++)
   const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'job:build:abc', '--to', 'general', '[job]', 'build', 'ended'])
   expect(await cli.exited).toBe(0)
@@ -145,6 +146,58 @@ test('hex deliver reaches a thread by its id, and a sender alone gets a key of i
   expect(await cli.exited).toBe(0)
   expect(open(dir).said('1561', 1)).toMatchObject([{ key: expect.stringMatching(/^hex:[0-9a-f-]{36}$/), from: 'hex', author: 'prompt', body: 'look at the build', meta: { user: 'hex General' } }])
 })
+
+test("hex deliver reaches a thread by its session's id or the 8 characters hex running prints, and refuses a session that works for no thread", async () => {
+  const claude = join(dir, 'claude')
+  mkdirSync(join(claude, 'sessions'), { recursive: true })
+  const session = (sessionId: string, name: string, thread?: string, store = dir, jobId = `job${sessionId.slice(0, 5)}`) => {
+    const job = thread && (jobId || sessionId.slice(0, 8))
+    writeFileSync(join(claude, 'sessions', `${sessionId}.json`), JSON.stringify({ pid: process.pid, sessionId, name, status: 'busy', ...(job && { kind: 'bg' }), ...(job && jobId && { jobId }) }))
+    if (!job) return
+    const settings = join(claude, `${thread}.json`)
+    writeFileSync(settings, JSON.stringify({ env: { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: thread, HEX_STORE: store } }))
+    mkdirSync(join(claude, 'jobs', job), { recursive: true })
+    writeFileSync(join(claude, 'jobs', job, 'state.json'), JSON.stringify({ sessionId, respawnFlags: ['--channels', 'plugin:telegram@hex', '--settings', settings] }))
+  }
+  session('38b69086-82da-46a4-8a80-802ddb4fbec5', 'hex/seqno-plugins2')
+  session('38b69086-ffff-4000-8000-000000000000', 'hex/seqno-import2')
+  session('9762845b-0000-4000-8000-000000000000', 'hex keyboard', '-100:452')
+  session('5cc4f530-0000-4000-8000-000000000000', 'Selfheal', '-100:4715')
+  session('7ac61e5d-0000-4000-8000-000000000000', 'Theo clips', '-100:65', dir, '')
+  session('e3bbf1d4-0000-4000-8000-000000000000', 'another hex', '-100:4716', join(dir, 'elsewhere'))
+  open(dir).keepThreads('telegram', { '-100:4715': { name: 'Selfheal' }, '-100:3655': { name: 'portfolio', session: '3d599dd0-0000-4000-8000-000000000000' } })
+  open(dir).turned('d4365c34-312f-4a52-9704-36fcf657e5b9', true)
+  open(dir).keepThreads('telegram', { '-100:7': { name: 'General', session: 'addfa113-11f6-4698-9b9e-c80b1d5aebdf' }, '-100:452': { name: 'hex keyboard' }, '-100:65': { name: 'Theo clips' } })
+  const deliver = async (to: string) => {
+    const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'hex', '--to', to, 'the theme class names'], { stderr: 'pipe', env: { ...Bun.env, CLAUDE_CONFIG_DIR: claude } })
+    return { code: await cli.exited, said: await new Response(cli.stderr).text() }
+  }
+
+  for (const to of ['addfa113', 'ADDFA113', 'addfa113-11f6-4698-9b9e-c80b1d5aebdf', '9762845b', '7ac61e5d']) expect(await deliver(to)).toEqual({ code: 0, said: '' })
+  for (const to of ['5cc4f530', '3d599dd0']) expect(await deliver(to)).toEqual({ code: 0, said: expect.stringContaining('is closed, so this waits until it opens') })
+  expect(await deliver('e3bbf1d4')).toEqual({ code: 1, said: expect.stringContaining('e3bbf1d4-0000-4000-8000-000000000000 (another hex) is a session no thread holds') })
+  expect(await deliver('d4365c34-312f-4a52-9704-36fcf657e5b9')).toEqual({ code: 1, said: expect.stringContaining('no thread or running session is d4365c34-312f-4a52-9704-36fcf657e5b9') })
+  expect(await deliver('38b69086-82')).toEqual({ code: 1, said: expect.stringContaining('38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2) is a session no thread holds, so it would never take this message: message it with Claude Code\'s SendMessage to "hex/seqno-plugins2"') })
+  expect(await deliver('38b69086')).toEqual({ code: 1, said: expect.stringContaining('38b69086 starts more than one session\'s id: 38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2), 38b69086-ffff-4000-8000-000000000000 (hex/seqno-import2)') })
+  expect(await deliver('d4365c34')).toEqual({ code: 1, said: expect.stringContaining('no thread or running session is d4365c34') })
+  expect(open(dir).since().map(row => row.to)).toEqual(['-100:7', '-100:7', '-100:7', '-100:452', '-100:65', '-100:4715', '-100:3655'])
+}, 20_000)
+
+test('hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has', async () => {
+  open(dir).keepThreads('t3', { '0f3a9c1e-0000-4000-8000-000000000000': { name: 'Old T3 thread' } })
+  open(dir).keepThreads('t3', { '5b0e7d2a-0000-4000-8000-000000000000': { name: 't3: notes' } })
+  open(dir).keepThreads('telegram', { '-100:1': { name: 'hex' } })
+  open(dir).keepThreads('telegram', { '-100:4715': { name: 'Selfheal' }, '-100:2': { name: 'hex' }, selfheal: { name: 'Old notes' } })
+  const deliver = async (to: string) => {
+    const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'hex', '--to', to, 'hello'], { stderr: 'pipe', env: { ...Bun.env, CLAUDE_CONFIG_DIR: join(dir, 'claude') } })
+    return { code: await cli.exited, said: await new Response(cli.stderr).text() }
+  }
+  for (const to of ['SelfHeal', 'HEX', 'T3: notes']) expect(await deliver(to)).toEqual({ code: 0, said: '' })
+  expect(await deliver('0F3A9C1E-0000-4000-8000-000000000000')).toEqual({ code: 0, said: expect.stringContaining('the thread 0f3a9c1e-0000-4000-8000-000000000000 is closed, so this waits until it opens again') })
+  expect(await deliver('Self heal')).toEqual({ code: 1, said: expect.stringContaining('no thread is "Self heal" (hex threads lists them)') })
+  expect(await deliver('1d056dde-a8e8-479f-842c-e9d7eb6e6e5d')).toEqual({ code: 1, said: expect.stringContaining('no thread or running session is 1d056dde-a8e8-479f-842c-e9d7eb6e6e5d') })
+  expect(open(dir).since().map(row => row.to)).toEqual(['-100:4715', '-100:2', '5b0e7d2a-0000-4000-8000-000000000000', '0f3a9c1e-0000-4000-8000-000000000000'])
+}, 20_000)
 
 const ask = { ...message, key: 'telegram:-100:50', body: 'Fix the login page. Also the logo looks blurry on retina.' }
 

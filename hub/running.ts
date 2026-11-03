@@ -11,7 +11,7 @@ import type { Store } from './store.ts'
 // background session: Claude Code's daemon starts those with its own environment, whoever started
 // it. From hex's own record of its turns (hex.db's turns): when its latest turn began, and when that
 // turn ended, if it has.
-export type Session = { id: string; pid: number; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number; thread?: string; began?: string; ended?: string }
+export type Session = { id: string; pid: number; job?: string; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number; thread?: string; began?: string; ended?: string }
 
 export const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 const BUSY = new Set(['busy', 'shell'])
@@ -27,13 +27,14 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   for (const file of list(dir)) {
     const record = file.endsWith('.json') ? readJson(join(dir, file)) : undefined
     if (!record?.sessionId || !alive(record.pid)) continue
-    const { sessionId: id, pid, status = 'idle', kind, name, cwd, startedAt: started = 0, statusUpdatedAt } = record
+    const { sessionId: id, pid, jobId, status = 'idle', kind, name, cwd, startedAt: started = 0, statusUpdatedAt } = record
     const updated = typeof statusUpdatedAt === 'number' ? statusUpdatedAt : undefined
     const kept = sessions.get(id)
     if (kept && (busyness(kept.status) > busyness(status) || (busyness(kept.status) === busyness(status) && (kept.updated ?? kept.started) >= (updated ?? started)))) continue
-    const { state, detail, needs } = readJson(join(claude, 'jobs', id.slice(0, 8), 'state.json')) ?? {}
-    const job = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
-    sessions.set(id, { id, pid, status, ...job, kind, name, cwd, started, ...(updated !== undefined && { updated }), thread: kind === 'bg' ? undefined : served(environ(pid)), ...store.turn(id) })
+    const job: string | undefined = (typeof jobId === 'string' && jobId) || kept?.job
+    const { state, detail, needs } = readJson(join(claude, 'jobs', job || id.slice(0, 8), 'state.json')) ?? {}
+    const progress = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
+    sessions.set(id, { id, pid, ...(job && { job }), status, ...progress, kind, name, cwd, started, ...(updated !== undefined && { updated }), thread: kind === 'bg' ? undefined : served(environ(pid)), ...store.turn(id) })
   }
   return sessions
 }
