@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -12,6 +12,8 @@ let waits: object[] = []
 let drop = 0
 let refuse: string | undefined
 let running = false
+let refused = 0
+let flaky = 0
 
 const server = Bun.serve({
   port: 0,
@@ -21,6 +23,8 @@ const server = Bun.serve({
     if (body.method !== 'tools/call') return new Response(null, { status: 202 })
     calls.push(body.params)
     if (body.params.name === 't3_thread_wait' && drop-- > 0) return new Response('gone', { status: 502 })
+    if (body.params.name === 't3_thread_wait' && refused-- > 0) return new Response('expired', { status: 401 })
+    if (body.params.name === 't3_thread_wait' && flaky-- > 0) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'mac is not answering' }], isError: true } })
     if (body.params.name === refuse) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{"code":"capability_denied","message":"no link"}' }], isError: true } })
     const answers: Record<string, () => unknown> = {
       orchestrator_capabilities: () => ({ providers: [{ providerInstanceId: 'claudeAgent', models: [{ id: 'claude-opus-4-1' }, { id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }] }] }),
@@ -43,7 +47,7 @@ beforeAll(() => {
   mkdirSync(join(home, '.t3/userdata'), { recursive: true })
   cpSync(join(HEX, 'bin/away'), join(home, '.hex/bin/away'))
   script(join(home, '.hex/bin/identity'), 'echo "You are hex."')
-  script(join(home, '.hex/bin/t3-mcp-headers'), 'echo {}')
+  script(join(home, '.hex/bin/t3-mcp-headers'), `echo "sign-in $*" >> "${home}/signed"; echo {}`)
   writeFileSync(join(home, '.t3/userdata/server-runtime.json'), JSON.stringify({ port: server.port }))
 })
 afterAll(() => {
@@ -61,6 +65,9 @@ const reset = () => {
   drop = 0
   refuse = undefined
   running = false
+  refused = 0
+  flaky = 0
+  rmSync(join(home, 'signed'), { force: true })
 }
 
 test("a job runs as a T3 Code thread on that machine, follows its run through early and dropped waits, and prints the thread's last answer", async () => {
@@ -79,6 +86,15 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
   expect(waited).toHaveLength(4)
   expect(waited.every(({ arguments: input }) => input.runId === 'r1')).toBe(true)
 }, 20_000)
+
+test('a refused token is renewed and a tool error without a final code is retried', async () => {
+  reset()
+  refused = 1
+  flaky = 1
+  const { run } = away(['-p', 'Build it.'])
+  expect(await run.exited).toBe(0)
+  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in \nsign-in --refresh\n')
+}, 30_000)
 
 test('a job whose thread stops at a question ends there, with the question as its answer', async () => {
   reset()

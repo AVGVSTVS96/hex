@@ -23,7 +23,7 @@ beforeAll(() => {
   script(join(home, '.hex/bin/room'), `cat "${fake}/${here}"; exit $(cat "${fake}/${here}.code")`)
   script(join(home, '.hex/bin/session'), `echo "session $* $(cat)"`)
   // A machine's away exits as that machine's file says: 76 when the job can't run there.
-  script(join(home, '.hex/bin/away'), `echo "away $*"; exit $(cat "${fake}/$1.away" 2>/dev/null || echo 0)`)
+  script(join(home, '.hex/bin/away'), `echo "away $* $(cat)"; exit $(cat "${fake}/$1.away" 2>/dev/null || echo 0)`)
   script(join(home, '.hex/bin/job'), `echo "$*" >> "${fake}/told"`)
   script(join(fake, 'bun'), 'exec "$@"')
   script(join(fake, 'ssh'), `cat "${fake}/$3"; exit $(cat "${fake}/$3.code")`)
@@ -56,10 +56,10 @@ test('a job runs here as a hex session while this machine has room, with what ca
 test("a job goes to the next machine with room, as a T3 Code thread on that machine's hex T3", () => {
   machine(here, 'cpu 80% busy', 1)
   machine('mac', 'cpu 20% busy\nt3 env-mac', 0)
-  expect(place({ HEX_MACHINES: 'mac:3' }).out).toBe('hex/deck runs on mac\naway mac env-mac hex/deck -p build it\n')
+  expect(place({ HEX_MACHINES: 'mac:3' }).out).toBe('hex/deck runs on mac\naway mac env-mac hex/deck -p build it the log\n')
 })
 
-test('held slots, a machine without a hex T3 Code, and one where the job could not run are passed over', () => {
+test('held slots, a machine without a hex T3 Code, and one where the job could not run are passed over, and the next machine gets all of its stdin', () => {
   machine(here, 'cpu 3% busy', 0)
   machine('cloud', 'cpu 1% busy', 0)
   machine('mini', 'cpu 1% busy\nt3 env-mini', 0, 76)
@@ -69,7 +69,7 @@ test('held slots, a machine without a hex T3 Code, and one where the job could n
   Bun.sleepSync(200)
   const { out, code } = place({ HEX_SLOTS: '1', HEX_MACHINES: 'cloud:1 mini mac:3' })
   held.kill()
-  expect(out).toBe('hex/deck runs on mini\naway mini env-mini hex/deck -p build it\nhex/deck runs on mac\naway mac env-mac hex/deck -p build it\n')
+  expect(out).toBe('hex/deck runs on mini\naway mini env-mini hex/deck -p build it the log\nhex/deck runs on mac\naway mac env-mac hex/deck -p build it the log\n')
   expect(code).toBe(0)
 })
 

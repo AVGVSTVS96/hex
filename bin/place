@@ -2,7 +2,7 @@
 # place <name> <claude args...>: an agent job's unit runs this. The job takes a slot on the first machine with room,
 # this one first (HEX_SLOTS, 12) and then each of HEX_MACHINES in order ("mac:3" is the machine `ssh mac` reaches,
 # with 3 slots), and runs there: here as a hex session, there as a T3 Code thread (bin/away). With no room anywhere it
-# waits in line, and its owner hears so once. A slot is a lock held while its job runs, so a job that ends, however
+# waits, and its owner hears so once. A slot is a lock held while its job runs, so a job that ends, however
 # it ends, gives its slot back.
 set -u
 hex=$(cd "$(dirname "$0")/.." && pwd)
@@ -12,6 +12,11 @@ shift
 here=$(uname -n)
 dir=${XDG_STATE_HOME:-$HOME/.local/state}/hex/slots
 mkdir -p "$dir"
+# What came on stdin, kept so each machine the job tries gets all of it.
+input=$(mktemp)
+trap 'rm -f "$input"' EXIT
+trap 'exit 143' TERM INT
+cat > "$input"
 setting() { (. "$hex/bin/settings" && eval "echo \"\${$1:-$2}\""); }
 told=
 wait_for() {
@@ -27,7 +32,7 @@ run() {
   shift 3
   [ "$host" = "$here" ] && set -- "$hex/bin/session" -n "$name" "$@" || set -- bun "$hex/bin/away" "$host" "$t3" "$name" "$@"
   echo "$name runs on $host"
-  flock -o "$dir/$host.$slot" "$@" 0<&0 9>&- &
+  flock -o "$dir/$host.$slot" "$@" < "$input" 9>&- &
   job=$!
   waited=0
   while [ "$waited" -lt 60 ] && kill -0 "$job" 2>/dev/null; do
@@ -79,5 +84,8 @@ $host: $measured"
     done
   done
   wait_for "$readings"
+  # Out of line while it waits, so a job no machine can take now doesn't hold up one another could.
+  flock -u 9
   sleep 30
+  flock 9
 done
