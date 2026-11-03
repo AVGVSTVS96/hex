@@ -417,7 +417,7 @@ function follow(socket: WebSocket, record: Live['record'], { call = new Call(), 
 type Topic = { id: string; claude: string; voice: string }
 
 function runTopic(run: Run & { closed?: true }): Topic {
-  const about = `${opener(run)}${run.closed ? ' The thread is closed, so nothing can be sent to it.' : ''}`
+  const about = `${run.closed ? 'This thread is closed, so nothing can be sent to it. ' : ''}${opener(run)}`
   return {
     id: run.id,
     claude: `The caller started it with Talk it through on a task. ${about}`,

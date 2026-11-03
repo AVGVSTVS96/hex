@@ -126,8 +126,9 @@ export class Board extends Changes {
   }
 
   // Any thread hex.db knows, as a run: the board's while it's on it, else built now, so a thread
-  // that left the board or closed still opens from an old ask. What's read for it isn't kept, and a
-  // closed thread whose session an open thread now holds has none of its own left.
+  // that left the board or closed still opens from an old ask. What's read for it isn't kept. A
+  // closed thread needs nothing more, and one whose session an open thread now holds has none of its
+  // own left, so it dates from its kept lane.
   find(id: string): (Run & { closed?: true }) | undefined {
     const kept = this.get(id)
     if (kept) return kept
@@ -141,8 +142,13 @@ export class Board extends Changes {
     if (lane) this.tracks[id] = lane
     else delete this.tracks[id]
     if (thread.session && !this.wanted().has(short(thread.session))) this.jobs.delete(short(thread.session))
-    if (run.state !== 'working' && !taken) this.keep(run)
-    return row.open ? run : { ...run, closed: true }
+    if (row.open) {
+      if (run.state !== 'working') this.keep(run)
+      return run
+    }
+    const { needs, ...closed } = run
+    const at = taken ? (lane?.at(-1)?.at ?? run.at) : run.at
+    return { ...closed, state: run.state === 'needs' ? 'idle' : run.state, at, since: taken ? at : run.since, closed: true }
   }
 
   // The Claude Code session a run's thread runs in, whose log holds its chat.
