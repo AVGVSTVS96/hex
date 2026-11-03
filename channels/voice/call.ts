@@ -8,8 +8,14 @@ export type Task = { id: string; state: 'running' | 'done' | 'failed'; text: str
 
 export type Moment = Task & { at: number }
 
-// ask: a question put on the caller's screen (its text) by its id; answered: its answer.
-export type Mark = { at: number; kind: 'say' | 'note' | 'paused' | 'resumed' | 'warned' | 'ask' | 'answered'; text: string; ask?: string }
+// What an answer, a note or a not needed did: the hex thread it went to (app:thread), that thread's
+// name, how many open copies of the question it sent an answer or settle to, and how many copies or
+// threads it couldn't reach (a hub that was down), which stay as they were.
+export type Sent = { thread: string; topic: string; settled: number; missed: number }
+
+// ask: a question put on the caller's screen (its text) by its id; answered: its answer, and what
+// sending it did; undone: that answer taken back.
+export type Mark = { at: number; kind: 'say' | 'note' | 'paused' | 'resumed' | 'warned' | 'ask' | 'answered' | 'undone'; text: string; ask?: string; sent?: Sent }
 
 export type Saved = { turns: { who: Speaker; at: number; text: string }[]; tasks: Moment[]; moments?: Mark[] }
 

@@ -270,14 +270,35 @@ Discord thread), else its thread (Telegram's DM opens the chat with the bot). A 
 An answer from the app reaches the thread as your own tap would (with
 `answered_in`), and its Telegram buttons change to "Answered in the app". A
 poll can't take a vote from the bot, so it closes instead. Undo puts the
-buttons back and tells the thread the answer no longer stands.
+buttons back and tells the thread the answer no longer stands (a poll that was
+closed, in Telegram or Discord, stays closed). A note is your own words to the
+thread that asked, and the question stays open. Not needed tells the
+question's thread and every thread its copies are in, and settles the copies,
+which takes it off the list; undo brings it back too.
+
+Answer and not needed go one at a time per question. The first step (the
+answer to its first copy, or not needed's word to the question's thread) has to
+go through; after that each tries every copy, so one hub that's down doesn't
+stop the rest, and keeps what went out in
+`state/voice/marks.json` for undo. Each says what it did: `{ thread, topic,
+settled, missed }`, the hex thread told (`app:thread`), its name, how many open
+copies it sent an answer or settle to (hubs don't confirm one), and how many
+copies or threads it couldn't reach. A finished answer stands while a copy it
+reached still reads open. Once the list is past it, the copies it missed are
+finished by the same answer (they only settle; a thread already told isn't told
+again), and no other answer goes over it until then; a copy it never saw means
+the question was asked again, which can be answered anew, and one undo takes
+back both. An undo that can't reach a hub keeps the rest and says so, nothing
+is answered over it, and undoing again finishes it.
 
 | Request | Answers |
 | --- | --- |
 | `GET /asks` | `{ version, asks, stuck, fresh, check }`: each open question's `id`, `kind` (`pick`, `yesno`, `do`, `look`), `task` and `topic` (its thread), `question`, `context`, `options` (its answers: `label`, `pick`), `links` (pages it points to, which answer nothing: `label`, `url`), `tag`, and `places`, every place it was asked (each thread once, at its open question, pinned post or message), the ones that open first, each newest first; what's `stuck` (`title`, `why`, one `action`); what finished since you looked (`fresh`, with `read`); and the last check's time and counts |
 | `GET /asks?after=<version>` | the same, once anything has changed (or after 25 seconds) |
 | `POST /asks/<id>/answer` | `{ "label": "..." }`: answers it |
-| `POST /asks/<id>/undo` | takes that answer back |
+| `POST /asks/<id>/note` | `{ "text": "..." }`: tells its thread, leaving it open |
+| `POST /asks/<id>/dismiss` | puts it away as not needed |
+| `POST /asks/<id>/undo` | takes that answer or not needed back |
 | `POST /stuck/<id>/act` | does its action: asks hex's General to fix it, or puts it away until it changes |
 | `POST /fresh/<id>/read` | marks a finished result read |
 | `POST /asks/talk` | during a call: Claude walks you through them, one card at a time |
@@ -308,8 +329,10 @@ It writes `state/voice/check.json`; `check/error` keeps the last failure.
 In hex the voice session also has `ask` (put an open question on the caller's
 screen as a card in the transcript, by id) and `answer` (send the choice they
 said aloud). `GET /activity` carries the call's cards as `asks`, each with its
-answer once it has one; a tap on a card answers it like the Tasks sheet does,
-and Claude hears it. An app starting a call with `"about": "asks"` (Go through
+`answer` once it has one and what sending it did (`sent`: `{ thread, topic,
+settled, missed }`), until an undo takes it back; a tap on a card answers it like the
+Tasks sheet does, and Claude hears it, as it hears a note, a not needed or an
+undo on a card. An app starting a call with `"about": "asks"` (Go through
 them with hex) gets Claude walking the list in order.
 
 ## Setup

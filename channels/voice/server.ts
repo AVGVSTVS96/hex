@@ -3,7 +3,7 @@ import { readFileSync } from 'fs'
 import { isIP } from 'net'
 import { dirname, join } from 'path'
 import { findThread, followAgent, followThread, type Step, type Thread } from './activity.ts'
-import { Call, transcript, type Mark, type Speaker, type Task } from './call.ts'
+import { Call, transcript, type Mark, type Sent, type Speaker, type Task } from './call.ts'
 import { CallLog, ending, usage, type CallRecord, type Ending, type Source } from './calls.ts'
 import { Changes } from './changes.ts'
 import { Chats } from './chat.ts'
@@ -113,7 +113,7 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   if (name === 'title') return title(args.call, args)
   if (name === 'task') return task(args.id, args.state as Task['state'], args.text, args.call, args.agent)
   if (name === 'send') return pass(args.thread, args.about, args.text, args.app, args.channel)
-  if (name === 'answer') return answerQuestion(args.id, args.label, 'call')
+  if (name === 'answer') return answerQuestion(args.id, args.label, 'call').then(sent => `sent "${args.label}" to ${sent.topic}${missed(sent)}`)
   if (name === 'note' && !live && ringing()) {
     briefing.push(args.text)
     return 'the call is still ringing; the voice gets this when it connects'
@@ -151,8 +151,8 @@ function since(call: Live) {
   return Date.now() - Date.parse(call.record.started)
 }
 
-function remember(call: Live, kind: Mark['kind'], text: string, ask?: string) {
-  call.call.mark({ at: since(call), kind, text, ...(ask && { ask }) })
+function remember(call: Live, kind: Mark['kind'], text: string, more: Pick<Mark, 'ask' | 'sent'> = {}) {
+  call.call.mark({ at: since(call), kind, text, ...more })
   save(call)
 }
 
@@ -464,21 +464,27 @@ function show(call: Live, id: string) {
   const question = yours.find(id)
   if (!question) throw new Error(`no open ask ${id}`)
   call.shown.set(id, question)
-  remember(call, 'ask', question.question, id)
+  remember(call, 'ask', question.question, { ask: id })
   activity.changed()
   return `showing "${question.question}" to the caller`
 }
 
+// How many copies or threads an answer couldn't reach, for whoever is told it went.
+function missed({ missed }: Sent) {
+  return missed ? `, but ${missed} of its copies or threads couldn't be reached` : ''
+}
+
 // A question answered on a call, said aloud (via call) or tapped on its card (via app).
 async function answerQuestion(id: string, label: string, via: string) {
-  const question = yours.find(id) ?? live?.shown.get(id)
-  await yours.answer(id, label, via)
-  if (live && question) {
-    live.shown.set(id, question)
-    remember(live, 'answered', label, id)
+  const call = live
+  const question = yours.find(id) ?? call?.shown.get(id)
+  const sent = await yours.answer(id, label, via)
+  if (call && live === call && question) {
+    call.shown.set(id, question)
+    remember(call, 'answered', label, { ask: id, sent })
     activity.changed()
   }
-  return `sent "${label}" to ${question?.topic ?? 'its thread'}`
+  return sent
 }
 
 function listen(call: Live, socket: WebSocket, attempt = 0) {
@@ -938,12 +944,18 @@ function elsewhere(call: Live): (Task & { line?: string })[] {
     .map(row => ({ id: row.id, state: 'running', text: row.name, to: row.name, line: newest(row) }))
 }
 
-// The questions put on screen in this call, in order, each with its answer once it has one.
+// The questions put on screen in this call, in order, each with the answer given after it was shown,
+// until an undo takes that back.
 function cards(call: Live) {
   const marks = call.call.record().moments
   return marks
     .filter(mark => mark.kind === 'ask' && call.shown.has(mark.ask!))
-    .map(mark => ({ at: mark.at, ask: call.shown.get(mark.ask!)!, answer: marks.findLast(answer => answer.kind === 'answered' && answer.ask === mark.ask)?.text }))
+    .map((mark, i, shown) => {
+      const next = shown.slice(i + 1).find(later => later.ask === mark.ask)?.at ?? Infinity
+      const answered = marks.findLast(answer => answer.kind === 'answered' && answer.ask === mark.ask && answer.at >= mark.at && answer.at < next)
+      const undone = marks.findLast(undo => undo.kind === 'undone' && undo.ask === mark.ask)?.at ?? -1
+      return { at: mark.at, ask: call.shown.get(mark.ask!)!, ...(answered && answered.at > undone && { answer: answered.text, sent: answered.sent }) }
+    })
 }
 
 function topicOf(about?: string): Topic | undefined {
@@ -987,18 +999,57 @@ async function questionRoutes(request: Request, url: URL) {
   }
   if (url.pathname === '/asks/check' && request.method === 'GET') return questions.lastCheck ? Response.json(questions.lastCheck) : new Response('No check yet', { status: 404 })
   if (url.pathname === '/asks/talk' && request.method === 'POST') return talkAbout(walkTopic(questions.view.asks))
-  const [, kind, id, verb] = url.pathname.match(/^\/(asks|stuck|fresh)\/([^/]+)\/(answer|undo|act|read)$/) ?? []
+  const [, kind, id, verb] = url.pathname.match(/^\/(asks|stuck|fresh)\/([^/]+)\/(answer|note|dismiss|undo|act|read)$/) ?? []
   if (!kind || request.method !== 'POST') return new Response('404', { status: 404 })
-  const key = decodeURIComponent(id!)
   try {
+    const key = decodeURIComponent(id!)
+    // The call the card is on, if it still is once the verb has gone out; heard: the call that had
+    // its answer, from the card or the list.
+    const shown = live?.shown.has(key) && live.call.record().moments.some(mark => mark.kind === 'ask' && mark.ask === key) ? live : undefined
+    const heard = live?.call.record().moments.some(mark => mark.kind === 'answered' && mark.ask === key) ? live : undefined
+    const onCall = (call = shown) => (call && live === call ? call : undefined)
     if (kind === 'asks' && verb === 'answer') {
-      const { label } = (await request.json()) as { label?: string }
-      if (!label) return new Response('An answer needs its label', { status: 400 })
-      const shown = live?.shown.has(key)
-      await answerQuestion(key, label, 'app')
-      if (shown) deliver(`The caller tapped "${label}" on the card for ${key}; it's sent to its thread.`, { call: live!.id })
-    } else if (kind === 'asks' && verb === 'undo') await questions.undo(key, 'app')
-    else if (kind === 'stuck' && verb === 'act') await questions.act(key)
+      const label = ((await request.json().catch(() => null)) as { label?: unknown } | null)?.label
+      if (typeof label !== 'string' || !label) return new Response('An answer needs its label', { status: 400 })
+      const sent = await answerQuestion(key, label, 'app')
+      const call = onCall()
+      if (call) deliver(`The caller tapped "${label}" on the card for ${key}; it's sent to its thread${missed(sent)}.`, { call: call.id })
+      return Response.json(sent)
+    }
+    if (kind === 'asks' && verb === 'note') {
+      const raw = ((await request.json().catch(() => null)) as { text?: unknown } | null)?.text
+      const text = typeof raw === 'string' ? raw.trim() : ''
+      if (!text) return new Response('A note needs its text', { status: 400 })
+      const sent = await questions.note(key, text, 'app')
+      const call = onCall()
+      if (call) deliver(`The caller wrote a note on the card for ${key}: "${text}". It's sent to its thread, and the question stays open.`, { call: call.id })
+      return Response.json(sent)
+    }
+    if (kind === 'asks' && verb === 'dismiss') {
+      const question = questions.find(key)
+      const sent = await questions.dismiss(key, 'app')
+      const call = onCall()
+      if (call) {
+        call.shown.set(key, question!)
+        remember(call, 'answered', 'Not needed', { ask: key, sent })
+        activity.changed()
+        deliver(`The caller marked the card for ${key} not needed; its threads are told${missed(sent)}.`, { call: call.id })
+      }
+      return Response.json(sent)
+    }
+    if (kind === 'asks' && verb === 'undo') {
+      try {
+        await questions.undo(key, 'app')
+      } finally {
+        const call = !questions.answered(key) && onCall(heard)
+        if (call) {
+          remember(call, 'undone', 'Taken back', { ask: key })
+          activity.changed()
+        }
+      }
+      const card = onCall()
+      if (card) deliver(`The caller took back what they gave on the card for ${key}; it's open again.`, { call: card.id })
+    } else if (kind === 'stuck' && verb === 'act') await questions.act(key)
     else if (kind === 'fresh' && verb === 'read') questions.read(key)
     else return new Response('404', { status: 404 })
   } catch (error) {
