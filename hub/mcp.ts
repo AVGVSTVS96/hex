@@ -89,7 +89,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       await tick()
       const took = clock.now() - arrived
       if (--run.waiting === 0 && runs.get(key) === run) {
-        if (gone.aborted || took >= WAITED) Object.assign(run, { heard: 'no', at: clock.now() })
+        if (gone.aborted || took >= WAITED) run.heard = 'no'
         else if (took >= GAVE_UP) run.heard = 'maybe'
         else runs.delete(key)
       }
