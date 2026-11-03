@@ -41,7 +41,8 @@ if (key) {
     const flipped = heartbeat ? busySince(session_id) : undefined
     let took: boolean
     try {
-      took = recorded = store.write(() => store.take(key, session_id) && (!!session_id && (store.turned(session_id, busy, at, heartbeat, flipped), true)))
+      took = store.write(() => store.take(key, session_id) && (!session_id || (store.turned(session_id, busy, at, heartbeat, flipped), true)))
+      recorded = took && !!session_id
     } catch (error) {
       console.error(`hex couldn't record this turn: ${error}`)
       const mine = store.message(key)?.taken?.by === session_id

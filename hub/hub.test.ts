@@ -2205,6 +2205,14 @@ test("a session's hook takes what its prompt brings in, and drops a copy of one 
   expect(await new Response(copy.stderr).text()).toContain('telegram:1:42')
 })
 
+test("a hook with no session id lets its prompt through", async () => {
+  const store = open(dir)
+  store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
+  const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>'
+  const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir }, stdin: new Blob([JSON.stringify({ prompt, session_id: '' })]) })
+  expect(await hook.exited).toBe(0)
+})
+
 test("a channel tag in a message's own words takes nothing", async () => {
   const store = open(dir)
   store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
