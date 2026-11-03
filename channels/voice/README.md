@@ -96,8 +96,8 @@ or `phone-out`. `end` is how it ended: `you` (the caller hung up), `hex`
 `reason` says why in words. Every way the caller ends a call (the page, an
 app, the phone, `DELETE /session` with the call's `sessionId`) sends
 `session.close` with an `event_id` starting `close-you`; `hang_up` sends one
-starting `close_hex`. A `DELETE /session` naming a call that isn't live ends
-nothing.
+starting `close_hex`. A `DELETE /session` naming a call that's neither live
+nor being picked back up after a restart ends nothing.
 
 Calls that never connect are saved too, with no turns: an app or page whose
 `/session` OpenAI refused, a phone session OpenAI refused, and a placed phone
@@ -134,8 +134,12 @@ about 15 seconds before calling the call dropped. When the engine starts, it
 picks the latest call that never got an end back up the same way and sends
 Claude a "call resumed" message with the call so far; any other call left
 without an end is closed out as `dropped` and ends like any other call: Claude
-is told to name it, and the session renews. A phone call's audio runs through
-the engine, so the service waits for a call to end before it restarts.
+is told to name it, and the session renews. A hang-up (`DELETE /session`,
+`hang_up`) while a call's connection is opening or coming back goes out once
+the connection is up. One while the engine attaches back to a call, or a new
+call starting then, ends that call at once, and its close goes out once the
+attach opens. A phone call's audio runs through the engine, so the service
+waits for a call to end before it restarts.
 
 One session takes a whole call. When a call starts, the engine tells the hub
 to keep the session (`keep`) once the last call's renew is through, so a

@@ -77,7 +77,11 @@ type Live = {
   spoke: number
   warning?: ReturnType<typeof setTimeout>
   speak?: (audio: string) => void
+  // The first hang-up asked, which the call ends by, and whether it went out.
+  closing?: string
+  closed?: true
 }
+type Attaching = { id: string; closing?: string }
 type Placed = { to: string; why?: string; started: string; session?: string }
 type Dial = { greeting: string; from: Source; token: string; why?: string; callee?: string }
 type Phone = Dial & { openai?: WebSocket; stream?: string; started?: true; refused?: true }
@@ -99,6 +103,8 @@ let HEX_STATE: string
 // last call's renew, so the new call's words reach the new session.
 let lane = Promise.resolve()
 let live: Live | undefined
+// The call recover() is attaching back to after a restart, until it opens or is hung up.
+let attaching: Attaching | undefined
 let ended: string | undefined
 let seq = 0
 const dials = new Map<string, Dial>()
@@ -117,6 +123,10 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   if (name === 'note' && !live && ringing()) {
     briefing.push(args.text)
     return 'the call is still ringing; the voice gets this when it connects'
+  }
+  if (name === 'hang_up' && !live && attaching) {
+    retire(attaching, `close_hex_${++seq}`)
+    return 'hung up; the voice gets its close once the connection is back'
   }
   if (!live) throw new Error('no call is live')
   switch (name) {
@@ -314,8 +324,36 @@ async function hangUpCall(call: Live) {
   const asked = Date.now()
   while (live === call && Date.now() - asked < 20_000 && Date.now() - Math.max(asked, call.spoke) < 2000) await Bun.sleep(250)
   if (live !== call) return 'the call had already ended'
-  call.socket.send(JSON.stringify({ type: 'session.close', event_id: `close_hex_${++seq}` }))
+  close(call, `close_hex_${++seq}`)
   return 'hanging up'
+}
+
+// The caller or hex hangs up, and the first hang-up is the one the call ends by. Each goes out at
+// once over an open connection to the voice, so a later one retries a close the session didn't act
+// on; without one, the first goes out once one opens or, if the call ends first, on a connection
+// opened just for it. A phone or Discord call's socket is its session, so once that socket isn't
+// open there's nothing left to close.
+function close(call: Live, event: string) {
+  const state = call.socket.readyState
+  if (call.speak && state !== WebSocket.OPEN) return
+  call.closing ??= event
+  if (state === WebSocket.OPEN) sendClose(call, event)
+}
+
+function sendClose(call: Live, event = call.closing, socket = call.socket) {
+  socket.send(JSON.stringify({ type: 'session.close', event_id: event }))
+  call.closed = true
+}
+
+function closeSession(id: string, event: string) {
+  const socket = sideband(id)
+  let sent = false
+  socket.onopen = () => {
+    socket.send(JSON.stringify({ type: 'session.close', event_id: event }))
+    sent = true
+    socket.close()
+  }
+  socket.onclose = () => sent || trace(`couldn't send ${id} its close (${event})`)
 }
 
 function deliver(content: string, meta: Record<string, string>) {
@@ -377,6 +415,7 @@ function finish(call: Live, reason: string, by?: string) {
   toHub(hub.renew)
   call.socket.onclose = null
   call.socket.close()
+  if (call.closing && !call.closed && !call.speak) closeSession(call.id, call.closing)
 }
 
 function failed(record: Pick<CallRecord, 'from' | 'end' | 'reason'> & Partial<CallRecord>, to?: string) {
@@ -397,9 +436,11 @@ function ringing() {
 
 function follow(socket: WebSocket, record: Live['record'], { call = new Call(), speak, hello, about }: { call?: Call; speak?: Live['speak']; hello?: string; about?: Topic } = {}) {
   if (live) {
-    live.socket.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-moved' }))
-    finish(live, 'moved to a new call', 'close-you-moved')
+    const by = live.closing
+    close(live, 'close-you-moved')
+    finish(live, by ? 'close_requested' : 'moved to a new call', live.closing ?? 'close-you-moved')
   }
+  if (attaching) retire(attaching, 'close-you-moved')
   const current: Live = { id: record.id, shown: new Map(), socket, call, record, pending: new Map(), rings: [], changes: new Changes(), spoke: 0, speak }
   live = current
   save(current)
@@ -495,6 +536,11 @@ async function answerQuestion(id: string, label: string, via: string) {
 
 function listen(call: Live, socket: WebSocket, attempt = 0) {
   const opened = Date.now()
+  const hungUp = () => {
+    if (call.closing && !call.closed && live === call) sendClose(call)
+  }
+  if (socket.readyState === WebSocket.OPEN) hungUp()
+  else socket.addEventListener('open', hungUp, { once: true })
   socket.onmessage = ({ data }) => {
     const event = JSON.parse(String(data))
     switch (event.type) {
@@ -526,7 +572,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
         return
       case 'session.closed':
         if (event.usage) call.record.usage = usage(event.usage.seconds, call.record.usage?.context)
-        return finish(call, event.reason ?? 'closed', event.client_event_id)
+        return finish(call, event.reason ?? 'closed', (event.reason === 'close_requested' && call.closing) || event.client_event_id)
     }
   }
   socket.onclose = () => reconnect(call, Date.now() - opened < 5000 ? attempt + 1 : 0)
@@ -536,13 +582,18 @@ function reconnect(call: Live, attempt: number) {
   if (live !== call) return
   for (const pending of call.pending.values()) pending.reject(new Error('the connection to the voice dropped and is coming back; try again in a few seconds'))
   call.pending.clear()
-  if (call.speak || attempt >= RETRIES.length) return finish(call, 'connection_lost')
+  // A close sent on the dropped connection may never have reached the session, so it goes out again.
+  delete call.closed
+  if (call.speak || attempt >= RETRIES.length) return finish(call, call.closing ? 'close_requested' : 'connection_lost', call.closing)
   trace(`lost the connection to ${call.id}, reattaching (try ${attempt + 1})`)
   setTimeout(() => {
     if (live !== call) return
     const socket = sideband(call.id)
     socket.onopen = () => {
-      if (live !== call) return socket.close()
+      if (live !== call) {
+        if (call.closing && !call.closed) sendClose(call, call.closing, socket)
+        return socket.close()
+      }
       trace(`reattached to ${call.id}`)
       call.socket = socket
       listen(call, socket, attempt)
@@ -587,24 +638,46 @@ function recover() {
 }
 
 // A call lost with the engine ends like any other: Claude names it, and the session renews.
-function closeOut(record: CallRecord) {
+// by: the hang-up that ended it while the engine was attaching back to it, at that moment.
+function closeOut(record: CallRecord, by?: string) {
   const heard = Math.max(0, ...record.turns.map(turn => turn.at), ...record.tasks.map(task => task.at), ...(record.moments ?? []).map(mark => mark.at))
-  const reason = "hex's service restarted and the call was gone"
-  calls.save({ ...record, ended: new Date(Date.parse(record.started) + heard).toISOString(), end: 'dropped', reason })
-  trace(`closed out ${record.id}: it never got an end`)
-  deliver(`The call ended: ${ENDINGS.dropped} (${reason}). Name it with title.`, { call: record.id, ended: 'dropped', reason })
-  if (!live) toHub(hub.renew)
+  const reason = by === 'close-you-moved' ? 'moved to a new call' : by ? 'close_requested' : "hex's service restarted and the call was gone"
+  const end = ending(reason, by)
+  calls.save({ ...record, ended: by ? new Date().toISOString() : new Date(Date.parse(record.started) + heard).toISOString(), end, reason })
+  trace(`closed out ${record.id}: ${by ? 'hung up while it was picked back up' : 'it never got an end'}`)
+  deliver(`The call ended: ${ENDINGS[end]} (${reason}). Name it with title.`, { call: record.id, ended: end, reason })
+  if (!live) {
+    if (by) ended = record.id
+    toHub(hub.renew)
+  }
+}
+
+// A call hung up or replaced while recover() attaches back to it ends then; its close goes out on the
+// attach once it opens, or on a connection opened for it if the attach fails.
+function retire(pending: Attaching, event: string) {
+  attaching = undefined
+  pending.closing = event
+  const record = calls.get(pending.id)
+  if (record) closeOut(record, event)
+  else if (!live) toHub(hub.renew)
 }
 
 // Tasks the call sent out can end while the connection comes back, so the record is read again then;
-// a call deleted or replaced by a new one meanwhile is let go.
+// a call deleted, replaced by a new one or hung up meanwhile is let go.
 function reattach({ id }: CallRecord) {
   const socket = sideband(id)
+  const pending: Attaching = { id }
+  attaching = pending
   socket.onopen = () => {
-    const record = calls.get(id)
+    if (attaching === pending) attaching = undefined
+    const record = pending.closing ? undefined : calls.get(id)
     if (!record || live) {
-      socket.send(JSON.stringify({ type: 'session.close', event_id: `close_hex_${++seq}` }))
-      return socket.close()
+      socket.send(JSON.stringify({ type: 'session.close', event_id: pending.closing ?? `close_hex_${++seq}` }))
+      socket.onclose = null
+      socket.close()
+      if (record) closeOut(record)
+      else if (!live && !pending.closing) toHub(hub.renew)
+      return
     }
     const { turns, tasks, moments, ...rest } = record
     const so = turns.slice(-40).map(({ who, at, text }) => ({ who, text, start: at }))
@@ -620,6 +693,8 @@ function reattach({ id }: CallRecord) {
     })
   }
   socket.onclose = () => {
+    if (attaching === pending) attaching = undefined
+    if (pending.closing) return closeSession(id, pending.closing)
     if (live?.id === id) return
     const record = calls.get(id)
     if (record) closeOut(record)
@@ -779,7 +854,7 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
         gone = true
         return openai.close()
       }
-      if (openai.readyState === WebSocket.OPEN) openai.send(JSON.stringify({ type: 'session.close', event_id: `close-you-${from}` }))
+      closeSocket(openai, `close-you-${from}`)
     },
   }
 }
@@ -839,8 +914,14 @@ function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
 }
 
 function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
-  const openai = twilio.data.openai
-  if (openai?.readyState === WebSocket.OPEN) openai.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-phone' }))
+  if (twilio.data.openai) closeSocket(twilio.data.openai, 'close-you-phone')
+}
+
+// A phone or Discord caller hangs up on the session socket itself: through the call once it's live,
+// so the call keeps one close.
+function closeSocket(openai: WebSocket, event: string) {
+  if (live?.socket === openai) close(live, event)
+  else if (openai.readyState === WebSocket.OPEN) openai.send(JSON.stringify({ type: 'session.close', event_id: event }))
 }
 
 function session(extra: object = {}, opening?: string) {
@@ -903,7 +984,8 @@ async function interruption(request: Request, id: string) {
 async function endSession(request: Request) {
   const { sessionId } = ((await request.json().catch(() => null)) ?? {}) as { sessionId?: unknown }
   if (typeof sessionId !== 'string') return new Response('Name the call to end with sessionId', { status: 400 })
-  if (live?.id === sessionId) live.socket.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-app' }))
+  if (live?.id === sessionId) close(live, 'close-you-app')
+  else if (attaching?.id === sessionId) retire(attaching, 'close-you-app')
   return new Response(null, { status: 204 })
 }
 
