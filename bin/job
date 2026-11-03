@@ -50,7 +50,8 @@ if (mode === "--ended") {
   const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
   const input = piped ? ["-p", `StandardInputData=${Buffer.from(piped).toString("base64")}`] : []
   // The conversation that started the job, and when: a thread's session's own, or the one a job it runs in came from.
-  const from = process.env.HEX_CHANNEL && process.env.HEX_THREAD ? { HEX_FROM: served(), HEX_FROM_AT: new Date().toISOString() } : { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT }
+  const thread = served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD })
+  const from = thread ? { HEX_FROM: thread, HEX_FROM_AT: new Date().toISOString() } : { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT }
   const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`]).concat(Object.entries(from).flatMap(([name, value]) => (value ? ["-E", `${name}=${value}`] : [])))
   await $`systemd-run --user --unit=${mode} --same-dir ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
 }

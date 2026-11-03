@@ -11,7 +11,7 @@ export function origin(store: Store, owner: string | undefined, before?: string,
   const thread = store.key(owner)
   const names = store.names()
   if (!(thread in names)) return
-  const said = store.said(thread, -1, before).filter(row => row.taken && spoken(row) && !['reaction', 'deleted', 'vote_removed', 'took_back'].some(wordless => row.meta?.[wordless])).at(-1)
+  const said = store.said(thread, -1, before).filter(row => row.taken && (!before || row.taken.at < before) && spoken(row) && !['reaction', 'deleted', 'vote_removed', 'took_back'].some(wordless => row.meta?.[wordless])).at(-1)
   const name = names[thread]
   const log = `\`${hex}/bin/hex log --last 100 -- '${thread}'\` prints its newest 100 messages (without --last, all of it)`
   return `This work comes from my conversation${name ? ` in ${name}` : ''}: ${said ? `${log}, and \`${hex}/bin/hex message ${said.key}\` my newest message there, word for word.` : `${log}.`}`
