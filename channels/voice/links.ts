@@ -96,9 +96,11 @@ export class Links {
     return app === 't3' && this.owners(id).some(owner => this.shows(owner, new Set([`t3:${id}`])))
   }
 
-  // The thread a hex T3 thread shows under, when it shows under another.
+  // The thread a hex T3 thread shows under, when it shows under another: the one that last handed it work.
   under(app: string, id: string) {
-    return app === 't3' ? this.owners(id).find(owner => this.shows(owner, new Set([`t3:${id}`]))) : undefined
+    if (app !== 't3') return
+    const handoffs = this.handed.filter(one => one.hex === id && (!one.relay || one.latest) && this.shows(one.parent, new Set([`t3:${id}`])))
+    return handoffs.reduce<Delegation | undefined>((last, one) => (!last || (one.since ?? '') >= (last.since ?? '') ? one : last), undefined)?.parent
   }
 
   private owners(id: string) {

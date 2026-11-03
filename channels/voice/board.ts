@@ -274,6 +274,11 @@ export class Board extends Changes {
   // (closed, or shown under another thread), which no thread holds and no such session launched;
   // what it launched counts toward it.
   private own() {
+    // What a hex T3 thread shown under another launched counts toward that one.
+    const shownAt = (thread: string, seen = new Set<string>()): string => {
+      const under = this.links.under(thread.slice(0, thread.indexOf(':')), thread.slice(thread.indexOf(':') + 1))
+      return under && !seen.has(under) ? shownAt(under, seen.add(thread)) : thread
+    }
     const held = this.held()
     const known = new Map(held)
     this.handed = new Set()
@@ -281,7 +286,7 @@ export class Board extends Changes {
       const owner = !known.has(id) && this.links.owner(id)
       if (!owner) continue
       known.set(id, owner.thread)
-      if (owner.handed) this.handed.add(id)
+      if (owner.handed && shownAt(owner.thread) === owner.thread) this.handed.add(id)
     }
     // A session T3 Code runs, and what it launched, go only by its handoffs.
     const below = (session: Session, seen = new Set<string>()): boolean => {
@@ -291,11 +296,6 @@ export class Board extends Changes {
     const placed = new Map(
       [...this.sessions].map(([id, session]) => [id, this.links.runs(id) ? { ...session, thread: undefined, parent: undefined } : below(session) ? { ...session, thread: undefined } : session]),
     )
-    // What a hex T3 thread shown under another launched counts toward that one.
-    const shownAt = (thread: string, seen = new Set<string>()): string => {
-      const under = this.links.under(thread.slice(0, thread.indexOf(':')), thread.slice(thread.indexOf(':') + 1))
-      return under && !seen.has(under) ? shownAt(under, seen.add(thread)) : thread
-    }
     const owners = new Map([...placed.values()].flatMap(session => {
       const thread = serving(session, known, placed)
       return thread ? [[session.id, held.has(session.id) ? thread : shownAt(thread)] as [string, string]] : []

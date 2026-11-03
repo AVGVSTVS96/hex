@@ -341,6 +341,13 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
   rmSync(join(claude, 'sessions', 'e5000004.json'))
   kidBuild.kill()
   await until(() => lead()?.agents.length === 4)
+  mapped('e5000005-grand', 'thread-grand', { driver: 'claudeAgent', title: 'grand: a T3 task of kid' })
+  handed('task-grand', 'thread-kid', 'thread-grand', { driver: 'claudeAgent', title: 'grand: a T3 task of kid', since: ago(1) })
+  running('e5000005-grand', 'busy', process.pid, { kind: 'interactive', name: 'grand: a T3 task of kid', startedAt: Date.now() })
+  await until(() => lead()!.agents.some(agent => agent.id === 'e5000005-grand'))
+  expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  rmSync(join(claude, 'sessions', 'e5000005.json'))
+  await until(() => lead()?.agents.length === 4)
   expect(lead()).toMatchObject({ state: 'working', since: kidSince, place: 'hex primitives' })
   expect(lead()!.agents.map(agent => [agent.label, agent.state, agent.via, agent.who])).toEqual([
     ['sol: second opinion', 'working', 't3', 'Sol'],

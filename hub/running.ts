@@ -70,11 +70,13 @@ export function served(env = process.env): string | undefined {
   return env.HEX_OWNER?.includes(':') ? env.HEX_OWNER : undefined
 }
 
-// The environment a background session's settings gave it: the file its job passes to --settings.
+// The environment a background session's settings gave it: what its job passes to --settings, a
+// file or the settings themselves.
 function launched(flags: unknown): Record<string, string> {
   const at = Array.isArray(flags) ? flags.lastIndexOf('--settings') : -1
-  const env = at >= 0 ? readJson(String(flags[at + 1]))?.env : undefined
-  return env && typeof env === 'object' ? env : {}
+  const settings = at >= 0 ? String(flags[at + 1]) : ''
+  const env = (settings.startsWith('{') ? parse(settings) : readJson(settings))?.env
+  return env && typeof env === 'object' ? Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {}
 }
 
 function environ(pid: number): Record<string, string> {
@@ -124,6 +126,12 @@ function list(dir: string) {
 
 function readJson(path: string) {
   try {
-    return JSON.parse(readFileSync(path, 'utf8'))
+    return parse(readFileSync(path, 'utf8'))
+  } catch {}
+}
+
+function parse(text: string) {
+  try {
+    return JSON.parse(text)
   } catch {}
 }
