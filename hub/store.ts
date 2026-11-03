@@ -951,7 +951,7 @@ export function asked(text: string) {
 
 // What the owner sent in a T3 prompt, piece by piece: the prompt without T3's own blocks, with the
 // request unwrapped, and anything sent with it, like an attachment, as a piece of its own.
-function sent(body: string) {
+export function sent(body: string) {
   const request = body.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)
   const around = (text: string) => text.split(/^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/m).filter((_, i) => i % 2 === 0)
   const pieces = request ? [...around(body.slice(0, request.index)), request[1]!, ...around(body.slice(request.index! + request[0].length))] : around(body)

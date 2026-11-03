@@ -40,7 +40,7 @@ test("a subagent of a thread's session is told the conversation it works for and
 })
 
 test("a job's session is told where its work came from, and the thread's own session isn't told its own thread", async () => {
-  const job = await hook('SessionStart', { HEX_OWNER: 'telegram:-100:7' })
+  const job = await hook('SessionStart', { HEX_OWNER: 'telegram:-100:7', HEX_FROM: 'telegram:-100:7' })
   expect(job.hookEventName).toBe('SessionStart')
   expect(job.additionalContext).toContain('/bin/hex message telegram:-100:50`')
   expect(await hook('SessionStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).toBe('')
@@ -65,12 +65,17 @@ test("a thread's own session goes by its thread over job variables it inherited,
   expect(await hook('SubagentStart', { HEX_OWNER: 'telegram:-100:99' })).toBe('')
 })
 
-test("a turn hex's own prompt started points at the conversation only, and a vote taken off isn't the owner's words", async () => {
+test("a job is told the owner's words as they were when it started, a job no conversation started gets nothing, and a vote taken off isn't the owner's words", async () => {
   const store = open(dir)
+  await Bun.sleep(5)
+  const started = new Date().toISOString()
+  await Bun.sleep(5)
   store.deliver({ key: 'telegram:-100:53', to: '-100:7', from: 'telegram', body: '(vote removed)', author: 'owner', meta: { vote_removed: 'true' } })
   store.take('telegram:-100:53', 's')
   expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).additionalContext).toContain('/bin/hex message telegram:-100:50`')
-  store.deliver({ key: 'hub:-100:7:beat', to: '-100:7', from: 'hub', body: 'Hourly check.', author: 'prompt', meta: {} })
-  store.take('hub:-100:7:beat', 's')
-  expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).additionalContext).not.toContain('/bin/hex message')
+  store.deliver({ key: 'telegram:-100:54', to: '-100:7', from: 'telegram', body: 'Something else now.', author: 'owner', meta: { user: 'bassim' } })
+  store.take('telegram:-100:54', 's')
+  expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).additionalContext).toContain('/bin/hex message telegram:-100:54`')
+  expect((await hook('SubagentStart', { HEX_OWNER: 'telegram:-100:7', HEX_FROM: 'telegram:-100:7', HEX_FROM_AT: started })).additionalContext).toContain('/bin/hex message telegram:-100:50`')
+  expect(await hook('SessionStart', { HEX_OWNER: 'telegram:-100:7' })).toBe('')
 })
