@@ -4,6 +4,7 @@ import { join } from 'path'
 import { type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
 import { statusPost } from '../../hub/status.ts'
 import { open as store, type Thread } from '../../hub/store.ts'
+import { generalOf, nameOf } from './activity.ts'
 import { Changes } from './changes.ts'
 import { before, Check } from './check.ts'
 import { linkAt, Links } from './links.ts'
@@ -217,9 +218,15 @@ export class Questions extends Changes {
   }
 
   private general() {
-    const general = [...this.threads.keys()].find(id => /^telegram:-\d+$/.test(id))
+    const general = generalOf(this.threads.values())
     if (!general) throw new Error('hex has no Telegram General to send this to')
-    return general
+    return `${general.app}:${general.thread}`
+  }
+
+  // What a question's thread is called, as its run on the board is.
+  private topic(task: string) {
+    const thread = this.threads.get(task)
+    return thread ? nameOf(thread, generalOf(this.threads.values())) : task.slice(task.lastIndexOf(':') + 1)
   }
 
   private schedule() {
@@ -282,7 +289,7 @@ export class Questions extends Changes {
     return {
       ...question,
       app: app!,
-      topic: this.threads.get(question.task)?.name ?? thread.at(-1)!,
+      topic: this.topic(question.task),
       options: options.filter(option => !option.url),
       ...(pages.length && { links: pages }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(':') }]),
@@ -315,7 +322,9 @@ export class Questions extends Changes {
   // A thread's place, and when it asked there: the question's or the pinned post's time.
   private thread(app: string, thread: string, message?: MessageId): Place & { at?: string } {
     const key = `${app}:${thread}`
-    const place = app === 'telegram' && !thread.includes(':') ? (thread.startsWith('-') ? 'General' : 'DM') : (this.links.title(app, thread) ?? this.threads.get(key)?.name ?? thread)
+    const general = generalOf(this.threads.values())
+    const dm = app === 'telegram' && !thread.includes(':') && !thread.startsWith('-')
+    const place = general && `${general.app}:${general.thread}` === key ? 'General' : dm ? 'DM' : (this.links.title(app, thread) ?? this.threads.get(key)?.name ?? thread)
     const link = linkAt(app, this.threads.get(key)?.link, message)
     const pin = this.pins.get(key)
     const at = message === undefined ? undefined : pin && String(pin.message) === String(message) ? pin.at : this.asked({ app, thread, message })?.at

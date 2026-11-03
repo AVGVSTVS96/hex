@@ -127,7 +127,7 @@ test("each thread is a run from its session's own records, what needs you first,
   expect(board.runs.map(run => [run.name, run.state])).toEqual([
     ['autofork', 'needs'],
     ['voiceapp', 'working'],
-    ['hex', 'done'],
+    ['General', 'done'],
     ['Leisure time', 'idle'],
     ['Theo clips', 'idle'],
   ])
@@ -251,7 +251,7 @@ test('a change to a session wakes the list, and the counts move only when a coun
   job('aaaaaaaa-general', { state: 'blocked', detail: 'Your call: ship it?', updatedAt: ago(0) })
   await until(() => board.summary.needs === 2)
   expect(board.counts.version).toBeGreaterThan(counted)
-  expect(board.runs[0].name).toBe('hex')
+  expect(board.runs[0].name).toBe('General')
 })
 
 test('a new thread shows up when its app keeps it in hex.db, once its session has records, and links where its app keeps it opening there', async () => {
@@ -567,4 +567,37 @@ test("two T3 threads that send each other work each show on their own, the other
   await until(() => board.get('t3:ping')?.agents.length && board.get('t3:pong')?.agents.length)
   expect(board.get('t3:ping')!.agents.map(agent => [agent.label, agent.state])).toEqual([['pong', 'working']])
   expect(board.get('t3:pong')!.agents.map(agent => [agent.label, agent.state])).toEqual([['ping', 'working']])
+})
+
+test("a thread off the board, quiet for a week or closed, is a page of what was last kept for it, read without touching the board", async () => {
+  expect(board.find('telegram:-1001234567890')).toBe(board.get('telegram:-1001234567890')!)
+  const lanes = readFileSync(join(state, 'voice', 'tracks.json'), 'utf8')
+  expect(board.find('buzz:b1')).toEqual({ id: 'buzz:b1', app: 'buzz', thread: 'b1', name: 'Old news', where: 'Buzz', place: 'Old news', at: JSON.parse(readFileSync(join(claude, 'jobs', 'ffffffff', 'state.json'), 'utf8')).updatedAt, line: 'long ago' })
+  threads('discord', { gone: { name: 'Data kit', session: 'abababab-gone', link: 'https://discord.com/channels/1/gone' } })
+  job('abababab-gone', { state: 'blocked', detail: 'kit waits', needs: 'Pick a kit', updatedAt: ago(10 * 24 * 60) })
+  threads('discord', {})
+  await until(() => !open(state).threads({ app: 'discord', open: true }).length)
+  expect(board.find('discord:gone')).toEqual({ id: 'discord:gone', app: 'discord', thread: 'gone', name: 'Data kit', where: 'Discord', place: 'Data kit', at: JSON.parse(readFileSync(join(claude, 'jobs', 'abababab', 'state.json'), 'utf8')).updatedAt, link: 'https://discord.com/channels/1/gone' })
+  expect(board.find('discord:never')).toBeUndefined()
+  expect(board.runs.map(run => run.id)).not.toContainAnyValues(['buzz:b1', 'discord:gone'])
+  expect(readFileSync(join(state, 'voice', 'tracks.json'), 'utf8')).toBe(lanes)
+})
+
+test("a closed thread whose session another open thread holds now shows nothing of that session", async () => {
+  job('acacacac-moved', { state: 'blocked', detail: 'needs a pick', updatedAt: ago(1) })
+  threads('discord', { topic: { name: 'Snailmail', session: 'acacacac-moved' } })
+  threads('discord', {})
+  threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' }, there: { name: 'Snailmail', session: 'acacacac-moved' } })
+  await until(() => !!board.get('buzz:there'))
+  expect(board.find('discord:topic')).toEqual({ id: 'discord:topic', app: 'discord', thread: 'topic', name: 'Snailmail', where: 'Discord', place: 'Snailmail' })
+  threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' } })
+})
+
+test("another Telegram group keeps its own name and place, and only hex's General goes by General", async () => {
+  job('99999999-family', { state: 'done', detail: 'photos sent', updatedAt: ago(2) })
+  threads('telegram', { ...telegram, '-2002': { name: 'Family', session: '99999999-family' } })
+  await until(() => !!board.get('telegram:-2002'))
+  expect(board.get('telegram:-2002')).toMatchObject({ name: 'Family', where: 'Telegram', place: 'Family' })
+  expect(board.get('telegram:-1001234567890')).toMatchObject({ name: 'General', where: 'General', place: 'General' })
+  threads('telegram', telegram)
 })

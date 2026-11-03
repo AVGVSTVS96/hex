@@ -376,17 +376,33 @@ export function followAgent(agent: string, session: string | undefined, onStep: 
       return followTranscript(path, 0, (_, updates) => lines(updates(), onStep))
 }
 
+type Named = { app: string; thread: string; name: string; open?: boolean }
+
+// hex's General: the Telegram group HEX_MAIN_THREAD names, the one its bot opens topics in, else
+// the first open group chat hex.db has.
+export function generalOf<T extends Named>(threads: Iterable<T>, main = process.env.HEX_MAIN_THREAD) {
+  const groups = [...threads].filter(({ app, thread }) => app === 'telegram' && /^-\d+$/.test(thread))
+  return groups.find(({ thread }) => thread === main) ?? groups.find(({ open }) => open !== false)
+}
+
+// What a thread is called on screen: General is General, whatever hex.db names it.
+export function nameOf({ app, thread, name }: Named, general?: Named) {
+  return general && app === general.app && thread === general.thread ? 'General' : name
+}
+
 // An open hex thread (a Telegram topic, a Discord, Buzz or T3 Code thread) from hex.db, by its key or
-// its id as `hex threads --json` gives it (app:key), else by its name.
+// its id as `hex threads --json` gives it (app:key), else by its name, as hex.db keeps it or as it's shown.
 export function findThread(state: string, wanted: string): Thread | undefined {
   const store = open(state)
   const key = store.key(wanted)
+  const general = generalOf(store.threads())
   const all = store.threads({ open: true }).filter(({ app }) => app !== 'voice')
-  const ways = [all.filter(({ thread }) => thread === key), all.filter(({ name }) => name.toLowerCase() === wanted.toLowerCase())]
+  const is = (name: string) => name.toLowerCase() === wanted.toLowerCase()
+  const ways = [all.filter(({ thread }) => thread === key), all.filter(found => is(found.name) || is(nameOf(found, general)))]
   const matches = ways.find(found => found.length) ?? []
   if (matches.length > 1) throw new Error(`more than one hex thread goes by ${wanted}, in ${[...new Set(matches.map(({ app }) => app))].join(' and ')}: pass its app:key id, from hex threads --json`)
   const found = matches[0]
-  return found && { app: found.app, id: found.thread, name: found.name, cwd: found.cwd, state }
+  return found && { app: found.app, id: found.thread, name: nameOf(found, general), cwd: found.cwd, state }
 }
 
 // One message sent to a hex thread, followed through its session's transcript: it waits until the

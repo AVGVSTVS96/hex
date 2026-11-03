@@ -7,6 +7,7 @@ import { above } from '../../hub/fit.ts'
 import type { Question as Asked } from '../../hub/ledger.ts'
 import { open as store, shown, type Row, type Store } from '../../hub/store.ts'
 import type { CheckResult, Curated, Ref, Source } from './questions.ts'
+import { generalOf, nameOf } from './activity.ts'
 import { relay } from './relay.ts'
 import { T3, type Stuck } from './t3.ts'
 
@@ -107,7 +108,9 @@ function gather(state: string) {
   const names: Record<string, string> = {}
   const pins: { pin: Ref; topic: string; text: string }[] = []
   const questions = store(state).questions()
-  for (const { app, thread, name } of store(state).threads()) if (app !== 'voice') names[`${app}:${thread}`] = name
+  const threads = store(state).threads()
+  const general = generalOf(threads)
+  for (const thread of threads) if (thread.app !== 'voice') names[`${thread.app}:${thread.thread}`] = nameOf(thread, general)
   const ledgers = Object.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app) as Record<string, Asked[]>
   for (const pin of store(state).pins()) if (pin.note) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(pin.note, LONG) })
   const shown = (app: string, question: Asked) => ({

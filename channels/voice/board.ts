@@ -1,10 +1,10 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { join } from 'path'
-import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
+import { backOf, firstLine, followTranscript, generalOf, itemStep, nameOf, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
 import { busy, CLAUDE, running, serving, type Session } from '../../hub/running.ts'
 import { Changes } from './changes.ts'
 import { Links, type Delegation } from './links.ts'
-import { open } from '../../hub/store.ts'
+import { open, type Thread as Stored } from '../../hub/store.ts'
 
 export type State = 'working' | 'needs' | 'done' | 'failed' | 'idle'
 export type Step = Did & { at: string; end?: string }
@@ -26,6 +26,8 @@ export type Moment = { at: string; state: State; text: string }
 export type Turn = { at: string; state: State }
 export type Row = Omit<Run, 'needs' | 'lately' | 'steps' | 'plan' | 'agents'> & { agents: Omit<Agent, 'steps' | 'result'>[] }
 export type Summary = { needs: number; working: number }
+// A thread off the board, as its page shows it: what hex.db and its own last job records say.
+export type Page = Pick<Run, 'id' | 'app' | 'thread' | 'name' | 'where' | 'place'> & Partial<Pick<Run, 'at' | 'line' | 'link'>>
 export type Run = {
   id: string
   app: string
@@ -47,7 +49,7 @@ export type Run = {
   link?: string
 }
 
-type Thread = { app: string; id: string; name: string; session?: string; cwd?: string; link?: string }
+type Thread = { app: string; id: string; name: string; session?: string; cwd?: string; link?: string; general?: true }
 type Job = {
   state?: string
   detail?: string
@@ -123,6 +125,23 @@ export class Board extends Changes {
 
   get(id: string) {
     return this.runs.find(run => run.id === id)
+  }
+
+  // Any thread hex.db has had: its run while it's on the board, else a read-only page from what was
+  // last kept for it, read fresh. A session another open thread holds now says nothing of this one,
+  // a question it was blocked on is no line, and a thread that shows only under another has no page.
+  find(id: string): Run | Page | undefined {
+    const kept = this.get(id)
+    if (kept) return kept
+    const all = open(this.state).threads()
+    const row = all.find(({ app, thread }) => APPS[app] && `${app}:${thread}` === id)
+    if (!row || this.links.delegated(row.app, row.thread)) return
+    const thread = threadOf(row, generalOf(all))
+    const own = row.session && !all.some(one => one !== row && one.open && one.session === row.session) ? row.session : undefined
+    const job: Job | undefined = own && readJson(join(this.claude, 'jobs', short(own), 'state.json'))
+    const at = job?.updatedAt ?? this.tracks[id]?.at(-1)?.at
+    const line = job?.detail && job.state !== 'stopped' && job.state !== 'blocked' ? oneLine(plain(job.detail)) : undefined
+    return { id, app: thread.app, thread: thread.id, name: thread.name, where: where(thread), place: this.place(thread), ...(at && { at }), ...(line && { line }), ...(thread.link && { link: thread.link }) }
   }
 
   // The Claude Code session a run's thread runs in, whose log holds its chat.
@@ -210,10 +229,15 @@ export class Board extends Changes {
   }
 
   private stored(): Thread[] {
-    return open(this.state)
-      .threads({ open: true })
-      .filter(({ app }) => APPS[app])
-      .map(({ app, thread, name, session, cwd, link }) => ({ app, id: thread, name, session, cwd, ...(link && { link }) }))
+    const all = open(this.state).threads()
+    const general = generalOf(all)
+    return all.filter(({ app, open }) => open && APPS[app]).map(row => threadOf(row, general))
+  }
+
+  // What a thread's app calls it: General or the DM, T3 Code's own title, else its name.
+  private place(thread: Thread) {
+    const app = where(thread)
+    return app === 'General' || app === 'DM' ? app : (this.links.title(thread.app, thread.id) ?? thread.name)
   }
 
   // Each thread's session, as the <app>:<key> of the thread it serves.
@@ -321,7 +345,7 @@ export class Board extends Changes {
       thread: thread.id,
       name: thread.name,
       where: where(thread),
-      place: thread.app === 'telegram' && !thread.id.includes(':') ? where(thread) : (this.links.title(thread.app, thread.id) ?? thread.name),
+      place: this.place(thread),
       state,
       running: session?.status === 'busy',
       line: oneLine(line),
@@ -494,12 +518,18 @@ export function opener(run: Run) {
   return `The task is the hex thread ${run.name} (${run.where}, thread id ${run.thread}). ${state}`
 }
 
+function threadOf(row: Stored, general?: Stored): Thread {
+  const { app, thread, session, cwd, link } = row
+  return { app, id: thread, name: nameOf(row, general), session, cwd, ...(link && { link }), ...(row === general && { general: true as const }) }
+}
+
 function count(runs: Run[], state: State) {
   return runs.filter(run => run.state === state).length
 }
 
 function where(thread: Thread) {
-  if (thread.app === 'telegram' && !thread.id.includes(':')) return thread.id.startsWith('-') ? 'General' : 'DM'
+  if (thread.general) return 'General'
+  if (thread.app === 'telegram' && !thread.id.includes(':') && !thread.id.startsWith('-')) return 'DM'
   return APPS[thread.app]
 }
 
