@@ -242,6 +242,8 @@ const migrations: (string | ((store: Store) => void))[] = [
   },
   `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}), after text check (after ${UTC}));
   create index if not exists beats_session on beats (session, began);`,
+  // A thread's tasks, which its status post reads at each change to hex.db, by state and when each closed.
+  'create index if not exists owned on tasks (owner, status, closed);',
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -355,6 +357,7 @@ export class Store {
   private writing = false
   private readonly listeners = new Set<() => void>()
   private watcher?: FSWatcher
+  private heard = ''
 
   constructor(readonly dir: string) {
     mkdirSync(dir, { recursive: true })
@@ -398,7 +401,10 @@ export class Store {
   // Calls back after each change any process commits, until the stop it returns is called.
   watch(listener: () => void): () => void {
     this.listeners.add(listener)
-    this.watcher ??= watch(this.bell, () => this.rang())
+    if (!this.watcher) {
+      this.heard = this.moved()
+      this.watcher = watch(this.bell, () => this.rang())
+    }
     return () => {
       this.listeners.delete(listener)
       if (this.listeners.size) return
@@ -409,11 +415,13 @@ export class Store {
 
   // Bun's fs.watch on Linux drops a change that lands within about a millisecond of the one it just
   // reported (https://github.com/oven-sh/bun/issues/45954), so each ring is heard again once that has
-  // passed, if hex.db moved since.
+  // passed. Listeners run once for each time hex.db moved, however many rings that took.
   private rang() {
-    const seen = this.moved()
+    const moved = this.moved()
+    if (moved === this.heard) return
+    this.heard = moved
     for (const each of this.listeners) each()
-    setTimeout(() => this.watcher && this.moved() !== seen && this.rang(), 5)
+    setTimeout(() => this.watcher && this.rang(), 5)
   }
 
   // Keeps a new message. A key that's kept already is its sender sending it again: false. by: the
@@ -504,13 +512,22 @@ export class Store {
     return this.db.query('select 1 from messages where taken_by = ? limit 1').get(session) !== null
   }
 
-  // What no session has taken yet, oldest first: every thread's, or one thread's.
-  untaken(thread?: string): Row[] {
+  // What no session has taken yet, oldest first: every thread's, or one thread's, or some threads'.
+  untaken(thread?: string | string[]): Row[] {
     const rows =
       thread === undefined
         ? this.db.query('select * from messages where taken_at is null order by n').all()
-        : this.db.query('select * from messages where taken_at is null and "to" = ? order by n').all(thread)
+        : this.db.query('select * from messages where taken_at is null and "to" in (select value from json_each(?)) order by n').all(JSON.stringify([thread].flat()))
     return (rows as Stored[]).map(toRow)
+  }
+
+  // Changes whenever the thread's messages do: a new one is kept (as its newest), or a session takes
+  // one (one fewer waits). It reads two entries of indexes, so a reader can tell cheaply whether to
+  // read the messages again.
+  mark(thread: string): string {
+    const newest = this.db.query('select n from messages indexed by said where "to" = ? order by at desc, n desc limit 1').get(thread) as { n: number } | null
+    const { untaken } = this.db.query('select count(*) as untaken from messages indexed by untaken where taken_at is null and "to" = ?').get(thread) as { untaken: number }
+    return `${newest?.n}:${untaken}`
   }
 
   // Holds name for holder until it's released or ms pass, whichever comes first; false while another holds it.
@@ -644,18 +661,20 @@ export class Store {
     return row && this.toTask(row)
   }
 
-  // Newest first: every task, or one owner's, or those in some states.
-  tasks({ owner, status }: { owner?: string; status?: Status[] } = {}): Task[] {
-    const rows = this.db
-      .query('select * from tasks where (?1 is null or owner = ?1) and (?2 is null or status in (select value from json_each(?2))) order by at desc, n desc')
-      .all(owner ?? null, status ? JSON.stringify(status) : null) as StoredTask[]
-    return rows.map(row => this.toTask(row))
+  // Newest first: every task, or one owner's, or those in some states; without the owner's words,
+  // for a reader that shows only titles.
+  tasks(filter?: { owner?: string; status?: Status[]; words?: true }): Task[]
+  tasks(filter: { owner?: string; status?: Status[]; words: false }): Omit<Task, 'words'>[]
+  tasks({ owner, status, words = true }: { owner?: string; status?: Status[]; words?: boolean } = {}): Omit<Task, 'words'>[] {
+    const [where, params] = clause([owner !== undefined && ['owner = ?', owner], status && ['status in (select value from json_each(?))', JSON.stringify(status)]])
+    const rows = this.db.query(`select * from tasks ${where} order by at desc, n desc`).all(...params) as StoredTask[]
+    return rows.map(row => (words ? this.toTask(row) : toLine(row)))
   }
 
-  // The owner's last finished tasks, newest first.
-  lastDone(owner: string, count: number): Task[] {
+  // The owner's last finished tasks, newest first, without their words.
+  lastDone(owner: string, count: number): Omit<Task, 'words'>[] {
     const rows = this.db.query("select * from tasks where owner = ? and status = 'done' order by closed desc, n desc limit ?").all(owner, count) as StoredTask[]
-    return rows.map(row => this.toTask(row))
+    return rows.map(toLine)
   }
 
   // An app's open threads as its hub keeps them. A thread left out has closed: it keeps its row, with
@@ -721,10 +740,8 @@ export class Store {
 
   // Oldest first: every app's, or one app's or thread's, and only those still waiting on an answer.
   questions({ app, thread, waiting }: { app?: string; thread?: string; waiting?: boolean } = {}): Question[] {
-    const rows = this.db
-      .query('select * from questions where (?1 is null or app = ?1) and (?2 is null or thread = ?2) and (?3 is null or (answer is null and settled is null)) order by n')
-      .all(app ?? null, thread ?? null, waiting ? 1 : null) as StoredQuestion[]
-    return rows.map(toQuestion)
+    const [where, params] = clause([app !== undefined && ['app = ?', app], thread !== undefined && ['thread = ?', thread], waiting && ['answer is null and settled is null']])
+    return (this.db.query(`select * from questions ${where} order by n`).all(...params) as StoredQuestion[]).map(toQuestion)
   }
 
   // The owner's answer, unless one stands already: the first tap wins, and a later one changes
@@ -925,19 +942,7 @@ export class Store {
          from words join messages on messages.key = words.message where words.task = ? order by words.rowid`,
       )
       .all(row.n) as Words[]
-    return {
-      id: `t-${row.n}`,
-      title: row.title,
-      owner: row.owner,
-      status: row.status,
-      words,
-      at: row.at,
-      ...(row.project && { project: row.project }),
-      ...(row.done_when && { doneWhen: row.done_when }),
-      ...(row.proof && { proof: row.proof }),
-      ...(row.merged_into && { mergedInto: `t-${row.merged_into}` }),
-      ...(row.closed && { closed: row.closed }),
-    }
+    return { ...toLine(row), words }
   }
 
   private version() {
@@ -977,6 +982,27 @@ function number(id: string): number {
   const n = Number(id.replace(/^t-/, ''))
   if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`)
   return n
+}
+
+function toLine(row: StoredTask): Omit<Task, 'words'> {
+  return {
+    id: `t-${row.n}`,
+    title: row.title,
+    owner: row.owner,
+    status: row.status,
+    at: row.at,
+    ...(row.project && { project: row.project }),
+    ...(row.done_when && { doneWhen: row.done_when }),
+    ...(row.proof && { proof: row.proof }),
+    ...(row.merged_into && { mergedInto: `t-${row.merged_into}` }),
+    ...(row.closed && { closed: row.closed }),
+  }
+}
+
+// A where clause from the terms that apply, each with the value it binds, if any.
+function clause(terms: (false | undefined | [string, ...string[]])[]): [string, string[]] {
+  const kept = terms.filter(term => !!term)
+  return [kept.length ? `where ${kept.map(([sql]) => sql).join(' and ')}` : '', kept.flatMap(([, ...values]) => values)]
 }
 
 function toQuestion(row: StoredQuestion): Question {

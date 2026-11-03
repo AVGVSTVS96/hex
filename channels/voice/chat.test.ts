@@ -95,3 +95,16 @@ test('a wait for the chat ends when it changes, and not on a change elsewhere', 
   expect(chat.waiting.map(sent => sent.text)).toEqual(['hi'])
   expect((await chats.next(() => where, chat.version, 100)).version).toBe(chat.version)
 })
+
+test("a chat is read again only once its thread's messages change", () => {
+  const store = open(state)
+  store.deliver({ key: 'telegram:1', to: DESK, from: 'telegram', author: 'owner', body: 'ship it', meta: { user_id: '1' } })
+  const first = chats.of(where)
+  store.deliver({ key: 'telegram:5', to: '-1001234:6', from: 'telegram', author: 'owner', body: 'elsewhere', meta: { user_id: '1' } })
+  expect(chats.of(where)).toBe(first)
+  store.take('telegram:1', NOW)
+  const taken = chats.of(where)
+  expect(taken).not.toBe(first)
+  expect(taken).toMatchObject({ total: 1, waiting: [] })
+  expect(taken.version).toBeGreaterThan(first.version)
+})
