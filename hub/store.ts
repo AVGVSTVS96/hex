@@ -449,33 +449,23 @@ export class Store {
     return (this.db.query('select * from messages where at > ? order by at, n').all(after) as Stored[]).map(toRow)
   }
 
-  // A message and its edits, oldest first, or the edits alone when only those were kept, from the key
-  // of the message or of any edit. An edit is kept as a row of its own in the thread that made it,
-  // naming the app's id for the message, the last part of its key; a Telegram id is only unique in its
-  // chat, the part before it, so its edits are the ones kept in that chat.
-  versions(key: string): Row[] {
+  // A message as it reads now: the message, with its newest edit's words and that edit's key as
+  // meta.edit, or the edit alone when only that was kept. An edit is kept as a row of its own in the
+  // thread that made it, naming the app's id for the message, the last part of its key; a Telegram id
+  // is only unique in its chat, the part before it, so its edits are the ones kept in that chat.
+  latest(key: string): Row | null {
     const app = key.slice(0, key.indexOf(':'))
-    const named = this.message(key)
-    const of = named?.meta?.edited === 'true' ? named.meta.message_id : undefined
-    const id = of ?? key.slice(key.lastIndexOf(':') + 1)
-    const chat = key.slice(app.length + 1, Math.max(app.length + 1, key.lastIndexOf(':')))
-    const original = of ? this.message(`${app}:${chat && `${chat}:`}${id}`) : named
-    const edits = this.db
+    const id = key.slice(key.lastIndexOf(':') + 1)
+    const chat = key.slice(app.length + 1, -id.length - 1)
+    const original = this.message(key)
+    const edit = this.db
       .query(
         `select * from messages where "from" = ?1 and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ?2
-           and (?3 = '' or "to" = ?3 or "to" like ?3 || ':%') order by at, n`,
+           and (?3 = '' or "to" = ?3 or "to" like ?3 || ':%') order by at desc, n desc limit 1`,
       )
-      .all(app, id, chat) as Stored[]
-    return [...(original ? [original] : []), ...edits.map(toRow)]
-  }
-
-  // A message as it reads now: the message with its newest edit's words, or the newest edit when only
-  // edits were kept.
-  latest(key: string): Row | null {
-    const [first, ...edits] = this.versions(key)
-    const last = edits.at(-1)
-    if (!first) return null
-    return last && first.meta?.edited !== 'true' ? { ...first, body: last.body } : (last ?? first)
+      .get(app, id, chat) as Stored | null
+    if (!edit) return original
+    return original ? { ...original, body: edit.body, meta: { ...original.meta, edit: edit.key } } : toRow(edit)
   }
 
   // A thread's messages, oldest first: all of them, or its last few, or its last few before a time, or those between two times.
@@ -590,10 +580,9 @@ export class Store {
   requote(id: string, message: string, quote: string): Task {
     return this.write(() => {
       const live = this.live(id)
-      const said = this.latest(message)
+      const said = this.message(message)
       if (!said) throw new Error(`no message ${message}`)
-      const versions = JSON.stringify(this.versions(message).map(row => row.key))
-      const rows = this.db.query('select rowid, text from words where task = ? and message in (select value from json_each(?)) order by rowid').all(number(live), versions) as { rowid: number; text: string }[]
+      const rows = this.db.query('select rowid, text from words where task = ? and message = ? order by rowid').all(number(live), message) as { rowid: number; text: string }[]
       const pieces = said.from === 't3' ? sent(said.body) : []
       const whole = rows.find(row => row.text === said.body) ?? rows.find(row => pieces.includes(row.text) && row.text.includes(quote))
       const held = rows.find(row => row.text === quote)
@@ -854,20 +843,21 @@ export class Store {
   }
 
   private quote(task: string, message: string, quote?: string) {
-    const said = this.latest(message)
+    const said = this.message(message)
     if (!said) throw new Error(`no message ${message}`)
-    const versions = this.versions(message)
     const pieces = quote === undefined && said.from === 't3' ? sent(said.body) : []
-    if (quote === undefined && this.db.query('select 1 from words where task = ? and message in (select value from json_each(?))').get(number(task), JSON.stringify(versions.map(row => row.key)))) return
+    if (quote === undefined && this.db.query('select 1 from words where task = ? and message = ?').get(number(task), message)) return
     const texts = quote !== undefined ? [quote] : said.from === 't3' ? pieces : said.author === 'call' ? spoken(said).split('\n') : [said.body]
     if (!texts.length) throw new Error(`${message} has no words to quote`)
     if (!spoken(said)) throw new Error(`${message} is ${said.author}'s, not the owner's; a task holds the owner's words`)
     for (const text of texts) {
       if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
-      if (!spoken(said).includes(text)) throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
-      // the verbatim trigger checks words against the row they name: the first version that has them
-      const held = versions.find(row => spoken(row).includes(text))!.key
-      this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), held, text)
+      if (!spoken(said).includes(text)) {
+        const now = this.latest(message)
+        if (now?.meta?.edit && spoken(now).includes(text)) throw new Error(`"${text}" is in ${now.meta.edit}, the owner's edit of ${message}: quote it under that key`)
+        throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
+      }
+      this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
     }
   }
 

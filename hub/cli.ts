@@ -229,7 +229,7 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
   const thread = process.env.HEX_THREAD
   switch (verb) {
     case 'new': {
-      const said = id && store.latest(id)
+      const said = id && store.message(id)
       if (!said) throw new Error(id ? `no message ${id}` : 'name the message the task comes from by its key')
       return show([store.createTask({ title: flags.title!, message: id!, quote: flags.quote, owner: flags.owner ?? thread ?? said.to, project: flags.project, doneWhen: flags['done-when'], status: flags.idea ? 'idea' : 'open' })])
     }
