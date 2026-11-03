@@ -81,3 +81,15 @@ test("a job is told the owner's words as they were when it started, a job no con
   expect((await hook('SubagentStart', { HEX_OWNER: 'telegram:-100:7', HEX_FROM: 'telegram:-100:7', HEX_FROM_AT: started })).additionalContext).toContain('/bin/hex message telegram:-100:50`')
   expect(await hook('SessionStart', { HEX_OWNER: 'telegram:-100:7' })).toBe('')
 })
+
+test("an edit is named by the message it edits, so the line reads as the owner's newest words however often they edit", async () => {
+  const store = open(dir)
+  store.take('telegram:-100:52', 's')
+  store.deliver({ key: 'telegram:-100:52@1', to: '-100:7', from: 'telegram', body: 'Also the signup page, today.', author: 'owner', meta: { user: 'bassim', edited: 'true', message_id: '52' } })
+  store.take('telegram:-100:52@1', 's')
+  expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).additionalContext).toContain('/bin/hex message telegram:-100:52`')
+  store.deliver({ key: 'telegram:-100:52@2', to: '-100:7', from: 'telegram', body: 'Also the signup page, tonight.', author: 'owner', meta: { user: 'bassim', edited: 'true', message_id: '52' } })
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'message', 'telegram:-100:52'], { stdout: 'pipe' })
+  expect(await cli.exited).toBe(0)
+  expect((await new Response(cli.stdout).text()).trim()).toBe('Also the signup page, tonight.')
+})
