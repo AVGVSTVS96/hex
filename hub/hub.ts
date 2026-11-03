@@ -951,16 +951,18 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // That session starts when the last call ends and can wait hours for the next, so a call that finds
   // it still waiting for its first message starts it over, reading memory and live status as they are
   // now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for
-  // the new session. Resolves once the session the call runs in is connected.
+  // the new session, and the call is on once that session connects, so a restart that never gets
+  // there doesn't hold up the hub's own. Resolves once the session the call runs in is connected.
   function keep(thread: string) {
     const run = runOf(thread)
     if (run.renew !== 'underway') run.renew = undefined
-    onCall.add(run)
     const session = current(thread)
     if (!run.awaited && session && run.phase.is === 'live' && run.turn === 'done' && !run.handed.size && warmFor(thread) === undefined && !kept(store => store.took(session), true)) {
       run.renew = 'underway'
       void stop(thread).then(() => cycle(thread))
+      return renewal(thread).then(() => void onCall.add(run))
     }
+    onCall.add(run)
     letGo(thread)
     return renewal(thread)
   }

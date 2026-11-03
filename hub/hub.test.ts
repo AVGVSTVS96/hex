@@ -1414,6 +1414,16 @@ test('a call that finds its session still waiting for its first message starts i
   expect(hub.session('voice')).toBe('0a1b2c3d-0000-4000-8000-000000000009')
 })
 
+test("a call whose session's restart never gets through doesn't hold up the hub's own restart", async () => {
+  const old = Bun.spawn(['sleep', '30'])
+  start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
+  await session('voice')
+  void hub.keep('voice')
+  await until(() => calls().find(args => args[0] === 'stop'))
+  await free()
+  old.kill()
+})
+
 test('a call that comes while a renew is on its way takes the new session as it starts, without starting it over again', async () => {
   const old = Bun.spawn(['sleep', '30'])
   start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'busy' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
@@ -1662,6 +1672,7 @@ test('a restart waits for every call to hang up, even while its session\'s chann
   let freed = false
   await free()
   await session('voice')
+  said(500)
   hub.keep('voice')
   void free().then(() => (freed = true))
   await time.advance(50)
