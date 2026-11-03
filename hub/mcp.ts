@@ -31,6 +31,10 @@ const WAITED = 300_000
 const GAVE_UP = 120_000
 const KEEP = 15 * 60_000
 
+// Bun sees that a client left, while its request waited or its answer was being made, only a timer
+// tick later.
+const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
 type Run = { answer: Promise<Result>; at: number; waiting: number; heard?: 'maybe' | 'no' }
 
@@ -78,7 +82,8 @@ export function endpoint(name: string, channel: string, token: string, server: C
       runs.set(key, run)
       void run.answer.then(() => (run.at = clock.now()))
     }
-    return run.answer.then(answer => {
+    return run.answer.then(async answer => {
+      await tick()
       const took = clock.now() - arrived
       if (--run.waiting === 0 && runs.get(key) === run) {
         if (gone.aborted || took >= WAITED) run.heard = 'no'
@@ -193,8 +198,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       return result(id, { tools: server.tools })
     }
     if (method === 'tools/call') {
-      // Bun sees that a client left while its request waited only a timer tick into the handler.
-      await new Promise(resolve => setTimeout(resolve, 0))
+      await tick()
       return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, arrived))
     }
     if (method === 'ping') return result(id, {})

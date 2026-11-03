@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { existsSync, mkdtempSync } from 'fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { manual } from './clock.ts'
@@ -53,7 +53,9 @@ function channel(fails = false) {
     await Bun.sleep(5)
     for (const resolve of waiting.splice(0)) resolve()
   }
-  return { ran: () => ran, call, answer, reached, rested: serve.rested, serve }
+  // Answers every call waiting in the tool right away, without letting anything else run first.
+  const answerNow = () => waiting.splice(0).forEach(resolve => resolve())
+  return { ran: () => ran, call, answer, answerNow, reached, rested: serve.rested, serve }
 }
 
 const text = (answer: Answer) => answer.result.content[0]!.text
@@ -331,4 +333,34 @@ test('the latest of several repeats says whether the session heard, so a later m
   await Promise.all([first, heard, last])
   expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
   expect(ran()).toBe(1)
+})
+
+test('a call whose client left while the hub was too busy to send its answer counts as missed', async () => {
+  const { ran, serve, answerNow, reached } = channel()
+  const hub = Bun.serve({ port: 0, fetch: serve })
+  const left = join(mkdtempSync(join(tmpdir(), 'mcp-')), 'left')
+  const gave = `${left}-asked`
+  try {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reply', arguments: { text: 'report' } } })
+    const headers = { authorization: `Bearer ${TOKEN}`, 'x-hex-channel': 'chat', 'x-hex-thread': '-100:7' }
+    const client = `const fs = require('fs')
+      const gaveUp = new AbortController()
+      fetch(${JSON.stringify(`http://127.0.0.1:${hub.port}/telegram`)}, { method: 'POST', headers: ${JSON.stringify(headers)}, body: ${JSON.stringify(body)}, signal: gaveUp.signal }).catch(() => {})
+      while (!fs.existsSync(${JSON.stringify(gave)})) await Bun.sleep(10)
+      gaveUp.abort()
+      await Bun.sleep(100)
+      fs.writeFileSync(${JSON.stringify(left)}, '')`
+    Bun.spawn(['bun', '-e', client], { stdout: 'ignore', stderr: 'ignore' })
+    await reached()
+    writeFileSync(gave, '')
+    for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end; ) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)
+    expect(existsSync(left)).toBe(true)
+    answerNow()
+    await Bun.sleep(200)
+    const again = fetch(`http://127.0.0.1:${hub.port}/telegram`, { method: 'POST', headers, body })
+    expect(text((await (await again).json()) as Answer)).toStartWith('this same reply call came before')
+    expect(ran()).toBe(1)
+  } finally {
+    hub.stop(true)
+  }
 })
