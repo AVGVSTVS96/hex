@@ -4,15 +4,24 @@ set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
 . "$(dirname "$0")/settings"
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
-if command -v enclave >/dev/null; then enclave=enclave; else enclave="bunx enclave-link"; fi
+
+pick() {
+  enclave="bunx enclave-link@^0.2.12"
+  installed=$(command -v enclave) || return 0
+  version=$(enclave --version 2>/dev/null) || version=
+  case $version in
+  0.2.1[2-9] | 0.2.[2-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave=enclave ;;
+  *) echo "hex needs enclave-link 0.2.12 or a later 0.2, and \`$installed --version\` says '${version:-nothing (run it to see why)}': npm install -g enclave-link@^0.2.12 (or bun add -g enclave-link@^0.2.12)" >&2; exit 1 ;;
+  esac
+}
 
 usage() {
   cat >&2 <<'EOF'
 vault ask <name> <field…>      a link to send me; a totp field asks for a 2FA setup key
 vault wait <name>              wait for me to fill it in, then save it
 vault fill <name> <field>      type a saved value (totp: the current 2FA code) on your computer
-vault passkey <name> [field]   let your computer's browser sign in once with a saved passkey
-vault list | run | get | rm | import   the same as enclave's
+vault passkey <name> [field]   let your computer's browser sign in once with a saved passkey, in the next 5 minutes
+vault list [search] | run | get | save | rm | import   the same as enclave's
 EOF
   exit 2
 }
@@ -25,11 +34,15 @@ case ${1:-} in
 fill)
   [ $# -eq 3 ] || usage
   computer
+  pick
   value=$($enclave get "$2" "$3" && printf .)
   printf %s "${value%.}" |
     sprite exec -s "$HEX_COMPUTER" -- sh -c 'jq -Rsc "{scope: \"desktop\", text: .}" | DISPLAY=:1 ~/.local/bin/cua-driver call type_text >/dev/null'
   echo "typed $2's $3 on $HEX_COMPUTER"
   ;;
-ask | wait | passkey | list | run | get | rm | import) exec $enclave "$@" ;;
+ask | wait | passkey | list | run | get | save | rm | import)
+  pick
+  exec $enclave "$@"
+  ;;
 *) usage ;;
 esac
