@@ -2,25 +2,56 @@
 # place <name> <claude args...>: an agent job's unit runs this. The job takes a slot on the first machine with room,
 # this one first (HEX_SLOTS, 12) and then each of HEX_MACHINES in order ("mac:3" is the machine `ssh mac` reaches,
 # with 3 slots), and runs there: here as a hex session, there as a T3 Code thread (bin/away). With no room anywhere it
-# waits in line, oldest first, and its owner hears so once. A slot is a lock its job holds while it runs, so a job
-# that dies gives its slot back.
+# waits in line, and its owner hears so once. A slot is a lock held while its job runs, so a job that ends, however
+# it ends, gives its slot back.
 set -u
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
-machines=$(. "$hex/bin/settings"; echo "${HEX_MACHINES:-}")
-slots=$(. "$hex/bin/settings"; echo "${HEX_SLOTS:-12}")
 name=$1
 shift
-here=$(hostname)
+here=$(uname -n)
 dir=${XDG_STATE_HOME:-$HOME/.local/state}/hex/slots
 mkdir -p "$dir"
-exec 9>"$dir/line"
-flock 9
+setting() { (. "$hex/bin/settings" && eval "echo \"\${$1:-$2}\""); }
 told=
+wait_for() {
+  [ -n "$told" ] && return
+  told=1
+  echo "$name waits for room:$1"
+  [ -z "${HEX_OWNER:-}" ] || bun "$hex/bin/job" --waiting "${name##*/}" "$HEX_OWNER" "$1"
+}
+# Runs the job in a slot. The next job in line waits a minute, so the readings it takes count this one.
+# Returns the job's exit, or 76 when it couldn't run on that machine.
+run() {
+  host=$1 slot=$2 t3=$3
+  shift 3
+  [ "$host" = "$here" ] && set -- "$hex/bin/session" -n "$name" "$@" || set -- bun "$hex/bin/away" "$host" "$t3" "$name" "$@"
+  echo "$name runs on $host"
+  flock -o "$dir/$host.$slot" "$@" 0<&0 9>&- &
+  job=$!
+  waited=0
+  while [ "$waited" -lt 60 ] && kill -0 "$job" 2>/dev/null; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  flock -u 9
+  wait "$job"
+}
+exec 9>"$dir/line"
+flock -n 9 || { wait_for "
+other jobs are ahead of it in line"; flock 9; }
+passed=
 while :; do
   readings=
-  for machine in "$here:$slots" $machines; do
+  for machine in "$here:$(setting HEX_SLOTS 12)" $(setting HEX_MACHINES ''); do
     host=${machine%%:*}
+    slots=${machine#*:}
+    [ "$slots" = "$machine" ] && slots=1
+    case " $passed " in *" $host "*)
+      readings="$readings
+$host: the job can't run there"
+      continue ;;
+    esac
     if [ "$host" = "$here" ]; then
       reading=$("$hex/bin/room")
     else
@@ -29,25 +60,24 @@ while :; do
     fi
     fits=$?
     t3=$(echo "$reading" | sed -n 's/^t3 //p')
+    measured=$(echo "$reading" | grep '^cpu ') || { measured="no answer"; fits=1; }
+    [ "$host" = "$here" ] || [ -n "$t3" ] || [ "$fits" != 0 ] || { measured="$measured, no hex T3 Code"; fits=1; }
     readings="$readings
-$host: $(echo "${reading:-no answer}" | head -1)"
-    [ "$fits" = 0 ] && { [ "$host" = "$here" ] || [ -n "$t3" ]; } || continue
+$host: $measured"
+    [ "$fits" = 0 ] || continue
     slot=1
-    while [ "$slot" -le "${machine#*:}" ]; do
-      exec 8>"$dir/$host.$slot"
-      if flock -n 8; then
-        exec 9>&-
-        echo "$name runs on $host: $(echo "$reading" | head -1)"
-        [ "$host" = "$here" ] && exec "$hex/bin/session" -n "$name" "$@"
-        exec bun "$hex/bin/away" "$host" "$t3" "$name" "$@"
+    while [ "$slot" -le "$slots" ]; do
+      if flock -n "$dir/$host.$slot" true; then
+        run "$host" "$slot" "$t3" "$@"
+        code=$?
+        [ "$code" = 76 ] || exit "$code"
+        passed="$passed $host"
+        flock 9
+        break
       fi
       slot=$((slot + 1))
     done
   done
-  if [ -z "$told" ]; then
-    echo "$name waits for room:$readings"
-    [ -n "${HEX_OWNER:-}" ] && bun "$hex/bin/job" --waiting "$name" "$HEX_OWNER" "$readings"
-    told=1
-  fi
+  wait_for "$readings"
   sleep 30
 done

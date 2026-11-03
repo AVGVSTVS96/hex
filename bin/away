@@ -1,95 +1,162 @@
 #!/usr/bin/env bun
 // away <machine> <environment> <name> <claude args...>: runs an agent job as a T3 Code thread on another machine,
 // through this machine's T3 Code and its link to that one, so it starts the way T3 starts Claude Code, and follows it
-// the way T3 follows a task it delegates: waits until it ends, prints its last answer, and stops it if the job stops.
+// the way T3 follows a task it delegates: waits until its run ends, prints its last answer, and stops it if the job
+// stops. It exits 76, having started nothing, when the job can't run there: claude flags a thread has no place for,
+// no Claude on that machine, or a link that's gone; bin/place then tries the next machine.
 import { readFileSync } from 'node:fs'
+import { homedir, hostname, userInfo } from 'node:os'
 import { join } from 'node:path'
 
 const [machine, environmentId, name, ...args] = process.argv.slice(2) as [string, string, string, ...string[]]
 const home = join(import.meta.dir, '../..')
+const ELSEWHERE = 76
 
-// The claude flags a job passes that a thread has a place for.
-const flag = (name: string) => {
-  const at = args.indexOf(name)
-  return at >= 0 && args[at + 1] && !args[at + 1]!.startsWith('-') ? args[at + 1] : undefined
+function elsewhere(why: string): never {
+  console.error(`away: ${name} can't run on ${machine}: ${why}`)
+  process.exit(ELSEWHERE)
 }
-const model = flag('--model') ?? 'opus'
-const effort = flag('--effort')
-const asked = flag('-p') ?? flag('--print') ?? (await Bun.stdin.text()).trim()
-const identity = Bun.spawnSync([join(import.meta.dir, 'identity'), home], { cwd: home }).stdout.toString()
-const message = `${identity}
 
-You are running on ${machine}, in a T3 Code thread hex started there because the machine hex runs on was short on room. Your folder ${home}, the files under it and every other path on that machine are reached with \`ssh ${process.env.USER}@${Bun.spawnSync(['hostname']).stdout.toString().trim()} '<command>'\`, hex's commands included. Work in this machine's own checkouts: clone or pull a repo here, and push what you commit.
+// The claude flags a thread has a place for; a job with any other runs where its flags mean something.
+let model: string | undefined
+let effort: string | undefined
+const words: string[] = []
+for (let at = 0; at < args.length; at++) {
+  const arg = args[at]!
+  if (arg === '-p' || arg === '--print') continue
+  else if (arg === '--model') model = args[++at]
+  else if (arg === '--effort') effort = args[++at]
+  else if (/^--?[A-Za-z][\w-]*(=.*)?$/.test(arg)) elsewhere(`${arg} has no place in a T3 Code thread`)
+  else words.push(arg)
+}
+const piped = process.stdin.isTTY ? '' : (await Bun.stdin.text()).trim()
+const asked = [words.join(' '), piped].filter(Boolean).join('\n\n')
+if (!asked) elsewhere('the job has no prompt')
 
-${asked}`
-
-// This machine's T3 Code is reached the way hex's sessions reach it, through the t3-code server in the hex folder's .mcp.json.
-const server = JSON.parse(readFileSync(join(home, '.mcp.json'), 'utf8')).mcpServers['t3-code'] as { url: string; headersHelper: string }
+// This machine's T3 Code, signed in to as an MCP client, the way hex's sessions reach it.
+const runtime = JSON.parse(readFileSync(join(homedir(), '.t3/userdata/server-runtime.json'), 'utf8')) as { port: number }
+const url = `http://127.0.0.1:${runtime.port}/mcp`
+// T3's own split: a revoked link or a thread or run that's gone is final, and so is a request it can't take; the
+// other machine asleep or a dropped route is retried, for as long as it takes.
+const FINAL = ['capability_denied', 'thread_not_found', 'run_not_found', 'invalid_request']
+class Final extends Error {}
 let session: string | undefined
+// Signed in once, so stopping the job needs no new process while systemd stops the unit's.
+function signIn() {
+  const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers')], { cwd: home })
+  if (helper.exitCode !== 0) throw new Final(`couldn't sign in to T3 Code: ${helper.stderr.toString().trim()}`)
+  return { ...JSON.parse(helper.stdout.toString()), 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
+}
+let headers: Record<string, string> | undefined
 async function call(tool: string, input: Record<string, unknown>): Promise<any> {
-  const headers = { ...JSON.parse(Bun.spawnSync(['sh', '-c', server.headersHelper]).stdout.toString()), 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
-  const post = (body: object) => fetch(server.url, { method: 'POST', headers: { ...headers, ...(session && { 'mcp-session-id': session }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }), signal: AbortSignal.timeout(120_000) })
+  headers ??= signIn()
+  const post = (body: object) => fetch(url, { method: 'POST', headers: { ...headers, ...(session && { 'mcp-session-id': session }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }), signal: AbortSignal.timeout(120_000) })
   if (!session) {
     const opened = await post({ id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'hex-away', version: '1' } } })
     session = opened.headers.get('mcp-session-id') ?? undefined
     await post({ method: 'notifications/initialized' })
   }
   const answer = await post({ id: 1, method: 'tools/call', params: { name: tool, arguments: { environmentId, ...input } } })
-  if (!answer.ok) throw Object.assign(new Error(`${tool}: HTTP ${answer.status}`), { lost: true })
-  const { result, error } = (await answer.json()) as { result?: { isError?: boolean; content: { text: string }[]; structuredContent?: unknown }; error?: { message: string } }
-  if (error) throw new Error(`${tool}: ${error.message}`)
-  if (result!.isError) throw Object.assign(new Error(`${tool}: ${result!.content[0]?.text}`), { code: JSON.parse(result!.content[0]?.text ?? '{}').code })
-  return result!.structuredContent ?? JSON.parse(result!.content[0]!.text)
+  // 404 is an MCP session T3 Code forgot, which a fresh one fixes; any other refusal stays refused.
+  if (answer.status === 401) headers = undefined
+  if (answer.status >= 400 && answer.status < 500 && answer.status !== 404) throw new Final(`${tool}: HTTP ${answer.status}`)
+  if (!answer.ok) throw new Error(`${tool}: HTTP ${answer.status}`)
+  // Streamable HTTP may answer as an event stream, whose last data line is the reply.
+  const raw = await answer.text()
+  const reply = answer.headers.get('content-type')?.startsWith('text/event-stream') ? (raw.split('\n').filter(line => line.startsWith('data:')).at(-1)?.slice(5) ?? '') : raw
+  const { result, error } = ((): unknown => {
+    try {
+      return JSON.parse(reply)
+    } catch {
+      return { error: { message: 'an answer that is not JSON' } }
+    }
+  })() as { result?: { isError?: boolean; content: { text: string }[]; structuredContent?: unknown }; error?: { message: string } }
+  if (error) throw new Final(`${tool}: ${error.message}`)
+  const text = result!.content[0]?.text ?? ''
+  let parsed: any
+  try {
+    parsed = JSON.parse(text)
+  } catch {}
+  if (result!.isError) throw parsed?.code && !FINAL.includes(parsed.code) ? new Error(`${tool}: ${text}`) : new Final(`${tool}: ${text}`)
+  return result!.structuredContent ?? parsed
 }
 
-// T3's own split: a revoked link or a thread or run that's gone is final; the other machine asleep or a dropped route is retried.
-const FINAL = ['capability_denied', 'thread_not_found', 'run_not_found', 'invalid_request']
 async function persist<T>(what: () => Promise<T>): Promise<T> {
   for (let wait = 5_000; ; wait = Math.min(wait * 2, 120_000)) {
     try {
       return await what()
-    } catch (error: any) {
-      if (FINAL.includes(error.code)) throw error
-      console.error(`away: ${error.message}; trying ${machine} again in ${wait / 1000} s`)
+    } catch (error) {
+      if (error instanceof Final) throw error
+      console.error(`away: ${(error as Error).message}; trying ${machine} again in ${wait / 1000} s`)
       session = undefined
       await Bun.sleep(wait)
     }
   }
 }
 
-// A model goes by its alias, like opus, or its id, as that machine's Claude lists it.
-const { providers } = await persist(() => call('orchestrator_capabilities', {}))
-const claude = (providers as { providerInstanceId: string; models: { id: string }[] }[]).find(provider => provider.providerInstanceId === 'claudeAgent')!
-const chosen = claude.models.find(({ id }) => id === model) ?? claude.models.find(({ id }) => id.includes(model))
-const options = effort ? [{ id: 'effort', value: effort }] : []
+let threadId: string | undefined
+let stopping = false
+async function stop() {
+  if (threadId) await call('t3_thread_interrupt', { threadId, stop: true, reason: `hex stopped the job ${name}` }).catch(error => console.error(`away: couldn't stop the thread: ${error.message}`))
+  process.exit(143)
+}
+for (const signal of ['SIGTERM', 'SIGINT'] as const)
+  process.on(signal, () => {
+    stopping = true
+    if (threadId) void stop()
+  })
+
+// A model goes by its alias, like opus, or its id, as that machine's Claude lists it, newest first; with none, the one hex's sessions run.
+const configured = (path: string) => {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')).model as string | undefined
+  } catch {}
+}
+const wanted = model ?? configured(join(home, '.claude/settings.json')) ?? configured(join(homedir(), '.claude/settings.json')) ?? 'opus'
+const offered = await persist(() => call('orchestrator_capabilities', {})).catch((error: Error) => elsewhere(error.message))
+const claude = (offered.providers as { providerInstanceId: string; models: { id: string }[] }[]).find(provider => provider.providerInstanceId === 'claudeAgent')
+const chosen = claude?.models.find(({ id }) => id === wanted) ?? claude?.models.filter(({ id }) => id.includes(wanted)).sort((a, b) => b.id.localeCompare(a.id))[0]
+if (!chosen) elsewhere(claude ? `its Claude has no ${wanted}` : 'its T3 Code has no Claude')
+if (stopping) process.exit(143)
+
+const identity = Bun.spawnSync([join(import.meta.dir, 'identity'), home]).stdout.toString()
+const message = `${identity}
+
+You are running on ${machine}, in a T3 Code thread hex started there because ${hostname()}, where hex runs, was short on room. The job was started in ${process.cwd()} on ${hostname()}. Your folder ${home}, the files under it and every other path on ${hostname()} are reached with \`ssh ${userInfo().username}@${hostname()} '<command>'\`, hex's commands included. Work in this machine's own checkouts: clone or pull a repo here, and push what you commit.
+
+${asked}`
+
 const launched = await persist(() =>
   call('t3_thread_launch', {
     title: name,
     scratch: true,
     message,
     runtimeMode: 'full-access',
-    modelSelection: { provider: 'claudeAgent', model: chosen?.id ?? model, options },
+    modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
     clientRequestId: `hex-job-${name}-${process.env.INVOCATION_ID ?? process.pid}`,
   }),
-)
-const threadId = launched.threadId as string
+).catch((error: Error) => elsewhere(error.message))
+threadId = launched.threadId as string
+if (stopping) await stop()
 console.log(`${name} runs on ${machine} as T3 Code thread ${launched.link}`)
 
-for (const signal of ['SIGTERM', 'SIGINT'] as const)
-  process.on(signal, async () => {
-    await call('t3_thread_interrupt', { threadId, stop: true, reason: `hex stopped the job ${name}` }).catch(error => console.error(`away: couldn't stop the thread: ${error.message}`))
-    process.exit(143)
-  })
-
+// Following the run the launch started until it ends; a wait comes back early while that run is still starting.
+const ENDED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']
 let ended: { status: string }
-do ended = await persist(() => call('t3_thread_wait', { threadId, timeoutMs: 50_000 }))
-while ((ended as { timedOut?: boolean }).timedOut)
+do ended = await persist(() => call('t3_thread_wait', { threadId, runId: launched.runId, timeoutMs: 50_000 }))
+while (!ENDED.includes(ended.status) && ended.status !== 'waiting')
 
 let last: { text: string } | undefined
 for (let after: number | undefined, more = true; more; ) {
   const page = await persist(() => call('t3_thread_read', { threadId, view: 'messages', limit: 100, maxCharsPerItem: 50_000, afterPosition: after }))
   last = (page.items as { type: string; text: string }[]).filter(item => item.type === 'assistant_message').at(-1) ?? last
   ;[after, more] = [page.nextPosition, page.hasMore]
+}
+// A job has nobody to answer a question its thread asks, so the thread stops there, and the question is the job's answer.
+if (ended.status === 'waiting') {
+  await call('t3_thread_interrupt', { threadId, stop: true, reason: `the job ${name} has nobody to answer` }).catch(() => {})
+  console.log(`${name} stopped on ${machine} at a question, which a job can't answer: ${last?.text ?? '(see the thread)'}`)
+  process.exit(1)
 }
 console.log(last?.text ?? `${name} ended on ${machine} with no answer`)
 process.exit(ended.status === 'completed' ? 0 : 1)
