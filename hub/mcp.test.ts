@@ -19,6 +19,7 @@ test('meta without a time or a zone it can read passes through as it is', () => 
 
 const SERVER = { title: 'Telegram', instructions: '', tools: [
     { name: 'fetch_messages', description: 'Read.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'canvas', description: 'Read or write.', inputSchema: { type: 'object' }, reads: (args: Record<string, unknown>) => args.text === undefined },
   ],
 }
 const TOKEN = 'secret'
@@ -98,6 +99,20 @@ test('a tool that only reads runs every time', async () => {
   await answer()
   await Promise.all([first, again])
   expect(ran()).toBe(2)
+})
+
+test('a call a tool says only reads runs every time, while the same tool writing is kept', async () => {
+  const { ran, call, answer, reached } = channel()
+  for (const args of [{}, { text: 'plan' }]) {
+    const gaveUp = new AbortController()
+    const first = call(args, gaveUp, 'canvas')
+    await reached()
+    gaveUp.abort()
+    const again = call(args, undefined, 'canvas')
+    await answer()
+    await Promise.all([first, again])
+  }
+  expect(ran()).toBe(3)
 })
 
 test("a missed answer still answers its repeat after the thread's turn ends, while a heard slow one goes", async () => {
@@ -207,7 +222,7 @@ test('calls made side by side that both went unheard each answer their own repea
   expect(ran()).toBe(2)
 })
 
-test('a call that took as long as the session waits counts as missed, even with no abort seen', async () => {
+test('a call answered two minutes or more after it came may have been missed, so its repeat gets that answer', async () => {
   const time = manual(async () => {})
   try {
     const { ran, call, answer, reached } = channel()

@@ -1008,7 +1008,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (request.type === 'state') {
       took(request.taken, request.session)
       setState(request.thread, request.busy, request.background === true)
-      if (!request.busy && request.background !== true) serve.rested(request.thread)
+      // A StopFailure says nothing of background work, so only a Stop of the thread's own session rests it.
+      if (!request.busy && !request.background && !request.failed && request.session && request.session === current(request.thread)) serve.rested(request.thread)
     }
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
     if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
@@ -1062,7 +1063,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       const after = await claude.listing(session)
       if (after?.state !== 'working' && run.turn === 'background') {
         setState(thread, false)
-        if (after && current(thread) === session) serve.rested(thread)
+        if (after && after.state !== 'blocked' && current(thread) === session) serve.rested(thread)
       }
       return
     }

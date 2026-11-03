@@ -125,6 +125,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'canvas',
+      reads: args => args.text === undefined,
       description: 'Read this channel\'s canvas, or replace it by passing text. Reading returns its Markdown and revision.',
       inputSchema: {
         type: 'object',

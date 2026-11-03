@@ -1,6 +1,8 @@
 import { clock } from './clock.ts'
 
-export type Tool = { name: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean }; _meta?: object }
+// reads: for a tool that reads or writes by its arguments, whether a call only reads. It stays here: a
+// function never reaches the session's tool list.
+export type Tool = { name: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean }; reads?: (args: Record<string, unknown>) => boolean; _meta?: object }
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = { title: string; instructions: string; tools: Tool[]; permission?: boolean }
 export type Payload = { type: 'inbound'; content: string; meta: Record<string, string> } | { type: 'permission'; request_id: string; behavior: string }
@@ -62,11 +64,12 @@ export function endpoint(name: string, channel: string, token: string, server: C
   }
 
   const unheard = new Map<string, Map<string, Run>>()
-  const reads = new Set(server.tools.filter(tool => tool.annotations?.readOnlyHint).map(tool => tool.name))
+  const tools = new Map(server.tools.map(tool => [tool.name, tool]))
+  const reads = (tool: string, args: Record<string, unknown>) => !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args))
 
   function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal, arrived: number): Promise<Result> {
     if (gone.aborted) return Promise.resolve({ content: [{ type: 'text', text: `${tool} didn't run: you stopped waiting before the hub read it` }], isError: true })
-    if (reads.has(tool)) return call(thread, tool, args)
+    if (reads(tool, args)) return call(thread, tool, args)
     for (const [scope, runs] of unheard) {
       for (const [key, run] of runs) if (clock.now() - run.at > KEEP) runs.delete(key)
       if (!runs.size) unheard.delete(scope)
@@ -86,7 +89,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       await tick()
       const took = clock.now() - arrived
       if (--run.waiting === 0 && runs.get(key) === run) {
-        if (gone.aborted || took >= WAITED) run.heard = 'no'
+        if (gone.aborted || took >= WAITED) Object.assign(run, { heard: 'no', at: clock.now() })
         else if (took >= GAVE_UP) run.heard = 'maybe'
         else runs.delete(key)
       }
