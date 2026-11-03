@@ -370,3 +370,30 @@ test('a session resumed from an earlier one than the last is followed past what 
   expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'A fresh session.' }, { line: 'Finished it.' }, { end: 'done' }])
   stop()
 })
+
+test('an agent back clears the wait on it, so a later turn cut off with another agent out is redone, not failed', () => {
+  threads('buzz', { b11: { name: 'Agent redo', session: 'redo-new' } })
+  open(state).deliver({ key: 'buzz:redo', to: 'b11', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:redo' } }, 'redo-old')
+  const notice = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentr1</task-id>\n<status>completed</status>' } }
+  const old = [asked('call:redo'), launched('agentr1'), ended, notice, launched('agentr2')].map((entry, n) => ({ ...entry, uuid: `redo-${n}` }))
+  write(join(project, 'redo-old.jsonl'), ...old)
+  write(join(project, 'redo-new.jsonl'), ...old, said('Redid it.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'agent redo')!, hex, 'call:redo', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Redid it.' }, { end: 'done' }])
+})
+
+test('a session hex.db still names though it was last written before the message was taken is not gone back to', async () => {
+  threads('buzz', { b12: { name: 'Lagging', session: 'lag-old' } })
+  write(join(project, 'lag-old.jsonl'), asked('call:other'), said('Old history.'), ended)
+  await Bun.sleep(1100)
+  open(state).deliver({ key: 'buzz:lag', to: 'b12', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:lag' } }, 'lag-new')
+  write(join(project, 'lag-new.jsonl'), asked('call:lag'), said('Working on it.'))
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'lagging')!, hex, 'call:lag', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Working on it.' }])
+  write(join(project, 'lag-new.jsonl'), said('Done.'), ended)
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Working on it.' }, { line: 'Done.' }, { end: 'done' }])
+  stop()
+})

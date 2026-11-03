@@ -497,10 +497,10 @@ export class Store {
     return (this.db.query('select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n').all(thread, before, after, last) as Stored[]).map(toRow)
   }
 
-  // The session that took the thread's newest message whose meta has this value under key.
-  taker(thread: string, key: string, value: string): string | undefined {
-    const row = this.db.query(`select taken_by from messages where "to" = ? and json_extract(meta, '$.' || ?) = ? and taken_by is not null order by n desc limit 1`).get(thread, key, value) as { taken_by: string } | null
-    return row?.taken_by
+  // The session that took the thread's newest message whose meta has this value under key, and when.
+  taker(thread: string, key: string, value: string): { by: string; at: string } | undefined {
+    const row = this.db.query(`select taken_by, taken_at from messages where "to" = ? and json_extract(meta, '$.' || ?) = ? and taken_by is not null order by n desc limit 1`).get(thread, key, value) as { taken_by: string; taken_at: string } | null
+    return row ? { by: row.taken_by, at: row.taken_at } : undefined
   }
 
   // What a session, or another in its thread, took by a time that no pass has looked over for

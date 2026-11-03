@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, watch } from 'fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
 import { toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
@@ -419,7 +419,6 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
   const agents = new Map<string, (last?: boolean) => void>()
   let session: string | undefined
-  let project = ''
   let stopSession = (_last?: boolean) => {}
   let picked = false
   let failed = false
@@ -428,15 +427,20 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let waiting = false
   const copied = new Set<string>()
 
+  const project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
+  const transcript = (id: string) => join(project, `${id}.jsonl`)
   const store = open(thread.state)
+  const taken = resumed ? store.taker(thread.id, 'voice_task', tag) : undefined
+  const took = taken && ID.test(taken.by) && existsSync(transcript(taken.by)) ? taken : undefined
   const stopState = store.watch(locate)
   locate()
 
   function locate() {
     const current = store.threads({ app: thread.app, open: true }).find(({ thread: id }) => id === thread.id)?.session
-    const took = resumed && session === undefined ? store.taker(thread.id, 'voice_task', tag) : undefined
-    const next = took && ID.test(took) ? took : current
+    const next = session === undefined && took ? took.by : current
     if (ended || !next || next === session || !ID.test(next)) return
+    // hex.db can still name the session before the one that took the message, for a moment.
+    if (took && session === took.by && writtenBefore(transcript(next), took.at)) return
     const fresh = resumed || session !== undefined
     stopSession(true)
     if (ended) return
@@ -446,10 +450,9 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
       return onStep({ end: 'failed' })
     }
     agents.clear()
-    if (session) for (const uuid of uuids(join(project, `${session}.jsonl`))) copied.add(uuid)
+    if (session) for (const uuid of uuids(transcript(session))) copied.add(uuid)
     session = next
-    project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
-    const stop = followTranscript(join(project, `${session}.jsonl`), fresh ? 0 : 'end', take)
+    const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take)
     if (ended) stop()
     else stopSession = stop
     if (!ended && next !== current) locate()
@@ -469,6 +472,7 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     if (back) {
       agents.get(back)?.(true)
       agents.delete(back)
+      if (!agents.size) waiting = false
     }
     if (entry.type === 'assistant') failed = entry.isApiErrorMessage === true
     lines(updates(), onStep)
@@ -494,6 +498,16 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
 
 // Read as bytes and searched a stretch of whole lines at a time: a transcript can outgrow the
 // longest string JavaScript can hold.
+// A second's leeway, as a file's time can trail the clock by a few milliseconds; a session that
+// takes a message starts seconds after the one before it stops.
+function writtenBefore(path: string, at: string) {
+  try {
+    return statSync(path).mtimeMs < Date.parse(at) - 1000
+  } catch {
+    return false
+  }
+}
+
 function uuids(path: string) {
   let data: Buffer
   try {
