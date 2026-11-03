@@ -691,3 +691,14 @@ test('an answer with no buttons is kept for good, other marks and unfinished ans
   const marks = JSON.parse(readFileSync(join(state, 'voice', 'marks.json'), 'utf8'))
   expect([Object.keys(marks.answers), Object.keys(marks.read)]).toEqual([['check:read'], ['t3-done-1']])
 })
+
+test('an old answer whose undo stops partway is kept until it is undone again', async () => {
+  const old = new Date(Date.now() - 20 * 24 * 60 * 60_000).toISOString()
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify({ at: old, why: 'a call ended', read: {}, fixed: [], flagged: [], stuck: [], asks: [{ id: 'check:read', kind: 'look', task: `telegram:${DESK}`, at: old, question: 'Read it', options: [{ label: 'Seen' }] }] }))
+  writeFileSync(join(state, 'voice', 'marks.json'), JSON.stringify({ answers: { 'check:read': { label: 'Seen', at: old, via: 'app', question: 'Read it', told: [`telegram:${DESK}`], refs: [], missed: [] } } }))
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await new Promise(resolve => hub.close(resolve))
+  await expect(questions.undo('check:read', 'app')).rejects.toThrow('undo again to finish')
+  expect(JSON.parse(readFileSync(join(state, 'voice', 'marks.json'), 'utf8')).answers['check:read']).toMatchObject({ undoing: true })
+})
+

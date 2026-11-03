@@ -243,7 +243,7 @@ export class Questions extends Changes {
         }
       }
       if (!failed.length) delete this.marks.answers[id]
-      else (this.marks.answers[id] = taken ?? { label: '', at: now(), via, refs: stuck, told: [] }).undoing = true
+      else Object.assign((this.marks.answers[id] = taken ?? { label: '', at: now(), via, refs: stuck, told: [] }), { undoing: true, at: now() })
       this.saveMarks()
       if (failed.length) throw new Error(`part of it couldn't be taken back; undo again to finish (${failed[0] instanceof Error ? failed[0].message : failed[0]})`)
       if (!did) throw new Error('nothing was left to take back: its copies were answered or closed in their own apps since')
