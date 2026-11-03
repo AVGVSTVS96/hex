@@ -13,7 +13,11 @@ test('meta without a time or a zone it can read passes through as it is', () => 
   expect(local({ ts: '2026-10-20T06:31:05Z' }, 'Bogus/Zone')).toEqual({ ts: '2026-10-20T06:31:05Z' })
 })
 
-const SERVER = { title: 'Telegram', instructions: '', tools: [{ name: 'fetch_messages', description: 'Read.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }] }
+const SERVER = { title: 'Telegram', instructions: '', tools: [
+    { name: 'fetch_messages', description: 'Read.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } },
+    { name: 'react', description: 'React.', inputSchema: { type: 'object' }, annotations: { idempotentHint: true } },
+  ],
+}
 const TOKEN = 'secret'
 type Answer = { result: { content: { text: string }[]; isError?: true } }
 
@@ -65,28 +69,29 @@ test('a call made again after the session gave up on it runs once, and the repea
   expect(ran()).toBe(2)
 })
 
-test('a call the session gave up on before the hub read it counts as missed', async () => {
+test('a call the session gave up on before the hub read it never runs, so its repeat runs once', async () => {
   const { ran, call, answer } = channel()
   const gaveUp = new AbortController()
   gaveUp.abort()
-  const first = call({ text: 'report' }, gaveUp)
-  await answer()
-  await first
+  expect((await call({ text: 'report' }, gaveUp)).result).toEqual({ content: [{ type: 'text', text: "reply didn't run: you stopped waiting before the hub read it" }], isError: true })
   const again = call({ text: 'report' })
-  expect(text(await again)).toStartWith('this same reply call came before')
+  await answer()
+  expect(text(await again)).toBe('sent (id: 5389)')
   expect(ran()).toBe(1)
 })
 
-test('a tool that only reads runs every time', async () => {
+test('a tool that only reads, or whose repeat changes nothing more, runs every time', async () => {
   const { ran, call, answer } = channel()
-  const gaveUp = new AbortController()
-  const first = call({ chat: '1' }, gaveUp, 'fetch_messages')
-  await Bun.sleep(1)
-  gaveUp.abort()
-  const again = call({ chat: '1' }, undefined, 'fetch_messages')
-  await answer()
-  await Promise.all([first, again])
-  expect(ran()).toBe(2)
+  for (const tool of ['fetch_messages', 'react']) {
+    const gaveUp = new AbortController()
+    const first = call({ message_id: '1' }, gaveUp, tool)
+    await Bun.sleep(1)
+    gaveUp.abort()
+    const again = call({ message_id: '1' }, undefined, tool)
+    await answer()
+    await Promise.all([first, again])
+  }
+  expect(ran()).toBe(4)
 })
 
 test("an answer the session missed answers its repeat until the thread's turn ends", async () => {
@@ -97,10 +102,7 @@ test("an answer the session missed answers its repeat until the thread's turn en
   gaveUp.abort()
   await answer()
   await first
-  const missedAgain = new AbortController()
-  const again = call({ text: 'report' }, missedAgain)
-  missedAgain.abort()
-  expect(text(await again)).toStartWith('this same reply call came before')
+  expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
   expect(ran()).toBe(1)
   rested('-100:7')
   const nextTurn = call({ text: 'report' })
@@ -113,19 +115,23 @@ test('a missed answer in a thread whose turns the hub never sees is let go half 
   const time = manual(async () => {})
   try {
     const { ran, call, answer } = channel()
-    const gaveUp = new AbortController()
-    const first = call({ text: 'report' }, gaveUp)
-    await Bun.sleep(1)
-    gaveUp.abort()
-    await answer()
-    await first
+    const miss = async () => {
+      const gaveUp = new AbortController()
+      const first = call({ text: 'report' }, gaveUp)
+      await Bun.sleep(1)
+      gaveUp.abort()
+      await answer()
+      await first
+    }
+    await miss()
     await time.advance(30 * 60_000)
-    expect(text(await call({ text: 'report' }, gaveUp))).toStartWith('this same reply call came before')
-    await time.advance(1)
+    expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
+    await miss()
+    await time.advance(30 * 60_000 + 1)
     const later = call({ text: 'report' })
     await answer()
     expect(text(await later)).toBe('sent (id: 5389)')
-    expect(ran()).toBe(2)
+    expect(ran()).toBe(3)
   } finally {
     time.restore()
   }

@@ -75,6 +75,7 @@ A result too long to speak goes wherever the caller reads, if this session has a
     },
     {
       name: 'answer',
+      annotations: { idempotentHint: true },
       description: "Answer one of the caller's asks with the choice they said aloud: it reaches the thread that asked as their own tap would, and its buttons in Telegram or Discord say it was answered on a call.",
       inputSchema: {
         type: 'object',
@@ -101,6 +102,7 @@ A result too long to speak goes wherever the caller reads, if this session has a
     },
     {
       name: 'title',
+      annotations: { idempotentHint: true },
       description:
         "Name a call in the caller's list of past calls, and once its work has settled, wrap it up: summary is what happened and what you sent where, waiting is what's left for the caller. Each field you pass replaces the call's last one.",
       inputSchema: {
@@ -127,6 +129,7 @@ A result too long to speak goes wherever the caller reads, if this session has a
     },
     {
       name: 'hang_up',
+      annotations: { idempotentHint: true },
       description: 'End the live call once the voice finishes speaking. Say goodbye with say first.',
       inputSchema: { type: 'object', properties: {} },
     },
