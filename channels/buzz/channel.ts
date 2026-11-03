@@ -137,6 +137,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'presence',
+      annotations: { readOnlyHint: true },
       description: 'Whether the user is online, away or offline in Buzz right now.',
       inputSchema: { type: 'object', properties: {} },
     },

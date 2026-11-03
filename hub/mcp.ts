@@ -24,9 +24,12 @@ const NUDGE = 250
 // session gave up on, while it runs or within this long of its start or answer, gets that answer
 // instead of sending, deleting or opening a thread twice. A tool that only reads runs every time.
 const REPEAT = 10 * 60_000
+// The timeout in each channel's .mcp.json: a call that took this long, the session gave up on, even
+// when the hub was too far behind to see it go.
+const GAVE_UP = 300_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-type Run = { answer: Promise<Result>; at: number }
+type Run = { answer: Promise<Result>; at: number; failed?: true }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -59,13 +62,15 @@ export function endpoint(name: string, channel: string, token: string, server: C
     for (const [key, run] of unheard) if (clock.now() - run.at > REPEAT) unheard.delete(key)
     const key = JSON.stringify([thread, tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
     const earlier = unheard.get(key)
+    const began = clock.now()
     const run = earlier ?? start(key, call(thread, tool, args))
-    const missed = () => void unheard.set(key, run)
+    const missed = () => void (run.failed || unheard.set(key, run))
     // The session can give up before the hub reads its call, or while the answer is on its way.
     if (gone.aborted) missed()
     else gone.addEventListener('abort', missed, { once: true })
     return run.answer.then(answer => {
-      if (!gone.aborted && unheard.get(key) === run) unheard.delete(key)
+      if (clock.now() - began >= GAVE_UP) missed()
+      else if (!gone.aborted && unheard.get(key) === run) unheard.delete(key)
       if (!earlier) return answer
       if (answer.isError) return once(thread, tool, args, gone)
       return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
@@ -77,7 +82,9 @@ export function endpoint(name: string, channel: string, token: string, server: C
     const run: Run = { answer, at: clock.now() }
     void answer.then(({ isError }) => {
       run.at = clock.now()
-      if (isError && unheard.get(key) === run) unheard.delete(key)
+      if (!isError) return
+      run.failed = true
+      if (unheard.get(key) === run) unheard.delete(key)
     })
     return run
   }

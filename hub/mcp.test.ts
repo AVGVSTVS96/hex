@@ -151,6 +151,37 @@ test('a repeat that joined a run that then failed tries again itself', async () 
   expect(failing.ran()).toBe(2)
 })
 
+test('a failed run the session missed after its answer is never kept for a repeat', async () => {
+  const failing = channel(true)
+  const late = new AbortController()
+  const first = failing.call({ text: 'report' }, late)
+  await failing.answer()
+  await first
+  late.abort()
+  const gaveUp = new AbortController()
+  gaveUp.abort()
+  const again = failing.call({ text: 'report' }, gaveUp)
+  await failing.answer()
+  expect(text(await again)).toBe('reply failed: Telegram said no')
+  expect(failing.ran()).toBe(2)
+})
+
+test('a call that took as long as the session waits counts as missed, even with no abort seen', async () => {
+  const time = manual(async () => {})
+  try {
+    const { ran, call, answer } = channel()
+    const first = call({ text: 'report' })
+    await Bun.sleep(1)
+    await time.advance(5 * 60_000)
+    await answer()
+    expect(text(await first)).toBe('sent (id: 5389)')
+    expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
+    expect(ran()).toBe(1)
+  } finally {
+    time.restore()
+  }
+})
+
 test('a run that never answers stops holding its repeats ten minutes after it started', async () => {
   const time = manual(async () => {})
   try {
