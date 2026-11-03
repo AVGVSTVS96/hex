@@ -187,12 +187,12 @@ test('hex deliver finds a thread by its name too, keeps one for a closed thread 
   open(dir).keepThreads('t3', { '0f3a9c1e-0000-4000-8000-000000000000': { name: 'Old T3 thread' } })
   open(dir).keepThreads('t3', { '5b0e7d2a-0000-4000-8000-000000000000': { name: 't3: notes' } })
   open(dir).keepThreads('telegram', { '-100:1': { name: 'hex' } })
-  open(dir).keepThreads('telegram', { '-100:4715': { name: 'Selfheal' }, '-100:2': { name: 'hex' } })
+  open(dir).keepThreads('telegram', { '-100:4715': { name: 'Selfheal' }, '-100:2': { name: 'hex' }, selfheal: { name: 'Old notes' } })
   const deliver = async (to: string) => {
     const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'deliver', 'hex', '--to', to, 'hello'], { stderr: 'pipe', env: { ...Bun.env, CLAUDE_CONFIG_DIR: join(dir, 'claude') } })
     return { code: await cli.exited, said: await new Response(cli.stderr).text() }
   }
-  for (const to of ['selfheal', 'HEX', 'T3: notes']) expect(await deliver(to)).toEqual({ code: 0, said: '' })
+  for (const to of ['SelfHeal', 'HEX', 'T3: notes']) expect(await deliver(to)).toEqual({ code: 0, said: '' })
   expect(await deliver('0F3A9C1E-0000-4000-8000-000000000000')).toEqual({ code: 0, said: expect.stringContaining('the thread 0f3a9c1e-0000-4000-8000-000000000000 is closed, so this waits until it opens again') })
   expect(await deliver('Self heal')).toEqual({ code: 1, said: expect.stringContaining('no thread is "Self heal" (hex threads lists them)') })
   expect(await deliver('1d056dde-a8e8-479f-842c-e9d7eb6e6e5d')).toEqual({ code: 1, said: expect.stringContaining('no thread or running session is 1d056dde-a8e8-479f-842c-e9d7eb6e6e5d') })

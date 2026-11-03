@@ -141,13 +141,13 @@ function stray(word: string) {
 function known(named: string) {
   const key = store.key(named)
   const threads = store.threads()
-  const keyed = threads.find(({ thread }) => thread === key) ?? threads.find(({ thread }) => thread === key.toLowerCase())
+  const keyed = threads.find(({ thread }) => thread === key)
   if (keyed) return keyed
   const wanted = named.trim().toLowerCase()
   const all = threads.filter(({ name }) => name.toLowerCase() === wanted)
   const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all
   if (matches.length > 1) throw new Error(`more than one thread is named "${named}": ${matches.map(({ thread }) => thread).join(', ')}`)
-  return matches[0]
+  return matches[0] ?? threads.find(({ thread }) => thread === key.toLowerCase())
 }
 
 function threadOf(named: string) {
