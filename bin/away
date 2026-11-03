@@ -45,6 +45,7 @@ let session: string | undefined
 // Signed in once, so stopping the job needs no new process while systemd stops the unit's; a refused token is renewed.
 let headers: Record<string, string> | undefined
 let refresh = false
+let renewed = false
 function signIn() {
   const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers'), ...(refresh ? ['--refresh'] : [])], { cwd: home })
   if (helper.exitCode !== 0) throw new Error(`couldn't sign in to T3 Code: ${helper.stderr.toString().trim()}`)
@@ -62,7 +63,8 @@ async function call(tool: string, input: Record<string, unknown>): Promise<any> 
   }
   const answer = await post({ id: 1, method: 'tools/call', params: { name: tool, arguments: { environmentId, ...input } } })
   if (answer.status === 401) {
-    ;[headers, refresh] = [undefined, true]
+    if (renewed) throw new Final(`${tool}: T3 Code here refused a new token`)
+    ;[headers, refresh, renewed] = [undefined, true, true]
     throw new Error(`${tool}: T3 Code refused its token`)
   }
   // 404 is an MCP session T3 Code forgot, which a fresh one fixes; any other refusal stays refused.
@@ -75,7 +77,7 @@ async function call(tool: string, input: Record<string, unknown>): Promise<any> 
   if (error) throw new Final(`${tool}: ${error.message}`)
   if (!result) throw new Error(`${tool}: an answer that is not JSON`)
   const text = result.content[0]?.text ?? ''
-  if (result.isError) throw FINAL.includes(parse(text)?.code) ? new Final(`${tool}: ${text}`) : new Error(`${tool}: ${text}`)
+  if (result.isError) throw FINAL.includes(parse(text)?.code) ? new Final(`${tool}: ${text}`) : Object.assign(new Error(`${tool}: ${text}`), { answered: true })
   return result.structuredContent ?? parse(text)
 }
 function parse(text: string): any {
@@ -85,13 +87,17 @@ function parse(text: string): any {
 }
 
 // A job gives up on a machine that doesn't answer its first call for 5 minutes; after that, it waits the machine out.
-async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<T> {
+// A launch the other machine answered with a refusal won't change by asking again; one lost on the way is retried,
+// and the same clientRequestId gets back the thread it may have started.
+async function persist<T>(what: () => Promise<T>, { patience = Infinity, answeredIsFinal = false } = {}): Promise<T> {
   const until = Date.now() + patience
   for (let wait = 5_000; ; wait = Math.min(wait * 2, 120_000)) {
     try {
       return await what()
     } catch (error) {
-      if (error instanceof Final || Date.now() + wait > until) throw error
+      if (stopping && !threadId) process.exit(143)
+      if (error instanceof Final || (answeredIsFinal && (error as { answered?: boolean }).answered)) throw new Final((error as Error).message)
+      if (Date.now() + wait > until) throw error
       console.error(`away: ${(error as Error).message}; trying ${machine} again in ${wait / 1000} s`)
       session = undefined
       await Bun.sleep(wait)
@@ -118,7 +124,15 @@ const configured = (path: string) => {
   } catch {}
 }
 const wanted = model ?? configured(join(home, '.claude/settings.json')) ?? configured(join(homedir(), '.claude/settings.json')) ?? 'opus'
-const offered = await persist(() => call('orchestrator_capabilities', {}), 300_000).catch((error: Error) => {
+// T3 Code here first, so a fault on this machine is named as one, not blamed on the other.
+try {
+  headers = signIn()
+  readFileSync(join(homedir(), '.t3/userdata/server-runtime.json'))
+} catch (error) {
+  console.error(`away: T3 Code on ${hostname()} can't be reached: ${(error as Error).message}`)
+  process.exit(UNREACHABLE)
+}
+const offered = await persist(() => call('orchestrator_capabilities', {}), { patience: 300_000 }).catch((error: Error) => {
   if (error instanceof Final) elsewhere(error.message)
   console.error(`away: ${machine} doesn't answer: ${error.message}`)
   process.exit(UNREACHABLE)
@@ -144,22 +158,27 @@ const launched = await persist(() =>
     modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
     clientRequestId: `hex-job-${name}-${process.env.INVOCATION_ID ?? process.pid}`,
   }),
+  { answeredIsFinal: true },
 ).catch((error: Error) => elsewhere(error.message))
 threadId = launched.threadId as string
 if (stopping) await stop()
 console.log(`${name} runs on ${machine} as T3 Code thread ${launched.link}`)
 
 // Following the run the launch started until it ends. A run blocked on a question or another request still reads as
-// running, so each wait that comes back without an end checks the thread for requests, as `t3 thread --wait` does.
+// running, so each wait that comes back without an end checks the thread for requests.
 const ENDED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back', ...(launched.runId ? [] : ['idle'])]
 async function follow() {
   let ended: { status: string; timedOut: boolean }
   let asking: string | undefined
+  let lastChange: string | undefined = ''
   for (;;) {
     ended = await persist(() => call('t3_thread_wait', { threadId, runId: launched.runId ?? undefined, timeoutMs: 50_000 }))
     if (ENDED.includes(ended.status)) break
+    // A pending request blocks the run once the thread stops changing; an agent that asked in passing keeps working.
     const { thread } = await persist(() => call('t3_thread_read', { threadId, limit: 1, maxCharsPerItem: 1 }))
-    if (thread.pendingRequestCount > 0) {
+    const still = thread.updatedAt === lastChange
+    lastChange = thread.updatedAt
+    if (thread.pendingRequestCount > 0 && still) {
       const { requestIds } = await persist(() => call('t3_pending_request', { action: 'list', threadId }))
       const read = requestIds?.length ? await persist(() => call('t3_pending_request', { action: 'read', threadId, requestId: requestIds[0] })) : undefined
       asking = read ? (read.questions as { question?: string; header?: string }[]).map(({ question, header }) => question ?? header).join(' ') : 'a request only a person can answer in T3 Code'
