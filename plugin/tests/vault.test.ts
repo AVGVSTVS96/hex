@@ -11,7 +11,7 @@ beforeEach(() => {
   mkdirSync(join(home, '.claude'))
   mkdirSync(join(home, 'fake'))
   for (const script of ['vault', 'settings']) copyFileSync(join(import.meta.dir, '../../bin', script), join(home, '.hex/bin', script))
-  writeFileSync(join(home, '.env'), 'TELEGRAM_BOT_TOKEN=bot-secret\nexport TRANSCRIBE_URL=http://transcribe\nENCLAVE_HOME=/vault-home\n')
+  writeFileSync(join(home, '.env'), 'TELEGRAM_BOT_TOKEN=bot-secret\nexport TRANSCRIBE_URL=http://transcribe\nTRANSCRIBE_MODEL=a SPEECH_KEY=speech-secret\nreadonly TELEGRAM_BOT_TOKEN\nENCLAVE_HOME=/vault-home\n')
   writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_NAME: 'herald', HEX_COMPUTER: 'box' } }))
   fake('enclave', '[ "$1" = --version ] && echo 0.2.12 && exit\n[ "$1" = get ] && printf hunter2 && exit\nenv')
   fake('sprite', `cat > ${join(home, 'typed')}`)
@@ -32,12 +32,18 @@ function vault(args: string[], caller: Record<string, string> = {}) {
 }
 
 test('vault run hands the command enclave\'s settings and none of .env, even when its caller has them', () => {
-  const env = vault(['run', 'GitHub', '--', 'env'], { TRANSCRIBE_URL: 'http://transcribe', TELEGRAM_BOT_TOKEN: 'bot-secret', LANG: 'C.UTF-8' })
+  const env = vault(['run', 'GitHub', '--', 'env'], { TRANSCRIBE_URL: 'http://transcribe', TELEGRAM_BOT_TOKEN: 'bot-secret', SPEECH_KEY: 'speech-secret', LANG: 'C.UTF-8' })
   expect(env).toContain('ENCLAVE_FROM=herald\n')
   expect(env).toContain('ENCLAVE_HOME=/vault-home\n')
   expect(env).not.toContain('bot-secret')
+  expect(env).not.toContain('speech-secret')
   expect(env).not.toContain('TRANSCRIBE_URL')
   expect(env).toContain('LANG=C.UTF-8\n')
+})
+
+test('vault run works without a .env', () => {
+  rmSync(join(home, '.env'))
+  expect(vault(['run', 'GitHub', '--', 'env'])).toContain('ENCLAVE_FROM=herald\n')
 })
 
 test('vault fill still finds the computer in the settings', () => {

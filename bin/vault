@@ -42,9 +42,10 @@ fill)
   ;;
 run)
   pick
-  # The command gets what it asked the vault for, and of .env only what enclave reads from it.
-  [ ! -f "$home/.env" ] || unset $(sed -n 's/^[[:space:]]*\(export[[:space:]]\{1,\}\)\{0,1\}\([A-Za-z_][A-Za-z0-9_]*\)=.*/\2/p' "$home/.env" | grep -v '^ENCLAVE_')
-  exec $enclave "$@"
+  # .env is shell, so only sourcing it alone shows every name it sets; ENCLAVE_ ones are enclave's settings.
+  unset=$([ ! -f "$home/.env" ] || env -i /bin/sh -c 'set -a; . "$1"; env' sh "$home/.env" |
+    sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -vx -e 'ENCLAVE_.*' -e PATH -e HOME -e PWD -e OLDPWD -e SHLVL -e _ | sed 's/^/-u /' || :)
+  exec env $unset $enclave "$@"
   ;;
 ask | wait | passkey | list | get | save | rm | import)
   pick
