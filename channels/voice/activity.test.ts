@@ -383,3 +383,24 @@ test("an agent restarted with its session is still out until it's back", () => {
   followThread(findThread(state, 'agent restarted')!, hex, 'call:restarted', true, step => steps.push(step))
   expect(steps).toEqual([{ line: 'Waiting on it.' }, { line: 'It is back.' }, { end: 'done' }])
 })
+
+test('an older session hex.db names is followed again once it takes a message after the task message', async () => {
+  threads('buzz', { b15: { name: 'Back on old', session: 'back-old' } })
+  const sent = (key: string, tag: string, by: string) => open(state).deliver({ key, to: 'b15', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: tag } }, by)
+  sent('buzz:back-before', 'call:before', 'back-old')
+  const then = { timestamp: new Date(Date.now() - 60_000).toISOString() }
+  write(join(project, 'back-old.jsonl'), { ...asked('call:before'), ...then }, { ...said('Earlier.'), ...then }, { ...ended, ...then })
+  await Bun.sleep(5)
+  sent('buzz:back', 'call:back', 'back-cut')
+  write(join(project, 'back-cut.jsonl'), asked('call:back'), said('Starting on it.'))
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'back on old')!, hex, 'call:back', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Starting on it.' }])
+  await Bun.sleep(5)
+  const now = { timestamp: new Date().toISOString() }
+  write(join(project, 'back-old.jsonl'), { ...asked('call:later'), ...now }, { ...said('Back on the old session.'), ...now }, { ...ended, ...now })
+  sent('buzz:back-later', 'call:later', 'back-old')
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Back on the old session.' }, { end: 'done' }])
+  stop()
+})

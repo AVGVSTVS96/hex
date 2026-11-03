@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, statSync, watch } from 'fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
 import { toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
@@ -421,7 +421,10 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let picked = false
   let failed = false
   let ended = false
-  const copied = new Set<string>()
+  // Every entry already read, in this session or one before it, which a copy carries with the same uuid.
+  const seen = new Set<string>()
+  // Where following the first session started, live, past entries take never saw.
+  let before = 0
 
   const project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
   const transcript = (id: string) => join(project, `${id}.jsonl`)
@@ -436,20 +439,24 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const next = session === undefined && took ? took.by : current
     if (ended || !next || next === session || !ID.test(next)) return
     // hex.db can still name the session before the one that took the message, for a moment.
-    if (took && session === took.by && store.tookBefore(next, took.at)) return
+    if (took && session === took.by && (store.lastTaken(next) ?? took.at) < took.at) return
     const fresh = resumed || session !== undefined
     stopSession(true)
     if (ended) return
-    if (session) for (const uuid of uuids(transcript(session))) copied.add(uuid)
+    if (before) for (const uuid of uuids(transcript(session!), before)) seen.add(uuid)
     session = next
-    const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take)
+    before = fresh ? 0 : sizeOf(transcript(session))
+    const stop = followTranscript(transcript(session), before, take)
     if (ended) stop()
     else stopSession = stop
     if (!ended && next !== current) locate()
   }
 
   function take(entry: any, updates: () => Update[]) {
-    if (ended || copied.has(entry.uuid)) return
+    if (ended || seen.has(entry.uuid)) return
+    if (entry.uuid) seen.add(entry.uuid)
+    // A session older than the one that took the message was gone back to: its history is older still.
+    if (took && session !== took.by && entry.timestamp < took.at) return
     if (!picked) {
       const text = channelMessage(entry)
       picked = !!text && text.slice(0, text.indexOf('>') + 1).includes(` voice_task="${tag}"`)
@@ -484,19 +491,24 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
 
 // Read as bytes and searched a stretch of whole lines at a time: a transcript can outgrow the
 // longest string JavaScript can hold.
-function uuids(path: string) {
-  let data: Buffer
+// The uuids in a transcript's first bytes, searched a stretch of whole lines at a time: a
+// transcript can outgrow the longest string JavaScript can hold.
+function uuids(path: string, upTo: number) {
+  const data = Buffer.alloc(upTo)
+  let fd
   try {
-    data = readFileSync(path)
+    fd = openSync(path, 'r')
+    readSync(fd, data, 0, upTo, 0)
   } catch (error: any) {
-    if (error.code !== 'ENOENT') logger.error(`couldn't read ${path}: ${error.message}`)
+    logger.error(`couldn't read ${path}: ${error.message}`)
     return []
+  } finally {
+    if (fd !== undefined) closeSync(fd)
   }
   const found: string[] = []
   for (let start = 0; start < data.length; ) {
-    let end = Math.min(data.length, start + 2 ** 26)
-    const line = end < data.length ? data.lastIndexOf(10, end - 1) : -1
-    if (line >= start) end = line + 1
+    const line = data.indexOf(10, Math.min(data.length, start + 2 ** 26) - 1)
+    const end = line < 0 ? data.length : line + 1
     for (const match of data.toString('utf8', start, end).matchAll(/"uuid":"([^"]+)"/g)) found.push(match[1])
     start = end
   }
@@ -508,7 +520,7 @@ function uuids(path: string) {
 function agentBack(entry: any): string | undefined {
   const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
   if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return
-  const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content)
+  const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content) ?? ''
   return notice.includes('<status>') ? notice.match(/<task-id>([\w-]+)<\/task-id>/)?.[1] : undefined
 }
 
