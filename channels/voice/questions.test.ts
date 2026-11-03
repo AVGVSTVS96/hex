@@ -77,6 +77,12 @@ test('a long first line ends at its last sentence that fits, and the rest opens 
   expect(question.context).toBe('My pick: bring it back, drawn cleanly.\nMore.')
 })
 
+test('a long first line ends at its last question that fits, however short', () => {
+  const question = fromLedger('telegram', asked(1, `Should we ship tonight? ${'The redesign brings a calmer palette and bigger type. '.repeat(3).trim()}`, ['Yes', 'No']))
+  expect(question.question).toBe('Should we ship tonight?')
+  expect(question.context!.startsWith('The redesign')).toBe(true)
+})
+
 test('a long first line with no sentence end is cut at a word, and the rest opens its context', () => {
   const first = `Which way ${'one option costs this and the other takes that away '.repeat(4).trim()}`
   const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
