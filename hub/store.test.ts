@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { basename, join } from 'path'
+import { verdict } from './notes.ts'
 import { open, Store } from './store.ts'
 import { until } from './until.ts'
 
@@ -623,4 +624,18 @@ test('a profile kept in state/profile.md comes into hex.db with its history, in 
 test('a carry that renamed the profile files and then failed to commit carries them from their new names', () => {
   writeFileSync(join(dir, 'profile.md.moved-to-hex.db'), '# Who he is\n- Third\n')
   expect(new Store(dir).profile()).toBe('# Who he is\n- Third')
+})
+
+test("hex message and hex recall give the owner's words as he last edited them", async () => {
+  const store = open(dir)
+  store.keepThreads('telegram', { '-100:7': { name: 'Website' } })
+  store.deliver({ key: 'telegram:-100:52', to: '-100:7', from: 'telegram', author: 'owner', body: 'Tell selfheal, so it can be fixed next run' })
+  store.deliver({ key: 'telegram:-100:52@1', to: '-100:7', from: 'telegram', author: 'owner', body: 'Tell selfheal, so it can be fixed properly at the root next run', meta: { edited: 'true', message_id: '52' } })
+  const run = async (...args: string[]) => {
+    const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, ...args], { stdout: 'pipe' })
+    await cli.exited
+    return (await new Response(cli.stdout).text()).trim()
+  }
+  expect(await run('message', 'telegram:-100:52')).toBe('Tell selfheal, so it can be fixed properly at the root next run')
+  expect(verdict('He wants it "fixed properly at the root" [telegram:-100:52]', store).unquoted).toEqual([])
 })
