@@ -394,8 +394,8 @@ export class Board extends Changes {
     const next = !!last?.until && session?.status === 'busy' && flipped > Date.parse(last.until) && this.untaken(thread).some(row => row.meta?.schedule !== 'heartbeat')
     if (run.length && !next) return Date.parse(run[0]!.began)
     if (!session) return
-    const { began } = open(this.state).turn(session.id)
-    if (session.status === 'busy' && !(began && Date.parse(began) >= flipped) && this.awaited(thread)) return flipped
+    const { began, ended } = open(this.state).turn(session.id)
+    if (session.status === 'busy' && (!began || (!!ended && Date.parse(began) < flipped)) && this.awaited(thread)) return flipped
   }
 
   private untaken(thread: Thread) {

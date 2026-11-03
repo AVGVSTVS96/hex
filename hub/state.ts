@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs'
+import { readdirSync, readFileSync } from 'fs'
 import { connect } from 'net'
 import { join } from 'path'
 import { CLAUDE } from './running.ts'
@@ -59,12 +59,25 @@ function heartbeats(store: ReturnType<typeof open>, session: string) {
   const beats = task ? store.beats(session) : []
   const first = beats.slice(beats.findLastIndex(beat => beat.after) + 1)[0]
   if (!first) return false
-  try {
-    const fan: { id: string; startedAt?: number }[] = JSON.parse(readFileSync(join(CLAUDE, 'jobs', session.slice(0, 8), 'state.json'), 'utf8')).fan ?? []
-    return (fan.find(one => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began)
-  } catch {
-    return false
+  const fan: { id: string; startedAt?: number }[] = job(session)?.fan ?? []
+  return (fan.find(one => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began)
+}
+
+// The session's job record: in the folder named for its id, or one a renewed job kept.
+function job(session: string): { sessionId?: string; fan?: { id: string; startedAt?: number }[] } | undefined {
+  const read = (id: string) => {
+    try {
+      return JSON.parse(readFileSync(join(CLAUDE, 'jobs', id, 'state.json'), 'utf8'))
+    } catch {}
   }
+  const own = read(session.slice(0, 8))
+  if (own?.sessionId === session) return own
+  try {
+    for (const id of readdirSync(join(CLAUDE, 'jobs'))) {
+      const record = read(id)
+      if (record?.sessionId === session) return record
+    }
+  } catch {}
 }
 
 // The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
