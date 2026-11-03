@@ -12,6 +12,7 @@ import { Questions, type Question } from './questions.ts'
 import { relay } from './relay.ts'
 import { Board, opener, type Run } from './board.ts'
 import { begin, title as oneWord, type Held, type VoiceLine } from '../../hub/hub.ts'
+import { cut } from '../../hub/notes.ts'
 import page from './page.html' with { type: 'text' }
 
 const KEY = env.OPENAI_API_KEY
@@ -428,7 +429,7 @@ function runTopic(run: Run): Topic {
 function walkTopic(questions: Question[]): Topic {
   const list = questions.map(
     (question, i) =>
-      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${question.context ? ` (${question.context})` : ''} Options: ${question.options.map(option => `${option.label}${option.pick ? ' (hex’s pick)' : ''}`).join(' / ')}${question.tag ? ` [${question.tag}]` : ''}`,
+      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${question.context ? ` (${cut(question.context.replace(/\s+/g, ' '), 280)})` : ''} Options: ${question.options.map(option => `${option.label}${option.pick ? ' (hex’s pick)' : ''}`).join(' / ')}${question.tag ? ` [${question.tag}]` : ''}`,
   )
   return {
     id: 'asks',

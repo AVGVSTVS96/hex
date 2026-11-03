@@ -65,8 +65,8 @@ test('a question asked with buttons reads as its first line, its context and the
   })
 })
 
-test('a question keeps all of its context, so the app can open the rest', () => {
-  const context = 'Why it matters, what each option costs. '.repeat(20).trim()
+test('a question keeps all of its context, line by line, so the app can open the rest', () => {
+  const context = `- A: ${'what it costs. '.repeat(20).trim()}\n- B: what it takes away.`
   expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
 })
 

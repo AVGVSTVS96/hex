@@ -347,7 +347,7 @@ export function fromLedger(app: string, asked: Asked): Curated {
     const label = value.replace(PICK, '').trim() || value
     return { label, value, ...(label !== value && { pick: true }) }
   })
-  const context = lines.slice(1).join(' ')
+  const context = lines.slice(1).join('\n')
   return {
     id: refId({ app, ...asked }),
     kind: asked.options.length <= 2 ? 'yesno' : 'pick',
