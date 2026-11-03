@@ -492,6 +492,11 @@ export class Store {
     this.write(() => this.db.query(`update messages set ${set} where key in (select value from json_each(?))`).run(JSON.stringify(keys)))
   }
 
+  // Whether the session has taken any message.
+  took(session: string): boolean {
+    return this.db.query('select 1 from messages where taken_by = ? limit 1').get(session) !== null
+  }
+
   // What no session has taken yet, oldest first: every thread's, or one thread's.
   untaken(thread?: string): Row[] {
     const rows =

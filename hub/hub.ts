@@ -956,7 +956,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const run = runOf(thread)
     if (run.renew !== 'underway') run.renew = undefined
     onCall.add(run)
-    if (!run.awaited && current(thread) && run.phase.is === 'live' && run.turn === 'done' && warmFor(thread) === undefined) {
+    const session = current(thread)
+    if (!run.awaited && session && run.phase.is === 'live' && run.turn === 'done' && warmFor(thread) === undefined && !kept(store => store.took(session), true)) {
       run.renew = 'underway'
       void stop(thread).then(() => cycle(thread))
     }

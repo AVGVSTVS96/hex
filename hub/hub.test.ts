@@ -1438,10 +1438,12 @@ test('a call that comes while a renew is on its way takes the new session as it 
   expect(hub.session('voice')).toBe('0a1b2c3d-0000-4000-8000-000000000009')
 })
 
-test('a call keeps the session it finds once that session has taken a message, like the one that placed the call', async () => {
+test('a call keeps the session it finds once that session has taken a message, like the one that placed the call, before its first request is through', async () => {
   start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
-  await session('voice')
-  said(500)
+  const { received } = await session('voice')
+  hub.deliver('voice', 'voice', message)
+  await until(() => received.length)
+  fold(received)
   await hub.keep('voice')
   await time.advance(150)
   expect(calls().some(args => args[0] === 'stop' || args[0] === '--bg')).toBe(false)
