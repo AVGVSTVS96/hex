@@ -14,7 +14,7 @@ Look in the vault first: `.hex/bin/vault list <site>` finds saved logins by name
 - `.hex/bin/vault fill <name> <field>` types a saved value (`totp`: the current code) into the focused field on your computer, without you reading it.
 - `.hex/bin/vault run KEY='<name>/<field>' sh -c '<command using "$KEY">'` runs a command with the secret in its environment, hidden in its output. The single quotes keep your own shell from expanding `$KEY` first.
 - `.hex/bin/vault passkey <name>` lets your computer's browser sign in once with a saved passkey: run it, then click the site's passkey sign-in within 5 minutes.
-- `value=$(<command>) && printf %s "$value" | .hex/bin/vault save <name> <field>` keeps a value you just made, like a new API token, without it passing through your context, and saves it only when the command worked.
+- `value=$(<command>) && printf %s "$value" | .hex/bin/vault save '<name>' <field>` keeps a value you just made, like a new API token, without it passing through your context. It saves when the command exits cleanly, so make a failed request exit with an error (`curl -f`, `jq -e`).
 
 When the vault doesn't have it, ask me: run `.hex/bin/vault ask <name> <field…>` (a `totp` field asks for a 2FA setup key), send me the link it prints, and run `.hex/bin/vault wait <name>` in the background until it says `saved`. What I type goes straight into your vault, not through chat or your context. The link works once, for 24 hours; if the wait stops, run it again and it picks up the same link.
 
@@ -24,7 +24,7 @@ If I paste a secret in chat, tell me it's in this chat's log now and send me a l
 
 Ask which one they use, then:
 
-- **Proton Pass.** Run `pass-cli login` (install it from proton.me/pass/download if it's missing) and send them the link it prints, saying to open it in a browser rather than the Proton app and sign in within 10 minutes. Once `pass-cli info` works, run `.hex/bin/vault import proton`, which copies every vault. Then `pass-cli logout`, so nothing stays signed in as them. Proton keeps everything; running the import again later brings in what changed. An item keeps its name unless it's renamed in Proton, and items saved by link stay as they are.
+- **Proton Pass.** Run `pass-cli login` (install it from proton.me/pass/download if it's missing) and send them the link it prints, saying to open it in a browser rather than the Proton app and sign in within 10 minutes. Once `pass-cli info` works, run `.hex/bin/vault import proton`, which copies every vault. Then `pass-cli logout`, so nothing stays signed in as them. Proton keeps everything; running the import again later brings in what changed. An item keeps its name unless it's renamed in Proton, and what hex saved, as its own item or a field on an imported one, stays.
 - **Anything else.** enclave has no importer for it yet. Ask by link for each login as hex needs it (`.hex/bin/vault ask`), and tell them a bulk import would need one written.
 
 Afterwards, `.hex/bin/vault list` shows what came in. Tell them the counts.
@@ -35,10 +35,10 @@ A saved passkey signs in through enclave's Chrome extension, which sends the sit
 
 The computer's browser reaches the vault over `ssh`, with a key and no password, so set that up from the computer to here first. Then:
 
-1. Here, run `command -v node enclave` for the two paths to sign with (install enclave with `npm install -g enclave-link` if it's missing). A command over ssh gets a short PATH, so it needs both in full.
+1. Here, run `command -v node` and `readlink -f "$(command -v enclave)"` for the two paths to sign with (install enclave with `npm install -g enclave-link` if it's missing). A command over ssh gets a short PATH, so it needs both in full.
 2. Inside the computer, clone enclave and run `extension/install ssh -o BatchMode=yes <user>@<this machine> <node path> <enclave path> sign`, then restart Chrome.
-3. Check it reaches this vault: inside the computer, `ssh -o BatchMode=yes <user>@<this machine> <node path> <enclave path> list | head -3` should print names you know from `.hex/bin/vault list` here.
-4. Sign in once on a site they have a passkey for in the vault, with `.hex/bin/vault passkey <name>`.
+3. Check the installed signer: here, run `.hex/bin/vault passkey <name>` for a site they have a passkey for. Inside the computer, `echo '{"origin":"https://<that site>","challenge":"AA"}' | sh -c "$(jq -r '.command | @sh' ~/.local/share/enclave-extension/host.json)"` should print a signed answer starting with `{"id":`.
+4. Run `.hex/bin/vault passkey <name>` again and sign in on that site once.
 
 ## The key
 
