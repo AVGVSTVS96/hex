@@ -72,6 +72,16 @@ test('vault run stops on a .env that doesn\'t parse', () => {
   expect(out).toBe('')
 })
 
+test('vault run stops on a .env that exits early', () => {
+  appendFileSync(join(home, '.env'), 'exit 0\n')
+  expect(vault(['run', 'GitHub', '--', 'env'])).toEqual({ code: 1, out: '', err: 'export PRINTED=1\nhex couldn\'t read its settings\n' })
+})
+
+test('every vault command stops on settings it can\'t read', () => {
+  writeFileSync(join(home, '.claude/settings.json'), '{')
+  expect(vault(['save', 'GitHub', 'password'])).toMatchObject({ code: 1, out: '' })
+})
+
 test('vault fill still finds the computer in the settings', () => {
   expect(vault(['fill', 'GitHub', 'password'])).toEqual({ code: 0, out: 'typed GitHub\'s password on box\n', err: 'export PRINTED=1\n' })
   expect(readFileSync(join(home, 'typed'), 'utf8')).toBe('hunter2')
