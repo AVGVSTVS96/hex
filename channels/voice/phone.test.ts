@@ -180,3 +180,19 @@ test("a call's words reach the voice session only once the last call's renew is 
   const record = await fetch(`${call.base}/calls/sess_phone`).then(r => r.json())
   expect(record.claude).toBe('brain')
 }, 20_000)
+
+test('the app ends only the call it names: a stale screen closing its old call leaves the live one going', async () => {
+  await using call = await phoneCall()
+  await dialIn(call.base)
+  const id = await live(call.base)
+  const end = (body?: object) => fetch(`${call.base}/session`, { method: 'DELETE', ...(body && { body: JSON.stringify(body) }) })
+
+  expect((await end()).status).toBe(400)
+  expect((await end({ sessionId: 'sess_old' })).status).toBe(204)
+  await Bun.sleep(200)
+  expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe(id)
+
+  const ending = fetch(`${call.base}/calls/${id}?after=0`).then(r => r.json())
+  expect((await end({ sessionId: id })).status).toBe(204)
+  expect(await listen(call.base, id, (await ending).version, call => !!call.ended)).toMatchObject({ end: 'you' })
+}, 20_000)

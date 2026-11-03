@@ -220,20 +220,31 @@ function resume() {
   }
 }
 
+// A resumed thread is read from its start before followThread returns, so its turn can end and the
+// board start following before followThread hands back anything to stop: the task's followers are
+// held from the outset, and one that starts after the task stopped stops at once.
 function watch(call: string, id: string, thread: Thread, resumed: boolean) {
-  follows.set(`${call} ${id}`, followThread(thread, dirname(HEX_STATE), `${call}:${id}`, resumed, step => (step.end ? settle(call, id, thread, step.end) : see(call, id, step))))
+  stop(call, id)
+  const stops: (() => void)[] = []
+  let stopped = false
+  const hold = (off: () => void) => void (stopped ? off() : stops.push(off))
+  follows.set(`${call} ${id}`, () => {
+    stopped = true
+    for (const off of stops.splice(0)) off()
+  })
+  hold(followThread(thread, dirname(HEX_STATE), `${call}:${id}`, resumed, step => (step.end ? settle(call, id, thread, step.end, hold) : see(call, id, step))))
 }
 
 // The turn that took the message in has ended, but the thread's work may not have: the board keeps
 // a thread working while its background agents, workflows or next turns run, so the task follows
 // the board's row until it rests.
-function settle(call: string, id: string, thread: Thread, end: NonNullable<Step['end']>) {
+function settle(call: string, id: string, thread: Thread, end: NonNullable<Step['end']>, hold: (off: () => void) => void) {
   const check = () => {
     const row = board.get(`${thread.app}:${thread.id}`)
     if (row?.state === 'working') see(call, id, { line: newest(row) })
     else see(call, id, { end: row?.state === 'failed' ? 'failed' : end })
   }
-  follows.set(`${call} ${id}`, board.listen(check))
+  hold(board.listen(check))
   check()
 }
 
@@ -271,10 +282,10 @@ async function mark(call: string, task: Task) {
 
 function see(call: string, id: string, { line, end }: Step) {
   if (line && live?.id === call && live.call.see(id, line)) activity.changed()
-  const task = end && current(call, id)
-  if (!task) return
+  if (!end) return
   stop(call, id)
-  mark(call, { ...task, state: end }).catch(error => trace(`couldn't mark ${id} ${end}: ${error.message}`))
+  const task = current(call, id)
+  if (task?.state === 'running') mark(call, { ...task, state: end }).catch(error => trace(`couldn't mark ${id} ${end}: ${error.message}`))
 }
 
 function stop(call: string, id: string) {
@@ -865,6 +876,14 @@ async function interruption(request: Request, id: string) {
   return new Response(null, { status: 204 })
 }
 
+// The app ends the call it started, by its id; one that already ended has nothing left to end.
+async function endSession(request: Request) {
+  const { sessionId } = (await request.json().catch(() => ({}))) as { sessionId?: unknown }
+  if (typeof sessionId !== 'string') return new Response('Name the call to end with sessionId', { status: 400 })
+  if (live?.id === sessionId) live.socket.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-app' }))
+  return new Response(null, { status: 204 })
+}
+
 function same(a: string, b: string) {
   const left = Buffer.from(a)
   const right = Buffer.from(b)
@@ -1034,10 +1053,7 @@ async function listCalls(url: URL) {
 function routes(request: Request) {
   const { pathname } = new URL(request.url)
   if (pathname === '/session' && request.method === 'POST') return start(request)
-  if (pathname === '/session' && request.method === 'DELETE') {
-    live?.socket.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-app' }))
-    return new Response(null, { status: 204 })
-  }
+  if (pathname === '/session' && request.method === 'DELETE') return endSession(request)
   if (pathname === '/calls' && request.method === 'GET') return listCalls(new URL(request.url))
   if (pathname === '/activity' && request.method === 'GET') return showActivity(new URL(request.url))
   if (pathname === '/tasks' || pathname.startsWith('/tasks/')) return runRoutes(request, new URL(request.url))
