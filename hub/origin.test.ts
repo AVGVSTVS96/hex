@@ -89,5 +89,7 @@ test("an edit is named by the message it edits, so the line reads as the owner's
   store.take('telegram:-100:52@1', 's')
   expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).additionalContext).toContain('/bin/hex message telegram:-100:52`')
   store.deliver({ key: 'telegram:-100:52@2', to: '-100:7', from: 'telegram', body: 'Also the signup page, tonight.', author: 'owner', meta: { user: 'bassim', edited: 'true', message_id: '52' } })
-  expect(store.latest('telegram:-100:52')!.body).toBe('Also the signup page, tonight.')
+  const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, 'message', 'telegram:-100:52'], { stdout: 'pipe' })
+  expect(await cli.exited).toBe(0)
+  expect((await new Response(cli.stdout).text()).trim()).toBe('Also the signup page, tonight.')
 })
