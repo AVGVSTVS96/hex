@@ -311,3 +311,53 @@ test('following a message sent before a restart reads its thread from the start,
   await Bun.sleep(200)
   expect(steps).toHaveLength(2)
 })
+
+test('a transcript stopped for the last time reads what it has that the watcher has not brought yet', () => {
+  const path = join(project, 'last.jsonl')
+  write(path, said('Before.'))
+  const seen: string[] = []
+  const stop = followTranscript(path, 0, entry => seen.push(entry.message.content[0].text))
+  write(path, said('Just written.'))
+  stop(true)
+  expect(seen).toEqual(['Before.', 'Just written.'])
+})
+
+const launched = (agentId: string) => ({ type: 'user', message: { role: 'user', content: [] }, toolUseResult: { isAsync: true, agentId } })
+
+test('an agent that comes back while another turn runs, queued as an attachment, is back', () => {
+  threads('buzz', { b7: { name: 'Agent queued', session: 'agent-queued' } })
+  const notice = { type: 'attachment', attachment: { type: 'queued_command', origin: { kind: 'task-notification' }, prompt: '<task-notification>\n<task-id>agentq</task-id>\n<status>completed</status>' } }
+  write(join(project, 'agent-queued.jsonl'), asked('call:queued-agent'), launched('agentq'), ended, said('Another turn.'), notice, said('It is back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'agent queued')!, hex, 'call:queued-agent', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Another turn.' }, { line: 'It is back.' }, { end: 'done' }])
+})
+
+test("an agent still out when its session ended doesn't hold the task open in the next one", () => {
+  threads('buzz', { b8: { name: 'Agent cut', session: 'agent-new' } })
+  open(state).deliver({ key: 'buzz:agent-cut', to: 'b8', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:agent-cut' } }, 'agent-old')
+  const old = [asked('call:agent-cut'), launched('agentx'), said('Started an agent.'), ended].map((entry, n) => ({ ...entry, uuid: `agent-cut-${n}` }))
+  write(join(project, 'agent-old.jsonl'), ...old)
+  write(join(project, 'agent-new.jsonl'), ...old, said('The next turn.'), ended)
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'agent cut')!, hex, 'call:agent-cut', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Started an agent.' }, { line: 'The next turn.' }, { end: 'done' }])
+  stop()
+})
+
+test('a session resumed from an earlier one than the last is followed past what it copied from either', async () => {
+  threads('buzz', { b9: { name: 'Forked', session: 'fork-a' } })
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'forked')!, hex, 'call:fork', false, step => steps.push(step))
+  const a = [said('An earlier turn.'), ended, asked('call:fork'), said('Starting on it.')].map((entry, n) => ({ ...entry, uuid: `fork-a-${n}` }))
+  write(join(project, 'fork-a.jsonl'), ...a)
+  await until(() => steps.length === 1)
+  write(join(project, 'fork-b.jsonl'), { ...said('A fresh session.'), uuid: 'fork-b-0' })
+  threads('buzz', { b9: { name: 'Forked', session: 'fork-b' } })
+  await until(() => steps.length === 2)
+  write(join(project, 'fork-c.jsonl'), ...a, { ...asked('call:fork'), uuid: 'fork-c-0' }, { ...said('Finished it.'), uuid: 'fork-c-1' }, { ...ended, uuid: 'fork-c-2' })
+  threads('buzz', { b9: { name: 'Forked', session: 'fork-c' } })
+  await until(() => steps.length === 4)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'A fresh session.' }, { line: 'Finished it.' }, { end: 'done' }])
+  stop()
+})

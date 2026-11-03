@@ -360,7 +360,9 @@ export function followTranscript(path: string, from: number | 'end', onEntry: (e
     )
   }
 
-  return () => {
+  // last: read what the file has that the watcher hasn't brought yet, first.
+  return (last = false) => {
+    if (last) read()
     closed = true
     watcher.close()
   }
@@ -409,18 +411,20 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 // session takes in the message carrying `tag`, shows each step after that (its background agents'
 // steps too), and ends when a turn ends with none of those agents still out. A new session for the
 // thread (a renewal or a restart) shows up in hex.db and is followed from its start, past the
-// entries it copied when resumed from the last one: a copy keeps their uuids. Following resumes a
+// entries it copied when resumed from an earlier one: a copy keeps their uuids. The last session's
+// background agents end with it: Claude Code tells only the session that started an agent when
+// it's back. Following resumes a
 // message sent earlier from the start of the session that took it, as hex.db has it, then goes on
 // in the thread's session now, if that's another; a session between the two is skipped.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
   const agents = new Map<string, () => void>()
   let session: string | undefined
   let project = ''
-  let stopSession = () => {}
+  let stopSession = (_last?: boolean) => {}
   let picked = false
   let failed = false
   let ended = false
-  let copied = new Set<string>()
+  const copied = new Set<string>()
 
   const store = open(thread.state)
   const stopState = store.watch(locate)
@@ -432,8 +436,11 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const next = took && ID.test(took) ? took : current
     if (ended || !next || next === session || !ID.test(next)) return
     const fresh = resumed || session !== undefined
-    stopSession()
-    copied = session ? uuids(join(project, `${session}.jsonl`)) : new Set()
+    stopSession(true)
+    if (ended) return
+    for (const stop of agents.values()) stop()
+    agents.clear()
+    if (session) for (const uuid of uuids(join(project, `${session}.jsonl`))) copied.add(uuid)
     session = next
     project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
     const stop = followTranscript(join(project, `${session}.jsonl`), fresh ? 0 : 'end', take)
@@ -452,7 +459,7 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const launched = entry.toolUseResult?.isAsync && entry.toolUseResult.agentId
     if (launched && ID.test(launched) && !agents.has(launched))
       agents.set(launched, followTranscript(join(project, session!, 'subagents', `agent-${launched}.jsonl`), 0, (_, updates) => lines(updates(), onStep)))
-    const back = entry.origin?.kind === 'task-notification' && JSON.stringify(entry.message?.content).match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
+    const back = agentBack(entry)
     if (back) {
       agents.get(back)?.()
       agents.delete(back)
@@ -476,16 +483,22 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   return close
 }
 
+// Every entry's uuid in a transcript, found by its key rather than by parsing each line: a
+// transcript can run to a hundred megabytes.
 function uuids(path: string) {
-  const found = new Set<string>()
   try {
-    for (const line of readFileSync(path, 'utf8').split('\n'))
-      try {
-        const uuid = JSON.parse(line).uuid
-        if (uuid) found.add(uuid)
-      } catch {}
-  } catch {}
-  return found
+    return Array.from(readFileSync(path, 'utf8').matchAll(/"uuid":"([^"]+)"/g), match => match[1])
+  } catch {
+    return []
+  }
+}
+
+// The background agent a session was just told is back, as a turn of its own or queued while a
+// turn ran.
+function agentBack(entry: any): string | undefined {
+  const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
+  if ((queued ?? entry).origin?.kind !== 'task-notification') return
+  return JSON.stringify(queued ? queued.prompt : entry.message?.content).match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
 }
 
 // A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its
