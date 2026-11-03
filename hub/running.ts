@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'fs'
+import { closeSync, constants, fstatSync, openSync, readdirSync, readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import type { Store } from './store.ts'
@@ -75,7 +75,7 @@ export function served(env = process.env): string | undefined {
 function launched(flags: unknown): Record<string, string> {
   const at = Array.isArray(flags) ? flags.lastIndexOf('--settings') : -1
   const settings = at >= 0 && typeof flags[at + 1] === 'string' ? (flags[at + 1] as string) : ''
-  const env = (settings.startsWith('{') ? parse(settings) : settings.startsWith('/') && statSync(settings, { throwIfNoEntry: false })?.isFile() ? readJson(settings) : undefined)?.env
+  const env = (settings.startsWith('{') ? parse(settings) : settings.startsWith('/') ? readFile(settings) : undefined)?.env
   return env && typeof env === 'object' ? Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) : {}
 }
 
@@ -130,6 +130,18 @@ function readJson(path: string) {
   try {
     return parse(readFileSync(path, 'utf8'))
   } catch {}
+}
+
+// A JSON file, read only when it's a regular one: opened without blocking, so a pipe can't stall the read.
+function readFile(path: string) {
+  let fd: number | undefined
+  try {
+    fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK)
+    if (fstatSync(fd).isFile()) return parse(readFileSync(fd, 'utf8'))
+  } catch {
+  } finally {
+    if (fd !== undefined) closeSync(fd)
+  }
 }
 
 function parse(text: string) {

@@ -72,6 +72,20 @@ test("a background session works for the thread its job's settings name, before 
   rmSync(join(claude, 'jobs'), { recursive: true })
 })
 
+test("a background session whose settings are a pipe or can't be opened works for no thread, without blocking", () => {
+  Bun.spawnSync(['mkfifo', join(claude, 'settings-pipe')])
+  for (const [id, settings] of [['cccccccc', join(claude, 'settings-pipe')], ['dddddddd', '/proc/1/environ'], ['eeeeeeee', `/${'x'.repeat(5000)}`]]) {
+    mkdirSync(join(claude, 'jobs', id!), { recursive: true })
+    writeFileSync(join(claude, 'jobs', id!, 'state.json'), JSON.stringify({ state: 'working', respawnFlags: ['--settings', settings] }))
+    record(id!, { pid: process.pid, sessionId: `${id}-5`, status: 'busy', kind: 'bg', startedAt: 1 })
+  }
+  const sessions = running(store, claude)
+  expect(['cccccccc-5', 'dddddddd-5', 'eeeeeeee-5'].map(id => sessions.get(id)?.thread)).toEqual([undefined, undefined, undefined])
+  expect(sessions.size).toBe(3)
+  rmSync(join(claude, 'jobs'), { recursive: true })
+  rmSync(join(claude, 'settings-pipe'))
+})
+
 test("a record whose pid now belongs to a process that started at another time isn't running", () => {
   const since = readFileSync(`/proc/${process.pid}/stat`, 'utf8').split(') ')[1].split(' ')[19]
   record('same', { pid: process.pid, sessionId: 'aaaaaaaa-3', status: 'busy', procStart: since })
