@@ -2,7 +2,29 @@
 # hex's vault is enclave (github.com/AVGVSTVS96/enclave). This adds typing on hex's computer.
 set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
-. "$(dirname "$0")/settings"
+unread() { echo "hex couldn't read its settings" >&2; exit 1; }
+# .env is shell code: a line that fails or exits stops vault, and it can't read or print into vault's streams.
+load() { trap unread EXIT; . "$(dirname "$0")/settings" </dev/null >&2; trap - EXIT; [ -z "$settings_unread" ] || unread; }
+if [ "${1:-}" = run ]; then
+  # The command gets its caller's environment and the secrets it asked for: of hex's settings, only enclave's.
+  settings=$(
+    load
+    q="'"
+    for name in HEX_NAME ENCLAVE_HOME ENCLAVE_RELAY; do
+      eval "[ -n \"\${$name+set}\" ]" || continue
+      eval "rest=\$$name"
+      quoted=
+      while [ "${rest#*"$q"}" != "$rest" ]; do
+        quoted="$quoted${rest%%"$q"*}$q\\$q$q"
+        rest=${rest#*"$q"}
+      done
+      printf "export %s='%s'\n" "$name" "$quoted$rest"
+    done
+  )
+  eval "$settings"
+else
+  load
+fi
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
 
 pick() {
