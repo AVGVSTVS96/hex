@@ -196,10 +196,10 @@ async function pass(name: string, about: string, text: string, app?: string, whe
     const opened = await begin(app, oneWord(name), { content: text, author: 'prompt', meta }, { about: `From a call: ${about}`, where })
     thread = { app, id: opened.thread, name, state: HEX_STATE }
   }
-  if (call && id) {
-    await mark(call, { id, state: 'running', text: about, to: thread!.name, agent: `${thread!.app}:${thread!.id}` })
-    watch(call, id, thread!, !!app)
-  }
+  // The record has the task the moment mark is called; telling the voice can fail, as while its
+  // connection comes back, and that mustn't keep the message from going out and being followed.
+  const told = call && id ? mark(call, { id, state: 'running', text: about, to: thread!.name, agent: `${thread!.app}:${thread!.id}` }).then(() => undefined, (error: Error) => error.message) : undefined
+  if (call && id) watch(call, id, thread!, !!app)
   if (!app) {
     try {
       await relay(HEX_STATE, thread!.app, { type: 'inbound', thread: thread!.id, content: text, meta })
@@ -209,7 +209,9 @@ async function pass(name: string, about: string, text: string, app?: string, whe
     }
   }
   const sent = app ? `opened ${name} in ${app}` : `sent to ${thread!.name}`
-  return id ? `${sent}, on the board as ${id}` : sent
+  if (!id) return sent
+  const unheard = await told
+  return unheard ? `${sent}, on the board as ${id}, but telling the voice failed (${unheard}); the work went out, so tell the voice with note when you can rather than sending it again` : `${sent}, on the board as ${id}`
 }
 
 // Work a past call sent out is picked back up when the engine starts, read from the start of its
