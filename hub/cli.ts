@@ -148,6 +148,28 @@ function threadOf(named: string) {
   throw new Error(`no thread named "${named}"`)
 }
 
+// Where a delivery goes: a thread, by its key or id, or the open thread a session holds, by the
+// session's id or the 8 characters of it `hex running` prints. Only a thread's session takes
+// messages, so one to a session no thread holds would never be taken. A thread hex hasn't had yet
+// gets it once it starts.
+function recipient(to: string): string {
+  const threads = store.threads()
+  if (threads.some(({ thread }) => thread === to)) return to
+  if (/^[0-9a-f]{8}(-[0-9a-f-]*)?$/i.test(to)) {
+    const held = new Map(threads.filter(({ open, session }) => open && session).map(({ thread, session }) => [session!, thread]))
+    const live = running(store)
+    const named = (id: string) => (live.get(id)?.name ? `${id} (${live.get(id)!.name})` : id)
+    const matches = [...new Set([...held.keys(), ...live.keys()])].filter(id => id.startsWith(to.toLowerCase())).sort()
+    if (matches.length > 1) throw new Error(`${to} starts more than one session's id: ${matches.map(named).join(', ')}`)
+    const [id] = matches
+    if (!id) throw new Error(`no thread or running session is ${to} (hex threads and hex running list them)`)
+    if (held.has(id)) return held.get(id)!
+    throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
+  }
+  console.error(`hex: no thread ${to} yet, so this waits until one starts (hex threads lists them)`)
+  return to
+}
+
 // Messages as markdown, one heading each, in the owner's time zone, for rg to search. Within room,
 // the newest whole messages that fit, or the newest's heading and the end of its words when none does.
 // A T3 prompt of the owner's shows only what they asked, without T3's context around it.
@@ -220,7 +242,7 @@ try {
       const from = given?.split(':')[0]
       if (!from || !flags.to || !words.length) usage()
       const key = from === given ? `${from}:${crypto.randomUUID()}` : given!
-      store.deliver({ key, to: flags.to, from, author: 'prompt', body: words.join(' '), meta: { user: flags.user ?? from } })
+      store.deliver({ key, to: recipient(flags.to), from, author: 'prompt', body: words.join(' '), meta: { user: flags.user ?? from } })
       break
     }
     case 'task':
