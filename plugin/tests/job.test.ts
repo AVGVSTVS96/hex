@@ -49,13 +49,13 @@ test("a job a hex session starts is its thread's, in that session's own app, and
   expect(run(['round3', 'stray-key', 'claude'], session).args).toContain('HEX_OWNER=t3:stray-key')
 })
 
-test('an agent job runs as a hex session in the folder it was started from', () => {
+test('an agent job goes to a machine with room, from the folder it was started from', () => {
   const priced = run(['deck', 'claude', '-p', 'cost $5 in $HOME'], session).args
   expect(priced.at(-1)).toBe('cost $$5 in $$HOME')
   const project = mkdtempSync(join(home, 'deck-'))
   const away = run(['deck', 'claude', '-p', 'build it', '--model', 'opus'], session, project)
   expect(away.args).toContain('--same-dir')
-  expect(away.args.slice(away.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/session'), '-n', 'hex/deck', '-p', 'build it', '--model', 'opus'])
+  expect(away.args.slice(away.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/place'), 'hex/deck', '-p', 'build it', '--model', 'opus'])
   expect(value(away.args, 'StandardInputData')).toBeUndefined()
   const piped = run(['deck', 'claude', '-p'], session, home, 'Build the Usage tab.\n')
   expect(Buffer.from(value(piped.args, 'StandardInputData')!, 'base64').toString()).toBe('Build the Usage tab.\n')

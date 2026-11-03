@@ -1,0 +1,24 @@
+#!/bin/sh
+# room: prints this machine's readings and exits 0 when it has room for one more agent job: the CPU at most half
+# busy, a fifth of its memory and 25 GB of disk free, and a Mac on power and not slowed by heat. Another machine
+# runs it as `ssh <machine> sh -s < room`. The last line names the machine's hex T3 Code, when it has one.
+set -u
+room=0
+disk=$(df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1048576) }')
+if [ "$(uname)" = Darwin ]; then
+  # Load average counts sleeping simulator threads, so a Mac reads load 800 while half idle; idle time is the signal.
+  busy=$(top -l 2 -n 0 -s 1 | awk '/CPU usage/ { idle = $7 } END { print int(100 - idle) }')
+  free=$(memory_pressure | awk '/free percentage/ { print int($NF) }')
+  power=$(pmset -g batt | grep -q "AC Power" && echo "on power" || echo "on battery")
+  heat=$(pmset -g therm | awk -F'= *' '/CPU_Speed_Limit/ && $2 < 100 { print "slowed by heat" }')
+  echo "cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free, $power${heat:+, $heat}"
+  [ "$power" = "on power" ] && [ -z "$heat" ] || room=1
+else
+  # Pressure counts the time work waited for a CPU, which is what starves the hub; load average also counts sleepers.
+  busy=$(awk '/^some/ { split($3, a, "="); print int(a[2]) }' /proc/pressure/cpu)
+  free=$(awk '/MemTotal/ { t = $2 } /MemAvailable/ { a = $2 } END { print int(100 * a / t) }' /proc/meminfo)
+  echo "cpu ${busy}% waiting, memory ${free}% free, disk ${disk} GB free"
+fi
+[ "$busy" -le 50 ] && [ "$free" -ge 20 ] && [ "$disk" -ge 25 ] || room=1
+[ -s "$HOME/.t3-hex/userdata/environment-id" ] && echo "t3 $(cat "$HOME/.t3-hex/userdata/environment-id")"
+exit $room

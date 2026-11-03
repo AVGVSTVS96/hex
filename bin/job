@@ -3,9 +3,10 @@
 // from the hub, so hex restarts don't stop it, and wake the thread that owns it when it ends. The owner
 // is the hex session that runs it, or <thread>: an open thread's key or <app>:<key> id (hex threads).
 // The job's Claude Code sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them
-// under it, and are named <owner>/<unit> unless they name themselves. A job whose command is claude runs
-// as a hex session in the folder it was started from, through the launcher the hub starts sessions with,
-// so it has hex's rules, memory and hooks.
+// under it, and are named <owner>/<unit> unless they name themselves. A job whose command is claude goes
+// to the first machine with room, or waits for one (bin/place): here it runs as a hex session in the folder
+// it was started from, through the launcher the hub starts sessions with, so it has hex's rules, memory and
+// hooks; on another machine it runs as a T3 Code thread (bin/away).
 import { $ } from "bun"
 import { basename } from "node:path"
 import { served } from "../hub/running.ts"
@@ -29,6 +30,10 @@ if (mode === "--ended") {
   const status = process.env.EXIT_STATUS ?? "?"
   const body = `[job] ${unit} ended: ${result} (exit ${status}). Check its output and report it.`
   store.deliver({ key: `job:${unit}@${process.env.INVOCATION_ID ?? Date.now()}`, to: key, from: "job", author: "prompt", body, meta: { user: "job" } })
+} else if (mode === "--waiting") {
+  const [unit, owner, readings] = rest as [string, string, string]
+  const body = `[job] ${unit} waits for room: no machine has a free slot and room right now. It starts by itself once one does.${readings}`
+  store.deliver({ key: `job:${unit}@${process.env.INVOCATION_ID ?? Date.now()}:waiting`, to: owner.slice(owner.indexOf(":") + 1), from: "job", author: "prompt", body, meta: { user: "job" } })
 } else {
   const given = rest.length > 1 ? named(rest[0]!) : undefined
   const owner = given ?? served()
@@ -45,7 +50,7 @@ if (mode === "--ended") {
   const name = `${store.names()[key] ?? key}/${mode}`
   const agent = basename(command[0]!) === "claude"
   if (!agent && /(^|[\s;&|(/])claude(\s|$)/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it from its folder as: job ${mode} claude -p "<prompt>"`)
-  const run = agent ? [`${import.meta.dir}/session`, "-n", name, ...command.slice(1)] : command
+  const run = agent ? [`${import.meta.dir}/place`, name, ...command.slice(1)] : command
   // Like claude -p, the job reads what comes on stdin after its prompt.
   const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
   const input = piped ? ["-p", `StandardInputData=${Buffer.from(piped).toString("base64")}`] : []

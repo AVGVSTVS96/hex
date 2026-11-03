@@ -1,0 +1,53 @@
+#!/bin/sh
+# place <name> <claude args...>: an agent job's unit runs this. The job takes a slot on the first machine with room,
+# this one first (HEX_SLOTS, 12) and then each of HEX_MACHINES in order ("mac:3" is the machine `ssh mac` reaches,
+# with 3 slots), and runs there: here as a hex session, there as a T3 Code thread (bin/away). With no room anywhere it
+# waits in line, oldest first, and its owner hears so once. A slot is a lock its job holds while it runs, so a job
+# that dies gives its slot back.
+set -u
+hex=$(cd "$(dirname "$0")/.." && pwd)
+home=$(cd "$hex/.." && pwd)
+machines=$(. "$hex/bin/settings"; echo "${HEX_MACHINES:-}")
+slots=$(. "$hex/bin/settings"; echo "${HEX_SLOTS:-12}")
+name=$1
+shift
+here=$(hostname)
+dir=${XDG_STATE_HOME:-$HOME/.local/state}/hex/slots
+mkdir -p "$dir"
+exec 9>"$dir/line"
+flock 9
+told=
+while :; do
+  readings=
+  for machine in "$here:$slots" $machines; do
+    host=${machine%%:*}
+    if [ "$host" = "$here" ]; then
+      reading=$("$hex/bin/room")
+    else
+      # A machine that doesn't answer in 30 s, asleep or too busy to, has no room.
+      reading=$(timeout 30 ssh -o BatchMode=yes "$host" sh -s < "$hex/bin/room")
+    fi
+    fits=$?
+    t3=$(echo "$reading" | sed -n 's/^t3 //p')
+    readings="$readings
+$host: $(echo "${reading:-no answer}" | head -1)"
+    [ "$fits" = 0 ] && { [ "$host" = "$here" ] || [ -n "$t3" ]; } || continue
+    slot=1
+    while [ "$slot" -le "${machine#*:}" ]; do
+      exec 8>"$dir/$host.$slot"
+      if flock -n 8; then
+        exec 9>&-
+        echo "$name runs on $host: $(echo "$reading" | head -1)"
+        [ "$host" = "$here" ] && exec "$hex/bin/session" -n "$name" "$@"
+        exec bun "$hex/bin/away" "$host" "$t3" "$name" "$@"
+      fi
+      slot=$((slot + 1))
+    done
+  done
+  if [ -z "$told" ]; then
+    echo "$name waits for room:$readings"
+    [ -n "${HEX_OWNER:-}" ] && bun "$hex/bin/job" --waiting "$name" "$HEX_OWNER" "$readings"
+    told=1
+  fi
+  sleep 30
+done
