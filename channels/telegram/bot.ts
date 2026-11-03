@@ -650,6 +650,15 @@ async function reopenQuestion(thread: string, message: number, via: string) {
   if (reopened) await draw(thread, message)
 }
 
+// Telegram shows a message read once the bot has it, so one that waits for its thread's session to
+// start says so until a session takes it.
+const ASLEEP: ReactionTypeEmoji = { type: 'emoji', emoji: '😴' }
+
+function acked(): ReactionTypeEmoji[] {
+  const { ackReaction } = loadAccess()
+  return ackReaction ? [{ type: 'emoji', emoji: ackReaction as ReactionTypeEmoji['emoji'] }] : []
+}
+
 // The bot's name once it polls, which a DM's link opens.
 let polling: string | undefined
 
@@ -676,6 +685,9 @@ const hub = startHub({
   failed: (thread, reason) => {
     const { chat_id, extra } = target(thread)
     void bot.api.sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra).catch(() => {})
+  },
+  held: (_, { meta }, waits) => {
+    if (meta.chat_id && meta.message_id) void bot.api.setMessageReaction(meta.chat_id, Number(meta.message_id), waits ? [ASLEEP] : acked()).catch(() => {})
   },
 })
 

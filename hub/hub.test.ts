@@ -22,6 +22,7 @@ let hub: ReturnType<typeof startHub>
 let states: [string, boolean][]
 let failures: [string, string][]
 let prompts: [string, Permission][]
+let holds: [string, string, boolean][]
 let time: ReturnType<typeof manual>
 const sockets: Socket[] = []
 const sleepers: ReturnType<typeof Bun.spawn>[] = []
@@ -76,13 +77,14 @@ function fold(received: { meta: { key: string } }[]) {
 }
 
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
-function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
-  const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = options
+function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; connect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
+  const { idleStop, cacheWarm, compactAbove, reconnect, connect = 0, capacity } = options
   if (options.registry) open(dir).keepThreads('telegram', Object.fromEntries(Object.entries<any>(options.stale ? before(options.registry) : options.registry).map(([thread, { from, ...known }]) => [thread, { ...known, fork: from }])))
   if (options.agents) writeFileSync(join(dir, 'agents'), JSON.stringify(options.agents))
   const seen: [string, boolean][] = (states = [])
   const failedSeen: [string, string][] = (failures = [])
   const asked: [string, Permission][] = (prompts = [])
+  const marked: [string, string, boolean][] = (holds = [])
   hub = startHub({
     stateDir: dir,
     channel: CHANNEL,
@@ -93,9 +95,10 @@ function start(options: { call?: (thread: string, tool: string, args: Record<str
     call: options.call ?? (async (thread, tool) => `${tool} in ${thread}`),
     state: (thread, busy) => void seen.push([thread, busy]),
     failed: (thread, reason) => void failedSeen.push([thread, reason]),
+    held: (thread, { content }, waits) => void marked.push([thread, content, waits]),
     permission: (thread, request) => void asked.push([thread, request]),
     hexDir: join(dir, 'hex'),
-    limits: Object.fromEntries(Object.entries({ idleStop, cacheWarm, compactAbove, reconnect, capacity }).filter(([, value]) => value !== undefined)),
+    limits: Object.fromEntries(Object.entries({ idleStop, cacheWarm, compactAbove, reconnect, connect, capacity }).filter(([, value]) => value !== undefined)),
     launcher: options.launcher,
     fresh: options.fresh,
     hooks: options.hooks,
@@ -403,6 +406,23 @@ test('a session still running once its channel stays gone restarts in place, and
   expect(back.received[0].content).toBe('hi')
   await time.advance(150)
   expect(calls().filter(args => args[0] === 'respawn').length).toBe(1)
+  expect(failures).toEqual([])
+})
+
+test('a starting session gets as long as Claude Code is told to wait for its channel, and its message shows it waits until the session has it', async () => {
+  start({ reconnect: 50, connect: 1000 })
+  hub.deliver('chat:7', 'Desk anchors', message)
+  const args = await launched()
+  expect(settingsOf(args).env.MCP_TIMEOUT).toBe('1000')
+  expect(holds).toEqual([['chat:7', 'hi', true]])
+  await time.advance(1000)
+  expect(calls().filter(args => args[0] === 'respawn')).toEqual([])
+  const line = await session('chat:7')
+  await until(() => line.received.length)
+  expect(holds).toEqual([['chat:7', 'hi', true], ['chat:7', 'hi', false]])
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'and this' })
+  await until(() => line.received.length === 2)
+  expect(holds).toHaveLength(2)
   expect(failures).toEqual([])
 })
 

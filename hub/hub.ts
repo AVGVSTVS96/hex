@@ -19,6 +19,8 @@ export type Call = (thread: string, tool: string, args: Record<string, unknown>)
 // background: the session's turn ended with background agents still working.
 export type State = (thread: string, busy: boolean, background: boolean) => void
 export type Failed = (thread: string, reason: string) => void
+// waits: the message waits for the thread's session to start, or else a session has it now.
+export type Held = (thread: string, message: Message, waits: boolean) => void
 export type Permission = { request_id: string; tool_name: string; description: string; input_preview: string }
 export type Settings = { model?: string; effort?: string }
 
@@ -67,9 +69,11 @@ export type Hub = ReturnType<typeof startHub>
 // thread rests before it compacts, while its cache is still warm. Both sit just inside Claude
 // Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above
 // which a session compacts before it rests. reconnect: how long a running session's channel may be
-// gone before the session restarts to get it back. capacity: how much context a fresh thread's
+// gone before the session restarts to get it back. connect: how long a starting session waits for
+// the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a
+// hub running behind still gets its sessions' channels. capacity: how much context a fresh thread's
 // session holds before a new one takes over; with 0, every message that finds it done goes to a new one.
-export type Limits = { idleStop: number; cacheWarm: number; compactAbove: number; reconnect: number; capacity: number }
+export type Limits = { idleStop: number; cacheWarm: number; compactAbove: number; reconnect: number; connect: number; capacity: number }
 
 // from: the session the thread continues as a fork with its first message, until it has its own.
 type Saved = Settings & { name: string; session?: string; from?: string; cwd?: string; launched?: string }
@@ -223,7 +227,7 @@ const PRESS = 5_000
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and
 // compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1,
 // 3, 7 and 15 seconds, then gives up for good.
-const LIMITS: Limits = { idleStop: 54 * 60_000, cacheWarm: 54 * 60_000, compactAbove: 150_000, reconnect: 20_000, capacity: capacity(process.env.HEX_CHAT_CAPACITY) }
+const LIMITS: Limits = { idleStop: 54 * 60_000, cacheWarm: 54 * 60_000, compactAbove: 150_000, reconnect: 20_000, connect: 300_000, capacity: capacity(process.env.HEX_CHAT_CAPACITY) }
 
 function capacity(tokens?: string) {
   if (!tokens) return 350_000
@@ -265,7 +269,7 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [], link }: {
+export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, held, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [], link }: {
   stateDir: string
   storeDir?: string
   channel: string
@@ -280,6 +284,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   call: Call
   state: State
   failed: Failed
+  held?: Held
   permission?: (thread: string, request: Permission) => void
   questions?: Questions
   args?: (thread: string) => string[]
@@ -295,7 +300,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // Where the app opens a thread, which hex.db keeps with it.
   link?: (thread: string) => string | undefined
 }) {
-  const { idleStop, cacheWarm, compactAbove, reconnect, capacity } = { ...LIMITS, ...limits }
+  const { idleStop, cacheWarm, compactAbove, reconnect, connect, capacity } = { ...LIMITS, ...limits }
   // The thread whose session made the tool call in progress.
   const caller = new AsyncLocalStorage<string>()
   const socketPath = join(stateDir, 'hub.sock')
@@ -619,6 +624,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       HEX_PORT: String(port),
       HEX_TOKEN: token,
       HEX_STORE: storeDir,
+      ...(connect ? { MCP_TIMEOUT: String(connect) } : {}),
       ...(general && thread === main ? { HEX_MAIN: '1' } : {}),
       ...(fresh(thread) ? { HEX_FRESH: '1' } : {}),
     }
@@ -751,13 +757,18 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   function route(thread: string, name: string, message: Message) {
     const run = runOf(thread)
     if (run.ending) {
-      run.queue.push(message)
+      hold(thread, message)
       return void run.ending.then(() => resume(thread, name))
     }
     if (run.phase.is === 'live') return (stale(thread) && !onCall.has(run)) || spent(thread) ? void refresh(thread, message) : run.phase.line.send({ type: 'inbound', ...message })
-    run.queue.push(message)
+    hold(thread, message)
     if (run.phase.is === 'launching') run.phase.again = false
     void launch(thread, name)
+  }
+
+  function hold(thread: string, message: Message) {
+    runOf(thread).queue.push(message)
+    held?.(thread, message, true)
   }
 
   // The key goes first on the channel tag, where the session's hook reads it (state.ts).
@@ -824,7 +835,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (run.phase !== phase || phase.is !== 'live') return route(thread, threads[thread]!.name, message)
     const working = fresh(thread) ? run.turn === 'busy' || (running && running.status !== 'idle') : running?.status === 'busy'
     if (working && !run.queue.length) return phase.line.send({ type: 'inbound', ...message })
-    run.queue.push(message)
+    hold(thread, message)
     void cycle(thread, running)
   }
 
@@ -853,7 +864,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const id = job && claude.record(job).sessionId
     if (id) note(thread, id)
     const given = waiting(thread)
-    for (const message of given) line.send({ type: 'inbound', ...message })
+    for (const message of given) {
+      held?.(thread, message, false)
+      line.send({ type: 'inbound', ...message })
+    }
     run.handed = new Set(given.flatMap(message => message.meta.key ?? []))
     run.queue.length = 0
     run.awaited = run.held.length > 0
@@ -883,7 +897,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     recover(thread)
   }
 
-  // A session without its channel gets Claude Code's reconnect window to come back. After that, one
+  // A session without its channel gets Claude Code's reconnect window to come back, and a starting
+  // one also the time Claude Code waits for the hub to answer its channel. After that, one
   // still running restarts in place (a turn it was on runs again) if it started before the wait
   // did, or else gets another window; a start that ended is reported, a gone main thread starts
   // again, and a thread whose messages waited on a session that has since ended resumes.
@@ -901,7 +916,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       // settings file only for a session the hub started that way.
       if (claude.settingsOf(running)) return respawn(thread, running)
       void cycle(thread, running)
-    }, reconnect)
+    }, phase.is === 'launching' ? connect + reconnect : reconnect)
   }
 
   function gone(thread: string) {

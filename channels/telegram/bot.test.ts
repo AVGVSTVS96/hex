@@ -331,6 +331,16 @@ test('the got-it reaction lands on each message when access.json sets one', asyn
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
 })
 
+test('a message no session has read shows it waits, until a session takes it', async () => {
+  const waiting = message({ text: 'anyone there?', message_thread_id: 6 })
+  await update({ message: waiting })
+  expect(await called('setMessageReaction', p => p.message_id === waiting.message_id)).toMatchObject({ reaction: [{ type: 'emoji', emoji: '😴' }] })
+  const notes = await connectSession({ stateDir: state, path: '/telegram', channel: CHANNEL, thread: `${FORUM}:6` })
+  await until(() => notes.received.find(line => line.meta?.message_id === String(waiting.message_id)))
+  expect(await called('setMessageReaction', p => p.message_id === waiting.message_id && !p.reaction.length)).toBeTruthy()
+  notes.close()
+})
+
 test('a DM is its own thread: it reaches the DM session, not the group, and replies go back to the DM', async () => {
   const dm = await connectSession({ stateDir: state, path: '/telegram', channel: CHANNEL, thread: String(OWNER) })
   const lines = dm.received
