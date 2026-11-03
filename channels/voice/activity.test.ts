@@ -342,18 +342,6 @@ test('an agent back in the older queued form, by command mode, is back', () => {
   expect(steps).toEqual([{ line: 'Another turn.' }, { line: 'It is back.' }, { end: 'done' }])
 })
 
-test("a task only an agent held open fails once the agent's session ends, since the agent ended with it", () => {
-  threads('buzz', { b8: { name: 'Agent cut', session: 'agent-new' } })
-  open(state).deliver({ key: 'buzz:agent-cut', to: 'b8', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:agent-cut' } }, 'agent-old')
-  const old = [asked('call:agent-cut'), launched('agentx'), said('Started an agent.'), ended].map((entry, n) => ({ ...entry, uuid: `agent-cut-${n}` }))
-  write(join(project, 'agent-old.jsonl'), ...old)
-  write(join(project, 'agent-new.jsonl'), ...old, said('The next turn.'), ended)
-  const steps: object[] = []
-  const stop = followThread(findThread(state, 'agent cut')!, hex, 'call:agent-cut', true, step => steps.push(step))
-  expect(steps).toEqual([{ line: 'Started an agent.' }, { end: 'failed' }])
-  stop()
-})
-
 test('a session resumed from an earlier one than the last is followed past what it copied from either', async () => {
   threads('buzz', { b9: { name: 'Forked', session: 'fork-a' } })
   const steps: object[] = []
@@ -371,30 +359,6 @@ test('a session resumed from an earlier one than the last is followed past what 
   stop()
 })
 
-test('an agent back clears the wait on it, so a later turn cut off with another agent out is redone, not failed', () => {
-  threads('buzz', { b11: { name: 'Agent redo', session: 'redo-new' } })
-  open(state).deliver({ key: 'buzz:redo', to: 'b11', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:redo' } }, 'redo-old')
-  const notice = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentr1</task-id>\n<status>completed</status>' } }
-  const old = [asked('call:redo'), launched('agentr1'), ended, notice, launched('agentr2')].map((entry, n) => ({ ...entry, uuid: `redo-${n}` }))
-  write(join(project, 'redo-old.jsonl'), ...old)
-  write(join(project, 'redo-new.jsonl'), ...old, said('Redid it.'), ended)
-  const steps: object[] = []
-  followThread(findThread(state, 'agent redo')!, hex, 'call:redo', true, step => steps.push(step))
-  expect(steps).toEqual([{ line: 'Redid it.' }, { end: 'done' }])
-})
-
-test('a later turn cut off while an earlier agent is still out is redone, not failed', () => {
-  threads('buzz', { b13: { name: 'Two agents', session: 'two-new' } })
-  open(state).deliver({ key: 'buzz:two', to: 'b13', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:two' } }, 'two-old')
-  const notice = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentt1</task-id>\n<status>completed</status>' } }
-  const old = [asked('call:two'), launched('agentt1'), launched('agentt2'), ended, notice, said('Looking at the first.')].map((entry, n) => ({ ...entry, uuid: `two-${n}` }))
-  write(join(project, 'two-old.jsonl'), ...old)
-  write(join(project, 'two-new.jsonl'), ...old, said('Redid it.'), ended)
-  const steps: object[] = []
-  followThread(findThread(state, 'two agents')!, hex, 'call:two', true, step => steps.push(step))
-  expect(steps).toEqual([{ line: 'Looking at the first.' }, { line: 'Redid it.' }, { end: 'done' }])
-})
-
 test('a session hex.db still names that took messages before the task message was taken is not gone back to', async () => {
   threads('buzz', { b12: { name: 'Lagging', session: 'lag-old' } })
   open(state).deliver({ key: 'buzz:lag-other', to: 'b12', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:other' } }, 'lag-old')
@@ -409,4 +373,13 @@ test('a session hex.db still names that took messages before the task message wa
   await until(() => steps.length === 3)
   expect(steps).toEqual([{ line: 'Working on it.' }, { line: 'Done.' }, { end: 'done' }])
   stop()
+})
+
+test("an agent restarted with its session is still out until it's back", () => {
+  threads('buzz', { b14: { name: 'Agent restarted', session: 'agent-restarted' } })
+  const notice = (status: string) => ({ type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: `<task-notification>\n<task-id>agents1</task-id>\n${status}</task-notification>` } })
+  write(join(project, 'agent-restarted.jsonl'), asked('call:restarted'), launched('agents1'), ended, notice('<summary>Background agent was restarted after the previous session ended</summary>'), said('Waiting on it.'), ended, notice('<status>completed</status>'), said('It is back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'agent restarted')!, hex, 'call:restarted', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Waiting on it.' }, { line: 'It is back.' }, { end: 'done' }])
 })

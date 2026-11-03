@@ -411,9 +411,7 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 // session takes in the message carrying `tag`, shows each step after that (its background agents'
 // steps too), and ends when a turn ends with none of those agents still out. A new session for the
 // thread (a renewal or a restart) shows up in hex.db and is followed from its start, past the
-// entries it copied when resumed from an earlier one: a copy keeps their uuids. The last session's
-// background agents end with it: Claude Code tells only the session that started an agent when
-// it's back. Following resumes a message sent earlier from the start of the session that took it,
+// entries it copied when resumed from an earlier one: a copy keeps their uuids. Following resumes a message sent earlier from the start of the session that took it,
 // as hex.db has it, then goes on in the thread's session now, if that's another. A session between
 // the two isn't read, though what the session now copied from it is, as its own.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
@@ -423,8 +421,6 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let picked = false
   let failed = false
   let ended = false
-  // The last turn ended while agents were out, so only they hold the task open.
-  let waiting = false
   const copied = new Set<string>()
 
   const project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
@@ -444,12 +440,6 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const fresh = resumed || session !== undefined
     stopSession(true)
     if (ended) return
-    for (const stop of agents.values()) stop(true)
-    if (waiting && agents.size) {
-      close()
-      return onStep({ end: 'failed' })
-    }
-    agents.clear()
     if (session) for (const uuid of uuids(transcript(session))) copied.add(uuid)
     session = next
     const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take)
@@ -473,15 +463,11 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
       agents.get(back)?.(true)
       agents.delete(back)
     }
-    if (entry.type === 'user' || entry.type === 'assistant') waiting = false
     if (entry.type === 'assistant') failed = entry.isApiErrorMessage === true
     lines(updates(), onStep)
-    if (entry.type === 'system' && entry.subtype === 'turn_duration') {
-      waiting = agents.size > 0
-      if (!waiting) {
-        close()
-        onStep({ end: failed ? 'failed' : 'done' })
-      }
+    if (entry.type === 'system' && entry.subtype === 'turn_duration' && !agents.size) {
+      close()
+      onStep({ end: failed ? 'failed' : 'done' })
     }
   }
 
@@ -518,11 +504,12 @@ function uuids(path: string) {
 }
 
 // The background agent a session was just told is back, as a turn of its own or queued while a
-// turn ran.
+// turn ran. A notice with no status says it was restarted with its session, and is still out.
 function agentBack(entry: any): string | undefined {
   const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
   if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return
-  return JSON.stringify(queued ? queued.prompt : entry.message?.content).match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
+  const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content)
+  return notice.includes('<status>') ? notice.match(/<task-id>([\w-]+)<\/task-id>/)?.[1] : undefined
 }
 
 // A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its
