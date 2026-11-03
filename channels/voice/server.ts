@@ -565,7 +565,7 @@ function reconnect(call: Live, attempt: number) {
   if (live !== call) return
   for (const pending of call.pending.values()) pending.reject(new Error('the connection to the voice dropped and is coming back; try again in a few seconds'))
   call.pending.clear()
-  if (call.speak || attempt >= RETRIES.length) return finish(call, 'connection_lost', call.closing)
+  if (call.speak || attempt >= RETRIES.length) return finish(call, call.closing ? 'close_requested' : 'connection_lost', call.closing)
   trace(`lost the connection to ${call.id}, reattaching (try ${attempt + 1})`)
   setTimeout(() => {
     if (live !== call) return
@@ -619,7 +619,7 @@ function recover() {
 // by: the hang-up that ended it while the engine was attaching back to it.
 function closeOut(record: CallRecord, by?: string) {
   const heard = Math.max(0, ...record.turns.map(turn => turn.at), ...record.tasks.map(task => task.at), ...(record.moments ?? []).map(mark => mark.at))
-  const reason = by ? 'close_requested' : "hex's service restarted and the call was gone"
+  const reason = by === 'close-you-moved' ? 'moved to a new call' : by ? 'close_requested' : "hex's service restarted and the call was gone"
   const end = ending(reason, by)
   calls.save({ ...record, ended: by ? new Date().toISOString() : new Date(Date.parse(record.started) + heard).toISOString(), end, reason })
   trace(`closed out ${record.id}: ${by ? 'hung up while it was picked back up' : 'it never got an end'}`)
