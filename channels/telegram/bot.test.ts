@@ -336,7 +336,8 @@ test('a message no session has read shows it waits, until a session takes it', a
   await update({ message: waiting })
   expect(await called('setMessageReaction', p => p.message_id === waiting.message_id)).toMatchObject({ reaction: [{ type: 'emoji', emoji: '😴' }] })
   const notes = await connectSession({ stateDir: state, path: '/telegram', channel: CHANNEL, thread: `${FORUM}:6` })
-  await until(() => notes.received.find(line => line.meta?.message_id === String(waiting.message_id)))
+  const handed = await until(() => notes.received.find(line => line.meta?.message_id === String(waiting.message_id)))
+  open(state).take(handed.meta.key, 'notes-session')
   expect(await called('setMessageReaction', p => p.message_id === waiting.message_id && !p.reaction.length)).toBeTruthy()
   notes.close()
   const marks = () => calls.filter(c => c.method === 'setMessageReaction' && c.payload.message_id === waiting.message_id).length

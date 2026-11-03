@@ -657,7 +657,7 @@ const ASLEEP: ReactionTypeEmoji = { type: 'emoji', emoji: '😴' }
 
 function waiting(message: Message, still: boolean): void {
   const { chat_id, message_id, edited } = message.meta
-  if (!chat_id || !message_id || edited) return
+  if (!chat_id || !message_id || edited || (!still && !asleep.has(`${chat_id}:${message_id}`))) return
   const ack = acked()
   void react(chat_id, Number(message_id), still ? [ASLEEP] : ack, !still && ack.length ? [] : undefined).catch(() => {})
 }
@@ -670,9 +670,13 @@ function acked(): ReactionTypeEmoji[] {
 // Telegram may apply two reactions sent at once in either order, so each message's go one at a
 // time. otherwise: what to set in the same turn if Telegram refuses reaction, like an ack it won't take.
 const reacting = new Map<string, Promise<unknown>>()
+// The messages whose last reaction from the bot is 😴, so a session's own reaction is never cleared.
+const asleep = new Set<string>()
 
 function react(chat_id: string, message_id: number, reaction: ReactionTypeEmoji[], otherwise?: ReactionTypeEmoji[]): Promise<unknown> {
   const key = `${chat_id}:${message_id}`
+  if (reaction.length === 1 && reaction[0] === ASLEEP) asleep.add(key)
+  else asleep.delete(key)
   const set = (to: ReactionTypeEmoji[]) => paced(() => bot.api.setMessageReaction(chat_id, message_id, to))
   const done = (reacting.get(key) ?? Promise.resolve()).catch(() => {}).then(() => (otherwise ? set(reaction).catch(() => set(otherwise)) : set(reaction)))
   reacting.set(key, done)

@@ -116,8 +116,8 @@ type Run = {
   // session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean }
   opening?: Opening
-  // The kept messages the client was told wait for a session, by key.
-  waiting: Set<string>
+  // The kept messages the client was told wait for a session, by key, until one takes them.
+  waiting: Map<string, Message>
 }
 
 // What a new session starts with: its first prompt, and the session it continues as a fork. quiet:
@@ -352,7 +352,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   function runOf(thread: string): Run {
     let run = runs.get(thread)
-    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], handed: new Set(), turn: 'done', held: [], waiting: new Set() }))
+    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], handed: new Set(), turn: 'done', held: [], waiting: new Map() }))
     return run
   }
 
@@ -567,6 +567,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if ((prompt && !quiet) || run.queue.length) setState(thread, true)
     const phase: Phase = { is: 'launching', again }
     become(run, phase)
+    for (const message of waiting(thread)) mark(thread, message)
     // A fork's first start has no session to find; after a failed one, the session it started may run on.
     if (fork && !run.failing) return start(thread, prompt, fork)
     const running = await sessionOf(thread)
@@ -779,7 +780,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const run = runOf(thread)
     const { key } = message.meta
     if (!key || run.waiting.has(key)) return
-    run.waiting.add(key)
+    run.waiting.set(key, message)
     waits?.(thread, message, true)
   }
 
@@ -796,7 +797,17 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // that no session took before the hub stopped.
   function wake() {
     if (closed) return
-    for (const row of kept(store => store.untaken(Object.keys(threads)), [])) if (threads[row.to]) pass(row.to, threads[row.to]!.name, toMessage(row))
+    const rows = kept<Row[] | undefined>(store => store.untaken(Object.keys(threads)), undefined)
+    if (!rows) return
+    for (const row of rows) if (threads[row.to]) pass(row.to, threads[row.to]!.name, toMessage(row))
+    const untaken = new Set(rows.map(row => row.key))
+    for (const [thread, run] of runs) {
+      for (const [key, message] of run.waiting) {
+        if (untaken.has(key)) continue
+        run.waiting.delete(key)
+        waits?.(thread, message, false)
+      }
+    }
   }
 
   // A thread whose session failed to start keeps its prompt and the messages it was handed waiting,
@@ -876,13 +887,11 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const id = job && claude.record(job).sessionId
     if (id) note(thread, id)
     const given = waiting(thread)
-    // No session has these yet, so none has reacted to them, whichever hub told the client they
-    // wait. One that's still untaken when this line drops or the next start fails waits again.
+    // They wait until the session takes them, though an earlier hub may be the one that said so.
     for (const message of given) {
-      waits?.(thread, message, false)
+      mark(thread, message)
       line.send({ type: 'inbound', ...message })
     }
-    run.waiting.clear()
     run.handed = new Set(given.flatMap(message => message.meta.key ?? []))
     run.queue.length = 0
     run.awaited = run.held.length > 0
@@ -914,7 +923,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
 
   // A session without its channel gets Claude Code's reconnect window to come back, and a starting
-  // one also the time Claude Code waits for the hub to answer its channel. After that, one
+  // one, still running each time the hub looks, also the time Claude Code waits for the hub to
+  // answer its channel. After that, one
   // still running restarts in place (a turn it was on runs again) if it started before the wait
   // did, or else gets another window; a start that ended is reported, a gone main thread starts
   // again, and a thread whose messages waited on a session that has since ended resumes.
@@ -928,11 +938,12 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       if (run.phase !== phase) return
       if (!running) return gone(thread)
       if ((running.startedAt ?? 0) >= since) return recover(thread)
+      if (phase.is === 'launching' && clock.now() - since < connect) return recover(thread, since)
       // A respawn starts from the flags the session started with, which read the thread's current
       // settings file only for a session the hub started that way.
       if (claude.settingsOf(running)) return respawn(thread, running)
       void cycle(thread, running)
-    }, phase.is === 'launching' ? connect + reconnect : reconnect)
+    }, reconnect)
   }
 
   function gone(thread: string) {

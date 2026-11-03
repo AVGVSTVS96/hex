@@ -409,21 +409,32 @@ test('a session still running once its channel stays gone restarts in place, and
   expect(failures).toEqual([])
 })
 
-test('a starting session gets as long as Claude Code is told to wait for its channel, and its message shows it waits until the session has it', async () => {
+test('a starting session gets as long as Claude Code is told to wait for its channel, and its message shows it waits until the session takes it', async () => {
   start({ reconnect: 50, connect: 1000 })
   hub.deliver('chat:7', 'Desk anchors', message)
   const args = await launched()
   expect(settingsOf(args).env.MCP_TIMEOUT).toBe('1000')
   expect(holds).toEqual([['chat:7', 'hi', true]])
-  await time.advance(1000)
+  bound('chat:7', SESSION, 'job12345')
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ id: 'job12345', sessionId: SESSION, pid: 42, startedAt: 1 }]))
+  await time.advance(900)
   expect(calls().filter(args => args[0] === 'respawn')).toEqual([])
   const line = await session('chat:7')
   await until(() => line.received.length)
-  expect(holds).toEqual([['chat:7', 'hi', true], ['chat:7', 'hi', false]])
-  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'and this' })
-  await until(() => line.received.length === 2)
-  expect(holds).toHaveLength(2)
+  expect(holds).toEqual([['chat:7', 'hi', true]])
+  fold(line.received)
+  await until(() => holds.length === 2)
+  expect(holds[1]).toEqual(['chat:7', 'hi', false])
   expect(failures).toEqual([])
+})
+
+test('a starting session that has ended is reported the next time the hub looks, not after the wait for a slow hub', async () => {
+  start({ reconnect: 50, connect: 60_000, agents: [] })
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await launched()
+  await time.lapse(50)
+  await until(() => failures.length)
+  expect(failures).toEqual([['chat:7', 'its session ended before its channel connected']])
 })
 
 test('a session that restarts in place keeps what its launcher added to its settings, and gets the hub\'s current token', async () => {
@@ -753,16 +764,18 @@ test('a local inbound request for a thread this hub doesn\'t have opens nothing'
   expect(Object.keys(registry())).toEqual(['chat:5'])
 })
 
-test('a message a session was handed but never took shows it waits again once that session is gone', async () => {
-  start({ reconnect: 50 })
-  hub.deliver('chat:7', 'Desk anchors', message)
-  await launched()
+test('a message a live session was handed shows it waits once its line drops, until the session takes it', async () => {
+  bound('chat:7')
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, startedAt: 1 }], reconnect: 50 })
   const line = await session('chat:7')
+  hub.deliver('chat:7', 'Desk anchors', message)
   await until(() => line.received.length)
-  expect(holds).toEqual([['chat:7', 'hi', true], ['chat:7', 'hi', false]])
+  expect(holds).toEqual([])
   line.close()
-  await until(() => holds.length === 3)
-  expect(holds[2]).toEqual(['chat:7', 'hi', true])
+  await until(() => holds.length)
+  fold(line.received)
+  await until(() => holds.length === 2)
+  expect(holds).toEqual([['chat:7', 'hi', true], ['chat:7', 'hi', false]])
 })
 
 test('a message that waited from before this hub started stops showing it waits once a session has it', async () => {
@@ -770,6 +783,8 @@ test('a message that waited from before this hub started stops showing it waits 
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, startedAt: 1 }], reconnect: 50 })
   const line = await session('chat:7')
   await until(() => line.received.length)
+  fold(line.received)
+  await until(() => holds.at(-1)?.[2] === false)
   expect(holds.at(-1)).toEqual(['chat:7', 'still there?', false])
 })
 
