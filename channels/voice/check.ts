@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSy
 import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
 import type { Question as Asked } from '../../hub/ledger.ts'
-import { open as store, type Store } from '../../hub/store.ts'
+import { open as store, shown, type Row, type Store } from '../../hub/store.ts'
 import type { CheckResult, Curated, Ref, Source } from './questions.ts'
 import { relay } from './relay.ts'
 import { T3, type Stuck } from './t3.ts'
@@ -132,14 +132,26 @@ function gather(state: string) {
   return { now: new Date(now).toISOString(), threads: names, open, closed, pins, calls, t3: t3Now, previous: json(join(state, 'voice', 'check.json')), ledgers }
 }
 
-// What hex said in a thread just before it asked a question there, where its explanation usually
-// is: the last two messages its app showed there, oldest first, other than the question's own parts.
+// What hex said in a thread in the hour before it asked a question there, where its explanation
+// usually is: its last two messages there as they read now, oldest first. Left out are the rows the
+// owner never read as hex's words there (failed sends, edits, permission prompts, files, forwards,
+// the pinned post) and the question's own earlier parts, sent with it a moment before.
 export function before(store: Store, app: string, question: Asked, max = 700) {
+  const asked = Date.parse(question.at)
+  const since = new Date(asked - 60 * 60_000).toISOString()
+  const own = [question.message, store.pin(app, question.thread)?.message].map(String)
+  const part = (row: Row) => Date.parse(row.at) > asked - 60_000 && bare(question.text).includes(bare(row.body))
   return store
-    .said(question.thread, 12, question.at)
-    .filter(row => row.from === app && row.author === 'hex' && !row.meta?.edited && !row.meta?.file && !question.text.includes(row.body.trim()))
+    .said(question.thread, 40, question.at)
+    .filter(row => row.at > since && row.from === app && row.author === 'hex' && shown(row) && !row.meta?.file && !row.meta?.forwarded)
+    .filter(row => !own.includes(row.key.slice(row.key.lastIndexOf(':') + 1)) && !part(row))
     .slice(-2)
-    .map(row => clip(row.body, max))
+    .map(row => clip(store.latest(row.key)?.body ?? row.body, max))
+}
+
+// A message's words without the code fences a long message gains where it's cut into parts.
+function bare(text: string) {
+  return text.replace(/^```.*$/gm, '').trim()
 }
 
 // What a pass reads, as one fingerprint: the same records give the same verdict.
@@ -305,7 +317,7 @@ function list(dir: string) {
 }
 
 function clip(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+  return text.length > max ? `${text.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, '').trimEnd()}…` : text
 }
 
 function alive(pid: number) {
