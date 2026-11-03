@@ -509,6 +509,30 @@ test("the hourly heartbeat is no turn of work: from the moment its session is bu
   job(session, { state: 'done', detail: 'page built', updatedAt: ago(0) }, timeline)
 })
 
+test("a heartbeat after a turn that ended handing work off shows that turn's end, not the task before it", async () => {
+  threads('telegram', { ...telegram, '-1001234567890:4300': { name: 'handoff', session: '43004300-handoff' } })
+  const session = '43004300-handoff'
+  const thread = '-1001234567890:4300'
+  const off = () => board.get(`telegram:${thread}`)!
+  const older = { at: ago(30), state: 'done', detail: 'shipped the old fix', text: 'Shipped.' }
+  const handed = { at: ago(5), state: 'working', detail: 'page job started; it runs on', text: 'The page job is running.' }
+  prompted(session, thread, 'Build the page')()
+  job(session, { state: 'working', detail: handed.detail, updatedAt: handed.at }, [older, handed])
+  stopped(session)
+  await until(() => board.get(`telegram:${thread}`)?.line === 'page job started; it runs on')
+  await Bun.sleep(5)
+  const take = prompted(session, thread, '[heartbeat] Hourly check', true)
+  const flipped = Date.now()
+  running(session, 'busy', process.pid, { statusUpdatedAt: flipped })
+  await Bun.sleep(5)
+  take()
+  job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0) }, [older, handed, { at: ago(0), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' }])
+  stopped(session)
+  await settle()
+  expect(off()).toMatchObject({ line: 'page job started; it runs on', at: handed.at })
+  job(session, { state: 'done', detail: 'page built', updatedAt: ago(0) })
+})
+
 test("a heartbeat while agents or shells from before it run leaves the thread working on its own words, and a shell of its own is no work", async () => {
   threads('telegram', { ...telegram, '-1001234567890:4200': { name: 'beatwork', session: '42004200-beatwork' } })
   const session = '42004200-beatwork'
