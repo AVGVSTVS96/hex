@@ -70,11 +70,19 @@ test('a question keeps all of its context, line by line, so the app can open the
   expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
 })
 
-test('what a long first line loses to its cut opens its context', () => {
-  const first = `Which way? ${'One option costs this and the other takes that away. '.repeat(4).trim()}`
+test('a long first line ends at its last sentence that fits, and the rest opens its context whole', () => {
+  const first = 'The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean? My pick: bring it back, drawn cleanly.'
+  const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
+  expect(question.question).toBe('The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean?')
+  expect(question.context).toBe('My pick: bring it back, drawn cleanly.\nMore.')
+})
+
+test('a long first line with no sentence end is cut at a word, and the rest opens its context', () => {
+  const first = `Which way ${'one option costs this and the other takes that away '.repeat(4).trim()}`
   const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
   const [shown, rest] = [question.question.slice(0, -1), question.context!.split('\n')[0]!.slice(1)]
-  expect(`${shown} ${rest}`.replace(/\s+/g, ' ')).toBe(first)
+  expect(question.question.length).toBeLessThanOrEqual(160)
+  expect(`${shown} ${rest}`).toBe(first)
   expect(question.context!.endsWith('\nMore.')).toBe(true)
 })
 

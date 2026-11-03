@@ -347,9 +347,8 @@ export function fromLedger(app: string, asked: Asked): Curated {
     const label = value.replace(PICK, '').trim() || value
     return { label, value, ...(label !== value && { pick: true }) }
   })
-  const question = clip(lines[0] ?? '', 160)
-  const rest = question === lines[0] ? '' : (lines[0] ?? '').slice(question.length - 1).trim()
-  const context = [...(rest ? [`…${rest}`] : []), ...lines.slice(1)].join('\n')
+  const [question, rest] = cut(lines[0] ?? '', 160)
+  const context = [...(rest ? [rest] : []), ...lines.slice(1)].join('\n')
   return {
     id: refId({ app, ...asked }),
     kind: asked.options.length <= 2 ? 'yesno' : 'pick',
@@ -372,6 +371,15 @@ function plain(text: string) {
     .replace(/```[\s\S]*?(```|$)/g, '')
     .replace(/\*\*|__|`/g, '')
     .replace(/^#+\s+/gm, '')
+}
+
+function cut(line: string, max: number): [string, string] {
+  if (line.length <= max) return [line, '']
+  const end = [...line.matchAll(/[.?!](?=\s)/g)].filter(found => found.index < max).at(-1)?.index
+  if (end) return [line.slice(0, end + 1), line.slice(end + 1).trim()]
+  const space = line.slice(0, max).lastIndexOf(' ')
+  const at = space > 0 ? space : max - 1
+  return [`${line.slice(0, at).trimEnd()}…`, `…${line.slice(at).trim()}`]
 }
 
 export function clip(text: string, max: number) {
