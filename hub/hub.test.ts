@@ -1950,6 +1950,19 @@ test("a session's stop hook reports whether background agents are still working,
   expect(received).toEqual([{ type: 'state', thread: 't1', busy: false, background: true }, { type: 'state', thread: 't1', busy: false }])
 })
 
+test("a turn's hook tells the hub and goes, without waiting for a stalled hub to hang up", async () => {
+  const socket = join(dir, 'state.sock')
+  const received: object[] = []
+  const server = createServer({ allowHalfOpen: true }, client => client.on('data', chunk => received.push(JSON.parse(String(chunk))))).listen(socket)
+  const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'idle'], { env: { ...process.env, HEX_HUB: socket, HEX_THREAD: 't1' }, stdin: new Blob([JSON.stringify({ hook_event_name: 'Stop' })]) })
+  const ended = await Promise.race([hook.exited.then(() => true), Bun.sleep(3000).then(() => false)])
+  hook.kill()
+  await until(() => received.length || undefined)
+  server.close()
+  expect(ended).toBe(true)
+  expect(received).toEqual([{ type: 'state', thread: 't1', busy: false }])
+})
+
 test('a main thread whose new session ends before its channel connects is reported and started again', async () => {
   start({ main: 'chat', agents: [], reconnect: 50 })
   expect(settingsOf(await launched()).env.HEX_MAIN).toBeUndefined()
