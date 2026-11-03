@@ -658,7 +658,8 @@ const ASLEEP: ReactionTypeEmoji = { type: 'emoji', emoji: '😴' }
 function waiting(message: Message, still: boolean): void {
   const { chat_id, message_id, edited } = message.meta
   if (!chat_id || !message_id || edited) return
-  void react(chat_id, Number(message_id), still ? [ASLEEP] : acked()).catch(() => react(chat_id, Number(message_id), [])).catch(() => {})
+  const ack = acked()
+  void react(chat_id, Number(message_id), still ? [ASLEEP] : ack, !still && ack.length ? [] : undefined).catch(() => {})
 }
 
 function acked(): ReactionTypeEmoji[] {
@@ -666,12 +667,14 @@ function acked(): ReactionTypeEmoji[] {
   return ackReaction ? [{ type: 'emoji', emoji: ackReaction as ReactionTypeEmoji['emoji'] }] : []
 }
 
-// Telegram may apply two reactions sent at once in either order, so each message's go one at a time.
+// Telegram may apply two reactions sent at once in either order, so each message's go one at a
+// time. otherwise: what to set in the same turn if Telegram refuses reaction, like an ack it won't take.
 const reacting = new Map<string, Promise<unknown>>()
 
-function react(chat_id: string, message_id: number, reaction: ReactionTypeEmoji[]): Promise<unknown> {
+function react(chat_id: string, message_id: number, reaction: ReactionTypeEmoji[], otherwise?: ReactionTypeEmoji[]): Promise<unknown> {
   const key = `${chat_id}:${message_id}`
-  const done = (reacting.get(key) ?? Promise.resolve()).catch(() => {}).then(() => bot.api.setMessageReaction(chat_id, message_id, reaction))
+  const set = (to: ReactionTypeEmoji[]) => bot.api.setMessageReaction(chat_id, message_id, to)
+  const done = (reacting.get(key) ?? Promise.resolve()).catch(() => {}).then(() => (otherwise ? set(reaction).catch(() => set(otherwise)) : set(reaction)))
   reacting.set(key, done)
   const settled = () => void (reacting.get(key) === done && reacting.delete(key))
   done.then(settled, settled)
@@ -1079,7 +1082,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   // Telegram only accepts a fixed emoji whitelist — if the user configures
   // something outside that set the API rejects it and we swallow.
-  if (access.ackReaction && msgId != null) void react(chat_id, msgId, acked()).catch(() => {})
+  if (access.ackReaction && msgId != null && !ctx.editedMessage) void react(chat_id, msgId, acked()).catch(() => {})
 
   const imagePaths = (await Promise.all(parts.map(part => part.downloadImage?.()))).filter(Boolean) as string[]
   const attachments = parts.flatMap(part => part.attachment ?? [])

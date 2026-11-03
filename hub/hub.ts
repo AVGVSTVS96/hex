@@ -117,7 +117,7 @@ type Run = {
   failing?: { count: number; retried?: boolean; told?: boolean }
   opening?: Opening
   // The kept messages the client was told wait for a session, by key.
-  waiting: Map<string, Message>
+  waiting: Set<string>
 }
 
 // What a new session starts with: its first prompt, and the session it continues as a fork. quiet:
@@ -352,7 +352,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   function runOf(thread: string): Run {
     let run = runs.get(thread)
-    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], handed: new Set(), turn: 'done', held: [], waiting: new Map() }))
+    if (!run) runs.set(thread, (run = { phase: { is: 'stopped' }, queue: [], handed: new Set(), turn: 'done', held: [], waiting: new Set() }))
     return run
   }
 
@@ -519,7 +519,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     save()
     become(run, { is: 'stopped' })
     clock.clearTimeout(run.rest)
-    unhold(thread, run)
     runs.delete(thread)
     rmSync(settingsOf(thread), { force: true })
     run.leaving!(session)
@@ -628,7 +627,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       HEX_PORT: String(port),
       HEX_TOKEN: token,
       HEX_STORE: storeDir,
-      ...(connect ? { MCP_TIMEOUT: String(Math.max(connect, Number(launched?.env?.MCP_TIMEOUT) || 0)) } : {}),
+      ...(connect ? { MCP_TIMEOUT: String(connect) } : {}),
       ...(general && thread === main ? { HEX_MAIN: '1' } : {}),
       ...(fresh(thread) ? { HEX_FRESH: '1' } : {}),
     }
@@ -663,6 +662,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const check = () => {
       const { state: status, detail } = claude.record(job)
       if (status === 'failed') fail(thread, detail || 'the session failed to start')
+      else if (status === 'stopped') gone(thread)
     }
     try {
       phase.watch = claude.watchJob(job, check)
@@ -775,13 +775,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     run.queue.push(message)
     const { key } = message.meta
     if (!key || run.waiting.has(key)) return
-    run.waiting.set(key, message)
+    run.waiting.add(key)
     waits?.(thread, message, true)
-  }
-
-  function unhold(thread: string, run: Run) {
-    for (const message of run.waiting.values()) waits?.(thread, message, false)
-    run.waiting.clear()
   }
 
   // The key goes first on the channel tag, where the session's hook reads it (state.ts).
@@ -877,8 +872,12 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const id = job && claude.record(job).sessionId
     if (id) note(thread, id)
     const given = waiting(thread)
-    unhold(thread, run)
-    for (const message of given) line.send({ type: 'inbound', ...message })
+    // No session has these yet, so none has reacted to them, whichever hub told the client they wait.
+    for (const message of given) {
+      waits?.(thread, message, false)
+      line.send({ type: 'inbound', ...message })
+    }
+    run.waiting.clear()
     run.handed = new Set(given.flatMap(message => message.meta.key ?? []))
     run.queue.length = 0
     run.awaited = run.held.length > 0
