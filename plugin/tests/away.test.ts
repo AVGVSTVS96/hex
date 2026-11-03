@@ -46,11 +46,9 @@ const script = (path: string, body: string) => {
 
 beforeAll(() => {
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
-  mkdirSync(join(home, '.t3/userdata'), { recursive: true })
   cpSync(join(HEX, 'bin/away'), join(home, '.hex/bin/away'))
   script(join(home, '.hex/bin/identity'), 'echo "You are hex."')
-  script(join(home, '.hex/bin/t3-mcp-headers'), `echo "sign-in $*" >> "${home}/signed"; echo {}`)
-  writeFileSync(join(home, '.t3/userdata/server-runtime.json'), JSON.stringify({ port: server.port }))
+  writeFileSync(join(home, '.mcp.json'), JSON.stringify({ mcpServers: { 't3-code': { url: `${server.url.href}mcp`, headersHelper: `echo sign-in >> '${home}/signed'; echo {}` } } }))
 })
 afterAll(() => {
   server.stop()
@@ -73,9 +71,9 @@ const reset = () => {
   rmSync(join(home, 'signed'), { force: true })
 }
 
-test("a job runs as a T3 Code thread on that machine, follows its run through early and dropped waits, and prints the thread's last answer", async () => {
+test("a job runs as a T3 Code thread on that machine, follows its run through timed-out and dropped waits, and prints the thread's last answer", async () => {
   reset()
-  waits = [{ status: 'preparing', timedOut: false }, { status: 'running', timedOut: true }]
+  waits = [{ status: 'running', timedOut: true }]
   drop = 1
   const { run, out } = away(['-p', 'Build the Usage tab.', '--model', 'opus', '--effort', 'high'], 'the log')
   expect(await run.exited).toBe(0)
@@ -86,17 +84,17 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
   expect(launch.message).toStartWith('You are hex.')
   expect(launch.message).toEndWith('Build the Usage tab.\n\nthe log')
   const waited = calls.filter(({ name }) => name === 't3_thread_wait')
-  expect(waited).toHaveLength(4)
+  expect(waited).toHaveLength(3)
   expect(waited.every(({ arguments: input }) => input.runId === 'r1')).toBe(true)
 }, 20_000)
 
-test('a refused token is renewed and a tool error without a final code is retried', async () => {
+test('a refused sign-in is signed in again, and a tool error without a final code is retried', async () => {
   reset()
   refused = 1
   flaky = 1
   const { run } = away(['-p', 'Build it.'])
   expect(await run.exited).toBe(0)
-  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in \nsign-in --refresh\n')
+  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in\nsign-in\nsign-in\n')
 }, 30_000)
 
 test('a job whose thread stops at a question ends there, with the question as its answer', async () => {
