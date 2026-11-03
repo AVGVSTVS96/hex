@@ -437,10 +437,16 @@ function runTopic(run: Run): Topic {
 }
 
 // Go through them with hex: Claude walks the caller's questions in the app's order, one card at a time.
+// What the voice should know about an ask left half done: only one choice, or an undo in the app, finishes it.
+function half({ partly, undoing }: Question) {
+  if (undoing) return ' [taking back its answer stopped partway: only Undo in the app finishes it]'
+  return partly ? ` ["${partly}" already went out to part of it: only "${partly}" finishes it, or Undo in the app]` : ''
+}
+
 function walkTopic(questions: Question[]): Topic {
   const list = questions.map(
     (question, i) =>
-      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${question.context ? ` (${clip(question.context.replace(/\s+/g, ' ').trim(), 280)})` : ''} Options: ${question.options.map(option => `${option.label}${option.pick ? ' (hex’s pick)' : ''}`).join(' / ')}${question.tag ? ` [${question.tag}]` : ''}`,
+      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${question.context ? ` (${clip(question.context.replace(/\s+/g, ' ').trim(), 280)})` : ''} Options: ${question.options.map(option => `${option.label}${option.pick ? ' (hex’s pick)' : ''}`).join(' / ')}${question.tag ? ` [${question.tag}]` : ''}${half(question)}`,
   )
   return {
     id: 'asks',
