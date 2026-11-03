@@ -166,6 +166,7 @@ test("General goes by General, found by that name too, and a second Telegram gro
   expect(findThread(state, 'Family')).toMatchObject({ id: '-200', name: 'Family' })
   const rows = [{ app: 'telegram', thread: '-100', name: 'old', open: false }, { app: 'telegram', thread: '-200', name: 'main' }, { app: 'telegram', thread: '-300', name: 'Family' }]
   expect(rows.map(row => nameOf(row, generalOf(rows)))).toEqual(['old', 'General', 'Family'])
+  expect(generalOf([rows[0]!])).toBeUndefined()
   expect(rows.map(row => nameOf(row, generalOf(rows, '-300')))).toEqual(['old', 'main', 'General'])
   threads('discord', { 'discord-general': { name: 'general', session: 's9' } })
   expect(() => findThread(state, 'General')).toThrow('more than one hex thread goes by General, in discord and telegram')

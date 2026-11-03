@@ -236,7 +236,8 @@ export class Board extends Changes {
 
   // What a thread's app calls it: General or the DM, T3 Code's own title, else its name.
   private place(thread: Thread) {
-    return thread.app === 'telegram' && !thread.id.includes(':') ? where(thread) : (this.links.title(thread.app, thread.id) ?? thread.name)
+    const app = where(thread)
+    return app === 'General' || app === 'DM' ? app : (this.links.title(thread.app, thread.id) ?? thread.name)
   }
 
   // Each thread's session, as the <app>:<key> of the thread it serves.
@@ -344,7 +345,7 @@ export class Board extends Changes {
       thread: thread.id,
       name: thread.name,
       where: where(thread),
-      place: thread.app === 'telegram' && !thread.id.includes(':') ? where(thread) : (this.links.title(thread.app, thread.id) ?? thread.name),
+      place: this.place(thread),
       state,
       running: session?.status === 'busy',
       line: oneLine(line),

@@ -592,3 +592,12 @@ test("a closed thread whose session another open thread holds now shows nothing 
   expect(board.find('discord:topic')).toEqual({ id: 'discord:topic', app: 'discord', thread: 'topic', name: 'Snailmail', where: 'Discord', place: 'Snailmail' })
   threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' } })
 })
+
+test("another Telegram group keeps its own name and place, and only hex's General goes by General", async () => {
+  job('99999999-family', { state: 'done', detail: 'photos sent', updatedAt: ago(2) })
+  threads('telegram', { ...telegram, '-2002': { name: 'Family', session: '99999999-family' } })
+  await until(() => !!board.get('telegram:-2002'))
+  expect(board.get('telegram:-2002')).toMatchObject({ name: 'Family', where: 'Telegram', place: 'Family' })
+  expect(board.get('telegram:-1001234567890')).toMatchObject({ name: 'General', where: 'General', place: 'General' })
+  threads('telegram', telegram)
+})
