@@ -583,9 +583,12 @@ function closeOut(record: CallRecord) {
   if (!live) toHub(hub.renew)
 }
 
-function reattach(record: CallRecord) {
-  const socket = sideband(record.id)
+// Tasks the call sent out can end while the connection comes back, so the record is read again then.
+function reattach({ id }: CallRecord) {
+  const socket = sideband(id)
   socket.onopen = () => {
+    const record = calls.get(id)
+    if (!record) return socket.close()
     const { turns, tasks, moments, ...rest } = record
     const so = turns.slice(-40).map(({ who, at, text }) => ({ who, text, start: at }))
     trace(`picked ${record.id} back up after a restart`)
@@ -600,7 +603,8 @@ function reattach(record: CallRecord) {
     })
   }
   socket.onclose = () => {
-    if (live?.id !== record.id) closeOut(record)
+    const record = calls.get(id)
+    if (live?.id !== id && record) closeOut(record)
   }
 }
 

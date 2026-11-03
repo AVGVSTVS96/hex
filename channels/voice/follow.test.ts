@@ -9,9 +9,10 @@ const CALL = 'sess_past'
 const SESSION = 'aaaaaaaa-general'
 const OTHER = 'bbbbbbbb-other'
 
-// A task an ended call sent to a thread, picked back up as the engine starts: the thread already
-// took the message in and ended its turn, and is still working on what came after.
-async function resumed() {
+// A task a call sent to a thread, picked back up as the engine starts: the thread already took the
+// message in and ended its turn, and is still working on what came after. live: the call itself was
+// still going, and the engine's connection to it comes back once the test lets it.
+async function resumed({ live = false } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'follow-'))
   const claude = join(home, 'claude')
   const hex = join(home, 'hex')
@@ -22,7 +23,7 @@ async function resumed() {
   open(state).keepThreads('telegram', { '-100123': { name: 'General', session: SESSION }, '-100123:7': { name: 'Other', session: OTHER } })
   const started = new Date(Date.now() - 60 * 60_000).toISOString()
   const task = { id: 'look-into-it', state: 'running', text: 'Look into it', to: 'General', agent: 'telegram:-100123', at: 1000 }
-  writeFileSync(join(calls, `${CALL}.json`), JSON.stringify({ id: CALL, started, ended: started, end: 'you', from: 'app', turns: [], tasks: [task] }))
+  writeFileSync(join(calls, `${CALL}.json`), JSON.stringify({ id: CALL, started, ...(!live && { ended: started, end: 'you' }), from: 'app', turns: [], tasks: [task] }))
   const entries = [
     { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: `<channel voice_task="${CALL}:look-into-it">look into it</channel>` } },
     { type: 'assistant', message: { id: 'msg_1', content: [{ type: 'text', text: 'On it.' }] } },
@@ -37,17 +38,27 @@ async function resumed() {
 const server = serve({ deliver() {}, keep: async () => {}, renew() {}, renewal: async () => {}, session: () => undefined }, ${JSON.stringify(state)})
 console.log(server.port)`
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
-  writeFileSync(join(home, '.claude', 'channels', 'voice', '.env'), 'VOICE_PORT=0\n')
+  let reconnect!: () => void
+  const back = new Promise<void>(resolve => (reconnect = resolve))
+  const openai = Bun.serve({
+    port: 0,
+    fetch: async (request, server) => (await back, server.upgrade(request) ? undefined : new Response('no', { status: 400 })),
+    websocket: { message() {} },
+  })
+  writeFileSync(join(home, '.claude', 'channels', 'voice', '.env'), ['VOICE_PORT=0', ...(live ? ['OPENAI_API_KEY=test', `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`] : [])].join('\n'))
   const plugin = Bun.spawn(['bun', '-e', engine], { env: { ...env, HOME: home, CLAUDE_CONFIG_DIR: claude }, stdout: 'pipe', stderr: 'ignore' })
-  await plugin.stdout.getReader().read()
+  const port = new TextDecoder().decode((await plugin.stdout.getReader().read()).value).trim()
   return {
     status,
+    reconnect,
+    live: async () => (await fetch(`http://127.0.0.1:${port}/calls`).then(r => r.json())).live,
     record: () => JSON.parse(readFileSync(join(calls, `${CALL}.json`), 'utf8')),
     // Another thread's turn starting or ending, which changes the board and nothing about the task.
     elsewhere: (n: number) => status(OTHER, n % 2 ? 'busy' : 'idle'),
     [Symbol.asyncDispose]: async () => {
       plugin.kill()
       await plugin.exited
+      openai.stop(true)
       rmSync(home, { recursive: true, force: true })
     },
   }
@@ -63,6 +74,19 @@ test('a task picked back up after a restart is done once its thread rests, and s
   for (let n = 1; n <= 6; n++) {
     engine.elsewhere(n)
     await Bun.sleep(150)
+  }
+  expect(engine.record().tasks.map((task: any) => task.state)).toEqual(['running', 'done'])
+}, 20_000)
+
+test("a task that ends while a live call's connection comes back after a restart stays done once the call is picked back up", async () => {
+  await using engine = await resumed({ live: true })
+  await Bun.sleep(300)
+  engine.status(SESSION, 'idle')
+  await until(() => engine.record().tasks.length === 2)
+  engine.reconnect()
+  for (let tries = 0; (await engine.live()) !== CALL; tries++) {
+    expect(tries).toBeLessThan(100)
+    await Bun.sleep(50)
   }
   expect(engine.record().tasks.map((task: any) => task.state)).toEqual(['running', 'done'])
 }, 20_000)
