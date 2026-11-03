@@ -19,6 +19,14 @@ type Hooks = {
 const REVISIONS = ['2025-11-25', '2025-06-18', '2025-03-26']
 const encoder = new TextEncoder()
 const NUDGE = 250
+// Claude Code gives up on a tool call after the timeout in the channel's .mcp.json, while the hub
+// still carries it out, and the session then makes the same call again. A repeat of a call the
+// session gave up on, while it runs or within this long of its answer, gets that answer instead of
+// sending, deleting or opening a thread twice.
+const REPEAT = 10 * 60_000
+
+type Result = { content: { type: 'text'; text: string }[]; isError?: true }
+type Run = { answer: Promise<Result>; answered?: number }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -43,7 +51,34 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return Response.json({ jsonrpc: '2.0', id, result: value })
   }
 
-  async function call(thread: string | undefined, tool: string, args: Record<string, unknown>) {
+  const unheard = new Map<string, Run>()
+
+  function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal): Promise<Result> {
+    for (const [key, run] of unheard) if (run.answered !== undefined && clock.now() - run.answered > REPEAT) unheard.delete(key)
+    const key = JSON.stringify([thread, tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
+    const earlier = unheard.get(key)
+    const run = earlier ?? start(key, call(thread, tool, args))
+    const missed = () => void unheard.set(key, run)
+    gone.addEventListener('abort', missed, { once: true })
+    return run.answer.then(answer => {
+      gone.removeEventListener('abort', missed)
+      if (!gone.aborted && unheard.get(key) === run) unheard.delete(key)
+      if (!earlier) return answer
+      return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
+    })
+  }
+
+  // A run that failed is no answer to keep: its repeat tries again.
+  function start(key: string, answer: Promise<Result>): Run {
+    const run: Run = { answer }
+    void answer.then(({ isError }) => {
+      run.answered = clock.now()
+      if (isError && unheard.get(key) === run) unheard.delete(key)
+    })
+    return run
+  }
+
+  async function call(thread: string | undefined, tool: string, args: Record<string, unknown>): Promise<Result> {
     try {
       if (!thread) throw new Error(`this session is not bound to a ${server.title} thread (HEX_THREAD is unset)`)
       return { content: [{ type: 'text', text: await hooks.call(thread, tool, args) }] }
@@ -144,7 +179,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
       listed(session)
       return result(id, { tools: server.tools })
     }
-    if (method === 'tools/call') return result(id, await call(thread, params?.name, params?.arguments ?? {}))
+    if (method === 'tools/call') return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal))
     if (method === 'ping') return result(id, {})
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
   }
