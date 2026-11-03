@@ -157,6 +157,21 @@ test('a call a new one replaces before its connection opened is still closed', a
   expect(await engine.call()).toMatchObject({ end: 'you', reason: 'moved to a new call' })
 }, 20_000)
 
+test('a hung-up call a new one replaces before its connection opened ends as hung up', async () => {
+  await using engine = await appCall()
+  engine.hold()
+  const start = () => fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })
+  expect((await start()).status).toBe(201)
+  await engine.attaching()
+  expect((await engine.hangUp()).status).toBe(204)
+  expect((await start()).status).toBe(201)
+  engine.back()
+  await until(() => engine.closes.length)
+  await Bun.sleep(200)
+  expect(engine.closes).toEqual([`${ID} close-you-app`])
+  expect(await engine.call()).toMatchObject({ end: 'you', reason: 'close_requested' })
+}, 20_000)
+
 test('hanging up a call the engine is attaching back to after a restart ends it once attached, from the app or from hex', async () => {
   const ways = [
     { hangUp: (engine: Engine) => engine.hangUp(), end: 'you', close: 'close-you-app' },
@@ -168,6 +183,8 @@ test('hanging up a call the engine is attaching back to after a restart ends it 
     await hangUp(engine)
     engine.back()
     expect(await ends(engine)).toMatchObject({ end })
+    await until(() => engine.closes.length)
+    await Bun.sleep(200)
     expect(engine.closes).toHaveLength(1)
     expect(engine.closes[0]).toStartWith(`${ID} ${close}`)
   }

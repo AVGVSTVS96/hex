@@ -137,8 +137,8 @@ without an end is closed out as `dropped` and ends like any other call: Claude
 is told to name it, and the session renews. A hang-up (`DELETE /session`,
 `hang_up`) while a call's connection is opening or coming back, or while the
 engine attaches back to it, goes out once the connection is up. A phone call's
-audio runs through
-the engine, so the service waits for a call to end before it restarts.
+audio runs through the engine, so the service waits for a call to end before it
+restarts.
 
 One session takes a whole call. When a call starts, the engine tells the hub
 to keep the session (`keep`) once the last call's renew is through, so a

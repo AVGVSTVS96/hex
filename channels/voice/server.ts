@@ -423,8 +423,9 @@ function ringing() {
 
 function follow(socket: WebSocket, record: Live['record'], { call = new Call(), speak, hello, about }: { call?: Call; speak?: Live['speak']; hello?: string; about?: Topic } = {}) {
   if (live) {
+    const by = live.closing
     close(live, 'close-you-moved')
-    finish(live, 'moved to a new call', live.closing ?? 'close-you-moved')
+    finish(live, by ? 'close_requested' : 'moved to a new call', by ?? 'close-you-moved')
   }
   if (attaching) attaching.closing ??= 'close-you-moved'
   attaching = undefined
