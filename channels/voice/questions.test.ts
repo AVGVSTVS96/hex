@@ -385,6 +385,27 @@ test('an answer that missed a copy is finished by the same answer, which only se
   }
 })
 
+test('an option labelled Not needed that missed a copy is finished as the answer it was, not as a not needed', async () => {
+  const options = ['Upgrade', 'Not needed']
+  const hubs = { ...TWO_HUBS, asks: [{ ...TWO_HUBS.asks[0]!, options: options.map(label => ({ label, value: label })) }] }
+  ledger([asked(1, 'Twilio?', options), { ...asked(2, 'Upgrade Twilio now?', options), app: 'discord' } as any])
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify(hubs))
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await until(() => questions.find('check:twilio'))
+  await questions.answer('check:twilio', 'Not needed', 'app')
+  ledger([{ ...asked(1, 'Twilio?', options), answer: { label: 'Not needed', at: '', via: 'app' } }, { ...asked(2, 'Upgrade Twilio now?', options), app: 'discord' } as any])
+  await Bun.sleep(150)
+  expect(questions.find('check:twilio')).toMatchObject({ partly: 'Not needed' })
+  const discord = await discordHub()
+  try {
+    expect(await questions.answer('check:twilio', 'Not needed', 'call')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 0 })
+    await until(() => discord.heard.length === 1)
+    expect(discord.heard).toEqual([{ type: 'settle', thread: DESK, message: 2, note: '✓ Answered on a call: Not needed' }])
+  } finally {
+    await discord.stop()
+  }
+})
+
 test('a question asked again while an earlier answer missed a copy is answered on the new copy, and the missed one only settles', async () => {
   ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Twilio?', ['Upgrade', 'Not yet']), app: 'discord' } as any, asked(3, 'Twilio, again?', ['Upgrade', 'Not yet'])])
   writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify(TWO_HUBS))

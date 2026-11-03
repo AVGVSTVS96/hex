@@ -315,7 +315,7 @@ export class Questions extends Changes {
       const finishing = standing === 'finishing'
       if (finishing && kept!.label !== label) throw new Error(`part of "${kept!.label}" went out; send it again to finish, or undo it`)
       if (finishing) dismissed = isDismissal(kept!)
-      const taken: Taken = { label, at: now(), via, question: question.question, told: [], refs: [], missed: [], ...(dismissed && { dismissed }), ...(finishing && { finishing }), ...(kept && { before: kept }) }
+      const taken: Taken = { label, at: now(), via, question: question.question, told: [], refs: [], missed: [], dismissed, ...(finishing && { finishing }), ...(kept && { before: kept }) }
       const where = WHERE[via] ?? via
       const failed = await (dismissed ? this.dismissing(id, via, question, taken, where, finishing) : this.answering(id, label, via, question, taken, where, finishing))
       if (!taken.told.length && !taken.refs.length) throw failed[0] ?? new Error('that question is already answered or settled')
