@@ -65,6 +65,23 @@ test('a question asked with buttons reads as its first line, its context and the
   })
 })
 
+test('a question keeps all of its context, line by line, so the app can open the rest', () => {
+  const context = `- A: ${'what it costs. '.repeat(20).trim()}\n- B: what it takes away.`
+  expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
+})
+
+test('what a long first line loses to its cut opens its context', () => {
+  const first = `Which way? ${'One option costs this and the other takes that away. '.repeat(4).trim()}`
+  const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
+  const [shown, rest] = [question.question.slice(0, -1), question.context!.split('\n')[0]!.slice(1)]
+  expect(`${shown} ${rest}`.replace(/\s+/g, ' ')).toBe(first)
+  expect(question.context!.endsWith('\nMore.')).toBe(true)
+})
+
+test('a short first line that ends in an ellipsis keeps no context of its own', () => {
+  expect(fromLedger('telegram', asked(1, 'Ship it…', ['Yes', 'No'])).context).toBeUndefined()
+})
+
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {
   ledger([asked(1, 'Ship it?', ['Yes', 'No']), asked(2, 'Rename it?', ['Yes', 'No'], { answer: { label: 'No', at: '', via: 'telegram' } }), asked(3, 'Which color?', ['Mint', 'Coral'])])
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })

@@ -336,8 +336,8 @@ export class Questions extends Changes {
   }
 }
 
-// A question as its thread asked it: its first line is the question and the rest its context; the
-// option the thread marked as its pick wears it.
+// A question as its thread asked it: its first line is the question (what's cut from a long one opens
+// its context) and the rest its context; the option the thread marked as its pick wears it.
 export function fromLedger(app: string, asked: Asked): Curated {
   const lines = plain(asked.text)
     .split('\n')
@@ -347,14 +347,16 @@ export function fromLedger(app: string, asked: Asked): Curated {
     const label = value.replace(PICK, '').trim() || value
     return { label, value, ...(label !== value && { pick: true }) }
   })
-  const context = lines.slice(1).join(' ')
+  const question = clip(lines[0] ?? '', 160)
+  const rest = question === lines[0] ? '' : (lines[0] ?? '').slice(question.length - 1).trim()
+  const context = [...(rest ? [`…${rest}`] : []), ...lines.slice(1)].join('\n')
   return {
     id: refId({ app, ...asked }),
     kind: asked.options.length <= 2 ? 'yesno' : 'pick',
     task: `${app}:${asked.thread}`,
     at: asked.at,
-    question: clip(lines[0] ?? '', 160).replace(/:$/, ''),
-    ...(context && { context: clip(context, 280) }),
+    question: question.replace(/:$/, ''),
+    ...(context && { context }),
     options,
     refs: [{ app, thread: asked.thread, message: asked.message }],
     from: [{ app, thread: asked.thread, message: asked.message }],
@@ -372,8 +374,8 @@ function plain(text: string) {
     .replace(/^#+\s+/gm, '')
 }
 
-function clip(text: string, max: number) {
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text
+export function clip(text: string, max: number) {
+  return text.length > max ? `${text.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, '').trimEnd()}…` : text
 }
 
 function readMarks(file: string): Marks {
