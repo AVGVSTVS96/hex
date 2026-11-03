@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { until } from '../../hub/until.ts'
 
 const ID = 'sess_app'
 
@@ -18,12 +19,17 @@ async function appCall({ open = false } = {}) {
   const closes: string[] = []
   let voice: Bun.ServerWebSocket<unknown> | undefined
   let hold = open
+  let held = false
   let release = () => {}
   const openai = Bun.serve({
     port: 0,
     async fetch(request, server) {
       if (request.method === 'POST') return Response.json({ session: { id: ID, expires_at: Date.now() / 1000 + 3600 }, transport: { sdp: 'answer' } }, { status: 201 })
-      if (hold) await new Promise<void>(resolve => (release = resolve))
+      if (hold) {
+        held = true
+        await new Promise<void>(resolve => (release = resolve))
+        held = false
+      }
       return server.upgrade(request) ? undefined : new Response('no', { status: 400 })
     },
     websocket: {
@@ -72,11 +78,17 @@ for await (const line of console) {
       plugin.stdin.flush()
       return new Promise<{ result?: string; error?: string }>(resolve => answers.push(resolve))
     },
+    attached: () => until(() => voice),
     // The engine's connection to the call drops, and its next attach waits until the test lets it.
-    drop: () => {
+    drop: async () => {
       hold = true
       voice!.close()
+      voice = undefined
+      await until(() => held)
     },
+    attaching: () => until(() => held),
+    // The engine's next attach waits until the test lets it.
+    hold: () => void (hold = true),
     back: () => {
       hold = false
       release()
@@ -95,10 +107,8 @@ type Engine = Awaited<ReturnType<typeof appCall>>
 
 async function started(engine: Engine) {
   expect((await fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })).status).toBe(201)
-  for (let tries = 0; (await engine.live()) !== ID; tries++) {
-    expect(tries).toBeLessThan(100)
-    await Bun.sleep(50)
-  }
+  expect(await engine.live()).toBe(ID)
+  await engine.attached()
 }
 
 async function ends(engine: Engine) {
@@ -112,10 +122,20 @@ async function ends(engine: Engine) {
 test('hanging up while the connection to the call is coming back ends the call once it is back', async () => {
   await using engine = await appCall()
   await started(engine)
-  engine.drop()
-  await Bun.sleep(400)
+  await engine.drop()
   expect((await engine.hangUp()).status).toBe(204)
   expect(engine.closes).toEqual([])
+  engine.back()
+  expect(await ends(engine)).toMatchObject({ end: 'you' })
+  expect(engine.closes).toEqual(['close-you-app'])
+}, 20_000)
+
+test('hanging up a new call before its connection has opened ends it once open', async () => {
+  await using engine = await appCall()
+  engine.hold()
+  expect((await fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })).status).toBe(201)
+  await engine.attaching()
+  expect((await engine.hangUp()).status).toBe(204)
   engine.back()
   expect(await ends(engine)).toMatchObject({ end: 'you' })
   expect(engine.closes).toEqual(['close-you-app'])
@@ -124,6 +144,7 @@ test('hanging up while the connection to the call is coming back ends the call o
 test('hanging up a call the engine is attaching back to after a restart ends it once attached, from the app or from hex', async () => {
   for (const hangUp of [(engine: Engine) => engine.hangUp(), (engine: Engine) => engine.tool('hang_up')]) {
     await using engine = await appCall({ open: true })
+    await engine.attaching()
     await hangUp(engine)
     engine.back()
     await ends(engine)
