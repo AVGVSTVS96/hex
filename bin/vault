@@ -4,12 +4,12 @@ set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
 if [ "${1:-}" = run ]; then
   # What `vault run` starts keeps its caller's environment and gets the vault's secrets, but none of .env's:
-  # of hex's settings, it gets only the ones enclave reads.
+  # of hex's settings, it gets only enclave's and the name it asks as.
   settings=$(
     . "$(dirname "$0")/settings" >&2
     [ -z "$settings_unread" ] || { echo "hex couldn't read its settings" >&2; exit 1; }
     for name in HEX_NAME ENCLAVE_HOME ENCLAVE_RELAY; do
-      if value=$(printenv "$name"); then printf "export %s='%s'\n" "$name" "$(printf %s "$value" | sed "s/'/'\\\\''/g")"; fi
+      if value=$(printenv "$name"); then printf "export %s='%s'\n" "$name" "$(printf %s "$value" | LC_ALL=C sed "s/'/'\\\\''/g")"; fi
     done
   )
   eval "$settings"
