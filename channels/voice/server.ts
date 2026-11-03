@@ -330,10 +330,10 @@ async function hangUpCall(call: Live) {
 
 // The caller or hex hangs up: at once over an open connection to the voice, else once one opens,
 // or, if the call ends without one, on a connection opened just for it. A phone or Discord call's
-// socket is its session, so once that socket is going there's nothing left to close.
+// socket is its session, so once that socket isn't open there's nothing left to close.
 function close(call: Live, event: string) {
   const state = call.socket.readyState
-  if (call.closing || (call.speak && state !== WebSocket.OPEN && state !== WebSocket.CONNECTING)) return
+  if (call.closing || (call.speak && state !== WebSocket.OPEN)) return
   call.closing = event
   if (state === WebSocket.OPEN) sendClose(call)
 }
