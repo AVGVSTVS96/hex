@@ -168,17 +168,15 @@ export class Questions extends Changes {
   }
 
   private async answering(id: string, label: string, via: string, question: Question, taken: Taken, where: string, finishing: boolean) {
-    {
-      const value = question.options.find(option => option.label === label)?.value ?? label
-      const refs = this.left(id, taken)
-      const missed = new Set(chain(taken.before).flatMap(mark => (mark.missed ?? []).map(refId)))
-      const first = refs.find(ref => !missed.has(refId(ref)))
-      const settle = (ref: Ref) => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ Answered ${where}: ${label}` })
-      if (finishing) return this.each(refs, settle)
-      if (first && this.asked(first)!.options.includes(value)) await this.reach(taken, first, { type: 'answer', thread: first.thread, message: first.message, label: value, via })
-      else await this.inform(taken, first ? place(first) : question.task, `(answered ${where}) ${question.question}: ${label}`, via)
-      return this.each(refs.filter(ref => !taken.refs.includes(ref)), settle)
-    }
+    const value = question.options.find(option => option.label === label)?.value ?? label
+    const refs = this.left(id, taken)
+    const missed = new Set(chain(taken.before).flatMap(mark => (mark.missed ?? []).map(refId)))
+    const first = refs.find(ref => !missed.has(refId(ref)))
+    const settle = (ref: Ref) => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ Answered ${where}: ${label}` })
+    if (finishing) return this.each(refs, settle)
+    if (first && this.asked(first)!.options.includes(value)) await this.reach(taken, first, { type: 'answer', thread: first.thread, message: first.message, label: value, via })
+    else await this.inform(taken, first ? place(first) : question.task, `(answered ${where}) ${question.question}: ${label}`, via)
+    return this.each(refs.filter(ref => !taken.refs.includes(ref)), settle)
   }
 
   // His own words on a question, which leave it open: they reach the thread that asked it, and
@@ -200,24 +198,22 @@ export class Questions extends Changes {
   }
 
   private async dismissing(id: string, via: string, question: Question, taken: Taken, where: string, finishing: boolean) {
-    {
-      const told = new Set(finishing ? round(taken.before).flatMap(mark => mark.told ?? []) : [])
-      const say = async (thread: string) => {
-        if (told.has(thread)) return
-        await this.inform(taken, thread, `(not needed, said ${where}) ${question.question}`, via)
-        told.add(thread)
-      }
-      await say(question.task)
-      const failed: unknown[] = []
-      for (const [thread, copies] of Map.groupBy(this.left(id, taken), place)) {
-        const heard = await say(thread).then(
-          () => true,
-          error => (failed.push(error, ...copies.map(() => error)), taken.missed.push(...copies), false),
-        )
-        if (heard) failed.push(...(await this.each(copies, ref => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ ${NOT_NEEDED}, said ${where}` }))))
-      }
-      return failed
+    const told = new Set(finishing ? round(taken.before).flatMap(mark => mark.told ?? []) : [])
+    const say = async (thread: string) => {
+      if (told.has(thread)) return
+      await this.inform(taken, thread, `(not needed, said ${where}) ${question.question}`, via)
+      told.add(thread)
     }
+    await say(question.task)
+    const failed: unknown[] = []
+    for (const [thread, copies] of Map.groupBy(this.left(id, taken), place)) {
+      const heard = await say(thread).then(
+        () => true,
+        error => (failed.push(error, ...copies.map(() => error)), taken.missed.push(...copies), false),
+      )
+      if (heard) failed.push(...(await this.each(copies, ref => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ ${NOT_NEEDED}, said ${where}` }))))
+    }
+    return failed
   }
 
   // Takes back an answer or a not needed given in the app or on a call, with any it was given over:
