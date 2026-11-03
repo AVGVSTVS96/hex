@@ -1950,6 +1950,19 @@ test("a session's stop hook reports whether background agents are still working,
   expect(received).toEqual([{ type: 'state', thread: 't1', busy: false, background: true }, { type: 'state', thread: 't1', busy: false }])
 })
 
+test("a session's stop hook names its session, and says when the turn failed", async () => {
+  const socket = join(dir, 'state.sock')
+  const received: object[] = []
+  const server = createServer(client => client.on('data', chunk => received.push(JSON.parse(String(chunk))))).listen(socket)
+  for (const hook_event_name of ['Stop', 'StopFailure']) {
+    const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'idle'], { env: { ...process.env, HEX_HUB: socket, HEX_THREAD: 't1', HEX_STORE: dir, MEMORY_DIR: '' }, stdin: new Blob([JSON.stringify({ hook_event_name, session_id: SESSION })]) })
+    await hook.exited
+    await until(() => received.length === (hook_event_name === 'Stop' ? 1 : 2) || undefined)
+  }
+  server.close()
+  expect(received).toEqual([{ type: 'state', thread: 't1', busy: false, session: SESSION }, { type: 'state', thread: 't1', busy: false, failed: true, session: SESSION }])
+})
+
 test("a turn's hook tells the hub and goes, without waiting for a stalled hub to hang up", async () => {
   const socket = join(dir, 'state.sock')
   const received: object[] = []
@@ -2360,4 +2373,28 @@ test("what a session sends into another thread is kept as its own words, not tha
   await line.initialize()
   await line.call('reply', { text: 'done' })
   expect(open(dir).said('chat:8').map(({ body, taken }) => ({ body, by: taken?.by }))).toEqual([{ body: 'From Desk anchors: done.', by: SESSION }])
+})
+
+test('a tool call answered slowly is kept for a repeat until a Stop of the thread\'s own session, with nothing left working, ends its turn', async () => {
+  const waiting: (() => void)[] = []
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, call: (_, tool, args) => new Promise(resolve => waiting.push(() => resolve(`${tool} ${args.text}`))) })
+  const line = await session('chat:7')
+  const kept = async (text: string, stop: object) => {
+    const slow = line.call('reply', { text })
+    await until(() => waiting.length)
+    await time.advance(150_000)
+    waiting.shift()!()
+    await slow
+    await line.send({ type: 'state', thread: 'chat:7', busy: false, ...stop })
+    const repeat = line.call('reply', { text })
+    const ran = await Promise.race([until(() => waiting.length).then(() => true), repeat.then(() => false)])
+    if (ran) waiting.shift()!()
+    return (await repeat).content[0].text.startsWith('this same reply call came before')
+  }
+  expect(await kept('another session', { session: 'ffffffff-0000-4000-8000-000000000000' })).toBe(true)
+  expect(await kept('background', { session: SESSION, background: true })).toBe(true)
+  expect(await kept('failed', { session: SESSION, failed: true })).toBe(true)
+  expect(await kept('no session', {})).toBe(true)
+  expect(await kept('busy', { session: SESSION, busy: true })).toBe(true)
+  expect(await kept('done', { session: SESSION })).toBe(false)
 })

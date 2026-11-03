@@ -1,6 +1,8 @@
 import { clock } from './clock.ts'
 
-export type Tool = { name: string; description: string; inputSchema: object; _meta?: object }
+// reads: for a tool that reads or writes by its arguments, whether a call only reads. It stays here: a
+// function never reaches the session's tool list.
+export type Tool = { name: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean }; reads?: (args: Record<string, unknown>) => boolean; _meta?: object }
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = { title: string; instructions: string; tools: Tool[]; permission?: boolean }
 export type Payload = { type: 'inbound'; content: string; meta: Record<string, string> } | { type: 'permission'; request_id: string; behavior: string }
@@ -19,6 +21,24 @@ type Hooks = {
 const REVISIONS = ['2025-11-25', '2025-06-18', '2025-03-26']
 const encoder = new TextEncoder()
 const NUDGE = 250
+// Claude Code gives up on a tool call after the timeout in the channel's .mcp.json, while the hub
+// still carries it out, and the session then makes the same call again. A call is kept until the
+// session hears its answer, and the same call in its thread meanwhile gets that answer instead of
+// acting twice. Whether the session heard is told by the latest request for the call: one aborted,
+// or answered WAITED after reaching the hub, was missed and is kept until KEEP after its start or
+// answer; one answered GAVE_UP after it may have been heard (a lagging hub accepts late and can miss
+// the session leaving), and is kept until the thread's turn ends (rested). A tool that only reads
+// runs every time, and a call the session gave up on before the hub read it doesn't run at all.
+const WAITED = 300_000
+const GAVE_UP = 120_000
+const KEEP = 15 * 60_000
+
+// Bun sees that a client left, while its request waited or its answer was being made, only a timer
+// tick later.
+const tick = () => new Promise(resolve => setTimeout(resolve, 0))
+
+type Result = { content: { type: 'text'; text: string }[]; isError?: true }
+type Run = { answer: Promise<Result>; at: number; waiting: number; heard?: 'maybe' | 'no' }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -43,7 +63,42 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return Response.json({ jsonrpc: '2.0', id, result: value })
   }
 
-  async function call(thread: string | undefined, tool: string, args: Record<string, unknown>) {
+  const unheard = new Map<string, Map<string, Run>>()
+  const tools = new Map(server.tools.map(tool => [tool.name, tool]))
+  const reads = (tool: string, args: Record<string, unknown>) => !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args))
+
+  function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal, arrived: number): Promise<Result> {
+    if (gone.aborted) return Promise.resolve({ content: [{ type: 'text', text: `${tool} didn't run: you stopped waiting before the hub read it` }], isError: true })
+    if (reads(tool, args)) return call(thread, tool, args)
+    for (const [scope, runs] of unheard) {
+      for (const [key, run] of runs) if (clock.now() - run.at > KEEP) runs.delete(key)
+      if (!runs.size) unheard.delete(scope)
+    }
+    const scope = String(thread)
+    const runs = unheard.get(scope) ?? new Map<string, Run>()
+    unheard.set(scope, runs)
+    const key = JSON.stringify([tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
+    const repeat = runs.get(key)
+    const run: Run = repeat ?? { answer: call(thread, tool, args), at: arrived, waiting: 0 }
+    run.waiting++
+    if (!repeat) {
+      runs.set(key, run)
+      void run.answer.then(() => (run.at = clock.now()))
+    }
+    return run.answer.then(async answer => {
+      await tick()
+      const took = clock.now() - arrived
+      if (--run.waiting === 0 && runs.get(key) === run) {
+        if (gone.aborted || took >= WAITED) run.heard = 'no'
+        else if (took >= GAVE_UP) run.heard = 'maybe'
+        else runs.delete(key)
+      }
+      if (!repeat) return answer
+      return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
+    })
+  }
+
+  async function call(thread: string | undefined, tool: string, args: Record<string, unknown>): Promise<Result> {
     try {
       if (!thread) throw new Error(`this session is not bound to a ${server.title} thread (HEX_THREAD is unset)`)
       return { content: [{ type: 'text', text: await hooks.call(thread, tool, args) }] }
@@ -111,7 +166,8 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return new Response(body, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', ...(session && { 'mcp-session-id': session }) } })
   }
 
-  return async (request: Request): Promise<Response> => {
+  const handle = async (request: Request): Promise<Response> => {
+    const arrived = clock.now()
     // The token comes as Authorization: Claude Code then takes a refusal as a failed connection,
     // where with any other header it marks the server as needing a login for 15 minutes.
     if (request.headers.has('origin') || !['127.0.0.1', 'localhost'].includes(new URL(request.url).hostname) || request.headers.get('authorization') !== `Bearer ${token}`) return new Response('Forbidden', { status: 403 })
@@ -144,10 +200,22 @@ export function endpoint(name: string, channel: string, token: string, server: C
       listed(session)
       return result(id, { tools: server.tools })
     }
-    if (method === 'tools/call') return result(id, await call(thread, params?.name, params?.arguments ?? {}))
+    if (method === 'tools/call') {
+      await tick()
+      return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, arrived))
+    }
     if (method === 'ping') return result(id, {})
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
   }
+
+  // The thread's turn ended with nothing left working, so a call that may have been heard was. One
+  // the session missed stays: its next turn may well make it again.
+  function rested(thread: string) {
+    const runs = unheard.get(thread)
+    for (const [key, run] of runs ?? []) if (run.heard === 'maybe' && !run.waiting) runs!.delete(key)
+  }
+
+  return Object.assign(handle, { rested })
 }
 
 function notification(payload: Payload, zone: string) {

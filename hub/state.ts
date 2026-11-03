@@ -141,7 +141,7 @@ if (!busy && session_id && hook_event_name === 'Stop') {
 if (HEX_HUB && HEX_THREAD && (!busy || fromChat)) {
   connect(HEX_HUB)
     .on('connect', function () {
-      this.end(JSON.stringify({ type: 'state', thread: HEX_THREAD, busy, ...(background && { background }), ...(untold && { taken: [untold], session: session_id }) }) + '\n', () => this.destroy())
+      this.end(JSON.stringify({ type: 'state', thread: HEX_THREAD, busy, ...(background && { background }), ...(hook_event_name === 'StopFailure' && { failed: true }), ...(untold && { taken: [untold] }), ...(session_id && { session: session_id }) }) + '\n', () => this.destroy())
     })
     .on('error', () => {})
 }
