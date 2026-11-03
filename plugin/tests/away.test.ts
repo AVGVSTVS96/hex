@@ -11,6 +11,7 @@ let calls: { name: string; arguments: Record<string, any> }[] = []
 let waits: object[] = []
 let drop = 0
 let refuse: string | undefined
+let running = false
 
 const server = Bun.serve({
   port: 0,
@@ -24,7 +25,7 @@ const server = Bun.serve({
     const answers: Record<string, () => unknown> = {
       orchestrator_capabilities: () => ({ providers: [{ providerInstanceId: 'claudeAgent', models: [{ id: 'claude-opus-4-1' }, { id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }] }] }),
       t3_thread_launch: () => ({ threadId: 't1', runId: 'r1', link: '<t3-thread://v2/env-mac/t1>' }),
-      t3_thread_wait: () => waits.shift() ?? { status: 'completed', timedOut: false },
+      t3_thread_wait: () => waits.shift() ?? (running ? { status: 'running', timedOut: true } : { status: 'completed', timedOut: false }),
       t3_thread_read: () => ({ items: [{ type: 'user_message', text: 'go' }, { type: 'assistant_message', text: 'Built the Usage tab.' }], hasMore: false }),
       t3_thread_interrupt: () => ({}),
     }
@@ -59,6 +60,7 @@ const reset = () => {
   waits = []
   drop = 0
   refuse = undefined
+  running = false
 }
 
 test("a job runs as a T3 Code thread on that machine, follows its run through early and dropped waits, and prints the thread's last answer", async () => {
@@ -99,7 +101,7 @@ test("a job can't run there, having started nothing, with claude flags a thread 
 
 test('stopping the job stops its thread', async () => {
   reset()
-  waits = Array(100).fill({ status: 'running', timedOut: true })
+  running = true
   const { run } = away(['-p', 'Build it.'])
   while (!calls.some(({ name }) => name === 't3_thread_wait')) await Bun.sleep(50)
   run.kill('SIGTERM')
