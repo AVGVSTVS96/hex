@@ -1,5 +1,6 @@
 import { connect } from 'net'
-import { open, stateDir } from './store.ts'
+import { running } from './running.ts'
+import { open, stateDir, type Store } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
 const at = new Date().toISOString()
@@ -39,10 +40,19 @@ if (key) {
   } catch {}
 }
 
+// The heartbeat opens a turn of its own when it's the first prompt hex hears since Claude Code
+// marked the session busy; one that comes inside a turn is part of that turn.
+function opens(store: Store, session: string) {
+  const flipped = running(store).get(session)?.updated
+  const { began, ended } = store.turn(session)
+  return !began || (flipped === undefined ? !!ended : Date.parse(began) < flipped)
+}
+
 // The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
 if (session_id) {
   try {
-    open(stateDir()).turned(session_id, busy, at)
+    const store = open(stateDir())
+    store.turned(session_id, busy, at, !!key && store.message(key)?.meta?.schedule === 'heartbeat' && opens(store, session_id))
   } catch (error) {
     console.error(`hex couldn't record this turn: ${error}`)
   }

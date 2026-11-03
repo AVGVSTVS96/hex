@@ -2216,6 +2216,34 @@ test("a channel tag in a message's own words takes nothing", async () => {
   expect(store.message('schedule:heartbeat@2026-10-18T21:45Z')!.taken).toBeUndefined()
 })
 
+test("a heartbeat that opens its session's turn is kept until the session's next prompt, and one inside a turn isn't", async () => {
+  const store = open(dir)
+  const claude = mkdtempSync(join(tmpdir(), 'hex-claude-'))
+  mkdirSync(join(claude, 'sessions'))
+  const flip = () => writeFileSync(join(claude, 'sessions', `${process.pid}.json`), JSON.stringify({ sessionId: SESSION, pid: process.pid, status: 'busy', statusUpdatedAt: Date.now() }))
+  const prompt = async (key: string, from: string, body: string, meta?: Record<string, string>) => {
+    store.deliver({ key, to: 'chat:7', from, author: from === 'telegram' ? 'owner' : 'prompt', body, ...(meta && { meta }) })
+    const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], {
+      env: { ...process.env, HEX_STORE: dir, CLAUDE_CONFIG_DIR: claude },
+      stdin: new Blob([JSON.stringify({ prompt: `<channel source="plugin:telegram:telegram" key="${key}">\n${body}\n</channel>`, session_id: SESSION })]),
+    })
+    expect(await hook.exited).toBe(0)
+  }
+  const beat = (slot: string) => prompt(`schedule:heartbeat@${slot}`, 'schedule', '[heartbeat] Hourly check', { user: 'schedule', schedule: 'heartbeat' })
+  flip()
+  await Bun.sleep(5)
+  await beat('2026-11-03T12:45Z')
+  const [first] = store.beats(SESSION)
+  expect(first).toEqual({ began: expect.any(String) })
+  flip()
+  await Bun.sleep(5)
+  await prompt('telegram:1:50', 'telegram', 'ship it')
+  expect(store.beats(SESSION)).toEqual([{ began: first!.began, until: expect.any(String) }])
+  await beat('2026-11-03T13:45Z')
+  expect(store.beats(SESSION)).toHaveLength(1)
+  rmSync(claude, { recursive: true })
+})
+
 test('a session started before hex kept messages has the hub take them for it', async () => {
   start()
   open(dir).deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })

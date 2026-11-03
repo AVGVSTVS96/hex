@@ -240,6 +240,8 @@ const migrations: (string | ((store: Store) => void))[] = [
       else store.db.query('delete from pins where app = ? and thread = ?').run(app, thread)
     }
   },
+  `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}));
+  create index if not exists beats_session on beats (session, began);`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -314,6 +316,7 @@ function bookOf(text: () => string, file: string): Book | undefined {
 const now = () => new Date().toISOString()
 const SEEN = 2 * 24 * 60 * 60 * 1000
 const TURNS = 30 * 24 * 60 * 60 * 1000
+const BEATS = 7 * 24 * 60 * 60 * 1000
 
 // The profile and its history moved into hex.db from state/profile.md and profile.md.history, where
 // each version it replaced is a JSON line with when it was replaced: when the next was put in place.
@@ -820,12 +823,26 @@ export class Store {
 
   // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
   // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes.
-  turned(session: string, busy: boolean, at = now()) {
+  // A heartbeat (the scheduler's hourly check) that opened its turn holds until the session's next
+  // prompt, so it holds that turn's records, and is kept a week.
+  turned(session: string, busy: boolean, at = now(), heartbeat = false) {
     this.write(() => {
+      if (busy) this.db.query('update beats set until = ? where session = ? and until is null').run(at, session)
+      if (heartbeat) this.db.query('insert into beats (session, began) values (?, ?)').run(session, at)
+      this.db.query('delete from beats where coalesce(until, began) < ?').run(new Date(Date.parse(at) - BEATS).toISOString())
       if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
       else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
       this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
     })
+  }
+
+  beats(session: string): { began: string; until?: string }[] {
+    return (this.db.query('select began, until from beats where session = ? order by began').all(session) as { began: string; until: string | null }[]).map(({ began, until }) => (until ? { began, until } : { began }))
+  }
+
+  // Changes whenever a heartbeat begins or ends.
+  beaten(): string {
+    return JSON.stringify(this.db.query('select max(rowid), count(until) from beats').values())
   }
 
   turn(session: string): { began?: string; ended?: string } {
