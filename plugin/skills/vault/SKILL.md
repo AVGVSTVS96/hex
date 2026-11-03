@@ -35,10 +35,10 @@ A saved passkey signs in through enclave's Chrome extension, which sends the sit
 
 The computer's browser reaches the vault over `ssh`, with a key and no password, so set that up from the computer to here first. Then:
 
-1. Here, run `node -p process.execPath` and `readlink -f "$(command -v enclave)"` for the two paths to sign with (install or update enclave with `npm install -g enclave-link@latest`). A command over ssh gets a short PATH, so it needs both in full.
+1. Here, with node 22 or newer, run `npm install -g enclave-link@latest`, then `node -p process.execPath` and `readlink -f "$(command -v enclave)"` for the two paths to sign with. A command over ssh gets a short PATH, so it needs both in full; after a node upgrade, run step 2 again.
 2. Inside the computer, clone enclave and run `extension/install ssh -o BatchMode=yes <user>@<this machine> <node path> <enclave path> sign`, then restart Chrome.
-3. Check the installed signer: here, run `.hex/bin/vault passkey <name>` for a site they have a passkey for. Inside the computer, `echo '{"origin":"https://<the passkey's domain>","challenge":"AA"}' | sh -c "$(jq -r '.command | @sh' ~/.local/share/enclave-extension/host.json)"` should print a signed answer starting with `{"id":`.
-4. Run `.hex/bin/vault passkey <name>` again and sign in on that site once.
+3. Check the installed signer: here, run `.hex/bin/vault passkey <name>` for a site they have a passkey for. Inside the computer, `echo '{"origin":"https://<the passkey's domain>","challenge":"AA"}' | sh -c "$(jq -r '.command | @sh' ${XDG_DATA_HOME:-$HOME/.local/share}/enclave-extension/host.json)"` should print a signed answer starting with `{"id":`.
+4. Once that works, run `.hex/bin/vault passkey <name>` again and sign in on that site once.
 
 ## The key
 
