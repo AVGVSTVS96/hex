@@ -209,7 +209,7 @@ export function startMemory({ relay, secretKey, owner, hexDir, share = SHARE }: 
     }
     try {
       await exec('git', ['-C', hexDir, 'add', '--', path])
-      await exec('git', ['-C', hexDir, 'commit', '-q', '-m', `${path}: edited in Buzz`, '--', path])
+      await exec('git', ['-C', hexDir, 'commit', '-q', '-m', `docs(buzz): edit ${path}`, '--', path])
     } catch (error) {
       log(`couldn't commit ${path}: ${error instanceof Error ? error.message.trim() : error}`)
     }

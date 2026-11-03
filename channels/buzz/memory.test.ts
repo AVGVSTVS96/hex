@@ -219,7 +219,7 @@ test('an edit request is written, committed, republished and answered', async ()
   expect(readFileSync(join(dir, 'AGENTS.md'), 'utf8')).toBe('# My rules for you\n- be brief\n')
   expect(opened(relay, 30180).at(-1)!.body).toMatchObject({ path: 'AGENTS.md', content: '# My rules for you\n- be brief\n' })
   expect(relay.events.findIndex(event => event.kind === 4181)).toBeGreaterThan(relay.events.indexOf(opened(relay, 30180).at(-1)!.event))
-  expect(execFileSync('git', ['-C', dir, 'log', '-1', '--format=%s', '--name-only'], { encoding: 'utf8' })).toBe('AGENTS.md: edited in Buzz\n\nAGENTS.md\n')
+  expect(execFileSync('git', ['-C', dir, 'log', '-1', '--format=%s', '--name-only'], { encoding: 'utf8' })).toBe('docs(buzz): edit AGENTS.md\n\nAGENTS.md\n')
   expect(execFileSync('git', ['-C', dir, 'status', '--porcelain'], { encoding: 'utf8' })).toBe('?? scratch.md\n')
 })
 
