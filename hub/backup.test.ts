@@ -70,6 +70,11 @@ test('a computer that never answers fails the backup once its time is up', async
   expect(existsSync(join(dir, 'backups', 'hex-2026-10-19.db'))).toBe(true)
 })
 
+test('a computer that leaves its answer open fails the backup once its time is up', async () => {
+  computer('sleep 60 & exit 0')
+  await expect(backup(dir, '2026-10-19', 'cloud', 300)).rejects.toThrow("cloud didn't answer in")
+})
+
 test('a copy cut off on the way never takes the day\'s name on the computer', async () => {
   const there = computer('shift 4; head -c 4096 | HOME="$COMPUTER" exec "$@"')
   await expect(backup(dir, '2026-10-19', 'cloud')).rejects.toThrow("cloud didn't take it")

@@ -29,18 +29,22 @@ export async function backup(storeDir: string, day: string, computer?: string, l
   for (const old of readdirSync(dir).filter(file => /^hex-.*\.db$/.test(file)).sort().slice(0, -KEEP)) rmSync(join(dir, old))
   if (!computer) return
   const hash = new Bun.CryptoHasher('sha256').update(await Bun.file(join(dir, name)).arrayBuffer()).digest('hex')
-  const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; find . -name 'hex-*.db.part' -mmin +${SEND_LIMIT / 60_000 + 1} -delete; cat > "$1.part"; echo "$2  $1.part" | sha256sum -c --quiet; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`
+  const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; find . -name 'hex-*.db.part' -mmin +${Math.ceil(limit / 60_000) + 1} -delete; cat > "$1.part"; echo "$2  $1.part" | sha256sum -c --quiet; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`
+  const late = AbortSignal.timeout(limit)
   const sent = Bun.spawn(['sprite', 'exec', '-s', computer, '--', 'sh', '-c', keep, 'sh', name, hash], {
     env: process.env,
     stdin: Bun.file(join(dir, name)),
     stdout: 'pipe',
     stderr: 'pipe',
-    timeout: limit,
+    signal: late,
     killSignal: 'SIGKILL',
   })
-  const exit = await sent.exited
-  if (sent.signalCode === 'SIGKILL') throw new Error(`${computer} didn't answer in ${limit / 60_000} minutes`)
-  const [out, err] = await Promise.all([new Response(sent.stdout).text(), new Response(sent.stderr).text()])
+  const answer = await Promise.race([
+    Promise.all([sent.exited, new Response(sent.stdout).text(), new Response(sent.stderr).text()]),
+    new Promise<undefined>(resolve => late.addEventListener('abort', () => resolve(undefined))),
+  ])
+  if (!answer) throw new Error(`${computer} didn't answer in ${limit / 60_000} minutes`)
+  const [exit, out, err] = answer
   if (exit !== 0) throw new Error(`${computer} didn't take it: ${err.trim() || `exit ${exit}`}`)
   if (!out.startsWith(hash)) throw new Error(`the copy on ${computer} doesn't match hex.db's`)
 }
