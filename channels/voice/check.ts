@@ -134,7 +134,7 @@ function gather(state: string) {
     .filter(call => call?.ended && (call.summary || call.waiting?.length))
     .map(call => ({ id: call.id, title: call.title, ended: call.ended, summary: call.summary, waiting: call.waiting ?? [] }))
   const answers: Record<string, Answer> = json(join(state, 'voice', 'marks.json'))?.answers ?? {}
-  const answered = Object.fromEntries(Object.entries(answers).map(([id, { label, at, question, told }]) => [id, { label, at, ...(question && { question }), ...(told && { told }) }]))
+  const answered = Object.fromEntries(Object.entries(answers).flatMap(([id, answer]) => (final(answer) ? [[id, { label: answer.label, at: answer.at, ...(answer.question && { question: answer.question }), ...(answer.told && { told: answer.told }) }]] : [])))
   return { now: new Date(now).toISOString(), threads: names, open, closed, answered, pins, calls, t3: t3Now, previous: json(join(state, 'voice', 'check.json')), ledgers }
 }
 
@@ -303,6 +303,12 @@ export function vet(verdict: Verdict, ledgers: Record<string, Asked[]>, { thread
     ],
     stuck: verdict.stuck.map((item: Omit<Stuck, 'app'>) => ({ ...item, id: item.id.startsWith('check-') ? item.id : `check-${item.id}` })),
   }
+}
+
+// An answer that went through and had no buttons to answer: nothing but its mark keeps its ask
+// answered, so it's kept for good and the check is told of it.
+export function final(answer: Answer) {
+  return !answer.refs?.length && !answer.missed?.length && !answer.undoing
 }
 
 // What a link may open on the phone: a web page, or a chat app's own link to a place in it.

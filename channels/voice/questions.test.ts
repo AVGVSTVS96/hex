@@ -678,9 +678,14 @@ test("a check's links keep only what opens a page or an app on the phone", () =>
 })
 
 
-test('answers are kept for good, other marks for 14 days', () => {
+test('an answer with no buttons is kept for good, other marks and unfinished answers for 14 days', () => {
   const old = new Date(Date.now() - 20 * 24 * 60 * 60_000).toISOString()
-  writeFileSync(join(state, 'voice', 'marks.json'), JSON.stringify({ answers: { 'check:read': { label: 'Seen', at: old, via: 'app' } }, read: { 't3-done-0': old } }))
+  const answers = {
+    'check:read': { label: 'Seen', at: old, via: 'app' },
+    'check:poll': { label: 'A', at: old, via: 'app', refs: [{ app: 'telegram', thread: DESK, message: 1 }], told: [] },
+    'check:half': { label: 'B', at: old, via: 'app', refs: [], told: [], undoing: true },
+  }
+  writeFileSync(join(state, 'voice', 'marks.json'), JSON.stringify({ answers, read: { 't3-done-0': old } }))
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
   questions.read('t3-done-1')
   const marks = JSON.parse(readFileSync(join(state, 'voice', 'marks.json'), 'utf8'))

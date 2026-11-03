@@ -7,7 +7,7 @@ import { open as store, type Thread } from '../../hub/store.ts'
 import { generalOf, nameOf } from './activity.ts'
 import type { Sent } from './call.ts'
 import { Changes } from './changes.ts'
-import { before, Check, opens } from './check.ts'
+import { before, Check, final, opens } from './check.ts'
 import { linkAt, Links } from './links.ts'
 import { relay } from './relay.ts'
 import { T3, type Fresh, type Stuck } from './t3.ts'
@@ -504,12 +504,12 @@ export class Questions extends Changes {
     return { app: 'voice', place: known.title ?? 'a call', call: id, at: known.started }
   }
 
-  // Marks are kept 14 days, but answers for good: an ask a pinned post still mentions would come
-  // back without one.
+  // Marks are kept 14 days, but a final answer for good: an ask a pinned post still mentions would
+  // come back without one.
   private saveMarks() {
     const since = new Date(Date.now() - KEEP).toISOString()
-    for (const book of [this.marks.sent, this.marks.dismissed, this.marks.read])
-      for (const [id, at] of Object.entries(book)) if (at < since) delete book[id]
+    for (const book of Object.values(this.marks) as Record<string, string | Answer>[])
+      for (const [id, at] of Object.entries(book)) if (typeof at === 'string' ? at < since : at.at < since && !final(at)) delete book[id]
     const file = join(this.state, 'voice', 'marks.json')
     writeFileSync(`${file}.tmp`, JSON.stringify(this.marks, null, 1) + '\n')
     renameSync(`${file}.tmp`, file)
