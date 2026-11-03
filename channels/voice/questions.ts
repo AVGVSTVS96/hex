@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, watch, writeFileSync } from 'fs'
+import { readFileSync, renameSync, statSync, watch, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
@@ -70,6 +70,8 @@ const KEEP = 14 * 24 * 60 * 60_000
 const CALLS = join(homedir(), '.claude', 'channels', 'voice', 'calls')
 const WHERE: Record<string, string> = { app: 'in the app', call: 'on a call' }
 const PICK = /\s*[(\[]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/i
+// A call's title and start as its record last read, under that record's stamp.
+type CallPlace = { stamp: string; title?: string; started?: string }
 
 // Everything waiting on the owner, in one list: each question a hex thread asked with buttons or a
 // poll and nobody has answered (from each app's ledger), as hex's check last rewrote them; what's
@@ -84,12 +86,15 @@ export class Questions extends Changes {
   private links: Links
   private calls: string
   private result?: CheckResult
+  private checkStamp?: string
   private marks: Marks
   private pending?: ReturnType<typeof setTimeout>
   private stops: (() => void)[] = []
   private t3: T3
   private check: (why: string) => void
   private seen?: { pins: string; t3: string }
+  private callPlaces = new Map<string, CallPlace>()
+  private lastCallPlaces = new Map<string, CallPlace>()
 
   constructor(
     private state: string,
@@ -241,7 +246,13 @@ export class Questions extends Changes {
     for (const thread of store(this.state).threads()) this.threads.set(`${thread.app}:${thread.thread}`, thread)
     this.ledgers = Map.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app)
     for (const pin of store(this.state).pins()) if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin)
-    this.result = readJson(join(this.state, 'voice', 'check.json'))
+    const check = join(this.state, 'voice', 'check.json')
+    const stamp = stampOf(check)
+    if (stamp !== this.checkStamp) {
+      this.result = readJson(check)
+      this.checkStamp = this.result || !stamp ? stamp : undefined
+    }
+    ;[this.lastCallPlaces, this.callPlaces] = [this.callPlaces, new Map()]
     this.notice()
     const used = new Set<string>()
     const curated = (this.result?.asks ?? []).flatMap((question: Written) => {
@@ -331,9 +342,19 @@ export class Questions extends Changes {
     return { app, place, task: key, ...(link && { link }), at }
   }
 
+  // A call's record holds its whole transcript, megabytes for a long one, so its title and start are
+  // read again only once the file changes, or after a read that failed; a call no build asks for drops out.
   private call(id: string): Place & { at?: string } {
-    const call = readJson(join(this.calls, `${id}.json`))
-    return { app: 'voice', place: call?.title ?? 'a call', call: id, at: call?.started }
+    const file = join(this.calls, `${id}.json`)
+    const stamp = stampOf(file)
+    const kept = this.callPlaces.get(id) ?? this.lastCallPlaces.get(id)
+    let known = kept?.stamp === stamp ? kept : undefined
+    if (!known) {
+      const call = readJson(file)
+      known = { stamp: call ? stamp : '', title: call?.title, started: call?.started }
+    }
+    this.callPlaces.set(id, known)
+    return { app: 'voice', place: known.title ?? 'a call', call: id, at: known.started }
   }
 
   private saveMarks() {
@@ -414,6 +435,15 @@ export function clip(text: string, max: number) {
 function readMarks(file: string): Marks {
   const marks = readJson(file) ?? {}
   return { answers: marks.answers ?? {}, sent: marks.sent ?? {}, dismissed: marks.dismissed ?? {}, read: marks.read ?? {} }
+}
+
+function stampOf(path: string) {
+  try {
+    const { mtimeMs, size } = statSync(path)
+    return `${mtimeMs}:${size}`
+  } catch {
+    return ''
+  }
 }
 
 function readJson(path: string) {
