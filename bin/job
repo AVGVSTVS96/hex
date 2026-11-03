@@ -49,8 +49,9 @@ if (mode === "--ended") {
   // Like claude -p, the job reads what comes on stdin after its prompt.
   const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
   const input = piped ? ["-p", `StandardInputData=${Buffer.from(piped).toString("base64")}`] : []
-  // A job for another thread still knows the conversation that started it, and passes it on.
-  const from = process.env.HEX_FROM || served()
+  // A job for another thread still knows the conversation that started it, and passes it on; a
+  // thread's own session goes by its thread.
+  const from = (!(process.env.HEX_CHANNEL && process.env.HEX_THREAD) && process.env.HEX_FROM) || served()
   const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`]).concat(from && from !== owner ? ["-E", `HEX_FROM=${from}`] : [])
   await $`systemd-run --user --unit=${mode} --same-dir ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
 }

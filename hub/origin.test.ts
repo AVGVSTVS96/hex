@@ -58,3 +58,9 @@ test("what the owner said on a call counts as their words, and a thread with non
   const told = await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:8' })
   expect(told.additionalContext).toEndWith("/bin/hex log --last 100 -- '-100:8'` prints its newest 100 messages (without --last, all of it).")
 })
+
+test("a thread's own session goes by its thread over job variables it inherited, and a thread hex doesn't have gets nothing", async () => {
+  expect(await hook('SessionStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:8', HEX_OWNER: 'telegram:-100:7', HEX_FROM: 'telegram:-100:7' })).toBe('')
+  expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:8', HEX_FROM: 'telegram:-100:7' })).additionalContext).toContain("in Shop: `")
+  expect(await hook('SubagentStart', { HEX_OWNER: 'telegram:-100:99' })).toBe('')
+})
