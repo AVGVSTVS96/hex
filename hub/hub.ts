@@ -105,6 +105,8 @@ type Run = {
   // A new session whose conversation Claude hasn't saved yet.
   unsaved?: string
   held: (() => void)[]
+  // A call waited for the session now connected to start, so it is as new as the call.
+  awaited?: boolean
   // The starts that failed in a row since the thread's session last connected; retried: another
   // session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean }
@@ -837,8 +839,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   // A session's channel connected over HTTP: its session is the one the hub started, or the one
   // Claude reports running for the thread. One that only reconnects still owes a renew it asked for.
+  // One that reconnects while it's being stopped gets nothing, since what it took would end with it.
   function welcome(thread: string, line: Line) {
     const run = runOf(thread)
+    if (run.ending) return
     const was = run.phase
     const job = was.is === 'launching' ? was.job : undefined
     become(run, { is: 'live', line })
@@ -852,6 +856,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     for (const message of given) line.send({ type: 'inbound', ...message })
     run.handed = new Set(given.flatMap(message => message.meta.key ?? []))
     run.queue.length = 0
+    run.awaited = run.held.length > 0
     rest(thread)
     letGo(thread)
     if (stale(thread)) {
@@ -945,11 +950,23 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
 
   // A thread is on a call from its keep until its renew, which starts the next call in a new session.
+  // That session starts when the last call ends and can wait hours for the next, so a call that finds
+  // it still waiting for its first message starts it over, reading memory and live status as they are
+  // now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for
+  // the new session, and the call is on once that session connects, so a restart that never gets
+  // there doesn't hold up the hub's own. Resolves once the session the call runs in is connected.
   function keep(thread: string) {
     const run = runOf(thread)
     if (run.renew !== 'underway') run.renew = undefined
+    const session = current(thread)
+    if (!run.awaited && session && run.phase.is === 'live' && run.turn === 'done' && !run.handed.size && warmFor(thread) === undefined && !kept(store => store.took(session), true)) {
+      run.renew = 'underway'
+      void stop(thread).then(() => cycle(thread))
+      return renewal(thread).then(() => void onCall.add(run))
+    }
     onCall.add(run)
     letGo(thread)
+    return renewal(thread)
   }
 
   function renewAsked(thread: string) {
