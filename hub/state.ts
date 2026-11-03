@@ -52,15 +52,16 @@ if (key) {
   } catch {}
 }
 
-// A task the heartbeat started wakes the session with its notification, which is the heartbeat's
-// own work: Claude Code's job record says when each task started.
+// A task a run of heartbeats started wakes the session with its notification, which is the
+// heartbeats' own work: Claude Code's job record says when each task started.
 function heartbeats(store: ReturnType<typeof open>, session: string) {
   const task = typeof prompt === 'string' && prompt.startsWith('<task-notification') ? prompt.match(/<task-id>([\w-]+)<\/task-id>/)?.[1] : undefined
-  const last = task && store.beats(session).at(-1)
-  if (!last || last.after) return false
+  const beats = task ? store.beats(session) : []
+  const first = beats.slice(beats.findLastIndex(beat => beat.after) + 1)[0]
+  if (!first) return false
   try {
     const fan: { id: string; startedAt?: number }[] = JSON.parse(readFileSync(join(CLAUDE, 'jobs', session.slice(0, 8), 'state.json'), 'utf8')).fan ?? []
-    return (fan.find(one => one.id === task)?.startedAt ?? 0) >= Date.parse(last.began)
+    return (fan.find(one => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began)
   } catch {
     return false
   }
