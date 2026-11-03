@@ -50,7 +50,7 @@ export function served(env = process.env): string | undefined {
   return env.HEX_OWNER?.includes(':') ? env.HEX_OWNER : undefined
 }
 
-function environ(pid: number): Record<string, string> {
+export function environ(pid: number): Record<string, string> {
   try {
     return Object.fromEntries(readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0').map(entry => [entry.slice(0, entry.indexOf('=')), entry.slice(entry.indexOf('=') + 1)]))
   } catch {

@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
 import { dirname, join } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
-import { running, serving } from './running.ts'
+import { environ, running, served, serving } from './running.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
 import { asked, open, sent, type Row, type Status, type Task } from './store.ts'
@@ -148,25 +148,32 @@ function threadOf(named: string) {
   throw new Error(`no thread named "${named}"`)
 }
 
-// Where a delivery goes: a thread, by its key or id, or the open thread a session holds, by the
-// session's id or the 8 characters of it `hex running` prints. Only a thread's session takes
-// messages, so one to a session no thread holds would never be taken. A thread hex hasn't had yet
-// gets it once it starts.
-function recipient(to: string): string {
+// Where a delivery goes: a thread, by its key or id, or the open thread a session works for, by the
+// session's id or the 8 characters of it `hex running` prints. A session works for the thread that
+// holds it, or the one the hub started it for; only those sessions take messages, so one to any
+// other session would never be taken. A thread that's closed, or that hex hasn't had, takes it once
+// it opens.
+function recipient(given: string): string {
   const threads = store.threads()
-  if (threads.some(({ thread }) => thread === to)) return to
-  if (/^[0-9a-f]{8}(-[0-9a-f-]*)?$/i.test(to)) {
+  const sessionlike = /^(?![0-9]+$)[0-9a-f]{8}(-[0-9a-f-]*)?$/i.test(given)
+  const to = sessionlike ? given.toLowerCase() : given
+  const thread = threads.find(row => row.thread === to)
+  if (thread?.open) return to
+  if (!thread && sessionlike) {
     const held = new Map(threads.filter(({ open, session }) => open && session).map(({ thread, session }) => [session!, thread]))
     const live = running(store)
     const named = (id: string) => (live.get(id)?.name ? `${id} (${live.get(id)!.name})` : id)
-    const matches = [...new Set([...held.keys(), ...live.keys()])].filter(id => id.startsWith(to.toLowerCase())).sort()
-    if (matches.length > 1) throw new Error(`${to} starts more than one session's id: ${matches.map(named).join(', ')}`)
+    const matches = [...new Set([...held.keys(), ...live.keys()])].filter(id => id.startsWith(to)).sort()
+    if (matches.length > 1) throw new Error(`${given} starts more than one session's id: ${matches.map(named).join(', ')}`)
     const [id] = matches
-    if (!id) throw new Error(`no thread or running session is ${to} (hex threads and hex running list them)`)
-    if (held.has(id)) return held.get(id)!
-    throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
+    if (!id) throw new Error(`no thread or running session is ${given} (hex threads and hex running list them)`)
+    const session = live.get(id)
+    const env = session && session.kind !== 'bg' ? environ(session.pid) : {}
+    const startedFor = served({ HEX_CHANNEL: env.HEX_CHANNEL, HEX_THREAD: env.HEX_THREAD })
+    if (held.has(id) || startedFor) return held.get(id) ?? store.key(startedFor!)
+    throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${session?.name ? `: message it with Claude Code's SendMessage to "${session.name}"` : ''}`)
   }
-  console.error(`hex: no thread ${to} yet, so this waits until one starts (hex threads lists them)`)
+  console.error(`hex: ${thread ? `the thread ${to} is closed, so this waits until it opens` : `no thread is ${to}, so only a thread with that very key will take this`} (hex threads lists them)`)
   return to
 }
 
