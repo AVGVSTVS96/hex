@@ -9,8 +9,7 @@ here=$(pwd -P)
 # A session started in the background has nobody to accept Claude Code's trust prompt, so hex trusts the folder it starts in.
 # Claude Code rewrites this file as it runs, holding the lock directory next to it, so hex takes that lock too, and checks the write until it holds; the copy keeps the file's mode.
 config=$(readlink -f "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json")
-bg=
-for arg; do case $arg in --) break ;; --bg) bg=--bg; break ;; esac; done
+bg=${1:-}
 untrusted() { [ "$bg" = --bg ] && ! above && [ -s "$config" ] && ! jq -e --arg here "$here" '.projects[$here].hasTrustDialogAccepted' "$config" >/dev/null 2>&1; }
 for try in 1 2 3 4 5; do
   untrusted || break
@@ -69,5 +68,5 @@ fi
 [ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
 # Anthropic's 5-hour limit charges a run with no terminal, which Claude Code labels sdk-cli, more per token than an interactive one (anthropics/claude-code#97074), and Claude Code reads its label only from the environment, where a labeled parent leaves its own.
-if [ -z "$bg" ] && [ ! -t 1 ]; then export CLAUDE_CODE_ENTRYPOINT=hex; else unset CLAUDE_CODE_ENTRYPOINT; fi
+if [ "$bg" != --bg ] && [ ! -t 1 ]; then export CLAUDE_CODE_ENTRYPOINT=hex; else unset CLAUDE_CODE_ENTRYPOINT; fi
 exec claude --plugin-dir "$hex/plugin" "$@"

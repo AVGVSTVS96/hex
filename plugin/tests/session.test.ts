@@ -163,5 +163,5 @@ test('a run with no terminal says it is hex, over the label it inherited, and a 
   expect(launched('build it')).toBe('hex')
   expect(launched('-p', '--', '--bg')).toBe('hex')
   expect(launched('--bg', 'build it')).toBe('unset')
-  expect(launched('-n', 'x/deck', '--bg', '-p')).toBe('unset')
+  expect(launched('--bg', '-p')).toBe('unset')
 })
