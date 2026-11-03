@@ -95,7 +95,7 @@ function start(options: { call?: (thread: string, tool: string, args: Record<str
     call: options.call ?? (async (thread, tool) => `${tool} in ${thread}`),
     state: (thread, busy) => void seen.push([thread, busy]),
     failed: (thread, reason) => void failedSeen.push([thread, reason]),
-    held: (thread, { content }, waits) => void marked.push([thread, content, waits]),
+    waits: (thread, { content }, still) => void marked.push([thread, content, still]),
     permission: (thread, request) => void asked.push([thread, request]),
     hexDir: join(dir, 'hex'),
     limits: Object.fromEntries(Object.entries({ idleStop, cacheWarm, compactAbove, reconnect, connect, capacity }).filter(([, value]) => value !== undefined)),

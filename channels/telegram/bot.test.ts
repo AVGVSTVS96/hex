@@ -339,6 +339,11 @@ test('a message no session has read shows it waits, until a session takes it', a
   await until(() => notes.received.find(line => line.meta?.message_id === String(waiting.message_id)))
   expect(await called('setMessageReaction', p => p.message_id === waiting.message_id && !p.reaction.length)).toBeTruthy()
   notes.close()
+  const marks = () => calls.filter(c => c.method === 'setMessageReaction' && c.payload.message_id === waiting.message_id).length
+  const before = marks()
+  await update({ edited_message: { ...waiting, text: 'anyone there at all?', edit_date: 1760000100 } })
+  await until(() => calls.some(c => c.method === 'sendChatAction' && c.payload.message_thread_id === 6))
+  expect(marks()).toBe(before)
 })
 
 test('a DM is its own thread: it reaches the DM session, not the group, and replies go back to the DM', async () => {

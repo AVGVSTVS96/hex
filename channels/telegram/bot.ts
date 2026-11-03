@@ -408,7 +408,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       return sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
     }
     case 'react': {
-      await bot.api.setMessageReaction(chat_id, Number(args.message_id), args.remove ? [] : [
+      await react(chat_id, Number(args.message_id), args.remove ? [] : [
         { type: 'emoji', emoji: args.emoji as ReactionTypeEmoji['emoji'] },
       ])
       return args.remove ? 'reaction removed' : 'reacted'
@@ -650,13 +650,32 @@ async function reopenQuestion(thread: string, message: number, via: string) {
   if (reopened) await draw(thread, message)
 }
 
-// Telegram shows a message read once the bot has it, so one that waits for its thread's session to
-// start says so until a session takes it.
+// Telegram shows a message read once the bot has it, so one that waits for its thread's session
+// says so until a session takes it. An edit waits under the message it changed, whose reaction a
+// session may have set already.
 const ASLEEP: ReactionTypeEmoji = { type: 'emoji', emoji: '😴' }
+
+function waiting(message: Message, still: boolean): void {
+  const { chat_id, message_id, edited } = message.meta
+  if (!chat_id || !message_id || edited) return
+  void react(chat_id, Number(message_id), still ? [ASLEEP] : acked()).catch(() => react(chat_id, Number(message_id), [])).catch(() => {})
+}
 
 function acked(): ReactionTypeEmoji[] {
   const { ackReaction } = loadAccess()
   return ackReaction ? [{ type: 'emoji', emoji: ackReaction as ReactionTypeEmoji['emoji'] }] : []
+}
+
+// Telegram may apply two reactions sent at once in either order, so each message's go one at a time.
+const reacting = new Map<string, Promise<unknown>>()
+
+function react(chat_id: string, message_id: number, reaction: ReactionTypeEmoji[]): Promise<unknown> {
+  const key = `${chat_id}:${message_id}`
+  const done = (reacting.get(key) ?? Promise.resolve()).catch(() => {}).then(() => bot.api.setMessageReaction(chat_id, message_id, reaction))
+  reacting.set(key, done)
+  const settled = () => void (reacting.get(key) === done && reacting.delete(key))
+  done.then(settled, settled)
+  return done
 }
 
 // The bot's name once it polls, which a DM's link opens.
@@ -686,9 +705,7 @@ const hub = startHub({
     const { chat_id, extra } = target(thread)
     void bot.api.sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra).catch(() => {})
   },
-  held: (_, { meta }, waits) => {
-    if (meta.chat_id && meta.message_id) void bot.api.setMessageReaction(meta.chat_id, Number(meta.message_id), waits ? [ASLEEP] : acked()).catch(() => {})
-  },
+  waits: (_, message, still) => waiting(message, still),
 })
 
 clients.set('telegram', { hub, place, backfill })
@@ -1062,13 +1079,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   // Telegram only accepts a fixed emoji whitelist — if the user configures
   // something outside that set the API rejects it and we swallow.
-  if (access.ackReaction && msgId != null) {
-    void bot.api
-      .setMessageReaction(chat_id, msgId, [
-        { type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] },
-      ])
-      .catch(() => {})
-  }
+  if (access.ackReaction && msgId != null) void react(chat_id, msgId, acked()).catch(() => {})
 
   const imagePaths = (await Promise.all(parts.map(part => part.downloadImage?.()))).filter(Boolean) as string[]
   const attachments = parts.flatMap(part => part.attachment ?? [])
