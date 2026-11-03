@@ -10,7 +10,7 @@ export type Agent = { sessionId: string; id?: string; pid: number; status?: stri
 // The context a session's last request sent and when; short: it wrote the five-minute cache.
 export type Usage = { sent: number; at?: number; short?: boolean }
 
-const home = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+const home = () => process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 const short = (session: string) => session.slice(0, 8)
 
 // What a Claude process the hub starts never inherits from it: the bots' tokens, hex's own settings, and the

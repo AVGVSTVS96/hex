@@ -2,7 +2,7 @@ import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
-import { settingsOf } from './claude.ts'
+import { record, settingsOf } from './claude.ts'
 import { running, serving } from './running.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
@@ -64,7 +64,7 @@ if (args.length > takes) {
 // hex watch never opens hex.db, so a restore can replace it underneath.
 if (command === 'watch') await follow(join(state, 'hex.bell'))
 const store = open(state)
-for (const flag of ['owner', 'thread', 'to'] as const) flags[flag] &&= store.key(flags[flag])
+for (const flag of ['owner', 'thread'] as const) flags[flag] &&= store.key(flags[flag])
 
 function usage(): never {
   console.error(USAGE)
@@ -178,8 +178,8 @@ function workingFor(given: string) {
   if (matches.length > 1) throw new Error(`${given} starts more than one session's id: ${matches.map(named).join(', ')}`)
   const [id] = matches
   if (!id) throw new Error(`no thread or running session is ${given} (hex threads and hex running list them)`)
-  const job = live.get(id)?.job
-  const bound = job ? settingsOf({ sessionId: id, id: job, pid: 0 })?.env : undefined
+  const job = live.has(id) ? (live.get(id)!.job ?? id.slice(0, 8)) : undefined
+  const bound = job && record(job).sessionId === id ? settingsOf({ sessionId: id, id: job, pid: 0 })?.env : undefined
   const thread = held.get(id) ?? (bound?.HEX_STORE && real(bound.HEX_STORE) === real(state!) ? threads.find(({ thread }) => thread === bound.HEX_THREAD) : undefined)
   if (thread) return thread
   throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
