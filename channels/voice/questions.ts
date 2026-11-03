@@ -7,7 +7,7 @@ import { open as store, type Thread } from '../../hub/store.ts'
 import { generalOf, nameOf } from './activity.ts'
 import type { Sent } from './call.ts'
 import { Changes } from './changes.ts'
-import { before, Check } from './check.ts'
+import { before, Check, opens } from './check.ts'
 import { linkAt, Links } from './links.ts'
 import { relay } from './relay.ts'
 import { T3, type Fresh, type Stuck } from './t3.ts'
@@ -247,6 +247,7 @@ export class Questions extends Changes {
       this.saveMarks()
       if (failed.length) throw new Error(`part of it couldn't be taken back; undo again to finish (${failed[0] instanceof Error ? failed[0].message : failed[0]})`)
       if (!did) throw new Error('nothing was left to take back: its copies were answered or closed in their own apps since')
+      if (!refs.length) this.check('you took back an answer')
     } finally {
       this.taking.delete(id)
     }
@@ -442,7 +443,7 @@ export class Questions extends Changes {
 
   private dress({ refs, from, options, links = [], places: _names, ...question }: Written): Question {
     const [app, ...thread] = question.task.split(':')
-    const pages = [...links, ...options.flatMap(({ label, url }) => (url ? [{ label, url }] : []))]
+    const pages = [...links, ...options.flatMap(({ label, url }) => (url ? [{ label, url }] : []))].filter(page => opens(page.url))
     return {
       ...question,
       app: app!,
@@ -503,10 +504,12 @@ export class Questions extends Changes {
     return { app: 'voice', place: known.title ?? 'a call', call: id, at: known.started }
   }
 
+  // Marks are kept 14 days, but answers for good: an ask a pinned post still mentions would come
+  // back without one.
   private saveMarks() {
     const since = new Date(Date.now() - KEEP).toISOString()
-    for (const book of Object.values(this.marks) as Record<string, string | Answer>[])
-      for (const [id, at] of Object.entries(book)) if ((typeof at === 'string' ? at : at.at) < since) delete book[id]
+    for (const book of [this.marks.sent, this.marks.dismissed, this.marks.read])
+      for (const [id, at] of Object.entries(book)) if (at < since) delete book[id]
     const file = join(this.state, 'voice', 'marks.json')
     writeFileSync(`${file}.tmp`, JSON.stringify(this.marks, null, 1) + '\n')
     renameSync(`${file}.tmp`, file)

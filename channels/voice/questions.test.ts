@@ -5,7 +5,7 @@ import { createServer, type Server } from 'net'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Questions, fromLedger } from './questions.ts'
-import { before, vet } from './check.ts'
+import { before, digest, vet } from './check.ts'
 import { T3 } from './t3.ts'
 import { until } from '../../hub/until.ts'
 import type { Pin, Question } from '../../hub/ledger.ts'
@@ -206,6 +206,7 @@ test('the check’s version of a question stands in for every place that asked i
   await until(() => !questions.find('check:read'))
   await questions.undo('check:read', 'app')
   await until(() => questions.find('check:read'))
+  expect(checks).toContain('you took back an answer')
 })
 
 test('an answer that lands in the ledger takes the question off the list, and undo asks for its buttons back', async () => {
@@ -635,4 +636,53 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   store.pinned({ app: 'telegram', thread: DESK, ...pin, note: 'Site: example.org' })
   await until(() => checks.length)
   expect(checks).toEqual(['a pinned post changed'])
+})
+
+test("a check.json's links reach the app only when they open a page or an app, its old url options included", () => {
+  writeFileSync(
+    join(state, 'voice', 'check.json'),
+    JSON.stringify({
+      at: '2026-10-13T15:00:00.000Z', why: 'a call ended', read: {}, fixed: [], flagged: [], stuck: [],
+      asks: [{ id: 'check:read', kind: 'look', task: `telegram:${DESK}`, at: '', question: 'Read it', options: [{ label: 'Seen' }, { label: 'Notes', url: 'file:///home/a/notes.md' }, { label: 'PR', url: 'https://github.com/a/b/pull/2' }], links: [{ label: 'Report', url: '/home/a/report.md' }] }],
+    }),
+  )
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.find('check:read')).toMatchObject({ options: [{ label: 'Seen' }], links: [{ label: 'PR', url: 'https://github.com/a/b/pull/2' }] })
+})
+
+
+test("an answered ask the check lists again without buttons is flagged, not listed", () => {
+  const ask = { id: 'check:sign-in', kind: 'do' as const, task: `telegram:${DESK}`, at: '', question: 'Sign in', options: [{ label: 'Done' }], from: [] }
+  const verdict = vet({ asks: [ask, { ...ask, id: 'check:other' }], settle: [], fixed: [], flagged: [], stuck: [] }, {}, { threads: {}, calls: [], answered: { 'check:sign-in': { label: 'Done', at: '2026-10-13T12:00:00.000Z', via: 'app' } } })
+  expect(verdict.asks.map(question => question.id)).toEqual(['check:other'])
+  expect(verdict.flagged).toEqual([{ title: 'Sign in', text: 'You answered this "Done" on 2026-10-13, and the check found it asked again.' }])
+})
+
+
+test("the check's fingerprint takes in the answers it reads, and stays the same for the same records", () => {
+  const records = (answered: object) => ({ open: [], closed: [], answered, pins: [], calls: [], t3: { stuck: [], fresh: [] } }) as unknown as Parameters<typeof digest>[0]
+  const seen = { label: 'Seen', at: '2026-10-13T00:00:00.000Z', via: 'app' }
+  expect(digest(records({ 'check:read': seen }))).toBe(digest(records({ 'check:read': { ...seen } })))
+  expect(digest(records({ 'check:read': seen }))).not.toBe(digest(records({})))
+})
+
+
+test("a check's links keep only what opens a page or an app on the phone", () => {
+  const urls = ['https://github.com/a/b/pull/2', 'http://100.1.2.3:4800/page', 'tg://resolve?domain=hexbot', 't3code://threads/env/1', 'buzz://channel/x', 'discord://-/channels/1', 'file:///home/a/report.md', 'javascript:alert(1)', '/home/a/report.md']
+  const verdict = vet(
+    { asks: [{ id: 'read', kind: 'look', task: `telegram:${DESK}`, at: '', question: 'Read it', options: [{ label: 'Seen' }], links: urls.map(url => ({ label: 'Page', url })), from: [] }], settle: [], fixed: [], flagged: [], stuck: [] },
+    {},
+    { threads: {}, calls: [] },
+  )
+  expect(verdict.asks[0]!.links!.map(link => link.url)).toEqual(urls.slice(0, 5))
+})
+
+
+test('answers are kept for good, other marks for 14 days', () => {
+  const old = new Date(Date.now() - 20 * 24 * 60 * 60_000).toISOString()
+  writeFileSync(join(state, 'voice', 'marks.json'), JSON.stringify({ answers: { 'check:read': { label: 'Seen', at: old, via: 'app' } }, read: { 't3-done-0': old } }))
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  questions.read('t3-done-1')
+  const marks = JSON.parse(readFileSync(join(state, 'voice', 'marks.json'), 'utf8'))
+  expect([Object.keys(marks.answers), Object.keys(marks.read)]).toEqual([['check:read'], ['t3-done-1']])
 })
