@@ -595,5 +595,7 @@ test("a closed thread whose session moved to another app's thread shows none of 
   expect(board.find('discord:topic')).toMatchObject({ name: 'Snailmail', state: 'idle', running: false, line: '', agents: [] })
   expect(board.find('discord:topic')).not.toContainKey('needs')
   threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' } })
+  await until(() => !board.get('buzz:there'))
+  expect(board.find('buzz:there')).toMatchObject({ closed: true, line: 'needs a pick' })
   rmSync(join(claude, 'sessions', 'acacacac.json'))
 })

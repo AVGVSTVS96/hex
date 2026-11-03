@@ -127,21 +127,21 @@ export class Board extends Changes {
 
   // Any thread hex.db knows, as a run: the board's while it's on it, else built now, so a thread
   // that left the board or closed still opens from an old ask. What's read for it isn't kept, and a
-  // closed thread whose session another thread took has none of its own left.
+  // closed thread whose session an open thread now holds has none of its own left.
   find(id: string): (Run & { closed?: true }) | undefined {
     const kept = this.get(id)
     if (kept) return kept
     const all = open(this.state).threads().filter(({ app }) => APPS[app])
     const row = all.find(({ app, thread }) => `${app}:${thread}` === id)
     if (!row) return
-    const taken = !row.open && !!row.session && all.some(one => one !== row && one.session === row.session)
+    const taken = !row.open && !!row.session && all.some(one => one.open && one.session === row.session)
     const thread = threadOf(row)
     const lane = this.tracks[id]
     const run = this.run(taken ? { ...thread, session: undefined } : thread)
     if (lane) this.tracks[id] = lane
     else delete this.tracks[id]
     if (thread.session && !this.wanted().has(short(thread.session))) this.jobs.delete(short(thread.session))
-    if (run.state !== 'working') this.keep(run)
+    if (run.state !== 'working' && !taken) this.keep(run)
     return row.open ? run : { ...run, closed: true }
   }
 
