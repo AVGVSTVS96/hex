@@ -10,7 +10,10 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'origin-'))
   mkdirSync(join(dir, 'telegram'))
   const store = open(dir)
-  store.keepThreads('telegram', { '-100:7': { name: 'Website' } })
+  store.keepThreads('telegram', { '-100:7': { name: 'Website' }, '-100:8': { name: 'Shop' } })
+  store.keepThreads('voice', { voice: { name: 'voice' } })
+  store.deliver({ key: 'voice:c1:1', to: 'voice', from: 'voice', body: '[1.2s] you: Check the build.\n[2.0s] voice: On it.', author: 'call' })
+  store.take('voice:c1:1', 'v')
   store.deliver({ key: 'telegram:-100:50', to: '-100:7', from: 'telegram', body: 'Fix the login page.', author: 'owner', meta: { user: 'bassim' } })
   store.take('telegram:-100:50', 's')
   store.deliver({ key: 'telegram:-100:51', to: '-100:7', from: 'telegram', body: 'On it.', author: 'hex' })
@@ -42,4 +45,16 @@ test("a job's session is told where its work came from, and the thread's own ses
   expect(job.additionalContext).toContain('/bin/hex message telegram:-100:50`')
   expect(await hook('SessionStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).toBe('')
   expect(await hook('SubagentStart', {})).toBe('')
+})
+
+test("a job started for another thread is told the conversation that started it", async () => {
+  const job = await hook('SessionStart', { HEX_OWNER: 'telegram:-100:8', HEX_FROM: 'telegram:-100:7' })
+  expect(job.additionalContext).toContain("in Website: `")
+  expect(job.additionalContext).toContain('/bin/hex message telegram:-100:50`')
+})
+
+test("what the owner said on a call counts as their words, and a thread with none still gets its conversation", async () => {
+  expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:voice@hex', HEX_THREAD: 'voice' })).additionalContext).toContain('/bin/hex message voice:c1:1`')
+  const told = await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:8' })
+  expect(told.additionalContext).toEndWith("/bin/hex log -- '-100:8'` prints all of it.")
 })

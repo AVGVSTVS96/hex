@@ -1,25 +1,26 @@
 import { join } from 'path'
 import { served } from './running.ts'
-import { open, stateDir, type Store } from './store.ts'
+import { open, spoken, stateDir, type Store } from './store.ts'
 
-// Where work handed to another agent came from: the owner's conversation, and their newest message in
-// it that the session has taken (a reaction says no words), both by the commands that print them word
-// for word. Every handoff carries it, whatever the brief says, so the agent can read the owner's own
-// words instead of only a retelling of them.
+// Where work handed to another agent came from: the owner's conversation, and their newest words in
+// it that the session has taken (a reaction or a deletion says none), both by the commands that print
+// them word for word. Every handoff carries it, whatever the brief says, so the agent can read the
+// owner's own words instead of only a retelling of them.
 export function origin(store: Store, owner: string | undefined, hex = join(import.meta.dir, '..')): string | undefined {
   if (!owner) return
   const thread = store.key(owner)
-  const said = store.said(thread).filter(row => row.author === 'owner' && row.taken && !row.meta?.reaction).at(-1)
-  if (!said) return
+  const said = store.said(thread).filter(row => row.taken && spoken(row) && !row.meta?.reaction && !row.meta?.deleted).at(-1)
   const name = store.names()[thread]
-  return `This work comes from my conversation${name ? ` in ${name}` : ''}: \`${hex}/bin/hex log -- '${thread}'\` prints all of it, and \`${hex}/bin/hex message ${said.key}\` my newest message there, word for word.`
+  const log = `\`${hex}/bin/hex log -- '${thread}'\` prints all of it`
+  return `This work comes from my conversation${name ? ` in ${name}` : ''}: ${said ? `${log}, and \`${hex}/bin/hex message ${said.key}\` my newest message there, word for word.` : `${log}.`}`
 }
 
-// A subagent gets it as it starts, and so does a job's session (hex's own threads are the conversation).
+// A subagent gets it as it starts, and so does a job's session (hex's own threads are the conversation),
+// from the conversation that started the job when that isn't the thread it reports to.
 if (import.meta.main) {
   try {
     const { hook_event_name: event } = JSON.parse((await Bun.stdin.text()) || '{}')
-    const owner = served()
+    const owner = process.env.HEX_FROM || served()
     const line = owner && (event === 'SubagentStart' || process.env.HEX_OWNER) && origin(open(stateDir()), owner)
     if (line) console.log(JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: line } }))
   } catch (error) {
