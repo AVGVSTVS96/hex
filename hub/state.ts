@@ -1,4 +1,7 @@
+import { readFileSync } from 'fs'
 import { connect } from 'net'
+import { join } from 'path'
+import { CLAUDE } from './running.ts'
 import { open, stateDir } from './store.ts'
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env
@@ -34,7 +37,14 @@ if (key) {
   try {
     const store = open(stateDir())
     const heartbeat = store.message(key)?.meta?.schedule === 'heartbeat'
-    if (store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat), (recorded = true)))) untold = undefined
+    let took: boolean
+    try {
+      took = store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat), (recorded = true)))
+    } catch (error) {
+      console.error(`hex couldn't record this turn: ${error}`)
+      took = store.take(key, session_id)
+    }
+    if (took) untold = undefined
     else if (store.message(key)) {
       console.error(`hex gave this session ${key} already`)
       process.exit(2)
@@ -42,10 +52,25 @@ if (key) {
   } catch {}
 }
 
+// A task the heartbeat started wakes the session with its notification, which is the heartbeat's
+// own work: Claude Code's job record says when each task started.
+function heartbeats(store: ReturnType<typeof open>, session: string) {
+  const task = typeof prompt === 'string' && prompt.startsWith('<task-notification') ? prompt.match(/<task-id>([\w-]+)<\/task-id>/)?.[1] : undefined
+  const last = task && store.beats(session).at(-1)
+  if (!last || last.after) return false
+  try {
+    const fan: { id: string; startedAt?: number }[] = JSON.parse(readFileSync(join(CLAUDE, 'jobs', session.slice(0, 8), 'state.json'), 'utf8')).fan ?? []
+    return (fan.find(one => one.id === task)?.startedAt ?? 0) >= Date.parse(last.began)
+  } catch {
+    return false
+  }
+}
+
 // The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
 if (session_id && !recorded) {
   try {
-    open(stateDir()).turned(session_id, busy, at)
+    const store = open(stateDir())
+    store.turned(session_id, busy, at, busy && heartbeats(store, session_id))
   } catch (error) {
     console.error(`hex couldn't record this turn: ${error}`)
   }

@@ -2248,6 +2248,31 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
   expect(store.beats(SESSION)).toHaveLength(2)
 })
 
+test("a task the heartbeat started reports back inside the heartbeat, and one started before it ends the run", async () => {
+  const store = open(dir)
+  const claude = mkdtempSync(join(tmpdir(), 'hex-claude-'))
+  const jobs = join(claude, 'jobs', SESSION.slice(0, 8))
+  mkdirSync(jobs, { recursive: true })
+  const hook = async (prompt: string) => {
+    const run = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir, CLAUDE_CONFIG_DIR: claude }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]) })
+    expect(await run.exited).toBe(0)
+  }
+  const told = (task: string) => hook(`<task-notification>\n<task-id>${task}</task-id>\n<status>completed</status>\n</task-notification>`)
+  store.deliver({ key: 'schedule:heartbeat@2026-11-03T12:45Z', to: 'chat:7', from: 'schedule', author: 'prompt', body: '[heartbeat] Hourly check', meta: { user: 'schedule', schedule: 'heartbeat' } })
+  await hook('<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-11-03T12:45Z">\n[heartbeat] Hourly check\n</channel>')
+  const [beat] = store.beats(SESSION)
+  writeFileSync(join(jobs, 'state.json'), JSON.stringify({ fan: [{ id: 'early', kind: 'agent', startedAt: Date.parse(beat!.began) - 60_000 }, { id: 'own', kind: 'shell', startedAt: Date.parse(beat!.began) + 1000 }] }))
+  store.turned(SESSION, false)
+  await Bun.sleep(5)
+  await told('own')
+  expect(store.beats(SESSION).map(one => one.after)).toEqual([undefined, undefined])
+  store.turned(SESSION, false)
+  await Bun.sleep(5)
+  await told('early')
+  expect(store.beats(SESSION).every(one => one.after)).toBe(true)
+  rmSync(claude, { recursive: true })
+})
+
 test('a session started before hex kept messages has the hub take them for it', async () => {
   start()
   open(dir).deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
