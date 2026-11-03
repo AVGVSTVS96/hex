@@ -1059,9 +1059,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       // the press: a turn begun since then is left running.
       kept(store => store.turned(session, false, pressed), undefined)
       setState(thread, false, true)
-      if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') {
+      const after = await claude.listing(session)
+      if (after?.state !== 'working' && run.turn === 'background') {
         setState(thread, false)
-        serve.rested(thread)
+        if (after && current(thread) === session) serve.rested(thread)
       }
       return
     }

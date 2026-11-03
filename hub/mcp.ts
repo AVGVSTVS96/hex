@@ -32,7 +32,7 @@ const GAVE_UP = 120_000
 const KEEP = 15 * 60_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-type Run = { answer: Promise<Result>; at: number; done?: true; missed?: true }
+type Run = { answer: Promise<Result>; at: number; done?: true; missed?: true; slow?: true }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -79,7 +79,9 @@ export function endpoint(name: string, channel: string, token: string, server: C
       void run.answer.then(() => Object.assign(run, { done: true, at: clock.now() }))
     }
     return run.answer.then(answer => {
-      if ((repeat || !run.missed) && !gone.aborted && clock.now() - arrived < GAVE_UP && runs.get(key) === run) runs.delete(key)
+      if (gone.aborted) run.missed = true
+      else if (clock.now() - arrived >= GAVE_UP) run.slow = true
+      else if ((repeat || !run.missed) && runs.get(key) === run) runs.delete(key)
       if (!repeat) return answer
       return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
     })
@@ -187,16 +189,20 @@ export function endpoint(name: string, channel: string, token: string, server: C
       listed(session)
       return result(id, { tools: server.tools })
     }
-    if (method === 'tools/call') return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, arrived))
+    if (method === 'tools/call') {
+      // Bun sees that a client left while its request waited only a timer tick into the handler.
+      await new Promise(resolve => setTimeout(resolve, 0))
+      return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, arrived))
+    }
     if (method === 'ping') return result(id, {})
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
   }
 
-  // The thread's turn ended with nothing left working: its session moved on from every call that
-  // answered. One still running stays, since anything that joins it never heard back from it.
+  // The thread's turn ended with nothing left working, so a call kept only for being slow was heard.
+  // One the session is known to have missed stays: its next turn may well make it again.
   function rested(thread: string) {
     const runs = unheard.get(thread)
-    for (const [key, run] of runs ?? []) if (run.done) runs!.delete(key)
+    for (const [key, run] of runs ?? []) if (run.done && !run.missed) runs!.delete(key)
   }
 
   return Object.assign(handle, { rested })
