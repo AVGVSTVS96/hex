@@ -178,6 +178,7 @@ async function task(id: string, state: Task['state'], text: string, call = live?
 async function pass(name: string, about: string, text: string, app?: string, where?: string, call = live?.id ?? ended) {
   const known = app ? undefined : findThread(HEX_STATE, name)
   if (!app && !known) throw new Error(`no hex thread is named ${name}; pass app to open one`)
+  if (call && live?.id !== call) past(call)
   const id = call && fresh(call, about)
   const meta = { user: 'hex voice', ...(id && { voice_task: `${call}:${id}` }) }
   let thread = known
@@ -583,12 +584,16 @@ function closeOut(record: CallRecord) {
   if (!live) toHub(hub.renew)
 }
 
-// Tasks the call sent out can end while the connection comes back, so the record is read again then.
+// Tasks the call sent out can end while the connection comes back, so the record is read again then;
+// a call deleted or replaced by a new one meanwhile is let go.
 function reattach({ id }: CallRecord) {
   const socket = sideband(id)
   socket.onopen = () => {
     const record = calls.get(id)
-    if (!record) return socket.close()
+    if (!record || live) {
+      socket.send(JSON.stringify({ type: 'session.close', event_id: `close_hex_${++seq}` }))
+      return socket.close()
+    }
     const { turns, tasks, moments, ...rest } = record
     const so = turns.slice(-40).map(({ who, at, text }) => ({ who, text, start: at }))
     trace(`picked ${record.id} back up after a restart`)
