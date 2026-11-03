@@ -2,19 +2,24 @@
 # hex's vault is enclave (github.com/AVGVSTVS96/enclave). This adds typing on hex's computer.
 set -eu
 home=$(cd "$(dirname "$0")/../.." && pwd)
-. "$(dirname "$0")/settings"
+if [ "${1:-}" = run ]; then
+  # What `vault run` starts keeps its caller's environment and gets the vault's secrets, but none of .env's:
+  # of hex's settings, it gets only the ones enclave reads.
+  settings=$(. "$(dirname "$0")/settings" && [ -z "$settings_unread" ] &&
+    { export -p | grep -E '^export (HEX_NAME|ENCLAVE_HOME|ENCLAVE_RELAY|ENCLAVE_PASS_CLI)=' || :; }) ||
+    { echo "hex couldn't read its settings" >&2; exit 1; }
+  eval "$settings"
+else
+  . "$(dirname "$0")/settings"
+fi
 export ENCLAVE_FROM="${HEX_NAME:-hex}"
 
 pick() {
-  # .env is shell, so only sourcing it alone shows every name it sets. enclave, and what `vault run` starts, get
-  # none of them but enclave's own settings.
-  unset=$([ ! -f "$home/.env" ] || env -i /bin/sh -c 'set -a; . "$1"; env' sh "$home/.env" |
-    sed -n 's/^\([A-Za-z_][A-Za-z0-9_]*\)=.*/\1/p' | grep -vx -e ENCLAVE_HOME -e ENCLAVE_RELAY -e ENCLAVE_PASS_CLI -e PATH -e HOME -e PWD -e OLDPWD -e SHLVL -e _ | sed 's/^/-u /' || :)
-  enclave="env $unset bunx enclave-link@^0.2.12"
+  enclave="bunx enclave-link@^0.2.12"
   installed=$(command -v enclave) || return 0
   version=$(enclave --version 2>/dev/null) || version=
   case $version in
-  0.2.1[2-9] | 0.2.[2-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave="env $unset enclave" ;;
+  0.2.1[2-9] | 0.2.[2-9][0-9] | 0.2.[1-9][0-9][0-9]) enclave=enclave ;;
   *) echo "hex needs enclave-link 0.2.12 or a later 0.2, and \`$installed --version\` says '${version:-nothing (run it to see why)}': npm install -g enclave-link@^0.2.12 (or bun add -g enclave-link@^0.2.12)" >&2; exit 1 ;;
   esac
 }

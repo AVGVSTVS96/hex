@@ -31,8 +31,8 @@ function vault(args: string[], caller: Record<string, string> = {}) {
   return run.stdout.toString()
 }
 
-test('vault run hands the command enclave\'s settings and none of .env, even when its caller has them', () => {
-  const env = vault(['run', 'GitHub', '--', 'env'], { TRANSCRIBE_URL: 'http://transcribe', TELEGRAM_BOT_TOKEN: 'bot-secret', SPEECH_KEY: 'speech-secret', LANG: 'C.UTF-8' })
+test('vault run hands the command its caller\'s environment and enclave\'s settings, and none of .env', () => {
+  const env = vault(['run', 'GitHub', '--', 'env'], { LANG: 'C.UTF-8' })
   expect(env).toContain('ENCLAVE_FROM=herald\n')
   expect(env).toContain('ENCLAVE_HOME=/vault-home\n')
   expect(env).not.toContain('bot-secret')
@@ -46,12 +46,19 @@ test('vault run works without a .env', () => {
   expect(vault(['run', 'GitHub', '--', 'env'])).toContain('ENCLAVE_FROM=herald\n')
 })
 
-test('bunx, when enclave isn\'t installed, gets none of .env either', () => {
+test('vault run through bunx gets none of .env either', () => {
   rmSync(join(home, 'fake/enclave'))
   fake('bunx', 'env')
-  const env = vault(['list'], { PATH: `${join(home, 'fake')}:/usr/bin:/bin`, TELEGRAM_BOT_TOKEN: 'bot-secret' })
+  const env = vault(['run', 'GitHub', '--', 'env'], { PATH: `${join(home, 'fake')}:/usr/bin:/bin` })
   expect(env).toContain('ENCLAVE_HOME=/vault-home\n')
   expect(env).not.toContain('bot-secret')
+})
+
+test('vault run stops when the settings can\'t be read', () => {
+  writeFileSync(join(home, '.claude/settings.json'), '')
+  const run = Bun.spawnSync([join(home, '.hex/bin/vault'), 'run', 'GitHub', '--', 'env'], { env: { ...process.env, PATH: `${join(home, 'fake')}:${process.env.PATH}` } })
+  expect(run.exitCode).toBe(1)
+  expect(run.stderr.toString()).toBe("hex couldn't read its settings\n")
 })
 
 test('vault fill still finds the computer in the settings', () => {
