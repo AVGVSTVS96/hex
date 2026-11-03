@@ -9,7 +9,11 @@ if installed=$(command -v enclave) && real=$(readlink -f "$installed"); then
   version=$(jq -r 'select(.name == "enclave-link").version' "${real%/*}/../package.json" 2>/dev/null) || version=
   case $version in
   "" | *[!0-9.]* | .* | *. | *..*) ;;
-  *) [ "$(printf '0.2.7\n%s\n' "$version" | sort -V | head -n 1)" = 0.2.7 ] && enclave=enclave ;;
+  *)
+    [ "$(printf '0.2.7\n%s\n' "$version" | sort -V | head -n 1)" = 0.2.7 ] ||
+      { echo "enclave $version is too old for hex: npm install -g enclave-link@^0.2.7" >&2; exit 1; }
+    enclave=enclave
+    ;;
   esac
 fi
 
