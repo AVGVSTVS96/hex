@@ -70,6 +70,8 @@ const KEEP = 14 * 24 * 60 * 60_000
 const CALLS = join(homedir(), '.claude', 'channels', 'voice', 'calls')
 const WHERE: Record<string, string> = { app: 'in the app', call: 'on a call' }
 const PICK = /\s*[(\[]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/i
+// A call's title and start as its record last read, under that record's stamp.
+type CallPlace = { stamp: string; title?: string; started?: string }
 
 // Everything waiting on the owner, in one list: each question a hex thread asked with buttons or a
 // poll and nobody has answered (from each app's ledger), as hex's check last rewrote them; what's
@@ -91,7 +93,8 @@ export class Questions extends Changes {
   private t3: T3
   private check: (why: string) => void
   private seen?: { pins: string; t3: string }
-  private called = new Map<string, { stamp: string; title?: string; started?: string }>()
+  private callPlaces = new Map<string, CallPlace>()
+  private lastCallPlaces = new Map<string, CallPlace>()
 
   constructor(
     private state: string,
@@ -245,7 +248,11 @@ export class Questions extends Changes {
     for (const pin of store(this.state).pins()) if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin)
     const check = join(this.state, 'voice', 'check.json')
     const stamp = stampOf(check)
-    if (stamp !== this.checkStamp) [this.result, this.checkStamp] = [readJson(check), stamp]
+    if (stamp !== this.checkStamp) {
+      this.result = readJson(check)
+      this.checkStamp = this.result || !stamp ? stamp : undefined
+    }
+    ;[this.lastCallPlaces, this.callPlaces] = [this.callPlaces, new Map()]
     this.notice()
     const used = new Set<string>()
     const curated = (this.result?.asks ?? []).flatMap((question: Written) => {
@@ -336,15 +343,17 @@ export class Questions extends Changes {
   }
 
   // A call's record holds its whole transcript, megabytes for a long one, so its title and start are
-  // read again only once the file changes.
+  // read again only once the file changes, or after a read that failed; a call no build asks for drops out.
   private call(id: string): Place & { at?: string } {
     const file = join(this.calls, `${id}.json`)
     const stamp = stampOf(file)
-    let known = this.called.get(id)
-    if (known?.stamp !== stamp) {
+    const kept = this.callPlaces.get(id) ?? this.lastCallPlaces.get(id)
+    let known = kept?.stamp === stamp ? kept : undefined
+    if (!known) {
       const call = readJson(file)
-      this.called.set(id, (known = { stamp, title: call?.title, started: call?.started }))
+      known = { stamp: call ? stamp : '', title: call?.title, started: call?.started }
     }
+    this.callPlaces.set(id, known)
     return { app: 'voice', place: known.title ?? 'a call', call: id, at: known.started }
   }
 
