@@ -39,7 +39,7 @@ if (key) {
     const heartbeat = store.message(key)?.meta?.schedule === 'heartbeat'
     let took: boolean
     try {
-      took = store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat), (recorded = true)))
+      took = recorded = store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat), true))
     } catch (error) {
       console.error(`hex couldn't record this turn: ${error}`)
       took = store.take(key, session_id)

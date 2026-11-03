@@ -450,6 +450,12 @@ test("the hourly heartbeat is no turn of work: from the moment its session is bu
     running(session, 'idle')
     expect(board.counts.version).toBe(counted)
   }
+  running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })
+  await settle()
+  expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', running: false })
+  stopped(session)
+  await settle()
+  expect(board.counts.version).toBe(counted)
   await Bun.sleep(5)
   const take = prompted(session, thread, 'Build the page')
   running(session, 'busy', process.pid, { statusUpdatedAt: Date.now() })

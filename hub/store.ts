@@ -826,7 +826,7 @@ export class Store {
   // A heartbeat (the scheduler's hourly check) that opens a turn, because the last one ended, is
   // that turn until it ends or another prompt joins it; one inside a turn is part of that turn. Each
   // holds when the next prompt that isn't a heartbeat came (after), so a run of them reads as one,
-  // kept until a week after that prompt.
+  // kept a week after that prompt, or after it ended while none came.
   turned(session: string, busy: boolean, at = now(), heartbeat = false) {
     this.write(() => {
       const { began, ended } = this.turn(session)
@@ -834,7 +834,7 @@ export class Store {
       if ((!heartbeat && (busy || !began || at >= began)) || opens) this.db.query('update beats set until = ? where session = ? and until is null and began <= ?').run(at, session, at)
       if (busy && !heartbeat) this.db.query('update beats set after = ? where session = ? and after is null').run(at, session)
       if (opens) this.db.query('insert into beats (session, began) values (?, ?)').run(session, at)
-      this.db.query('delete from beats where after < ?').run(new Date(Date.parse(at) - BEATS).toISOString())
+      this.db.query('delete from beats where coalesce(after, until, began) < ?').run(new Date(Date.parse(at) - BEATS).toISOString())
       if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
       else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
       this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
@@ -844,11 +844,6 @@ export class Store {
   beats(session: string): { began: string; until?: string; after?: string }[] {
     const rows = this.db.query('select began, until, after from beats where session = ? order by began').all(session) as Record<string, string | null>[]
     return rows.map(row => Object.fromEntries(Object.entries(row).filter(([, value]) => value))) as { began: string; until?: string; after?: string }[]
-  }
-
-  // Changes whenever a heartbeat or any turn begins or ends.
-  beaten(): string {
-    return JSON.stringify(this.db.query('select (select max(rowid) from beats), (select count(until) + count(after) from beats), (select max(coalesce(ended, began)) from turns)').values())
   }
 
   turn(session: string): { began?: string; ended?: string } {

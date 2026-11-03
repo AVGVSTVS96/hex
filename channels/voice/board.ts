@@ -113,7 +113,6 @@ export class Board extends Changes {
   private stops: (() => void)[] = []
   private tracks: Record<string, Turn[]>
   private saving?: ReturnType<typeof setTimeout>
-  private beaten = ''
 
   constructor(
     private state: string,
@@ -127,9 +126,7 @@ export class Board extends Changes {
     this.stops.push(
       open(state).watch(() => {
         if (JSON.stringify(this.stored()) !== JSON.stringify(this.threads)) this.mark('threads')
-        const beaten = open(state).beaten()
-        if (beaten !== this.beaten) this.schedule()
-        this.beaten = beaten
+        this.schedule()
       }),
     )
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
@@ -321,7 +318,7 @@ export class Board extends Changes {
     const handed = this.links.delegations(thread.app, thread.id)
     const out = handed.filter(one => !HANDED[one.status])
     const beats = thread.session ? open(this.state).beats(thread.session) : []
-    const beat = this.beat(thread, beats, session, job)
+    const beat = this.beat(thread, beats, session)
     if (beat !== undefined && job?.state !== 'blocked') ({ job, timeline } = before(job, timeline, beat))
     const beating = beat !== undefined && !job?.fan?.some(fan => RUNS.has(fan.kind) && !fan.doneAt && (fan.startedAt ?? 0) < beat)
     const outside = (step: Step) => {
@@ -386,23 +383,25 @@ export class Board extends Changes {
 
   // When the heartbeats began, while the session's latest turns are heartbeats': from the moment
   // Claude Code marks the session busy while a heartbeat waits for it as its only message, until a
-  // prompt that isn't one comes, or Claude Code marks it busy again with no heartbeat waiting and none
-  // of the heartbeats' own tasks just done.
-  private beat(thread: Thread, beats: Beat[], session?: Session, job?: Job) {
+  // prompt that isn't one comes, or Claude Code marks it busy again for a message that isn't one.
+  private beat(thread: Thread, beats: Beat[], session?: Session) {
     const run = beats.slice(beats.findLastIndex(beat => beat.after) + 1)
     const flipped = session ? (session.updated ?? session.started) : 0
     const last = run.at(-1)
-    const own = (job?.fan ?? []).some(fan => (fan.startedAt ?? 0) >= Date.parse(run[0]?.began ?? '') && (fan.doneAt ?? 0) > Date.parse(last?.until ?? ''))
-    const next = !!last?.until && session?.status === 'busy' && flipped > Date.parse(last.until) && !this.awaited(thread) && !own
+    const next = !!last?.until && session?.status === 'busy' && flipped > Date.parse(last.until) && this.untaken(thread).some(row => row.meta?.schedule !== 'heartbeat')
     if (run.length && !next) return Date.parse(run[0]!.began)
     if (!session) return
     const { began } = open(this.state).turn(session.id)
     if (session.status === 'busy' && !(began && Date.parse(began) >= flipped) && this.awaited(thread)) return flipped
   }
 
+  private untaken(thread: Thread) {
+    return open(this.state).untaken(thread.id)
+  }
+
   // A heartbeat is the only message waiting for the thread.
   private awaited(thread: Thread) {
-    const waiting = open(this.state).untaken(thread.id)
+    const waiting = this.untaken(thread)
     return waiting.length > 0 && waiting.every(row => row.meta?.schedule === 'heartbeat')
   }
 
