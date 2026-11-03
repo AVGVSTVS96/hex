@@ -152,10 +152,11 @@ test("a background subagent's steps come from its transcript as it writes them",
 })
 
 test('a thread is found by its id or its name, in any app but voice', () => {
-  threads('telegram', { '-100:452': { name: 'voiceapp', session: 's1' } })
+  threads('telegram', { '-100:452': { name: 'voiceapp', session: 's1' }, '-100': { name: 'main', session: 's0' } })
   threads('voice', { voice: { name: 'voice', session: 'v' } })
   threads('t3', { 't3-id': { name: 'commonplace', cwd: '/home/someone/Developer/commonplace' } })
   expect(findThread(state, 'VoiceApp')).toMatchObject({ app: 'telegram', id: '-100:452', name: 'voiceapp' })
+  expect(findThread(state, 'general')).toMatchObject({ app: 'telegram', id: '-100', name: 'General' })
   expect(findThread(state, 't3-id')).toMatchObject({ app: 't3', cwd: '/home/someone/Developer/commonplace' })
   expect(findThread(state, 'voice')).toBeUndefined()
 })

@@ -1,6 +1,6 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { join } from 'path'
-import { backOf, firstLine, followTranscript, itemStep, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
+import { backOf, firstLine, followTranscript, itemStep, nameOf, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
 import { busy, CLAUDE, running, serving, type Session } from '../../hub/running.ts'
 import { Changes } from './changes.ts'
 import { Links, type Delegation } from './links.ts'
@@ -125,6 +125,18 @@ export class Board extends Changes {
     return this.runs.find(run => run.id === id)
   }
 
+  // Any thread hex.db knows, as a run: the board's while it's on it, else built now, so a thread
+  // that left the board or closed still opens from an old ask.
+  find(id: string) {
+    const kept = this.get(id)
+    if (kept) return kept
+    const thread = this.stored(true).find(thread => `${thread.app}:${thread.id}` === id)
+    if (!thread) return
+    const run = this.run(thread)
+    this.keep(run)
+    return run
+  }
+
   // The Claude Code session a run's thread runs in, whose log holds its chat.
   session(id: string) {
     return [...this.threads, ...this.loose()].find(thread => `${thread.app}:${thread.id}` === id)?.session
@@ -209,11 +221,12 @@ export class Board extends Changes {
     this.threads = this.stored()
   }
 
-  private stored(): Thread[] {
+  // hex.db's open threads, or with all, every one it has had.
+  private stored(all = false): Thread[] {
     return open(this.state)
-      .threads({ open: true })
+      .threads(all ? {} : { open: true })
       .filter(({ app }) => APPS[app])
-      .map(({ app, thread, name, session, cwd, link }) => ({ app, id: thread, name, session, cwd, ...(link && { link }) }))
+      .map(({ app, thread, name, session, cwd, link }) => ({ app, id: thread, name: nameOf(app, thread, name), session, cwd, ...(link && { link }) }))
   }
 
   // Each thread's session, as the <app>:<key> of the thread it serves.

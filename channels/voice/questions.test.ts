@@ -158,6 +158,12 @@ test('open questions come newest first with a link to each, answered and settled
   ])
 })
 
+test("General's questions sit under General, the name its places and its run go by, not the name hex.db keeps", () => {
+  ledger([{ thread: GROUP, message: 7, text: 'Ship it?', options: ['Yes', 'No'], at: '2026-10-13T12:00:00.000Z' }])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.view.asks.map(question => [question.topic, question.places.map(place => place.place)])).toEqual([['General', ['General']]])
+})
+
 test('the check’s version of a question stands in for every place that asked it, and newer questions lead', async () => {
   ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), asked(9, 'Brand new?', ['Yes', 'No'])])
   writeFileSync(

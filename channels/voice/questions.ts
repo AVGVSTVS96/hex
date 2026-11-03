@@ -4,6 +4,7 @@ import { join } from 'path'
 import { type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
 import { statusPost } from '../../hub/status.ts'
 import { open as store, type Thread } from '../../hub/store.ts'
+import { nameOf } from './activity.ts'
 import { Changes } from './changes.ts'
 import { before, Check } from './check.ts'
 import { linkAt, Links } from './links.ts'
@@ -282,7 +283,7 @@ export class Questions extends Changes {
     return {
       ...question,
       app: app!,
-      topic: this.threads.get(question.task)?.name ?? thread.at(-1)!,
+      topic: nameOf(app!, thread.join(':'), this.threads.get(question.task)?.name ?? thread.at(-1)!),
       options: options.filter(option => !option.url),
       ...(pages.length && { links: pages }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(':') }]),

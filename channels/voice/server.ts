@@ -918,7 +918,7 @@ function cards(call: Live) {
 
 function topicOf(about?: string): Topic | undefined {
   if (about === 'asks') return walkTopic(yours.view.asks)
-  const run = about ? board.get(about) : undefined
+  const run = about ? board.find(about) : undefined
   return run && runTopic(run)
 }
 
@@ -982,7 +982,7 @@ function runRoutes(request: Request, url: URL) {
   if (url.pathname === '/tasks' && request.method === 'GET') return showRuns(url, runs)
   if (url.pathname === '/tasks/summary' && request.method === 'GET') return showSummary(url, runs, yours)
   const [, id, verb] = url.pathname.match(/^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/) ?? []
-  const run = id && runs.get(decodeURIComponent(id))
+  const run = id && runs.find(decodeURIComponent(id))
   if (!run) return new Response('404', { status: 404 })
   if (verb === 'talk' && request.method === 'POST') return talkAbout(runTopic(run))
   if (verb === 'chat' && request.method === 'GET') return showChat(url, run)

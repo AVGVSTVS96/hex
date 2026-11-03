@@ -127,7 +127,7 @@ test("each thread is a run from its session's own records, what needs you first,
   expect(board.runs.map(run => [run.name, run.state])).toEqual([
     ['autofork', 'needs'],
     ['voiceapp', 'working'],
-    ['hex', 'done'],
+    ['General', 'done'],
     ['Leisure time', 'idle'],
     ['Theo clips', 'idle'],
   ])
@@ -159,6 +159,20 @@ test("each thread is a run from its session's own records, what needs you first,
   expect(board.get('buzz:b1')).toBeUndefined()
   expect(board.summary).toEqual({ needs: 1, working: 1 })
   expect(board.rows()[0]).not.toContainKeys(['needs', 'lately', 'steps'])
+})
+
+test("a thread off the board, one quiet for a week or closed, is still found as a run in the board's shape, and the board keeps leaving it out", async () => {
+  expect(board.find('telegram:-1001234567890')).toBe(board.get('telegram:-1001234567890')!)
+  const quiet = board.find('buzz:b1')!
+  expect(quiet).toMatchObject({ id: 'buzz:b1', app: 'buzz', thread: 'b1', name: 'Old news', where: 'Buzz', place: 'Old news', state: 'done', line: 'long ago', agents: [], steps: [], lately: [] })
+  expect(Object.keys(quiet).sort()).toEqual(Object.keys(board.get('telegram:-1001234567890:65')!).filter(key => key !== 'link').sort())
+  threads('discord', { gone: { name: 'Data kit', session: 'abababab-gone' } })
+  job('abababab-gone', { state: 'done', detail: 'kit shipped', updatedAt: ago(10 * 24 * 60) })
+  threads('discord', {})
+  await until(() => !open(state).threads({ app: 'discord', open: true }).length)
+  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', state: 'done', line: 'kit shipped' })
+  expect(board.runs.map(run => run.id)).not.toContainAnyValues(['buzz:b1', 'discord:gone'])
+  expect(board.find('discord:never')).toBeUndefined()
 })
 
 test("a working thread's line is its newest step, and each of its agents from this stretch of work shows its own, running ones first", async () => {
@@ -251,7 +265,7 @@ test('a change to a session wakes the list, and the counts move only when a coun
   job('aaaaaaaa-general', { state: 'blocked', detail: 'Your call: ship it?', updatedAt: ago(0) })
   await until(() => board.summary.needs === 2)
   expect(board.counts.version).toBeGreaterThan(counted)
-  expect(board.runs[0].name).toBe('hex')
+  expect(board.runs[0].name).toBe('General')
 })
 
 test('a new thread shows up when its app keeps it in hex.db, once its session has records, and links where its app keeps it opening there', async () => {
