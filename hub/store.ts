@@ -497,6 +497,11 @@ export class Store {
     return (this.db.query('select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n').all(thread, before, after, last) as Stored[]).map(toRow)
   }
 
+  // Whether a session took any message before a time.
+  tookBefore(session: string, at: string): boolean {
+    return !!this.db.query('select 1 from messages where taken_by = ? and taken_at < ? limit 1').get(session, at)
+  }
+
   // The session that took the thread's newest message whose meta has this value under key, and when.
   taker(thread: string, key: string, value: string): { by: string; at: string } | undefined {
     const row = this.db.query(`select taken_by, taken_at from messages where "to" = ? and json_extract(meta, '$.' || ?) = ? and taken_by is not null order by n desc limit 1`).get(thread, key, value) as { taken_by: string; taken_at: string } | null

@@ -383,10 +383,23 @@ test('an agent back clears the wait on it, so a later turn cut off with another 
   expect(steps).toEqual([{ line: 'Redid it.' }, { end: 'done' }])
 })
 
-test('a session hex.db still names though it was last written before the message was taken is not gone back to', async () => {
+test('a later turn cut off while an earlier agent is still out is redone, not failed', () => {
+  threads('buzz', { b13: { name: 'Two agents', session: 'two-new' } })
+  open(state).deliver({ key: 'buzz:two', to: 'b13', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:two' } }, 'two-old')
+  const notice = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentt1</task-id>\n<status>completed</status>' } }
+  const old = [asked('call:two'), launched('agentt1'), launched('agentt2'), ended, notice, said('Looking at the first.')].map((entry, n) => ({ ...entry, uuid: `two-${n}` }))
+  write(join(project, 'two-old.jsonl'), ...old)
+  write(join(project, 'two-new.jsonl'), ...old, said('Redid it.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'two agents')!, hex, 'call:two', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Looking at the first.' }, { line: 'Redid it.' }, { end: 'done' }])
+})
+
+test('a session hex.db still names that took messages before the task message was taken is not gone back to', async () => {
   threads('buzz', { b12: { name: 'Lagging', session: 'lag-old' } })
+  open(state).deliver({ key: 'buzz:lag-other', to: 'b12', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:other' } }, 'lag-old')
   write(join(project, 'lag-old.jsonl'), asked('call:other'), said('Old history.'), ended)
-  await Bun.sleep(1100)
+  await Bun.sleep(5)
   open(state).deliver({ key: 'buzz:lag', to: 'b12', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:lag' } }, 'lag-new')
   write(join(project, 'lag-new.jsonl'), asked('call:lag'), said('Working on it.'))
   const steps: object[] = []

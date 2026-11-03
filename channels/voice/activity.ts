@@ -423,7 +423,7 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let picked = false
   let failed = false
   let ended = false
-  // A turn ended while agents were out, so only they hold the task open.
+  // The last turn ended while agents were out, so only they hold the task open.
   let waiting = false
   const copied = new Set<string>()
 
@@ -440,7 +440,7 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const next = session === undefined && took ? took.by : current
     if (ended || !next || next === session || !ID.test(next)) return
     // hex.db can still name the session before the one that took the message, for a moment.
-    if (took && session === took.by && writtenBefore(transcript(next), took.at)) return
+    if (took && session === took.by && store.tookBefore(next, took.at)) return
     const fresh = resumed || session !== undefined
     stopSession(true)
     if (ended) return
@@ -472,8 +472,8 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     if (back) {
       agents.get(back)?.(true)
       agents.delete(back)
-      if (!agents.size) waiting = false
     }
+    if (entry.type === 'user' || entry.type === 'assistant') waiting = false
     if (entry.type === 'assistant') failed = entry.isApiErrorMessage === true
     lines(updates(), onStep)
     if (entry.type === 'system' && entry.subtype === 'turn_duration') {
@@ -498,16 +498,6 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
 
 // Read as bytes and searched a stretch of whole lines at a time: a transcript can outgrow the
 // longest string JavaScript can hold.
-// A second's leeway, as a file's time can trail the clock by a few milliseconds; a session that
-// takes a message starts seconds after the one before it stops.
-function writtenBefore(path: string, at: string) {
-  try {
-    return statSync(path).mtimeMs < Date.parse(at) - 1000
-  } catch {
-    return false
-  }
-}
-
 function uuids(path: string) {
   let data: Buffer
   try {
