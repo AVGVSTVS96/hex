@@ -96,8 +96,8 @@ or `phone-out`. `end` is how it ended: `you` (the caller hung up), `hex`
 `reason` says why in words. Every way the caller ends a call (the page, an
 app, the phone, `DELETE /session` with the call's `sessionId`) sends
 `session.close` with an `event_id` starting `close-you`; `hang_up` sends one
-starting `close_hex`. A `DELETE /session` naming a call that isn't live ends
-nothing.
+starting `close_hex`. A `DELETE /session` naming a call that isn't live, or
+being picked back up after a restart, ends nothing.
 
 Calls that never connect are saved too, with no turns: an app or page whose
 `/session` OpenAI refused, a phone session OpenAI refused, and a placed phone

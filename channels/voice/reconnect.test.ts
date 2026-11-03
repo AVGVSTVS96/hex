@@ -20,14 +20,15 @@ async function appCall({ open = false } = {}) {
   let voice: Bun.ServerWebSocket<unknown> | undefined
   let hold = open
   let held = false
-  let release = () => {}
+  let made = 0
+  const waiting: (() => void)[] = []
   const openai = Bun.serve({
     port: 0,
     async fetch(request, server) {
-      if (request.method === 'POST') return Response.json({ session: { id: ID, expires_at: Date.now() / 1000 + 3600 }, transport: { sdp: 'answer' } }, { status: 201 })
+      if (request.method === 'POST') return Response.json({ session: { id: made++ ? `${ID}-${made}` : ID, expires_at: Date.now() / 1000 + 3600 }, transport: { sdp: 'answer' } }, { status: 201 })
       if (hold) {
         held = true
-        await new Promise<void>(resolve => (release = resolve))
+        await new Promise<void>(resolve => waiting.push(resolve))
         held = false
       }
       return server.upgrade(request) ? undefined : new Response('no', { status: 400 })
@@ -91,7 +92,7 @@ for await (const line of console) {
     hold: () => void (hold = true),
     back: () => {
       hold = false
-      release()
+      for (const resolve of waiting.splice(0)) resolve()
     },
     hangUp: () => fetch(`${base}/session`, { method: 'DELETE', body: JSON.stringify({ sessionId: ID }) }),
     [Symbol.asyncDispose]: async () => {
@@ -139,6 +140,17 @@ test('hanging up a new call before its connection has opened ends it once open',
   engine.back()
   expect(await ends(engine)).toMatchObject({ end: 'you' })
   expect(engine.closes).toEqual(['close-you-app'])
+}, 20_000)
+
+test('a call a new one replaces before its connection opened is still closed', async () => {
+  await using engine = await appCall()
+  engine.hold()
+  const start = () => fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })
+  expect((await start()).status).toBe(201)
+  await engine.attaching()
+  expect((await start()).status).toBe(201)
+  engine.back()
+  await until(() => engine.closes.includes('close-you-moved'))
 }, 20_000)
 
 test('hanging up a call the engine is attaching back to after a restart ends it once attached, from the app or from hex', async () => {
