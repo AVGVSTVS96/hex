@@ -219,9 +219,22 @@ test("a message is picked by its own tag only, not by a tag it begins, in a stri
   const steps: object[] = []
   const stop = followThread(findThread(state, 'tags')!, hex, 'call:x', true, step => steps.push(step))
   expect(steps).toEqual([])
+  write(path, { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: '<channel source="telegram">quoting voice_task="call:x"</channel>' } }, said('A quote.'), ended)
   write(path, sent('call:x', true), said('This one.'), ended)
   await until(() => steps.length === 2)
   expect(steps).toEqual([{ line: 'This one.' }, { end: 'done' }])
+  stop()
+})
+
+test('a message the thread took while a turn ran, queued as an attachment, is picked too', async () => {
+  threads('buzz', { b5: { name: 'Busy', session: 'busy' } })
+  const path = join(project, 'busy.jsonl')
+  write(path, said('Working on something else.'))
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'busy')!, hex, 'call:queued', true, step => steps.push(step))
+  write(path, { type: 'attachment', attachment: { type: 'queued_command', origin: { kind: 'channel' }, prompt: '<channel source="telegram" voice_task="call:queued">look</channel>' } }, said('Looking now.'), ended)
+  await until(() => steps.length === 2)
+  expect(steps).toEqual([{ line: 'Looking now.' }, { end: 'done' }])
   stop()
 })
 
@@ -229,7 +242,7 @@ test("a thread's new session is followed from its start, and a turn that ends on
   threads('discord', { d1: { name: 'Latest Claude', session: 'old' } })
   const steps: object[] = []
   followThread(findThread(state, 'latest claude')!, hex, 'tag7', false, step => steps.push(step))
-  write(join(project, 'new.jsonl'), { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: 'voice_task="tag7"' } })
+  write(join(project, 'new.jsonl'), { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: '<channel source="discord" voice_task="tag7">look</channel>' } })
   threads('discord', { d1: { name: 'Latest Claude', session: 'new' } })
   await Bun.sleep(50)
   write(join(project, 'new.jsonl'), said("You've hit your weekly limit", { isApiErrorMessage: true }), ended)
@@ -239,7 +252,7 @@ test("a thread's new session is followed from its start, and a turn that ends on
 
 test('following a message sent before a restart reads its thread from the start, ends at once when the thread already finished, and reads no further', async () => {
   threads('buzz', { b1: { name: 'Context check', session: 'done-already' } })
-  write(join(project, 'done-already.jsonl'), { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: 'voice_task="call:id"' } }, said('All set.'), ended, said('Next turn.'), ended)
+  write(join(project, 'done-already.jsonl'), { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: '<channel source="buzz" voice_task="call:id">look</channel>' } }, said('All set.'), ended, said('Next turn.'), ended)
   const steps: object[] = []
   followThread(findThread(state, 'context check')!, hex, 'call:id', true, step => steps.push(step))
   expect(steps).toEqual([{ line: 'All set.' }, { end: 'done' }])
