@@ -87,7 +87,7 @@ type Phone = Dial & { openai?: WebSocket; stream?: string; started?: true; refus
 // name the session now serving the thread.
 export type Hub = {
   deliver: (content: string, meta: Record<string, string>) => void
-  keep: () => void
+  keep: () => Promise<void>
   renew: () => void
   renewal: () => Promise<void>
   session: () => string | undefined
@@ -394,7 +394,7 @@ function follow(socket: WebSocket, record: Live['record'], { call = new Call(), 
   activity.changed()
   toHub(async () => {
     await hub.renewal()
-    hub.keep()
+    await hub.keep()
     current.record.claude = hub.session()
   })
   listen(current, socket)

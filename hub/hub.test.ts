@@ -1379,7 +1379,8 @@ test('a session with no capacity takes every message of a call, idle or not, and
   const old = Bun.spawn(['sleep', '30'])
   start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
   const { received, send } = await session('voice')
-  hub.keep('voice')
+  said(20_000)
+  await hub.keep('voice')
   for (const turn of ['one', 'two', 'three']) {
     said(20_000)
     await send({ type: 'state', thread: 'voice', busy: false })
@@ -1394,6 +1395,32 @@ test('a session with no capacity takes every message of a call, idle or not, and
   expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
   old.kill()
   expect(await launched()).not.toContain('--resume')
+})
+
+test('a call that finds its session still waiting for its first message starts it over, and keeps the call until the new one connects', async () => {
+  const old = Bun.spawn(['sleep', '30'])
+  start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
+  await session('voice')
+  let kept = false
+  void hub.keep('voice').then(() => (kept = true))
+  expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
+  writeFileSync(join(dir, 'agents'), '[]')
+  old.kill()
+  expect(await launched()).not.toContain('--resume')
+  await time.advance(50)
+  expect(kept).toBe(false)
+  await session('voice', '0a1b2c3d-0000-4000-8000-000000000009')
+  await until(() => kept)
+  expect(hub.session('voice')).toBe('0a1b2c3d-0000-4000-8000-000000000009')
+})
+
+test('a call keeps the session it finds once that session has taken a message, like the one that placed the call', async () => {
+  start({ main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle' }], reconnect: 60_000, fresh: () => true, capacity: 0 })
+  await session('voice')
+  said(500)
+  await hub.keep('voice')
+  await time.advance(150)
+  expect(calls().some(args => args[0] === 'stop' || args[0] === '--bg')).toBe(false)
 })
 
 test('a session whose channel comes back before its rest still starts over for the call that ended', async () => {
@@ -1582,7 +1609,8 @@ test('a hub whose state folder is gone makes it again, with a new token', () => 
 test('a voice session that started with what the hub no longer gives waits out its call before starting over', async () => {
   start({ stale: true, main: 'voice', registry: { voice: { name: 'voice', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42, status: 'busy', startedAt: 1 }], reconnect: 60_000, fresh: () => true, capacity: 0 })
   const { send } = await session('voice')
-  hub.keep('voice')
+  said(500)
+  await hub.keep('voice')
   await time.advance(100)
   writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: EXITED, status: 'idle', startedAt: 1 }]))
   await send({ type: 'state', thread: 'voice', busy: false })

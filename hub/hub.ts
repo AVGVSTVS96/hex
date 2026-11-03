@@ -945,11 +945,20 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
 
   // A thread is on a call from its keep until its renew, which starts the next call in a new session.
-  function keep(thread: string) {
+  // That session starts when the last call ends and can wait hours for the next, so a call that finds
+  // it still waiting for its first message starts it over, reading memory and live status as they are
+  // now. Resolves once the session the call runs in is connected.
+  async function keep(thread: string) {
     const run = runOf(thread)
     if (run.renew !== 'underway') run.renew = undefined
     onCall.add(run)
+    const session = current(thread)
+    if (session && run.phase.is === 'live' && run.turn === 'done' && warmFor(thread) === undefined) {
+      run.renew = 'underway'
+      void cycle(thread, await claude.agent(session, serving))
+    }
     letGo(thread)
+    return renewal(thread)
   }
 
   function renewAsked(thread: string) {
