@@ -8,9 +8,9 @@
       { "matcher": "compact", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted" }] },
       { "hooks": [
         { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" },
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" },
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/origin.ts" }
-      ] }
+        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
+      ] },
+      { "matcher": "startup", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/origin.ts" }] }
     ],
     "SubagentStart": [
       { "hooks": [

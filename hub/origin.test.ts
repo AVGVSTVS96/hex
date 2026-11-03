@@ -12,7 +12,11 @@ beforeEach(() => {
   const store = open(dir)
   store.keepThreads('telegram', { '-100:7': { name: 'Website' } })
   store.deliver({ key: 'telegram:-100:50', to: '-100:7', from: 'telegram', body: 'Fix the login page.', author: 'owner', meta: { user: 'bassim' } })
+  store.take('telegram:-100:50', 's')
   store.deliver({ key: 'telegram:-100:51', to: '-100:7', from: 'telegram', body: 'On it.', author: 'hex' })
+  store.deliver({ key: 'telegram:-100:51+👍', to: '-100:7', from: 'telegram', body: '(reaction: 👍)', author: 'owner', meta: { user: 'bassim', reaction: '👍' } })
+  store.take('telegram:-100:51+👍', 's')
+  store.deliver({ key: 'telegram:-100:52', to: '-100:7', from: 'telegram', body: 'Also the signup page.', author: 'owner', meta: { user: 'bassim' } })
 })
 
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
@@ -24,7 +28,7 @@ async function hook(event: string, env: Record<string, string>) {
   return out && JSON.parse(out).hookSpecificOutput
 }
 
-test("a subagent of a thread's session is told the conversation it works for and the owner's newest message there", async () => {
+test("a subagent of a thread's session is told the conversation it works for and the owner's newest message its session took, past reactions", async () => {
   const told = await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })
   expect(told.hookEventName).toBe('SubagentStart')
   expect(told.additionalContext).toContain("in Website: `")
