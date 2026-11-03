@@ -429,3 +429,17 @@ test('one notice naming several agents brings them all back', () => {
   followThread(findThread(state, 'both back')!, hex, 'call:both', true, step => steps.push(step))
   expect(steps).toEqual([{ line: 'Both are back.' }, { end: 'done' }])
 })
+
+test('of several notices in one message, each one with a status brings its agents back, and a restart notice none', () => {
+  threads('buzz', { b18: { name: 'Notices', session: 'notices' } })
+  const notices = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: [
+    { type: 'text', text: '<task-notification>\n<task-id>agentn1</task-id>\n<summary>Background agent was restarted after the previous session ended</summary>\n</task-notification>' },
+    { type: 'text', text: '<task-notification>\n<task-id>agentn2</task-id>\n<status>completed</status>\n</task-notification>' },
+    { type: 'text', text: '<task-notification>\n<task-id>agentn3</task-id>\n<status>completed</status>\n</task-notification>' },
+  ] } }
+  const back = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentn1</task-id>\n<status>completed</status>' } }
+  write(join(project, 'notices.jsonl'), asked('call:notices'), launched('agentn1'), launched('agentn2'), launched('agentn3'), ended, notices, said('Two are back.'), ended, back, said('All back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'notices')!, hex, 'call:notices', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Two are back.' }, { line: 'All back.' }, { end: 'done' }])
+})

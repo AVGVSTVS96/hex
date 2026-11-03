@@ -488,14 +488,16 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
 }
 
 // The background agents a session was just told are back, in a turn of its own or queued while a
-// turn ran; one notice can name several. A notice with no status says they were restarted with
-// their session, and are still out.
+// turn ran: each notice in it names one or more in its header, before its status. A notice with
+// no status says they were restarted with their session, and are still out.
 function agentsBack(entry: any): string[] {
   const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
   if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return []
   const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content) ?? ''
-  const status = notice.indexOf('<status>')
-  return status < 0 ? [] : Array.from(notice.slice(0, status).matchAll(/<task-id>([\w-]+)<\/task-id>/g), match => match[1])
+  return notice.split('<task-notification>').flatMap(block => {
+    const status = block.indexOf('<status>')
+    return status < 0 ? [] : Array.from(block.slice(0, status).matchAll(/<task-id>([\w-]+)<\/task-id>/g), match => match[1])
+  })
 }
 
 // A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its
