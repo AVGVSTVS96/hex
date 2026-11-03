@@ -194,14 +194,14 @@ test('the check’s version of a question stands in for every place that asked i
   expect(questions.view.asks.map(question => question.app)).toEqual(['telegram', 'telegram', 'telegram'])
   expect(questions.view.check).toEqual({ at: '2026-10-13T15:00:00.000Z', why: 'a pinned post changed', fixed: 0, flagged: 0 })
 
-  await questions.answer('check:twilio', 'Use the app', 'app')
+  expect(await questions.answer('check:twilio', 'Use the app', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 2, missed: 0 })
   await until(() => lines.length === 2)
   expect(lines).toEqual([
     { type: 'answer', thread: DESK, message: 1, label: 'Not yet', via: 'app' },
     { type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: Use the app' },
   ])
 
-  await questions.answer('check:read', 'Open', 'app')
+  expect(await questions.answer('check:read', 'Open', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 0, missed: 0 })
   expect(await until(() => lines.find(line => line.type === 'inbound'))).toEqual({ type: 'inbound', thread: DESK, content: '(answered in the app) Read the launch review: Open', author: 'owner', meta: { user: 'hex app' } })
   await until(() => !questions.find('check:read'))
   await questions.undo('check:read', 'app')
@@ -219,6 +219,216 @@ test('an answer that lands in the ledger takes the question off the list, and un
   expect(questions.view.asks).toEqual([])
   await questions.undo(`telegram:${DESK}:1`, 'app')
   expect(await until(() => lines[1])).toEqual({ type: 'reopen', thread: DESK, message: 1, via: 'app' })
+})
+
+test('a note reaches the thread that asked and leaves the question open, with nothing settled', async () => {
+  ledger([asked(1, 'Ship it?', ['Yes', 'No'])])
+  writeFileSync(
+    join(state, 'voice', 'check.json'),
+    JSON.stringify({ at: '', why: '', read: {}, fixed: [], flagged: [], stuck: [], asks: [{ id: 'check:read', kind: 'look', task: `telegram:${DESK}`, at: '', question: 'Read the review', options: [{ label: 'Open' }] }] }),
+  )
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(await questions.note(`telegram:${DESK}:1`, 'i wish i could get more context', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 0, missed: 0 })
+  await questions.note('check:read', 'which one?', 'app')
+  await until(() => lines.length === 2)
+  expect(lines).toEqual([
+    { type: 'inbound', thread: DESK, content: '(note written in the app) Ship it?: i wish i could get more context', author: 'owner', meta: { user: 'hex app' } },
+    { type: 'inbound', thread: DESK, content: '(note written in the app) Read the review: which one?', author: 'owner', meta: { user: 'hex app' } },
+  ])
+  await Bun.sleep(60)
+  expect(questions.view.asks.map(question => question.id)).toEqual([`telegram:${DESK}:1`, 'check:read'])
+})
+
+test('not needed takes a question off the list, settles its copies and tells its thread, and undo brings it back', async () => {
+  ledger([asked(1, 'Ship it?', ['Yes', 'No'])])
+  writeFileSync(
+    join(state, 'voice', 'check.json'),
+    JSON.stringify({ at: '', why: '', read: {}, fixed: [], flagged: [], stuck: [], asks: [{ id: 'check:read', kind: 'look', task: `telegram:${DESK}`, at: '', question: 'Read the review', options: [{ label: 'Open' }] }] }),
+  )
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(await questions.dismiss(`telegram:${DESK}:1`, 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 0 })
+  await until(() => lines.length === 2)
+  expect(lines).toEqual([
+    { type: 'inbound', thread: DESK, content: '(not needed, said in the app) Ship it?', author: 'owner', meta: { user: 'hex app' } },
+    { type: 'settle', thread: DESK, message: 1, note: '✓ Not needed, said in the app' },
+  ])
+  await expect(questions.dismiss(`telegram:${DESK}:1`, 'app')).rejects.toThrow('already answered or settled')
+  await expect(questions.answer(`telegram:${DESK}:1`, 'Yes', 'app')).rejects.toThrow('already answered or settled')
+  ledger([asked(1, 'Ship it?', ['Yes', 'No'], { settled: { note: '✓ Not needed, said in the app', at: '' } })])
+  await until(() => questions.view.asks.length === 1)
+  await questions.undo(`telegram:${DESK}:1`, 'app')
+  await until(() => lines.length === 4)
+  expect(lines.slice(2)).toEqual([
+    { type: 'reopen', thread: DESK, message: 1, via: 'app' },
+    { type: 'inbound', thread: DESK, content: '(took back) Ship it?: Not needed', author: 'owner', meta: { user: 'hex app' } },
+  ])
+
+  lines = []
+  expect(await questions.dismiss('check:read', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 0, missed: 0 })
+  await until(() => !questions.find('check:read'))
+  await questions.undo('check:read', 'app')
+  await until(() => questions.find('check:read'))
+  expect(lines.map(line => line.content)).toEqual(['(not needed, said in the app) Read the review', '(took back) Read the review: Not needed'])
+  await expect(questions.undo('check:read', 'app')).rejects.toThrow('there is no answer here to take back')
+})
+
+test('an answer its buttons can’t take settles every copy, and undo reopens them and tells the thread it no longer stands, even right away', async () => {
+  ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), asked(2, 'Upgrade Twilio now?', ['Go', 'Wait'])])
+  writeFileSync(
+    join(state, 'voice', 'check.json'),
+    JSON.stringify({
+      at: '',
+      why: '',
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [{ id: 'check:twilio', kind: 'do', task: `telegram:${DESK}`, at: '', question: 'Upgrade Twilio', options: [{ label: 'Upgrade' }], refs: [{ app: 'telegram', thread: DESK, message: 1 }, { app: 'telegram', thread: DESK, message: 2 }] }],
+    }),
+  )
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(await questions.answer('check:twilio', 'after the launch', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 2, missed: 0 })
+  await questions.undo('check:twilio', 'app')
+  await until(() => lines.length === 6)
+  expect(lines).toEqual([
+    { type: 'inbound', thread: DESK, content: '(answered in the app) Upgrade Twilio: after the launch', author: 'owner', meta: { user: 'hex app' } },
+    { type: 'settle', thread: DESK, message: 1, note: '✓ Answered in the app: after the launch' },
+    { type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: after the launch' },
+    { type: 'reopen', thread: DESK, message: 1, via: 'app' },
+    { type: 'reopen', thread: DESK, message: 2, via: 'app' },
+    { type: 'inbound', thread: DESK, content: '(took back) Upgrade Twilio: after the launch', author: 'owner', meta: { user: 'hex app' } },
+  ])
+})
+
+const TWO_HUBS = {
+  at: '',
+  why: '',
+  read: {},
+  fixed: [],
+  flagged: [],
+  stuck: [],
+  asks: [
+    {
+      id: 'check:twilio',
+      kind: 'do',
+      task: `telegram:${DESK}`,
+      at: '',
+      question: 'Upgrade Twilio',
+      options: [{ label: 'Upgrade', value: 'Upgrade' }, { label: 'Not yet', value: 'Not yet' }],
+      refs: [{ app: 'telegram', thread: DESK, message: 1 }, { app: 'discord', thread: DESK, message: 2 }],
+    },
+  ],
+}
+
+async function discordHub() {
+  mkdirSync(join(state, 'discord'), { recursive: true })
+  const heard: any[] = []
+  const server = createServer(socket => {
+    socket.setEncoding('utf8')
+    socket.on('data', (chunk: string) => heard.push(...chunk.trim().split('\n').map(line => JSON.parse(line))))
+  })
+  await new Promise<void>(resolve => server.listen(join(state, 'discord', 'hub.sock'), resolve))
+  return { heard, stop: () => new Promise<void>(resolve => server.close(() => (rmSync(join(state, 'discord', 'hub.sock'), { force: true }), resolve()))) }
+}
+
+test('a not needed with one hub down still reaches the rest and says what it missed, and the copy left open can be settled later', async () => {
+  ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), app: 'discord' } as any])
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify(TWO_HUBS))
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await until(() => questions.find('check:twilio'))
+  expect(await questions.dismiss('check:twilio', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 2 })
+  await until(() => lines.length === 2)
+  expect(lines.map(line => line.type)).toEqual(['inbound', 'settle'])
+  await expect(questions.dismiss('check:twilio', 'app')).rejects.toThrow('already answered or settled')
+
+  ledger([{ ...asked(1, 'Twilio?', ['Upgrade', 'Not yet']), settled: { note: '✓ Not needed, said in the app', at: '' } }, { ...asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), app: 'discord' } as any])
+  await Bun.sleep(150)
+  const discord = await discordHub()
+  try {
+    expect(await questions.dismiss('check:twilio', 'app')).toEqual({ thread: `discord:${DESK}`, topic: '5', settled: 1, missed: 0 })
+    await until(() => discord.heard.length === 2)
+    expect(discord.heard.map(line => line.type)).toEqual(['inbound', 'settle'])
+    expect(lines.map(line => line.type)).toEqual(['inbound', 'settle'])
+    await questions.undo('check:twilio', 'app')
+    await until(() => discord.heard.length === 4 && lines.length === 4)
+    expect(lines.slice(2).map(line => line.type)).toEqual(['reopen', 'inbound'])
+    expect(discord.heard.slice(2).map(line => line.type)).toEqual(['reopen', 'inbound'])
+    await Bun.sleep(50)
+    expect([lines.length, discord.heard.length]).toEqual([4, 4])
+  } finally {
+    await discord.stop()
+  }
+})
+
+test('an answer that missed a copy is finished by the same answer, which only settles it, and no other answer goes over it', async () => {
+  ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Upgrade Twilio now?', ['Upgrade', 'Not yet']), app: 'discord' } as any])
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify(TWO_HUBS))
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await until(() => questions.find('check:twilio'))
+  expect(await questions.answer('check:twilio', 'Upgrade', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 1 })
+  ledger([{ ...asked(1, 'Twilio?', ['Upgrade', 'Not yet']), answer: { label: 'Upgrade', at: '', via: 'app' } }, { ...asked(2, 'Upgrade Twilio now?', ['Upgrade', 'Not yet']), app: 'discord' } as any])
+  await Bun.sleep(150)
+  await expect(questions.answer('check:twilio', 'Not yet', 'app')).rejects.toThrow('part of "Upgrade" went out')
+  await expect(questions.dismiss('check:twilio', 'app')).rejects.toThrow('part of "Upgrade" went out')
+  const discord = await discordHub()
+  try {
+    expect(await questions.answer('check:twilio', 'Upgrade', 'app')).toMatchObject({ settled: 1, missed: 0 })
+    await until(() => discord.heard.length === 1)
+    expect(discord.heard).toEqual([{ type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: Upgrade' }])
+  } finally {
+    await discord.stop()
+  }
+})
+
+test('an undo with a hub down takes back what it can, keeps the rest, and finishes when tried again', async () => {
+  ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), app: 'discord' } as any])
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify(TWO_HUBS))
+  let discord = await discordHub()
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await until(() => questions.find('check:twilio'))
+  expect(await questions.answer('check:twilio', 'Upgrade', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 2, missed: 0 })
+  await discord.stop()
+  await expect(questions.undo('check:twilio', 'app')).rejects.toThrow('undo again to finish')
+  await until(() => lines.some(line => line.type === 'reopen'))
+  ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), app: 'discord', settled: { note: '✓ Answered in the app: Upgrade', at: '' } } as any])
+  await Bun.sleep(150)
+  await expect(questions.answer('check:twilio', 'Not yet', 'app')).rejects.toThrow('undo it again first')
+  discord = await discordHub()
+  try {
+    await questions.undo('check:twilio', 'app')
+    await until(() => discord.heard.some(line => line.type === 'reopen'))
+    ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), { ...asked(2, 'Upgrade Twilio now?', ['Go', 'Wait']), app: 'discord' } as any])
+    await Bun.sleep(150)
+    await expect(questions.undo('check:twilio', 'app')).rejects.toThrow('no answer here to take back')
+    expect(await questions.answer('check:twilio', 'Not yet', 'app')).toMatchObject({ settled: 2, missed: 0 })
+  } finally {
+    await discord.stop()
+  }
+})
+
+test('a question asked again over an earlier answer can be answered, and one undo takes back both', async () => {
+  ledger([asked(1, 'Ship it?', ['Yes', 'No']), asked(3, 'Ship it now?', ['Yes', 'No'])])
+  const check = (refs: number[]) =>
+    writeFileSync(
+      join(state, 'voice', 'check.json'),
+      JSON.stringify({ ...TWO_HUBS, asks: [{ id: 'check:ship', kind: 'yesno', task: `telegram:${DESK}`, at: '', question: 'Ship it', options: [{ label: 'Yes', value: 'Yes' }, { label: 'No', value: 'No' }], refs: refs.map(message => ({ app: 'telegram', thread: DESK, message })) }] }),
+    )
+  check([1])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await until(() => questions.find('check:ship'))
+  await questions.dismiss('check:ship', 'app')
+  ledger([{ ...asked(1, 'Ship it?', ['Yes', 'No']), settled: { note: '✓ Not needed, said in the app', at: '' } }, asked(3, 'Ship it now?', ['Yes', 'No'])])
+  check([1, 3])
+  await Bun.sleep(150)
+  expect(await questions.answer('check:ship', 'Yes', 'app')).toEqual({ thread: `telegram:${DESK}`, topic: 'desk', settled: 1, missed: 0 })
+  await questions.undo('check:ship', 'app')
+  await until(() => lines.length === 6)
+  expect(lines.slice(2)).toEqual([
+    { type: 'answer', thread: DESK, message: 3, label: 'Yes', via: 'app' },
+    { type: 'reopen', thread: DESK, message: 3, via: 'app' },
+    { type: 'reopen', thread: DESK, message: 1, via: 'app' },
+    { type: 'inbound', thread: DESK, content: '(took back) Ship it: Not needed', author: 'owner', meta: { user: 'hex app' } },
+  ])
 })
 
 test('a stuck item with a request goes to General, one without is put away', async () => {
