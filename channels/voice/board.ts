@@ -669,12 +669,12 @@ function toldOf(entry: any): [string, Told] | undefined {
 // A session's records as they stood when its heartbeat began: at rest (a turn's end, which has its
 // reply, even while what it handed off works on), or while work from before it still runs, as that
 // work last said. With none from before it (Claude Code starts a job's
-// timeline over when its session renews), it's idle, still listed by its own time.
+// timeline over when its session renews), it's idle. Either way it stays listed by its own time.
 function before(job: Job | undefined, timeline: Entry[], from: number, working: boolean) {
   const kept = timeline.filter(entry => Date.parse(entry.at) < from)
   const last = working ? kept.at(-1) : kept.findLast(entry => entry.state !== 'working' || entry.text)
   if (!job || !last) return { job: job && { ...job, state: undefined, detail: undefined, needs: undefined }, timeline: kept }
-  return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined, updatedAt: last.at }, timeline: kept }
+  return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined }, timeline: kept }
 }
 
 // When the timeline first showed the summary it shows now: Claude Code writes the same one again
