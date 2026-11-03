@@ -371,6 +371,9 @@ test('a question names every place it was asked, each thread once at its open qu
     { app: 'discord', place: 'fix hex NOW', task: `discord:${THREAD}`, link: `https://discord.com/channels/42/${THREAD}` },
     { app: 'voice', place: 'Apple charges', call: 'live_1' },
   ])
+  writeFileSync(join(calls, 'live_1.json'), JSON.stringify({ id: 'live_1', title: 'Apple refund', started: '2026-10-13T18:00:00.000Z' }))
+  ;(questions as unknown as { build(): void }).build()
+  expect(questions.view.asks[0]!.places.at(-1)).toEqual({ app: 'voice', place: 'Apple refund', call: 'live_1' })
 })
 
 test('a check written before places and links were typed still gives each question its places, and its url options as links', () => {

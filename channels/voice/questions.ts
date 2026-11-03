@@ -1,4 +1,4 @@
-import { readFileSync, renameSync, watch, writeFileSync } from 'fs'
+import { readFileSync, renameSync, statSync, watch, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { type Question as Asked, type MessageId, type Pin } from '../../hub/ledger.ts'
@@ -84,12 +84,14 @@ export class Questions extends Changes {
   private links: Links
   private calls: string
   private result?: CheckResult
+  private checkStamp?: string
   private marks: Marks
   private pending?: ReturnType<typeof setTimeout>
   private stops: (() => void)[] = []
   private t3: T3
   private check: (why: string) => void
   private seen?: { pins: string; t3: string }
+  private called = new Map<string, { stamp: string; title?: string; started?: string }>()
 
   constructor(
     private state: string,
@@ -241,7 +243,9 @@ export class Questions extends Changes {
     for (const thread of store(this.state).threads()) this.threads.set(`${thread.app}:${thread.thread}`, thread)
     this.ledgers = Map.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app)
     for (const pin of store(this.state).pins()) if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin)
-    this.result = readJson(join(this.state, 'voice', 'check.json'))
+    const check = join(this.state, 'voice', 'check.json')
+    const stamp = stampOf(check)
+    if (stamp !== this.checkStamp) [this.result, this.checkStamp] = [readJson(check), stamp]
     this.notice()
     const used = new Set<string>()
     const curated = (this.result?.asks ?? []).flatMap((question: Written) => {
@@ -331,9 +335,17 @@ export class Questions extends Changes {
     return { app, place, task: key, ...(link && { link }), at }
   }
 
+  // A call's record holds its whole transcript, megabytes for a long one, so its title and start are
+  // read again only once the file changes.
   private call(id: string): Place & { at?: string } {
-    const call = readJson(join(this.calls, `${id}.json`))
-    return { app: 'voice', place: call?.title ?? 'a call', call: id, at: call?.started }
+    const file = join(this.calls, `${id}.json`)
+    const stamp = stampOf(file)
+    let known = this.called.get(id)
+    if (known?.stamp !== stamp) {
+      const call = readJson(file)
+      this.called.set(id, (known = { stamp, title: call?.title, started: call?.started }))
+    }
+    return { app: 'voice', place: known.title ?? 'a call', call: id, at: known.started }
   }
 
   private saveMarks() {
@@ -414,6 +426,15 @@ export function clip(text: string, max: number) {
 function readMarks(file: string): Marks {
   const marks = readJson(file) ?? {}
   return { answers: marks.answers ?? {}, sent: marks.sent ?? {}, dismissed: marks.dismissed ?? {}, read: marks.read ?? {} }
+}
+
+function stampOf(path: string) {
+  try {
+    const { mtimeMs, size } = statSync(path)
+    return `${mtimeMs}:${size}`
+  } catch {
+    return ''
+  }
 }
 
 function readJson(path: string) {
