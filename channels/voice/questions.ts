@@ -287,7 +287,8 @@ export class Questions extends Changes {
       if (!taken.told.length && !taken.refs.length) throw failed[0] ?? new Error('that question is already answered or settled')
       this.marks.answers[id] = taken
       this.saveMarks()
-      return { ...this.sent(taken.told[0] ?? place(taken.refs[0]!), taken.refs.length), missed: failed.length }
+      const told = taken.told[0] ?? (finishing ? marks.flatMap(mark => mark.told ?? [])[0] : undefined)
+      return { ...this.sent(told ?? place(taken.refs[0]!), taken.refs.length), missed: failed.length }
     } finally {
       this.taking.delete(id)
     }

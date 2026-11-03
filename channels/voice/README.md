@@ -276,8 +276,10 @@ thread that asked, and the question stays open. Not needed tells the
 question's thread and every thread its copies are in, and settles the copies,
 which takes it off the list; undo brings it back too.
 
-Answer and not needed go one at a time per question. Each tries every copy, so
-one hub that's down doesn't stop the rest, and keeps what went out in
+Answer and not needed go one at a time per question. The first step (the
+answer to its first copy, or not needed's word to the question's thread) has to
+go through; after that each tries every copy, so one hub that's down doesn't
+stop the rest, and keeps what went out in
 `state/voice/marks.json` for undo. Each says what it did: `{ thread, topic,
 settled, missed }`, the hex thread told (`app:thread`), its name, how many open
 copies it sent an answer or settle to (hubs don't confirm one), and how many

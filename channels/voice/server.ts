@@ -944,15 +944,17 @@ function elsewhere(call: Live): (Task & { line?: string })[] {
     .map(row => ({ id: row.id, state: 'running', text: row.name, to: row.name, line: newest(row) }))
 }
 
-// The questions put on screen in this call, in order, each with its answer once it has one.
+// The questions put on screen in this call, in order, each with the answer given after it was shown,
+// until an undo takes that back.
 function cards(call: Live) {
   const marks = call.call.record().moments
   return marks
     .filter(mark => mark.kind === 'ask' && call.shown.has(mark.ask!))
     .map((mark, i, shown) => {
       const next = shown.slice(i + 1).find(later => later.ask === mark.ask)?.at ?? Infinity
-      const answered = marks.findLast(answer => (answer.kind === 'answered' || answer.kind === 'undone') && answer.ask === mark.ask && answer.at >= mark.at && answer.at < next)
-      return { at: mark.at, ask: call.shown.get(mark.ask!)!, ...(answered?.kind === 'answered' && { answer: answered.text, sent: answered.sent }) }
+      const answered = marks.findLast(answer => answer.kind === 'answered' && answer.ask === mark.ask && answer.at >= mark.at && answer.at < next)
+      const undone = marks.findLast(undo => undo.kind === 'undone' && undo.ask === mark.ask)?.at ?? -1
+      return { at: mark.at, ask: call.shown.get(mark.ask!)!, ...(answered && answered.at > undone && { answer: answered.text, sent: answered.sent }) }
     })
 }
 
