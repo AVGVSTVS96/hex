@@ -408,7 +408,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       return sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
     }
     case 'react': {
-      await bot.api.setMessageReaction(chat_id, Number(args.message_id), args.remove ? [] : [
+      await react(chat_id, Number(args.message_id), args.remove ? [] : [
         { type: 'emoji', emoji: args.emoji as ReactionTypeEmoji['emoji'] },
       ])
       return args.remove ? 'reaction removed' : 'reacted'
@@ -650,6 +650,53 @@ async function reopenQuestion(thread: string, message: number, via: string) {
   if (reopened) await draw(thread, message)
 }
 
+// Telegram shows a message read once the bot has it, so one that waits for its thread's session
+// says so until a session takes it. An edit waits under the message it changed, whose reaction a
+// session may have set already.
+const ASLEEP: ReactionTypeEmoji = { type: 'emoji', emoji: '😴' }
+
+function waiting(message: Message, still: boolean): void {
+  const { chat_id, message_id, edited } = message.meta
+  if (!chat_id || !message_id || edited || (!still && !asleep.has(`${chat_id}:${message_id}`))) return
+  const ack = acked()
+  void react(chat_id, Number(message_id), still ? [ASLEEP] : ack, !still && ack.length ? [] : undefined).catch(() => {})
+}
+
+function acked(): ReactionTypeEmoji[] {
+  const { ackReaction } = loadAccess()
+  return ackReaction ? [{ type: 'emoji', emoji: ackReaction as ReactionTypeEmoji['emoji'] }] : []
+}
+
+// Telegram may apply two reactions sent at once in either order, so each message's go one at a
+// time. otherwise: what to set in the same turn if Telegram refuses reaction, like an ack it won't take.
+const reacting = new Map<string, Promise<unknown>>()
+// The messages whose last reaction from the bot is 😴, so a session's own reaction is never cleared.
+const asleep = new Set<string>()
+
+function react(chat_id: string, message_id: number, reaction: ReactionTypeEmoji[], otherwise?: ReactionTypeEmoji[]): Promise<unknown> {
+  const key = `${chat_id}:${message_id}`
+  if (reaction.length === 1 && reaction[0] === ASLEEP) asleep.add(key)
+  else asleep.delete(key)
+  const set = (to: ReactionTypeEmoji[]) => steady(() => paced(() => bot.api.setMessageReaction(chat_id, message_id, to)))
+  const done = (reacting.get(key) ?? Promise.resolve()).catch(() => {}).then(() => (otherwise ? set(reaction).catch(() => set(otherwise)) : set(reaction)))
+  reacting.set(key, done)
+  const settled = () => void (reacting.get(key) === done && reacting.delete(key))
+  done.then(settled, settled)
+  return done
+}
+
+// A mark Telegram missed for a network or server error would stay wrong, since nothing sends it again.
+async function steady<T>(send: () => Promise<T>, tries = 3): Promise<T> {
+  for (let tried = 1; ; tried++) {
+    try {
+      return await send()
+    } catch (err) {
+      if (tried === tries || (err instanceof GrammyError && err.error_code < 500)) throw err
+      await Bun.sleep(1000 * tried)
+    }
+  }
+}
+
 // The bot's name once it polls, which a DM's link opens.
 let polling: string | undefined
 
@@ -677,6 +724,7 @@ const hub = startHub({
     const { chat_id, extra } = target(thread)
     void bot.api.sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra).catch(() => {})
   },
+  waits: (_, message, still) => waiting(message, still),
 })
 
 clients.set('telegram', { hub, place, backfill })
@@ -1050,13 +1098,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   // Telegram only accepts a fixed emoji whitelist — if the user configures
   // something outside that set the API rejects it and we swallow.
-  if (access.ackReaction && msgId != null) {
-    void bot.api
-      .setMessageReaction(chat_id, msgId, [
-        { type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] },
-      ])
-      .catch(() => {})
-  }
+  if (access.ackReaction && msgId != null && !ctx.editedMessage) void react(chat_id, msgId, acked()).catch(() => {})
 
   const imagePaths = (await Promise.all(parts.map(part => part.downloadImage?.()))).filter(Boolean) as string[]
   const attachments = parts.flatMap(part => part.attachment ?? [])

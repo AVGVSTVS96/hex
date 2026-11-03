@@ -257,6 +257,15 @@ export function exited(pid: number): Promise<void> {
   })
 }
 
+export function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as { code?: string }).code === 'EPERM'
+  }
+}
+
 function job(agent: Agent) {
   return agent.id ?? short(agent.sessionId)
 }
