@@ -126,9 +126,9 @@ export class Board extends Changes {
   }
 
   // Any thread hex.db knows, as a run: the board's while it's on it, else built now, so a thread
-  // that left the board or closed still opens from an old ask. What's read for it isn't kept. A
-  // closed thread neither works nor needs you, and one whose session an open thread now holds has
-  // none of its own left, so it dates from its kept lane or its launch.
+  // that left the board or closed still opens from an old ask. What's read for it isn't kept, and
+  // one with no job records left dates from its kept lane. A closed thread neither works nor needs
+  // you, and one whose session an open thread now holds has none of its own left.
   find(id: string): (Run & { closed?: true }) | undefined {
     const kept = this.get(id)
     if (kept) return kept
@@ -142,20 +142,15 @@ export class Board extends Changes {
     if (lane) this.tracks[id] = lane
     else delete this.tracks[id]
     if (thread.session && !this.wanted().has(short(thread.session))) this.jobs.delete(short(thread.session))
+    if (!Date.parse(run.at) && lane?.length) run.at = run.since = lane.at(-1)!.at
     if (row.open) {
       if (run.state !== 'working') this.keep(run)
       return run
     }
     const { needs, ...closed } = run
-    const resting = run.state === 'needs' || run.state === 'working'
-    const at = taken ? (lane?.at(-1)?.at ?? row.launched ?? run.at) : run.at
-    return {
-      ...closed,
-      ...(resting && { state: 'idle' as const, running: false, lately: [], agents: [], steps: [], plan: [] }),
-      at,
-      since: taken ? at : run.since,
-      closed: true,
-    }
+    if (run.state !== 'needs' && run.state !== 'working') return { ...closed, closed: true }
+    const line = run.lately.find(moment => moment.text !== needs)?.text ?? ''
+    return { ...closed, state: 'idle', running: false, line, since: run.at, lately: [], agents: [], steps: [], plan: [], closed: true }
   }
 
   // The Claude Code session a run's thread runs in, whose log holds its chat.

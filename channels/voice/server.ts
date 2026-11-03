@@ -417,7 +417,10 @@ function follow(socket: WebSocket, record: Live['record'], { call = new Call(), 
 type Topic = { id: string; claude: string; voice: string }
 
 function runTopic(run: Run & { closed?: true }): Topic {
-  const about = run.closed ? `${opener(run).replace(/[.\s]*$/, '.')} The thread is closed, so new messages can't reach it, but its open questions can still be answered.` : opener(run)
+  const asked = run.closed && yours.of(run.id).asks.length > 0
+  const about = run.closed
+    ? `${opener(run).trimEnd().replace(/([^.?!…])$/, '$1.')} The thread is closed, so new messages can't reach it${asked ? ', but its open questions can still be answered' : ''}.`
+    : opener(run)
   return {
     id: run.id,
     claude: `The caller started it with Talk it through on a task. ${about}`,
