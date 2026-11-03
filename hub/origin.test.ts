@@ -64,3 +64,13 @@ test("a thread's own session goes by its thread over job variables it inherited,
   expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:8', HEX_FROM: 'telegram:-100:7' })).additionalContext).toContain("in Shop: `")
   expect(await hook('SubagentStart', { HEX_OWNER: 'telegram:-100:99' })).toBe('')
 })
+
+test("a turn hex's own prompt started points at the conversation only, and a vote taken off isn't the owner's words", async () => {
+  const store = open(dir)
+  store.deliver({ key: 'telegram:-100:53', to: '-100:7', from: 'telegram', body: '(vote removed)', author: 'owner', meta: { vote_removed: 'true' } })
+  store.take('telegram:-100:53', 's')
+  expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).additionalContext).toContain('/bin/hex message telegram:-100:50`')
+  store.deliver({ key: 'hub:-100:7:beat', to: '-100:7', from: 'hub', body: 'Hourly check.', author: 'prompt', meta: {} })
+  store.take('hub:-100:7:beat', 's')
+  expect((await hook('SubagentStart', { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: '-100:7' })).additionalContext).not.toContain('/bin/hex message')
+})
