@@ -219,7 +219,7 @@ test("a missed call still running when the thread's turn ends holds its repeat i
   expect(ran()).toBe(1)
 })
 
-test('a missed call still running holds its repeats however long it takes', async () => {
+test('a missed call still running holds its repeats until a quarter of an hour after it started', async () => {
   const time = manual(async () => {})
   try {
     const { ran, call, answer } = channel()
@@ -229,11 +229,28 @@ test('a missed call still running holds its repeats however long it takes', asyn
     gaveUp.abort()
     await time.advance(15 * 60_000)
     const again = call({ text: 'report' })
-    await answer()
-    await first
-    expect(text(await again)).toStartWith('this same reply call came before')
+    await Bun.sleep(1)
     expect(ran()).toBe(1)
+    await time.advance(1)
+    const stuck = call({ text: 'report' })
+    await Bun.sleep(1)
+    expect(ran()).toBe(2)
+    await answer()
+    await Promise.all([first, again, stuck])
   } finally {
     time.restore()
   }
+})
+
+test('a repeat that joined a call keeps it unheard, even when the first request hears its answer', async () => {
+  const { ran, call, answer } = channel()
+  const first = call({ text: 'report' })
+  const joined = new AbortController()
+  const again = call({ text: 'report' }, joined)
+  await Bun.sleep(1)
+  joined.abort()
+  await answer()
+  await Promise.all([first, again])
+  expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
+  expect(ran()).toBe(1)
 })

@@ -24,14 +24,15 @@ const NUDGE = 250
 // turn ends. A call stays unheard until the session hears its answer, and the same call in its
 // thread, until the thread's turn ends (rested), gets that answer instead of acting twice. A call
 // that reached the hub GAVE_UP before its answer counts as unheard even with no abort seen, since a
-// lagging hub accepts late and can miss the session leaving. KEEP bounds a finished call's record
-// for sessions whose turns the hub doesn't follow. A tool that only reads runs every time, and a
+// lagging hub accepts late and can miss the session leaving, and so does one a repeat joined. KEEP
+// after its start or answer lets a record go, for sessions whose turns the hub doesn't follow and
+// calls that never answer. A tool that only reads runs every time, and a
 // call the session gave up on before the hub read it doesn't run at all.
 const GAVE_UP = 120_000
 const KEEP = 15 * 60_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-type Run = { answer: Promise<Result>; at: number; done?: true }
+type Run = { answer: Promise<Result>; at: number; done?: true; missed?: true }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -63,7 +64,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
     if (gone.aborted) return Promise.resolve({ content: [{ type: 'text', text: `${tool} didn't run: you stopped waiting before the hub read it` }], isError: true })
     if (reads.has(tool)) return call(thread, tool, args)
     for (const [scope, runs] of unheard) {
-      for (const [key, run] of runs) if (run.done && clock.now() - run.at > KEEP) runs.delete(key)
+      for (const [key, run] of runs) if (clock.now() - run.at > KEEP) runs.delete(key)
       if (!runs.size) unheard.delete(scope)
     }
     const scope = String(thread)
@@ -72,12 +73,13 @@ export function endpoint(name: string, channel: string, token: string, server: C
     const key = JSON.stringify([tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
     const repeat = runs.get(key)
     const run: Run = repeat ?? { answer: call(thread, tool, args), at: arrived }
-    if (!repeat) {
+    if (repeat) repeat.missed = true
+    else {
       runs.set(key, run)
       void run.answer.then(() => Object.assign(run, { done: true, at: clock.now() }))
     }
     return run.answer.then(answer => {
-      if (!gone.aborted && clock.now() - arrived < GAVE_UP && runs.get(key) === run) runs.delete(key)
+      if ((repeat || !run.missed) && !gone.aborted && clock.now() - arrived < GAVE_UP && runs.get(key) === run) runs.delete(key)
       if (!repeat) return answer
       return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
     })
