@@ -9,14 +9,14 @@ hex's vault is [enclave](https://github.com/AVGVSTVS96/enclave): `.hex/bin/vault
 
 ## Every day
 
-Look in the vault first: `.hex/bin/vault list <site or name>` finds saved logins by name or website, with their fields and never their values.
+Look in the vault first: `.hex/bin/vault list <site or name>` finds saved logins by name or website, with their fields and without their values.
 
-- `.hex/bin/vault fill <name> <field>` types a saved value (`totp`: the current code) into the focused field on your computer, so you never read it.
+- `.hex/bin/vault fill <name> <field>` types a saved value (`totp`: the current code) into the focused field on your computer, without you reading it.
 - `.hex/bin/vault run KEY=<name>/<field> <command>` runs a command with the secret in its environment, hidden in its output.
 - `.hex/bin/vault passkey <name>` lets your computer's browser sign in once with a saved passkey: run it, then click the site's passkey sign-in within 5 minutes.
 - `<command> | .hex/bin/vault save <name> <field>` keeps a value you just made, like a new API token, without it passing through your context.
 
-When the vault doesn't have it, ask me: run `.hex/bin/vault ask <name> <field…>` (a `totp` field asks for a 2FA setup key), send me the link it prints, and run `.hex/bin/vault wait <name>` in the background until it says `saved`. What I type goes straight into your vault, never through chat or your context. The link works once, for 24 hours; if the wait stops, run it again and it picks up the same link.
+When the vault doesn't have it, ask me: run `.hex/bin/vault ask <name> <field…>` (a `totp` field asks for a 2FA setup key), send me the link it prints, and run `.hex/bin/vault wait <name>` in the background until it says `saved`. What I type goes straight into your vault, not through chat or your context. The link works once, for 24 hours; if the wait stops, run it again and it picks up the same link.
 
 If I paste a secret in chat, tell me it's in this chat's log now and send me a link instead.
 
@@ -31,7 +31,7 @@ Afterwards, `.hex/bin/vault list` shows what came in. Tell them the counts.
 
 ## Passkeys on hex's computer
 
-A saved passkey signs in through enclave's Chrome extension, which sends the site's request to the vault so the key never enters the browser.
+A saved passkey signs in through enclave's Chrome extension, which sends the site's request to the vault, so the key stays in the vault.
 
 The computer's browser reaches the vault over `ssh`, with a key and no password, so set that up from the computer to here first. Then:
 
