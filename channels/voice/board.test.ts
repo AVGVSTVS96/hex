@@ -161,7 +161,7 @@ test("each thread is a run from its session's own records, what needs you first,
   expect(board.rows()[0]).not.toContainKeys(['needs', 'lately', 'steps'])
 })
 
-test("a working thread's line is its newest step, and each of its agents from this stretch of work shows its own, running ones first", async () => {
+test("a working thread's line is its newest step in words, never a tool call, and each of its agents from this stretch of work shows its own, running ones first", async () => {
   const voiceapp = () => board.get('telegram:-1001234567890:2583')!
   expect(voiceapp().agents).toEqual([
     { id: 'agent1', label: 'Build the Tasks view', state: 'working', via: 'claude', since: new Date(building).toISOString(), steps: [] },
@@ -169,11 +169,16 @@ test("a working thread's line is its newest step, and each of its agents from th
   ])
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Read', { file_path: '/repo/src/tasks.ts' })
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Edit', { file_path: '/repo/src/tasks.ts', old_string: 'a', new_string: 'b' })
-  await until(() => voiceapp().line === 'Editing tasks.ts')
+  await until(() => voiceapp().steps.length === 2)
   expect(voiceapp().steps.map(step => [step.kind, step.text])).toEqual([
     ['edit', 'Editing tasks.ts'],
     ['read', 'Reading tasks.ts'],
   ])
+  expect(voiceapp().line).toBe('building')
+  said(join(project, 'cccccccc-voiceapp.jsonl'), { type: 'text', text: 'The **Tasks** view reads its rows now.' })
+  step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'cd ~/repo && git commit -qm "fix: rows"' })
+  await until(() => voiceapp().steps[0]?.kind === 'run')
+  expect(voiceapp().line).toBe('The Tasks view reads its rows now.')
   step(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.jsonl'), 'Read', { file_path: '/repo/README.md' })
   await until(() => voiceapp().agents[0].line === 'Reading README.md')
   const row = board.rows().find(row => row.name === 'voiceapp')!
@@ -387,6 +392,50 @@ test('a running session no thread holds is a run of its own while it works', asy
   running('12121212-review', 'idle', process.pid, { kind: 'bg', name: 'autofork-review', cwd: '/repo' })
   rmSync(join(claude, 'sessions', '56565656.json'))
   await until(() => !board.get('claude:12121212') && !board.get('claude:56565656'))
+})
+
+test("the hourly heartbeat is no turn of work: it leaves a thread as it was, and adds no steps to one that's working", async () => {
+  threads('telegram', { ...telegram, '-1001234567890:4100': { name: 'pulse', session: '41004100-pulse' } })
+  const transcript = join(project, '41004100-pulse.jsonl')
+  const pulse = () => board.get('telegram:-1001234567890:4100')
+  const beat = (slot: string) =>
+    heard(transcript, `<channel source="plugin:telegram:telegram" key="schedule:heartbeat@${slot}" user="schedule" schedule="heartbeat">\n[heartbeat] Hourly check`, {
+      isMeta: true,
+      origin: { kind: 'channel', server: 'plugin:telegram:telegram' },
+    })
+  const shipped = { at: ago(10), state: 'done', detail: 'shipped the fix', text: 'Shipped.' }
+  job('41004100-pulse', { state: 'done', detail: 'shipped the fix', updatedAt: shipped.at }, [shipped])
+  running('41004100-pulse', 'idle')
+  await until(() => pulse()?.state === 'done')
+  beat('2026-11-03T13:45Z')
+  said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
+  job('41004100-pulse', { state: 'working', detail: 'Checking inbox', updatedAt: ago(0) }, [shipped, { at: ago(0), state: 'working', detail: 'Checking inbox', text: '' }])
+  running('41004100-pulse', 'busy')
+  await until(() => pulse()?.running === true)
+  await Bun.sleep(100)
+  expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', steps: [] })
+  expect(board.runs.filter(run => run.state === 'working').map(run => run.name)).not.toContain('pulse')
+  job('41004100-pulse', { state: 'done', detail: 'Nothing new', updatedAt: ago(0) }, [shipped, { at: ago(0), state: 'done', detail: 'Nothing new', text: 'HEARTBEAT_OK' }])
+  running('41004100-pulse', 'idle')
+  await until(() => pulse()?.running === false)
+  await Bun.sleep(100)
+  expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', at: shipped.at })
+  expect(pulse()!.lately.map(moment => moment.text)).toEqual(['shipped the fix'])
+
+  running('41004100-pulse', 'busy')
+
+  job('41004100-pulse', { state: 'working', detail: 'Building the page', updatedAt: ago(0), fan: [{ id: 'page', kind: 'agent', label: 'Build the page', startedAt: Date.now() }] })
+  heard(transcript, 'Build the page', { origin: { kind: 'channel', server: 'plugin:telegram:telegram' } })
+  said(transcript, { type: 'text', text: 'Starting on the page.' })
+  await until(() => pulse()?.line === 'Starting on the page.')
+  beat('2026-11-03T14:45Z')
+  said(transcript, { type: 'text', text: 'HEARTBEAT_OK' })
+  step(transcript, 'Bash', { command: 'gh pr list' })
+  await Bun.sleep(100)
+  expect(pulse()).toMatchObject({ state: 'working', line: 'Starting on the page.' })
+  expect(pulse()!.steps.map(step => step.text)).toEqual(['Starting on the page.'])
+  running('41004100-pulse', 'idle')
+  job('41004100-pulse', { state: 'done', detail: 'page built', updatedAt: ago(0) })
 })
 
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
