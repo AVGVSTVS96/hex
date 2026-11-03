@@ -862,7 +862,7 @@ export class Store {
   // Changes whenever a heartbeat begins, ends or is followed, or a turn of a session that has had one.
   beaten(): string {
     return JSON.stringify(
-      this.db.query('select max(rowid), count(until), count(after), (select max(coalesce(ended, began)) from turns where session in (select session from beats)) from beats').values(),
+      this.db.query('select max(rowid), count(*), count(until), count(after), (select max(coalesce(ended, began)) from turns where session in (select session from beats)) from beats').values(),
     )
   }
 

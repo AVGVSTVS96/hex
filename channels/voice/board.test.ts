@@ -186,7 +186,12 @@ test("a working thread's line is its newest step in words, never a tool call, an
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Write', { file_path: '/repo/src/rows.ts', content: 'x' })
   await until(() => voiceapp().steps[0]?.kind === 'edit')
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'for r in a b; do echo $r; done' })
-  for (const tool of ["Running cd ~/repo && python3 -c ' import json print(1)'", 'Writing /repo/src/rows.ts', 'Reading src/tasks.ts', 'Running for r in a b; do ec…', 'Writing /repo/…/rows.ts']) {
+  step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'pwd' })
+  step(join(project, 'cccccccc-voiceapp.jsonl'), 'Grep', { pattern: 'board', path: '/repo' })
+  await until(() => voiceapp().steps[0]?.kind === 'search')
+  record('Wired the Tasks rows to the board')
+  await until(() => voiceapp().line === 'Wired the Tasks rows to the board')
+  for (const tool of ['Running pwd', "Running cd ~/repo && python3 -c ' import json print(1)'", 'Writing /repo/src/rows.ts', 'Reading src/tasks.ts', 'Running for r in a b; do ec…', 'Writing /repo/…/rows.ts']) {
     record(tool)
     await Bun.sleep(50)
     expect(voiceapp().line).toBe('')

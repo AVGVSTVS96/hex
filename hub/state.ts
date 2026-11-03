@@ -44,7 +44,9 @@ if (key) {
       took = recorded = store.write(() => store.take(key, session_id) && (store.turned(session_id, busy, at, heartbeat, flipped), true))
     } catch (error) {
       console.error(`hex couldn't record this turn: ${error}`)
-      took = store.take(key, session_id)
+      const mine = store.message(key)?.taken?.by === session_id
+      took = mine || store.take(key, session_id)
+      recorded = mine
     }
     if (took) untold = undefined
     else if (store.message(key)) {

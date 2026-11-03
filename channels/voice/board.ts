@@ -324,8 +324,9 @@ export class Board extends Changes {
     const out = handed.filter(one => !HANDED[one.status])
     const beats = (thread.session && this.beats.get(thread.session)) || []
     const beat = this.beat(thread, beats, session)
-    if (beat !== undefined && job?.state !== 'blocked') ({ job, timeline } = before(job, timeline, beat))
-    const beating = beat !== undefined && !job?.fan?.some(fan => RUNS.has(fan.kind) && !fan.doneAt && (fan.startedAt ?? 0) < beat)
+    const earlier = beat !== undefined && !!job?.fan?.some(fan => RUNS.has(fan.kind) && !fan.doneAt && (fan.startedAt ?? 0) < beat)
+    if (beat !== undefined && job?.state !== 'blocked') ({ job, timeline } = before(job, timeline, beat, earlier))
+    const beating = beat !== undefined && !earlier
     const outside = (at: string) => !beats.some(beat => at >= beat.began && (!beat.until || at < beat.until))
     const ours = (step: Step) => outside(written.get(step) ?? step.at)
     const known = job?.state ? STATES[job.state] : undefined
@@ -348,12 +349,13 @@ export class Board extends Changes {
     const steps = state === 'working' ? this.steps(key).filter(ours) : []
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
     const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && ours(step)) : undefined
-    const summary = detail && !tooled(detail, this.followers.get(key)?.steps ?? []) ? detail : undefined
-    const line = (said && (!summary || said.at >= (shownSince(timeline, summary) ?? at)) ? said.text : undefined) || needs || summary || (state === 'working' ? '' : lately[0]?.text) || ''
+    const shown = detail && (shownSince(timeline, detail) ?? at)
+    const summary = detail && shown && outside(shown) && !tooled(detail, this.followers.get(key)?.steps ?? []) ? detail : undefined
+    const line = (said && (!summary || said.at >= shown!) ? said.text : undefined) || needs || summary || (state === 'working' ? '' : lately[0]?.text) || ''
     const agents = (
       state === 'working'
         ? [
-            ...(job?.fan ?? []).filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since)) && outside(iso(fan.startedAt) ?? '')).map(fan => this.subagent(key, fan)),
+            ...(job?.fan ?? []).filter(fan => WORK.has(fan.kind) && (!fan.doneAt || fan.doneAt >= Date.parse(since)) && !(beat !== undefined && (fan.startedAt ?? 0) >= beat)).map(fan => this.subagent(key, fan)),
             ...started.map(one => this.agent(`${key} ${one.id}`, { id: one.id, label: one.name ?? short(one.id), state: 'working', via: 'claude', since: iso(one.started) })),
             ...handed.filter(one => !HANDED[one.status] || one.latest || !one.end || one.end >= since).map(one => this.delegation(key, one)),
           ]
@@ -664,12 +666,12 @@ function toldOf(entry: any): [string, Told] | undefined {
   return id ? [id, { state: TOLD[text.match(/<status>(\w+)<\/status>/)?.[1] ?? ''] ?? 'stopped', ...(said && { result: said }) }] : undefined
 }
 
-// A session's records as they stood when its heartbeat began, at rest: work still running then keeps
-// it working through its agents and shells. With none from before it (Claude Code starts a job's
+// A session's records as they stood when its heartbeat began: at rest, or while work from before it
+// still runs, as that work last said. With none from before it (Claude Code starts a job's
 // timeline over when its session renews), it's idle, still listed by its own time.
-function before(job: Job | undefined, timeline: Entry[], from: number) {
+function before(job: Job | undefined, timeline: Entry[], from: number, working: boolean) {
   const kept = timeline.filter(entry => Date.parse(entry.at) < from)
-  const last = kept.findLast(entry => entry.state !== 'working')
+  const last = working ? kept.at(-1) : kept.findLast(entry => entry.state !== 'working')
   if (!job || !last) return { job: job && { ...job, state: undefined, detail: undefined, needs: undefined }, timeline: kept }
   return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined, updatedAt: last.at }, timeline: kept }
 }
@@ -691,7 +693,7 @@ function tooled(detail: string, steps: Step[]) {
   return steps.some(step => {
     if (['say', 'think', 'plan'].includes(step.kind)) return false
     const input = step.detail && plain(step.detail)
-    return !!input && rest.length > 3 && (shortened(rest, input) || (input.length > 3 && rest.endsWith(input)))
+    return !!input && rest.length > 1 && shortened(rest, input)
   })
 }
 
