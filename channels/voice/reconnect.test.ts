@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import { open as store } from '../../hub/store.ts'
 import { until } from '../../hub/until.ts'
 
 const ID = 'sess_app'
@@ -9,13 +10,17 @@ const ID = 'sess_app'
 // An app call against a stand-in for OpenAI's live API whose attach the test can hold back, so the
 // engine's connection to the call can be dropped and kept from coming back. open: a record of a
 // call still going when the engine starts, which it attaches back to. The test calls the voice
-// session's tools through lines on the engine's stdin, and their answers come back on its stdout.
+// session's tools through lines on the engine's stdin, and their answers come back on its stdout;
+// what the engine relays to the thread General reaches the test as its hub.
 async function appCall({ open = false } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'reconnect-'))
   const voiceDir = join(home, '.claude', 'channels', 'voice')
   const state = join(home, 'hex', 'state')
   mkdirSync(join(voiceDir, 'calls'), { recursive: true })
-  mkdirSync(state, { recursive: true })
+  mkdirSync(join(state, 'telegram'), { recursive: true })
+  store(state).keepThreads('telegram', { '-100123': { name: 'General', session: 'aaaaaaaa-general' } })
+  const relayed: any[] = []
+  const hub = Bun.listen({ unix: join(state, 'telegram', 'hub.sock'), socket: { data: (_, data) => void relayed.push(JSON.parse(String(data))) } })
   // Each session.close the stand-in got, as `<session id> <event id>`.
   const closes: string[] = []
   let voice: Bun.ServerWebSocket<unknown> | undefined
@@ -78,6 +83,7 @@ for await (const line of console) {
     base,
     closes,
     told,
+    relayed,
     call,
     live: async () => (await fetch(`${base}/calls`).then(r => r.json())).live,
     tool: (name: string, args: object = {}) => {
@@ -107,6 +113,7 @@ for await (const line of console) {
       plugin.kill()
       await plugin.exited
       openai.stop(true)
+      hub.stop(true)
       rmSync(home, { recursive: true, force: true })
     },
   }
@@ -266,4 +273,14 @@ test('a call a new one replaces while the engine attaches back to it after a res
   expect(await engine.live()).toBe(`${ID}-1`)
   await until(() => engine.told.length >= 3)
   expect(engine.told.map(({ hub, meta }) => (meta?.ended ? `${meta.call} ended` : meta?.call ? `${meta.call} told` : hub))).toEqual([`${ID} ended`, 'renew', `${ID}-1 told`])
+}, 20_000)
+
+test('work sent while the connection to the call is coming back still goes out and is followed', async () => {
+  await using engine = await appCall()
+  await started(engine)
+  await engine.drop()
+  const { result } = await engine.tool('send', { thread: 'General', about: 'Look into it', text: 'look into it' })
+  expect(result).toBe("sent to General, on the board as look-into-it, but the voice may not have heard of it; the work went out, so it needn't be sent again")
+  expect(engine.relayed).toMatchObject([{ type: 'inbound', thread: '-100123', content: 'look into it', meta: { voice_task: `${ID}:look-into-it` } }])
+  expect((await engine.call()).tasks).toMatchObject([{ id: 'look-into-it', state: 'running', to: 'General' }])
 }, 20_000)

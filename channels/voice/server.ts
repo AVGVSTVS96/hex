@@ -196,10 +196,10 @@ async function pass(name: string, about: string, text: string, app?: string, whe
     const opened = await begin(app, oneWord(name), { content: text, author: 'prompt', meta }, { about: `From a call: ${about}`, where })
     thread = { app, id: opened.thread, name, state: HEX_STATE }
   }
-  if (call && id) {
-    await mark(call, { id, state: 'running', text: about, to: thread!.name, agent: `${thread!.app}:${thread!.id}` })
-    watch(call, id, thread!, !!app)
-  }
+  // Telling the voice can fail, as while its connection comes back, and that mustn't keep the
+  // message from going out and being followed.
+  const told = call && id ? mark(call, { id, state: 'running', text: about, to: thread!.name, agent: `${thread!.app}:${thread!.id}` }).then(() => true, () => false) : true
+  if (call && id) watch(call, id, thread!, !!app)
   if (!app) {
     try {
       await relay(HEX_STATE, thread!.app, { type: 'inbound', thread: thread!.id, content: text, meta })
@@ -209,7 +209,8 @@ async function pass(name: string, about: string, text: string, app?: string, whe
     }
   }
   const sent = app ? `opened ${name} in ${app}` : `sent to ${thread!.name}`
-  return id ? `${sent}, on the board as ${id}` : sent
+  if (!id) return sent
+  return (await told) ? `${sent}, on the board as ${id}` : `${sent}, on the board as ${id}, but the voice may not have heard of it; the work went out, so it needn't be sent again`
 }
 
 // Work a past call sent out is picked back up when the engine starts, read from the start of its
@@ -278,17 +279,18 @@ function current(call: string, id: string): Task | undefined {
   return task
 }
 
-async function mark(call: string, task: Task) {
+// The change is on the call's record when mark returns, or it throws; what it returns settles once
+// the voice has heard of it, on a live call.
+function mark(call: string, task: Task): Promise<string> {
   if (live?.id === call) {
     live.call.track(task, Date.now() - Date.parse(live.record.started))
     save(live)
     activity.changed()
-    await send(live, 'session.thinking.append', live.call.change(task.id))
-    return 'board updated'
+    return send(live, 'session.thinking.append', live.call.change(task.id)).then(() => 'board updated')
   }
   const record = past(call)
   calls.save({ ...record, tasks: [...record.tasks, { ...task, at: Date.now() - Date.parse(record.started) }] })
-  return 'that call has ended, so only its record changed'
+  return Promise.resolve('that call has ended, so only its record changed')
 }
 
 function see(call: string, id: string, { line, end }: Step) {
@@ -296,7 +298,12 @@ function see(call: string, id: string, { line, end }: Step) {
   if (!end) return
   stop(call, id)
   const task = current(call, id)
-  if (task?.state === 'running') mark(call, { ...task, state: end }).catch(error => trace(`couldn't mark ${id} ${end}: ${error.message}`))
+  if (task?.state !== 'running') return
+  try {
+    mark(call, { ...task, state: end }).catch(error => trace(`the voice didn't hear ${id} ${end}: ${error.message}`))
+  } catch (error) {
+    trace(`couldn't mark ${id} ${end}: ${(error as Error).message}`)
+  }
 }
 
 function stop(call: string, id: string) {
