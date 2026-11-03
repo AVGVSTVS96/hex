@@ -16,6 +16,7 @@ async function appCall({ open = false } = {}) {
   const state = join(home, 'hex', 'state')
   mkdirSync(join(voiceDir, 'calls'), { recursive: true })
   mkdirSync(state, { recursive: true })
+  // Each session.close the stand-in got, as `<session id> <event id>`.
   const closes: string[] = []
   let voice: Bun.ServerWebSocket<unknown> | undefined
   let hold = open
@@ -31,7 +32,7 @@ async function appCall({ open = false } = {}) {
         await new Promise<void>(resolve => waiting.push(resolve))
         held = false
       }
-      return server.upgrade(request) ? undefined : new Response('no', { status: 400 })
+      return server.upgrade(request, { data: { id: new URL(request.url).pathname.split('/').at(-2) } }) ? undefined : new Response('no', { status: 400 })
     },
     websocket: {
       open: socket => void (voice = socket),
@@ -39,7 +40,7 @@ async function appCall({ open = false } = {}) {
         const event = JSON.parse(String(raw))
         if (event.type === 'session.thinking.append') socket.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: event.event_id }))
         if (event.type !== 'session.close') return
-        closes.push(event.event_id)
+        closes.push(`${(socket.data as { id: string }).id} ${event.event_id}`)
         socket.send(JSON.stringify({ type: 'session.closed', reason: 'close_requested', client_event_id: event.event_id }))
       },
     },
@@ -128,7 +129,7 @@ test('hanging up while the connection to the call is coming back ends the call o
   expect(engine.closes).toEqual([])
   engine.back()
   expect(await ends(engine)).toMatchObject({ end: 'you' })
-  expect(engine.closes).toEqual(['close-you-app'])
+  expect(engine.closes).toEqual([`${ID} close-you-app`])
 }, 20_000)
 
 test('hanging up a new call before its connection has opened ends it once open', async () => {
@@ -139,7 +140,7 @@ test('hanging up a new call before its connection has opened ends it once open',
   expect((await engine.hangUp()).status).toBe(204)
   engine.back()
   expect(await ends(engine)).toMatchObject({ end: 'you' })
-  expect(engine.closes).toEqual(['close-you-app'])
+  expect(engine.closes).toEqual([`${ID} close-you-app`])
 }, 20_000)
 
 test('a call a new one replaces before its connection opened is still closed', async () => {
@@ -150,16 +151,24 @@ test('a call a new one replaces before its connection opened is still closed', a
   await engine.attaching()
   expect((await start()).status).toBe(201)
   engine.back()
-  await until(() => engine.closes.includes('close-you-moved'))
+  await until(() => engine.closes.length)
+  await Bun.sleep(200)
+  expect(engine.closes).toEqual([`${ID} close-you-moved`])
+  expect(await engine.call()).toMatchObject({ end: 'you', reason: 'moved to a new call' })
 }, 20_000)
 
 test('hanging up a call the engine is attaching back to after a restart ends it once attached, from the app or from hex', async () => {
-  for (const hangUp of [(engine: Engine) => engine.hangUp(), (engine: Engine) => engine.tool('hang_up')]) {
+  const ways = [
+    { hangUp: (engine: Engine) => engine.hangUp(), end: 'you', close: 'close-you-app' },
+    { hangUp: (engine: Engine) => engine.tool('hang_up'), end: 'hex', close: 'close_hex_' },
+  ]
+  for (const { hangUp, end, close } of ways) {
     await using engine = await appCall({ open: true })
     await engine.attaching()
     await hangUp(engine)
     engine.back()
-    await ends(engine)
+    expect(await ends(engine)).toMatchObject({ end })
     expect(engine.closes).toHaveLength(1)
+    expect(engine.closes[0]).toStartWith(`${ID} ${close}`)
   }
 }, 30_000)

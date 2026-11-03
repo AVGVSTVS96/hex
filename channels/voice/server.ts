@@ -334,10 +334,13 @@ function close(call: Live, event: string) {
 
 function closeSession(id: string, event: string) {
   const socket = sideband(id)
+  let sent = false
   socket.onopen = () => {
     socket.send(JSON.stringify({ type: 'session.close', event_id: event }))
+    sent = true
     socket.close()
   }
+  socket.onclose = () => sent || trace(`couldn't send ${id} its close (${event})`)
 }
 
 function deliver(content: string, meta: Record<string, string>) {
@@ -421,8 +424,10 @@ function ringing() {
 function follow(socket: WebSocket, record: Live['record'], { call = new Call(), speak, hello, about }: { call?: Call; speak?: Live['speak']; hello?: string; about?: Topic } = {}) {
   if (live) {
     close(live, 'close-you-moved')
-    finish(live, 'moved to a new call', 'close-you-moved')
+    finish(live, 'moved to a new call', live.closing ?? 'close-you-moved')
   }
+  if (attaching) attaching.closing ??= 'close-you-moved'
+  attaching = undefined
   const current: Live = { id: record.id, shown: new Map(), socket, call, record, pending: new Map(), rings: [], changes: new Changes(), spoke: 0, speak }
   live = current
   save(current)
@@ -560,7 +565,7 @@ function reconnect(call: Live, attempt: number) {
   if (live !== call) return
   for (const pending of call.pending.values()) pending.reject(new Error('the connection to the voice dropped and is coming back; try again in a few seconds'))
   call.pending.clear()
-  if (call.speak || attempt >= RETRIES.length) return finish(call, 'connection_lost')
+  if (call.speak || attempt >= RETRIES.length) return finish(call, 'connection_lost', call.closing)
   trace(`lost the connection to ${call.id}, reattaching (try ${attempt + 1})`)
   setTimeout(() => {
     if (live !== call) return
@@ -655,8 +660,9 @@ function reattach({ id }: CallRecord) {
   socket.onclose = () => {
     if (attaching === pending) attaching = undefined
     if (live?.id === id) return
+    if (pending.closing) closeSession(id, pending.closing)
     const record = calls.get(id)
-    if (record) closeOut(record)
+    if (record) closeOut(record, pending.closing)
     else if (!live) toHub(hub.renew)
   }
 }
