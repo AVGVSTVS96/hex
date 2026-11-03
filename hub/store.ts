@@ -240,6 +240,8 @@ const migrations: (string | ((store: Store) => void))[] = [
       else store.db.query('delete from pins where app = ? and thread = ?').run(app, thread)
     }
   },
+  `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}), after text check (after ${UTC}));
+  create index if not exists beats_session on beats (session, began);`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -314,6 +316,7 @@ function bookOf(text: () => string, file: string): Book | undefined {
 const now = () => new Date().toISOString()
 const SEEN = 2 * 24 * 60 * 60 * 1000
 const TURNS = 30 * 24 * 60 * 60 * 1000
+const BEATS = 7 * 24 * 60 * 60 * 1000
 
 // The profile and its history moved into hex.db from state/profile.md and profile.md.history, where
 // each version it replaced is a JSON line with when it was replaced: when the next was put in place.
@@ -824,12 +827,47 @@ export class Store {
 
   // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
   // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes.
-  turned(session: string, busy: boolean, at = now()) {
+  // A heartbeat (the scheduler's hourly check) that opens a turn, because the last one ended, is
+  // that turn until it ends or another prompt joins it; one inside a turn is part of that turn. Each
+  // holds when the next prompt that isn't a heartbeat came (after), so a run of them reads as one,
+  // kept a week after that prompt, or after it ended while none came.
+  // A heartbeat's turn counts from Claude Code marking the session busy (flipped), when that came
+  // after the last turn ended, since Claude Code's records of the turn can come before the hook.
+  turned(session: string, busy: boolean, at = now(), heartbeat = false, flipped?: number) {
     this.write(() => {
+      const { began, ended } = this.turn(session)
+      const opens = heartbeat && (!began || !!ended)
+      const from = opens && flipped !== undefined && flipped <= Date.parse(at) && (!ended || flipped > Date.parse(ended)) ? new Date(flipped).toISOString() : at
+      if (busy && !heartbeat) this.db.query('delete from beats where session = ? and began > ?').run(session, at)
+      if ((!heartbeat && (busy || !began || at >= began)) || opens) this.db.query('update beats set until = ? where session = ? and until is null and began <= ?').run(at, session, at)
+      if (busy && !heartbeat) this.db.query('update beats set after = ? where session = ? and after is null').run(at, session)
+      if (opens) this.db.query('insert into beats (session, began) values (?, ?)').run(session, from)
+      this.db.query('delete from beats where coalesce(after, until, began) < ? and (after is not null or rowid > (select min(rowid) from beats run where run.session = beats.session and run.after is null))').run(new Date(Date.parse(at) - BEATS).toISOString())
       if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
       else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
       this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
     })
+  }
+
+  beats(session: string): { began: string; until?: string; after?: string }[] {
+    return this.everyBeat().get(session) ?? []
+  }
+
+  // Each session's heartbeats, oldest first.
+  everyBeat(): Map<string, { began: string; until?: string; after?: string }[]> {
+    const beats = new Map<string, { began: string; until?: string; after?: string }[]>()
+    for (const { session, ...row } of this.db.query('select session, began, until, after from beats order by began').all() as Record<string, string | null>[]) {
+      const beat = Object.fromEntries(Object.entries(row).filter(([, value]) => value)) as { began: string; until?: string; after?: string }
+      beats.set(session!, [...(beats.get(session!) ?? []), beat])
+    }
+    return beats
+  }
+
+  // Changes whenever a heartbeat begins, ends or is followed, or a turn of a session that has had one.
+  beaten(): string {
+    return JSON.stringify(
+      this.db.query('select max(rowid), count(*), count(until), count(after), (select max(coalesce(ended, began)) from turns where session in (select session from beats)) from beats').values(),
+    )
   }
 
   turn(session: string): { began?: string; ended?: string } {

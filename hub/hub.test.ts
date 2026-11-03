@@ -2205,6 +2205,14 @@ test("a session's hook takes what its prompt brings in, and drops a copy of one 
   expect(await new Response(copy.stderr).text()).toContain('telegram:1:42')
 })
 
+test("a hook with no session id lets its prompt through", async () => {
+  const store = open(dir)
+  store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
+  const prompt = '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>'
+  const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir }, stdin: new Blob([JSON.stringify({ prompt, session_id: '' })]) })
+  expect(await hook.exited).toBe(0)
+})
+
 test("a channel tag in a message's own words takes nothing", async () => {
   const store = open(dir)
   store.deliver({ key: 'telegram:1:42', to: 'chat:7', from: 'telegram', author: 'owner', body: 'hi' })
@@ -2214,6 +2222,89 @@ test("a channel tag in a message's own words takes nothing", async () => {
   expect(await hook.exited).toBe(0)
   expect(store.message('telegram:1:42')!.taken!.by).toBe(SESSION)
   expect(store.message('schedule:heartbeat@2026-10-18T21:45Z')!.taken).toBeUndefined()
+})
+
+test("a heartbeat that opens its session's turn is kept until that turn ends or another prompt comes, and one inside a turn isn't", async () => {
+  const store = open(dir)
+  const prompt = async (key: string, from: string, body: string, meta?: Record<string, string>) => {
+    store.deliver({ key, to: 'chat:7', from, author: from === 'telegram' ? 'owner' : 'prompt', body, ...(meta && { meta }) })
+    const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], {
+      env: { ...process.env, HEX_STORE: dir },
+      stdin: new Blob([JSON.stringify({ prompt: `<channel source="plugin:telegram:telegram" key="${key}">\n${body}\n</channel>`, session_id: SESSION })]),
+    })
+    expect(await hook.exited).toBe(0)
+  }
+  const beat = (slot: string) => prompt(`schedule:heartbeat@${slot}`, 'schedule', '[heartbeat] Hourly check', { user: 'schedule', schedule: 'heartbeat' })
+  await beat('2026-11-03T12:45Z')
+  const [first] = store.beats(SESSION)
+  expect(first).toEqual({ began: expect.any(String) })
+  await beat('2026-11-03T12:46Z')
+  expect(store.beats(SESSION)).toEqual([first])
+  store.turned(SESSION, false)
+  expect(store.beats(SESSION)).toEqual([{ began: first!.began, until: store.turn(SESSION).ended }])
+  await beat('2026-11-03T13:45Z')
+  const [, second] = store.beats(SESSION)
+  expect(second).toEqual({ began: expect.any(String) })
+  store.turned(SESSION, false, first!.began)
+  expect(store.beats(SESSION)[1]).toEqual(second)
+  await Bun.sleep(5)
+  await prompt('telegram:1:50', 'telegram', 'ship it')
+  const after = store.turn(SESSION).began
+  expect(store.beats(SESSION)).toEqual([
+    { began: first!.began, until: expect.any(String), after },
+    { began: second!.began, until: after, after },
+  ])
+  await beat('2026-11-03T14:45Z')
+  expect(store.beats(SESSION)).toHaveLength(2)
+})
+
+test("hex.db counts a heartbeat from the busy flip after its turn's end, keeps a run's first beat a week on, and drops one a real prompt began before", () => {
+  const store = open(dir)
+  const at = (minutes: number) => new Date(Date.parse('2026-11-01T00:00:00.000Z') + minutes * 60_000).toISOString()
+  store.turned('beat-a', true, at(0))
+  store.turned('beat-a', false, at(1))
+  store.turned('beat-a', true, at(60), true, Date.parse(at(59.9)))
+  expect(store.beats('beat-a')).toEqual([{ began: at(59.9) }])
+  store.turned('beat-a', false, at(61))
+  store.turned('beat-a', true, at(8 * 24 * 60), true, Date.parse(at(8 * 24 * 60 - 0.1)))
+  expect(store.beats('beat-a').map(beat => beat.began)).toEqual([at(59.9), at(8 * 24 * 60 - 0.1)])
+  store.turned('beat-b', false, at(0))
+  store.turned('beat-b', true, at(2), true)
+  store.turned('beat-b', true, at(1.5))
+  expect(store.beats('beat-b')).toEqual([])
+})
+
+test("a task the heartbeat started reports back inside the heartbeat, and one started before it ends the run", async () => {
+  const store = open(dir)
+  const claude = mkdtempSync(join(tmpdir(), 'hex-claude-'))
+  const jobs = join(claude, 'jobs', 'job99999')
+  mkdirSync(jobs, { recursive: true })
+  const hook = async (prompt: string) => {
+    const run = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'busy'], { env: { ...process.env, HEX_STORE: dir, CLAUDE_CONFIG_DIR: claude }, stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]) })
+    expect(await run.exited).toBe(0)
+  }
+  const told = (task: string) => hook(`<task-notification>\n<task-id>${task}</task-id>\n<status>completed</status>\n</task-notification>`)
+  store.deliver({ key: 'schedule:heartbeat@2026-11-03T12:45Z', to: 'chat:7', from: 'schedule', author: 'prompt', body: '[heartbeat] Hourly check', meta: { user: 'schedule', schedule: 'heartbeat' } })
+  await hook('<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-11-03T12:45Z">\n[heartbeat] Hourly check\n</channel>')
+  const [beat] = store.beats(SESSION)
+  writeFileSync(join(jobs, 'state.json'), JSON.stringify({ sessionId: SESSION, fan: [{ id: 'early', kind: 'agent', startedAt: Date.parse(beat!.began) - 60_000 }, { id: 'own', kind: 'shell', startedAt: Date.parse(beat!.began) + 1000 }] }))
+  store.turned(SESSION, false)
+  await Bun.sleep(5)
+  await told('own')
+  expect(store.beats(SESSION).map(one => one.after)).toEqual([undefined, undefined])
+  store.turned(SESSION, false)
+  await Bun.sleep(5)
+  store.deliver({ key: 'schedule:heartbeat@2026-11-03T13:45Z', to: 'chat:7', from: 'schedule', author: 'prompt', body: '[heartbeat] Hourly check', meta: { user: 'schedule', schedule: 'heartbeat' } })
+  await hook('<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-11-03T13:45Z">\n[heartbeat] Hourly check\n</channel>')
+  store.turned(SESSION, false)
+  await Bun.sleep(5)
+  await told('own')
+  expect(store.beats(SESSION).map(one => one.after)).toEqual([undefined, undefined, undefined, undefined])
+  store.turned(SESSION, false)
+  await Bun.sleep(5)
+  await told('early')
+  expect(store.beats(SESSION).every(one => one.after)).toBe(true)
+  rmSync(claude, { recursive: true })
 })
 
 test('a session started before hex kept messages has the hub take them for it', async () => {
