@@ -1950,6 +1950,19 @@ test("a session's stop hook reports whether background agents are still working,
   expect(received).toEqual([{ type: 'state', thread: 't1', busy: false, background: true }, { type: 'state', thread: 't1', busy: false }])
 })
 
+test("a session's stop hook names its session, and says when the turn failed", async () => {
+  const socket = join(dir, 'state.sock')
+  const received: object[] = []
+  const server = createServer(client => client.on('data', chunk => received.push(JSON.parse(String(chunk))))).listen(socket)
+  for (const hook_event_name of ['Stop', 'StopFailure']) {
+    const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'idle'], { env: { ...process.env, HEX_HUB: socket, HEX_THREAD: 't1', HEX_STORE: dir, MEMORY_DIR: '' }, stdin: new Blob([JSON.stringify({ hook_event_name, session_id: SESSION })]) })
+    await hook.exited
+    await until(() => received.length === (hook_event_name === 'Stop' ? 1 : 2) || undefined)
+  }
+  server.close()
+  expect(received).toEqual([{ type: 'state', thread: 't1', busy: false, session: SESSION }, { type: 'state', thread: 't1', busy: false, failed: true, session: SESSION }])
+})
+
 test("a turn's hook tells the hub and goes, without waiting for a stalled hub to hang up", async () => {
   const socket = join(dir, 'state.sock')
   const received: object[] = []
@@ -2382,5 +2395,6 @@ test('a tool call answered slowly is kept for a repeat until a Stop of the threa
   expect(await kept('background', { session: SESSION, background: true })).toBe(true)
   expect(await kept('failed', { session: SESSION, failed: true })).toBe(true)
   expect(await kept('no session', {})).toBe(true)
+  expect(await kept('busy', { session: SESSION, busy: true })).toBe(true)
   expect(await kept('done', { session: SESSION })).toBe(false)
 })
