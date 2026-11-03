@@ -70,11 +70,16 @@ test('a question keeps all of its context, line by line, so the app can open the
   expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
 })
 
-test('a first line too long to show reads whole in its context', () => {
+test('what a long first line loses to its cut opens its context', () => {
   const first = `Which way? ${'One option costs this and the other takes that away. '.repeat(4).trim()}`
-  const question = fromLedger('telegram', asked(1, first, ['A', 'B']))
-  expect(question.question.endsWith('…')).toBe(true)
-  expect(question.context).toBe(first)
+  const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
+  const [shown, rest] = [question.question.slice(0, -1), question.context!.split('\n')[0]!.slice(1)]
+  expect(`${shown} ${rest}`.replace(/\s+/g, ' ')).toBe(first)
+  expect(question.context!.endsWith('\nMore.')).toBe(true)
+})
+
+test('a short first line that ends in an ellipsis keeps no context of its own', () => {
+  expect(fromLedger('telegram', asked(1, 'Ship it…', ['Yes', 'No'])).context).toBeUndefined()
 })
 
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {
