@@ -12,6 +12,7 @@ import { clip, Questions, type Question } from './questions.ts'
 import { relay } from './relay.ts'
 import { Board, opener, type Run } from './board.ts'
 import { begin, title as oneWord, type Held, type VoiceLine } from '../../hub/hub.ts'
+import { open as store } from '../../hub/store.ts'
 import page from './page.html' with { type: 'text' }
 
 const KEY = env.OPENAI_API_KEY
@@ -417,9 +418,10 @@ function follow(socket: WebSocket, record: Live['record'], { call = new Call(), 
 type Topic = { id: string; claude: string; voice: string }
 
 function runTopic(run: Run): Topic {
+  const closed = store(HEX_STATE).threads({ app: run.app, open: false }).some(({ thread }) => thread === run.thread)
   return {
     id: run.id,
-    claude: `The caller started it with Talk it through on a task. ${opener(run)}`,
+    claude: `The caller started it with Talk it through on a task. ${opener(run)}${closed ? ' The thread is closed, so send can’t reach it.' : ''}`,
     voice: `The caller tapped Talk it through on a task, so bring it up now in a sentence or two, then listen. ${opener(run)}`,
   }
 }

@@ -161,20 +161,6 @@ test("each thread is a run from its session's own records, what needs you first,
   expect(board.rows()[0]).not.toContainKeys(['needs', 'lately', 'steps'])
 })
 
-test("a thread off the board, one quiet for a week or closed, is still found as a run in the board's shape, and the board keeps leaving it out", async () => {
-  expect(board.find('telegram:-1001234567890')).toBe(board.get('telegram:-1001234567890')!)
-  const quiet = board.find('buzz:b1')!
-  expect(quiet).toMatchObject({ id: 'buzz:b1', app: 'buzz', thread: 'b1', name: 'Old news', where: 'Buzz', place: 'Old news', state: 'done', line: 'long ago', agents: [], steps: [], lately: [] })
-  expect(Object.keys(quiet).sort()).toEqual(Object.keys(board.get('telegram:-1001234567890:65')!).filter(key => key !== 'link').sort())
-  threads('discord', { gone: { name: 'Data kit', session: 'abababab-gone' } })
-  job('abababab-gone', { state: 'done', detail: 'kit shipped', updatedAt: ago(10 * 24 * 60) })
-  threads('discord', {})
-  await until(() => !open(state).threads({ app: 'discord', open: true }).length)
-  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', state: 'done', line: 'kit shipped' })
-  expect(board.runs.map(run => run.id)).not.toContainAnyValues(['buzz:b1', 'discord:gone'])
-  expect(board.find('discord:never')).toBeUndefined()
-})
-
 test("a working thread's line is its newest step, and each of its agents from this stretch of work shows its own, running ones first", async () => {
   const voiceapp = () => board.get('telegram:-1001234567890:2583')!
   expect(voiceapp().agents).toEqual([
@@ -581,4 +567,31 @@ test("two T3 threads that send each other work each show on their own, the other
   await until(() => board.get('t3:ping')?.agents.length && board.get('t3:pong')?.agents.length)
   expect(board.get('t3:ping')!.agents.map(agent => [agent.label, agent.state])).toEqual([['pong', 'working']])
   expect(board.get('t3:pong')!.agents.map(agent => [agent.label, agent.state])).toEqual([['ping', 'working']])
+})
+
+test("a thread off the board, one quiet for a week or closed, is still found as a run in the board's shape, and the board keeps leaving it out", async () => {
+  expect(board.find('telegram:-1001234567890')).toBe(board.get('telegram:-1001234567890')!)
+  const quiet = board.find('buzz:b1')!
+  expect(quiet).toMatchObject({ id: 'buzz:b1', app: 'buzz', thread: 'b1', name: 'Old news', where: 'Buzz', place: 'Old news', state: 'done', line: 'long ago', agents: [], steps: [], lately: [] })
+  expect(Object.keys(quiet).sort()).toEqual(Object.keys(board.get('telegram:-1001234567890:65')!).filter(key => key !== 'link').sort())
+  threads('discord', { gone: { name: 'Data kit', session: 'abababab-gone' } })
+  job('abababab-gone', { state: 'done', detail: 'kit shipped', updatedAt: ago(10 * 24 * 60) })
+  threads('discord', {})
+  await until(() => !open(state).threads({ app: 'discord', open: true }).length)
+  expect(board.find('discord:gone')).toMatchObject({ id: 'discord:gone', name: 'Data kit', where: 'Discord', state: 'done', line: 'kit shipped' })
+  expect(board.runs.map(run => run.id)).not.toContainAnyValues(['buzz:b1', 'discord:gone'])
+  expect(board.find('discord:never')).toBeUndefined()
+})
+
+test("a closed thread whose session moved to another app's thread shows none of that session's state", async () => {
+  job('acacacac-moved', { state: 'blocked', detail: 'needs a pick', needs: 'Pick one', updatedAt: ago(1) })
+  running('acacacac-moved', 'busy')
+  threads('discord', { topic: { name: 'Snailmail', session: 'acacacac-moved' } })
+  threads('discord', {})
+  threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' }, there: { name: 'Snailmail', session: 'acacacac-moved' } })
+  await until(() => board.get('buzz:there')?.state === 'working')
+  expect(board.find('discord:topic')).toMatchObject({ name: 'Snailmail', state: 'idle', running: false, line: '', agents: [] })
+  expect(board.find('discord:topic')).not.toContainKey('needs')
+  threads('buzz', { b1: { name: 'Old news', session: 'ffffffff-old' } })
+  rmSync(join(claude, 'sessions', 'acacacac.json'))
 })

@@ -126,14 +126,16 @@ export class Board extends Changes {
   }
 
   // Any thread hex.db knows, as a run: the board's while it's on it, else built now, so a thread
-  // that left the board or closed still opens from an old ask.
+  // that left the board or closed still opens from an old ask. A closed thread whose session moved
+  // on with it to another app has none of its own left, and what's read for it isn't kept.
   find(id: string) {
     const kept = this.get(id)
     if (kept) return kept
     const thread = this.stored(true).find(thread => `${thread.app}:${thread.id}` === id)
     if (!thread) return
-    const run = this.run(thread)
-    this.keep(run)
+    const moved = this.threads.some(one => one.session === thread.session && `${one.app}:${one.id}` !== id)
+    const run = this.run(moved ? { ...thread, session: undefined } : thread)
+    if (thread.session && !this.wanted().has(short(thread.session))) this.jobs.delete(short(thread.session))
     return run
   }
 
