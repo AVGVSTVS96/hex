@@ -64,6 +64,12 @@ test('a computer that can\'t take the copy fails the backup, and the copy stays 
   expect(existsSync(join(dir, 'backups', 'hex-2026-10-19.db'))).toBe(true)
 })
 
+test('a computer that never answers fails the backup once its time is up', async () => {
+  computer('exec sleep 60')
+  await expect(backup(dir, '2026-10-19', 'cloud', 300)).rejects.toThrow("cloud didn't answer in")
+  expect(existsSync(join(dir, 'backups', 'hex-2026-10-19.db'))).toBe(true)
+})
+
 test('a copy that arrives changed fails the backup', async () => {
   computer('shift 4; cat > /dev/null; echo "0000  hex-2026-10-19.db"')
   await expect(backup(dir, '2026-10-19', 'cloud')).rejects.toThrow("the copy on cloud doesn't match hex.db's")

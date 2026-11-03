@@ -1,4 +1,3 @@
-import { $ } from 'bun'
 import { Database } from 'bun:sqlite'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'fs'
 import { join } from 'path'
@@ -8,11 +7,13 @@ import { open } from './store.ts'
 // Each night at 3:00 on the owner's clock, while hex is quietest.
 const HOUR = 3
 const KEEP = 7
+// A day's copy reaches the computer in about a second; one that can't answer in five minutes isn't there.
+const SEND_LIMIT = 5 * 60_000
 
 // The day's copy of hex.db, made with VACUUM INTO and checked by SQLite, goes to state/backups and,
 // when hex has a computer (a Sprite), to ~/hex-backups there, off this machine's disk. Each place
 // keeps the last seven. The computer reads back the copy's hash, so a copy that arrived broken fails.
-export async function backup(storeDir: string, day: string, computer?: string) {
+export async function backup(storeDir: string, day: string, computer?: string, limit = SEND_LIMIT) {
   const dir = join(storeDir, 'backups')
   const name = `hex-${day}.db`
   const part = join(dir, `${name}.part`)
@@ -28,13 +29,23 @@ export async function backup(storeDir: string, day: string, computer?: string) {
   if (!computer) return
   const hash = new Bun.CryptoHasher('sha256').update(await Bun.file(join(dir, name)).arrayBuffer()).digest('hex')
   const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; cat > "$1.part"; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`
-  const sent = await $`sprite exec -s ${computer} -- sh -c ${keep} sh ${name} < ${join(dir, name)}`.quiet().nothrow()
-  if (sent.exitCode !== 0) throw new Error(`${computer} didn't take it: ${sent.stderr.toString().trim() || `exit ${sent.exitCode}`}`)
-  if (!sent.stdout.toString().startsWith(hash)) throw new Error(`the copy on ${computer} doesn't match hex.db's`)
+  const sent = Bun.spawn(['sprite', 'exec', '-s', computer, '--', 'sh', '-c', keep, 'sh', name], {
+    env: process.env,
+    stdin: Bun.file(join(dir, name)),
+    stdout: 'pipe',
+    stderr: 'pipe',
+    timeout: limit,
+    killSignal: 'SIGKILL',
+  })
+  const [exit, out, err] = await Promise.all([sent.exited, new Response(sent.stdout).text(), new Response(sent.stderr).text()])
+  if (sent.signalCode === 'SIGKILL') throw new Error(`${computer} didn't answer in ${limit / 60_000} minutes`)
+  if (exit !== 0) throw new Error(`${computer} didn't take it: ${err.trim() || `exit ${exit}`}`)
+  if (!out.startsWith(hash)) throw new Error(`the copy on ${computer} doesn't match hex.db's`)
 }
 
 // The hub that serves General backs up each night, and at its start when the last 3:00 passed
-// without one, so a night the hub was down is made up. A backup that fails tells the main thread;
+// without one, so a night the hub was down is made up. The next night is set before this one runs,
+// so a backup that hangs never stops the nights after it. A backup that fails tells the main thread;
 // its copy stays in state/backups when only the computer failed.
 export function nightly(storeDir: string, hexDir: string, main: string): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -44,6 +55,7 @@ export function nightly(storeDir: string, hexDir: string, main: string): () => v
     const today = now.round({ smallestUnit: 'hour', roundingMode: 'floor' }).with({ hour: HOUR })
     const passed = Temporal.ZonedDateTime.compare(today, now) <= 0
     const day = (passed ? today : today.subtract({ days: 1 })).toPlainDate().toString()
+    if (!stopped) timer = setTimeout(run, (passed ? today.add({ days: 1 }) : today).epochMilliseconds - Date.now())
     if (!existsSync(join(storeDir, 'backups', `hex-${day}.db`))) {
       try {
         await backup(storeDir, day, process.env.HEX_COMPUTER || undefined)
@@ -52,7 +64,6 @@ export function nightly(storeDir: string, hexDir: string, main: string): () => v
         open(storeDir).deliver({ key: `backup:failed@${day}`, to: main, from: 'backup', author: 'prompt', body, meta: { user: 'backup' } })
       }
     }
-    if (!stopped) timer = setTimeout(run, (passed ? today.add({ days: 1 }) : today).epochMilliseconds - Date.now())
   }
   void run()
   return () => {
