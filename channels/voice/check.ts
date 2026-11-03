@@ -135,7 +135,7 @@ function gather(state: string) {
 
 // What hex said in a thread in the hour before it asked a question there, where its explanation
 // usually is: its last two messages there, oldest first. Left out are the rows the owner never read
-// as hex's words there (failed sends, edits, permission prompts, files, forwards, status posts), the
+// as hex's words there (failed sends, edits, permission prompts, files without a caption, forwards, status posts), the
 // thread's questions, and the question's own earlier parts, sent with it a moment before.
 export function before(store: Store, app: string, question: Asked, max = 700) {
   const rows = store.said(question.thread, -1, question.at, new Date(Date.parse(question.at) - 60 * 60_000).toISOString())
@@ -144,7 +144,7 @@ export function before(store: Store, app: string, question: Asked, max = 700) {
   const questions = new Set(store.questions({ app, thread: question.thread }).map(other => String(other.message)))
   const part = (row: Row) => !!bare(row.body) && Date.parse(row.at) > asked - 60_000 && bare(question.text).includes(bare(row.body))
   return rows
-    .filter(row => row.from === app && row.author === 'hex' && shown(row) && !row.meta?.file && !row.meta?.forwarded && above(row.body) === row.body.trim())
+    .filter(row => row.from === app && row.author === 'hex' && shown(row) && !/^\(file: .*\)$/.test(row.body) && !row.meta?.forwarded && above(row.body) === row.body.trim())
     .filter(row => !questions.has(id(row)) && !part(row))
     .slice(-2)
     .map(row => clip(row.body, max))

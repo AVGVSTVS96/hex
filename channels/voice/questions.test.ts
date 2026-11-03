@@ -120,11 +120,12 @@ function said(lines: Said[]) {
 
 test("a question comes with hex's last two messages in the hour before it in its thread, and only what the owner read there as hex's explanation", () => {
   said([
-    ['17:30:00', 'Too old.'],
+    ['16:59:00', 'Too old.'],
     ['18:01:00', 'Old news.'],
     ['18:02:00', 'Caddy gives a short domain.', { id: 50 }],
     ['18:03:00', 'which one?', { author: 'owner' }],
     ['18:04:00', '(file: plan.png)', { meta: { file: 'plan.png' } }],
+    ['18:04:30', 'The plan, A on the left.', { meta: { file: 'plan.png' } }],
     ['18:05:00', 'Caddy gives a short domain, Tailscale none.', { meta: { edited: 'true', message_id: '50' } }],
     ['18:06:00', 'Elsewhere.', { to: GROUP }],
     ['18:07:00', '🔐 Bash: rm -rf build', { meta: { permission: 'p1' } }],
@@ -136,8 +137,9 @@ test("a question comes with hex's last two messages in the hour before it in its
   ])
   ledger([asked(8, 'Ship it?', ['Yes', 'No'])])
   const question = asked(9, '**Which one serves the pages?**\nA or B', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })
-  expect(before(open(state), 'telegram', question)).toEqual(['Old news.', 'Caddy gives a short domain.'])
-  expect(before(open(state), 'telegram', question, 10)).toEqual(['Old news.', 'Caddy giv…'])
+  expect(before(open(state), 'telegram', question)).toEqual(['Caddy gives a short domain.', 'The plan, A on the left.'])
+  expect(before(open(state), 'telegram', question, 10)).toEqual(['Caddy giv…', 'The plan,…'])
+  expect(before(open(state), 'telegram', { ...question, at: '2026-10-13T18:01:30.000Z' })).toEqual(['Old news.'])
 })
 
 test("a question the check hasn't rewritten yet opens hex's message before it as context", () => {
