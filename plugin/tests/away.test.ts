@@ -20,6 +20,8 @@ const server = Bun.serve({
   port: 0,
   async fetch(request) {
     const body = (await request.json()) as { id?: number; method: string; params: { name: string; arguments: Record<string, any> } }
+    // As MCP's Streamable HTTP asks: a new session starts without the old one's id.
+    if (body.method === 'initialize' && request.headers.has('mcp-session-id')) return new Response('already initialized', { status: 400 })
     if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: {} }, { headers: { 'mcp-session-id': 's1' } })
     if (body.method !== 'tools/call') return new Response(null, { status: 202 })
     calls.push(body.params)
@@ -96,7 +98,7 @@ test('a refused token is renewed and a tool error without a final code is retrie
   flaky = 1
   const { run } = away(['-p', 'Build it.'])
   expect(await run.exited).toBe(0)
-  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in \nsign-in --refresh\n')
+  expect(readFileSync(join(home, 'signed'), 'utf8')).toBe('sign-in \nsign-in --refresh t\n')
 }, 30_000)
 
 test('a job whose thread stops at a question ends there, with the question as its answer', async () => {

@@ -49,8 +49,8 @@ const here = (why: string) => new Local(`T3 Code on ${hostname()}, this machine:
 // This machine's T3 Code /mcp, signed in once; its MCP tools are the only calls T3 forwards over a link. A refused
 // token is renewed once. Signing in again only then means stopping a thread as the unit stops starts no process.
 let headers: Record<string, string> | undefined
-function signIn(refresh = false) {
-  const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers'), ...(refresh ? ['--refresh'] : [])], { cwd: home, timeout: 60_000 })
+function signIn(refused?: string) {
+  const helper = Bun.spawnSync([join(import.meta.dir, 't3-mcp-headers'), ...(refused ? ['--refresh', refused] : [])], { cwd: home, timeout: 60_000 })
   const signed = parse(helper.stdout.toString())
   if (helper.exitCode !== 0 || typeof signed?.Authorization !== 'string') throw here(`couldn't sign in: ${helper.stderr.toString().trim() || 'no sign-in printed'}`)
   return { ...signed, 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
@@ -68,7 +68,7 @@ async function post(body: object, renewed = false): Promise<Response> {
   headers ??= signIn()
   const answer = await fetch(url, { method: 'POST', headers: { ...headers, ...(session && { 'mcp-session-id': session }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }), signal: AbortSignal.timeout(120_000) })
   if (answer.status === 401 && !renewed) {
-    headers = signIn(true)
+    headers = signIn(headers.Authorization!.replace(/^Bearer /, ''))
     return post(body, true)
   }
   // A refused sign-in, or a request T3 Code turns down, won't change by asking again; anything else might.
@@ -96,6 +96,8 @@ async function call(tool: string, input: Record<string, unknown>): Promise<any> 
 
 let threadId: string | undefined
 let stopping = false
+let launches = 0
+const requestId = `hex-job-${name}-${machine}-${process.env.INVOCATION_ID ?? process.pid}`
 const stop = (reason: string) => call('t3_thread_interrupt', { threadId, stop: true, reason }).catch(error => console.error(`away: couldn't stop the thread: ${error.message}`))
 for (const signal of ['SIGTERM', 'SIGINT'] as const)
   process.on(signal, () => {
@@ -111,9 +113,12 @@ async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<
     } catch (error) {
       if (error instanceof Final || error instanceof Local || Date.now() + wait > until) throw error
       console.error(`away: ${(error as Error).message}; trying again in ${wait / 1000} s`)
-      connected = false
+      ;[connected, session] = [false, undefined]
       await Bun.sleep(wait)
-      if (stopping && !threadId) process.exit(143)
+      if (stopping && !threadId) {
+        if (launches) console.error(`away: ${name} stopped while starting; a thread may have started on ${machine} under ${requestId}`)
+        process.exit(143)
+      }
     }
   }
 }
@@ -146,22 +151,25 @@ You are running on ${machine}, in a T3 Code thread hex started there because ${h
 ${asked}`
 
 // A launch that fails on the way is retried, and the same clientRequestId gets back the thread it may have started.
-// One that keeps failing for half an hour fails the job, rather than moving on to a machine where it could run twice.
+// Once one may have reached the other machine, a launch that keeps failing fails the job, rather than moving on to a
+// machine where it could run twice.
 const launched = await persist(
-  () =>
-    call('t3_thread_launch', {
+  () => {
+    launches++
+    return call('t3_thread_launch', {
       title: name,
       scratch: true,
       message,
       runtimeMode: 'full-access',
       modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
-      clientRequestId: `hex-job-${name}-${machine}-${process.env.INVOCATION_ID ?? process.pid}`,
-    }),
+      clientRequestId: requestId,
+    })
+  },
   1_800_000,
 ).catch((error: Error) => {
-  if (error instanceof Final) quit(ELSEWHERE, error.message)
-  if (error instanceof Local) quit(UNREACHABLE, error.message)
-  console.error(`away: ${name} couldn't start on ${machine}: ${error.message}`)
+  if (launches === 1 && error instanceof Final) quit(ELSEWHERE, error.message)
+  if (launches === 1 && error instanceof Local) quit(UNREACHABLE, error.message)
+  console.error(`away: ${name} couldn't start on ${machine}: ${error.message}${launches > 1 ? `; a thread may have started there under ${requestId}` : ''}`)
   process.exit(1)
 })
 threadId = launched.threadId as string
@@ -177,7 +185,8 @@ async function follow(): Promise<number> {
   let waited = await slice(50_000)
   while (!ENDED.includes(waited.status)) {
     const { thread } = await persist(() => call('t3_thread_read', { threadId, limit: 1, runLimit: 1 }))
-    if (thread.pendingRequestCount > 0 && !ENDED.includes((waited = await slice(1)).status)) {
+    const pending = thread.pendingRequestCount > 0 || waited.hasPendingQuestion || waited.pendingApproval
+    if (pending && !ENDED.includes((waited = await slice(1)).status)) {
       const { requestIds } = await call('t3_pending_request', { action: 'list', threadId }).catch(() => ({}))
       const read = requestIds?.length ? await call('t3_pending_request', { action: 'read', threadId, requestId: requestIds[0] }).catch(() => undefined) : undefined
       await stop(`the job ${name} has nobody to answer`)
@@ -185,6 +194,8 @@ async function follow(): Promise<number> {
       console.log(`${name} stopped on ${machine} at a question, which a job can't answer: ${question ?? `see ${launched.link}`}`)
       return 1
     }
+    // A wait that comes back early without an end gets a pause, so the two machines aren't asked in a tight loop.
+    if (!waited.timedOut) await Bun.sleep(5_000)
     if (!ENDED.includes(waited.status)) waited = await slice(50_000)
   }
   if (stopping) return 143

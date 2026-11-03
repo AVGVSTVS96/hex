@@ -1,13 +1,17 @@
 #!/bin/sh
-# t3-mcp-headers [--refresh]: prints {"Authorization": "Bearer …"} for this machine's T3 Code /mcp, as a
+# t3-mcp-headers [--refresh <token>]: prints {"Authorization": "Bearer …"} for this machine's T3 Code /mcp, as a
 # headersHelper does. /mcp takes only its own OAuth tokens (30 days, no refresh), and its MCP tools are the only
 # way into a linked machine, so this signs in as T3's own `t3 environment link` does: an OAuth client approved with
-# a one-time pairing code. The token is cached for the server it was issued by; --refresh drops it.
+# a one-time pairing code. The token is cached for the server it was issued by; --refresh drops it if it is still the refused one, so jobs
+# refused together sign in once, one at a time.
 set -eu
 cache="$HOME/.claude/channels/hex/t3/mcp-token.json"
+mkdir -p "$(dirname "$cache")"
+exec 8>"$cache.lock"
+flock 8
 now=$(date +%s)
 base=http://127.0.0.1:$(jq -r .port "$HOME/.t3/userdata/server-runtime.json")
-[ "${1:-}" = --refresh ] && rm -f "$cache"
+if [ "${1:-}" = --refresh ] && [ "$(jq -r .access_token "$cache" 2>/dev/null)" = "${2:-}" ]; then rm -f "$cache"; fi
 if [ -s "$cache" ] && jq -e --arg base "$base" --argjson soon $((now + 86400)) '.expires_at > $soon and (.resource // "\($base)/mcp") == "\($base)/mcp"' "$cache" >/dev/null; then
   jq -c '{Authorization: ("Bearer " + .access_token)}' "$cache"
   exit
@@ -19,7 +23,8 @@ client=$(printf %s "$client" | jq -r .client_id)
 step "client id" "$client"
 verifier=$(openssl rand -base64 48 | tr '+/' '-_' | tr -d '=\n')
 challenge=$(printf %s "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
-code=$("$HOME/.t3/bin/t3" auth pairing create --ttl 5m --label hex-mcp --json 2>/dev/null | jq -r .credential)
+t3=$(command -v t3 || echo "$HOME/.t3/bin/t3")
+code=$("$t3" auth pairing create --ttl 5m --label hex-mcp --json 2>/dev/null | jq -r .credential)
 step "pairing code" "$code"
 auth=$(jq -nc --arg c "$client" --arg r "$redirect" --arg ch "$challenge" --arg res "$base/mcp" \
   '{response_type:"code",client_id:$c,redirect_uri:$r,code_challenge:$ch,code_challenge_method:"S256",state:"hex",resource:$res}')
@@ -32,7 +37,7 @@ token=$(curl -sf "$base/oauth/mcp/token" --data-urlencode grant_type=authorizati
   --data-urlencode "client_id=$client" --data-urlencode "code_verifier=$verifier" \
   --data-urlencode "resource=$base/mcp") || token=
 step "token" "$(printf %s "$token" | jq -r .access_token)"
-mkdir -p "$(dirname "$cache")"
-printf %s "$token" | jq --argjson now "$now" --arg resource "$base/mcp" '{access_token, expires_at: ($now + .expires_in), resource: $resource}' >"$cache.tmp"
-chmod 600 "$cache.tmp" && mv "$cache.tmp" "$cache"
-jq -c '{Authorization: ("Bearer " + .access_token)}' "$cache"
+tmp=$(mktemp "$cache.XXXXXX")
+printf %s "$token" | jq --argjson now "$now" --arg resource "$base/mcp" '{access_token, expires_at: ($now + .expires_in), resource: $resource}' >"$tmp"
+chmod 600 "$tmp" && mv "$tmp" "$cache"
+printf %s "$token" | jq -c '{Authorization: ("Bearer " + .access_token)}'
