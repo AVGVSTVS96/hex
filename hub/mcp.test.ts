@@ -202,6 +202,20 @@ test('a call that took as long as the session waits counts as missed, even with 
   }
 })
 
+test("a missed call still running when the thread's turn ends holds its repeat in the next", async () => {
+  const { ran, call, answer, rested } = channel()
+  const gaveUp = new AbortController()
+  const first = call({ text: 'report' }, gaveUp)
+  await Bun.sleep(1)
+  gaveUp.abort()
+  rested('-100:7')
+  const nextTurn = call({ text: 'report' })
+  await answer()
+  await first
+  expect(text(await nextTurn)).toStartWith('this same reply call came before')
+  expect(ran()).toBe(1)
+})
+
 test('a missed call still running holds its repeats however long it takes', async () => {
   const time = manual(async () => {})
   try {

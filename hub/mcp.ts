@@ -188,8 +188,14 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
   }
 
-  // The thread's turn ended: its session moved on from every call it made.
-  return Object.assign(handle, { rested: (thread: string) => void unheard.delete(thread) })
+  // The thread's turn ended with nothing left working: its session moved on from every call that
+  // answered. One still running stays, since anything that joins it never heard back from it.
+  function rested(thread: string) {
+    const runs = unheard.get(thread)
+    for (const [key, run] of runs ?? []) if (run.done) runs!.delete(key)
+  }
+
+  return Object.assign(handle, { rested })
 }
 
 function notification(payload: Payload, zone: string) {

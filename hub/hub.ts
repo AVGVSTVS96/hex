@@ -364,7 +364,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     state(thread, working, background)
     claim(thread)
     run.turn = working ? 'busy' : background ? 'background' : 'done'
-    if (run.turn !== 'busy') serve.rested(thread)
     if (run.turn === 'done' && (run.renew === 'asked' || run.renew === 'stale')) void renew(thread, run.renew === 'asked')
     rest(thread, run.turn === 'done')
     letGo(thread)
@@ -1009,6 +1008,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (request.type === 'state') {
       took(request.taken, request.session)
       setState(request.thread, request.busy, request.background === true)
+      if (!request.busy && request.background !== true) serve.rested(request.thread)
     }
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
     if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
@@ -1059,7 +1059,10 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       // the press: a turn begun since then is left running.
       kept(store => store.turned(session, false, pressed), undefined)
       setState(thread, false, true)
-      if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') setState(thread, false)
+      if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') {
+        setState(thread, false)
+        serve.rested(thread)
+      }
       return
     }
     process.stderr.write(`hub: Esc didn't interrupt ${thread}'s turn\n`)
