@@ -393,6 +393,7 @@ test("hex log reads every thread a name means, a delivery to that name asks for 
   expect(said((await hex('log', '--', 'telegram:629')).out)).toEqual(['on Telegram', 'Telegram again'])
   expect(await hex('deliver', 'hex', '--to', 'DM', 'hello')).toMatchObject({ code: 1, err: expect.stringContaining('more than one thread is named "DM", so send to one by its id: discord:1560, telegram:629') })
   expect(await hex('recall', '-i', 'salty')).toEqual(await hex('recall', 'salty'))
+  expect(await hex('deliver', 'hex', '--to', 'telegram:629', 'use', 'rg', '-i')).toMatchObject({ code: 2, err: 'hex: -i is only for recall\n' })
 }, 20_000)
 
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
