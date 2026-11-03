@@ -12,7 +12,8 @@ const SEND_LIMIT = 5 * 60_000
 
 // The day's copy of hex.db, made with VACUUM INTO and checked by SQLite, goes to state/backups and,
 // when hex has a computer (a Sprite), to ~/hex-backups there, off this machine's disk. Each place
-// keeps the last seven. The computer reads back the copy's hash, so a copy that arrived broken fails.
+// keeps the last seven. The computer checks the copy's hash before it takes the day's name, so a copy
+// that arrived broken or cut off fails and never pushes a good one out of the seven.
 export async function backup(storeDir: string, day: string, computer?: string, limit = SEND_LIMIT) {
   const dir = join(storeDir, 'backups')
   const name = `hex-${day}.db`
@@ -28,8 +29,8 @@ export async function backup(storeDir: string, day: string, computer?: string, l
   for (const old of readdirSync(dir).filter(file => /^hex-.*\.db$/.test(file)).sort().slice(0, -KEEP)) rmSync(join(dir, old))
   if (!computer) return
   const hash = new Bun.CryptoHasher('sha256').update(await Bun.file(join(dir, name)).arrayBuffer()).digest('hex')
-  const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; rm -f hex-*.db.part; cat > "$1.part"; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`
-  const sent = Bun.spawn(['sprite', 'exec', '-s', computer, '--', 'sh', '-c', keep, 'sh', name], {
+  const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; find . -name 'hex-*.db.part' -mmin +${SEND_LIMIT / 60_000 + 1} -delete; cat > "$1.part"; echo "$2  $1.part" | sha256sum -c --quiet; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`
+  const sent = Bun.spawn(['sprite', 'exec', '-s', computer, '--', 'sh', '-c', keep, 'sh', name, hash], {
     env: process.env,
     stdin: Bun.file(join(dir, name)),
     stdout: 'pipe',
