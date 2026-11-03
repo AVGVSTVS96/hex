@@ -131,6 +131,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'download_attachment',
+      annotations: { readOnlyHint: true },
       description: 'Download attachments from a message in this thread to the local inbox. Use after the inbound meta or fetch_messages shows a message has attachments. Returns file paths ready to Read.',
       inputSchema: {
         type: 'object',
@@ -142,6 +143,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'fetch_messages',
+      annotations: { readOnlyHint: true },
       description: 'Fetch recent messages from this thread, or from a channel or another thread. Returns oldest-first with message IDs. In a channel, a message that has a thread shows its reply count and last reply; pass its id as thread to read the thread. A forum channel lists its posts; pass a post\'s id as thread to read it.',
       inputSchema: {
         type: 'object',
@@ -155,6 +157,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'search_messages',
+      annotations: { readOnlyHint: true },
       description: 'Search messages across the Discord server by their text, newest first, with where each one is. Page with offset.',
       inputSchema: {
         type: 'object',
@@ -169,6 +172,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'list_channels',
+      annotations: { readOnlyHint: true },
       description: 'List the Discord text, announcement and forum channels you can read, with their IDs.',
       inputSchema: { type: 'object', properties: {} },
     },

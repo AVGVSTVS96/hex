@@ -13,7 +13,7 @@ test('meta without a time or a zone it can read passes through as it is', () => 
   expect(local({ ts: '2026-10-20T06:31:05Z' }, 'Bogus/Zone')).toEqual({ ts: '2026-10-20T06:31:05Z' })
 })
 
-const SERVER = { title: 'Telegram', instructions: '', tools: [] }
+const SERVER = { title: 'Telegram', instructions: '', tools: [{ name: 'fetch_messages', description: 'Read.', inputSchema: { type: 'object' }, annotations: { readOnlyHint: true } }] }
 const TOKEN = 'secret'
 type Answer = { result: { content: { text: string }[]; isError?: true } }
 
@@ -33,8 +33,8 @@ function channel(fails = false) {
     open: () => {},
     close: () => {},
   })
-  function call(args: object, gaveUp?: AbortController): Promise<Answer> {
-    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reply', arguments: args } })
+  function call(args: object, gaveUp?: AbortController, name = 'reply'): Promise<Answer> {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } })
     const headers = { authorization: `Bearer ${TOKEN}`, 'x-hex-channel': 'chat', 'x-hex-thread': '-100:7' }
     return serve(new Request('http://127.0.0.1/telegram', { method: 'POST', headers, body, signal: gaveUp?.signal })).then(response => response.json() as Promise<Answer>)
   }
@@ -62,6 +62,30 @@ test('a call made again after the session gave up on it runs once, and the repea
   const third = call({ text: 'report', format: 'markdown' })
   await answer()
   expect(text(await third)).toBe('sent (id: 5389)')
+  expect(ran()).toBe(2)
+})
+
+test('a call the session gave up on before the hub read it counts as missed', async () => {
+  const { ran, call, answer } = channel()
+  const gaveUp = new AbortController()
+  gaveUp.abort()
+  const first = call({ text: 'report' }, gaveUp)
+  await answer()
+  await first
+  const again = call({ text: 'report' })
+  expect(text(await again)).toStartWith('this same reply call came before')
+  expect(ran()).toBe(1)
+})
+
+test('a tool that only reads runs every time', async () => {
+  const { ran, call, answer } = channel()
+  const gaveUp = new AbortController()
+  const first = call({ chat: '1' }, gaveUp, 'fetch_messages')
+  await Bun.sleep(1)
+  gaveUp.abort()
+  const again = call({ chat: '1' }, undefined, 'fetch_messages')
+  await answer()
+  await Promise.all([first, again])
   expect(ran()).toBe(2)
 })
 
@@ -111,4 +135,37 @@ test('the same call made again after its answer was heard runs again, as does on
   await failing.answer()
   expect(text(await again)).toBe('reply failed: Telegram said no')
   expect(failing.ran()).toBe(2)
+})
+
+test('a repeat that joined a run that then failed tries again itself', async () => {
+  const failing = channel(true)
+  const gaveUp = new AbortController()
+  const first = failing.call({ text: 'report' }, gaveUp)
+  await Bun.sleep(1)
+  gaveUp.abort()
+  const again = failing.call({ text: 'report' })
+  await failing.answer()
+  await first
+  await failing.answer()
+  expect(text(await again)).toBe('reply failed: Telegram said no')
+  expect(failing.ran()).toBe(2)
+})
+
+test('a run that never answers stops holding its repeats ten minutes after it started', async () => {
+  const time = manual(async () => {})
+  try {
+    const { ran, call, answer } = channel()
+    const gaveUp = new AbortController()
+    void call({ text: 'report' }, gaveUp)
+    await Bun.sleep(1)
+    gaveUp.abort()
+    await time.advance(10 * 60_000 + 1)
+    const later = call({ text: 'report' })
+    await Bun.sleep(1)
+    expect(ran()).toBe(2)
+    await answer()
+    expect(text(await later)).toBe('sent (id: 5389)')
+  } finally {
+    time.restore()
+  }
 })

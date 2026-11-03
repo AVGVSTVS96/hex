@@ -85,6 +85,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'download_attachment',
+      annotations: { readOnlyHint: true },
       description: 'Download attachments from a message in this thread to the local inbox. Use after the inbound meta or fetch_messages shows a message has attachments. Returns file paths ready to Read.',
       inputSchema: {
         type: 'object',
@@ -96,6 +97,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'fetch_messages',
+      annotations: { readOnlyHint: true },
       description: 'Fetch recent messages from this thread, or from a channel or another thread. Returns oldest-first with message IDs. In a channel, a message that has a thread shows its reply count and last reply; pass its id as thread to read the thread.',
       inputSchema: {
         type: 'object',
@@ -109,6 +111,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'search_messages',
+      annotations: { readOnlyHint: true },
       description: 'Search the Buzz channels you are in for messages containing words, best matches first. Each row names its channel, and the thread a reply belongs to, for fetch_messages.',
       inputSchema: {
         type: 'object',
@@ -139,6 +142,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'list_channels',
+      annotations: { readOnlyHint: true },
       description: 'List the Buzz channels you are in, with their IDs. Direct messages are marked.',
       inputSchema: { type: 'object', properties: {} },
     },

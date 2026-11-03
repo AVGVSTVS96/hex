@@ -1,6 +1,6 @@
 import { clock } from './clock.ts'
 
-export type Tool = { name: string; description: string; inputSchema: object; _meta?: object }
+export type Tool = { name: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean }; _meta?: object }
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = { title: string; instructions: string; tools: Tool[]; permission?: boolean }
 export type Payload = { type: 'inbound'; content: string; meta: Record<string, string> } | { type: 'permission'; request_id: string; behavior: string }
@@ -21,12 +21,12 @@ const encoder = new TextEncoder()
 const NUDGE = 250
 // Claude Code gives up on a tool call after the timeout in the channel's .mcp.json, while the hub
 // still carries it out, and the session then makes the same call again. A repeat of a call the
-// session gave up on, while it runs or within this long of its answer, gets that answer instead of
-// sending, deleting or opening a thread twice.
+// session gave up on, while it runs or within this long of its start or answer, gets that answer
+// instead of sending, deleting or opening a thread twice. A tool that only reads runs every time.
 const REPEAT = 10 * 60_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-type Run = { answer: Promise<Result>; answered?: number }
+type Run = { answer: Promise<Result>; at: number }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -52,27 +52,31 @@ export function endpoint(name: string, channel: string, token: string, server: C
   }
 
   const unheard = new Map<string, Run>()
+  const reads = new Set(server.tools.filter(tool => tool.annotations?.readOnlyHint).map(tool => tool.name))
 
   function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal): Promise<Result> {
-    for (const [key, run] of unheard) if (run.answered !== undefined && clock.now() - run.answered > REPEAT) unheard.delete(key)
+    if (reads.has(tool)) return call(thread, tool, args)
+    for (const [key, run] of unheard) if (clock.now() - run.at > REPEAT) unheard.delete(key)
     const key = JSON.stringify([thread, tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
     const earlier = unheard.get(key)
     const run = earlier ?? start(key, call(thread, tool, args))
     const missed = () => void unheard.set(key, run)
-    gone.addEventListener('abort', missed, { once: true })
+    // The session can give up before the hub reads its call, or while the answer is on its way.
+    if (gone.aborted) missed()
+    else gone.addEventListener('abort', missed, { once: true })
     return run.answer.then(answer => {
-      gone.removeEventListener('abort', missed)
       if (!gone.aborted && unheard.get(key) === run) unheard.delete(key)
       if (!earlier) return answer
+      if (answer.isError) return once(thread, tool, args, gone)
       return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
     })
   }
 
   // A run that failed is no answer to keep: its repeat tries again.
   function start(key: string, answer: Promise<Result>): Run {
-    const run: Run = { answer }
+    const run: Run = { answer, at: clock.now() }
     void answer.then(({ isError }) => {
-      run.answered = clock.now()
+      run.at = clock.now()
       if (isError && unheard.get(key) === run) unheard.delete(key)
     })
     return run

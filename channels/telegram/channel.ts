@@ -69,6 +69,7 @@ export const server: ChannelServer = {
     },
     {
       name: 'download_attachment',
+      annotations: { readOnlyHint: true },
       description: 'Download a file attachment from a Telegram message to the local inbox. Use when the inbound <channel> meta shows attachment_file_id. Returns the local file path ready to Read. Telegram caps bot downloads at 20MB.',
       inputSchema: {
         type: 'object',

@@ -508,7 +508,7 @@ export class Store {
   untaken(thread?: string): Row[] {
     const rows =
       thread === undefined
-        ? this.db.query('select * from messages indexed by untaken where taken_at is null order by n').all()
+        ? this.db.query('select * from messages where taken_at is null order by n').all()
         : this.db.query('select * from messages where taken_at is null and "to" = ? order by n').all(thread)
     return (rows as Stored[]).map(toRow)
   }
