@@ -185,7 +185,8 @@ test("a working thread's line is its newest step in words, never a tool call, an
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: "cd ~/repo && python3 -c '\nimport json\nprint(1)'" })
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Write', { file_path: '/repo/src/rows.ts', content: 'x' })
   await until(() => voiceapp().steps[0]?.kind === 'edit')
-  for (const tool of ["Running cd ~/repo && python3 -c ' import json print(1)'", 'Writing /repo/src/rows.ts', 'Reading src/tasks.ts']) {
+  step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'for r in a b; do echo $r; done' })
+  for (const tool of ["Running cd ~/repo && python3 -c ' import json print(1)'", 'Writing /repo/src/rows.ts', 'Reading src/tasks.ts', 'Running for r in a b; do ec…']) {
     record(tool)
     await Bun.sleep(50)
     expect(voiceapp().line).toBe('')
@@ -198,6 +199,14 @@ test("a working thread's line is its newest step in words, never a tool call, an
   step(join(project, 'cccccccc-voiceapp.jsonl'), 'Bash', { command: 'cd ~/repo && git commit -qm "fix: rows"' })
   await until(() => voiceapp().steps[0]?.text.includes('git commit'))
   expect(voiceapp().line).toBe('The Tasks view reads its rows now.')
+  const wiring = { state: 'working', detail: 'Wiring rows', text: '' }
+  const spoken = Date.now()
+  job('cccccccc-voiceapp', { state: 'working', detail: 'Wiring rows', updatedAt: ago(0), fan: voiceFan }, [{ ...wiring, at: new Date(spoken - 30_000).toISOString() }, { ...wiring, at: ago(0) }])
+  await Bun.sleep(50)
+  expect(voiceapp().line).toBe('The Tasks view reads its rows now.')
+  job('cccccccc-voiceapp', { state: 'working', detail: 'Rows render from the board', updatedAt: ago(0), fan: voiceFan }, [{ ...wiring, at: new Date(spoken - 30_000).toISOString() }, { ...wiring, detail: 'Rows render from the board', at: ago(0) }])
+  await until(() => voiceapp().line === 'Rows render from the board')
+  job('cccccccc-voiceapp', { state: 'working', detail: 'building', updatedAt: ago(1), fan: voiceFan }, [{ at: ago(14), state: 'working', detail: '', text: '' }])
   step(join(project, 'cccccccc-voiceapp', 'subagents', 'agent-agent1.jsonl'), 'Read', { file_path: '/repo/README.md' })
   await until(() => voiceapp().agents[0].line === 'Reading README.md')
   const row = board.rows().find(row => row.name === 'voiceapp')!
@@ -474,8 +483,8 @@ test("the hourly heartbeat is no turn of work: from the moment its session is bu
   expect(pulse()).toMatchObject({ state: 'done', line: 'shipped the fix', running: false })
   stopped(session)
   job(session, { state: 'done', detail: 'heartbeat checked', updatedAt: ago(0) }, [{ at: ago(0), state: 'done', detail: 'heartbeat checked', text: 'HEARTBEAT_OK' }])
-  await until(() => pulse().line === 'heartbeat checked')
-  expect(pulse().state).toBe('done')
+  await until(() => pulse().state === 'idle')
+  expect(pulse().line).toBe('')
   job(session, { state: 'done', detail: 'Nothing new', updatedAt: ago(0) }, timeline)
   await settle()
   expect(board.counts.version).toBe(counted)

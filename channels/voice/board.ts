@@ -333,7 +333,7 @@ export class Board extends Changes {
     let state: State = live ? 'working' : (known ?? 'idle')
     if (!live && ((state === 'working' && !session) || job?.detail?.startsWith('(idle'))) state = 'idle'
     const lately = timeline
-      .filter(entry => entry.text && entry.detail)
+      .filter(entry => entry.text && entry.detail && outside(entry.at))
       .slice(-LATELY)
       .reverse()
       .map(entry => ({ at: entry.at, state: STATES[entry.state] ?? 'idle', text: plain(entry.detail!) }))
@@ -349,8 +349,7 @@ export class Board extends Changes {
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
     const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && ours(step)) : undefined
     const summary = detail && !tooled(detail, this.followers.get(key)?.steps ?? []) ? detail : undefined
-    const summed = (summary && timeline.findLast(entry => entry.detail && plain(entry.detail) === summary)?.at) ?? at
-    const line = (said && (!summary || said.at >= summed) ? said.text : undefined) || needs || summary || lately[0]?.text || ''
+    const line = (said && (!summary || said.at >= (shownSince(timeline, summary) ?? at)) ? said.text : undefined) || needs || summary || (state === 'working' ? '' : lately[0]?.text) || ''
     const agents = (
       state === 'working'
         ? [
@@ -666,19 +665,27 @@ function toldOf(entry: any): [string, Told] | undefined {
 }
 
 // A session's records as they stood when its heartbeat began. With none from before it (Claude Code
-// starts a job's timeline over when its session renews), it keeps its own, just not as work.
+// starts a job's timeline over when its session renews), it's idle, still listed by its own time.
 function before(job: Job | undefined, timeline: Entry[], from: number) {
   const kept = timeline.filter(entry => Date.parse(entry.at) < from)
   const last = kept.at(-1)
-  if (!job || !last) return { job: job && { ...job, state: job.state === 'working' ? undefined : job.state }, timeline: kept }
+  if (!job || !last) return { job: job && { ...job, state: undefined, detail: undefined, needs: undefined }, timeline: kept }
   return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined, updatedAt: last.at }, timeline: kept }
+}
+
+// When the timeline first showed the summary it shows now: Claude Code writes the same one again
+// every few seconds while it works.
+function shownSince(timeline: Entry[], summary: string) {
+  let first: string | undefined
+  for (let i = timeline.length - 1; i >= 0 && timeline[i]!.detail && plain(timeline[i]!.detail!) === summary; i--) first = timeline[i]!.at
+  return first
 }
 
 // Claude Code's own status line while it works is often the tool it's running: a verb, then the
 // tool's command, path or query (Running cd … && git commit …, Writing ~/…/t3.ts), cut short with
 // …. A line in words leaves out one that names a tool call of the session's.
 function tooled(detail: string, steps: Step[]) {
-  const rest = detail.replace(/…$/, '').replace(/^\S+\s+(for\s+)?/, '')
+  const rest = detail.replace(/…$/, '').replace(/^(Searching for|\S+)\s+/, '')
   return steps.some(step => {
     if (['say', 'think', 'plan'].includes(step.kind)) return false
     const input = step.detail && plain(step.detail)
