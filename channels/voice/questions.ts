@@ -347,9 +347,8 @@ export function fromLedger(app: string, asked: Asked): Curated {
     const label = value.replace(PICK, '').trim() || value
     return { label, value, ...(label !== value && { pick: true }) }
   })
-  const question = clip(lines[0] ?? '', 160)
-  const rest = question === lines[0] ? '' : (lines[0] ?? '').slice(question.length - 1).trim()
-  const context = [...(rest ? [`…${rest}`] : []), ...lines.slice(1)].join('\n')
+  const [question, rest] = cut(lines[0] ?? '', 160)
+  const context = [...(rest ? [rest] : []), ...lines.slice(1)].join('\n')
   return {
     id: refId({ app, ...asked }),
     kind: asked.options.length <= 2 ? 'yesno' : 'pick',
@@ -372,6 +371,20 @@ function plain(text: string) {
     .replace(/```[\s\S]*?(```|$)/g, '')
     .replace(/\*\*|__|`/g, '')
     .replace(/^#+\s+/gm, '')
+}
+
+const SENTENCE_END = /(?:[?!]+|(?<!(?:^|[^\p{L}\p{N}'’])\p{Ll}|\.\p{L}|(?:^|[^\p{L}\p{N}])\p{N}+|\b(?:vs|Mr|Mrs|Ms|Dr|St|approx))\.)["')\]”’]*(?=\s+["'“‘(\[]?[\p{Lu}\p{N}]|\s*$)/gu
+
+function cut(line: string, max: number): [string, string] {
+  if (line.length <= max) return [line, '']
+  const ends = [...line.matchAll(SENTENCE_END)].map(found => ({ at: found.index + found[0].length, asks: found[0].includes('?') }))
+  const lastAsk = line.search(/[?？][^?？]*$/)
+  const fits = ends.filter(({ at }) => at >= lastAsk && at <= max)
+  const end = fits.findLast(({ asks }) => asks)?.at ?? fits.findLast(({ at }) => at >= max / 2)?.at
+  if (end !== undefined) return [line.slice(0, end), line.slice(end).trim()]
+  const space = line.slice(0, max).search(/\s\S*$/)
+  const at = space >= max / 2 ? space : max - 1 - Number(/[\uD800-\uDBFF]/.test(line[max - 2] ?? ''))
+  return [`${line.slice(0, at).trimEnd()}…`, `…${line.slice(at).trim()}`]
 }
 
 export function clip(text: string, max: number) {

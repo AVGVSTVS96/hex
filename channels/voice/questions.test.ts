@@ -70,12 +70,39 @@ test('a question keeps all of its context, line by line, so the app can open the
   expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
 })
 
-test('what a long first line loses to its cut opens its context', () => {
-  const first = `Which way? ${'One option costs this and the other takes that away. '.repeat(4).trim()}`
+test('a long first line ends at its last sentence that fits, and the rest opens its context whole', () => {
+  const first = 'The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean? My pick: bring it back, drawn cleanly.'
+  const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
+  expect(question.question).toBe('The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean?')
+  expect(question.context).toBe('My pick: bring it back, drawn cleanly.\nMore.')
+})
+
+test('a long first line ends at its last question that fits, however short', () => {
+  const question = fromLedger('telegram', asked(1, `Should we ship tonight? ${'The redesign brings a calmer palette and bigger type. '.repeat(3).trim()}`, ['Yes', 'No']))
+  expect(question.question).toBe('Should we ship tonight?')
+  expect(question.context!.startsWith('The redesign')).toBe(true)
+})
+
+test('a long first line with no sentence end is cut at a word, and the rest opens its context', () => {
+  const first = `Which way ${'one option costs this and the other takes that away '.repeat(4).trim()}`
   const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
   const [shown, rest] = [question.question.slice(0, -1), question.context!.split('\n')[0]!.slice(1)]
-  expect(`${shown} ${rest}`.replace(/\s+/g, ' ')).toBe(first)
+  expect(question.question.length).toBeLessThanOrEqual(160)
+  expect(`${shown} ${rest}`).toBe(first)
   expect(question.context!.endsWith('\nMore.')).toBe(true)
+})
+
+test('a long first line is cut at a word when its only sentence end is an abbreviation, too early, or would leave the question out', () => {
+  const tail = 'and here the line keeps going well past the limit with plenty of words to spare for the cut'
+  for (const first of [
+    `Ship the redesign with the calmer palette and the bigger type, e.g. Inter at sixteen points ${tail}`,
+    `Ok. Ship the redesign with the calmer palette and the bigger type and the new spacing ${tail}`,
+    `The redesign has a calmer palette and bigger type. ${'It also changes the spacing everywhere. '.repeat(2)}Ship it tonight ${tail}?`,
+  ]) {
+    const question = fromLedger('telegram', asked(1, first, ['A', 'B']))
+    expect(question.question.endsWith('…')).toBe(true)
+    expect(`${question.question.slice(0, -1)} ${question.context!.slice(1)}`).toBe(first)
+  }
 })
 
 test('a short first line that ends in an ellipsis keeps no context of its own', () => {
