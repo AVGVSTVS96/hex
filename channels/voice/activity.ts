@@ -410,10 +410,11 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 // One message sent to a hex thread, followed through its session's transcript: it waits until the
 // session takes in the message carrying `tag`, shows each step after that (its background agents'
 // steps too), and ends when a turn ends with none of those agents still out. A new session for the
-// thread (a renewal or a restart) shows up in hex.db and is followed from its start, past the
-// entries it copied when resumed from an earlier one: a copy keeps their uuids. Following resumes a message sent earlier from the start of the session that took it,
-// as hex.db has it, then goes on in the thread's session now, if that's another. A session between
-// the two isn't read, though what the session now copied from it is, as its own.
+// thread (a renewal or a restart) shows up in hex.db and is followed from its start, past what it
+// copied when resumed from an earlier one: a copy keeps each entry's uuid and time. Following
+// resumes a message sent earlier from the start of the session that took it, as hex.db has it,
+// then goes on in the thread's session now, if that's another. A session between the two isn't
+// read, though what the session now copied from it is, as its own.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
   const agents = new Map<string, (last?: boolean) => void>()
   let session: string | undefined
@@ -423,16 +424,14 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   let ended = false
   // Every entry already read, in this session or one before it, which a copy carries with the same uuid.
   const seen = new Set<string>()
-  // Where following the first session started, live, past entries take never saw.
-  let before = 0
+  // When the session took the message in: a copy's history from before it keeps its older times.
+  let floor: string | undefined
 
   const project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
   const transcript = (id: string) => join(project, `${id}.jsonl`)
   const store = open(thread.state)
   const taken = resumed ? store.taker(thread.id, 'voice_task', tag) : undefined
   const took = taken && ID.test(taken.by) && existsSync(transcript(taken.by)) ? taken : undefined
-  // Older than any entry of this message's work: when it was taken, or for a live follow, now.
-  const floor = took?.at ?? (resumed ? undefined : new Date().toISOString())
   const stopState = store.watch(locate)
   locate()
 
@@ -445,10 +444,8 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     const fresh = resumed || session !== undefined
     stopSession(true)
     if (ended) return
-    if (before) for (const uuid of uuids(transcript(session!), before)) seen.add(uuid)
     session = next
-    before = fresh ? 0 : sizeOf(transcript(session))
-    const stop = followTranscript(transcript(session), before, take)
+    const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take)
     if (ended) stop()
     else stopSession = stop
     if (!ended && next !== current) locate()
@@ -457,11 +454,11 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   function take(entry: any, updates: () => Update[]) {
     if (ended || seen.has(entry.uuid)) return
     if (entry.uuid) seen.add(entry.uuid)
-    // A session followed after the one that took the message can carry history older than it.
-    if (floor && session !== took?.by && entry.timestamp < floor) return
+    if (floor && entry.timestamp < floor) return
     if (!picked) {
       const text = channelMessage(entry)
       picked = !!text && text.slice(0, text.indexOf('>') + 1).includes(` voice_task="${tag}"`)
+      if (picked) floor = entry.timestamp
       return
     }
     const launched = entry.toolUseResult?.isAsync && entry.toolUseResult.agentId
@@ -490,34 +487,6 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   return close
 }
 
-// The uuids in a transcript's first bytes, read a stretch at a time: a transcript can outgrow
-// the longest string JavaScript can hold.
-function uuids(path: string, upTo: number) {
-  const found: string[] = []
-  const scan = (text: string) => {
-    for (const match of text.matchAll(/"uuid":"([^"]+)"/g)) found.push(match[1])
-  }
-  let fd
-  try {
-    fd = openSync(path, 'r')
-    const chunk = Buffer.alloc(Math.min(upTo, 2 ** 26))
-    let rest = ''
-    for (let at = 0, read = 1; at < upTo && read; at += read) {
-      read = readSync(fd, chunk, 0, Math.min(chunk.length, upTo - at), at)
-      const text = rest + chunk.toString('utf8', 0, read)
-      const line = text.lastIndexOf('\n') + 1
-      scan(text.slice(0, line))
-      rest = text.slice(line)
-    }
-    scan(rest)
-  } catch (error: any) {
-    logger.error(`couldn't read ${path}: ${error.message}`)
-  } finally {
-    if (fd !== undefined) closeSync(fd)
-  }
-  return found
-}
-
 // The background agents a session was just told are back, in a turn of its own or queued while a
 // turn ran; one notice can name several. A notice with no status says they were restarted with
 // their session, and are still out.
@@ -525,7 +494,8 @@ function agentsBack(entry: any): string[] {
   const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
   if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return []
   const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content) ?? ''
-  return notice.includes('<status>') ? Array.from(notice.matchAll(/<task-id>([\w-]+)<\/task-id>/g), match => match[1]) : []
+  const status = notice.indexOf('<status>')
+  return status < 0 ? [] : Array.from(notice.slice(0, status).matchAll(/<task-id>([\w-]+)<\/task-id>/g), match => match[1])
 }
 
 // A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its

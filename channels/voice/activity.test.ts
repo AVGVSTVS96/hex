@@ -258,11 +258,13 @@ test("following a message sent before a restart starts in the session that took 
   stop()
 })
 
-// A session resumed from another copies its finished turns, uuids and all, then takes the message
+// A session resumed from another copies its finished turns, uuids and times and all, then takes the message
 // of the turn that was cut off again and does it over.
 function resumedFrom(tag: string) {
-  const old = [said('An earlier turn.'), ended, asked(tag), said('Starting on it.')].map((entry, n) => ({ ...entry, uuid: `${tag}-${n}` }))
-  return { old, copy: [old[0], old[1], { ...asked(tag), uuid: `${tag}-again` }, { ...said('Finished it.'), uuid: `${tag}-4` }, { ...ended, uuid: `${tag}-5` }] }
+  const at = (ago: number) => new Date(Date.now() - ago).toISOString()
+  const old = [said('An earlier turn.'), ended, asked(tag), said('Starting on it.')].map((entry, n) => ({ ...entry, uuid: `${tag}-${n}`, timestamp: at(n < 2 ? 60_000 : 0) }))
+  const now = { timestamp: at(0) }
+  return { old, copy: [old[0], old[1], { ...asked(tag), uuid: `${tag}-again`, ...now }, { ...said('Finished it.'), uuid: `${tag}-4`, ...now }, { ...ended, uuid: `${tag}-5`, ...now }] }
 }
 
 test("a session resumed from the one that took the message is followed past what it copied, after a restart or live", async () => {
@@ -392,7 +394,7 @@ test('an older session hex.db names is followed again once it takes a message af
   write(join(project, 'back-old.jsonl'), { ...asked('call:before'), ...then }, { ...said('Earlier.'), ...then }, { ...ended, ...then })
   await Bun.sleep(5)
   sent('buzz:back', 'call:back', 'back-cut')
-  write(join(project, 'back-cut.jsonl'), asked('call:back'), said('Starting on it.'))
+  write(join(project, 'back-cut.jsonl'), { ...asked('call:back'), timestamp: new Date().toISOString() }, said('Starting on it.'))
   const steps: object[] = []
   const stop = followThread(findThread(state, 'back on old')!, hex, 'call:back', true, step => steps.push(step))
   expect(steps).toEqual([{ line: 'Starting on it.' }])
