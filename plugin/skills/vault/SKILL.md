@@ -24,7 +24,7 @@ If I paste a secret in chat, tell me it's in this chat's log now and send me a l
 
 Ask which one they use, then:
 
-- **Proton Pass.** Run `pass-cli login` (install it from proton.me/pass/download if it's missing) and send them the link it prints, saying to open it in a browser rather than the Proton app and sign in within 10 minutes. Once `pass-cli info` works, run `.hex/bin/vault import proton`, which copies every vault. Then `pass-cli logout`, so nothing stays signed in as them. Proton keeps everything; running the import again later brings in what changed. An item keeps its name unless it's renamed in Proton, and fields hex saved onto it stay until it's deleted there.
+- **Proton Pass.** Run `pass-cli login` (install it from proton.me/pass/download if it's missing) and send them the link it prints, saying to open it in a browser rather than the Proton app and sign in within 10 minutes. Once `pass-cli info` works, run `.hex/bin/vault import proton`, which copies every vault. Then `pass-cli logout`, so nothing stays signed in as them. Proton keeps everything; running the import again later brings in what changed. An item keeps its name unless it's renamed in Proton, and fields hex added to it stay until it's deleted there. A field Proton also has takes Proton's value again, so a password hex changes gets changed in Proton too.
 - **Anything else.** enclave has no importer for it yet. Ask by link for each login as hex needs it (`.hex/bin/vault ask`), and tell them a bulk import would need one written.
 
 Afterwards, `.hex/bin/vault list` shows what came in. Tell them the counts.
@@ -35,9 +35,9 @@ A saved passkey signs in through enclave's Chrome extension, which sends the sit
 
 The computer's browser reaches the vault over `ssh`, with a key and no password, so set that up from the computer to here first. Then:
 
-1. Here, with node 22 or newer, run `npm install -g enclave-link@latest`, then `node -p process.execPath` and `readlink -f "$(command -v enclave)"` for the two paths to sign with. A command over ssh gets a short PATH, so it needs both in full; after a node upgrade, run step 2 again.
-2. Inside the computer, clone enclave and run `extension/install ssh -o BatchMode=yes <user>@<this machine> <node path> <enclave path> sign`, then restart Chrome.
-3. Check the installed signer: here, run `.hex/bin/vault passkey <name>` for a site they have a passkey for. Inside the computer, `echo '{"origin":"https://<the passkey's domain>","challenge":"AA"}' | sh -c "$(jq -r '.command | @sh' ${XDG_DATA_HOME:-$HOME/.local/share}/enclave-extension/host.json)"` should print a signed answer starting with `{"id":`.
+1. Here, with node 22 or newer, run `npm install -g enclave-link@latest` (`.hex/bin/vault` then uses this same copy), then `node -p process.execPath` and `readlink -f "$(command -v enclave)"` for the two paths to sign with. A command over ssh gets a short PATH, so it needs both in full; after a node upgrade, run steps 1 and 2 again.
+2. Inside the computer (it needs node too), clone enclave and run `extension/install ssh -o BatchMode=yes <user>@<this machine> <node path> <enclave path> sign`, then restart Chrome. If `ENCLAVE_HOME` is set here, put `env ENCLAVE_HOME=<it>` before the node path.
+3. Check the installed signer: here, run `.hex/bin/vault passkey <name>` for a site they have a passkey for. Inside the computer, `echo '{"origin":"https://<the passkey's domain>","challenge":"AA"}' | sh -c "$(jq -r '.command | @sh' "${XDG_DATA_HOME:-$HOME/.local/share}/enclave-extension/host.json")"` should print a signed answer starting with `{"id":`.
 4. Once that works, run `.hex/bin/vault passkey <name>` again and sign in on that site once.
 
 ## The key
