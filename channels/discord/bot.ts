@@ -1164,7 +1164,7 @@ function serve(token: string) {
 
   client.on('messageUpdate', (before, after) => {
     if (before.partial || before.content === after.content || after.author.bot) return
-    queue = queue.then(() => handleInbound(after, true)).catch(failure('handleInbound'))
+    handleInbound(after, true).catch(failure('handleInbound'))
   })
 
   client.on('threadUpdate', (before, after) => {
