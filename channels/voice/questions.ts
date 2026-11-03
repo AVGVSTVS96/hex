@@ -22,8 +22,8 @@ export type Link = { label: string; url: string }
 // missed, whether an undo of it stopped partway, and the answer it was given over, which one undo
 // takes back too.
 // Marks from before these were kept have only label, at and via.
-// finishing: it only finished the one under it.
-export type Answer = { label: string; at: string; via: string; question?: string; told?: string[]; refs?: Ref[]; missed?: Ref[]; finishing?: boolean; undoing?: boolean; before?: Answer }
+// finishing: it only finished the one under it. dismissed: it was a not needed.
+export type Answer = { label: string; at: string; via: string; question?: string; told?: string[]; refs?: Ref[]; missed?: Ref[]; finishing?: boolean; undoing?: boolean; dismissed?: boolean; before?: Answer }
 type Taken = Answer & Required<Pick<Answer, 'question' | 'told' | 'refs' | 'missed'>>
 export type Ref = { app: string; thread: string; message: MessageId }
 // Where a question was asked, as hex's check found it: a thread, with the message when it knows it
@@ -46,6 +46,11 @@ export type Question = {
   links?: Link[]
   tag?: string
   places: Place[]
+  // Left half done from here: partly, the answer (or "Not needed") that reached only some of its
+  // copies, which only it can finish, or undo; undoing, an undo that stopped partway, which only
+  // undoing again finishes.
+  partly?: string
+  undoing?: true
 }
 // hex's check rewrites the raw questions into these: one per decision, however many places asked
 // it (from; refs are the open questions with buttons among them, which an answer goes back to), in
@@ -159,17 +164,19 @@ export class Questions extends Changes {
   // button takes it; the other copies settle. A copy an earlier answer missed only settles, and
   // finishing that answer settles just those.
   answer(id: string, label: string, via: string): Promise<Sent> {
-    return this.take(id, label, via, async (question, taken, where, finishing) => {
-      const value = question.options.find(option => option.label === label)?.value ?? label
-      const refs = this.left(id, taken)
-      const missed = new Set(chain(taken.before).flatMap(mark => (mark.missed ?? []).map(refId)))
-      const first = refs.find(ref => !missed.has(refId(ref)))
-      const settle = (ref: Ref) => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ Answered ${where}: ${label}` })
-      if (finishing) return this.each(refs, settle)
-      if (first && this.asked(first)!.options.includes(value)) await this.reach(taken, first, { type: 'answer', thread: first.thread, message: first.message, label: value, via })
-      else await this.inform(taken, first ? place(first) : question.task, `(answered ${where}) ${question.question}: ${label}`, via)
-      return this.each(refs.filter(ref => !taken.refs.includes(ref)), settle)
-    })
+    return this.take(id, label, via, false)
+  }
+
+  private async answering(id: string, label: string, via: string, question: Question, taken: Taken, where: string, finishing: boolean) {
+    const value = question.options.find(option => option.label === label)?.value ?? label
+    const refs = this.left(id, taken)
+    const missed = new Set(chain(taken.before).flatMap(mark => (mark.missed ?? []).map(refId)))
+    const first = refs.find(ref => !missed.has(refId(ref)))
+    const settle = (ref: Ref) => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ Answered ${where}: ${label}` })
+    if (finishing) return this.each(refs, settle)
+    if (first && this.asked(first)!.options.includes(value)) await this.reach(taken, first, { type: 'answer', thread: first.thread, message: first.message, label: value, via })
+    else await this.inform(taken, first ? place(first) : question.task, `(answered ${where}) ${question.question}: ${label}`, via)
+    return this.each(refs.filter(ref => !taken.refs.includes(ref)), settle)
   }
 
   // His own words on a question, which leave it open: they reach the thread that asked it, and
@@ -187,24 +194,26 @@ export class Questions extends Changes {
   // thread's copies settle only once it has heard, so one it couldn't reach stays open to try
   // again; finishing skips the threads that round already told.
   dismiss(id: string, via: string): Promise<Sent> {
-    return this.take(id, NOT_NEEDED, via, async (question, taken, where, finishing) => {
-      const told = new Set(finishing ? round(taken.before).flatMap(mark => mark.told ?? []) : [])
-      const say = async (thread: string) => {
-        if (told.has(thread)) return
-        await this.inform(taken, thread, `(not needed, said ${where}) ${question.question}`, via)
-        told.add(thread)
-      }
-      await say(question.task)
-      const failed: unknown[] = []
-      for (const [thread, copies] of Map.groupBy(this.left(id, taken), place)) {
-        const heard = await say(thread).then(
-          () => true,
-          error => (failed.push(error, ...copies.map(() => error)), taken.missed.push(...copies), false),
-        )
-        if (heard) failed.push(...(await this.each(copies, ref => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ ${NOT_NEEDED}, said ${where}` }))))
-      }
-      return failed
-    })
+    return this.take(id, NOT_NEEDED, via, true)
+  }
+
+  private async dismissing(id: string, via: string, question: Question, taken: Taken, where: string, finishing: boolean) {
+    const told = new Set(finishing ? round(taken.before).flatMap(mark => mark.told ?? []) : [])
+    const say = async (thread: string) => {
+      if (told.has(thread)) return
+      await this.inform(taken, thread, `(not needed, said ${where}) ${question.question}`, via)
+      told.add(thread)
+    }
+    await say(question.task)
+    const failed: unknown[] = []
+    for (const [thread, copies] of Map.groupBy(this.left(id, taken), place)) {
+      const heard = await say(thread).then(
+        () => true,
+        error => (failed.push(error, ...copies.map(() => error)), taken.missed.push(...copies), false),
+      )
+      if (heard) failed.push(...(await this.each(copies, ref => this.reach(taken, ref, { type: 'settle', thread: ref.thread, message: ref.message, note: `✓ ${NOT_NEEDED}, said ${where}` }))))
+    }
+    return failed
   }
 
   // Takes back an answer or a not needed given in the app or on a call, with any it was given over:
@@ -290,22 +299,21 @@ export class Questions extends Changes {
   // list that hadn't caught up), and not over an undo that stopped partway. When the only copies
   // left open are ones the earlier answer missed, it's that answer being finished, and only the
   // same answer can finish it; a copy it never saw means the question was asked again.
-  private async take(id: string, label: string, via: string, run: (question: Question, taken: Taken, where: string, finishing: boolean) => Promise<unknown[]>): Promise<Sent> {
+  private async take(id: string, label: string, via: string, dismissed: boolean): Promise<Sent> {
     if (this.taking.has(id)) throw new Error('an answer to that is on its way; try again in a moment')
     this.taking.add(id)
     try {
       const question = this.find(id)
       const kept = this.marks.answers[id]
-      const marks = chain(kept)
-      const reached = marks.flatMap(mark => mark.refs ?? [])
-      if (!question || (kept && (!this.refs(id).length || reached.some(ref => this.open(ref))))) throw new Error('that question is already answered or settled')
-      if (kept?.undoing) throw new Error('taking back the last answer to this stopped partway; undo it again first')
-      const missed = new Set(marks.flatMap(mark => (mark.missed ?? []).map(refId)))
-      const taken: Taken = { label, at: now(), via, question: question.question, told: [], refs: [], missed: [], ...(kept && { before: kept }) }
-      const finishing = !!kept && this.left(id, taken).every(ref => missed.has(refId(ref)))
-      if (finishing && kept.label !== label) throw new Error(`part of "${kept.label}" went out; send it again to finish, or undo it`)
-      if (finishing) taken.finishing = true
-      const failed = await run(question, taken, WHERE[via] ?? via, finishing)
+      const standing = this.standing(id)
+      if (!question || standing === 'stale') throw new Error('that question is already answered or settled')
+      if (standing === 'undoing') throw new Error('taking back the last answer to this stopped partway; undo it again first')
+      const finishing = standing === 'finishing'
+      if (finishing && kept!.label !== label) throw new Error(`part of "${kept!.label}" went out; send it again to finish, or undo it`)
+      if (finishing) dismissed = isDismissal(kept!)
+      const taken: Taken = { label, at: now(), via, question: question.question, told: [], refs: [], missed: [], dismissed, ...(finishing && { finishing }), ...(kept && { before: kept }) }
+      const where = WHERE[via] ?? via
+      const failed = await (dismissed ? this.dismissing(id, via, question, taken, where, finishing) : this.answering(id, label, via, question, taken, where, finishing))
       if (!taken.told.length && !taken.refs.length) throw failed[0] ?? new Error('that question is already answered or settled')
       this.marks.answers[id] = taken
       this.saveMarks()
@@ -324,8 +332,8 @@ export class Questions extends Changes {
   }
 
   // The question's copies still open that no answer from here has reached.
-  private left(id: string, taken: Taken) {
-    const reached = new Set(chain(taken).flatMap(mark => (mark.refs ?? []).map(refId)))
+  private left(id: string, answer: Answer | undefined) {
+    const reached = new Set(chain(answer).flatMap(mark => (mark.refs ?? []).map(refId)))
     return this.refs(id).filter(ref => this.open(ref) && !reached.has(refId(ref)))
   }
 
@@ -340,6 +348,22 @@ export class Questions extends Changes {
   private async inform(taken: Taken, thread: string, content: string, via: string) {
     await this.tell(thread, content, via)
     taken.told.push(thread)
+  }
+
+  // Where the answers from here leave a question, which take and the list both go by: undoing
+  // while an undo of them stopped partway; stale while a copy they reached still reads open (the
+  // list hasn't caught up) or it has no copies; finishing when its only open copies are ones they
+  // missed, which only the same label finishes, by whichever route, with that answer's own verb;
+  // otherwise free, as when it was asked again.
+  private standing(id: string): 'stale' | 'undoing' | 'finishing' | 'free' {
+    const kept = this.marks.answers[id]
+    if (!kept) return 'free'
+    if (kept.undoing) return 'undoing'
+    const marks = chain(kept)
+    if (!this.refs(id).length || marks.some(mark => mark.refs?.some(ref => this.open(ref)))) return 'stale'
+    const missed = new Set(marks.flatMap(mark => (mark.missed ?? []).map(refId)))
+    const left = this.left(id, kept)
+    return left.length && left.every(ref => missed.has(refId(ref))) ? 'finishing' : 'free'
   }
 
   // Whether a copy is open, or was closed from here rather than by a tap in its own app or its thread.
@@ -441,6 +465,12 @@ export class Questions extends Changes {
     if (why) this.check(why)
   }
 
+  // An ask's half-done state, for the app to offer what finishes it.
+  private half(id: string): Pick<Question, 'partly' | 'undoing'> {
+    const standing = this.standing(id)
+    return standing === 'undoing' ? { undoing: true } : standing === 'finishing' ? { partly: this.marks.answers[id]!.label } : {}
+  }
+
   private dress({ refs, from, options, links = [], places: _names, ...question }: Written): Question {
     const [app, ...thread] = question.task.split(':')
     const pages = [...links, ...options.flatMap(({ label, url }) => (url ? [{ label, url }] : []))].filter(page => opens(page.url))
@@ -451,6 +481,7 @@ export class Questions extends Changes {
       options: options.filter(option => !option.url),
       ...(pages.length && { links: pages }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(':') }]),
+      ...this.half(question.id),
     }
   }
 
@@ -561,6 +592,11 @@ function chain(answer: Answer | undefined) {
   const marks: Answer[] = []
   for (let mark = answer; mark; mark = mark.before) marks.push(mark)
   return marks
+}
+
+// Whether a mark was a not needed; one kept before marks said so is known by its label.
+function isDismissal(mark: Answer) {
+  return mark.dismissed ?? mark.label === NOT_NEEDED
 }
 
 // The marks of one answer: it and those that finished it, newest first, its first send last.

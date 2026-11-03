@@ -291,6 +291,12 @@ the question was asked again, which can be answered anew, and one undo takes
 back both. An undo that can't reach a hub keeps the rest and says so, nothing
 is answered over it, and undoing again finishes it.
 
+`GET /asks` marks an ask left half done: `partly` is the answer (or "Not
+needed") that reached only some of its copies, which sending that label again
+finishes (by answer or dismiss, either way, as the verb it was) or undo takes
+back; `undoing: true` is an undo that stopped partway, which only undoing again
+finishes. The call's walk-through says the same.
+
 | Request | Answers |
 | --- | --- |
 | `GET /asks` | `{ version, asks, stuck, fresh, check }`: each open question's `id`, `kind` (`pick`, `yesno`, `do`, `look`), `task` and `topic` (its thread), `question`, `context`, `options` (its answers: `label`, `pick`), `links` (pages it points to, which answer nothing: `label`, `url`), `tag`, and `places`, every place it was asked (each thread once, at its open question, pinned post or message), the ones that open first, each newest first; what's `stuck` (`title`, `why`, one `action`); what finished since you looked (`fresh`, with `read`); and the last check's time and counts |
