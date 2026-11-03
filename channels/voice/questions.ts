@@ -351,7 +351,14 @@ export function fromLedger(app: string, asked: Asked, lead?: string): Curated {
     return { label, value, ...(label !== value && { pick: true }) }
   })
   const [question, rest] = cut(lines[0] ?? '', 160)
-  const said = clip(plain(lead ?? '').trim(), 500)
+  const said = clip(
+    plain(lead ?? '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean)
+      .join('\n'),
+    500,
+  )
   const context = [...(rest ? [rest] : []), ...lines.slice(1), ...(said ? [said] : [])].join('\n')
   return {
     id: refId({ app, ...asked }),

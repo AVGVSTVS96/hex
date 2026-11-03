@@ -468,9 +468,9 @@ export class Store {
     return original ? { ...original, body: edit.body } : toRow(edit)
   }
 
-  // A thread's messages, oldest first: all of them, or its last few, or its last few before a time.
-  said(thread: string, last = -1, before = '9'): Row[] {
-    return (this.db.query('select * from (select * from messages where "to" = ? and at < ? order by at desc, n desc limit ?) order by at, n').all(thread, before, last) as Stored[]).map(toRow)
+  // A thread's messages, oldest first: all of them, or its last few, or its last few before a time, or those between two times.
+  said(thread: string, last = -1, before = '9', after = ''): Row[] {
+    return (this.db.query('select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n').all(thread, before, after, last) as Stored[]).map(toRow)
   }
 
   // What a session, or another in its thread, took by a time that no pass has looked over for

@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { dirname, join } from 'path'
+import { above } from '../../hub/fit.ts'
 import type { Question as Asked } from '../../hub/ledger.ts'
 import { open as store, shown, type Row, type Store } from '../../hub/store.ts'
 import type { CheckResult, Curated, Ref, Source } from './questions.ts'
@@ -133,20 +134,20 @@ function gather(state: string) {
 }
 
 // What hex said in a thread in the hour before it asked a question there, where its explanation
-// usually is: its last two messages there as they read now, oldest first. Left out are the rows the
-// owner never read as hex's words there (failed sends, edits, permission prompts, files, forwards,
-// the pinned post) and the question's own earlier parts, sent with it a moment before.
+// usually is: its last two messages there, oldest first. Left out are the rows the owner never read
+// as hex's words there (failed sends, edits, permission prompts, files, forwards, status posts), the
+// thread's questions, and the question's own earlier parts, sent with it a moment before.
 export function before(store: Store, app: string, question: Asked, max = 700) {
-  const asked = Date.parse(question.at)
-  const since = new Date(asked - 60 * 60_000).toISOString()
-  const own = [question.message, store.pin(app, question.thread)?.message].map(String)
-  const part = (row: Row) => Date.parse(row.at) > asked - 60_000 && bare(question.text).includes(bare(row.body))
-  return store
-    .said(question.thread, 40, question.at)
-    .filter(row => row.at > since && row.from === app && row.author === 'hex' && shown(row) && !row.meta?.file && !row.meta?.forwarded)
-    .filter(row => !own.includes(row.key.slice(row.key.lastIndexOf(':') + 1)) && !part(row))
+  const rows = store.said(question.thread, -1, question.at, new Date(Date.parse(question.at) - 60 * 60_000).toISOString())
+  const id = (row: Row) => row.key.slice(row.key.lastIndexOf(':') + 1)
+  const asked = Date.parse(rows.find(row => id(row) === String(question.message))?.at ?? question.at)
+  const questions = new Set(store.questions({ app, thread: question.thread }).map(other => String(other.message)))
+  const part = (row: Row) => !!bare(row.body) && Date.parse(row.at) > asked - 60_000 && bare(question.text).includes(bare(row.body))
+  return rows
+    .filter(row => row.from === app && row.author === 'hex' && shown(row) && !row.meta?.file && !row.meta?.forwarded && above(row.body) === row.body.trim())
+    .filter(row => !questions.has(id(row)) && !part(row))
     .slice(-2)
-    .map(row => clip(store.latest(row.key)?.body ?? row.body, max))
+    .map(row => clip(row.body, max))
 }
 
 // A message's words without the code fences a long message gains where it's cut into parts.
