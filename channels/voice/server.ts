@@ -198,8 +198,11 @@ async function pass(name: string, about: string, text: string, app?: string, whe
   }
   // The record has the task the moment mark is called; telling the voice can fail, as while its
   // connection comes back, and that mustn't keep the message from going out and being followed.
-  const told = call && id ? mark(call, { id, state: 'running', text: about, to: thread!.name, agent: `${thread!.app}:${thread!.id}` }).then(() => undefined, (error: Error) => error.message) : undefined
-  if (call && id) watch(call, id, thread!, !!app)
+  const told = call && id ? mark(call, { id, state: 'running', text: about, to: thread!.name, agent: `${thread!.app}:${thread!.id}` }).then(() => true, () => false) : true
+  if (call && id) {
+    if (current(call, id)?.state !== 'running') throw new Error(`couldn't put ${id} on the board`)
+    watch(call, id, thread!, !!app)
+  }
   if (!app) {
     try {
       await relay(HEX_STATE, thread!.app, { type: 'inbound', thread: thread!.id, content: text, meta })
@@ -210,8 +213,7 @@ async function pass(name: string, about: string, text: string, app?: string, whe
   }
   const sent = app ? `opened ${name} in ${app}` : `sent to ${thread!.name}`
   if (!id) return sent
-  const unheard = await told
-  return unheard ? `${sent}, on the board as ${id}, but telling the voice failed (${unheard}); the work went out, so tell the voice with note when you can rather than sending it again` : `${sent}, on the board as ${id}`
+  return (await told) ? `${sent}, on the board as ${id}` : `${sent}, on the board as ${id}, but the voice wasn't told of it; the work went out, so it needn't be sent again`
 }
 
 // Work a past call sent out is picked back up when the engine starts, read from the start of its

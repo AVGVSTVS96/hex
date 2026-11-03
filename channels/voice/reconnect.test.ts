@@ -280,7 +280,7 @@ test('work sent while the connection to the call is coming back still goes out a
   await started(engine)
   await engine.drop()
   const { result } = await engine.tool('send', { thread: 'General', about: 'Look into it', text: 'look into it' })
-  expect(result).toStartWith('sent to General, on the board as look-into-it, but telling the voice failed (the connection to the voice is coming back')
+  expect(result).toBe("sent to General, on the board as look-into-it, but the voice wasn't told of it; the work went out, so it needn't be sent again")
   expect(engine.relayed).toMatchObject([{ type: 'inbound', thread: '-100123', content: 'look into it', meta: { voice_task: `${ID}:look-into-it` } }])
   expect((await engine.call()).tasks).toMatchObject([{ id: 'look-into-it', state: 'running', to: 'General' }])
 }, 20_000)
