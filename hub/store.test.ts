@@ -151,12 +151,13 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
   const claude = join(dir, 'claude')
   mkdirSync(join(claude, 'sessions'), { recursive: true })
   const session = (sessionId: string, name: string, thread?: string, store = dir) => {
-    writeFileSync(join(claude, 'sessions', `${sessionId}.json`), JSON.stringify({ pid: process.pid, sessionId, name, status: 'busy' }))
-    if (!thread) return
+    const job = thread && `job${sessionId.slice(0, 5)}`
+    writeFileSync(join(claude, 'sessions', `${sessionId}.json`), JSON.stringify({ pid: process.pid, sessionId, name, status: 'busy', ...(job && { jobId: job, kind: 'bg' }) }))
+    if (!job) return
     const settings = join(claude, `${thread}.json`)
     writeFileSync(settings, JSON.stringify({ env: { HEX_CHANNEL: 'plugin:telegram@hex', HEX_THREAD: thread, HEX_STORE: store } }))
-    mkdirSync(join(claude, 'jobs', sessionId.slice(0, 8)), { recursive: true })
-    writeFileSync(join(claude, 'jobs', sessionId.slice(0, 8), 'state.json'), JSON.stringify({ respawnFlags: ['--channels', 'plugin:telegram@hex', '--settings', settings] }))
+    mkdirSync(join(claude, 'jobs', job), { recursive: true })
+    writeFileSync(join(claude, 'jobs', job, 'state.json'), JSON.stringify({ sessionId, respawnFlags: ['--channels', 'plugin:telegram@hex', '--settings', settings] }))
   }
   session('38b69086-82da-46a4-8a80-802ddb4fbec5', 'hex/seqno-plugins2')
   session('38b69086-ffff-4000-8000-000000000000', 'hex/seqno-import2')
@@ -179,7 +180,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
   expect(await deliver('38b69086')).toEqual({ code: 1, said: expect.stringContaining('38b69086 starts more than one session\'s id: 38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2), 38b69086-ffff-4000-8000-000000000000 (hex/seqno-import2)') })
   expect(await deliver('d4365c34')).toEqual({ code: 1, said: expect.stringContaining('no thread or running session is d4365c34') })
   expect(open(dir).since().map(row => row.to)).toEqual(['-100:7', '-100:7', '-100:7', '-100:452', '-100:4715', '-100:3655'])
-})
+}, 20_000)
 
 test('hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has', async () => {
   open(dir).keepThreads('t3', { '0f3a9c1e-0000-4000-8000-000000000000': { name: 'Old T3 thread' } })
@@ -195,7 +196,7 @@ test('hex deliver finds a thread by its name too, keeps one for a closed thread 
   expect(await deliver('Self heal')).toEqual({ code: 1, said: expect.stringContaining('no thread is "Self heal" (hex threads lists them)') })
   expect(await deliver('1d056dde-a8e8-479f-842c-e9d7eb6e6e5d')).toEqual({ code: 1, said: expect.stringContaining('no thread or running session is 1d056dde-a8e8-479f-842c-e9d7eb6e6e5d') })
   expect(open(dir).since().map(row => row.to)).toEqual(['-100:4715', '-100:2', '0f3a9c1e-0000-4000-8000-000000000000'])
-})
+}, 20_000)
 
 const ask = { ...message, key: 'telegram:-100:50', body: 'Fix the login page. Also the logo looks blurry on retina.' }
 

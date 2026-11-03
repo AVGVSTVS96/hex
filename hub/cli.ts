@@ -178,10 +178,19 @@ function workingFor(given: string) {
   if (matches.length > 1) throw new Error(`${given} starts more than one session's id: ${matches.map(named).join(', ')}`)
   const [id] = matches
   if (!id) throw new Error(`no thread or running session is ${given} (hex threads and hex running list them)`)
-  const bound = settingsOf({ sessionId: id, pid: 0 })?.env
-  const thread = held.get(id) ?? (bound?.HEX_STORE && resolve(bound.HEX_STORE) === resolve(state!) ? threads.find(({ thread }) => thread === bound.HEX_THREAD) : undefined)
+  const job = live.get(id)?.job
+  const bound = job ? settingsOf({ sessionId: id, id: job, pid: 0 })?.env : undefined
+  const thread = held.get(id) ?? (bound?.HEX_STORE && real(bound.HEX_STORE) === real(state!) ? threads.find(({ thread }) => thread === bound.HEX_THREAD) : undefined)
   if (thread) return thread
   throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
+}
+
+function real(path: string) {
+  try {
+    return realpathSync(path)
+  } catch {
+    return resolve(path)
+  }
 }
 
 // Messages as markdown, one heading each, in the owner's time zone, for rg to search. Within room,

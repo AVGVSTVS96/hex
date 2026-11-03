@@ -23,7 +23,7 @@ function named(word: string): string | undefined {
 
 if (mode === "--ended") {
   const [unit, owner] = rest as [string, string]
-  const key = store.key(owner)
+  const key = owner.slice(owner.indexOf(":") + 1)
   if (!store.threads().some(({ thread }) => thread === key)) console.error(`job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`)
   const result = process.env.SERVICE_RESULT ?? "unknown"
   const status = process.env.EXIT_STATUS ?? "?"
