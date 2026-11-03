@@ -26,7 +26,7 @@ const USAGE = `usage:
   hex message <key>
   hex profile [--all] [--json]
   hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--room <characters>] [--json]
-  hex recall <regex>
+  hex recall <regex, in any case>
   hex watch`
 
 const { values: flags, positionals } = parseArgs({
@@ -50,10 +50,16 @@ const { values: flags, positionals } = parseArgs({
     last: { type: 'string' },
     taken: { type: 'boolean' },
     room: { type: 'string' },
+    // recall reads in any case already, so rg's -i changes nothing.
+    'ignore-case': { type: 'boolean', short: 'i' },
   },
 })
 const [state, command, ...args] = positionals
 if (!state || !command) usage()
+if (flags['ignore-case'] && command !== 'recall') {
+  console.error("hex: -i is only for recall")
+  process.exit(2)
+}
 // How many words each command takes before its flags; a word past them is a flag's value left
 // unquoted, which would otherwise be cut short without a word.
 const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2 } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
@@ -136,31 +142,34 @@ function stray(word: string) {
   return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`
 }
 
-// A thread by its key or id, or by its name the way the hub finds one: any case, and only one thread,
-// an open one before any closed.
-function known(named: string) {
-  const key = store.key(named)
+// The threads a name or id means: the one with that key or id, or else every thread by that name, in
+// any case.
+function named(given: string) {
+  const key = store.key(given)
   const threads = store.threads()
   const keyed = threads.find(({ thread }) => thread === key)
-  if (keyed) return keyed
-  const wanted = named.trim().toLowerCase()
+  if (keyed) return [keyed]
+  const wanted = given.trim().toLowerCase()
   const all = threads.filter(({ name }) => name.toLowerCase() === wanted)
-  const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all
-  if (matches.length > 1) throw new Error(`more than one thread is named "${named}": ${matches.map(({ thread }) => thread).join(', ')}`)
-  return matches[0] ?? threads.find(({ thread }) => thread === key.toLowerCase())
+  return all.length ? all : threads.filter(({ thread }) => thread === key.toLowerCase())
 }
 
-function threadOf(named: string) {
-  const thread = known(named)?.thread
-  if (thread) return thread
-  if (store.said(named, 1).length) return named
-  throw new Error(`no thread named "${named}"`)
+// What a log reads: every thread the name means, since each message's heading says which it's from,
+// or a terminal session's messages.
+function threadsOf(given: string) {
+  const threads = named(given).map(({ thread }) => thread)
+  if (threads.length) return threads
+  if (store.said(given, 1).length) return [given]
+  throw new Error(`no thread named "${given}"`)
 }
 
-// Where a delivery goes: a thread hex has, since only a thread's session takes messages. A closed
-// thread takes it once it opens again.
+// Where a delivery goes: a thread hex has, since only a thread's session takes messages, and only
+// one, an open one before any closed. A closed thread takes it once it opens again.
 function recipient(to: string): string {
-  const thread = known(to) ?? workingFor(to)
+  const all = named(to)
+  const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all
+  if (matches.length > 1) throw new Error(`more than one thread is named "${to}", so send to one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(', ')}`)
+  const thread = matches[0] ?? workingFor(to)
   if (!thread.open) console.error(`hex: the thread ${thread.thread} is closed, so this waits until it opens again`)
   return thread.thread
 }
@@ -329,8 +338,9 @@ try {
         console.error("hex log: name the thread, by its name or id")
         process.exit(2)
       }
-      const thread = args[0] && threadOf(args[0])
-      const rows = thread ? store.said(thread, flags.last ? Number(flags.last) : -1) : store.since(since)
+      const last = flags.last ? Number(flags.last) : -1
+      const threads = args[0] ? threadsOf(args[0]) : []
+      const rows = threads.length ? threads.flatMap(thread => store.said(thread, last)).sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(last < 0 ? 0 : -last) : store.since(since)
       log(rows.filter(row => row.at > since && (!flags.taken || row.taken)))
       break
     }

@@ -375,6 +375,27 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
   expect(() => store.mergeTasks(kept.id, kept.id)).toThrow('itself')
 })
 
+test("hex log reads every thread a name means, a delivery to that name asks for one by its id, and hex recall takes rg's -i", async () => {
+  const store = open(dir)
+  store.keepThreads('telegram', { '629': { name: 'DM' } })
+  store.keepThreads('discord', { '1560': { name: 'DM' } })
+  for (const [key, to, body] of [['telegram:629:1', '629', 'on Telegram'], ['discord:1560:1', '1560', 'on Discord'], ['telegram:629:2', '629', 'Telegram again']]) {
+    store.deliver({ key: key!, to: to!, from: key!.split(':')[0]!, author: 'owner', body: body! })
+    await Bun.sleep(5)
+  }
+  const hex = async (...args: string[]) => {
+    const cli = Bun.spawn(['bun', join(import.meta.dir, 'cli.ts'), dir, ...args], { stdout: 'pipe', stderr: 'pipe', env: { ...Bun.env, MEMORY_DIR: join(dir, 'memory'), CLAUDE_CONFIG_DIR: join(dir, 'claude') } })
+    return { code: await cli.exited, out: await new Response(cli.stdout).text(), err: await new Response(cli.stderr).text() }
+  }
+  const said = (out: string) => out.split('\n').filter(line => /^(on|Telegram)/.test(line))
+  expect(said((await hex('log', '--', 'dm')).out)).toEqual(['on Telegram', 'on Discord', 'Telegram again'])
+  expect(said((await hex('log', '--last', '2', '--', 'DM')).out)).toEqual(['on Discord', 'Telegram again'])
+  expect(said((await hex('log', '--', 'telegram:629')).out)).toEqual(['on Telegram', 'Telegram again'])
+  expect(await hex('deliver', 'hex', '--to', 'DM', 'hello')).toMatchObject({ code: 1, err: expect.stringContaining('more than one thread is named "DM", so send to one by its id: discord:1560, telegram:629') })
+  expect(await hex('recall', '-i', 'salty')).toEqual(await hex('recall', 'salty'))
+  expect(await hex('deliver', 'hex', '--to', 'telegram:629', 'use', 'rg', '-i')).toMatchObject({ code: 2, err: 'hex: -i is only for recall\n' })
+}, 20_000)
+
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
   new Store(dir).db.close()
   const old = new Database(join(dir, 'hex.db'))
