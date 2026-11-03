@@ -431,6 +431,8 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   const store = open(thread.state)
   const taken = resumed ? store.taker(thread.id, 'voice_task', tag) : undefined
   const took = taken && ID.test(taken.by) && existsSync(transcript(taken.by)) ? taken : undefined
+  // Older than any entry of this message's work: when it was taken, or for a live follow, now.
+  const floor = took?.at ?? (resumed ? undefined : new Date().toISOString())
   const stopState = store.watch(locate)
   locate()
 
@@ -455,8 +457,8 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   function take(entry: any, updates: () => Update[]) {
     if (ended || seen.has(entry.uuid)) return
     if (entry.uuid) seen.add(entry.uuid)
-    // A session older than the one that took the message was gone back to: its history is older still.
-    if (took && session !== took.by && entry.timestamp < took.at) return
+    // A session followed after the one that took the message can carry history older than it.
+    if (floor && session !== took?.by && entry.timestamp < floor) return
     if (!picked) {
       const text = channelMessage(entry)
       picked = !!text && text.slice(0, text.indexOf('>') + 1).includes(` voice_task="${tag}"`)
@@ -489,28 +491,30 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   return close
 }
 
-// Read as bytes and searched a stretch of whole lines at a time: a transcript can outgrow the
-// longest string JavaScript can hold.
-// The uuids in a transcript's first bytes, searched a stretch of whole lines at a time: a
-// transcript can outgrow the longest string JavaScript can hold.
+// The uuids in a transcript's first bytes, read a stretch at a time: a transcript can outgrow
+// the longest string JavaScript can hold.
 function uuids(path: string, upTo: number) {
-  const data = Buffer.alloc(upTo)
+  const found: string[] = []
+  const scan = (text: string) => {
+    for (const match of text.matchAll(/"uuid":"([^"]+)"/g)) found.push(match[1])
+  }
   let fd
   try {
     fd = openSync(path, 'r')
-    readSync(fd, data, 0, upTo, 0)
+    const chunk = Buffer.alloc(Math.min(upTo, 2 ** 26))
+    let rest = ''
+    for (let at = 0, read = 1; at < upTo && read; at += read) {
+      read = readSync(fd, chunk, 0, Math.min(chunk.length, upTo - at), at)
+      const text = rest + chunk.toString('utf8', 0, read)
+      const line = text.lastIndexOf('\n') + 1
+      scan(text.slice(0, line))
+      rest = text.slice(line)
+    }
+    scan(rest)
   } catch (error: any) {
     logger.error(`couldn't read ${path}: ${error.message}`)
-    return []
   } finally {
     if (fd !== undefined) closeSync(fd)
-  }
-  const found: string[] = []
-  for (let start = 0; start < data.length; ) {
-    const line = data.indexOf(10, Math.min(data.length, start + 2 ** 26) - 1)
-    const end = line < 0 ? data.length : line + 1
-    for (const match of data.toString('utf8', start, end).matchAll(/"uuid":"([^"]+)"/g)) found.push(match[1])
-    start = end
   }
   return found
 }

@@ -497,9 +497,9 @@ export class Store {
     return (this.db.query('select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n').all(thread, before, after, last) as Stored[]).map(toRow)
   }
 
-  // When a session last took a message.
+  // When a session last took a message it was sent, rather than one it sent.
   lastTaken(session: string): string | undefined {
-    return (this.db.query('select max(taken_at) as at from messages where taken_by = ?').get(session) as { at: string | null }).at ?? undefined
+    return (this.db.query(`select max(taken_at) as at from messages where taken_by = ? and author <> 'hex'`).get(session) as { at: string | null }).at ?? undefined
   }
 
   // The session that took the thread's newest message whose meta has this value under key, and when.

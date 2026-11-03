@@ -404,3 +404,17 @@ test('an older session hex.db names is followed again once it takes a message af
   expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Back on the old session.' }, { end: 'done' }])
   stop()
 })
+
+test('a live follow skips history older than itself in a session it switches to, though none of it was seen', async () => {
+  threads('buzz', { b16: { name: 'Floor', session: 'floor-a' } })
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'floor')!, hex, 'call:floor', false, step => steps.push(step))
+  const at = (entry: object, ago = 0) => ({ ...entry, timestamp: new Date(Date.now() - ago).toISOString() })
+  write(join(project, 'floor-a.jsonl'), at(asked('call:floor')), at(said('Starting on it.')))
+  await until(() => steps.length === 1)
+  write(join(project, 'floor-b.jsonl'), at(said('Old history.'), 60_000), at(ended, 60_000), at(said('Finished it.')), at(ended))
+  threads('buzz', { b16: { name: 'Floor', session: 'floor-b' } })
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Finished it.' }, { end: 'done' }])
+  stop()
+})
