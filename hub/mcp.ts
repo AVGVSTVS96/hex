@@ -19,17 +19,18 @@ type Hooks = {
 const REVISIONS = ['2025-11-25', '2025-06-18', '2025-03-26']
 const encoder = new TextEncoder()
 const NUDGE = 250
-// Claude Code gives up on a tool call after the timeout in the channel's .mcp.json, while the hub
-// still carries it out, and the session then makes the same call again. A repeat of a call the
-// session gave up on, while it runs or within this long of its start or answer, gets that answer
-// instead of sending, deleting or opening a thread twice. A tool that only reads runs every time.
+// Claude Code gives up on a tool call after the timeout in the channel's .mcp.json (300000 ms),
+// while the hub still carries it out, and the session then makes the same call again. A call stays
+// unheard until the session hears its answer, and a repeat of an unheard call gets that answer
+// instead of acting twice. A different call in the thread shows the session moved on from those
+// already answered, and REPEAT after its answer one is let go. A call that took GAVE_UP counts as
+// unheard: the session's clock started before the hub read it, and a lagging hub can miss the
+// session leaving. A tool that only reads runs every time.
 const REPEAT = 10 * 60_000
-// The timeout in each channel's .mcp.json: a call that took this long, the session gave up on, even
-// when the hub was too far behind to see it go.
-const GAVE_UP = 300_000
+const GAVE_UP = 240_000
 
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-type Run = { answer: Promise<Result>; at: number; failed?: true }
+type Run = { answer: Promise<Result>; at: number; done?: true }
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -54,39 +55,29 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return Response.json({ jsonrpc: '2.0', id, result: value })
   }
 
-  const unheard = new Map<string, Run>()
+  const unheard = new Map<string, Map<string, Run>>()
   const reads = new Set(server.tools.filter(tool => tool.annotations?.readOnlyHint).map(tool => tool.name))
 
   function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal): Promise<Result> {
     if (reads.has(tool)) return call(thread, tool, args)
-    for (const [key, run] of unheard) if (clock.now() - run.at > REPEAT) unheard.delete(key)
-    const key = JSON.stringify([thread, tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
-    const earlier = unheard.get(key)
+    const scope = String(thread)
+    if (!unheard.has(scope)) unheard.set(scope, new Map())
+    const runs = unheard.get(scope)!
+    const key = JSON.stringify([tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
+    for (const [each, run] of runs) if (run.done && clock.now() - run.at > REPEAT) runs.delete(each)
+    const repeat = runs.get(key)
     const began = clock.now()
-    const run = earlier ?? start(key, call(thread, tool, args))
-    const missed = () => void (run.failed || unheard.set(key, run))
-    // The session can give up before the hub reads its call, or while the answer is on its way.
-    if (gone.aborted) missed()
-    else gone.addEventListener('abort', missed, { once: true })
+    const run: Run = repeat ?? { answer: call(thread, tool, args), at: began }
+    if (!repeat) {
+      for (const [each, earlier] of runs) if (earlier.done) runs.delete(each)
+      runs.set(key, run)
+      void run.answer.then(() => Object.assign(run, { done: true, at: clock.now() }))
+    }
     return run.answer.then(answer => {
-      if (clock.now() - began >= GAVE_UP) missed()
-      else if (!gone.aborted && unheard.get(key) === run) unheard.delete(key)
-      if (!earlier) return answer
-      if (answer.isError) return once(thread, tool, args, gone)
+      if (!gone.aborted && clock.now() - began < GAVE_UP && runs.get(key) === run) runs.delete(key)
+      if (!repeat) return answer
       return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
     })
-  }
-
-  // A run that failed is no answer to keep: its repeat tries again.
-  function start(key: string, answer: Promise<Result>): Run {
-    const run: Run = { answer, at: clock.now() }
-    void answer.then(({ isError }) => {
-      run.at = clock.now()
-      if (!isError) return
-      run.failed = true
-      if (unheard.get(key) === run) unheard.delete(key)
-    })
-    return run
   }
 
   async function call(thread: string | undefined, tool: string, args: Record<string, unknown>): Promise<Result> {

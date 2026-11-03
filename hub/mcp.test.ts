@@ -115,55 +115,61 @@ test("an answer the session missed answers its repeat for ten minutes", async ()
   }
 })
 
-test('the same call made again after its answer was heard runs again, as does one the session gave up on that failed', async () => {
-  const heard = channel()
+test('the same call made again after its answer was heard runs again', async () => {
+  const { ran, call, answer } = channel()
   for (let i = 0; i < 2; i++) {
-    const each = heard.call({ text: 'report' })
-    await heard.answer()
+    const each = call({ text: 'report' })
+    await answer()
     expect(text(await each)).toBe('sent (id: 5389)')
   }
-  expect(heard.ran()).toBe(2)
+  expect(ran()).toBe(2)
+})
 
+test('a repeat of a missed call that failed hears the failure instead of acting again, and the call after runs', async () => {
   const failing = channel(true)
   const gaveUp = new AbortController()
   const first = failing.call({ text: 'report' }, gaveUp)
   await Bun.sleep(1)
   gaveUp.abort()
+  const joined = failing.call({ text: 'report' })
   await failing.answer()
-  expect((await first).result.isError).toBe(true)
-  const again = failing.call({ text: 'report' })
+  await first
+  expect((await joined).result).toEqual({ content: [{ type: 'text', text: 'this same reply call came before and its answer never reached you, so it ran once: reply failed: Telegram said no' }], isError: true })
+  expect(failing.ran()).toBe(1)
+  const after = failing.call({ text: 'report' })
   await failing.answer()
-  expect(text(await again)).toBe('reply failed: Telegram said no')
+  expect(text(await after)).toBe('reply failed: Telegram said no')
   expect(failing.ran()).toBe(2)
 })
 
-test('a repeat that joined a run that then failed tries again itself', async () => {
-  const failing = channel(true)
+test('a different call shows the session moved on from a missed one, so the same call later runs again', async () => {
+  const { ran, call, answer } = channel()
   const gaveUp = new AbortController()
-  const first = failing.call({ text: 'report' }, gaveUp)
+  const first = call({ emoji: '👍' }, gaveUp)
   await Bun.sleep(1)
   gaveUp.abort()
-  const again = failing.call({ text: 'report' })
-  await failing.answer()
+  await answer()
   await first
-  await failing.answer()
-  expect(text(await again)).toBe('reply failed: Telegram said no')
-  expect(failing.ran()).toBe(2)
+  const other = call({ emoji: '👍', remove: true })
+  await answer()
+  await other
+  const again = call({ emoji: '👍' })
+  await answer()
+  expect(text(await again)).toBe('sent (id: 5389)')
+  expect(ran()).toBe(3)
 })
 
-test('a failed run the session missed after its answer is never kept for a repeat', async () => {
-  const failing = channel(true)
-  const late = new AbortController()
-  const first = failing.call({ text: 'report' }, late)
-  await failing.answer()
-  await first
-  late.abort()
+test('calls made side by side that both went unheard each answer their own repeat', async () => {
+  const { ran, call, answer } = channel()
   const gaveUp = new AbortController()
+  const both = [call({ text: 'report' }, gaveUp), call({ emoji: '👍' }, gaveUp)]
+  await Bun.sleep(1)
   gaveUp.abort()
-  const again = failing.call({ text: 'report' }, gaveUp)
-  await failing.answer()
-  expect(text(await again)).toBe('reply failed: Telegram said no')
-  expect(failing.ran()).toBe(2)
+  await answer()
+  await Promise.all(both)
+  const repeats = await Promise.all([call({ emoji: '👍' }), call({ text: 'report' })])
+  expect(repeats.map(text).every(each => each.startsWith('this same reply call came before'))).toBe(true)
+  expect(ran()).toBe(2)
 })
 
 test('a call that took as long as the session waits counts as missed, even with no abort seen', async () => {
@@ -172,7 +178,7 @@ test('a call that took as long as the session waits counts as missed, even with 
     const { ran, call, answer } = channel()
     const first = call({ text: 'report' })
     await Bun.sleep(1)
-    await time.advance(5 * 60_000)
+    await time.advance(4 * 60_000)
     await answer()
     expect(text(await first)).toBe('sent (id: 5389)')
     expect(text(await call({ text: 'report' }))).toStartWith('this same reply call came before')
@@ -182,20 +188,20 @@ test('a call that took as long as the session waits counts as missed, even with 
   }
 })
 
-test('a run that never answers stops holding its repeats ten minutes after it started', async () => {
+test('a missed call still running holds its repeats however long it takes', async () => {
   const time = manual(async () => {})
   try {
     const { ran, call, answer } = channel()
     const gaveUp = new AbortController()
-    void call({ text: 'report' }, gaveUp)
+    const first = call({ text: 'report' }, gaveUp)
     await Bun.sleep(1)
     gaveUp.abort()
-    await time.advance(10 * 60_000 + 1)
-    const later = call({ text: 'report' })
-    await Bun.sleep(1)
-    expect(ran()).toBe(2)
+    await time.advance(15 * 60_000)
+    const again = call({ text: 'report' })
     await answer()
-    expect(text(await later)).toBe('sent (id: 5389)')
+    await first
+    expect(text(await again)).toStartWith('this same reply call came before')
+    expect(ran()).toBe(1)
   } finally {
     time.restore()
   }
