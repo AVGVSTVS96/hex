@@ -20,6 +20,8 @@ async function appCall({ open = false } = {}) {
   const closes: string[] = []
   let voice: Bun.ServerWebSocket<unknown> | undefined
   let hold = open
+  // Whether the stand-in answers a session.close with session.closed.
+  let acking = true
   let held = false
   let made = 0
   const waiting: (() => void)[] = []
@@ -41,7 +43,7 @@ async function appCall({ open = false } = {}) {
         if (event.type === 'session.thinking.append') socket.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: event.event_id }))
         if (event.type !== 'session.close') return
         closes.push(`${(socket.data as { id: string }).id} ${event.event_id}`)
-        socket.send(JSON.stringify({ type: 'session.closed', reason: 'close_requested', client_event_id: event.event_id }))
+        if (acking) socket.send(JSON.stringify({ type: 'session.closed', reason: 'close_requested', client_event_id: event.event_id }))
       },
     },
   })
@@ -94,6 +96,7 @@ for await (const line of console) {
     attaching: () => until(() => held),
     // The engine's next attach waits until the test lets it.
     hold: () => void (hold = true),
+    holdAcks: () => void (acking = false),
     back: () => {
       hold = false
       for (const resolve of waiting.splice(0)) resolve()
@@ -146,6 +149,20 @@ test('hanging up a new call before its connection has opened ends it once open',
   expect(engine.closes).toEqual([`${ID} close-you-app`])
 }, 20_000)
 
+test('a call hung up and replaced before OpenAI says it closed gets one close, and ends by the hang-up', async () => {
+  await using engine = await appCall()
+  await started(engine)
+  engine.holdAcks()
+  expect(await engine.tool('hang_up')).toEqual({ result: 'hanging up' })
+  await until(() => engine.closes.length)
+  expect((await engine.hangUp()).status).toBe(204)
+  expect((await fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })).status).toBe(201)
+  expect(await engine.call()).toMatchObject({ end: 'hex', reason: 'close_requested' })
+  await Bun.sleep(200)
+  expect(engine.closes).toHaveLength(1)
+  expect(engine.closes[0]).toStartWith(`${ID} close_hex_`)
+}, 20_000)
+
 test('a call a new one replaces before its connection opened is still closed', async () => {
   await using engine = await appCall()
   engine.hold()
@@ -192,6 +209,7 @@ test('hanging up a call the engine is attaching back to after a restart ends it 
     await Bun.sleep(200)
     expect(engine.closes).toHaveLength(1)
     expect(engine.closes[0]).toStartWith(`${ID} ${close}`)
+    await until(() => engine.told.length >= 2)
     expect(engine.told.map(({ hub, meta }) => meta?.ended ?? hub)).toEqual([end, 'renew'])
   }
 }, 30_000)
@@ -206,5 +224,6 @@ test('a call a new one replaces while the engine attaches back to it after a res
   await Bun.sleep(200)
   expect(engine.closes).toEqual([`${ID} close-you-moved`])
   expect(await engine.live()).toBe(`${ID}-1`)
+  await until(() => engine.told.length >= 3)
   expect(engine.told.map(({ hub, meta }) => (meta?.ended ? `${meta.call} ended` : meta?.call ? `${meta.call} told` : hub))).toEqual([`${ID} ended`, 'renew', `${ID}-1 told`])
 }, 20_000)
