@@ -315,9 +315,11 @@ try {
       break
     }
     case 'message': {
-      const said = args[0] && store.message(args[0])
+      const said = args[0] && store.latest(args[0])
       if (!said) throw new Error(`no message ${args[0] ?? ''}`)
       console.log(flags.json ? JSON.stringify(said, null, 1) : said.from === 't3' && said.author === 'owner' ? sent(said.body).join('\n\n') : said.body)
+      const under = said.meta?.edit ?? (said.key !== args[0] ? said.key : undefined)
+      if (under && !flags.json) console.error(`(edited: these are the words of ${under}, the key to quote them under)`)
       break
     }
     case 'log': {
