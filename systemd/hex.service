@@ -10,6 +10,8 @@ RestartSec=3
 # A stop waits for a live call to end, the way a restart does.
 TimeoutStopSec=30min
 MemoryMax=2G
+# The hub answers every channel, so it runs ahead of the other services when the CPU is short.
+CPUWeight=1000
 OOMPolicy=continue
 
 [Install]

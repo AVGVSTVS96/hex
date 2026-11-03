@@ -42,6 +42,8 @@ clean() {
 clean
 trap clean EXIT
 git worktree add -q --detach "$check" "$incoming"
+# As a job, the update runs its check ahead of the other jobs, so a busy machine doesn't time its tests out.
+[ "$mode" != --when-quiet ] || systemctl --user set-property --runtime hex-update.service CPUWeight=10000 2>/dev/null || :
 if ! output=$("$check/bin/check" 2>&1); then
   printf '%s\n' "$output"
   echo "not updated: hex $(git rev-parse --short "$incoming") fails bin/check"

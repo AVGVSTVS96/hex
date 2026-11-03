@@ -41,6 +41,7 @@ test("a job a hex session starts is its thread's, in that session's own app, and
   const { args, error } = run(['round3', 'make', 'all'], session)
   expect(args.slice(args.indexOf('--'))).toEqual(['--', 'make', 'all'])
   expect(args).toContain('--same-dir')
+  expect(args).toContain('--slice=hex-jobs.slice')
   expect(error).toBe('')
   expect(value(args, 'HEX_OWNER')).toBe('t3:stray-key')
   expect(value(args, 'CLAUDE_CODE_SESSION_NAME')).toBe('hex/round3')

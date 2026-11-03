@@ -1,10 +1,10 @@
 #!/usr/bin/env bun
-// job <unit> [<thread>] <command...>: run a long job as its own systemd unit, so hex restarts don't
-// stop it, and wake the thread that owns it when it ends. The owner is the hex session that runs it,
-// or <thread>: an open thread's key or <app>:<key> id (hex threads). The job's Claude Code
-// sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them under it, and are
-// named <owner>/<unit> unless they name themselves. A job whose command is claude runs as a hex
-// session in the folder it was started from, through the launcher the hub starts sessions with,
+// job <unit> [<thread>] <command...>: run a long job as its own systemd unit in hex-jobs.slice, apart
+// from the hub, so hex restarts don't stop it, and wake the thread that owns it when it ends. The owner
+// is the hex session that runs it, or <thread>: an open thread's key or <app>:<key> id (hex threads).
+// The job's Claude Code sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them
+// under it, and are named <owner>/<unit> unless they name themselves. A job whose command is claude runs
+// as a hex session in the folder it was started from, through the launcher the hub starts sessions with,
 // so it has hex's rules, memory and hooks.
 import { $ } from "bun"
 import { basename } from "node:path"
@@ -53,7 +53,7 @@ if (mode === "--ended") {
   const thread = served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD })
   const from = thread ? { HEX_FROM: thread, HEX_FROM_AT: new Date().toISOString() } : { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT }
   const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`]).concat(Object.entries(from).flatMap(([name, value]) => (value ? ["-E", `${name}=${value}`] : [])))
-  await $`systemd-run --user --unit=${mode} --same-dir ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
+  await $`systemd-run --user --unit=${mode} --slice=hex-jobs.slice --same-dir ${input} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
 }
 
 // systemd expands $VARIABLE in a unit's command lines, which would rewrite a thread's name or prompt;
