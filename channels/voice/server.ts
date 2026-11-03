@@ -77,6 +77,7 @@ type Live = {
   spoke: number
   warning?: ReturnType<typeof setTimeout>
   speak?: (audio: string) => void
+  closing?: string
 }
 type Placed = { to: string; why?: string; started: string; session?: string }
 type Dial = { greeting: string; from: Source; token: string; why?: string; callee?: string }
@@ -99,6 +100,8 @@ let HEX_STATE: string
 // last call's renew, so the new call's words reach the new session.
 let lane = Promise.resolve()
 let live: Live | undefined
+// The call recover() is attaching to after a restart, until it's live, and the close asked of it meanwhile.
+let attaching: { id: string; closing?: string } | undefined
 let ended: string | undefined
 let seq = 0
 const dials = new Map<string, Dial>()
@@ -117,6 +120,10 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   if (name === 'note' && !live && ringing()) {
     briefing.push(args.text)
     return 'the call is still ringing; the voice gets this when it connects'
+  }
+  if (name === 'hang_up' && !live && attaching) {
+    attaching.closing = `close_hex_${++seq}`
+    return 'hanging up once the call is back'
   }
   if (!live) throw new Error('no call is live')
   switch (name) {
@@ -314,8 +321,14 @@ async function hangUpCall(call: Live) {
   const asked = Date.now()
   while (live === call && Date.now() - asked < 20_000 && Date.now() - Math.max(asked, call.spoke) < 2000) await Bun.sleep(250)
   if (live !== call) return 'the call had already ended'
-  call.socket.send(JSON.stringify({ type: 'session.close', event_id: `close_hex_${++seq}` }))
+  close(call, `close_hex_${++seq}`)
   return 'hanging up'
+}
+
+// A close asked while the connection to the voice is coming back is sent once it's back.
+function close(call: Live, event: string) {
+  call.closing = event
+  if (call.socket.readyState === WebSocket.OPEN) call.socket.send(JSON.stringify({ type: 'session.close', event_id: event }))
 }
 
 function deliver(content: string, meta: Record<string, string>) {
@@ -540,6 +553,7 @@ function reconnect(call: Live, attempt: number) {
       trace(`reattached to ${call.id}`)
       call.socket = socket
       listen(call, socket, attempt)
+      if (call.closing) close(call, call.closing)
     }
     socket.onclose = () => reconnect(call, attempt + 1)
   }, RETRIES[attempt])
@@ -594,7 +608,10 @@ function closeOut(record: CallRecord) {
 // a call deleted or replaced by a new one meanwhile is let go.
 function reattach({ id }: CallRecord) {
   const socket = sideband(id)
+  attaching = { id }
   socket.onopen = () => {
+    const closing = attaching?.closing
+    attaching = undefined
     const record = calls.get(id)
     if (!record || live) {
       socket.send(JSON.stringify({ type: 'session.close', event_id: `close_hex_${++seq}` }))
@@ -612,8 +629,10 @@ function reattach({ id }: CallRecord) {
         ...(tasks.length ? [Call.resume(record).board()] : []),
       ].join('\n'),
     })
+    if (closing) close(live!, closing)
   }
   socket.onclose = () => {
+    if (attaching?.id === id) attaching = undefined
     if (live?.id === id) return
     const record = calls.get(id)
     if (record) closeOut(record)
@@ -897,7 +916,8 @@ async function interruption(request: Request, id: string) {
 async function endSession(request: Request) {
   const { sessionId } = ((await request.json().catch(() => null)) ?? {}) as { sessionId?: unknown }
   if (typeof sessionId !== 'string') return new Response('Name the call to end with sessionId', { status: 400 })
-  if (live?.id === sessionId) live.socket.send(JSON.stringify({ type: 'session.close', event_id: 'close-you-app' }))
+  if (live?.id === sessionId) close(live, 'close-you-app')
+  else if (attaching?.id === sessionId) attaching.closing = 'close-you-app'
   return new Response(null, { status: 204 })
 }
 

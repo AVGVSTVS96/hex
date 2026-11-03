@@ -134,7 +134,9 @@ about 15 seconds before calling the call dropped. When the engine starts, it
 picks the latest call that never got an end back up the same way and sends
 Claude a "call resumed" message with the call so far; any other call left
 without an end is closed out as `dropped` and ends like any other call: Claude
-is told to name it, and the session renews. A phone call's audio runs through
+is told to name it, and the session renews. A hang-up (`DELETE /session`,
+`hang_up`) that comes while the connection is coming back is sent once it's
+back. A phone call's audio runs through
 the engine, so the service waits for a call to end before it restarts.
 
 One session takes a whole call. When a call starts, the engine tells the hub
