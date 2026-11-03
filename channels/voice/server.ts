@@ -328,18 +328,20 @@ async function hangUpCall(call: Live) {
   return 'hanging up'
 }
 
-// The caller or hex hangs up: at once over an open connection to the voice, else once one opens,
-// or, if the call ends without one, on a connection opened just for it. A phone or Discord call's
-// socket is its session, so once that socket isn't open there's nothing left to close.
+// The caller or hex hangs up, and the first hang-up is the one the call ends by. Each goes out at
+// once over an open connection to the voice, so a later one retries a close the session didn't act
+// on; without one, the first goes out once one opens or, if the call ends first, on a connection
+// opened just for it. A phone or Discord call's socket is its session, so once that socket isn't
+// open there's nothing left to close.
 function close(call: Live, event: string) {
   const state = call.socket.readyState
-  if (call.closing || (call.speak && state !== WebSocket.OPEN)) return
-  call.closing = event
-  if (state === WebSocket.OPEN) sendClose(call)
+  if (call.speak && state !== WebSocket.OPEN) return
+  call.closing ??= event
+  if (state === WebSocket.OPEN) sendClose(call, event)
 }
 
-function sendClose(call: Live) {
-  call.socket.send(JSON.stringify({ type: 'session.close', event_id: call.closing }))
+function sendClose(call: Live, event = call.closing, socket = call.socket) {
+  socket.send(JSON.stringify({ type: 'session.close', event_id: event }))
   call.closed = true
 }
 
@@ -564,7 +566,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
         return
       case 'session.closed':
         if (event.usage) call.record.usage = usage(event.usage.seconds, call.record.usage?.context)
-        return finish(call, event.reason ?? 'closed', event.client_event_id)
+        return finish(call, event.reason ?? 'closed', (event.reason === 'close_requested' && call.closing) || event.client_event_id)
     }
   }
   socket.onclose = () => reconnect(call, Date.now() - opened < 5000 ? attempt + 1 : 0)
@@ -582,7 +584,10 @@ function reconnect(call: Live, attempt: number) {
     if (live !== call) return
     const socket = sideband(call.id)
     socket.onopen = () => {
-      if (live !== call) return socket.close()
+      if (live !== call) {
+        if (call.closing && !call.closed) sendClose(call, call.closing, socket)
+        return socket.close()
+      }
       trace(`reattached to ${call.id}`)
       call.socket = socket
       listen(call, socket, attempt)

@@ -152,7 +152,7 @@ test('hanging up a new call before its connection has opened ends it once open',
   expect(engine.closes).toEqual([`${ID} close-you-app`])
 }, 20_000)
 
-test('a call hung up and replaced before OpenAI says it closed gets one close, and ends by the hang-up', async () => {
+test('a call hung up again or replaced before OpenAI says it closed gets a close each time, and ends by the first hang-up', async () => {
   await using engine = await appCall()
   await started(engine)
   engine.holdAcks()
@@ -162,8 +162,7 @@ test('a call hung up and replaced before OpenAI says it closed gets one close, a
   expect((await fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })).status).toBe(201)
   expect(await engine.call()).toMatchObject({ end: 'hex', reason: 'close_requested' })
   await Bun.sleep(200)
-  expect(engine.closes).toHaveLength(1)
-  expect(engine.closes[0]).toStartWith(`${ID} close_hex_`)
+  expect(engine.closes.map(close => close.replace(/_\d+$/, ''))).toEqual([`${ID} close_hex`, `${ID} close-you-app`, `${ID} close-you-moved`])
 }, 20_000)
 
 test('a hang-up sent on a connection that drops before OpenAI says it closed goes out again once the connection is back', async () => {
@@ -176,6 +175,19 @@ test('a hang-up sent on a connection that drops before OpenAI says it closed goe
   await engine.drop()
   engine.back()
   expect(await ends(engine)).toMatchObject({ end: 'you', reason: 'close_requested' })
+  expect(engine.closes).toEqual([`${ID} close-you-app`, `${ID} close-you-app`])
+}, 20_000)
+
+test('a call hung up while its connection comes back and then replaced is closed on the reattach that opens late, too', async () => {
+  await using engine = await appCall()
+  await started(engine)
+  await engine.drop()
+  expect((await engine.hangUp()).status).toBe(204)
+  expect((await fetch(`${engine.base}/session`, { method: 'POST', body: JSON.stringify({ sdp: 'offer', from: 'app' }) })).status).toBe(201)
+  expect(await engine.call()).toMatchObject({ end: 'you', reason: 'close_requested' })
+  engine.back()
+  await until(() => engine.closes.length >= 2)
+  await Bun.sleep(200)
   expect(engine.closes).toEqual([`${ID} close-you-app`, `${ID} close-you-app`])
 }, 20_000)
 
