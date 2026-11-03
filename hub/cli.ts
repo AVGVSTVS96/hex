@@ -5,7 +5,7 @@ import { holds, keysOf, problems, verdict } from './notes.ts'
 import { running, serving } from './running.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
-import { asked, open, type Row, type Status, type Task } from './store.ts'
+import { asked, open, sent, type Row, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
   hex deliver <from>[:<id>] --to <thread> [--user <name>] <words…>
@@ -271,7 +271,7 @@ try {
     case 'message': {
       const said = args[0] && store.message(args[0])
       if (!said) throw new Error(`no message ${args[0] ?? ''}`)
-      console.log(flags.json ? JSON.stringify(said, null, 1) : said.body)
+      console.log(flags.json ? JSON.stringify(said, null, 1) : said.from === 't3' && said.author === 'owner' ? sent(said.body).join('\n\n') : said.body)
       break
     }
     case 'log': {
