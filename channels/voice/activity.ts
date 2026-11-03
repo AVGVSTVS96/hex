@@ -430,10 +430,13 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     stopSession()
     session = next
     project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
-    stopSession = followTranscript(join(project, `${session}.jsonl`), fresh ? 0 : 'end', take)
+    const stop = followTranscript(join(project, `${session}.jsonl`), fresh ? 0 : 'end', take)
+    if (ended) stop()
+    else stopSession = stop
   }
 
   function take(entry: any, updates: () => Update[]) {
+    if (ended) return
     if (!picked) {
       const content = entry.message?.content
       picked = entry.type === 'user' && entry.origin?.kind === 'channel' && (typeof content === 'string' ? content : JSON.stringify(content)).includes(tag)

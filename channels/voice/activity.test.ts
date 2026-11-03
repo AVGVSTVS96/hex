@@ -220,10 +220,13 @@ test("a thread's new session is followed from its start, and a turn that ends on
   expect(steps).toEqual([{ line: "You've hit your weekly limit" }, { end: 'failed' }])
 })
 
-test('following a message sent before a restart reads its thread from the start, and ends at once when the thread already finished', () => {
+test('following a message sent before a restart reads its thread from the start, ends at once when the thread already finished, and reads no further', async () => {
   threads('buzz', { b1: { name: 'Context check', session: 'done-already' } })
-  write(join(project, 'done-already.jsonl'), { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: 'voice_task="call:id"' } }, said('All set.'), ended)
+  write(join(project, 'done-already.jsonl'), { type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: 'voice_task="call:id"' } }, said('All set.'), ended, said('Next turn.'), ended)
   const steps: object[] = []
   followThread(findThread(state, 'context check')!, hex, 'call:id', true, step => steps.push(step))
   expect(steps).toEqual([{ line: 'All set.' }, { end: 'done' }])
+  write(join(project, 'done-already.jsonl'), said('A later turn.'), ended)
+  await Bun.sleep(200)
+  expect(steps).toHaveLength(2)
 })
