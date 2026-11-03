@@ -13,7 +13,7 @@ Look in the vault first: `.hex/bin/vault list <site>` finds saved logins by name
 
 - `.hex/bin/vault fill <name> <field>` types a saved value (`totp`: the current code) into the focused field on your computer, without you reading it.
 - `.hex/bin/vault run KEY='<name>/<field>' sh -c '<command using "$KEY">'` runs a command with the secret in its environment, hidden in its output. The single quotes keep your own shell from expanding `$KEY` first.
-- `.hex/bin/vault passkey <name>` lets your computer's browser sign in once with a saved passkey: run it, then click the site's passkey sign-in within 5 minutes.
+- `.hex/bin/vault passkey <name> [field]` lets your computer's browser sign in once with a saved passkey: run it, then click the site's passkey sign-in within 5 minutes. An item with more than one has fields like `passkey 2` (`vault list <name>` shows them).
 - `value=$(<command>) && printf %s "$value" | .hex/bin/vault save '<name>' <field>` keeps a value you just made, like a new API token, without it passing through your context. It saves when the command exits cleanly, so make a failed request exit with an error (`curl -f`, `jq -er`); if it doesn't print `saved`, revoke what you made and make it again.
 
 When the vault doesn't have it, ask me: run `.hex/bin/vault ask <name> <field…>` (a `totp` field asks for a 2FA setup key), send me the link it prints, and run `.hex/bin/vault wait <name>` in the background until it says `saved`. What I type goes straight into your vault, not through chat or your context. The link works once, for 24 hours; if the wait stops, run it again and it picks up the same link.
@@ -24,7 +24,7 @@ If I paste a secret in chat, tell me it's in this chat's log now and send me a l
 
 Ask which one they use, then:
 
-- **Proton Pass.** Run `pass-cli login` (install it from proton.me/pass/download if it's missing) and send them the link it prints, saying to open it in a browser rather than the Proton app and sign in within 10 minutes. Once `pass-cli info` works, run `.hex/bin/vault import proton`, which copies every vault. Then `pass-cli logout`, so nothing stays signed in as them. Proton keeps everything; running the import again later brings in what changed. An item keeps its name unless it's renamed in Proton, and fields hex added to it stay until it's deleted there. A field Proton also has takes Proton's value again, so a password hex changes gets changed in Proton too.
+- **Proton Pass.** Run `pass-cli login` (install it from proton.me/pass/download if it's missing) and send them the link it prints, saying to open it in a browser rather than the Proton app and sign in within 10 minutes. Once `pass-cli info` works, run `.hex/bin/vault import proton`, which copies every vault. Then `pass-cli logout`, so nothing stays signed in as them. Proton keeps everything; running the import again later brings in what changed. An item keeps its name unless it's renamed in Proton, and fields hex added to it stay until it's deleted there. A field Proton also has takes Proton's value again, so when hex changes a password, ask them to change it in Proton too.
 - **Anything else.** enclave has no importer for it yet. Ask by link for each login as hex needs it (`.hex/bin/vault ask`), and tell them a bulk import would need one written.
 
 Afterwards, `.hex/bin/vault list` shows what came in. Tell them the counts.
