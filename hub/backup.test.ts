@@ -65,7 +65,7 @@ test('a computer that can\'t take the copy fails the backup, and the copy stays 
 })
 
 test('a computer that never answers fails the backup once its time is up', async () => {
-  computer('exec sleep 60')
+  computer('sleep 60')
   await expect(backup(dir, '2026-10-19', 'cloud', 300)).rejects.toThrow("cloud didn't answer in")
   expect(existsSync(join(dir, 'backups', 'hex-2026-10-19.db'))).toBe(true)
 })
