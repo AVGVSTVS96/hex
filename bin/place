@@ -2,8 +2,8 @@
 # place <name> <claude args...>: an agent job's unit runs this. The job takes a slot on the first machine with room,
 # this one first (HEX_SLOTS, 12) and then each of HEX_MACHINES in order ("mac:3" is the machine `ssh mac` reaches,
 # with 3 slots), and runs there: here as a hex session, there as a T3 Code thread (bin/away). With no room anywhere it
-# waits, and its owner hears so once. A slot is a lock held while its job runs, so a job that ends, however
-# it ends, gives its slot back.
+# waits, and its owner hears so once. A slot is a lock this script holds until its job has ended, a stop included,
+# so a job that ends, however it ends, gives its slot back.
 set -u
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
@@ -15,7 +15,9 @@ mkdir -p "$dir"
 # What came on stdin, kept so each machine the job tries gets all of it.
 input=$(mktemp)
 trap 'rm -f "$input"' EXIT
-trap 'exit 143' TERM INT
+job=
+# A stopped job is waited for, so its slot stays taken while it stops its thread.
+trap '[ -z "$job" ] || wait "$job"; exit 143' TERM INT
 cat > "$input"
 setting() { (. "$hex/bin/settings" && eval "echo \"\${$1:-$2}\""); }
 told=
@@ -32,7 +34,7 @@ run() {
   shift 3
   [ "$host" = "$here" ] && set -- "$hex/bin/session" -n "$name" "$@" || set -- bun "$hex/bin/away" "$host" "$t3" "$name" "$@"
   echo "$name runs on $host"
-  flock -o "$dir/$host.$slot" "$@" < "$input" 9>&- &
+  "$@" < "$input" 7>&- 9>&- &
   job=$!
   waited=0
   while [ "$waited" -lt 60 ] && kill -0 "$job" 2>/dev/null; do
@@ -41,6 +43,9 @@ run() {
   done
   flock -u 9
   wait "$job"
+  code=$?
+  job=
+  return $code
 }
 exec 9>"$dir/line"
 flock 9
@@ -71,9 +76,11 @@ $host: $measured"
     [ "$fits" = 0 ] || continue
     slot=1
     while [ "$slot" -le "$slots" ]; do
-      if flock -n "$dir/$host.$slot" true; then
+      exec 7>"$dir/$host.$slot"
+      if flock -n 7; then
         run "$host" "$slot" "$t3" "$@"
         code=$?
+        exec 7>&-
         case $code in
           76) passed="$passed $host" ;;
           77) readings="$readings (but T3 Code, here or there, didn't answer)" ;;
@@ -82,6 +89,7 @@ $host: $measured"
         flock 9
         break
       fi
+      exec 7>&-
       slot=$((slot + 1))
     done
   done

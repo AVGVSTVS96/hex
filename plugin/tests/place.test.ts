@@ -65,7 +65,7 @@ test('held slots, a machine without a hex T3 Code, and one where the job could n
   machine('mini', 'cpu 1% busy\nt3 env-mini', 0, 76)
   machine('mac', 'cpu 20% busy\nt3 env-mac', 0)
   mkdirSync(slots, { recursive: true })
-  const held = Bun.spawn(['flock', join(slots, `${here}.1`), 'sleep', '30'])
+  const held = Bun.spawn(['flock', '-o', join(slots, `${here}.1`), 'sleep', '30'])
   Bun.sleepSync(200)
   const { out, code } = place({ HEX_SLOTS: '1', HEX_MACHINES: 'cloud:1 mini mac:3' })
   held.kill()
@@ -91,9 +91,31 @@ test('with no room anywhere a job waits, and its owner hears it once, with every
 test('a job behind another in line waits its turn without telling its owner', () => {
   machine(here, 'cpu 3% busy', 0)
   mkdirSync(slots, { recursive: true })
-  const ahead = Bun.spawn(['flock', join(slots, 'line'), 'sleep', '30'])
+  const ahead = Bun.spawn(['flock', '-o', join(slots, 'line'), 'sleep', '30'])
   Bun.sleepSync(200)
   const { told } = place({}, 2_000)
   ahead.kill()
   expect(told).toBe('')
 })
+
+test("a stopped job keeps its slot until it has stopped, as systemd's stop reaches every process at once", async () => {
+  machine(here, 'cpu 3% busy', 0)
+  writeFileSync(join(home, '.claude/settings.json'), JSON.stringify({ env: { HEX_SLOTS: '1' } }))
+  const session = join(home, '.hex/bin/session')
+  const kept = readFileSync(session, 'utf8')
+  script(session, `trap 'sleep 2; echo stopped >> "${fake}/stops"; exit 143' TERM; echo started > "${fake}/started"; sleep 30 & wait`)
+  const unit = Bun.spawn(['setsid', join(home, '.hex/bin/place'), 'hex/deck', '-p', 'build it'], {
+    cwd: home,
+    stdin: Buffer.from(''),
+    env: { ...process.env, PATH: `${fake}:${process.env.PATH}`, XDG_STATE_HOME: join(home, 'state') },
+  })
+  while (!existsSync(join(fake, 'started'))) await Bun.sleep(50)
+  process.kill(-unit.pid, 'SIGTERM')
+  await Bun.sleep(500)
+  expect(Bun.spawnSync(['flock', '-n', join(slots, `${here}.1`), 'true']).exitCode).toBe(1)
+  expect(await unit.exited).toBe(143)
+  expect(readFileSync(join(fake, 'stops'), 'utf8')).toBe('stopped\n')
+  expect(Bun.spawnSync(['flock', '-n', join(slots, `${here}.1`), 'true']).exitCode).toBe(0)
+  writeFileSync(session, kept)
+  rmSync(join(fake, 'started'))
+}, 20_000)

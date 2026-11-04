@@ -34,6 +34,9 @@ if (mode === "--ended") {
   const [unit, owner, readings] = rest as [string, string, string]
   const body = `[job] ${unit} waits for room: no machine has a free slot and room right now. It starts by itself once one does.${readings}`
   store.deliver({ key: `job:${unit}@${process.env.INVOCATION_ID ?? Date.now()}:waiting`, to: owner.slice(owner.indexOf(":") + 1), from: "job", author: "prompt", body, meta: { user: "job" } })
+} else if (mode === "--tell") {
+  const [unit, owner, said] = rest as [string, string, string]
+  store.deliver({ key: `job:${unit}@${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`, to: owner.slice(owner.indexOf(":") + 1), from: "job", author: "prompt", body: `[job] ${unit} ${said}`, meta: { user: "job" } })
 } else {
   const given = rest.length > 1 ? named(rest[0]!) : undefined
   const owner = given ?? served()

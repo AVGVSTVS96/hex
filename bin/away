@@ -38,10 +38,9 @@ function parse(text: string): any {
     return JSON.parse(text)
   } catch {}
 }
-// T3's own split (RemoteDelegation): a revoked link or a thread or run that's gone is final, and so is a request it
-// can't take. A fault on this machine is its own (Local), so it isn't charged to the other one. The other machine
+// T3's own split (RemoteDelegation): a revoked link or a thread or run that's gone is final. A fault on this machine is its own (Local), so it isn't charged to the other one. The other machine
 // asleep, a dropped route or T3 Code restarting is retried.
-const FINAL = ['capability_denied', 'thread_not_found', 'run_not_found', 'invalid_request']
+const FINAL = ['capability_denied', 'thread_not_found', 'run_not_found']
 class Final extends Error {}
 class Local extends Error {}
 const here = (why: string) => new Local(`T3 Code on ${hostname()}, this machine: ${why}`)
@@ -113,44 +112,70 @@ async function call(tool: string, input: Record<string, unknown>, { patience }: 
 
 let threadId: string | undefined
 let tried = false
+let inflight: Promise<any> | undefined
 let stopping = false
 let halting: Promise<void> | undefined
-const requestId = `hex-job-${name}-${machine}-${process.env.INVOCATION_ID ?? process.pid}`
-// Stopping the thread, once: a launch that was tried is asked for again, as the same clientRequestId gets back the
-// thread it started, then that thread is interrupted. Retried for 70 s, inside the 90 s bin/job gives a unit to stop.
-const stopThread = (reason: string) => (halting ??= halt(reason))
-async function halt(reason: string) {
-  const until = Date.now() + 70_000
-  const left = () => Math.max(1_000, until - Date.now())
-  for (let wait = 1_000; ; wait = Math.min(wait * 2, 10_000)) {
-    try {
-      if (!threadId && tried) threadId = (await launch(left())).threadId
-      if (threadId) await call('t3_thread_interrupt', { threadId, stop: true, reason }, { patience: left() })
-      return
-    } catch (error) {
-      if (error instanceof Final || Date.now() + wait > until) {
-        console.error(`away: couldn't stop ${name} on ${machine}: ${(error as Error).message}; its thread (${requestId}) may still be running there`)
-        return
-      }
-      opening = undefined
-      await Bun.sleep(wait)
-    }
+const invocation = process.env.INVOCATION_ID ?? String(process.pid)
+const requestId = `hex-job-${name}-${machine}-${invocation}`
+// Its own title, so a thread whose launch answer was lost is found by it, whatever sign-in sent the launch.
+const title = `${name} · ${invocation.slice(0, 8)}`
+async function find(patience?: number): Promise<{ threadId: string; runId?: string; link: string } | undefined> {
+  for (let cursor: number | undefined, pages = 0; pages < 5; pages++) {
+    const page = await call('t3_thread_list', { allProjects: true, titleContains: title, limit: 100, cursor }, { patience })
+    const thread = (page.threads as { threadId: string; title: string; latestRunId?: string; link: string }[]).find(thread => thread.title === title)
+    if (thread) return { threadId: thread.threadId, runId: thread.latestRunId, link: thread.link }
+    if ((cursor = page.nextCursor ?? undefined) === undefined) return
   }
 }
-// Every way out after a stop waits for it, so the thread is stopped before the job ends.
+// What a job's owner needs to hear while it runs, beyond its output.
+const tell = (said: string) =>
+  process.env.HEX_OWNER ? Bun.spawn(['bun', join(import.meta.dir, 'job'), '--tell', name.split('/').pop()!, process.env.HEX_OWNER, said], { stdout: 'ignore', stderr: 'inherit' }).exited : undefined
+// Stopping the thread, once: one whose launch was tried is the launch's answer or found by its title, then interrupted. All of it in 70 s,
+// inside the 90 s bin/job gives an agent unit to stop.
+const stopThread = (reason: string) => (halting ??= halt(reason))
+async function halt(reason: string) {
+  let why = 'it gave no answer in 70 s'
+  const stopped = (async () => {
+    for (let wait = 1_000; ; wait = Math.min(wait * 2, 10_000)) {
+      try {
+        if (!threadId && inflight) threadId = (await inflight.catch(() => undefined))?.threadId
+        if (!threadId && tried) threadId = (await find(30_000))?.threadId
+        if (threadId) await call('t3_thread_interrupt', { threadId, stop: true, reason }, { patience: 30_000 })
+        return true
+      } catch (error) {
+        why = (error as Error).message
+        if (error instanceof Final) return false
+        opening = undefined
+        await Bun.sleep(wait)
+      }
+    }
+  })()
+  if (await Promise.race([stopped, Bun.sleep(70_000).then(() => false)])) return
+  const where = threadId ? `its T3 Code thread <t3-thread://v2/${environmentId}/${threadId}>` : `a T3 Code thread titled "${title}"`
+  const said = `couldn't stop on ${machine} (${why}): ${where} may still be running there. Stop it in T3 Code on ${machine}.`
+  console.log(`${name} ${said}`)
+  await Promise.race([tell(said), Bun.sleep(5_000)])
+}
+// Every way out after a stop waits for it, so the thread is stopped before the job ends, and closes its MCP session.
 async function exit(code: number): Promise<never> {
   if (stopping) await halting
+  const signed = await Promise.race([headers?.catch(() => undefined), Bun.sleep(2_000)])
+  if (session && signed) await fetch(url, { method: 'DELETE', headers: { ...signed, 'mcp-session-id': session }, signal: AbortSignal.timeout(2_000) }).catch(() => {})
   process.exit(stopping ? 143 : code)
 }
 for (const signal of ['SIGTERM', 'SIGINT'] as const)
   process.on(signal, () => {
     if (stopping) return
     stopping = true
-    void stopThread(`hex stopped the job ${name}`).then(() => process.exit(143))
+    void stopThread(`hex stopped the job ${name}`)
+    void exit(143)
   })
-// A call is retried with backoff until it's final, patience runs out or the job stops.
+// A call is retried with backoff until it's final, patience runs out or the job stops. A running thread that can't
+// be reached for 10 minutes is told to its owner once, as the job keeps trying.
+let told = false
 async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<T> {
-  const until = Date.now() + patience
+  const since = Date.now()
+  const until = since + patience
   for (let wait = 5_000; ; wait = Math.min(wait * 2, 120_000)) {
     try {
       return await what()
@@ -158,6 +183,10 @@ async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<
       if (stopping) return exit(143)
       if (error instanceof Final || error instanceof Local || Date.now() + wait > until) throw error
       console.error(`away: ${(error as Error).message}; trying again in ${wait / 1000} s`)
+      if (threadId && !told && Date.now() - since > 600_000) {
+        told = true
+        void tell(`can't reach its T3 Code thread <t3-thread://v2/${environmentId}/${threadId}> on ${machine} for 10 minutes (${(error as Error).message}). It keeps trying.`)
+      }
       opening = undefined
       await Bun.sleep(wait)
       if (stopping) return exit(143)
@@ -187,30 +216,33 @@ const message = `${identity}
 You are running on ${machine}, in a T3 Code thread hex started there because ${hostname()}, where hex runs, was short on room. The job was started in ${process.cwd()} on ${hostname()}. Your folder ${home}, the files under it and every other path on ${hostname()} are reached with \`ssh ${userInfo().username}@${hostname()} '<command>'\`, hex's commands included. Work in this machine's own checkouts: clone or pull a repo here, and push what you commit.
 
 ${asked}`
+if (message.length > 120_000) quit(ELSEWHERE, `its prompt is ${message.length} characters, over the 120,000 a T3 Code thread takes`)
 
-// A launch is retried for half an hour, and the same clientRequestId gets back the thread it may have started. Once
-// one was tried, the job runs there or fails, never moving to another machine where it could run twice. T3 Code
-// keys a clientRequestId to the sign-in that sent it (PeerForwarding's scopedRequestId), so a launch after a renewed
-// sign-in would start a second thread: it fails instead.
-let launchedAs: string | undefined
-const launch = async (patience?: number) => {
-  const as = (await (headers ?? signedIn())).Authorization
-  if ((launchedAs ??= as) !== as) throw new Final(`this machine's sign-in to T3 Code changed after the launch went out, so a thread it started there can't be found by its clientRequestId (${requestId})`)
-  return call(
-    't3_thread_launch',
-    {
-      title: name,
-      scratch: true,
-      message,
-      runtimeMode: 'full-access',
-      modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
-      clientRequestId: requestId,
-    },
-    { patience },
-  )
-}
-tried = true
-const launched = await persist(() => launch(), 1_800_000).catch(async (error: Error) => {
+// A launch is retried for half an hour, with one clientRequestId so T3 Code gives back a thread it already started,
+// and after a lost answer the thread is looked for by its title first, as T3 Code keys that id to the sign-in that
+// sent it. Once one was tried, the job runs there or fails, never moving to another machine where it could run twice.
+const launch = () =>
+  call('t3_thread_launch', {
+    title,
+    scratch: true,
+    message,
+    runtimeMode: 'full-access',
+    modelSelection: { provider: 'claudeAgent', model: chosen.id, options: effort ? [{ id: 'effort', value: effort }] : [] },
+    clientRequestId: requestId,
+  })
+const launched = await persist(async () => {
+  if (tried) {
+    const found = await find()
+    if (found) return found
+  }
+  tried = true
+  inflight = launch()
+  try {
+    return await inflight
+  } finally {
+    inflight = undefined
+  }
+}, 1_800_000).catch(async (error: Error) => {
   console.error(`away: ${name} couldn't start on ${machine}: ${error.message}; stopping any thread it started there`)
   await stopThread(`hex couldn't start the job ${name}`)
   return exit(1)

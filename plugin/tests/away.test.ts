@@ -17,10 +17,12 @@ let asked: string[] = []
 let flaky = 0
 let launchDrop = 0
 let launchSlow = 0
+let launched = false
 
 const server = Bun.serve({
   port: 0,
   async fetch(request) {
+    if (request.method === 'DELETE') return new Response(null, { status: 200 })
     const body = (await request.json()) as { id?: number; method: string; params: { name: string; arguments: Record<string, any> } }
     // As MCP's Streamable HTTP asks: a new session starts without the old one's id.
     if (body.method === 'initialize' && request.headers.has('mcp-session-id')) return new Response('already initialized', { status: 400 })
@@ -28,14 +30,15 @@ const server = Bun.serve({
     if (body.method !== 'tools/call') return new Response(null, { status: 202 })
     calls.push(body.params)
     if (body.params.name === 't3_thread_launch' && launchSlow-- > 0) await Bun.sleep(3_000)
-    if (body.params.name === 't3_thread_launch' && launchDrop-- > 0) return new Response('relay timed out', { status: 504 })
+    if (body.params.name === 't3_thread_launch' && launchDrop-- > 0 && (launched = true)) return new Response('relay timed out', { status: 504 })
     if (body.params.name === 't3_thread_wait' && drop-- > 0) return new Response('gone', { status: 502 })
     if (body.params.name === 't3_thread_wait' && refused-- > 0) return new Response('expired', { status: 401 })
     if (body.params.name === 't3_thread_wait' && flaky-- > 0) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'mac is not answering' }], isError: true } })
     if (body.params.name === refuse) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{"code":"capability_denied","message":"no link"}' }], isError: true } })
     const answers: Record<string, () => unknown> = {
       orchestrator_capabilities: () => ({ providers: [{ providerInstanceId: 'claudeAgent', models: [{ id: 'claude-opus-4-1' }, { id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }] }] }),
-      t3_thread_launch: () => ({ threadId: 't1', runId: 'r1', link: '<t3-thread://v2/env-mac/t1>' }),
+      t3_thread_launch: () => ((launched = true), { threadId: 't1', runId: 'r1', link: '<t3-thread://v2/env-mac/t1>' }),
+      t3_thread_list: () => ({ nextCursor: null, threads: launched ? [{ threadId: 't1', title: 'hex/deck · inv1', latestRunId: 'r1', link: '<t3-thread://v2/env-mac/t1>' }] : [] }),
       t3_thread_wait: () => waits.shift() ?? (running ? { status: 'running', timedOut: true } : { status: 'completed', timedOut: false }),
       t3_thread_read: () => ({ thread: { pendingRequestCount: asked.length }, items: [{ type: 'user_message', text: 'go' }, { type: 'assistant_message', text: 'Built the Usage tab.' }], hasMore: false }),
       t3_thread_interrupt: () => ({}),
@@ -77,6 +80,7 @@ const reset = () => {
   flaky = 0
   launchDrop = 0
   launchSlow = 0
+  launched = false
   asked = []
   rmSync(join(home, 'signed'), { force: true })
 }
@@ -89,7 +93,7 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
   expect(await run.exited).toBe(0)
   expect(await out()).toBe('hex/deck runs on mac as T3 Code thread <t3-thread://v2/env-mac/t1>\nBuilt the Usage tab.\n')
   const launch = calls.find(({ name }) => name === 't3_thread_launch')!.arguments
-  expect(launch).toMatchObject({ environmentId: 'env-mac', title: 'hex/deck', scratch: true, runtimeMode: 'full-access', clientRequestId: 'hex-job-hex/deck-mac-inv1' })
+  expect(launch).toMatchObject({ environmentId: 'env-mac', scratch: true, runtimeMode: 'full-access', title: 'hex/deck · inv1', clientRequestId: 'hex-job-hex/deck-mac-inv1' })
   expect(launch.modelSelection).toEqual({ provider: 'claudeAgent', model: 'claude-opus-5-5', options: [{ id: 'effort', value: 'high' }] })
   expect(launch.message).toStartWith('You are hex.')
   expect(launch.message).toEndWith('Build the Usage tab.\n\nthe log')
@@ -150,7 +154,7 @@ test("a sign-in that fails here is this machine's fault, named at once, and star
   writeFileSync(helper, kept)
 })
 
-test('a job stopped while its launch may have reached the other machine gets that thread back and stops it', async () => {
+test('a job stopped while its launch may have reached the other machine finds that thread by its title and stops it', async () => {
   reset()
   launchDrop = 1
   const { run, error } = away(['-p', 'Build it.'])
@@ -158,12 +162,13 @@ test('a job stopped while its launch may have reached the other machine gets tha
   await Bun.sleep(200)
   run.kill('SIGTERM')
   expect(await run.exited).toBe(143)
-  expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(2)
+  expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(1)
+  expect(calls.some(({ name, arguments: input }) => name === 't3_thread_list' && input.titleContains === 'hex/deck · inv1')).toBe(true)
   expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
   expect(await error()).toContain('trying again')
 }, 20_000)
 
-test("a job stopped while its launch is on its way doesn't wait for the answer: it gets the thread back and stops it", async () => {
+test('a job stopped while its launch is on its way stops the thread the launch answers with', async () => {
   reset()
   launchSlow = 1
   const { run } = away(['-p', 'Build it.'])
@@ -171,8 +176,8 @@ test("a job stopped while its launch is on its way doesn't wait for the answer: 
   const stopped = Date.now()
   run.kill('SIGTERM')
   expect(await run.exited).toBe(143)
-  expect(Date.now() - stopped).toBeLessThan(2_500)
-  expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(2)
+  expect(Date.now() - stopped).toBeLessThan(5_000)
+  expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(1)
   expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
 }, 20_000)
 
@@ -183,3 +188,15 @@ test('a launch that was tried and refused fails the job there, rather than movin
   expect(await refused.run.exited).toBe(1)
   expect(await refused.error()).toContain("hex/deck couldn't start on mac")
 })
+
+test("a stop that can't reach the thread tells the job's owner where it may still be running", async () => {
+  reset()
+  running = true
+  writeFileSync(join(home, '.hex/bin/job'), `require('fs').writeFileSync(${JSON.stringify(join(home, 'told'))}, process.argv.slice(2).map(arg => arg + '|').join(''))`)
+  const run = Bun.spawn(['bun', join(home, '.hex/bin/away'), 'mac', 'env-mac', 'hex/deck', '-p', 'Build it.'], { cwd: home, stdin: Buffer.from(''), stdout: 'pipe', stderr: 'pipe', env: { ...process.env, HOME: home, INVOCATION_ID: 'inv1', HEX_OWNER: 'telegram:-100123:908' } })
+  while (!calls.some(({ name }) => name === 't3_thread_wait')) await Bun.sleep(50)
+  refuse = 't3_thread_interrupt'
+  run.kill('SIGTERM')
+  expect(await run.exited).toBe(143)
+  expect(readFileSync(join(home, 'told'), 'utf8')).toBe("--tell|deck|telegram:-100123:908|couldn't stop on mac (t3_thread_interrupt: {\"code\":\"capability_denied\",\"message\":\"no link\"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|")
+}, 20_000)
