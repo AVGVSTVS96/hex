@@ -1,7 +1,7 @@
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, watch, writeFileSync, type FSWatcher } from 'fs'
 import { join } from 'path'
 import { backOf, firstLine, followTranscript, generalOf, itemStep, nameOf, past, sizeOf, stepOf, unmark, type Did, type Update } from './activity.ts'
-import { busy, CLAUDE, running, serving, type Session } from '../../hub/running.ts'
+import { busy, CLAUDE, running, ownership, type Session } from '../../hub/running.ts'
 import { Changes } from './changes.ts'
 import { HANDED, Links, type Delegation } from './links.ts'
 import { open, type Thread as Stored } from '../../hub/store.ts'
@@ -288,37 +288,13 @@ export class Board extends Changes {
       known.set(id, owner.thread)
       if (owner.handed && shownAt(owner.thread) === owner.thread) this.handed.add(id)
     }
-    // A session T3 Code runs, and what it launched, go only by its handoffs.
-    const below = (session: Session, seen = new Set<string>()): boolean => {
-      const up = session.parent ? this.sessions.get(session.parent) : undefined
-      return !!up && !seen.has(up.id) && (this.links.runs(up.id) || below(up, seen.add(session.id)))
-    }
-    const placed = new Map(
-      [...this.sessions].map(([id, session]) => [id, this.links.runs(id) ? { ...session, thread: undefined, parent: undefined } : below(session) ? { ...session, thread: undefined } : session]),
-    )
-    const owners = new Map([...placed.values()].flatMap(session => {
-      const thread = serving(session, known, placed)
-      return thread ? [[session.id, held.has(session.id) ? thread : shownAt(thread)] as [string, string]] : []
-    }))
+    const resolved = new Map([...this.sessions.values()].map(session => [session.id, ownership(session, held, this.sessions, { owners: known, boundary: id => this.links.runs(id), display: shownAt })]))
     const shown = new Set(this.threads.filter(thread => !this.links.delegated(thread.app, thread.id)).map(thread => `${thread.app}:${thread.id}`))
-    // The topmost session above this one that works for the same thread and no thread holds; this
-    // one itself where its launchers loop back to it.
-    const top = (session: Session, owner: string) => {
-      const seen = new Set([session.id])
-      let run = session
-      for (let up = run.parent ? placed.get(run.parent) : undefined; up && !held.has(up.id) && owners.get(up.id) === owner; up = up.parent ? placed.get(up.parent) : undefined) {
-        if (seen.has(up.id)) return session
-        seen.add(up.id)
-        run = up
-      }
-      return run
-    }
-    this.owners = new Map(owners)
+    this.owners = new Map([...resolved].flatMap(([id, result]) => result.thread ? [[id, result.thread] as [string, string]] : []))
     this.tops = []
     for (const session of this.sessions.values()) {
-      const owner = owners.get(session.id)
+      const { thread: owner, top: run } = resolved.get(session.id)!
       if (!owner || shown.has(owner) || held.has(session.id)) continue
-      const run = top(placed.get(session.id)!, owner)
       if (run.id === session.id) this.tops.push(session)
       else this.owners.set(session.id, `claude:${short(run.id)}`)
     }
