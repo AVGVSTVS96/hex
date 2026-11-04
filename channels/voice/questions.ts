@@ -59,6 +59,9 @@ export type Curated = Omit<Question, 'app' | 'topic' | 'places'> & { from?: Sour
 // A check.json written before places and links were typed: its places were names and a link was an
 // option with a url. The next pass rewrites it.
 type Written = Omit<Curated, 'options'> & { places?: string[]; options: (Option & { url?: string })[] }
+// Where an ask came from in its thread's own words, for its card under "From <place>": the place as
+// Tasks names it, when it was said there, and the words as written.
+export type Words = { place: string; at?: string; text: string }
 export type Note = { title: string; text: string; did?: string }
 export type CheckResult = {
   at: string
@@ -158,6 +161,37 @@ export class Questions extends Changes {
     const thread = id.slice(id.indexOf(':') + 1)
     const text = pin && statusPost(store(this.state), thread, pin.note, Infinity)
     return { asks: this.view.asks.filter(question => question.task === id), ...(text && { pin: text }) }
+  }
+
+  // An ask's words from the first of its places that has them: a question with what hex said just
+  // before it, a plain message with what came before it, a pinned post's waiting part, a call's
+  // wrap-up. An ask the check hasn't rewritten shows its own text as its question and context, so
+  // only what hex said before it is left.
+  words(id: string): Words | undefined {
+    const curated = this.result?.asks.find(question => question.id === id)
+    const raw = curated ? undefined : this.refs(id)[0]
+    if (!this.find(id) || (!curated && !raw)) return
+    for (const source of curated ? (curated.from ?? curated.refs ?? []) : [raw!]) {
+      const words = source.call ? this.callWords(source.call) : source.thread && source.message !== undefined && this.threadWords(source.app, source.thread, source.message, !!curated)
+      if (words) return words
+    }
+  }
+
+  private threadWords(app: string, thread: string, message: MessageId, own: boolean): Words | undefined {
+    const db = store(this.state)
+    const asked = this.asked({ app, thread, message })
+    const pin = this.pins.get(`${app}:${thread}`)
+    const pinned = !asked && pin && String(pin.message) === String(message) ? pin : undefined
+    const row = asked || pinned ? undefined : db.find(thread, message)
+    const said = asked ?? (row && { app, thread, message, text: row.body, at: row.at, options: [] })
+    const text = said ? [...before(db, app, said, Infinity), ...(own ? [said.text] : [])].join('\n\n') : pinned ? waiting(pinned.note) : ''
+    if (!text.trim()) return
+    return { place: this.thread(app, thread, message).place, at: (said ?? pinned)!.at, text }
+  }
+
+  private callWords(id: string): Words | undefined {
+    const call = readJson(join(this.calls, `${id}.json`))
+    if (call?.summary) return { place: call.title ?? 'a call', ...((call.ended ?? call.started) && { at: call.ended ?? call.started }), text: call.summary }
   }
 
   // An answer goes to its first open copy, as its tap would, or to its thread in words when no
@@ -434,7 +468,7 @@ export class Questions extends Changes {
     const raw = [...this.ledgers].flatMap(([app, questions]) =>
       questions
         .filter(question => !question.answer && !question.settled && !used.has(refId({ app, ...question })))
-        .map(question => this.dress(fromLedger(app, question, before(store(this.state), app, question, Infinity).at(-1)))),
+        .map(question => this.dress(fromLedger(app, question))),
     )
     raw.sort((a, b) => b.at.localeCompare(a.at))
     const checked = this.result?.at ?? ''
@@ -549,9 +583,9 @@ export class Questions extends Changes {
 }
 
 // A question as its thread asked it: its first line is the question (what's cut from a long one opens
-// its context) and the rest its context, then what hex said just before asking it (lead); the option
-// the thread marked as its pick wears it.
-export function fromLedger(app: string, asked: Asked, lead?: string): Curated {
+// its context) and the rest its context; the option the thread marked as its pick wears it. What hex
+// said before asking it is its card's words.
+export function fromLedger(app: string, asked: Asked): Curated {
   const lines = plain(asked.text)
     .split('\n')
     .map(line => line.trim())
@@ -561,15 +595,7 @@ export function fromLedger(app: string, asked: Asked, lead?: string): Curated {
     return { label, value, ...(label !== value && { pick: true }) }
   })
   const [question, rest] = cut(lines[0] ?? '', 160)
-  const said = clip(
-    plain(lead ?? '')
-      .split('\n')
-      .map(line => line.trim())
-      .filter(Boolean)
-      .join('\n'),
-    500,
-  )
-  const context = [...(rest ? [rest] : []), ...lines.slice(1), ...(said ? [said] : [])].join('\n')
+  const context = [...(rest ? [rest] : []), ...lines.slice(1)].join('\n')
   return {
     id: refId({ app, ...asked }),
     kind: asked.options.length <= 2 ? 'yesno' : 'pick',
@@ -581,6 +607,14 @@ export function fromLedger(app: string, asked: Asked, lead?: string): Curated {
     refs: [{ app, thread: asked.thread, message: asked.message }],
     from: [{ app, thread: asked.thread, message: asked.message }],
   }
+}
+
+// A pinned post's waiting part: the paragraphs of its note that say what's on the owner, or the whole
+// note when none does.
+function waiting(note: string) {
+  const parts = note.trim().split(/\n\s*\n/)
+  const theirs = parts.filter(part => /\bon you\b/i.test(part))
+  return (theirs.length ? theirs : parts).join('\n\n')
 }
 
 function refId({ app, thread, message }: Ref) {

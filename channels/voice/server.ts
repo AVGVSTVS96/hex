@@ -1093,6 +1093,11 @@ async function questionRoutes(request: Request, url: URL) {
     return showQuestions(url, questions)
   }
   if (url.pathname === '/asks/check' && request.method === 'GET') return questions.lastCheck ? Response.json(questions.lastCheck) : new Response('No check yet', { status: 404 })
+  const [, asked] = url.pathname.match(/^\/asks\/([^/]+)\/words$/) ?? []
+  if (asked && request.method === 'GET') {
+    const words = questions.words(decodeURIComponent(asked))
+    return words ? Response.json(words) : new Response('Nothing to show', { status: 404 })
+  }
   if (url.pathname === '/asks/talk' && request.method === 'POST') return talkAbout(walkTopic(questions.view.asks))
   const [, kind, id, verb] = url.pathname.match(/^\/(asks|stuck|fresh)\/([^/]+)\/(answer|note|dismiss|undo|act|read)$/) ?? []
   if (!kind || request.method !== 'POST') return new Response('404', { status: 404 })
