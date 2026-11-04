@@ -125,10 +125,7 @@ test("a job can't run there, having started nothing, with claude flags a thread 
   refuse = 'orchestrator_capabilities'
   expect(await away(['-p', 'Build it.']).run.exited).toBe(76)
   expect(calls.some(({ name }) => name === 't3_thread_launch')).toBe(false)
-  refuse = 't3_thread_launch'
-  const refused = away(['-p', 'Build it.'])
-  expect(await refused.run.exited).toBe(76)
-  expect(await refused.error()).not.toContain('may have started')
+
 })
 
 test('stopping the job stops its thread', async () => {
@@ -178,3 +175,11 @@ test("a job stopped while its launch is on its way doesn't wait for the answer: 
   expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(2)
   expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
 }, 20_000)
+
+test('a launch that was tried and refused fails the job there, rather than moving it to a machine where it could run twice', async () => {
+  reset()
+  refuse = 't3_thread_launch'
+  const refused = away(['-p', 'Build it.'])
+  expect(await refused.run.exited).toBe(1)
+  expect(await refused.error()).toContain("hex/deck couldn't start on mac")
+})
