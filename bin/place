@@ -43,8 +43,7 @@ run() {
   wait "$job"
 }
 exec 9>"$dir/line"
-flock -n 9 || { wait_for "
-other jobs are ahead of it in line"; flock 9; }
+flock 9
 passed=
 while :; do
   readings=

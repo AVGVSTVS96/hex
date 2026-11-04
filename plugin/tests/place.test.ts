@@ -88,12 +88,12 @@ test('with no room anywhere a job waits, and its owner hears it once, with every
   expect(told).toBe(`--waiting deck telegram:-100123:908 \n${here}: cpu 80% busy\nmac: no answer\n`)
 })
 
-test("a job behind another in line tells its owner it's waiting too", () => {
+test('a job behind another in line waits its turn without telling its owner', () => {
   machine(here, 'cpu 3% busy', 0)
   mkdirSync(slots, { recursive: true })
   const ahead = Bun.spawn(['flock', join(slots, 'line'), 'sleep', '30'])
   Bun.sleepSync(200)
   const { told } = place({}, 2_000)
   ahead.kill()
-  expect(told).toBe('--waiting deck telegram:-100123:908 \nother jobs are ahead of it in line\n')
+  expect(told).toBe('')
 })

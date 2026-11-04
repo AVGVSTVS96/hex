@@ -8,7 +8,7 @@ set -eu
 cache="$HOME/.claude/channels/hex/t3/mcp-token.json"
 mkdir -p "$(dirname "$cache")"
 exec 8>"$cache.lock"
-flock -w 45 8
+flock -w 60 8 || { echo "t3-mcp-headers: another sign-in is still running" >&2; exit 1; }
 now=$(date +%s)
 base=http://127.0.0.1:$(jq -r .port "$HOME/.t3/userdata/server-runtime.json")
 if [ "${1:-}" = --refresh ] && [ "$(jq -r .access_token "$cache" 2>/dev/null)" = "${T3_REFUSED:-}" ]; then rm -f "$cache"; fi

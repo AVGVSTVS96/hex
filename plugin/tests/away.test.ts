@@ -16,6 +16,7 @@ let refused = 0
 let asked: string[] = []
 let flaky = 0
 let launchDrop = 0
+let launchSlow = 0
 
 const server = Bun.serve({
   port: 0,
@@ -26,6 +27,7 @@ const server = Bun.serve({
     if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: {} }, { headers: { 'mcp-session-id': 's1' } })
     if (body.method !== 'tools/call') return new Response(null, { status: 202 })
     calls.push(body.params)
+    if (body.params.name === 't3_thread_launch' && launchSlow-- > 0) await Bun.sleep(3_000)
     if (body.params.name === 't3_thread_launch' && launchDrop-- > 0) return new Response('relay timed out', { status: 504 })
     if (body.params.name === 't3_thread_wait' && drop-- > 0) return new Response('gone', { status: 502 })
     if (body.params.name === 't3_thread_wait' && refused-- > 0) return new Response('expired', { status: 401 })
@@ -74,6 +76,7 @@ const reset = () => {
   refused = 0
   flaky = 0
   launchDrop = 0
+  launchSlow = 0
   asked = []
   rmSync(join(home, 'signed'), { force: true })
 }
@@ -161,4 +164,17 @@ test('a job stopped while its launch may have reached the other machine gets tha
   expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(2)
   expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
   expect(await error()).toContain('trying again')
+}, 20_000)
+
+test("a job stopped while its launch is on its way doesn't wait for the answer: it gets the thread back and stops it", async () => {
+  reset()
+  launchSlow = 1
+  const { run } = away(['-p', 'Build it.'])
+  while (!calls.some(({ name }) => name === 't3_thread_launch')) await Bun.sleep(50)
+  const stopped = Date.now()
+  run.kill('SIGTERM')
+  expect(await run.exited).toBe(143)
+  expect(Date.now() - stopped).toBeLessThan(2_500)
+  expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(2)
+  expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
 }, 20_000)
