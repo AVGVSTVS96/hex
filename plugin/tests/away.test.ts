@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -23,11 +23,12 @@ let unlinked = false
 const server = Bun.serve({
   port: 0,
   async fetch(request) {
+    if (request.method === 'GET') return new Response(null, { status: 405 })
     if (request.method === 'DELETE') return new Response(null, { status: 200 })
     const body = (await request.json()) as { id?: number; method: string; params: { name: string; arguments: Record<string, any> } }
     // As MCP's Streamable HTTP asks: a new session starts without the old one's id.
     if (body.method === 'initialize' && request.headers.has('mcp-session-id')) return new Response('already initialized', { status: 400 })
-    if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: {} }, { headers: { 'mcp-session-id': 's1' } })
+    if (body.method === 'initialize') return Response.json({ jsonrpc: '2.0', id: body.id, result: { protocolVersion: '2025-06-18', capabilities: { tools: {} }, serverInfo: { name: 'fake-t3', version: '1' } } }, { headers: { 'mcp-session-id': 's1' } })
     if (body.method !== 'tools/call') return new Response(null, { status: 202 })
     calls.push(body.params)
     if (body.params.name === 't3_thread_launch' && launchSlow-- > 0) await Bun.sleep(3_000)
@@ -58,6 +59,7 @@ const script = (path: string, body: string) => {
 beforeAll(() => {
   mkdirSync(join(home, '.hex/bin'), { recursive: true })
   mkdirSync(join(home, '.t3/userdata'), { recursive: true })
+  symlinkSync(join(HEX, 'node_modules'), join(home, '.hex/node_modules'))
   cpSync(join(HEX, 'bin/away'), join(home, '.hex/bin/away'))
   script(join(home, '.hex/bin/identity'), 'echo "You are hex."')
   script(join(home, '.hex/bin/t3-mcp-headers'), `echo "sign-in $*\${T3_REFUSED:+ refused=\$T3_REFUSED}" >> "${home}/signed"; echo '{"Authorization":"Bearer t"}'`)
