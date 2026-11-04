@@ -85,7 +85,7 @@ export function http({ stateDir, path, channel, thread, extra = {}, deaf = 0, at
       return response
     },
     close: () => stream.abort(),
-    call: async (tool: string, args: object = {}) => (await rpc('tools/call', { name: tool, arguments: args })).result,
+    call: async (tool: string, args: object = {}) => (await rpc('tools/call', { name: tool, arguments: { operation_id: crypto.randomUUID(), ...args } })).result,
     ask: (request: object) => post({ method: 'notifications/claude/channel/permission_request', params: request }),
   }
 }

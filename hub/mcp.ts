@@ -1,4 +1,6 @@
 import { clock } from './clock.ts'
+import { isDeepStrictEqual } from 'node:util'
+import type { Store } from './store.ts'
 
 // reads: for a tool that reads or writes by its arguments, whether a call only reads. It stays here: a
 // function never reaches the session's tool list.
@@ -21,24 +23,10 @@ type Hooks = {
 const REVISIONS = ['2025-11-25', '2025-06-18', '2025-03-26']
 const encoder = new TextEncoder()
 const NUDGE = 250
-// Claude Code gives up on a tool call after the timeout in the channel's .mcp.json, while the hub
-// still carries it out, and the session then makes the same call again. A call is kept until the
-// session hears its answer, and the same call in its thread meanwhile gets that answer instead of
-// acting twice. Whether the session heard is told by the latest request for the call: one aborted,
-// or answered WAITED after reaching the hub, was missed and is kept until KEEP after its start or
-// answer; one answered GAVE_UP after it may have been heard (a lagging hub accepts late and can miss
-// the session leaving), and is kept until the thread's turn ends (rested). A tool that only reads
-// runs every time, and a call the session gave up on before the hub read it doesn't run at all.
-const WAITED = 300_000
-const GAVE_UP = 120_000
-const KEEP = 15 * 60_000
-
-// Bun sees that a client left, while its request waited or its answer was being made, only a timer
-// tick later.
+// Bun notices a disconnected request on the next event-loop tick.
 const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-
 type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-type Run = { answer: Promise<Result>; at: number; waiting: number; heard?: 'maybe' | 'no' }
+const failure = (text: string): Result => ({ content: [{ type: 'text', text }], isError: true })
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -51,7 +39,7 @@ type Handshake = { is: 'initialized' } | { is: 'listed' } | { is: 'streaming'; n
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here
 // with their binding and the hub's token in headers. Every session id is taken as it comes, so a
 // session that connected before the hub restarted carries on where it was without initializing again.
-export function endpoint(name: string, channel: string, token: string, server: ChannelServer, hooks: Hooks, zone = () => Temporal.Now.timeZoneId()) {
+export function endpoint(name: string, channel: string, token: string, server: ChannelServer, hooks: Hooks, store: Store, zone = () => Temporal.Now.timeZoneId()) {
   const starting = new Map<string, Handshake>()
 
   function threadOf(request: Request) {
@@ -63,39 +51,36 @@ export function endpoint(name: string, channel: string, token: string, server: C
     return Response.json({ jsonrpc: '2.0', id, result: value })
   }
 
-  const unheard = new Map<string, Map<string, Run>>()
+  const active = new Map<string, Promise<Result>>()
   const tools = new Map(server.tools.map(tool => [tool.name, tool]))
   const reads = (tool: string, args: Record<string, unknown>) => !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args))
+  const advertised = server.tools.map(tool => {
+    if (tool.annotations?.readOnlyHint) return tool
+    const schema = tool.inputSchema as { properties?: object; required?: string[] }
+    return { ...tool, inputSchema: { ...schema, properties: { ...schema.properties, operation_id: { type: 'string', minLength: 1, description: 'A unique id for this operation. Reuse it on every retry; choose a new id for a deliberate repeat.' } }, required: [...(schema.required ?? []), ...(tool.reads ? [] : ['operation_id'])] } }
+  })
 
-  function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal, arrived: number): Promise<Result> {
-    if (gone.aborted) return Promise.resolve({ content: [{ type: 'text', text: `${tool} didn't run: you stopped waiting before the hub read it` }], isError: true })
+  async function once(thread: string | undefined, tool: string, input: Record<string, unknown>, gone: AbortSignal): Promise<Result> {
+    if (gone.aborted) return failure(`${tool} didn't run: you stopped waiting before the hub read it`)
+    const { operation_id: id, ...args } = input
     if (reads(tool, args)) return call(thread, tool, args)
-    for (const [scope, runs] of unheard) {
-      for (const [key, run] of runs) if (clock.now() - run.at > KEEP) runs.delete(key)
-      if (!runs.size) unheard.delete(scope)
+    if (!thread) return call(thread, tool, args)
+    if (typeof id !== 'string' || !id.trim()) return failure(`${tool} didn't run: supply operation_id, reuse it on retries, and choose a new id for a deliberate repeat`)
+    const scope = `${channel}:${thread}`
+    const key = JSON.stringify([scope, id])
+    const value = [tool, args]
+    const kept = store.operation(scope, id, JSON.stringify(value))
+    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) return failure(`${tool} didn't run: operation_id ${id} already identifies a different call`)
+    if (!kept.fresh) {
+      if (kept.result !== null) return JSON.parse(kept.result)
+      return active.get(key) ?? failure(`${tool} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`)
     }
-    const scope = String(thread)
-    const runs = unheard.get(scope) ?? new Map<string, Run>()
-    unheard.set(scope, runs)
-    const key = JSON.stringify([tool, Object.entries(args).sort(([a], [b]) => (a < b ? -1 : 1))])
-    const repeat = runs.get(key)
-    const run: Run = repeat ?? { answer: call(thread, tool, args), at: arrived, waiting: 0 }
-    run.waiting++
-    if (!repeat) {
-      runs.set(key, run)
-      void run.answer.then(() => (run.at = clock.now()))
-    }
-    return run.answer.then(async answer => {
-      await tick()
-      const took = clock.now() - arrived
-      if (--run.waiting === 0 && runs.get(key) === run) {
-        if (gone.aborted || took >= WAITED) run.heard = 'no'
-        else if (took >= GAVE_UP) run.heard = 'maybe'
-        else runs.delete(key)
-      }
-      if (!repeat) return answer
-      return { ...answer, content: [{ type: 'text', text: `this same ${tool} call came before and its answer never reached you, so it ran once: ${answer.content[0]!.text}` }] }
-    })
+    const answer = call(thread, tool, args).then(result => {
+      store.finishOperation(scope, id, JSON.stringify(result))
+      return result
+    }).finally(() => active.delete(key))
+    active.set(key, answer)
+    return answer
   }
 
   async function call(thread: string | undefined, tool: string, args: Record<string, unknown>): Promise<Result> {
@@ -167,7 +152,6 @@ export function endpoint(name: string, channel: string, token: string, server: C
   }
 
   const handle = async (request: Request): Promise<Response> => {
-    const arrived = clock.now()
     // The token comes as Authorization: Claude Code then takes a refusal as a failed connection,
     // where with any other header it marks the server as needing a login for 15 minutes.
     if (request.headers.has('origin') || !['127.0.0.1', 'localhost'].includes(new URL(request.url).hostname) || request.headers.get('authorization') !== `Bearer ${token}`) return new Response('Forbidden', { status: 403 })
@@ -199,24 +183,17 @@ export function endpoint(name: string, channel: string, token: string, server: C
     }
     if (method === 'tools/list') {
       listed(session)
-      return result(id, { tools: server.tools })
+      return result(id, { tools: advertised })
     }
     if (method === 'tools/call') {
       await tick()
-      return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, arrived))
+      return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal))
     }
     if (method === 'ping') return result(id, {})
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
   }
 
-  // The thread's turn ended with nothing left working, so a call that may have been heard was. One
-  // the session missed stays: its next turn may well make it again.
-  function rested(thread: string) {
-    const runs = unheard.get(thread)
-    for (const [key, run] of runs ?? []) if (run.heard === 'maybe' && !run.waiting) runs!.delete(key)
-  }
-
-  return Object.assign(handle, { rested })
+  return handle
 }
 
 function notification(payload: Payload, zone: string) {

@@ -1028,7 +1028,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     permission: (thread, request) => permission?.(thread, request),
     open: welcome,
     close: drop,
-  }, () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId())
+  }, store ??= open(storeDir), () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId())
   channels.set(path, serve)
 
   // Where a session's hooks and hex's own tools reach the hub, one JSON line each.
@@ -1055,8 +1055,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (request.type === 'state') {
       took(request.taken, request.session)
       setState(request.thread, request.busy, request.background === true)
-      // A StopFailure says nothing of background work, so only a Stop of the thread's own session rests it.
-      if (!request.busy && !request.background && !request.failed && request.session && request.session === current(request.thread)) serve.rested(request.thread)
     }
     if (request.type === 'sdk-fallback' && request.session === current(request.thread)) void sessionOf(request.thread).then(agent => cycle(request.thread, agent, request.continuing ? 'Continue the interrupted turn. The API credit is unavailable; this is now normal interactive Claude Code on the plan.' : undefined))
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
