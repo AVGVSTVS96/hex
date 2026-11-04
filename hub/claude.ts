@@ -111,7 +111,7 @@ export const stop = (session: string) => run(['stop', short(session)])
 // the session and what it started in the background keep running. interrupted once the transcript
 // records it; exited when the attach ends first (the session is gone), let go when the caller does.
 export function interrupt(cwd: string, session: string, until: AbortSignal): Promise<'interrupted' | 'exited' | 'let go'> {
-  if (sdkRecord(short(session))) return sdkInterrupt(session, until)
+  if (onSDK(session)) return sdkInterrupt(session, until)
   const file = transcript(cwd, session)
   const from = sizeOf(file)
   if (from === undefined) return Promise.resolve('exited')
@@ -350,6 +350,8 @@ export function usage(cwd: string, session: string): Usage {
 }
 
 // SDK workers are supervised shell jobs; their own state describes the agent inside.
+export const onSDK = (session: string) => !!sdkRecord(short(session))
+
 function sdkRecord(id: string): { status?: string; state?: string; flags?: string[] } | undefined {
   try { return JSON.parse(readFileSync(join(home(), 'jobs', id, 'hex-sdk.json'), 'utf8')) } catch { return undefined }
 }
