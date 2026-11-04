@@ -511,6 +511,12 @@ export class Store {
     return (this.db.query('select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n').all(thread, before, after, last) as Stored[]).map(toRow)
   }
 
+  // A thread's message by the id its app gave it, the last part of its key.
+  find(thread: string, message: MessageId): Row | null {
+    const row = this.db.query(`select * from messages where "to" = ?1 and substr(key, -length(?2) - 1) = ':' || ?2 order by at desc, n desc limit 1`).get(thread, String(message)) as Stored | null
+    return row && toRow(row)
+  }
+
   // When a session last took a message it was sent, rather than one it sent.
   lastTaken(session: string): string | undefined {
     return (this.db.query(`select max(taken_at) as at from messages where taken_by = ? and author <> 'hex'`).get(session) as { at: string | null }).at ?? undefined

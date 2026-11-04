@@ -141,11 +141,53 @@ test("a question comes with hex's last two messages in the hour before it in its
   expect(before(open(state), 'telegram', { ...question, at: '2026-10-13T18:01:30.000Z' })).toEqual(['Old news.'])
 })
 
-test("a question the check hasn't rewritten yet opens hex's message before it as context", () => {
-  said([['18:30:00', '**Caddy** gives a short domain.\n\n  It needs a server.']])
-  ledger([asked(9, 'Caddy or Tailscale?\nCaddy is mine.', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })])
+test("a question the check hasn't rewritten yet keeps its own words on the card and hex's messages before it, whole, as its words", () => {
+  said([
+    ['18:20:00', 'Caddy gives a short domain.'],
+    ['18:30:00', `**Caddy** needs a server. ${'More. '.repeat(150).trim()}`],
+  ])
+  ledger([asked(9, 'Caddy or Tailscale?\nCaddy is mine.', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' }), asked(8, 'Ship it?', ['Yes', 'No'])])
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  expect(questions.view.asks[0]!.context).toBe('Caddy is mine.\nCaddy gives a short domain.\nIt needs a server.')
+  expect(questions.find(`telegram:${DESK}:9`)!.context).toBe('Caddy is mine.')
+  expect(questions.words(`telegram:${DESK}:9`)).toEqual({ place: 'desk', at: '2026-10-13T19:00:00.000Z', text: `Caddy gives a short domain.\n\n**Caddy** needs a server. ${'More. '.repeat(150).trim()}` })
+  expect(questions.words(`telegram:${DESK}:8`)).toBeUndefined()
+  expect(questions.words('check:gone')).toBeUndefined()
+})
+
+test("the check's asks read their words from their first place that has them: a question, a plain message, a pinned post or a call", () => {
+  const calls = join(state, 'calls')
+  mkdirSync(calls)
+  writeFileSync(join(calls, 'live_1.json'), JSON.stringify({ id: 'live_1', title: 'Morning call', started: '2026-10-13T08:00:00.000Z', ended: '2026-10-13T08:05:00.000Z', summary: 'He wants the Duo build tonight.' }))
+  said([
+    ['18:20:00', 'Caddy gives a short domain.'],
+    ['18:25:00', 'Which one serves the pages?', { id: 70 }],
+  ])
+  ledger([asked(9, 'Caddy or Tailscale?', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })], {
+    [GROUP]: { message: 40, text: 'Pages', at: '2026-10-13T10:00:00.000Z', note: 'Pages live.\n\nOn you:\n• Pick a host' },
+  })
+  const ask = (id: string, from: object[]) => ({ id, kind: 'pick', task: `telegram:${DESK}`, at: '2026-10-13T00:00:00.000Z', question: id, options: [{ label: 'Ok' }], from })
+  writeFileSync(
+    join(state, 'voice', 'check.json'),
+    JSON.stringify({
+      at: '2026-10-13T20:00:00.000Z',
+      why: 'test',
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [
+        ask('check:question', [{ app: 'telegram', thread: DESK }, { app: 'telegram', thread: DESK, message: 404 }, { app: 'telegram', thread: DESK, message: 9 }]),
+        ask('check:message', [{ app: 'telegram', thread: DESK, message: 70 }]),
+        ask('check:pin', [{ app: 'telegram', thread: GROUP, message: 40 }]),
+        ask('check:call', [{ app: 'voice', call: 'live_1' }]),
+      ],
+    }),
+  )
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', calls, check: why => checks.push(why) })
+  expect(questions.words('check:question')).toEqual({ place: 'desk', at: '2026-10-13T19:00:00.000Z', text: 'Caddy gives a short domain.\n\nWhich one serves the pages?\n\nCaddy or Tailscale?' })
+  expect(questions.words('check:message')).toEqual({ place: 'desk', at: '2026-10-13T18:25:00.000Z', text: 'Caddy gives a short domain.\n\nWhich one serves the pages?' })
+  expect(questions.words('check:pin')).toEqual({ place: 'General', at: '2026-10-13T10:00:00.000Z', text: 'On you:\n• Pick a host' })
+  expect(questions.words('check:call')).toEqual({ place: 'Morning call', at: '2026-10-13T08:05:00.000Z', text: 'He wants the Duo build tonight.' })
 })
 
 test('open questions come newest first with a link to each, answered and settled ones drop out', () => {
