@@ -374,7 +374,6 @@ export class Board extends Changes {
     const last = Math.max(session ? (session.updated ?? session.started) : 0, ...started.map(one => one.updated ?? one.started), ...out.map(one => (one.since ? Date.parse(one.since) : 0)))
     const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(live ? last : 0).toISOString()
     const needs = state === 'needs' ? plain(job?.needs ?? job?.detail ?? '') || undefined : undefined
-    const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
     const began = Math.min(...started.map(one => one.updated ?? one.started), ...out.map(one => (one.since ? Date.parse(one.since) : Date.now())), busy(session) ? (session!.updated ?? session!.started) : Infinity)
     const since =
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
@@ -383,9 +382,8 @@ export class Board extends Changes {
     const steps = state === 'working' ? this.steps(key).filter(ours) : []
     const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
     const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && ours(step)) : undefined
-    const shown = detail && (shownSince(timeline, detail) ?? at)
-    const summary = detail && shown && outside(shown) && !tooled(detail, this.followers.get(key)?.steps ?? []) ? detail : undefined
-    const line = (said && (!summary || said.at >= shown!) ? said.text : undefined) || needs || summary || (state === 'working' ? '' : lately[0]?.text) || ''
+    const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
+    const line = needs || said?.text || (state === 'working' ? '' : detail || lately[0]?.text) || ''
     const agents = (
       state === 'working'
         ? [
@@ -709,40 +707,6 @@ function before(job: Job | undefined, timeline: Entry[], from: number, working: 
   const last = working ? kept.at(-1) : kept.findLast(entry => entry.state !== 'working' || entry.text)
   if (!job || !last) return { job: job && { ...job, state: undefined, detail: undefined, needs: undefined }, timeline: kept }
   return { job: { ...job, state: last.state, detail: last.detail, needs: last.state === 'blocked' ? job.needs : undefined }, timeline: kept }
-}
-
-// When the timeline first showed the summary it shows now: Claude Code writes the same one again
-// every few seconds while it works.
-function shownSince(timeline: Entry[], summary: string) {
-  let first: string | undefined
-  for (let i = timeline.length - 1; i >= 0 && timeline[i]!.detail && plain(timeline[i]!.detail!) === summary; i--) first = timeline[i]!.at
-  return first
-}
-
-// Claude Code's own status line while it works is often the tool it's running: a verb, then the
-// tool's command, path or query (Running cd … && git commit …, Writing ~/…/t3.ts), cut short with
-// …. A line in words leaves out one that names a tool call of the session's; a tool's own
-// description in words stays.
-function tooled(detail: string, steps: Step[]) {
-  const rest = detail.replace(/…$/, '').replace(/^(Searching for|\S+)\s+/, '')
-  return steps.some(step => {
-    if (['say', 'think', 'plan'].includes(step.kind)) return false
-    const input = step.detail && plain(step.detail)
-    return !!input && rest.length > 1 && shortened(rest, input)
-  })
-}
-
-// Whether shown is input shortened with … at its end or in its middle: its pieces appear in order,
-// from input's start or up to its end.
-function shortened(shown: string, input: string) {
-  const pieces = shown.split('…').map(piece => piece.trim())
-  let at = 0
-  for (const piece of pieces) {
-    const found = input.indexOf(piece, at)
-    if (found < 0) return false
-    at = found + piece.length
-  }
-  return input.startsWith(pieces[0]!) || input.endsWith(pieces.at(-1)!)
 }
 
 // Steps of a stretch that ended: one still running then never said how it went.
