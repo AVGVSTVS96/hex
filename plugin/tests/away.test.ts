@@ -18,6 +18,7 @@ let flaky = 0
 let launchDrop = 0
 let launchSlow = 0
 let launched = false
+let unlinked = false
 
 const server = Bun.serve({
   port: 0,
@@ -34,6 +35,7 @@ const server = Bun.serve({
     if (body.params.name === 't3_thread_wait' && drop-- > 0) return new Response('gone', { status: 502 })
     if (body.params.name === 't3_thread_wait' && refused-- > 0) return new Response('expired', { status: 401 })
     if (body.params.name === 't3_thread_wait' && flaky-- > 0) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: 'mac is not answering' }], isError: true } })
+    if (body.params.name === 'orchestrator_capabilities' && unlinked) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{"code":"invalid_request","message":"unknown_link"}' }], isError: true } })
     if (body.params.name === refuse) return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: '{"code":"capability_denied","message":"no link"}' }], isError: true } })
     const answers: Record<string, () => unknown> = {
       orchestrator_capabilities: () => ({ providers: [{ providerInstanceId: 'claudeAgent', models: [{ id: 'claude-opus-4-1' }, { id: 'claude-opus-5-5' }, { id: 'claude-sonnet-5-5' }] }] }),
@@ -41,7 +43,7 @@ const server = Bun.serve({
       t3_thread_list: () => ({ nextCursor: null, threads: launched ? [{ threadId: 't1', title: 'hex/deck · inv1', latestRunId: 'r1', link: '<t3-thread://v2/env-mac/t1>' }] : [] }),
       t3_thread_wait: () => waits.shift() ?? (running ? { status: 'running', timedOut: true } : { status: 'completed', timedOut: false }),
       t3_thread_read: () => ({ thread: { pendingRequestCount: asked.length }, items: [{ type: 'user_message', text: 'go' }, { type: 'assistant_message', text: 'Built the Usage tab.' }], hasMore: false }),
-      t3_thread_interrupt: () => ({}),
+      t3_thread_interrupt: () => ((running = false), {}),
       t3_pending_request: () => (body.params.arguments.action === 'list' ? { requestIds: asked } : { requestId: asked[0], questions: [{ question: 'Which branch should I push to?' }] }),
     }
     return Response.json({ jsonrpc: '2.0', id: body.id, result: { content: [{ type: 'text', text: JSON.stringify(answers[body.params.name]!()) }], isError: false } })
@@ -81,6 +83,7 @@ const reset = () => {
   launchDrop = 0
   launchSlow = 0
   launched = false
+  unlinked = false
   asked = []
   rmSync(join(home, 'signed'), { force: true })
 }
@@ -118,7 +121,7 @@ test('a job whose thread stops at a question ends there, with the question as it
   const { run, out } = away(['-p', 'Build it.'])
   expect(await run.exited).toBe(1)
   expect(await out()).toEndWith("hex/deck stopped on mac at a question, which a job can't answer: Which branch should I push to?\n")
-  expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
+  expect(calls.find(({ name }) => name === 't3_thread_interrupt')).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
 })
 
 test("a job can't run there, having started nothing, with claude flags a thread has no place for, or a link that's gone", async () => {
@@ -127,6 +130,10 @@ test("a job can't run there, having started nothing, with claude flags a thread 
   expect(await flagged.run.exited).toBe(76)
   expect(await flagged.error()).toContain('--permission-mode has no place in a T3 Code thread')
   refuse = 'orchestrator_capabilities'
+  expect(await away(['-p', 'Build it.']).run.exited).toBe(76)
+  expect(calls.some(({ name }) => name === 't3_thread_launch')).toBe(false)
+  refuse = undefined
+  unlinked = true
   expect(await away(['-p', 'Build it.']).run.exited).toBe(76)
   expect(calls.some(({ name }) => name === 't3_thread_launch')).toBe(false)
 
@@ -140,6 +147,8 @@ test('stopping the job stops its thread', async () => {
   run.kill('SIGTERM')
   expect(await run.exited).toBe(143)
   expect(calls.find(({ name }) => name === 't3_thread_interrupt')!.arguments).toMatchObject({ environmentId: 'env-mac', threadId: 't1', stop: true })
+  // The stop counts once the run has ended.
+  expect(calls.at(-1)).toMatchObject({ name: 't3_thread_wait', arguments: { threadId: 't1' } })
 })
 
 test("a sign-in that fails here is this machine's fault, named at once, and starts nothing", async () => {
@@ -164,7 +173,7 @@ test('a job stopped while its launch may have reached the other machine finds th
   expect(await run.exited).toBe(143)
   expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(1)
   expect(calls.some(({ name, arguments: input }) => name === 't3_thread_list' && input.titleContains === 'hex/deck · inv1')).toBe(true)
-  expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
+  expect(calls.find(({ name }) => name === 't3_thread_interrupt')).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
   expect(await error()).toContain('trying again')
 }, 20_000)
 
@@ -178,7 +187,7 @@ test('a job stopped while its launch is on its way stops the thread the launch a
   expect(await run.exited).toBe(143)
   expect(Date.now() - stopped).toBeLessThan(5_000)
   expect(calls.filter(({ name }) => name === 't3_thread_launch')).toHaveLength(1)
-  expect(calls.at(-1)).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
+  expect(calls.find(({ name }) => name === 't3_thread_interrupt')).toMatchObject({ name: 't3_thread_interrupt', arguments: { threadId: 't1', stop: true } })
 }, 20_000)
 
 test('a launch that was tried and refused fails the job there, rather than moving it to a machine where it could run twice', async () => {
@@ -200,3 +209,12 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
   expect(await run.exited).toBe(143)
   expect(readFileSync(join(home, 'told'), 'utf8')).toBe("--tell|deck|telegram:-100123:908|couldn't stop on mac (t3_thread_interrupt: {\"code\":\"capability_denied\",\"message\":\"no link\"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|")
 }, 20_000)
+
+test('a run a restart cut, which T3 shows final but timed out while its continuation is pending, is followed to the end', async () => {
+  reset()
+  waits = [{ status: 'cancelled', timedOut: true }]
+  const { run, out } = away(['-p', 'Build it.'])
+  expect(await run.exited).toBe(0)
+  expect(await out()).toEndWith('Built the Usage tab.\n')
+  expect(calls.filter(({ name }) => name === 't3_thread_wait')).toHaveLength(2)
+})

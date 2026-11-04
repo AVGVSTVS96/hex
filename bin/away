@@ -106,7 +106,8 @@ async function call(tool: string, input: Record<string, unknown>, { patience }: 
   if (error) throw here(`${tool}: ${error.message}`)
   if (!result) throw new Error(`${tool}: an answer that is not JSON`)
   const text = result.content[0]?.text ?? ''
-  if (result.isError) throw FINAL.includes(parse(text)?.code) ? new Final(`${tool}: ${text}`) : new Error(`${tool}: ${text}`)
+  const code = parse(text)?.code
+  if (result.isError) throw Object.assign(FINAL.includes(code) ? new Final(`${tool}: ${text}`) : new Error(`${tool}: ${text}`), { code })
   return result.structuredContent ?? parse(text)
 }
 
@@ -138,12 +139,16 @@ async function halt(reason: string) {
   const stopped = (async () => {
     for (let wait = 1_000; ; wait = Math.min(wait * 2, 10_000)) {
       try {
-        if (!threadId && inflight) threadId = (await inflight.catch(() => undefined))?.threadId
+        if (!threadId && inflight) threadId = (await Promise.race([inflight.catch(() => undefined), Bun.sleep(20_000)]))?.threadId
         if (!threadId && tried) threadId = (await find(30_000))?.threadId
-        if (threadId) await call('t3_thread_interrupt', { threadId, stop: true, reason }, { patience: 30_000 })
+        if (!threadId) return true
+        await call('t3_thread_interrupt', { threadId, stop: true, reason }, { patience: 30_000 })
+        // T3 records the interrupt before its provider acts on it, so the stop counts once the run has ended.
+        if ((await call('t3_thread_wait', { threadId, timeoutMs: 15_000 }, { patience: 30_000 })).timedOut) throw new Error('its run was still going after the interrupt')
         return true
       } catch (error) {
         why = (error as Error).message
+        if ((error as { code?: string }).code === 'thread_not_found') return true
         if (error instanceof Final) return false
         opening = undefined
         await Bun.sleep(wait)
@@ -196,8 +201,13 @@ async function persist<T>(what: () => Promise<T>, patience = Infinity): Promise<
 
 // This machine's sign-in first, so its fault is named as its own at once.
 await signedIn().catch((error: Error) => quit(UNREACHABLE, error.message))
-// The first forwarded call starts nothing, so a machine that doesn't answer it in 5 minutes is left for the next one.
-const offered = await persist(() => call('orchestrator_capabilities', {}), 300_000).catch((error: Error) => quit(error instanceof Final ? ELSEWHERE : UNREACHABLE, error.message))
+// The first forwarded call starts nothing, so a machine that doesn't answer it in 5 minutes is left for the next one,
+// and one this machine has no link to (T3's invalid_request: unknown_link) is passed over.
+const capabilities = () =>
+  call('orchestrator_capabilities', {}).catch(error => {
+    throw error.code === 'invalid_request' ? new Final(error.message) : error
+  })
+const offered = await persist(capabilities, 300_000).catch((error: Error) => quit(error instanceof Final ? ELSEWHERE : UNREACHABLE, error.message))
 if (stopping) await exit(143)
 // A model goes by its alias, like opus, or its id, as that machine's Claude lists it, newest first; with none, the one hex's sessions run.
 const configured = (path: string) => {
@@ -233,8 +243,11 @@ const launch = () =>
 const launched = await persist(async () => {
   if (tried) {
     const found = await find()
+    // T3 creates a thread before it sends it its first message, so one without a run isn't launched yet.
+    if (found && !found.runId) throw new Error(`its thread ${found.link} has no run yet`)
     if (found) return found
   }
+  if (stopping) return exit(143)
   tried = true
   inflight = launch()
   try {
@@ -253,15 +266,18 @@ console.log(`${name} runs on ${machine} as T3 Code thread ${launched.link}`)
 
 // As `t3 thread start --wait` does (T3's cli/thread.ts waitForRun): a run that hasn't ended while its thread has a
 // pending request, checked once more, needs an answer a job can't give. With Claude, a pending request holds its turn.
-const runId = launched.runId ?? undefined
-const ENDED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back', ...(runId ? [] : ['idle'])]
+const runId = launched.runId
+// A run has ended when its status is final and the wait didn't time out: T3 times out a run a restart cut, final as
+// its status reads, while its continuation is pending.
+const FINISHED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']
+const ended = ({ status, timedOut }: { status: string; timedOut: boolean }) => FINISHED.includes(status) && !timedOut
 async function follow(): Promise<number> {
   const slice = (timeoutMs: number) => persist(() => call('t3_thread_wait', { threadId, runId, timeoutMs }))
   let waited = await slice(50_000)
-  while (!ENDED.includes(waited.status)) {
+  while (!ended(waited)) {
     const { thread } = await persist(() => call('t3_thread_read', { threadId, limit: 1, runLimit: 1 }))
     const pending = thread.pendingRequestCount > 0 || waited.hasPendingQuestion || waited.pendingApproval
-    if (pending && !ENDED.includes((waited = await slice(1)).status)) {
+    if (pending && !ended((waited = await slice(1)))) {
       const { requestIds } = await call('t3_pending_request', { action: 'list', threadId }).catch(() => ({}))
       const read = requestIds?.length ? await call('t3_pending_request', { action: 'read', threadId, requestId: requestIds[0] }).catch(() => undefined) : undefined
       await stopThread(`the job ${name} has nobody to answer`)
@@ -271,7 +287,7 @@ async function follow(): Promise<number> {
     }
     // A wait that comes back early without an end gets a pause, so the two machines aren't asked in a tight loop.
     if (!waited.timedOut) await Bun.sleep(5_000)
-    if (!ENDED.includes(waited.status)) waited = await slice(50_000)
+    if (!ended(waited)) waited = await slice(50_000)
   }
   if (stopping) return exit(143)
   let last: { text: string } | undefined
