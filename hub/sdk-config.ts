@@ -20,3 +20,8 @@ export async function runtime(config: SDKBridge): Promise<'sdk' | 'interactive'>
   if (decision.runtime !== 'sdk' && decision.runtime !== 'interactive') throw new Error('SDK bridge got an invalid runtime decision')
   return decision.runtime
 }
+
+// A topic that fell back to its plan returns to the credit once one has balance again.
+export async function creditReady(file: string): Promise<boolean> {
+  try { return await runtime(JSON.parse(readFileSync(file, 'utf8'))) === 'sdk' } catch { return false }
+}
