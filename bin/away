@@ -77,7 +77,7 @@ let opening: Promise<void> | undefined
 let ids = 0
 async function post(body: object, patience = 120_000, renewed = false): Promise<Response> {
   const using = headers ?? signedIn()
-  const used = await using
+  const used = await Promise.race([using, Bun.sleep(patience).then(() => Promise.reject(new Error(`T3 Code on ${hostname()}, this machine: signing in took over ${patience / 1000} s`)))])
   const answer = await fetch(url, { method: 'POST', headers: { ...used, ...(session && { 'mcp-session-id': session }) }, body: JSON.stringify({ jsonrpc: '2.0', ...body }), signal: AbortSignal.timeout(patience) })
   if (answer.status === 401 && !renewed) {
     if (headers === using) signedIn(used.Authorization!.replace(/^Bearer /, ''))
@@ -115,9 +115,9 @@ async function call(tool: string, input: Record<string, unknown>, { reached, pat
   const { result, error } = parse(reply) ?? {}
   const text = result?.content[0]?.text ?? ''
   if (result?.isError && FINAL.includes(parse(text)?.code)) throw new Final(`${tool}: ${text}`)
-  // A JSON-RPC error is MCP's for a call that never ran; a tool that ran and failed answers with isError.
+  // JSON-RPC's own refusals (parse error, invalid request, unknown method, invalid params) come before the tool runs.
+  if (!(error && [-32700, -32600, -32601, -32602].includes(error.code))) reached?.()
   if (error) throw here(`${tool}: ${error.message}`)
-  reached?.()
   if (!result) throw new Error(`${tool}: an answer that is not JSON`)
   if (result.isError) throw new Error(`${tool}: ${text}`)
   return result.structuredContent ?? parse(text)
@@ -143,6 +143,8 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const)
 let abandoning: Promise<never> | undefined
 const abandon = () => (abandoning ??= leave())
 async function leave(): Promise<never> {
+  // Started after all: the signal handler stops it.
+  if (threadId) return new Promise<never>(() => {})
   const started = (sent || launching) && (await Promise.race([launch(20_000).catch(() => undefined), Bun.sleep(25_000)]))
   if (started) {
     threadId = started.threadId
