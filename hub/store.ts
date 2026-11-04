@@ -246,6 +246,7 @@ const migrations: (string | ((store: Store) => void))[] = [
   'create index if not exists owned on tasks (owner, status, closed);',
   // A thread's messages in the order they were kept, whose last says whether any came.
   'create index if not exists thread on messages ("to", n);',
+  `create table if not exists operations (scope text not null, id text not null, input text not null, result text, primary key (scope, id));`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -442,6 +443,19 @@ export class Store {
           .query('insert into messages (key, "to", "from", author, body, meta, at, taken_by, taken_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (key) do nothing')
           .run(key, to, from, author, body, meta ? JSON.stringify(meta) : null, at, by ?? null, by ? at : null).changes > 0,
     )
+  }
+
+  // Claim before an external effect. An unfinished claim after a restart is uncertain, never retried.
+  operation(scope: string, id: string, input: string): { fresh: boolean; input: string; result: string | null } {
+    return this.write(() => {
+      const fresh = this.db.query('insert into operations (scope, id, input) values (?, ?, ?) on conflict do nothing').run(scope, id, input).changes > 0
+      const kept = this.db.query('select input, result from operations where scope = ? and id = ?').get(scope, id) as { input: string; result: string | null }
+      return { fresh, ...kept }
+    })
+  }
+
+  finishOperation(scope: string, id: string, result: string) {
+    this.write(() => this.db.query('update operations set result = ? where scope = ? and id = ?').run(result, scope, id))
   }
 
   // Messages brought in from log/ (hub/past.ts), kept at the time it gave them, taken by its session and

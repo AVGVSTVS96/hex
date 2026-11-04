@@ -2442,26 +2442,27 @@ test("what a session sends into another thread is kept as its own words, not tha
   expect(open(dir).said('chat:8').map(({ body, taken }) => ({ body, by: taken?.by }))).toEqual([{ body: 'From Desk anchors: done.', by: SESSION }])
 })
 
-test('a tool call answered slowly is kept for a repeat until a Stop of the thread\'s own session, with nothing left working, ends its turn', async () => {
+test('an operation keeps its result across Stop events regardless of elapsed time', async () => {
   const waiting: (() => void)[] = []
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, call: (_, tool, args) => new Promise(resolve => waiting.push(() => resolve(`${tool} ${args.text}`))) })
   const line = await session('chat:7')
   const kept = async (text: string, stop: object) => {
-    const slow = line.call('reply', { text })
+    const slow = line.call('reply', { text, operation_id: text })
     await until(() => waiting.length)
     await time.advance(150_000)
     waiting.shift()!()
     await slow
     await line.send({ type: 'state', thread: 'chat:7', busy: false, ...stop })
-    const repeat = line.call('reply', { text })
+    const repeat = line.call('reply', { text, operation_id: text })
     const ran = await Promise.race([until(() => waiting.length).then(() => true), repeat.then(() => false)])
     if (ran) waiting.shift()!()
-    return (await repeat).content[0].text.startsWith('this same reply call came before')
+    expect((await repeat).content[0].text).toBe(`reply ${text}`)
+    return !ran
   }
   expect(await kept('another session', { session: 'ffffffff-0000-4000-8000-000000000000' })).toBe(true)
   expect(await kept('background', { session: SESSION, background: true })).toBe(true)
   expect(await kept('failed', { session: SESSION, failed: true })).toBe(true)
   expect(await kept('no session', {})).toBe(true)
   expect(await kept('busy', { session: SESSION, busy: true })).toBe(true)
-  expect(await kept('done', { session: SESSION })).toBe(false)
+  expect(await kept('done', { session: SESSION })).toBe(true)
 })
