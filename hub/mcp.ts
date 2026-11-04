@@ -173,7 +173,8 @@ export function endpoint(name: string, channel: string, token: string, server: C
     if (request.headers.has('origin') || !['127.0.0.1', 'localhost'].includes(new URL(request.url).hostname) || request.headers.get('authorization') !== `Bearer ${token}`) return new Response('Forbidden', { status: 403 })
     const thread = threadOf(request)
     const session = request.headers.get('mcp-session-id')
-    if (request.method === 'GET') return stream(thread, session)
+    const toolsOnly = request.headers.get('x-hex-tools-only') === '1'
+    if (request.method === 'GET') return stream(toolsOnly ? undefined : thread, session)
     if (request.method === 'DELETE') return new Response(null, { status: 204 })
     if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 })
     let message: any
@@ -189,7 +190,7 @@ export function endpoint(name: string, channel: string, token: string, server: C
     }
     if (method === 'initialize') {
       const opened = crypto.randomUUID()
-      starting.set(opened, { is: 'initialized' })
+      if (!toolsOnly) starting.set(opened, { is: 'initialized' })
       const capabilities = { tools: { listChanged: true }, experimental: { 'claude/channel': {}, ...(server.permission && { 'claude/channel/permission': {} }) } }
       const revision = REVISIONS.includes(params?.protocolVersion) ? params.protocolVersion : REVISIONS[0]
       const response = result(id, { protocolVersion: revision, capabilities, serverInfo: { name, version: '1.0.0' }, instructions: server.instructions })

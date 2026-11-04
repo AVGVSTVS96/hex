@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
+import { bridgeFile } from './sdk-config.ts'
 import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { queue } from './observe.ts'
@@ -594,7 +595,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   function extra(thread: string) {
     const { model, effort } = threads[thread]!
-    return [...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args(thread)]
+    const sdk = bridgeFile(app, thread)
+    return [...(sdk ? ['--hex-sdk', sdk] : []), ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args(thread)]
   }
 
   // A session that started with other arguments or another channel starts over: with its next
@@ -1056,6 +1058,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       // A StopFailure says nothing of background work, so only a Stop of the thread's own session rests it.
       if (!request.busy && !request.background && !request.failed && request.session && request.session === current(request.thread)) serve.rested(request.thread)
     }
+    if (request.type === 'sdk-fallback' && request.session === current(request.thread)) void sessionOf(request.thread).then(agent => cycle(request.thread, agent, request.continuing ? 'Continue the interrupted turn. The API credit is unavailable; this is now normal interactive Claude Code on the plan.' : undefined))
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
     if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
     if (request.type === 'settle') questions?.settle(request.thread, request.message, request.note)

@@ -53,6 +53,7 @@ fi
 # A busy session would take the new hooks and rules mid-turn, so hex ships only between turns.
 [ "$mode" = --now ] || "$hex/bin/quiet" "$asker"
 git merge -q --ff-only "$incoming"
+bun install --cwd "$hex" --silent
 "$hex/bin/optmem"
 "$hex/bin/migrate"
 # The new code, or a new memo, may write the wake differently.

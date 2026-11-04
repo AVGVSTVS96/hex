@@ -379,3 +379,15 @@ test('a call whose client left while the hub was too busy to send its answer cou
     hub.stop(true)
   }
 })
+
+test('an SDK tool connection never takes the topic delivery stream', async () => {
+  let opened = 0
+  const serve = endpoint('telegram', 'chat', TOKEN, SERVER, {
+    call: async () => 'read', permission: () => {}, open: () => { opened++ }, close: () => {},
+  })
+  const headers = { Authorization: `Bearer ${TOKEN}`, 'X-Hex-Channel': 'chat', 'X-Hex-Thread': 'topic', 'X-Hex-Tools-Only': '1' }
+  const response = await serve(new Request('http://127.0.0.1/telegram', { headers }))
+  expect(response.status).toBe(200)
+  expect(opened).toBe(0)
+  await response.body!.cancel()
+})

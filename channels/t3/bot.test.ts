@@ -40,6 +40,7 @@ echo "backgrounded · job12345 · test"`)
     HOME: dir,
     PATH: `${dir}:${process.env.PATH}`,
     T3_STATE_DIR: join(dir, 'state'),
+    T3CODE_HOME: join(dir, '.t3'),
     HEX_DIR: join(dir, 'hex'),
     HEX_LAUNCHER: join(dir, 'launch'),
     CLAUDE_CONFIG_DIR: join(dir, 'config'),

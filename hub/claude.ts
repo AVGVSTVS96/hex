@@ -2,6 +2,7 @@ import { execFile, spawn } from 'child_process'
 import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, readdirSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { dirname, join } from 'path'
+import { connect } from 'net'
 import { sleep } from './clock.ts'
 
 // A background session as `claude agents --json` lists it.
@@ -62,7 +63,7 @@ function run(args: string[]): Promise<string | undefined> {
 async function listed(): Promise<Agent[] | undefined> {
   try {
     const list = JSON.parse((await run(['agents', '--json'])) ?? '')
-    return Array.isArray(list) ? list.filter((agent: Agent) => agent.pid) : undefined
+    return Array.isArray(list) ? list.filter((agent: Agent) => agent.pid).map((agent: Agent) => ({ ...agent, ...sdkRecord(agent.id ?? short(agent.sessionId)) })) : undefined
   } catch {
     return undefined
   }
@@ -110,6 +111,7 @@ export const stop = (session: string) => run(['stop', short(session)])
 // the session and what it started in the background keep running. interrupted once the transcript
 // records it; exited when the attach ends first (the session is gone), let go when the caller does.
 export function interrupt(cwd: string, session: string, until: AbortSignal): Promise<'interrupted' | 'exited' | 'let go'> {
+  if (sdkRecord(short(session))) return sdkInterrupt(session, until)
   const file = transcript(cwd, session)
   const from = sizeOf(file)
   if (from === undefined) return Promise.resolve('exited')
@@ -288,7 +290,7 @@ type Launch = { enabledPlugins?: object; env?: Record<string, string> }
 
 // Claude keeps the flags a session started with, since it respawns from them.
 function settingsFlag(agent: Agent) {
-  const flags = record(job(agent)).respawnFlags ?? []
+  const flags = sdkRecord(job(agent))?.flags ?? record(job(agent)).respawnFlags ?? []
   return flags.includes('--settings') ? flags[flags.lastIndexOf('--settings') + 1]! : ''
 }
 
@@ -345,4 +347,22 @@ export function usage(cwd: string, session: string): Usage {
   } finally {
     closeSync(file)
   }
+}
+
+// SDK workers are supervised shell jobs; their own state describes the agent inside.
+function sdkRecord(id: string): { status?: string; state?: string; flags?: string[] } | undefined {
+  try { return JSON.parse(readFileSync(join(home(), 'jobs', id, 'hex-sdk.json'), 'utf8')) } catch { return undefined }
+}
+
+function sdkInterrupt(session: string, until: AbortSignal): Promise<'interrupted' | 'exited' | 'let go'> {
+  if (until.aborted) return Promise.resolve('let go')
+  return new Promise(resolve => {
+    const socket = connect(join(home(), 'jobs', short(session), 'hex-sdk.sock'), () => socket.write('interrupt\n'))
+    const done = (result: 'interrupted' | 'exited' | 'let go') => { until.removeEventListener('abort', abort); socket.destroy(); resolve(result) }
+    const abort = () => done('let go')
+    until.addEventListener('abort', abort, { once: true })
+    socket.once('data', data => done(data.toString().trim() === 'interrupted' ? 'interrupted' : 'exited'))
+    socket.once('error', () => done('exited'))
+    socket.once('end', () => done('exited'))
+  })
 }
