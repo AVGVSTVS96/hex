@@ -54,23 +54,15 @@ export function endpoint(name: string, channel: string, token: string, server: C
   const active = new Map<string, Promise<Result>>()
   const tools = new Map(server.tools.map(tool => [tool.name, tool]))
   const reads = (tool: string, args: Record<string, unknown>) => !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args))
-  const advertised = server.tools.map(tool => {
-    if (tool.annotations?.readOnlyHint) return tool
-    const schema = tool.inputSchema as { properties?: object; required?: string[] }
-    return { ...tool, inputSchema: { ...schema, properties: { ...schema.properties, operation_id: { type: 'string', minLength: 1, description: 'A unique id for this operation. Reuse it on every retry; choose a new id for a deliberate repeat.' } }, required: [...(schema.required ?? []), ...(tool.reads ? [] : ['operation_id'])] } }
-  })
-
-  async function once(thread: string | undefined, tool: string, input: Record<string, unknown>, gone: AbortSignal): Promise<Result> {
+  async function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal, id: string): Promise<Result> {
     if (gone.aborted) return failure(`${tool} didn't run: you stopped waiting before the hub read it`)
-    const { operation_id: id, ...args } = input
     if (reads(tool, args)) return call(thread, tool, args)
     if (!thread) return call(thread, tool, args)
-    if (typeof id !== 'string' || !id.trim()) return failure(`${tool} didn't run: supply operation_id, reuse it on retries, and choose a new id for a deliberate repeat`)
     const scope = `${channel}:${thread}`
     const key = JSON.stringify([scope, id])
     const value = [tool, args]
     const kept = store.operation(scope, id, JSON.stringify(value))
-    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) return failure(`${tool} didn't run: operation_id ${id} already identifies a different call`)
+    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) return failure(`${tool} didn't run: identity ${id} already identifies a different call`)
     if (!kept.fresh) {
       if (kept.result !== null) return JSON.parse(kept.result)
       return active.get(key) ?? failure(`${tool} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`)
@@ -183,11 +175,14 @@ export function endpoint(name: string, channel: string, token: string, server: C
     }
     if (method === 'tools/list') {
       listed(session)
-      return result(id, { tools: advertised })
+      return result(id, { tools: server.tools })
     }
     if (method === 'tools/call') {
       await tick()
-      return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal))
+      // Stock Claude Code sends its tool-use identity outside the model's arguments.
+      const toolUse = params?._meta?.['claudecode/toolUseId']
+      const operation = typeof toolUse === 'string' && toolUse ? JSON.stringify(['tool', toolUse]) : session ? JSON.stringify(['mcp', session, id]) : crypto.randomUUID()
+      return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, operation))
     }
     if (method === 'ping') return result(id, {})
     return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })

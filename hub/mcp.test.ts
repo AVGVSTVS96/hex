@@ -1,4 +1,6 @@
 import { expect, test } from 'bun:test'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { existsSync, mkdtempSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -42,9 +44,10 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), 'operati
     open: () => {},
     close: () => {},
   }, store)
-  function call(args: object, gaveUp?: AbortController, name = 'reply'): Promise<Answer> {
-    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: { operation_id: 'report', ...args } } })
-    const headers = { authorization: `Bearer ${TOKEN}`, 'x-hex-channel': 'chat', 'x-hex-thread': '-100:7' }
+  let ids = 0
+  function call(args: object, gaveUp?: AbortController, name = 'reply', identity: { toolUse?: string; session?: string; id?: string | number } = { toolUse: 'report' }): Promise<Answer> {
+    const body = JSON.stringify({ jsonrpc: '2.0', id: identity.id ?? ++ids, method: 'tools/call', params: { name, arguments: args, ...(identity.toolUse && { _meta: { 'claudecode/toolUseId': identity.toolUse } }) } })
+    const headers = { authorization: `Bearer ${TOKEN}`, 'x-hex-channel': 'chat', 'x-hex-thread': '-100:7', ...(identity.session && { 'mcp-session-id': identity.session }) }
     return serve(new Request('http://127.0.0.1/telegram', { method: 'POST', headers, body, signal: gaveUp?.signal })).then(response => response.json() as Promise<Answer>)
   }
   // Resolves once n calls are waiting in the tool.
@@ -80,21 +83,33 @@ test('an operation shares its running result and keeps it after an aborted reque
 })
 
 test('a deliberate identical send uses a new operation id, while a reused id cannot change the call', async () => {
-  const { ran, call, answer } = channel()
-  for (const operation_id of ['first', 'second']) {
-    const sending = call({ text: 'report', operation_id })
+  const { ran, call, answer, serve } = channel()
+  for (const toolUse of ['first', 'second']) {
+    const sending = call({ text: 'report' }, undefined, 'reply', { toolUse })
     await answer()
     await sending
   }
   expect(ran()).toBe(2)
-  expect(text(await call({ text: 'different', operation_id: 'first' }))).toContain('different call')
-  expect(text(await call({ text: 'report', operation_id: '' }))).toContain('supply operation_id')
-  expect(ran()).toBe(2)
+  expect(text(await call({ text: 'different' }, undefined, 'reply', { toolUse: 'first' }))).toContain('different call')
+  const listing = await serve(new Request('http://127.0.0.1/telegram', { method: 'POST', headers: { authorization: `Bearer ${TOKEN}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 99, method: 'tools/list' }) }))
+  expect((await listing.json()).result.tools).toEqual(JSON.parse(JSON.stringify(SERVER.tools)))
+  const transport = { session: 'standard-client', id: 7 }
+  const first = call({ text: 'standard MCP' }, undefined, 'reply', transport)
+  await answer()
+  await first
+  expect(text(await call({ text: 'standard MCP' }, undefined, 'reply', transport))).toBe('sent (id: 5389)')
+  expect(ran()).toBe(3)
+  for (const _ of [1, 2]) {
+    const noSession = call({ text: 'sessionless' }, undefined, 'reply', { id: 1 })
+    await answer()
+    await noSession
+  }
+  expect(ran()).toBe(5)
 })
 
 test('an unfinished persisted operation is uncertain and is never sent again', async () => {
   const { store, call, ran } = channel()
-  store.operation('chat:-100:7', 'report', JSON.stringify(['reply', { text: 'report' }]))
+  store.operation('chat:-100:7', JSON.stringify(['tool', 'report']), JSON.stringify(['reply', { text: 'report' }]))
   expect(text(await call({ text: 'report' }))).toContain('uncertain outcome')
   expect(ran()).toBe(0)
 })
@@ -117,7 +132,7 @@ test("a call whose client left while the hub was too busy to read it doesn't run
   const hub = Bun.serve({ port: 0, fetch: serve })
   const left = join(mkdtempSync(join(tmpdir(), 'mcp-')), 'left')
   try {
-    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reply', arguments: { text: 'report', operation_id: 'report' } } })
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reply', arguments: { text: 'report' }, _meta: { 'claudecode/toolUseId': 'report' } } })
     const headers = { authorization: `Bearer ${TOKEN}`, 'x-hex-channel': 'chat', 'x-hex-thread': '-100:7' }
     const client = `const gaveUp = new AbortController()
       fetch(${JSON.stringify(`http://127.0.0.1:${hub.port}/telegram`)}, { method: 'POST', headers: ${JSON.stringify(headers)}, body: ${JSON.stringify(body)}, signal: gaveUp.signal }).catch(() => {})
@@ -145,7 +160,7 @@ test('a call whose client left while the hub was too busy to send its answer cou
   const left = join(mkdtempSync(join(tmpdir(), 'mcp-')), 'left')
   const gave = `${left}-asked`
   try {
-    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reply', arguments: { text: 'report', operation_id: 'report' } } })
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'reply', arguments: { text: 'report' }, _meta: { 'claudecode/toolUseId': 'report' } } })
     const headers = { authorization: `Bearer ${TOKEN}`, 'x-hex-channel': 'chat', 'x-hex-thread': '-100:7' }
     const client = `const fs = require('fs')
       const gaveUp = new AbortController()
@@ -179,4 +194,16 @@ test('an SDK tool connection never takes the topic delivery stream', async () =>
   expect(response.status).toBe(200)
   expect(opened).toBe(0)
   await response.body!.cancel()
+  const hub = Bun.serve({ port: 0, fetch: serve })
+  const client = new Client({ name: 'stock-mcp-client', version: '1' })
+  try {
+    await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${hub.port}/telegram`), { requestInit: { headers } }))
+    expect((await client.listTools()).tools).toEqual(JSON.parse(JSON.stringify(SERVER.tools)))
+    const reply = await client.callTool({ name: 'reply', arguments: { text: 'ordinary reply without an operation id' } })
+    expect(reply).toMatchObject({ content: [{ type: 'text', text: 'read' }] })
+    expect(opened).toBe(0)
+  } finally {
+    await client.close()
+    hub.stop(true)
+  }
 })

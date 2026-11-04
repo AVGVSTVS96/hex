@@ -2447,13 +2447,13 @@ test('an operation keeps its result across Stop events regardless of elapsed tim
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, call: (_, tool, args) => new Promise(resolve => waiting.push(() => resolve(`${tool} ${args.text}`))) })
   const line = await session('chat:7')
   const kept = async (text: string, stop: object) => {
-    const slow = line.call('reply', { text, operation_id: text })
+    const slow = line.call('reply', { text }, text)
     await until(() => waiting.length)
     await time.advance(150_000)
     waiting.shift()!()
     await slow
     await line.send({ type: 'state', thread: 'chat:7', busy: false, ...stop })
-    const repeat = line.call('reply', { text, operation_id: text })
+    const repeat = line.call('reply', { text }, text)
     const ran = await Promise.race([until(() => waiting.length).then(() => true), repeat.then(() => false)])
     if (ran) waiting.shift()!()
     expect((await repeat).content[0].text).toBe(`reply ${text}`)
