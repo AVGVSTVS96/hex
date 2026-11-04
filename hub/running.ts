@@ -49,17 +49,35 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   return sessions
 }
 
-// The thread a session works for, as <app>:<key>: the one it serves (held maps each thread's
-// session to it), else the one it started for, else the one the session that launched it works
-// for. hex's own helpers, which start with no thread, and whatever they launch, work for none.
-export function serving(session: Session, held: Map<string, string>, sessions = new Map<string, Session>()): string | undefined {
+// Resolve ownership and the highest unheld session together. A T3 boundary makes its
+// handoff authoritative for the whole subtree, including inherited environments.
+export function ownership(session: Session, held: Map<string, string>, sessions: Map<string, Session>, { owners = held, boundary = (_: string) => false, display = (thread: string) => thread } = {}): { thread?: string; top: Session } {
+  const chain: Session[] = []
   const seen = new Set<string>()
-  for (let one: Session | undefined = session; one && !seen.has(one.id); one = one.parent ? sessions.get(one.parent) : undefined) {
-    const thread = held.get(one.id) ?? one.thread
-    if (thread) return thread
-    if (one.helper) return undefined
+  let cyclic = false
+  for (let one: Session | undefined = session; one; one = one.parent ? sessions.get(one.parent) : undefined) {
+    if (seen.has(one.id)) { cyclic = true; break }
     seen.add(one.id)
+    chain.push(one)
+    if (held.has(one.id) || one.helper || boundary(one.id)) break
   }
+  let thread: string | undefined
+  let top = session
+  let parent: Session | undefined
+  let t3 = false
+  for (const one of chain.reverse()) {
+    t3 ||= boundary(one.id)
+    let owner = owners.get(one.id) ?? (one.helper ? undefined : t3 ? thread : one.thread ?? thread)
+    if (owner && !held.has(one.id)) owner = display(owner)
+    if (!parent || held.has(parent.id) || owner !== thread) top = one
+    thread = owner
+    parent = one
+  }
+  return { thread, top: cyclic ? session : top }
+}
+
+export function serving(session: Session, held: Map<string, string>, sessions = new Map<string, Session>()): string | undefined {
+  return ownership(session, held, sessions).thread
 }
 
 // The thread a process works for, as <app>:<key>: the one its hub started its session for, or its
