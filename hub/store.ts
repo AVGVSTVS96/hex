@@ -497,6 +497,17 @@ export class Store {
     return (this.db.query('select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n').all(thread, before, after, last) as Stored[]).map(toRow)
   }
 
+  // When a session last took a message it was sent, rather than one it sent.
+  lastTaken(session: string): string | undefined {
+    return (this.db.query(`select max(taken_at) as at from messages where taken_by = ? and author <> 'hex'`).get(session) as { at: string | null }).at ?? undefined
+  }
+
+  // The session that took the thread's newest message whose meta has this value under key, and when.
+  taker(thread: string, key: string, value: string): { by: string; at: string } | undefined {
+    const row = this.db.query(`select taken_by, taken_at from messages where "to" = ? and json_extract(meta, '$.' || ?) = ? and taken_by is not null order by n desc limit 1`).get(thread, key, value) as { taken_by: string; taken_at: string } | null
+    return row ? { by: row.taken_by, at: row.taken_at } : undefined
+  }
+
   // What a session, or another in its thread, took by a time that no pass has looked over for
   // memories yet, oldest first, leased to the pass that asks: two passes never write about the same
   // message, and one that failed or died midway hands its messages to the next in the thread.

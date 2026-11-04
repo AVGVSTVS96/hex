@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, mkdirSync, openSync, readSync, statSync, watch } from 'fs'
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, statSync, watch } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
 import { toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
@@ -360,7 +360,9 @@ export function followTranscript(path: string, from: number | 'end', onEntry: (e
     )
   }
 
-  return () => {
+  // last: read what the file has that the watcher hasn't brought yet, first.
+  return (last = false) => {
+    if (last) read()
     closed = true
     watcher.close()
   }
@@ -408,46 +410,62 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 // One message sent to a hex thread, followed through its session's transcript: it waits until the
 // session takes in the message carrying `tag`, shows each step after that (its background agents'
 // steps too), and ends when a turn ends with none of those agents still out. A new session for the
-// thread (a renewal or a restart) shows up in hex.db and is followed from its start; so is
-// the first one when following resumes a message sent earlier.
+// thread (a renewal or a restart) shows up in hex.db and is followed from its start, past what it
+// copied when resumed from an earlier one: a copy keeps each entry's uuid and time. Following
+// resumes a message sent earlier from the start of the session that took it, as hex.db has it,
+// then goes on in the thread's session now, if that's another. A session between the two isn't
+// read, though what the session now copied from it is, as its own.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
-  const agents = new Map<string, () => void>()
+  const agents = new Map<string, (last?: boolean) => void>()
   let session: string | undefined
-  let project = ''
-  let stopSession = () => {}
+  let stopSession = (_last?: boolean) => {}
   let picked = false
   let failed = false
   let ended = false
+  // Every entry already read, in this session or one before it, which a copy carries with the same uuid.
+  const seen = new Set<string>()
+  // When the session took the message in: a copy's history from before it keeps its older times.
+  let floor: string | undefined
 
+  const project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
+  const transcript = (id: string) => join(project, `${id}.jsonl`)
   const store = open(thread.state)
+  const taken = resumed ? store.taker(thread.id, 'voice_task', tag) : undefined
+  const took = taken && ID.test(taken.by) && existsSync(transcript(taken.by)) ? taken : undefined
   const stopState = store.watch(locate)
   locate()
 
   function locate() {
-    const next = store.threads({ app: thread.app, open: true }).find(({ thread: id }) => id === thread.id)?.session
+    const current = store.threads({ app: thread.app, open: true }).find(({ thread: id }) => id === thread.id)?.session
+    const next = session === undefined && took ? took.by : current
     if (ended || !next || next === session || !ID.test(next)) return
+    // hex.db can still name the session before the one that took the message, for a moment.
+    if (took && session === took.by && (store.lastTaken(next) ?? took.at) < took.at) return
     const fresh = resumed || session !== undefined
-    stopSession()
+    stopSession(true)
+    if (ended) return
     session = next
-    project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
-    const stop = followTranscript(join(project, `${session}.jsonl`), fresh ? 0 : 'end', take)
+    const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take)
     if (ended) stop()
     else stopSession = stop
+    if (!ended && next !== current) locate()
   }
 
   function take(entry: any, updates: () => Update[]) {
-    if (ended) return
+    if (ended || seen.has(entry.uuid)) return
+    if (entry.uuid) seen.add(entry.uuid)
+    if (floor && entry.timestamp < floor) return
     if (!picked) {
       const text = channelMessage(entry)
       picked = !!text && text.slice(0, text.indexOf('>') + 1).includes(` voice_task="${tag}"`)
+      if (picked) floor = entry.timestamp
       return
     }
     const launched = entry.toolUseResult?.isAsync && entry.toolUseResult.agentId
     if (launched && ID.test(launched) && !agents.has(launched))
       agents.set(launched, followTranscript(join(project, session!, 'subagents', `agent-${launched}.jsonl`), 0, (_, updates) => lines(updates(), onStep)))
-    const back = entry.origin?.kind === 'task-notification' && JSON.stringify(entry.message?.content).match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
-    if (back) {
-      agents.get(back)?.()
+    for (const back of agentsBack(entry)) {
+      agents.get(back)?.(true)
       agents.delete(back)
     }
     if (entry.type === 'assistant') failed = entry.isApiErrorMessage === true
@@ -467,6 +485,19 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   }
 
   return close
+}
+
+// The background agents a session was just told are back, in a turn of its own or queued while a
+// turn ran: each notice in it names one or more in its header, before its status. A notice with
+// no status says they were restarted with their session, and are still out.
+function agentsBack(entry: any): string[] {
+  const queued = entry.attachment?.type === 'queued_command' ? entry.attachment : undefined
+  if ((queued ?? entry).origin?.kind !== 'task-notification' && queued?.commandMode !== 'task-notification') return []
+  const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content) ?? ''
+  return notice.split('<task-notification>').flatMap(block => {
+    const status = block.indexOf('<status>')
+    return status < 0 ? [] : Array.from(block.slice(0, status).matchAll(/<task-id>([\w-]+)<\/task-id>/g), match => match[1])
+  })
 }
 
 // A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its

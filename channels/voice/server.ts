@@ -213,8 +213,8 @@ async function pass(name: string, about: string, text: string, app?: string, whe
   return (await told) ? `${sent}, on the board as ${id}` : `${sent}, on the board as ${id}, but the voice may not have heard of it; the work went out, so it needn't be sent again`
 }
 
-// Work a past call sent out is picked back up when the engine starts, read from the start of its
-// thread's session.
+// Work a past call sent out is picked back up when the engine starts, read from the start of the
+// session that took it.
 function resume() {
   const since = Date.now() - 24 * 60 * 60_000
   for (const { id: call, started } of calls.list()) {

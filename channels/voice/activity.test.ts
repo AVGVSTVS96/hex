@@ -19,6 +19,7 @@ function tool(name: string, input: object) {
 }
 const said = (text: string, extra = {}) => ({ type: 'assistant', message: { id: 'msg_text', content: [{ type: 'text', text }] }, ...extra })
 const ended = { type: 'system', subtype: 'turn_duration' }
+const asked = (tag: string) => ({ type: 'user', origin: { kind: 'channel' }, message: { role: 'user', content: `<channel source="buzz" voice_task="${tag}">look</channel>` } })
 
 function write(path: string, ...entries: object[]) {
   appendFileSync(path, entries.map(entry => JSON.stringify(entry) + '\n').join(''))
@@ -238,6 +239,58 @@ test('a message the thread took while a turn ran, queued as an attachment, is pi
   stop()
 })
 
+test("following a message sent before a restart starts in the session that took it, though the thread has renewed since, and goes on in the new one", () => {
+  threads('buzz', { b3: { name: 'Renewed', session: 'renewed-now' } })
+  const sent = (tag: string, by: string) =>
+    open(state).deliver({ key: `buzz:${tag}`, to: 'b3', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: tag } }, by)
+  sent('call:finished', 'took-it')
+  write(join(project, 'took-it.jsonl'), asked('call:finished'), said('Done before the renewal.'), ended)
+  sent('call:cut-off', 'cut-off')
+  write(join(project, 'cut-off.jsonl'), asked('call:cut-off'), said('Starting on it.'))
+  write(join(project, 'renewed-now.jsonl'), said('Picked it up again.'), ended)
+
+  const finished: object[] = []
+  followThread(findThread(state, 'renewed')!, hex, 'call:finished', true, step => finished.push(step))
+  expect(finished).toEqual([{ line: 'Done before the renewal.' }, { end: 'done' }])
+  const cut: object[] = []
+  const stop = followThread(findThread(state, 'renewed')!, hex, 'call:cut-off', true, step => cut.push(step))
+  expect(cut).toEqual([{ line: 'Starting on it.' }, { line: 'Picked it up again.' }, { end: 'done' }])
+  stop()
+})
+
+// A session resumed from another copies its finished turns, uuids and times and all, then takes the message
+// of the turn that was cut off again and does it over.
+function resumedFrom(tag: string) {
+  const at = (ago: number) => new Date(Date.now() - ago).toISOString()
+  const old = [said('An earlier turn.'), ended, asked(tag), said('Starting on it.')].map((entry, n) => ({ ...entry, uuid: `${tag}-${n}`, timestamp: at(n < 2 ? 60_000 : 0) }))
+  const now = { timestamp: at(0) }
+  return { old, copy: [old[0], old[1], { ...asked(tag), uuid: `${tag}-again`, ...now }, { ...said('Finished it.'), uuid: `${tag}-4`, ...now }, { ...ended, uuid: `${tag}-5`, ...now }] }
+}
+
+test("a session resumed from the one that took the message is followed past what it copied, after a restart or live", async () => {
+  threads('buzz', { b4: { name: 'Copied', session: 'copy-now' } })
+  open(state).deliver({ key: 'buzz:copied', to: 'b4', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:copied' } }, 'copy-old')
+  const restart = resumedFrom('call:copied')
+  write(join(project, 'copy-old.jsonl'), ...restart.old)
+  write(join(project, 'copy-now.jsonl'), ...restart.copy)
+  const resumed: object[] = []
+  followThread(findThread(state, 'copied')!, hex, 'call:copied', true, step => resumed.push(step))
+  expect(resumed).toEqual([{ line: 'Starting on it.' }, { line: 'Finished it.' }, { end: 'done' }])
+
+  threads('buzz', { b6: { name: 'Live copy', session: 'live-old' } })
+  const live = resumedFrom('call:live')
+  write(join(project, 'live-old.jsonl'), live.old[0], live.old[1])
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'live copy')!, hex, 'call:live', false, step => steps.push(step))
+  write(join(project, 'live-old.jsonl'), live.old[2], live.old[3])
+  await until(() => steps.length === 1)
+  write(join(project, 'live-new.jsonl'), ...live.copy)
+  threads('buzz', { b6: { name: 'Live copy', session: 'live-new' } })
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Finished it.' }, { end: 'done' }])
+  stop()
+})
+
 test("a thread's new session is followed from its start, and a turn that ends on an API error fails", async () => {
   threads('discord', { d1: { name: 'Latest Claude', session: 'old' } })
   const steps: object[] = []
@@ -259,4 +312,134 @@ test('following a message sent before a restart reads its thread from the start,
   write(join(project, 'done-already.jsonl'), said('A later turn.'), ended)
   await Bun.sleep(200)
   expect(steps).toHaveLength(2)
+})
+
+test('a transcript stopped for the last time reads what it has that the watcher has not brought yet', () => {
+  const path = join(project, 'last.jsonl')
+  write(path, said('Before.'))
+  const seen: string[] = []
+  const stop = followTranscript(path, 0, entry => seen.push(entry.message.content[0].text))
+  write(path, said('Just written.'))
+  stop(true)
+  expect(seen).toEqual(['Before.', 'Just written.'])
+})
+
+const launched = (agentId: string) => ({ type: 'user', message: { role: 'user', content: [] }, toolUseResult: { isAsync: true, agentId } })
+
+test('an agent that comes back while another turn runs, queued as an attachment, is back', () => {
+  threads('buzz', { b7: { name: 'Agent queued', session: 'agent-queued' } })
+  const notice = { type: 'attachment', attachment: { type: 'queued_command', origin: { kind: 'task-notification' }, prompt: '<task-notification>\n<task-id>agentq</task-id>\n<status>completed</status>' } }
+  write(join(project, 'agent-queued.jsonl'), asked('call:queued-agent'), launched('agentq'), ended, said('Another turn.'), notice, said('It is back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'agent queued')!, hex, 'call:queued-agent', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Another turn.' }, { line: 'It is back.' }, { end: 'done' }])
+})
+
+test('an agent back in the older queued form, by command mode, is back', () => {
+  threads('buzz', { b10: { name: 'Agent queued old', session: 'agent-queued-old' } })
+  const notice = { type: 'attachment', attachment: { type: 'queued_command', commandMode: 'task-notification', prompt: '<task-notification>\n<task-id>agento</task-id>\n<status>completed</status>' } }
+  write(join(project, 'agent-queued-old.jsonl'), asked('call:queued-old'), launched('agento'), ended, said('Another turn.'), notice, said('It is back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'agent queued old')!, hex, 'call:queued-old', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Another turn.' }, { line: 'It is back.' }, { end: 'done' }])
+})
+
+test('a session resumed from an earlier one than the last is followed past what it copied from either', async () => {
+  threads('buzz', { b9: { name: 'Forked', session: 'fork-a' } })
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'forked')!, hex, 'call:fork', false, step => steps.push(step))
+  const a = [said('An earlier turn.'), ended, asked('call:fork'), said('Starting on it.')].map((entry, n) => ({ ...entry, uuid: `fork-a-${n}` }))
+  write(join(project, 'fork-a.jsonl'), ...a)
+  await until(() => steps.length === 1)
+  write(join(project, 'fork-b.jsonl'), { ...said('A fresh session.'), uuid: 'fork-b-0' })
+  threads('buzz', { b9: { name: 'Forked', session: 'fork-b' } })
+  await until(() => steps.length === 2)
+  write(join(project, 'fork-c.jsonl'), ...a, { ...asked('call:fork'), uuid: 'fork-c-0' }, { ...said('Finished it.'), uuid: 'fork-c-1' }, { ...ended, uuid: 'fork-c-2' })
+  threads('buzz', { b9: { name: 'Forked', session: 'fork-c' } })
+  await until(() => steps.length === 4)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'A fresh session.' }, { line: 'Finished it.' }, { end: 'done' }])
+  stop()
+})
+
+test('a session hex.db still names that took messages before the task message was taken is not gone back to', async () => {
+  threads('buzz', { b12: { name: 'Lagging', session: 'lag-old' } })
+  open(state).deliver({ key: 'buzz:lag-other', to: 'b12', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:other' } }, 'lag-old')
+  write(join(project, 'lag-old.jsonl'), asked('call:other'), said('Old history.'), ended)
+  await Bun.sleep(5)
+  open(state).deliver({ key: 'buzz:lag', to: 'b12', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: 'call:lag' } }, 'lag-new')
+  write(join(project, 'lag-new.jsonl'), asked('call:lag'), said('Working on it.'))
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'lagging')!, hex, 'call:lag', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Working on it.' }])
+  write(join(project, 'lag-new.jsonl'), said('Done.'), ended)
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Working on it.' }, { line: 'Done.' }, { end: 'done' }])
+  stop()
+})
+
+test("an agent restarted with its session is still out until it's back", () => {
+  threads('buzz', { b14: { name: 'Agent restarted', session: 'agent-restarted' } })
+  const notice = (status: string) => ({ type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: `<task-notification>\n<task-id>agents1</task-id>\n${status}</task-notification>` } })
+  write(join(project, 'agent-restarted.jsonl'), asked('call:restarted'), launched('agents1'), ended, notice('<summary>Background agent was restarted after the previous session ended</summary>'), said('Waiting on it.'), ended, notice('<status>completed</status>'), said('It is back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'agent restarted')!, hex, 'call:restarted', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Waiting on it.' }, { line: 'It is back.' }, { end: 'done' }])
+})
+
+test('an older session hex.db names is followed again once it takes a message after the task message', async () => {
+  threads('buzz', { b15: { name: 'Back on old', session: 'back-old' } })
+  const sent = (key: string, tag: string, by: string) => open(state).deliver({ key, to: 'b15', from: 'buzz', author: 'other', body: 'look', meta: { user: 'hex voice', voice_task: tag } }, by)
+  sent('buzz:back-before', 'call:before', 'back-old')
+  const then = { timestamp: new Date(Date.now() - 60_000).toISOString() }
+  write(join(project, 'back-old.jsonl'), { ...asked('call:before'), ...then }, { ...said('Earlier.'), ...then }, { ...ended, ...then })
+  await Bun.sleep(5)
+  sent('buzz:back', 'call:back', 'back-cut')
+  write(join(project, 'back-cut.jsonl'), { ...asked('call:back'), timestamp: new Date().toISOString() }, said('Starting on it.'))
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'back on old')!, hex, 'call:back', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Starting on it.' }])
+  await Bun.sleep(5)
+  const now = { timestamp: new Date().toISOString() }
+  write(join(project, 'back-old.jsonl'), { ...asked('call:later'), ...now }, { ...said('Back on the old session.'), ...now }, { ...ended, ...now })
+  sent('buzz:back-later', 'call:later', 'back-old')
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Back on the old session.' }, { end: 'done' }])
+  stop()
+})
+
+test('a live follow skips history older than itself in a session it switches to, though none of it was seen', async () => {
+  threads('buzz', { b16: { name: 'Floor', session: 'floor-a' } })
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'floor')!, hex, 'call:floor', false, step => steps.push(step))
+  const at = (entry: object, ago = 0) => ({ ...entry, timestamp: new Date(Date.now() - ago).toISOString() })
+  write(join(project, 'floor-a.jsonl'), at(asked('call:floor')), at(said('Starting on it.')))
+  await until(() => steps.length === 1)
+  write(join(project, 'floor-b.jsonl'), at(said('Old history.'), 60_000), at(ended, 60_000), at(said('Finished it.')), at(ended))
+  threads('buzz', { b16: { name: 'Floor', session: 'floor-b' } })
+  await until(() => steps.length === 3)
+  expect(steps).toEqual([{ line: 'Starting on it.' }, { line: 'Finished it.' }, { end: 'done' }])
+  stop()
+})
+
+test('one notice naming several agents brings them all back', () => {
+  threads('buzz', { b17: { name: 'Both back', session: 'both-back' } })
+  const notice = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentb1</task-id>\n<task-id>agentb2</task-id>\n<status>failed</status>' } }
+  write(join(project, 'both-back.jsonl'), asked('call:both'), launched('agentb1'), launched('agentb2'), ended, notice, said('Both are back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'both back')!, hex, 'call:both', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Both are back.' }, { end: 'done' }])
+})
+
+test('of several notices in one message, each one with a status brings its agents back, and a restart notice none', () => {
+  threads('buzz', { b18: { name: 'Notices', session: 'notices' } })
+  const notices = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: [
+    { type: 'text', text: '<task-notification>\n<task-id>agentn1</task-id>\n<summary>Background agent was restarted after the previous session ended</summary>\n</task-notification>' },
+    { type: 'text', text: '<task-notification>\n<task-id>agentn2</task-id>\n<status>completed</status>\n</task-notification>' },
+    { type: 'text', text: '<task-notification>\n<task-id>agentn3</task-id>\n<status>completed</status>\n</task-notification>' },
+  ] } }
+  const back = { type: 'user', origin: { kind: 'task-notification' }, message: { role: 'user', content: '<task-notification>\n<task-id>agentn1</task-id>\n<status>completed</status>' } }
+  write(join(project, 'notices.jsonl'), asked('call:notices'), launched('agentn1'), launched('agentn2'), launched('agentn3'), ended, notices, said('Two are back.'), ended, back, said('All back.'), ended)
+  const steps: object[] = []
+  followThread(findThread(state, 'notices')!, hex, 'call:notices', true, step => steps.push(step))
+  expect(steps).toEqual([{ line: 'Two are back.' }, { line: 'All back.' }, { end: 'done' }])
 })
