@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import type { Mark, Moment, Speaker } from './call.ts'
 import { Changes } from './changes.ts'
@@ -47,6 +47,11 @@ export function ending(reason: string, by?: string): Ending {
 }
 
 export class CallLog extends Changes {
+  // Each file's summary by when it last changed: the list is read on every change to a live call
+  // while the app waits on it, and parsing every past call's whole record each time stalls the
+  // engine, phone audio and all.
+  private summaries = new Map<string, { stamp: string; summary: CallSummary }>()
+
   constructor(private dir: string) {
     super()
     mkdirSync(dir, { recursive: true })
@@ -56,6 +61,7 @@ export class CallLog extends Changes {
     const file = this.file(record.id)
     writeFileSync(`${file}.tmp`, JSON.stringify(record))
     renameSync(`${file}.tmp`, file)
+    this.summaries.set(record.id, { stamp: stamp(file)!, summary: summary(record) })
     this.changed()
   }
 
@@ -69,6 +75,7 @@ export class CallLog extends Changes {
   delete(id: string) {
     if (!this.get(id)) return false
     rmSync(this.file(id))
+    this.summaries.delete(id)
     this.changed()
     return true
   }
@@ -76,8 +83,16 @@ export class CallLog extends Changes {
   list(): CallSummary[] {
     return readdirSync(this.dir)
       .flatMap(name => {
-        const record = name.endsWith('.json') && this.get(name.slice(0, -5))
-        return record ? [summary(record)] : []
+        const id = name.slice(0, -5)
+        if (!name.endsWith('.json') || !ID.test(id)) return []
+        const now = stamp(this.file(id))
+        const known = this.summaries.get(id)
+        if (now && known?.stamp === now) return [known.summary]
+        const record = this.get(id)
+        if (!record || !now) return []
+        const listed = summary(record)
+        this.summaries.set(id, { stamp: now, summary: listed })
+        return [listed]
       })
       .sort((a, b) => b.started.localeCompare(a.started))
   }
@@ -85,6 +100,13 @@ export class CallLog extends Changes {
   private file(id: string) {
     return join(this.dir, `${id}.json`)
   }
+}
+
+function stamp(file: string) {
+  try {
+    const { mtimeMs, size } = statSync(file)
+    return `${mtimeMs} ${size}`
+  } catch {}
 }
 
 export function summary({ turns, tasks, moments, ...call }: CallRecord): CallSummary {
