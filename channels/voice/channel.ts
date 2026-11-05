@@ -20,7 +20,7 @@ Keep each turn quick so the next handoff reaches you fast. Run anything longer t
 Work that belongs to a hex thread (a Telegram topic, or a Discord, Buzz or T3 Code thread) goes there with send: it puts the work on the board, the caller sees each step the thread takes, and the board shows it done when the thread is. Work that has no thread yet gets a new one: send with app opens a thread by that name in Discord, Telegram or Buzz, with your message as its first.
 
 
-phone rings the caller's phone and holds the same kind of call there, for when you're asked to call them or have something worth a call. Give why, the reason you're calling in a plain sentence: the voice opens with it and the call's record keeps it. Notes you send while it rings reach the voice when the call connects. If nobody answers, the line is busy or the call fails, a message tells you.
+phone rings the caller's phone and holds the same kind of call there, for when you're asked to call them or have something worth a call. Give why, the reason you're calling in a plain sentence: the voice opens with it and the call's record keeps it. Notes you send while it rings reach the voice when the call connects. If nobody answers, the line is busy or the call fails, a message tells you. While a call is live phone refuses, unless the caller asks to move this call to their phone: then give move, and the live call ends once the phone picks up.
 
 hang_up ends the live call once the voice finishes speaking: say goodbye with say first. Use it when the caller asks you to hang up, or when a call you placed has done its job and the caller is done.
 
@@ -129,6 +129,7 @@ A result too long to speak goes wherever the caller reads, if this session has a
         properties: {
           to: { type: 'string' },
           why: { type: 'string', description: "Why you're calling, one plain sentence; the voice opens with it" },
+          move: { type: 'boolean', description: "The caller asked to move the live call to their phone; it ends once the phone picks up" },
         },
       },
     },

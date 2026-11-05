@@ -80,7 +80,10 @@ export type View = {
   fresh: (Fresh & { read: boolean })[]
   check: { at: string; why: string; fixed: number; flagged: number } | null
 }
-type Marks = { answers: Record<string, Answer>; sent: Record<string, string>; dismissed: Record<string, string>; read: Record<string, string> }
+// reopened: copies of a check's ask that an undo gave their buttons back after a later check let
+// the ask go, by its id, with its question, so they stay one ask until a check lists them again.
+type Reopened = { refs: Ref[]; question?: string; at: string }
+type Marks = { answers: Record<string, Answer>; sent: Record<string, string>; dismissed: Record<string, string>; read: Record<string, string>; reopened: Record<string, Reopened> }
 
 const KEEP = 14 * 24 * 60 * 60_000
 const CALLS = join(homedir(), '.claude', 'channels', 'voice', 'calls')
@@ -159,7 +162,8 @@ export class Questions extends Changes {
   // its copies under an id of its own: answering it by the old id answers the check's.
   private renamed(id: string): string | undefined {
     if (this.view.asks.some(question => question.id === id)) return
-    return this.result?.asks.find((question: Written) => question.refs?.some(ref => refId(ref) === id))?.id
+    const copies = new Set([id, ...(this.marks.reopened[id]?.refs ?? []).map(refId)])
+    return this.result?.asks.find((question: Written) => question.refs?.some(ref => copies.has(refId(ref))))?.id
   }
 
   private listed(id: string) {
@@ -281,12 +285,19 @@ export class Questions extends Changes {
       const curated = this.result?.asks.find(question => question.id === id)
       const failed: unknown[] = []
       const stuck: Ref[] = []
+      const reopened: Ref[] = []
       let did = false
       for (const ref of refs)
         await relay(this.state, ref.app, { type: 'reopen', thread: ref.thread, message: ref.message, via }).then(
-          () => ((did = true), marks.forEach(mark => (mark.refs = mark.refs?.filter(done => refId(done) !== refId(ref))))),
+          () => ((did = true), reopened.push(ref), marks.forEach(mark => (mark.refs = mark.refs?.filter(done => refId(done) !== refId(ref))))),
           error => (failed.push(error), stuck.push(ref)),
         )
+      if (!curated && reopened.some(ref => refId(ref) !== id)) {
+        const kept = this.marks.reopened[id]
+        // An ask undone again reopens the copies it kept: each stays one copy.
+        const refs = [...new Map([...(kept?.refs ?? []), ...reopened].map(ref => [refId(ref), ref])).values()]
+        this.marks.reopened[id] = { refs, question: taken?.question ?? kept?.question, at: now() }
+      }
       const said = new Set<string>()
       for (const mark of marks) {
         mark.question ??= curated?.question
@@ -343,6 +354,7 @@ export class Questions extends Changes {
   private refs(id: string): Ref[] {
     const curated = this.result?.asks.find(question => question.id === id)
     if (curated) return curated.refs ?? []
+    if (this.marks.reopened[id]) return this.marks.reopened[id].refs
     for (const [app, questions] of this.ledgers) {
       const asked = questions.find(question => refId({ app, ...question }) === id)
       if (asked) return [{ app, thread: asked.thread, message: asked.message }]
@@ -488,6 +500,13 @@ export class Questions extends Changes {
       const live = question.refs?.length ? question.refs.some(ref => this.open(ref)) : !this.marks.answers[question.id]
       return live ? [this.dress(question)] : []
     })
+    const reopened = Object.entries(this.marks.reopened).flatMap(([id, { refs, question }]) => {
+      const open = refs.filter(ref => this.open(ref))
+      if (!open[0] || refs.some(ref => used.has(refId(ref)))) return []
+      for (const ref of refs) used.add(refId(ref))
+      const asked = fromLedger(open[0].app, this.asked(open[0])!)
+      return [this.dress({ ...asked, id, refs, from: refs, ...(question && { question }) })]
+    })
     const raw = [...this.ledgers].flatMap(([app, questions]) =>
       questions
         .filter(question => !question.answer && !question.settled && !used.has(refId({ app, ...question })))
@@ -499,7 +518,7 @@ export class Questions extends Changes {
       .filter(item => !this.marks.dismissed[item.id])
       .map(item => ({ ...item, ...(this.marks.sent[item.id] && { sent: this.marks.sent[item.id] }) }))
     const view: Omit<View, 'version'> = {
-      asks: [...raw.filter(question => question.at > checked), ...curated, ...raw.filter(question => question.at <= checked)],
+      asks: [...raw.filter(question => question.at > checked), ...curated, ...reopened, ...raw.filter(question => question.at <= checked)],
       stuck,
       fresh: this.t3.fresh.map(item => ({ ...item, read: !!this.marks.read[item.id] })),
       check: this.result ? { at: this.result.at, why: this.result.why, fixed: this.result.fixed.length, flagged: this.result.flagged.length } : null,
@@ -694,7 +713,7 @@ export function clip(text: string, max: number) {
 
 function readMarks(file: string): Marks {
   const marks = readJson(file) ?? {}
-  return { answers: marks.answers ?? {}, sent: marks.sent ?? {}, dismissed: marks.dismissed ?? {}, read: marks.read ?? {} }
+  return { answers: marks.answers ?? {}, sent: marks.sent ?? {}, dismissed: marks.dismissed ?? {}, read: marks.read ?? {}, reopened: marks.reopened ?? {} }
 }
 
 function stampOf(path: string) {

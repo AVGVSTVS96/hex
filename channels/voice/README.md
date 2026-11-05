@@ -418,7 +418,10 @@ work exactly as on the page. `phone` takes `why`, the reason Claude is
 calling, which the voice opens with; notes Claude sends while it rings reach
 the voice when the call connects, and Twilio reports how each placed call
 ended to a signed status callback, so an unanswered or failed call is saved
-and Claude hears about it.
+and Claude hears about it. While a call is live, only a move rings: **Call my
+phone**, or `phone` with `move`, rings the caller's phone, and the call there
+takes over once it picks up. Any other call hex places is refused then, and
+one that picks up once a call is live, as a voicemail can, is let go.
 
 ```
 phone ◄── PSTN ──► Twilio ── Media Stream (wss) ──► engine /twilio/<one-time token>
@@ -435,6 +438,7 @@ TWILIO_AUTH_TOKEN=...
 TWILIO_NUMBER=+1...                       # your Twilio number, the caller ID
 CALLER_NUMBER=+1...                       # who "call me" rings
 VOICE_PUBLIC_URL=host.example.com         # public HTTPS host that reaches /twilio on VOICE_PORT
+TWILIO_BASE_URL=...                       # optional: another endpoint for Twilio's REST API; https://api.twilio.com if unset
 ```
 
 Twilio has to reach `/twilio` from the internet, for example with

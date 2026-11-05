@@ -1,18 +1,22 @@
-import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readSync, statSync, watch } from 'fs'
+import { existsSync, mkdirSync, statSync, watch } from 'fs'
+import * as fs from 'fs/promises'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
 import { toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
 import type { SessionNotification, ToolCall } from '@agentclientprotocol/sdk'
+import { running } from '../../hub/running.ts'
 import { open } from '../../hub/store.ts'
 
 export type Update = SessionNotification['update']
 export type Step = { line?: string; end?: 'done' | 'failed' }
 export type Thread = { app: string; id: string; name: string; cwd?: string; state: string }
 
-const projects = () => join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects')
+const claude = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+const projects = () => join(claude(), 'projects')
 const client = { sessionUpdate: async () => {} } as unknown as Parameters<typeof toAcpNotifications>[4]
 const logger = { log: () => {}, error: (...args: unknown[]) => process.stderr.write(`voice: activity: ${args.join(' ')}\n`) }
 const ID = /^[\w-]+$/
+const CHUNK = 1 << 20
 
 export type Kind = 'think' | 'say' | 'plan' | 'run' | 'read' | 'edit' | 'search' | 'web' | 'agent' | 'tool'
 export type State = 'running' | 'done' | 'failed'
@@ -303,9 +307,11 @@ export function unmark(text: string) {
 }
 
 // Follows one Claude Code transcript as Claude Code writes it (a file change, not a timer), from
-// a byte offset or its end: every new line, and the ACP updates its assistant content and tool
-// results make, converted when asked for. A line cut in half by the offset is skipped.
-export function followTranscript(path: string, from: number | 'end', onEntry: (entry: any, updates: () => Update[]) => void) {
+// a byte offset or its end, once after has settled: every new line, and the ACP updates its assistant
+// content and tool results make, converted when asked for. A line cut in half by the offset is
+// skipped. It reads a chunk at a time, off the thread, so a long transcript never holds up the
+// process, and one read at a time, so lines come in order.
+export function followTranscript(path: string, from: number | 'end', onEntry: (entry: any, updates: () => Update[]) => void, after: Promise<unknown> = Promise.resolve()) {
   const tools = {}
   const tasks = new Map()
   let offset = from === 'end' ? sizeOf(path) : from
@@ -313,28 +319,30 @@ export function followTranscript(path: string, from: number | 'end', onEntry: (e
   let closed = false
   mkdirSync(dirname(path), { recursive: true })
   const watcher = watch(dirname(path), (_, file) => file === basename(path) && read())
+  let reading = after.then(() => {})
   read()
 
   function read() {
+    return (reading = reading.then(more).catch(error => logger.error(`couldn't read ${path}: ${error}`)))
+  }
+
+  async function more() {
     if (closed) return
-    let fd
+    const file = await fs.open(path, 'r').catch(() => undefined)
+    if (!file) return
     try {
-      fd = openSync(path, 'r')
-    } catch {
-      return
-    }
-    try {
-      const size = fstatSync(fd).size
-      if (size <= offset) return
-      const chunk = Buffer.alloc(size - offset)
-      readSync(fd, chunk, 0, chunk.length, offset)
-      offset = size
-      const data = Buffer.concat([rest, chunk])
-      const last = data.lastIndexOf(10)
-      rest = data.subarray(last + 1)
-      if (last >= 0) for (const line of data.subarray(0, last).toString('utf8').split('\n')) if (!closed) take(line)
+      for (const { size } = await file.stat(); offset < size && !closed; ) {
+        const chunk = Buffer.alloc(Math.min(size - offset, CHUNK))
+        const { bytesRead } = await file.read(chunk, 0, chunk.length, offset)
+        if (!bytesRead) return
+        offset += bytesRead
+        const data = Buffer.concat([rest, chunk.subarray(0, bytesRead)])
+        const last = data.lastIndexOf(10)
+        rest = data.subarray(last + 1)
+        if (last >= 0) for (const line of data.subarray(0, last).toString('utf8').split('\n')) if (!closed) take(line)
+      }
     } finally {
-      closeSync(fd)
+      await file.close()
     }
   }
 
@@ -360,11 +368,11 @@ export function followTranscript(path: string, from: number | 'end', onEntry: (e
     )
   }
 
-  // last: read what the file has that the watcher hasn't brought yet, first.
-  return (last = false) => {
-    if (last) read()
-    closed = true
+  // last: read what the file has that the watcher hasn't brought yet, first; it settles once read.
+  return (last = false): Promise<void> => {
     watcher.close()
+    if (!last) closed = true
+    return read().then(() => void (closed = true))
   }
 }
 
@@ -416,9 +424,9 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 // then goes on in the thread's session now, if that's another. A session between the two isn't
 // read, though what the session now copied from it is, as its own.
 export function followThread(thread: Thread, hexDir: string, tag: string, resumed: boolean, onStep: (step: Step) => void) {
-  const agents = new Map<string, (last?: boolean) => void>()
+  const agents = new Map<string, (last?: boolean) => Promise<void>>()
   let session: string | undefined
-  let stopSession = (_last?: boolean) => {}
+  let stopSession = (_last?: boolean) => Promise.resolve()
   let picked = false
   let failed = false
   let ended = false
@@ -426,13 +434,15 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   const seen = new Set<string>()
   // When the session took the message in: a copy's history from before it keeps its older times.
   let floor: string | undefined
+  // When hex's record last said the session's turn ended, as of the last look.
+  let turnEnd: string | undefined
 
   const project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
   const transcript = (id: string) => join(project, `${id}.jsonl`)
   const store = open(thread.state)
   const taken = resumed ? store.taker(thread.id, 'voice_task', tag) : undefined
   const took = taken && ID.test(taken.by) && existsSync(transcript(taken.by)) ? taken : undefined
-  const stopState = store.watch(locate)
+  const stopState = store.watch(() => (locate(), died()))
   locate()
 
   function locate() {
@@ -442,10 +452,10 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     // hex.db can still name the session before the one that took the message, for a moment.
     if (took && session === took.by && (store.lastTaken(next) ?? took.at) < took.at) return
     const fresh = resumed || session !== undefined
-    stopSession(true)
-    if (ended) return
+    const read = stopSession(true)
     session = next
-    const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take)
+    turnEnd = undefined
+    const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take, read)
     if (ended) stop()
     else stopSession = stop
     if (!ended && next !== current) locate()
@@ -474,6 +484,22 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
       close()
       onStep({ end: failed ? 'failed' : 'done' })
     }
+  }
+
+  // A session that dies mid-turn never ends it in its transcript: the hub ends it in hex's record
+  // once the session is gone, and the work it was on failed.
+  function died() {
+    if (ended || !picked || !session) return
+    const end = store.turn(session).ended
+    if (end === turnEnd) return
+    turnEnd = end
+    if (!end || running(store, claude()).has(session)) return
+    const dead = session
+    void stopSession(true).then(() => {
+      if (ended || session !== dead) return
+      close()
+      onStep({ end: 'failed' })
+    })
   }
 
   function close() {

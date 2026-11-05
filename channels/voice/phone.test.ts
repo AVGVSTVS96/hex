@@ -22,7 +22,10 @@ async function phoneCall({ late = false } = {}) {
   const starts: (() => void)[] = []
   // Each session.close OpenAI got, and whether its socket is still open.
   const closes: string[] = []
+  // What the voice was told with note or say, as each session got it.
+  const told: { session: string; content: string }[] = []
   let connected = 0
+  let sessions = 0
   const openai = Bun.serve({
     port: 0,
     fetch: (request, server) => (server.upgrade(request) ? undefined : new Response('no', { status: 400 })),
@@ -32,9 +35,16 @@ async function phoneCall({ late = false } = {}) {
         connected++
       },
       close: () => void connected--,
-      message(socket, raw) {
+      message(socket: Bun.ServerWebSocket<{ id?: string }>, raw) {
         const event = JSON.parse(String(raw))
-        const begin = () => socket.send(JSON.stringify({ type: 'session.started', session: { id: 'sess_phone', expires_at: Date.now() / 1000 + 3600 } }))
+        const begin = () => {
+          socket.data = { id: ++sessions === 1 ? 'sess_phone' : `sess_phone_${sessions}` }
+          socket.send(JSON.stringify({ type: 'session.started', session: { id: socket.data.id, expires_at: Date.now() / 1000 + 3600 } }))
+        }
+        if (/^session\.(thinking|commentary)\.append$/.test(event.type)) {
+          told.push({ session: socket.data?.id ?? '', content: event.content })
+          socket.send(JSON.stringify({ type: `${event.type}ed`, client_event_id: event.event_id }))
+        }
         if (event.type === 'session.start') late ? starts.push(begin) : begin()
         if (event.type === 'session.close') closes.push(event.event_id)
         if (event.type === 'session.input_audio.append') audio.push(event.audio)
@@ -42,15 +52,25 @@ async function phoneCall({ late = false } = {}) {
       },
     },
   })
+  // Twilio's REST API: each call placed, by the token its TwiML URL carries.
+  const placed: string[] = []
+  const twilio = Bun.serve({
+    port: 0,
+    fetch: async request => {
+      const url = (await request.formData()).get('Url')
+      placed.push(String(url).match(/\/twilio\/([\w-]+)\/twiml$/)![1]!)
+      return Response.json({ sid: `CA${placed.length}` }, { status: 201 })
+    },
+  })
   writeFileSync(
     join(state, '.env'),
-    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`].join('\n'),
+    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`, `TWILIO_BASE_URL=http://127.0.0.1:${twilio.port}`].join('\n'),
   )
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
   const hex = join(home, 'hex', 'state')
   mkdirSync(hex, { recursive: true })
   // The hub's side, as lines on stdout; a renewal holds until the test writes a line to stdin.
-  const engine = `import { serve } from ${JSON.stringify(join(import.meta.dir, 'server.ts'))}
+  const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, 'server.ts'))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 const lines = console[Symbol.asyncIterator]()
 const server = serve({
@@ -60,11 +80,15 @@ const server = serve({
   renewal: async () => (step('renewal'), await lines.next()),
   session: () => 'brain',
 }, ${JSON.stringify(hex)})
-step('listening', { port: server.port })`
+const tools = Bun.serve({ port: 0, fetch: async request => {
+  const { name, args } = await request.json()
+  return tool(name, args).then(result => Response.json({ result }), error => Response.json({ error: error.message }))
+} })
+step('listening', { port: server.port, tools: tools.port })`
   const plugin = Bun.spawn(['bun', '-e', engine], { env: { ...env, HOME: home }, stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
   const steps: any[] = []
-  let listening!: (port: number) => void
-  const port = new Promise<number>(resolve => (listening = resolve))
+  let listening!: (ports: { port: number; tools: number }) => void
+  const port = new Promise<{ port: number; tools: number }>(resolve => (listening = resolve))
   void (async () => {
     let buffer = ''
     for await (const chunk of plugin.stdout) {
@@ -72,7 +96,7 @@ step('listening', { port: server.port })`
       const lines = buffer.split('\n')
       buffer = lines.pop()!
       for (const step of lines.map(line => JSON.parse(line))) {
-        if (step.step === 'listening') listening(step.port)
+        if (step.step === 'listening') listening(step)
         else steps.push(step)
       }
     }
@@ -80,19 +104,25 @@ step('listening', { port: server.port })`
   const exited = plugin.exited.then(code => Promise.reject(new Error(`the engine exited (${code}) before it listened`)))
   const listened = await Promise.race([port, exited]).catch(error => {
     openai.stop(true)
+    twilio.stop(true)
     rmSync(home, { recursive: true, force: true })
     throw error
   })
-  const base = `http://127.0.0.1:${listened}`
+  const base = `http://127.0.0.1:${listened.port}`
   return {
     base,
     audio,
     steps,
     closes,
+    told,
+    placed,
+    tool: (name: string, args: object = {}): Promise<{ result?: string; error?: string }> =>
+      fetch(`http://127.0.0.1:${listened.tools}`, { method: 'POST', body: JSON.stringify({ name, args }) }).then(r => r.json()),
     connected: () => connected,
     starting: () => until(() => starts.length),
     start: () => starts.splice(0).forEach(begin => begin()),
     renewed: () => (plugin.stdin.write('renewed\n'), plugin.stdin.flush()),
+    speak: (delta: string) => voice!.send(JSON.stringify({ type: 'session.output_audio.delta', delta })),
     delegate: (id: string, offset_ms: number) => voice!.send(JSON.stringify({ type: 'session.delegation.created', delegation: { id, target: 'client' }, offset_ms })),
     say: (who: 'you' | 'voice', delta: string, start_ms: number) =>
       voice!.send(JSON.stringify({ type: who === 'you' ? 'session.input_transcript.delta' : 'session.output_transcript.delta', delta, start_ms, end_ms: start_ms + 300 })),
@@ -100,6 +130,7 @@ step('listening', { port: server.port })`
       plugin.kill()
       await plugin.exited
       openai.stop(true)
+      twilio.stop(true)
       rmSync(home, { recursive: true, force: true })
     },
   }
@@ -113,6 +144,15 @@ async function dialIn(base: string, { start = true } = {}) {
   const phone = new WebSocket(`${base.replace('http', 'ws')}/twilio/${token}`)
   await new Promise(resolve => (phone.onopen = resolve))
   if (start) phone.send(JSON.stringify({ event: 'start', start: { streamSid: 'MZ1' } }))
+  return phone
+}
+
+// A call hex placed, picked up: Twilio fetches its TwiML and opens its stream.
+async function pickedUp(base: string, token: string) {
+  await fetch(`${base}/twilio/${token}/twiml`, { method: 'POST' })
+  const phone = new WebSocket(`${base.replace('http', 'ws')}/twilio/${token}`)
+  await new Promise(resolve => (phone.onopen = resolve))
+  phone.send(JSON.stringify({ event: 'start', start: { streamSid: 'MZ2' } }))
   return phone
 }
 
@@ -169,6 +209,117 @@ test("a phone call's words reach the app as they're heard, and how it ended land
   expect(ended.version).toBeUndefined()
   expect(ended.turns).toHaveLength(2)
   expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBeUndefined()
+}, 20_000)
+
+test("the caller talking over the voice clears what Twilio hasn't played yet, but not the words it's answering, however late they come", async () => {
+  await using call = await phoneCall()
+  const phone = await dialIn(call.base)
+  const id = await live(call.base)
+  const heard: any[] = []
+  phone.onmessage = ({ data }) => heard.push(JSON.parse(String(data)))
+  const clears = () => heard.filter(message => message.event === 'clear')
+  const recorded = (text: string) => listen(call.base, id, 0, record => record.turns.some((turn: any) => turn.text.includes(text)))
+
+  call.speak('AAAA')
+  call.speak('BBBB')
+  await until(() => heard.filter(message => message.event === 'mark').length === 2)
+  expect(heard.map(message => message.event)).toEqual(['media', 'mark', 'media', 'mark'])
+  expect(heard[0]).toEqual({ event: 'media', streamSid: 'MZ1', media: { payload: 'AAAA' } })
+  call.say('voice', 'The build is green, ', 500)
+  call.say('you', 'is the build green?', 100)
+  await recorded('is the build green?')
+  expect(clears()).toEqual([])
+
+  // Listening while it talks, or a fragment with no words in it, clears nothing.
+  call.say('you', 'Mm-hmm. ', 800)
+  call.say('you', ' ', 900)
+  call.say('you', 'Yeah, okay.', 950)
+  await recorded('Yeah, okay.')
+  expect(clears()).toEqual([])
+
+  call.say('you', 'wait, ', 1000)
+  await until(() => clears().length)
+  expect(clears()).toEqual([{ event: 'clear', streamSid: 'MZ1' }])
+
+  // Twilio hands back every mark the clear dropped; with nothing left unplayed, more words clear nothing.
+  for (let i = 0; i < 2; i++) phone.send(JSON.stringify({ event: 'mark', streamSid: 'MZ1', mark: { name: 'voice' } }))
+  await Bun.sleep(100)
+  call.say('you', 'stop.', 1300)
+  await recorded('stop.')
+  expect(clears()).toHaveLength(1)
+}, 20_000)
+
+test('hex never rings while a call is live, and a call it placed that picks up once one is live, as a voicemail can, is let go', async () => {
+  await using call = await phoneCall()
+  expect((await call.tool('phone', { why: 'a reminder' })).result).toStartWith('ringing')
+  await dialIn(call.base)
+  const id = await live(call.base)
+  call.renewed()
+  expect((await call.tool('phone', { why: 'another reminder' })).error).toContain('a call is live')
+  expect(call.placed).toHaveLength(1)
+
+  const voicemail = await pickedUp(call.base, call.placed[0]!)
+  await new Promise(resolve => (voicemail.onclose = resolve))
+  const missed = await until(() => call.steps.find(step => step.step === 'deliver' && step.content.startsWith('Your phone call')))
+  expect(missed.content).toContain('another call was live')
+  expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe(id)
+}, 20_000)
+
+test("Call my phone moves the live call: the phone rings past the live call, and once it picks up the old call ends as moved", async () => {
+  await using call = await phoneCall()
+  await dialIn(call.base)
+  const id = await live(call.base)
+  call.renewed()
+  const moving = await fetch(`${call.base}/phone`, { method: 'POST' })
+  expect(await moving.text()).toStartWith(`ringing ${CALLER}`)
+
+  const { version } = await fetch(`${call.base}/calls/${id}`).then(r => r.json())
+  await pickedUp(call.base, call.placed[0]!)
+  expect(await listen(call.base, id, version, call => !!call.ended)).toMatchObject({ end: 'you', reason: 'moved to a new call' })
+  expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe('sess_phone_2')
+}, 20_000)
+
+test("phone moves the live call only with move, and only to the caller's own phone", async () => {
+  await using call = await phoneCall()
+  await dialIn(call.base)
+  await live(call.base)
+  call.renewed()
+  expect((await call.tool('phone', { move: true, to: '+15550003333' })).error).toContain("only to the caller's own phone")
+  expect((await call.tool('phone', { why: 'a reminder' })).error).toContain('a call is live')
+  expect((await call.tool('phone', { move: true })).result).toStartWith(`ringing ${CALLER}`)
+  expect(call.placed).toHaveLength(1)
+}, 20_000)
+
+test("while hex is on a call it placed to someone else, a call meant for the owner waits for it to end instead of going to them", async () => {
+  await using call = await phoneCall()
+  expect((await call.tool('phone', { to: '+15550003333', why: 'book a table' })).result).toStartWith('ringing')
+  await pickedUp(call.base, call.placed[0]!)
+  await live(call.base)
+  call.renewed()
+  const { error } = await call.tool('phone', { why: 'a reminder' })
+  expect(error).toContain('a call to +15550003333 is live')
+  expect(error).toContain('ring again once it ends')
+  expect((await call.tool('phone', { move: true })).error).toContain('on a call to +15550003333')
+  expect(call.placed).toHaveLength(1)
+}, 20_000)
+
+test('notes sent while a placed call rings reach that call when it connects, and never one the caller started meanwhile', async () => {
+  await using call = await phoneCall()
+  await call.tool('phone', { why: 'a reminder' })
+  expect((await call.tool('note', { text: 'for the call hex placed' })).result).toContain('still ringing')
+  await dialIn(call.base)
+  await live(call.base)
+  call.renewed()
+  expect((await call.tool('note', { text: 'for this call' })).result).toBe('noted')
+  expect(call.told).toEqual([{ session: 'sess_phone', content: 'for this call' }])
+}, 20_000)
+
+test('notes sent while a placed call rings reach the voice once it picks up', async () => {
+  await using call = await phoneCall()
+  await call.tool('phone', { why: 'a reminder' })
+  await call.tool('note', { text: 'the build is green' })
+  await pickedUp(call.base, call.placed[0]!)
+  expect(await until(() => call.told[0])).toEqual({ session: 'sess_phone', content: 'the build is green' })
 }, 20_000)
 
 test("a call's words reach the voice session only once the last call's renew is through, in order, and its end lets the session renew", async () => {
