@@ -651,12 +651,12 @@ export function fromLedger(app: string, asked: Asked): Curated {
   }
 }
 
-// A pinned post's waiting part: the paragraphs of its note that say what's on the owner, or the whole
-// note when none does.
+// A pinned post's waiting part: the paragraphs of its note that say what's on the owner, or, when
+// none does, its first paragraph, which says what the project is.
 function waiting(note: string) {
   const parts = note.trim().split(/\n\s*\n/)
   const theirs = parts.filter(part => /\bon you\b/i.test(part))
-  return (theirs.length ? theirs : parts).join('\n\n')
+  return (theirs.length ? theirs : parts.slice(0, 1)).join('\n\n')
 }
 
 function refId({ app, thread, message }: Ref) {

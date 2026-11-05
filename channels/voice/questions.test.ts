@@ -164,6 +164,7 @@ test("the check's asks read their words from their first place that has them: a 
   ])
   ledger([asked(9, 'Caddy or Tailscale?', ['Caddy', 'Tailscale'], { at: '2026-10-13T19:00:00.000Z' })], {
     [GROUP]: { message: 40, text: 'Pages', at: '2026-10-13T10:00:00.000Z', note: 'Pages live.\n\nOn you:\n• Pick a host' },
+    [DESK]: { message: 41, text: 'Desk', at: '2026-10-13T10:00:00.000Z', note: 'Desk: the help site.\n\n1. ✓ Ship it\n2. Docs' },
   })
   const ask = (id: string, from: object[]) => ({ id, kind: 'pick', task: `telegram:${DESK}`, at: '2026-10-13T00:00:00.000Z', question: id, options: [{ label: 'Ok' }], from })
   writeFileSync(
@@ -179,6 +180,7 @@ test("the check's asks read their words from their first place that has them: a 
         ask('check:question', [{ app: 'telegram', thread: DESK }, { app: 'telegram', thread: DESK, message: 404 }, { app: 'telegram', thread: DESK, message: 9 }]),
         ask('check:message', [{ app: 'telegram', thread: DESK, message: 70 }]),
         ask('check:pin', [{ app: 'telegram', thread: GROUP, message: 40 }]),
+        ask('check:plan', [{ app: 'telegram', thread: DESK, message: 41 }]),
         ask('check:call', [{ app: 'voice', call: 'live_1' }]),
       ],
     }),
@@ -187,6 +189,7 @@ test("the check's asks read their words from their first place that has them: a 
   expect(questions.words('check:question')).toEqual({ place: 'desk', at: '2026-10-13T19:00:00.000Z', text: 'Caddy gives a short domain.\n\nWhich one serves the pages?\n\nCaddy or Tailscale?' })
   expect(questions.words('check:message')).toEqual({ place: 'desk', at: '2026-10-13T18:25:00.000Z', text: 'Caddy gives a short domain.\n\nWhich one serves the pages?' })
   expect(questions.words('check:pin')).toEqual({ place: 'General', at: '2026-10-13T10:00:00.000Z', text: 'On you:\n• Pick a host' })
+  expect(questions.words('check:plan')).toEqual({ place: 'desk', at: '2026-10-13T10:00:00.000Z', text: 'Desk: the help site.' })
   expect(questions.words('check:call')).toEqual({ place: 'Morning call', at: '2026-10-13T08:05:00.000Z', text: 'He wants the Duo build tonight.' })
 })
 
