@@ -90,7 +90,8 @@ type Live = {
 type Attaching = { id: string; closing?: string }
 // notes: what the voice should know once this call connects, sent while it rang.
 type Placed = { to: string; why?: string; started: string; session?: string; notes: string[] }
-type Dial = { greeting: string; from: Source; token: string; why?: string; callee?: string }
+// move: the caller's own call going to their phone, which ends the live call once it picks up.
+type Dial = { greeting: string; from: Source; token: string; why?: string; callee?: string; move?: boolean }
 // unheard: the voice's audio sent to Twilio that its marks say hasn't played yet, in chunks, and
 // since: where on the session's timeline the voice began saying it.
 type Phone = Dial & { openai?: WebSocket; stream?: string; started?: true; refused?: true; unheard: number; since?: number }
@@ -129,7 +130,7 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
     board.refresh()
     return overall(board.runs, board.strays(), await jobs(), open(HEX_STATE).names(), Date.now(), yours.view.asks)
   }
-  if (name === 'phone') return dial(args.to, args.why)
+  if (name === 'phone') return dial(args)
   if (name === 'title') return title(args.call, args)
   if (name === 'task') return task(args.id, args.state as Task['state'], args.text, args.call, args.agent)
   if (name === 'send') return pass(args.thread, args.about, args.text, args.app, args.channel)
@@ -754,19 +755,21 @@ function reattach({ id }: CallRecord) {
   }
 }
 
-async function dial(to = CALLER_NUMBER, why?: string) {
+async function dial({ to = CALLER_NUMBER, why, move = false }: { to?: string; why?: string; move?: boolean } = {}) {
   if (!KEY || !TWILIO_SID || !TWILIO_TOKEN || !TWILIO_NUMBER || !PUBLIC_HOST)
     throw new Error(`phone calls need TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER and VOICE_PUBLIC_URL in ${join(STATE_DIR, '.env')}`)
   if (!to) throw new Error('no number to call: pass to, or set CALLER_NUMBER')
+  if (move && to !== CALLER_NUMBER) throw new Error("a call moves only to the caller's own phone: leave out to")
   // On a call hex placed to someone else, what was meant for the owner isn't theirs to hear.
-  if (live?.record.callee) throw new Error(`a call to ${live.record.callee} is live, and another would end it: ring again once it ends, which a message tells you`)
-  if (live || attaching) throw new Error('a call is live, and another would end it: tell the caller on this one with say or note')
+  if (live?.record.callee)
+    throw new Error(move ? `hex is on a call to ${live.record.callee}; move once it ends` : `a call to ${live.record.callee} is live, and another would end it: ring again once it ends, which a message tells you`)
+  if ((live || attaching) && !move) throw new Error('a call is live, and another would end it: tell the caller on this one with say or note')
   const token = crypto.randomUUID()
   const greeting = why
     ? `You placed this phone call because: ${why}. Greet them briefly and tell them why you're calling, then listen.`
     : 'You placed this phone call. Greet them briefly first, then listen.'
   // On a call hex placed to someone else, "you" in the transcript is them, not the owner.
-  dials.set(token, { greeting, from: 'phone-out', token, why, ...(to !== CALLER_NUMBER && { callee: to }) })
+  dials.set(token, { greeting, from: 'phone-out', token, why, move, ...(to !== CALLER_NUMBER && { callee: to }) })
   placed.set(token, { to, why, started: new Date().toISOString(), notes: [] })
   setTimeout(() => placed.get(token)?.session || placed.delete(token), 300_000)
   const response = await fetch(`${TWILIO_API}/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
@@ -820,6 +823,7 @@ type Passed = {
   name: string
   from: Source
   callee?: string
+  move?: boolean
   greeting: string
   why?: string
   format: { type: string; rate: number }
@@ -831,7 +835,7 @@ type Passed = {
   closed: () => void
 }
 
-function passThrough({ name, from, callee, greeting, why, format, play, heard, notes, started, refused, closed }: Passed) {
+function passThrough({ name, from, callee, move, greeting, why, format, play, heard, notes, started, refused, closed }: Passed) {
   const openai = new WebSocket(API, { headers: { Authorization: `Bearer ${KEY}` } } as any)
   let up = false
   let refusing = false
@@ -850,8 +854,9 @@ function passThrough({ name, from, callee, greeting, why, format, play, heard, n
     if (event.type === 'error') refuse(`OpenAI refused the ${name} session: ${event.error?.message ?? JSON.stringify(event.error)}`)
     // A session that starts once its caller has already hung up is let go, never taken as live.
     if (event.type !== 'session.started' || openai.readyState !== WebSocket.OPEN) return
-    // A call hex placed that picks up once another is live, as a voicemail can, never takes its place.
-    if (from === 'phone-out' && (live || attaching)) return refuse('it picked up while another call was live, so it was let go')
+    // A call hex placed that picks up once another is live, as a voicemail can, never takes its place;
+    // a move takes the caller's own call, never one hex placed to someone else.
+    if (from === 'phone-out' && (live?.record.callee || ((live || attaching) && !move))) return refuse('it picked up while another call was live, so it was let go')
     up = true
     started(event.session.id)
     follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play, heard, notes })
@@ -869,6 +874,7 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
     name: 'phone',
     from: twilio.data.from,
     callee: twilio.data.callee,
+    move: twilio.data.move,
     greeting: twilio.data.greeting,
     why: twilio.data.why,
     format: { type: 'audio/pcmu', rate: 8000 },
@@ -1326,7 +1332,7 @@ function routes(request: Request) {
     return new Response(null, { status: calls.delete(callId) ? 204 : 404 })
   }
   if (pathname === '/phone' && request.method === 'POST')
-    return dial().then(text => new Response(text), error => new Response(error.message, { status: 502 }))
+    return dial({ move: true }).then(text => new Response(text), error => new Response(error.message, { status: 502 }))
 }
 
 // The call engine: it holds the voice page, the app's routes and the phone line on the voice port,

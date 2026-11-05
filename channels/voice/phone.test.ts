@@ -265,6 +265,31 @@ test('hex never rings while a call is live, and a call it placed that picks up o
   expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe(id)
 }, 20_000)
 
+test("Call my phone moves the live call: the phone rings past the live call, and once it picks up the old call ends as moved", async () => {
+  await using call = await phoneCall()
+  await dialIn(call.base)
+  const id = await live(call.base)
+  call.renewed()
+  const moving = await fetch(`${call.base}/phone`, { method: 'POST' })
+  expect(await moving.text()).toStartWith(`ringing ${CALLER}`)
+
+  const { version } = await fetch(`${call.base}/calls/${id}`).then(r => r.json())
+  await pickedUp(call.base, call.placed[0]!)
+  expect(await listen(call.base, id, version, call => !!call.ended)).toMatchObject({ end: 'you', reason: 'moved to a new call' })
+  expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe('sess_phone_2')
+}, 20_000)
+
+test("phone moves the live call only with move, and only to the caller's own phone", async () => {
+  await using call = await phoneCall()
+  await dialIn(call.base)
+  await live(call.base)
+  call.renewed()
+  expect((await call.tool('phone', { move: true, to: '+15550003333' })).error).toContain("only to the caller's own phone")
+  expect((await call.tool('phone', { why: 'a reminder' })).error).toContain('a call is live')
+  expect((await call.tool('phone', { move: true })).result).toStartWith(`ringing ${CALLER}`)
+  expect(call.placed).toHaveLength(1)
+}, 20_000)
+
 test("while hex is on a call it placed to someone else, a call meant for the owner waits for it to end instead of going to them", async () => {
   await using call = await phoneCall()
   expect((await call.tool('phone', { to: '+15550003333', why: 'book a table' })).result).toStartWith('ringing')
@@ -274,6 +299,7 @@ test("while hex is on a call it placed to someone else, a call meant for the own
   const { error } = await call.tool('phone', { why: 'a reminder' })
   expect(error).toContain('a call to +15550003333 is live')
   expect(error).toContain('ring again once it ends')
+  expect((await call.tool('phone', { move: true })).error).toContain('on a call to +15550003333')
   expect(call.placed).toHaveLength(1)
 }, 20_000)
 
