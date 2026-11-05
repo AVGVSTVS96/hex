@@ -79,7 +79,7 @@ export function overall(runs: Run[], strays: Session[], jobs: Job[], names: Reco
     }),
   ]
   if (!lines.length) return 'Nothing is running anywhere in hex right now.'
-  const working = runs.filter(run => run.state === 'working' && run.app !== 'voice').length
+  const working = runs.filter(run => run.state === 'working' && run.app !== 'voice' && run.app !== 'claude').length
   const waiting = needs.length + asked.length
   const counts = [working && `${count(working, 'thread')} working`, waiting && `${waiting} waiting on you`].filter(Boolean).join(', ')
   const more = lines.length > SHOWN ? [`and ${lines.length - SHOWN} more`] : []

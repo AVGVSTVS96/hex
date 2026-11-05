@@ -53,7 +53,7 @@ test('everything hex runs, one line each: what waits on the caller first, then t
   ]
   expect(overall(runs, strays, jobs, { '-100:42': 'hex', '-100:65': 'hex' }, now)).toBe(
     [
-      'Everything hex is running, 3 threads working, 1 waiting on you:',
+      'Everything hex is running, 2 threads working, 1 waiting on you:',
       '- autofork (Telegram) waits on you: Pick a music style',
       '- voiceapp (Telegram), working for 10 minutes: Editing board.ts; 2 agents: Build the Tasks view, review-build',
       '- lab (Discord), working for 3 hours',
@@ -187,4 +187,10 @@ test("a job is at work when a busy Claude Code session runs in its unit's cgroup
     rmSync(bin, { recursive: true })
     rmSync(root, { recursive: true })
   }
+})
+
+test('a session outside any thread counts as no thread in what the call hears first', () => {
+  const runs = [run('lab'), run('hex/clips', { app: 'claude', where: 'Claude Code' })]
+  expect(overall(runs, [], [], {}, now).split('\n')[0]).toBe('Everything hex is running, 1 thread working:')
+  expect(overall(runs.slice(1), [], [], {}, now).split('\n')[0]).toBe('Everything hex is running:')
 })
