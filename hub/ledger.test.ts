@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { Ledger } from './ledger.ts'
+import { asking, Ledger } from './ledger.ts'
 import { open, Store } from './store.ts'
 
 let dir: string
@@ -155,4 +155,18 @@ test("Telegram's bot.json, which nothing reads now, is renamed", () => {
   writeFileSync(join(dir, 'telegram', 'bot.json'), '{"username":"hex_bot"}')
   open(dir)
   expect([existsSync(join(dir, 'telegram', 'bot.json')), existsSync(join(dir, 'telegram', 'bot.json.moved-to-hex.db'))]).toEqual([false, true])
+})
+
+test('a reply that ends asking something waits on the owner until they reply to it', () => {
+  const ledger = new Ledger(dir, 'telegram')
+  ledger.said('-100:7', 70, 'Plans first, then free credits, then paid extra usage last.\n\n**Is that order right?**')
+  ledger.said('-100:7', 71, 'Is it done? Yes, it shipped.')
+  expect(ledger.find('-100:7', 70)).toMatchObject({ text: 'Is that order right?', options: [] })
+  expect(ledger.find('-100:7', 71)).toBeUndefined()
+  ledger.replied('-100:7', 70, 'yes, plans first')
+  expect(ledger.find('-100:7', 70)!.answer).toMatchObject({ label: 'yes, plans first', via: 'reply' })
+  ledger.ask('-100:7', 72, 'Deploy now?', ['Deploy', 'Wait'])
+  ledger.replied('-100:7', 72, 'not yet')
+  expect(ledger.find('-100:7', 72)!.answer).toBeUndefined()
+  expect(asking('> - Want me to merge it?')).toBe('Want me to merge it?')
 })

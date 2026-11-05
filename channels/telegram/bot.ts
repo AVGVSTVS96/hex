@@ -404,6 +404,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         if (buttons.length && captioned) asked = sent.message_id
       }
       if (asked) ledger.ask(thread, asked, text, buttons)
+      else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text)
 
       return sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
     }
@@ -432,7 +433,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         await settleQuestion(thread, id, '✓ Settled')
         return `settled the poll (id: ${id}); its own text can't be edited, so reply with what changed`
       }
-      const keep = question && !question.poll && !question.answer && !question.settled && !args.settled ? { reply_markup: buttonsOf(question.options) } : {}
+      const keep = question?.options.length && !question.poll && !question.answer && !question.settled && !args.settled ? { reply_markup: buttonsOf(question.options) } : {}
       if (file) {
         const caption = text != null ? { caption: text, ...parseMode } : {}
         await bot.api.editMessageMedia(chat_id, id, { type: asPhoto(file) ? 'photo' : 'document', media: new InputFile(file), ...caption }, keep)
@@ -588,7 +589,7 @@ function draw(thread: string, message: number): Promise<void> {
   const drawn = (drawing.get(at) ?? Promise.resolve())
     .then(async () => {
       const question = ledger.find(thread, message)
-      if (!question) return
+      if (!question?.options.length) return
       const { chat_id } = target(thread)
       if (!question.poll) return void (await bot.api.editMessageReplyMarkup(chat_id, message, { reply_markup: question.answer ? only(answeredText(question.answer)) : question.settled ? only(question.settled.note) : buttonsOf(question.options) }))
       if (question.settled || (question.answer && question.answer.via !== 'telegram')) await bot.api.stopPoll(chat_id, message)
@@ -1138,6 +1139,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     },
   }
   hub.deliver(thread, nameOf(ctx, thread), message)
+  if (message.meta.reply_to_message_id) ledger.replied(thread, Number(message.meta.reply_to_message_id), content)
 }
 
 let keeping: (() => void) | undefined

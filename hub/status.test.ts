@@ -80,3 +80,12 @@ test("a status post's note is its words above its first heading, plain or an old
   expect(above('Note\n**🔴 Blocked on you:** no questions waiting')).toBe('Note')
   expect(above('Note\n## 🟡 Pending\n- old')).toBe('Note')
 })
+
+test("an open task links to the owner's latest words for it in the thread, to reply to with more", () => {
+  const store = new Store(dir)
+  const task = store.createTask({ title: 'Fix the login page', message: said(store, 50, 'Fix the login page'), owner: '-100:7' })
+  store.addWords(task.id, said(store, 58, 'and the signup page'))
+  store.deliver({ key: 'telegram:42:90', to: '42', from: 'telegram', body: 'one more thing', author: 'owner' })
+  store.addWords(task.id, 'telegram:42:90')
+  expect(statusPost(store, '-100:7', 'Note', 4096, (thread, message) => `https://t.me/c/${thread}/${message}`)).toContain('**Open**\n- [Fix the login page](https://t.me/c/-100:7/58)')
+})
