@@ -2489,29 +2489,3 @@ test('an operation keeps its result across Stop events regardless of elapsed tim
   expect(await kept('busy', { session: SESSION, busy: true })).toBe(true)
   expect(await kept('done', { session: SESSION })).toBe(true)
 })
-
-test('a topic that fell back to its plan goes back to the API credit at its next rest, once a credit has balance', async () => {
-  let runtime = 'interactive'
-  let asked = 0
-  const proxy = Bun.serve({ port: 0, fetch: () => (asked++, Response.json({ runtime })) })
-  const bridge = join(dir, 'bridge.json')
-  writeFileSync(bridge, JSON.stringify({ proxy: proxy.url.href, prefix: 'included', models: {}, env: { ANTHROPIC_API_KEY: 'test' } }))
-  process.env.HEX_AGENT_SDK = bridge
-  const old = Bun.spawn(['sleep', '30'])
-  try {
-    start({ registry: { dm: { name: 'DM', session: SESSION, launched: stamp(['--hex-sdk', bridge], SERVER) } }, agents: [{ sessionId: SESSION, pid: old.pid, status: 'idle', startedAt: 1 }], fresh: thread => thread === 'dm', capacity: 1000 })
-    said(500)
-    const { send } = await session('dm')
-    await send({ type: 'state', thread: 'dm', busy: false })
-    await until(() => asked === 1)
-    await settled()
-    expect(calls().some(args => args[0] === 'stop')).toBe(false)
-    runtime = 'sdk'
-    await send({ type: 'state', thread: 'dm', busy: false })
-    expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
-  } finally {
-    delete process.env.HEX_AGENT_SDK
-    proxy.stop(true)
-    old.kill()
-  }
-})

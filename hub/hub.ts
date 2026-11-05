@@ -4,7 +4,6 @@ import { createHash, randomBytes, randomUUID } from 'crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
-import { bridgeFile, creditReady } from './sdk-config.ts'
 import { clock } from './clock.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { queue } from './observe.ts'
@@ -374,7 +373,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     claim(thread)
     run.turn = working ? 'busy' : background ? 'background' : 'done'
     if (run.turn === 'done' && (run.renew === 'asked' || run.renew === 'stale')) void renew(thread, run.renew === 'asked')
-    else if (run.turn === 'done') void returnToCredit(thread)
     rest(thread, run.turn === 'done')
     letGo(thread)
   }
@@ -395,15 +393,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (run.renew) void cycle(thread, running)
     else stop(thread)
     letGo(thread)
-  }
-
-  async function returnToCredit(thread: string) {
-    const run = runOf(thread)
-    const file = bridgeFile(app, thread)
-    const session = current(thread)
-    if (!file || !session || claude.onSDK(session) || !await creditReady(file) || run.renew) return
-    run.renew = 'stale'
-    void renew(thread, true)
   }
 
   // A renew is on its way while the thread's session winds down its turn or restarts, but not
@@ -605,8 +594,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
 
   function extra(thread: string) {
     const { model, effort } = threads[thread]!
-    const sdk = bridgeFile(app, thread)
-    return [...(sdk ? ['--hex-sdk', sdk] : []), ...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args(thread)]
+    return [...(model ? ['--model', model] : []), ...(effort ? ['--effort', effort] : []), ...args(thread)]
   }
 
   // A session that started with other arguments or another channel starts over: with its next
@@ -1073,7 +1061,6 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       took(request.taken, request.session)
       setState(request.thread, request.busy, request.background === true)
     }
-    if (request.type === 'sdk-fallback' && request.session === current(request.thread)) void sessionOf(request.thread).then(agent => cycle(request.thread, agent, request.continuing ? 'Continue the interrupted turn. The API credit is unavailable; this is now normal interactive Claude Code on the plan.' : undefined))
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
     if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
     if (request.type === 'settle') questions?.settle(request.thread, request.message, request.note)

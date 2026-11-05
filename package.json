@@ -1,1 +1,1 @@
-{"private":true,"type":"module","dependencies":{"@anthropic-ai/claude-agent-sdk":"0.3.318","@modelcontextprotocol/sdk":"^1.26.0","zod":"^4.1.0"}}
+{"private":true,"type":"module","dependencies":{"@modelcontextprotocol/sdk":"^1.26.0","zod":"^4.1.0"}}

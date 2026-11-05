@@ -10,7 +10,6 @@ trap 'rm -rf "$out"' EXIT
 # Discord's voice (prism-media) requires ffmpeg-static only when it's installed, which a bundle can't tell.
 build="bun build --target bun --external ffmpeg-static"
 bun install --silent
-$build hub/sdk.ts --outdir "$out/sdk" >/dev/null
 for plugin in telegram discord buzz t3 voice; do
   bun install --cwd "channels/$plugin" --silent
   $build "channels/$plugin/bot.ts" --outdir "$out/$plugin" >/dev/null
