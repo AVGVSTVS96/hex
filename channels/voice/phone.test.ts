@@ -211,19 +211,24 @@ test("a phone call's words reach the app as they're heard, and how it ended land
   expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBeUndefined()
 }, 20_000)
 
-test("the caller talking over the voice clears what Twilio hasn't played yet, and only that", async () => {
+test("the caller talking over the voice clears what Twilio hasn't played yet, but not the words it's answering, however late they come", async () => {
   await using call = await phoneCall()
   const phone = await dialIn(call.base)
-  await live(call.base)
+  const id = await live(call.base)
   const heard: any[] = []
   phone.onmessage = ({ data }) => heard.push(JSON.parse(String(data)))
   const clears = () => heard.filter(message => message.event === 'clear')
+  const recorded = (text: string) => listen(call.base, id, 0, record => record.turns.some((turn: any) => turn.text.includes(text)))
 
   call.speak('AAAA')
   call.speak('BBBB')
   await until(() => heard.filter(message => message.event === 'mark').length === 2)
   expect(heard.map(message => message.event)).toEqual(['media', 'mark', 'media', 'mark'])
   expect(heard[0]).toEqual({ event: 'media', streamSid: 'MZ1', media: { payload: 'AAAA' } })
+  call.say('voice', 'The build is green, ', 500)
+  call.say('you', 'is the build green?', 100)
+  await recorded('is the build green?')
+  expect(clears()).toEqual([])
 
   call.say('you', 'wait, ', 1000)
   await until(() => clears().length)
@@ -233,8 +238,7 @@ test("the caller talking over the voice clears what Twilio hasn't played yet, an
   for (let i = 0; i < 2; i++) phone.send(JSON.stringify({ event: 'mark', streamSid: 'MZ1', mark: { name: 'voice' } }))
   await Bun.sleep(100)
   call.say('you', 'stop.', 1300)
-  const id = await live(call.base)
-  await listen(call.base, id, 0, record => record.turns.some((turn: any) => turn.text.includes('stop.')))
+  await recorded('stop.')
   expect(clears()).toHaveLength(1)
 }, 20_000)
 
