@@ -104,7 +104,7 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
   expect(launch.message).toEndWith('Build the Usage tab.\n\nthe log')
   const waited = calls.filter(({ name }) => name === 't3_thread_wait')
   expect(waited).toHaveLength(4)
-  expect(waited.every(({ arguments: input }) => input.runId === 'r1')).toBe(true)
+  expect(waited.every(({ arguments: input }) => input.runId === 'r1' && input.untilDelegatedWorkSettled)).toBe(true)
 }, 20_000)
 
 test('a refused token is renewed and a tool error without a final code is retried', async () => {
@@ -217,6 +217,15 @@ test('a run a restart cut, which T3 shows final but timed out while its continua
   waits = [{ status: 'cancelled', timedOut: true }]
   const { run, out } = away(['-p', 'Build it.'])
   expect(await run.exited).toBe(0)
+  expect(await out()).toEndWith('Built the Usage tab.\n')
+  expect(calls.filter(({ name }) => name === 't3_thread_wait')).toHaveLength(2)
+})
+
+test('a run that ends while its own background task runs is followed until that task wakes the thread and it answers', async () => {
+  reset()
+  waits = [{ status: 'completed', timedOut: true }, { status: 'completed', timedOut: false, resultRun: { runId: 'r2', status: 'failed' } }]
+  const { run, out } = away(['-p', 'Build it.'])
+  expect(await run.exited).toBe(1)
   expect(await out()).toEndWith('Built the Usage tab.\n')
   expect(calls.filter(({ name }) => name === 't3_thread_wait')).toHaveLength(2)
 })
