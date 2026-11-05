@@ -546,7 +546,7 @@ function serve(token: string) {
     const drawn = (drawing.get(at) ?? Promise.resolve())
       .then(async () => {
         const question = ledger.find(thread, message)
-        if (!question) return
+        if (!question?.options.length) return
         const ch = await threadChannel(thread)
         if (!question.poll) return void (await ch.messages.edit(String(message), { components: controls(question) }))
         if (question.settled || (question.answer && question.answer.via !== 'discord')) await (await ch.messages.fetch(String(message))).poll!.end()
@@ -673,6 +673,7 @@ function serve(token: string) {
           throw new Error(`reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`)
         }
         if (labels?.length) ledger.ask(thread, sentIds.at(-1)!, text, labels, undefined, multiple)
+        else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text)
 
         return sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
       }
@@ -884,6 +885,7 @@ function serve(token: string) {
       },
     }
     hub.deliver(ch.id, nameOf(ch), message)
+    if (message.meta.reply_to_message_id) ledger.replied(ch.id, message.meta.reply_to_message_id, message.content)
   }
 
   // Reactions and deletes reach only a thread the hub already serves: in it,

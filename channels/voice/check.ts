@@ -111,7 +111,7 @@ function gather(state: string) {
   const threads = store(state).threads()
   const general = generalOf(threads)
   for (const thread of threads) if (thread.app !== 'voice') names[`${thread.app}:${thread.thread}`] = nameOf(thread, general)
-  const ledgers = Object.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app) as Record<string, Asked[]>
+  const ledgers = Object.groupBy(questions.filter(question => question.app !== 'voice' && question.options.length), question => question.app) as Record<string, Asked[]>
   for (const pin of store(state).pins()) if (pin.note) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(pin.note, LONG) })
   const shown = (app: string, question: Asked) => ({
     ref: { app, thread: question.thread, message: question.message },

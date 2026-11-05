@@ -1,4 +1,4 @@
-import { above } from './fit.ts'
+import { above, clip } from './fit.ts'
 import { statusPost, type Link } from './status.ts'
 import { open, stateDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
 
@@ -121,6 +121,18 @@ export class Ledger {
     this.store.ask({ app: this.app, thread, message, text, options, poll, multiple })
   }
 
+  // A reply sent without buttons that ends by asking the owner something waits on them as a
+  // question too, with no options, until they reply to it or the session settles it.
+  said(thread: string, message: MessageId, text: string) {
+    const question = asking(text)
+    if (question) this.ask(thread, message, question, [])
+  }
+
+  // The owner replied to a message: their words answer the question it asked in words.
+  replied(thread: string, message: MessageId, text: string) {
+    if (this.find(thread, message)?.options.length === 0) this.answered(thread, message, clip(text, 60), 'reply')
+  }
+
   answered(thread: string, message: MessageId, label: string, via: string, again = false) {
     return this.store.answered(this.app, thread, message, label, via, again)
   }
@@ -135,7 +147,8 @@ export class Ledger {
 
   // A question's latest words. A question stays open through an edit: it's settled only by saying so.
   edited(thread: string, message: MessageId, text: string) {
-    this.store.reworded(this.app, thread, message, text)
+    const question = this.find(thread, message)
+    if (question) this.store.reworded(this.app, thread, message, question.options.length ? text : (asking(text) ?? text))
   }
 
   // Unpins a message, by default the thread's status post, in the app and then in hex.db, in the
@@ -167,4 +180,10 @@ export class Ledger {
     })
     return this.turn(thread, async () => this.store.unpinned(this.app, thread))
   }
+}
+
+// The question a message ends on: its last line, when that line asks one.
+export function asking(text: string): string | undefined {
+  const last = text.trim().split('\n').at(-1)!.replace(/[\s*_]+$/, '')
+  return last.endsWith('?') ? last.replace(/^[\s*_>#-]+/, '') : undefined
 }
