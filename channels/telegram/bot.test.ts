@@ -552,3 +552,11 @@ test('/effort and /model set what the thread\'s next message starts with, and ne
   expect(saved()[DESK].effort).toBe('high')
   expect(received.slice(before).filter(line => line.type === 'inbound').map(line => line.content)).toEqual(['/tmp/cache is full', '/model@other_bot opus'])
 })
+
+test('set_model sets what the thread\'s next message starts with, when the user tells hex', async () => {
+  expect((await call('set_model', { model: 'opus', effort: 'xhigh' })).text).toBe("Opus, Extra High effort, from this thread's next message")
+  expect(saved()[DESK]).toMatchObject({ model: 'opus', effort: 'xhigh' })
+  await call('set_model', { effort: 'low' })
+  expect(saved()[DESK]).toMatchObject({ model: 'opus', effort: 'low' })
+  expect((await call('set_model', { model: 'gpt' })).error).toMatch(/^set_model takes a model \(opus, sonnet, haiku, fable\)/)
+})

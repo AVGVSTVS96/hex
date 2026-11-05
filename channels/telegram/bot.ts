@@ -501,6 +501,12 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       }
       return [name && `renamed to "${name}"`, icon && `icon set to ${args.icon}`].filter(Boolean).join(', ')
     }
+    case 'set_model': {
+      const chosen = { model: MODELS.find(({ value }) => value === args.model), effort: EFFORTS.find(({ value }) => value === args.effort) }
+      if (!chosen.model && !chosen.effort) throw new Error(`set_model takes a model (${MODELS.map(({ value }) => value).join(', ')}) or an effort (${EFFORTS.map(({ value }) => value).join(', ')})`)
+      hub.configure(thread, { ...(chosen.model && { model: chosen.model.value }), ...(chosen.effort && { effort: chosen.effort.value }) })
+      return `${[chosen.model?.name, chosen.effort && `${chosen.effort.name} effort`].filter(Boolean).join(', ')}, from this thread's next message`
+    }
     case 'download_attachment': {
       return download(args.file_id as string, args.file_id as string)
     }
