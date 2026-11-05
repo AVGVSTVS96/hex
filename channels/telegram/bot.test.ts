@@ -540,6 +540,7 @@ test('a backfill quotes the owner under their name and posts hex as itself, sile
 })
 
 test('/effort and /model set what the thread\'s next message starts with, and never reach its session, unlike a path', async () => {
+  expect((await called('setMyCommands')).commands.map((c: { command: string }) => c.command)).toEqual(['model', 'effort'])
   const before = received.length
   await update({ message: message({ text: '/tmp/cache is full' }) })
   await inbound(line => line.content === '/tmp/cache is full')
