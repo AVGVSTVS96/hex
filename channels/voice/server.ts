@@ -82,7 +82,7 @@ type Live = {
   speak?: (audio: string) => void
   // Each transcript fragment's start on the session's timeline, as it comes in, for a line whose
   // own buffer plays the voice: the caller talking over it cuts off what they haven't heard yet.
-  heard?: (who: Speaker, start: number) => void
+  heard?: (who: Speaker, start: number, text: string) => void
   // The first hang-up asked, which the call ends by, and whether it went out.
   closing?: string
   closed?: true
@@ -415,7 +415,7 @@ function ring(call: Live, { delegation, offset }: Ring) {
 
 function hear(call: Live, who: Speaker, event: { delta: string; start_ms: number; end_ms: number }) {
   call.call.hear({ who, text: event.delta, start: event.start_ms, end: event.end_ms })
-  call.heard?.(who, event.start_ms)
+  call.heard?.(who, event.start_ms, event.delta)
   call.changes.changed()
   while (call.rings[0] && call.rings[0].offset <= event.start_ms) ring(call, call.rings.shift()!)
 }
@@ -880,11 +880,11 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
     },
     // Words the caller began before the voice did are what it's answering, however late their
     // transcript comes in; words begun after it are the caller talking over it.
-    heard: (who, start) => {
+    heard: (who, start, text) => {
       const phone = twilio.data
       if (!phone.unheard) return
       if (who === 'voice') phone.since ??= start
-      else if (phone.since !== undefined && start >= phone.since) {
+      else if (phone.since !== undefined && start >= phone.since && !backchannel(text)) {
         twilio.send(JSON.stringify({ event: 'clear', streamSid: phone.stream }))
         phone.since = undefined
       }
@@ -932,6 +932,19 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
       closeSocket(openai, `close-you-${from}`)
     },
   }
+}
+
+// The caller's "mm-hmm" or "yeah" while the voice talks, or a fragment with no words, is them
+// listening, not talking over it: the voice goes on, so what Twilio holds is what they'd miss.
+const LISTENING = new Set(['mm', 'mmm', 'hm', 'hmm', 'mhm', 'mmhm', 'mmhmm', 'mm-hmm', 'mm-hm', 'uh-huh', 'uhhuh', 'uh', 'um', 'ah', 'oh', 'yeah', 'yep', 'yup', 'yes', 'ok', 'okay', 'right', 'sure'])
+
+function backchannel(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, ' ')
+    .split(/\s+/)
+    .filter(word => word.replace(/-/g, ''))
+    .every(word => LISTENING.has(word))
 }
 
 function refuse(twilio: Bun.ServerWebSocket<Phone>, reason: string) {

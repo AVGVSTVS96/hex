@@ -230,6 +230,13 @@ test("the caller talking over the voice clears what Twilio hasn't played yet, bu
   await recorded('is the build green?')
   expect(clears()).toEqual([])
 
+  // Listening while it talks, or a fragment with no words in it, clears nothing.
+  call.say('you', 'Mm-hmm. ', 800)
+  call.say('you', ' ', 900)
+  call.say('you', 'Yeah, okay.', 950)
+  await recorded('Yeah, okay.')
+  expect(clears()).toEqual([])
+
   call.say('you', 'wait, ', 1000)
   await until(() => clears().length)
   expect(clears()).toEqual([{ event: 'clear', streamSid: 'MZ1' }])
