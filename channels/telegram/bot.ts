@@ -1158,6 +1158,10 @@ for (let attempt = 1; ; attempt++) {
         attempt = 0
         process.stderr.write(`telegram hub: polling as @${info.username}\n`)
         polling = info.username
+        void bot.api.setMyCommands([
+          { command: 'model', description: `This thread's model: ${MODELS.map(({ value }) => value).join(', ')}` },
+          { command: 'effort', description: `This thread's effort: ${EFFORTS.map(({ value }) => value).join(', ')}` },
+        ]).catch(err => process.stderr.write(`telegram hub: couldn't set the command menu: ${err}\n`))
         hub.save()
         keeping ??= ledger.keep(post, (thread, err) => process.stderr.write(`telegram hub: couldn't rewrite ${thread}'s status post: ${err}\n`))
       },
