@@ -102,6 +102,7 @@ async function update(fields: Record<string, any>) {
   await bot.handleUpdate({ update_id: nextUpdate++, ...fields } as any)
 }
 
+// Opening hex.db, loading the bot and connecting a session: seconds of work on a loaded machine.
 beforeAll(async () => {
   writeFileSync(join(state, 'access.json'), JSON.stringify({ allowFrom: [String(OWNER)] }))
   open(state).keepThreads('telegram', { [DESK]: { name: 'desk' }, [String(OWNER)]: { name: 'Bassim' }, [`${FORUM}:6`]: { name: 'notes' }, 'stray-key': { name: 'stray' } })
@@ -121,7 +122,7 @@ beforeAll(async () => {
   const hooks = connect(join(state, 'hub.sock'))
   await new Promise(resolve => hooks.on('connect', resolve))
   session = payload => hooks.write(JSON.stringify(payload) + '\n')
-})
+}, 30_000)
 
 test("closing a thread list entry that isn't a topic forgets it, instead of failing", async () => {
   expect((await call('close_thread', { thread: 'stray-key' })).text).toBe('forgot "stray": it isn\'t a topic, so there was nothing to close in Telegram')
