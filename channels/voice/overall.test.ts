@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync 
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { Run } from './board.ts'
+import { server } from './channel.ts'
 import { jobs, jobsOf, lasted, overall } from './overall.ts'
 
 const now = Date.parse('2026-11-05T20:00:00Z')
@@ -193,4 +194,9 @@ test('a session outside any thread counts as no thread in what the call hears fi
   const runs = [run('lab'), run('hex/clips', { app: 'claude', where: 'Claude Code' })]
   expect(overall(runs, [], [], {}, now).split('\n')[0]).toBe('Everything hex is running, 1 thread working:')
   expect(overall(runs.slice(1), [], [], {}, now).split('\n')[0]).toBe('Everything hex is running:')
+})
+
+test('the voice session knows the running tool and hex running, for each session’s live state', () => {
+  expect(server.instructions).toContain('the running tool for everything hex runs, .hex/bin/hex running for every session')
+  expect(server.tools.map(tool => tool.name)).toContain('running')
 })
