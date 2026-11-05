@@ -322,7 +322,14 @@ export class Questions extends Changes {
     const item = this.view.stuck.find(item => item.id === id)
     if (!item) throw new Error('that is no longer stuck')
     if (item.request) {
-      await this.tell(this.general(), item.request, 'app', 'prompt')
+      // A second tap while the first is on its way would ask General twice.
+      if (this.taking.has(id)) throw new Error('that request is on its way')
+      this.taking.add(id)
+      try {
+        await this.tell(this.general(), item.request, 'app', 'prompt')
+      } finally {
+        this.taking.delete(id)
+      }
       this.marks.sent[id] = now()
     } else this.marks.dismissed[id] = now()
     this.saveMarks()

@@ -515,7 +515,7 @@ test('a question asked again over an earlier answer can be answered, and one und
   ])
 })
 
-test('a stuck item with a request goes to General, one without is put away', async () => {
+test('a stuck item with a request goes to General once, however fast it is tapped twice, and one without is put away', async () => {
   writeFileSync(
     join(state, 'voice', 'check.json'),
     JSON.stringify({
@@ -527,9 +527,11 @@ test('a stuck item with a request goes to General, one without is put away', asy
     }),
   )
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
-  await questions.act('disk')
+  const [, twice] = await Promise.allSettled([questions.act('disk'), questions.act('disk')])
+  expect(twice).toMatchObject({ status: 'rejected', reason: new Error('that request is on its way') })
   expect(await until(() => lines[0])).toEqual({ type: 'inbound', thread: GROUP, content: 'Restore cloud from checkpoint v7.', author: 'prompt', meta: { user: 'hex app' } })
   await questions.act('runs')
+  expect(lines).toHaveLength(1)
   await until(() => questions.view.stuck.length === 1)
   expect(questions.view.stuck[0]).toMatchObject({ id: 'disk', app: 'hex', sent: expect.any(String) })
   expect(JSON.parse(readFileSync(join(state, 'voice', 'marks.json'), 'utf8')).dismissed.runs).toBeString()
