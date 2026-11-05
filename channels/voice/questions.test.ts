@@ -3,6 +3,7 @@ import { Database } from 'bun:sqlite'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { createServer, type Server } from 'net'
 import { tmpdir } from 'os'
+import { homedir } from 'os'
 import { join } from 'path'
 import { Questions, fromLedger } from './questions.ts'
 import { before, digest, vet } from './check.ts'
@@ -544,22 +545,26 @@ test('T3 Code’s records give what waits on a limit, what never started, what f
   const path = join(state, 't3.sqlite')
   const db = new Database(path)
   db.run(`create table orchestration_v2_projection_threads (thread_id text, project_id text, title text, archived_at text, deleted_at text, payload_json text)`)
-  db.run(`create table projection_projects (project_id text, title text)`)
+  db.run(`create table projection_projects (project_id text, title text, workspace_root text)`)
   db.run(`create table orchestration_v2_projection_runs (thread_id text, ordinal int, status text, requested_at text, completed_at text)`)
   db.run(`create table orchestration_v2_projection_messages (thread_id text, role text, created_at text, payload_json text)`)
-  db.run(`insert into projection_projects values ('p', 'hex')`)
-  const thread = (id: string, payload: object) => db.run(`insert into orchestration_v2_projection_threads values (?, 'p', ?, null, null, ?)`, [id, `${id} thread`, JSON.stringify(payload)])
+  db.run(`insert into projection_projects values ('p', 'hex', '/code/hex'), ('home', '~', ?), ('none', 'No project', ?)`, [homedir(), join(homedir(), '.t3', 'scratch')])
+  const thread = (id: string, payload: object, project = 'p') => db.run(`insert into orchestration_v2_projection_threads values (?, ?, ?, null, null, ?)`, [id, project, `${id} thread`, JSON.stringify(payload)])
   thread('parked', { limitRecovery: { resetAt: '2026-10-18T19:00:00.000Z' } })
   thread('queued', {})
   thread('broken', { lastVisitedAt: '2026-10-13T08:00:00.000Z' })
   thread('finished', { createdBy: 'user', lastVisitedAt: '2026-10-13T08:00:00.000Z' })
   thread('seen', { createdBy: 'user', lastVisitedAt: '2026-10-13T12:00:00.000Z' })
+  thread('loose', { createdBy: 'user' }, 'home')
+  thread('scratch', { createdBy: 'user' }, 'none')
   const run = (id: string, ordinal: number, status: string, completed: string | null) => db.run(`insert into orchestration_v2_projection_runs values (?, ?, ?, '2026-10-09T23:00:00.000Z', ?)`, [id, ordinal, status, completed])
   run('parked', 1, 'failed', '2026-10-13T10:00:00.000Z')
   run('queued', 1, 'queued', null)
   run('broken', 1, 'failed', '2026-10-13T10:00:00.000Z')
   run('finished', 1, 'completed', '2026-10-13T10:00:00.000Z')
   run('seen', 1, 'completed', '2026-10-13T10:00:00.000Z')
+  run('loose', 1, 'completed', '2026-10-13T09:00:00.000Z')
+  run('scratch', 1, 'completed', '2026-10-13T08:00:00.000Z')
   db.run(`insert into orchestration_v2_projection_messages values ('finished', 'assistant', '2026-10-13T10:00:00.000Z', ?)`, [JSON.stringify({ text: '## Done\n\n**Shipped** the memory fix.' })])
   db.close()
 
@@ -572,7 +577,8 @@ test('T3 Code’s records give what waits on a limit, what never started, what f
     ['broken thread ended in an error', 'Look', 'failed'],
   ])
   expect(stuck.every(item => item.request)).toBe(true)
-  expect(fresh).toEqual([{ id: expect.stringMatching(/^t3-done-/), app: 't3', topic: 'hex', title: 'finished thread', where: 'T3 · hex', line: 'Done', at: '2026-10-13T10:00:00.000Z' }])
+  expect(fresh.map(item => [item.topic, item.where])).toEqual([['hex', 'T3 · hex'], ['loose thread', 'T3'], ['scratch thread', 'T3']])
+  expect(fresh[0]).toEqual({ id: expect.stringMatching(/^t3-done-/), app: 't3', topic: 'hex', title: 'finished thread', where: 'T3 · hex', line: 'Done', at: '2026-10-13T10:00:00.000Z' })
   expect(stuck.every(item => item.app === 't3')).toBe(true)
 })
 
