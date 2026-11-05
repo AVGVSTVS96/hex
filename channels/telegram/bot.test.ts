@@ -494,7 +494,7 @@ test('a message edited before it is forwarded goes with its new text', async () 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
   const id = Number((await call('pin', { note: 'Site: example.com' })).text.match(/id: (\d+)/)[1])
   const sent = await called('sendRichMessage', p => p.rich_message.markdown.startsWith('Site: example.com'))
-  expect(sent.rich_message.markdown).toStartWith('Site: example.com\n\n**🔴 Blocked on you')
+  expect(sent.rich_message.markdown).toStartWith('Site: example.com\n\n**Waiting on you')
   expect(await called('pinChatMessage', p => p.message_id === id)).toBeTruthy()
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.com' })
 
@@ -505,7 +505,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   const count = edits().length
   expect((await call('edit_message', { message_id: String(id), text: 'Site: example.org' })).text).toStartWith("edited the status post's note")
   expect(edits()).toHaveLength(count + 1)
-  expect(edits().at(-1)).toStartWith('Site: example.org\n\n**🔴 Blocked on you**')
+  expect(edits().at(-1)).toStartWith('Site: example.org\n\n**Waiting on you**')
   expect(edits().at(-1)).toContain('[Rename the site?]')
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: 'Site: example.org' })
   expect((await call('edit_message', { message_id: String(id), text: 'Site', file: join(state, 'access.json') })).error).toBe('a status post is text: send the file in its own message')

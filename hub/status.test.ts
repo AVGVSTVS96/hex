@@ -25,7 +25,7 @@ const said = (store: Store, n: number, body: string) => {
 test("a status post is the note over the thread's waiting questions, open tasks and the last five done", () => {
   const store = new Store(dir)
   const note = 'Site: https://example.com'
-  expect(statusPost(store, '-100:7', note, 4096)).toBe(`${note}\n\n**🔴 Blocked on you:** no questions waiting\n\n**🟡 Pending:** no open tasks\n\n**🟢 Done:** no tasks done yet`)
+  expect(statusPost(store, '-100:7', note, 4096)).toBe(note)
 
   store.ask({ app: 'telegram', thread: '-100:7', message: 60, text: 'Ship today?\nCI is green.', options: ['Yes', 'No'] })
   store.ask({ app: 'telegram', thread: '-100:8', message: 61, text: 'Elsewhere?', options: ['Yes', 'No'] })
@@ -37,9 +37,9 @@ test("a status post is the note over the thread's waiting questions, open tasks 
   store.editTask(done.id, { status: 'done', proof: 'shipped in abc123, https://example.com/pull/3.' })
 
   expect(statusPost(store, '-100:7', note, 4096)).toBe(
-    [note, '**🔴 Blocked on you**\n- Ship today?', '**🟡 Pending**\n- Fix the login page', '**🟢 Done**\n- [Blur the logo less](https://example.com/pull/3)\n- Rename the repo'].join('\n\n'),
+    [note, '**Waiting on you**\n- Ship today?', '**Open**\n- Fix the login page', '**Done**\n- [Blur the logo less](https://example.com/pull/3)\n- Rename the repo'].join('\n\n'),
   )
-  expect(statusPost(store, '-100:7', note, 4096, (thread, message) => `https://t.me/c/${thread}/${message}`)).toContain('**🔴 Blocked on you**\n- [Ship today?](https://t.me/c/-100:7/60)\n\n')
+  expect(statusPost(store, '-100:7', note, 4096, (thread, message) => `https://t.me/c/${thread}/${message}`)).toContain('**Waiting on you**\n- [Ship today?](https://t.me/c/-100:7/60)\n\n')
 
   for (let n = 54; n < 58; n++) store.editTask(store.createTask({ title: `Later ${n}`, message: said(store, n, `Later ${n}`), owner: '-100:7' }).id, { status: 'done', proof: 'ok' })
   const latest = statusPost(store, '-100:7', note, 4096)
@@ -53,16 +53,16 @@ test('a status post fits the room the app gives one message, saying how many mor
   for (let room = 300; room <= 2100; room += 7) expect(statusPost(store, '-100:7', 'Note', room).length).toBeLessThanOrEqual(room)
   const long = statusPost(store, '-100:7', 'x'.repeat(3000), 2000)
   expect(long.length).toBeLessThanOrEqual(2000)
-  expect(long).toMatch(/^x+…\n\n\*\*🔴 Blocked on you:\*\* no questions waiting\n\n\*\*🟡 Pending\*\*\n…and 40 more\n\n\*\*🟢 Done:\*\* no tasks done yet$/)
+  expect(long).toMatch(/^x+…\n\n\*\*Open\*\*\n…and 40 more$/)
   const text = statusPost(store, '-100:7', 'Note', 2000)
-  expect(text).toMatch(/\n…and \d+ more\n\n\*\*🟢 Done:\*\* no tasks done yet$/)
+  expect(text).toMatch(/\n…and \d+ more$/)
 })
 
 test("a done task links to the first link in its proof, without the markdown or punctuation around it", () => {
   const store = new Store(dir)
   const proofs = ['merged in `https://github.com/o/r/pull/3`.', '(see https://en.wikipedia.org/wiki/Foo_(bar))', '**https://example.com/a**', 'commit abc123']
   proofs.forEach((proof, n) => store.editTask(store.createTask({ title: `Task ${n}`, message: said(store, 70 + n, `Task ${n}`), owner: '-100:7' }).id, { status: 'done', proof }))
-  expect(statusPost(store, '-100:7', 'Note', 4096).split('**🟢 Done**\n')[1]!.split('\n')).toEqual([
+  expect(statusPost(store, '-100:7', 'Note', 4096).split('**Done**\n')[1]!.split('\n')).toEqual([
     '- Task 3',
     '- [Task 2](https://example.com/a)',
     '- [Task 1](https://en.wikipedia.org/wiki/Foo_(bar))',
@@ -70,7 +70,10 @@ test("a done task links to the first link in its proof, without the markdown or 
   ])
 })
 
-test("a status post's note is its words above its first 🔴 🟡 🟢 line", () => {
+test("a status post's note is its words above its first heading, plain or an older post's 🔴 🟡 🟢 one", () => {
+  expect(above('📌 **desk**\nShipping today\n\n**Waiting on you**\n- old\n\n**Done**\n- x')).toBe('📌 **desk**\nShipping today')
+  expect(above('Note\n**Open**\n- old')).toBe('Note')
+  expect(above('Done when **Open** ships')).toBe('Done when **Open** ships')
   expect(above('📌 **desk**\nShipping today\n\n🔴 **Blocked on you**\n- old\n\n🟢 Done')).toBe('📌 **desk**\nShipping today')
   expect(above('Just a note')).toBe('Just a note')
   expect(above('Deploy is 🟢 for Friday\n🟢 Live at example.com\n## 🟡 In review')).toBe('Deploy is 🟢 for Friday\n🟢 Live at example.com\n## 🟡 In review')
