@@ -172,10 +172,11 @@ same conversion hex uses for Buzz and T3 Code), then into a few plain words.
 - `task` with `agent` (the agentId the Agent tool returned) follows that
   subagent until the task is done or failed.
 - `running` (in hex) reads everything hex runs, not only what the call
-  started: what waits on the caller, each thread at work with its newest step
-  and agents (from the board below), each `bin/job` unit the board shows no
-  session for (as `hex status` finds them), and busy sessions outside any
-  thread (`overall.ts`).
+  started: what waits on the caller (threads blocked on them and their open
+  asks), each thread at work with its newest step and agents (from the board
+  below, read again first, since a session that died leaves no change behind),
+  each `bin/job` unit no working session on the board runs (as `hex status`
+  finds them), and busy sessions outside any thread (`overall.ts`).
 - `send` (in hex) delivers a message to a Telegram topic, or a Discord, Buzz
   or T3 Code thread, puts it on the board, follows that thread's session from
   the moment it takes the message in, background agents included, and marks

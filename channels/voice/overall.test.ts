@@ -1,6 +1,9 @@
 import { expect, test } from 'bun:test'
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import type { Run } from './board.ts'
-import { jobsOf, lasted, overall } from './overall.ts'
+import { jobs, jobsOf, lasted, overall } from './overall.ts'
 
 const now = Date.parse('2026-11-05T20:00:00Z')
 const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString()
@@ -57,7 +60,7 @@ test('everything hex runs, one line each: what waits on the caller first, then t
       "- This call's agents: mail lookup",
       '- hex/clips, working for 1 minute: cutting clips',
       '- The job backup for hex, running for 3 days',
-      '- The job nightly for discord:9, running for a while',
+      '- The job nightly, running for a while',
       '- bassim-1, a Claude Code session outside any thread, busy for 5 minutes',
     ].join('\n'),
   )
@@ -74,4 +77,61 @@ test('a long board says the first eight and how many more', () => {
 test('how long, as said aloud', () => {
   expect([0.2, 1, 59, 60, 90, 47 * 60, 49 * 60].map(minutes => lasted(now - minutes * 60_000, now))).toEqual(['1 minute', '1 minute', '59 minutes', '1 hour', '2 hours', '47 hours', '2 days'])
   expect(lasted(0, now)).toBe('a while')
+})
+
+test('the questions hex keeps for the caller wait on them too, past those of a thread already blocked on them', () => {
+  const runs = [run('autofork', { state: 'needs', needs: 'Pick a music style' })]
+  const asks = [
+    { task: 'telegram:autofork', question: 'Pick a music style' },
+    { task: 'discord:9', question: 'Ship the  release\nnow?' },
+    { task: 'buzz:b1', question: 'Renew the domain?' },
+  ]
+  expect(overall(runs, [], [], {}, now, asks).split('\n')).toEqual([
+    'Everything hex is running, 3 waiting on you:',
+    '- autofork (Telegram) waits on you: Pick a music style',
+    '- 2 questions wait on you, the first: Ship the release now?',
+  ])
+  expect(overall([], [], [], {}, now, asks.slice(2))).toBe('Everything hex is running, 1 waiting on you:\n- A question waits on you: Renew the domain?')
+})
+
+test("a job shows while the session it ran has stopped, even though its thread's last stretch still lists it", () => {
+  const runs = [run('hex', { state: 'idle', agents: [agent('hex/build')] }), run('lab', { agents: [agent('lab/check', 'done')] })]
+  const jobs = [
+    { unit: 'build', owner: 'telegram:-100:42', since: now - 20 * 60_000 },
+    { unit: 'check', owner: 'telegram:-100:43', since: now - 5 * 60_000 },
+  ]
+  expect(overall(runs, [], jobs, { '-100:42': 'hex', '-100:43': 'lab' }, now).split('\n').slice(2)).toEqual([
+    '- The job build for hex, running for 20 minutes',
+    '- The job check for lab, running for 5 minutes',
+  ])
+})
+
+test('a busy session with no name is said by its folder, never its id', () => {
+  const strays = [{ id: '58585858-terminal', pid: 1, status: 'busy', cwd: '/home/u/projects/site', started: now - 2 * 60_000 }]
+  expect(overall([], strays, [], {}, now)).toBe('Everything hex is running:\n- A Claude Code session in site outside any thread, busy for 2 minutes')
+})
+
+test("jobs come from systemctl's own output, its start read in any zone the machine keeps", async () => {
+  const bin = mkdtempSync(join(tmpdir(), 'voice-systemctl-'))
+  const job = realpathSync(join(import.meta.dir, '..', '..', 'bin', 'job'))
+  // Like systemctl, it writes times in the zone TZ names, as that zone's abbreviation.
+  writeFileSync(
+    join(bin, 'systemctl'),
+    `#!/bin/sh
+zone=CET; hour=19; [ "$TZ" = UTC ] && zone=UTC && hour=18
+case "$2" in
+  list-units) printf 'backup.service loaded active running backup\\nssh-agent.service loaded active running agent\\n' ;;
+  show) printf 'Id=backup.service\\nActiveEnterTimestamp=Thu 2026-11-05 %s:00:00 %s\\nExecStopPost={ path=/bin/bun ; argv[]=/bin/bun ${job} --ended backup telegram:-100:42 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }\\n\\nId=ssh-agent.service\\nActiveEnterTimestamp=Thu 2026-11-05 09:00:00 %s\\nExecStopPost=\\n' $hour $zone $zone ;;
+esac
+`,
+  )
+  chmodSync(join(bin, 'systemctl'), 0o755)
+  const path = process.env.PATH
+  process.env.PATH = `${bin}:${path}`
+  try {
+    expect(await jobs()).toEqual([{ unit: 'backup', owner: 'telegram:-100:42', since: Date.parse('2026-11-05T18:00:00Z') }])
+  } finally {
+    process.env.PATH = path
+    rmSync(bin, { recursive: true })
+  }
 })

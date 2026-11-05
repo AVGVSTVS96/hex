@@ -1,7 +1,8 @@
 import { realpathSync } from 'fs'
-import { join } from 'path'
+import { basename, join } from 'path'
 import type { Session } from '../../hub/running.ts'
 import type { Run } from './board.ts'
+import { clip, type Question } from './questions.ts'
 
 // A bin/job unit running now: its name, the thread it's for (<app>:<key>) and when it started.
 export type Job = { unit: string; owner: string; since: number }
@@ -10,13 +11,13 @@ const SHOWN = 8
 
 // Every bin/job unit running now, found as `hex status` finds them: a user service whose stop
 // runs bin/job --ended, which names the unit's thread.
-export function jobs(): Job[] {
+export async function jobs(): Promise<Job[]> {
   const job = join(import.meta.dir, '..', '..', 'bin', 'job')
-  const units = systemctl('list-units', '--type=service', '--state=running', '--no-legend', '--plain')
+  const units = (await systemctl('list-units', '--type=service', '--state=running', '--no-legend', '--plain'))
     .split('\n')
     .map(line => line.split(/\s/)[0]!)
     .filter(Boolean)
-  return units.length ? jobsOf(systemctl('show', ...units, '-p', 'Id,ActiveEnterTimestamp,ExecStopPost'), real(job)) : []
+  return units.length ? jobsOf(await systemctl('show', ...units, '-p', 'Id,ActiveEnterTimestamp,ExecStopPost'), real(job)) : []
 }
 
 export function jobsOf(shown: string, job: string): Job[] {
@@ -30,13 +31,24 @@ export function jobsOf(shown: string, job: string): Job[] {
   })
 }
 
-// Everything hex runs, as the call says it: what waits on the caller, then each thread at work with
-// its newest step and the agents working for it, each job the board shows no session for, and
+// Everything hex runs, as the call says it: what waits on the caller (threads blocked on them, and
+// the questions hex keeps for them that no such thread asked), then each thread at work with its
+// newest step and the agents working for it, each job no session at work on the board runs for, and
 // busy sessions no thread holds. The call's own thread counts only for the agents it runs.
-export function overall(runs: Run[], strays: Session[], jobs: Job[], names: Record<string, string>, now = Date.now()) {
-  const shown = new Set(runs.flatMap(run => [run.name, ...run.agents.map(agent => agent.label)]).concat(strays.flatMap(one => one.name ?? [])))
+export function overall(runs: Run[], strays: Session[], jobs: Job[], names: Record<string, string>, now = Date.now(), asks: Pick<Question, 'task' | 'question'>[] = []) {
+  // A job's Claude Code session is named <thread>/<unit>; one that has stopped working, but whose
+  // run still keeps it among its agents, says nothing of whether the job still runs.
+  const shown = new Set(
+    runs
+      .filter(run => run.state === 'working' || run.state === 'needs')
+      .flatMap(run => [run.name, ...run.agents.filter(agent => agent.state === 'working').map(agent => agent.label)])
+      .concat(strays.flatMap(one => one.name ?? [])),
+  )
+  const needs = runs.filter(run => run.state === 'needs')
+  const asked = asks.filter(ask => !needs.some(run => run.id === ask.task))
   const lines = [
-    ...runs.filter(run => run.state === 'needs').map(run => `${place(run)} waits on you${(run.needs ?? run.line) ? `: ${run.needs ?? run.line}` : ''}`),
+    ...needs.map(run => `${place(run)} waits on you${(run.needs ?? run.line) ? `: ${run.needs ?? run.line}` : ''}`),
+    ...(asked.length ? [`${asked.length === 1 ? 'A question waits' : `${asked.length} questions wait`} on you${asked.length === 1 ? '' : ', the first'}: ${clip(asked[0]!.question.replace(/\s+/g, ' ').trim(), 140)}`] : []),
     ...runs.filter(run => run.state === 'working').flatMap(run => {
       const agents = run.agents.filter(agent => agent.state === 'working')
       if (run.app === 'voice') return agents.length ? [`This call's agents: ${agents.map(agent => agent.label).join(', ')}`] : []
@@ -45,12 +57,19 @@ export function overall(runs: Run[], strays: Session[], jobs: Job[], names: Reco
     }),
     ...jobs
       .filter(job => ![...shown].some(name => name.endsWith(`/${job.unit}`)))
-      .map(job => `The job ${job.unit} for ${names[job.owner.slice(job.owner.indexOf(':') + 1)] ?? job.owner}, running for ${lasted(job.since, now)}`),
-    ...strays.map(one => `${one.name ?? one.id.slice(0, 8)}, a Claude Code session outside any thread, busy for ${lasted(one.updated ?? one.started, now)}`),
+      .map(job => {
+        const thread = names[job.owner.slice(job.owner.indexOf(':') + 1)]
+        return `The job ${job.unit}${thread ? ` for ${thread}` : ''}, running for ${lasted(job.since, now)}`
+      }),
+    ...strays.map(one => {
+      const where = one.cwd && basename(one.cwd)
+      const what = one.name ? `${one.name}, a Claude Code session outside any thread` : `A Claude Code session${where ? ` in ${where}` : ''} outside any thread`
+      return `${what}, busy for ${lasted(one.updated ?? one.started, now)}`
+    }),
   ]
   if (!lines.length) return 'Nothing is running anywhere in hex right now.'
   const working = runs.filter(run => run.state === 'working' && run.app !== 'voice').length
-  const waiting = runs.filter(run => run.state === 'needs').length
+  const waiting = needs.length + asked.length
   const counts = [working && `${count(working, 'thread')} working`, waiting && `${waiting} waiting on you`].filter(Boolean).join(', ')
   const more = lines.length > SHOWN ? [`and ${lines.length - SHOWN} more`] : []
   return [`Everything hex is running${counts ? `, ${counts}` : ''}:`, ...lines.slice(0, SHOWN).map(line => `- ${line}`), ...more].join('\n')
@@ -85,10 +104,13 @@ function real(path: string) {
   }
 }
 
-function systemctl(...args: string[]) {
+// Off the event loop, which carries a phone call's audio both ways; with timestamps in UTC, since
+// systemctl writes them in the local zone's abbreviation, which Date.parse can't read for most zones (CET, JST).
+async function systemctl(...args: string[]) {
   try {
-    const { stdout, success } = Bun.spawnSync(['systemctl', '--user', ...args], { stderr: 'ignore', timeout: 5000 })
-    return success ? stdout.toString() : ''
+    const run = Bun.spawn(['systemctl', '--user', ...args], { stdout: 'pipe', stderr: 'ignore', env: { ...process.env, TZ: 'UTC' }, timeout: 5000 })
+    const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited])
+    return code === 0 ? out : ''
   } catch {
     return ''
   }

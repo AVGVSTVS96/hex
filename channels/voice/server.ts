@@ -117,7 +117,10 @@ const WARN_BEFORE = 120_000
 
 // The voice session's tools, which the hub hands here.
 export async function tool(name: string, args: Record<string, any>): Promise<string> {
-  if (name === 'running') return overall(board.runs, board.strays(), jobs(), open(HEX_STATE).names())
+  if (name === 'running') {
+    board.refresh()
+    return overall(board.runs, board.strays(), await jobs(), open(HEX_STATE).names(), Date.now(), yours.view.asks)
+  }
   if (name === 'phone') return dial(args.to, args.why)
   if (name === 'title') return title(args.call, args)
   if (name === 'task') return task(args.id, args.state as Task['state'], args.text, args.call, args.agent)
