@@ -1,4 +1,4 @@
-import type { ChannelServer } from '../../hub/hub.ts'
+import { EFFORTS, MODELS, type ChannelServer } from '../../hub/hub.ts'
 
 const titleProperty = { type: 'string', description: 'One word, like a chat name ("Anchors", "Frontier").' }
 
@@ -154,6 +154,18 @@ export const server: ChannelServer = {
         properties: {
           title: titleProperty,
           icon: { type: 'string', description: 'An emoji from Telegram\'s topic icon set, e.g. 🔥.' },
+        },
+      },
+    },
+    {
+      name: 'set_model',
+      description: "Set the model, the effort, or both that this topic's session runs on, when the user asks for it. It takes effect from the topic's next message, which restarts its session with its conversation kept.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          model: { type: 'string', enum: MODELS.map(({ value }) => value) },
+          effort: { type: 'string', enum: EFFORTS.map(({ value }) => value) },
+          thread: { type: 'string', description: 'Topic name to set instead of this thread.' },
         },
       },
     },
