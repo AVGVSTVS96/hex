@@ -434,6 +434,8 @@ function finish(call: Live, reason: string, by?: string) {
   clearTimeout(call.warning)
   const end = ending(reason, by)
   for (const pending of call.pending.values()) pending.reject(new Error(`the call ended (${reason})`))
+  // A subagent's steps show only on its live call; a thread's work goes on into the call's record.
+  for (const task of call.call.activity()) if (task.agent && !task.to) stop(call.id, task.id)
   for (const pending of call.rings.splice(0)) ring(call, pending)
   const rest = call.call.handOff()
   call.record = { ...call.record, ended: new Date().toISOString(), end, reason }
