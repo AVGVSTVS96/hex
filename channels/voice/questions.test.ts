@@ -804,6 +804,36 @@ test("an ask read out by its own id, which a check then takes up under one of it
   expect(questions.answered('check:ship')).toBe(false)
 })
 
+test("a check's ask undone after a later check let it go stays one card, and answering it reaches every copy", async () => {
+  const check = (asks: object[]) => writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify({ at: '2026-10-13T15:00:00.000Z', why: 'a call ended', read: {}, fixed: [], flagged: [], stuck: [], asks }))
+  const both = (fields: Partial<Question> = {}) => ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet'], fields), asked(2, 'Upgrade Twilio now?', ['Upgrade', 'Wait'], fields)])
+  both()
+  check([{ id: 'check:twilio', kind: 'yesno', task: `telegram:${DESK}`, at: '2026-10-11T00:00:00.000Z', question: 'Upgrade Twilio from trial', options: [{ label: 'Upgrade', value: 'Upgrade' }], refs: [{ app: 'telegram', thread: DESK, message: 1 }, { app: 'telegram', thread: DESK, message: 2 }] }])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  await questions.answer('check:twilio', 'Upgrade', 'app')
+  let version = questions.version
+  both({ answer: { label: 'Upgrade', at: '', via: 'app' } })
+  check([])
+  await questions.changes(version, 2000)
+  await until(() => !questions.view.asks.length)
+
+  await questions.undo('check:twilio', 'app')
+  await until(() => lines.filter(line => line.type === 'reopen').length === 2)
+  version = questions.version
+  both()
+  await questions.changes(version, 2000)
+  await until(() => questions.view.asks.length)
+  expect(questions.view.asks.map(question => [question.id, question.question])).toEqual([['check:twilio', 'Upgrade Twilio from trial']])
+
+  lines.length = 0
+  await questions.answer('check:twilio', 'Upgrade', 'app')
+  await until(() => lines.length === 2)
+  expect(lines).toEqual([
+    { type: 'answer', thread: DESK, message: 1, label: 'Upgrade', via: 'app' },
+    { type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: Upgrade' },
+  ])
+})
+
 test('an answer still on its way counts as given, so an undo it turns away is not taken for one that went through', async () => {
   ledger([asked(1, 'Ship it?', ['Yes', 'No'])])
   questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
