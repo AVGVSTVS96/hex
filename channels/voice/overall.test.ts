@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import type { Run } from './board.ts'
@@ -30,7 +30,7 @@ test('jobs are the units whose stop runs this hex’s bin/job --ended, with thei
     'ActiveEnterTimestamp=Thu 2026-11-05 19:00:00 UTC',
     'ExecStopPost={ path=/bin/bun ; argv[]=/bin/bun /elsewhere/bin/job --ended other telegram:1 ; ignore_errors=no }',
   ].join('\n')
-  expect(jobsOf(shown, '/home/u/hex/.hex/bin/job')).toEqual([{ unit: 'backup', owner: 'telegram:-100:42', since: Date.parse('2026-11-05T18:00:00Z') }])
+  expect(jobsOf(shown, '/home/u/hex/.hex/bin/job')).toEqual([{ unit: 'backup', owner: 'telegram:-100:42', since: Date.parse('2026-11-05T18:00:00Z'), working: false }])
 })
 
 test('nothing running says so', () => {
@@ -47,9 +47,9 @@ test('everything hex runs, one line each: what waits on the caller first, then t
   ]
   const strays = [{ id: '56565656-terminal', pid: 1, status: 'busy', name: 'bassim-1', started: now - 5 * 60_000 }]
   const jobs = [
-    { unit: 'backup', owner: 'telegram:-100:42', since: now - 3 * 24 * 60 * 60_000 },
-    { unit: 'clips', owner: 'telegram:-100:65', since: now - 60_000 },
-    { unit: 'nightly', owner: 'discord:9', since: 0 },
+    { unit: 'backup', owner: 'telegram:-100:42', since: now - 3 * 24 * 60 * 60_000, working: false },
+    { unit: 'clips', owner: 'telegram:-100:65', since: now - 60_000, working: false },
+    { unit: 'nightly', owner: 'discord:9', since: 0, working: false },
   ]
   expect(overall(runs, strays, jobs, { '-100:42': 'hex', '-100:65': 'hex' }, now)).toBe(
     [
@@ -97,8 +97,8 @@ test('the questions hex keeps for the caller wait on them too, past those of a t
 test("a job shows while the session it ran has stopped, even though its thread's last stretch still lists it", () => {
   const runs = [run('hex', { state: 'idle', agents: [agent('hex/build')] }), run('lab', { agents: [agent('lab/check', 'done')] })]
   const jobs = [
-    { unit: 'build', owner: 'telegram:-100:42', since: now - 20 * 60_000 },
-    { unit: 'check', owner: 'telegram:-100:43', since: now - 5 * 60_000 },
+    { unit: 'build', owner: 'telegram:-100:42', since: now - 20 * 60_000, working: false },
+    { unit: 'check', owner: 'telegram:-100:43', since: now - 5 * 60_000, working: false },
   ]
   expect(overall(runs, [], jobs, { '-100:42': 'hex', '-100:43': 'lab' }, now).split('\n').slice(2)).toEqual([
     '- The job build for hex, running for 20 minutes',
@@ -129,7 +129,7 @@ esac
   const path = process.env.PATH
   process.env.PATH = `${bin}:${path}`
   try {
-    expect(await jobs()).toEqual([{ unit: 'backup', owner: 'telegram:-100:42', since: Date.parse('2026-11-05T18:00:00Z') }])
+    expect(await jobs()).toEqual([{ unit: 'backup', owner: 'telegram:-100:42', since: Date.parse('2026-11-05T18:00:00Z'), working: false }])
   } finally {
     process.env.PATH = path
     rmSync(bin, { recursive: true })
@@ -139,9 +139,9 @@ esac
 test('a job is on the board only under the name bin/job gave it, never under another thread’s session of the same unit', () => {
   const runs = [run('lab', { agents: [agent('lab/build')] }), run('hex', { agents: [agent('hex/deploy')] })]
   const jobs = [
-    { unit: 'build', owner: 'telegram:-100:42', since: now - 20 * 60_000 },
-    { unit: 'deploy', owner: 'telegram:-100:42', since: now - 5 * 60_000 },
-    { unit: 'sync', owner: 'discord:9', since: now - 5 * 60_000 },
+    { unit: 'build', owner: 'telegram:-100:42', since: now - 20 * 60_000, working: false },
+    { unit: 'deploy', owner: 'telegram:-100:42', since: now - 5 * 60_000, working: false },
+    { unit: 'sync', owner: 'discord:9', since: now - 5 * 60_000, working: false },
   ]
   const strays = [{ id: '59595959-terminal', pid: 1, status: 'busy', name: 'x/sync', started: now - 60_000 }]
   expect(overall(runs, strays, jobs, { '-100:42': 'hex' }, now).split('\n').filter(line => line.includes('The job'))).toEqual([
@@ -149,4 +149,42 @@ test('a job is on the board only under the name bin/job gave it, never under ano
     '- The job sync, running for 5 minutes',
   ])
   expect(overall([run('9/sync')], [], jobs.slice(2), {}, now)).not.toContain('The job')
+})
+
+test('a job whose session at work renamed itself shows once, as that session', () => {
+  const runs = [run('hex', { agents: [agent('fix the deploy')] })]
+  const jobs = [{ unit: 'deploy', owner: 'telegram:-100:42', since: now - 5 * 60_000, working: true }]
+  expect(overall(runs, [], jobs, { '-100:42': 'hex' }, now)).toBe('Everything hex is running, 1 thread working:\n- hex (Telegram), working for 10 minutes; an agent: fix the deploy')
+})
+
+test("a job is at work when a busy Claude Code session runs in its unit's cgroup", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'voice-cgroup-'))
+  const job = realpathSync(join(import.meta.dir, '..', '..', 'bin', 'job'))
+  const unit = (name: string, pids: number[]) => {
+    mkdirSync(join(root, 'cg', name), { recursive: true })
+    writeFileSync(join(root, 'cg', name, 'cgroup.procs'), pids.map(pid => `${pid}\n`).join(''))
+    return [`Id=${name}.service`, 'ActiveEnterTimestamp=', `ExecStopPost={ path=/bin/bun ; argv[]=/bin/bun ${job} --ended ${name} telegram:1 ; ignore_errors=no }`, `ControlGroup=/${name}`].join('\n')
+  }
+  const shown = [unit('deploy', [101, 102]), unit('idle', [201]), unit('script', [301]), ['Id=bare.service', `ExecStopPost={ argv[]=/bin/bun ${job} --ended bare telegram:1 }`].join('\n')].join('\n\n')
+  mkdirSync(join(root, 'claude', 'sessions'), { recursive: true })
+  writeFileSync(join(root, 'claude', 'sessions', '102.json'), JSON.stringify({ sessionId: 'aaaa', pid: 102, status: 'busy', name: 'fix the deploy' }))
+  writeFileSync(join(root, 'claude', 'sessions', '201.json'), JSON.stringify({ sessionId: 'bbbb', pid: 201, status: 'idle' }))
+  const bin = mkdtempSync(join(tmpdir(), 'voice-systemctl-'))
+  writeFileSync(join(bin, 'systemctl'), `#!/bin/sh\ncase "$2" in list-units) echo 'deploy.service loaded active running deploy' ;; show) cat '${join(root, 'shown')}' ;; esac\n`)
+  writeFileSync(join(root, 'shown'), shown)
+  chmodSync(join(bin, 'systemctl'), 0o755)
+  const path = process.env.PATH
+  process.env.PATH = `${bin}:${path}`
+  try {
+    expect((await jobs(join(root, 'cg'), join(root, 'claude'))).map(({ unit, working }) => [unit, working])).toEqual([
+      ['deploy', true],
+      ['idle', false],
+      ['script', false],
+      ['bare', false],
+    ])
+  } finally {
+    process.env.PATH = path
+    rmSync(bin, { recursive: true })
+    rmSync(root, { recursive: true })
+  }
 })
