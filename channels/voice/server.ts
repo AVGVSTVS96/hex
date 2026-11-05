@@ -114,6 +114,8 @@ const placed = new Map<string, Placed>()
 const briefing: string[] = []
 const RETRIES = [250, 1000, 2000, 4000, 8000]
 const WARN_BEFORE = 120_000
+const HANDOFF_WAIT = 3000
+const ACK_WAIT = 10_000
 
 // The voice session's tools, which the hub hands here.
 export async function tool(name: string, args: Record<string, any>): Promise<string> {
@@ -155,7 +157,19 @@ function send(call: Live, type: string, content: string, delegation?: string) {
   if (call.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error('the connection to the voice is coming back; try again in a few seconds'))
   const event_id = `${type.split('.')[1]}_${++seq}`
   call.socket.send(JSON.stringify({ type, event_id, delegation_id: delegation ?? null, content }))
-  return new Promise<void>((resolve, reject) => call.pending.set(event_id, { resolve, reject }))
+  // A tool waits on the voice's word that it has the update; one that never comes would hold the
+  // voice session's turn, and every handoff after it, for good.
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      call.pending.delete(event_id)
+      reject(new Error(`the voice didn't confirm it within ${ACK_WAIT / 1000}s, so it may not have it`))
+    }, ACK_WAIT)
+    const settle = <T,>(then: (value: T) => void) => (value: T) => {
+      clearTimeout(timer)
+      then(value)
+    }
+    call.pending.set(event_id, { resolve: settle(resolve), reject: settle(reject) })
+  })
 }
 
 async function tell(call: Live, kind: 'say' | 'note', text: string, delegation?: string) {
@@ -416,7 +430,7 @@ function finish(call: Live, reason: string, by?: string) {
   clearTimeout(call.warning)
   const end = ending(reason, by)
   for (const pending of call.pending.values()) pending.reject(new Error(`the call ended (${reason})`))
-  for (const pending of call.rings) ring(call, pending)
+  for (const pending of call.rings.splice(0)) ring(call, pending)
   const rest = call.call.handOff()
   call.record = { ...call.record, ended: new Date().toISOString(), end, reason }
   save(call)
@@ -562,9 +576,18 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
       case 'session.output_transcript.delta':
         call.spoke = Date.now()
         return hear(call, 'voice', event)
-      case 'session.delegation.created':
-        if (event.delegation?.target === 'client') call.rings.push({ delegation: event.delegation.id, offset: event.offset_ms })
+      case 'session.delegation.created': {
+        if (event.delegation?.target !== 'client') return
+        const pending = { delegation: event.delegation.id, offset: event.offset_ms }
+        call.rings.push(pending)
+        // Words after the handoff are what send it, so the request is all there; when none come,
+        // as when the voice says nothing and the caller waits, it goes anyway after a moment.
+        setTimeout(() => {
+          const i = live === call ? call.rings.indexOf(pending) : -1
+          for (const due of i < 0 ? [] : call.rings.splice(0, i + 1)) ring(call, due)
+        }, HANDOFF_WAIT)
         return
+      }
       case 'session.commentary.appended':
       case 'session.thinking.appended':
       case 'session.instructions.appended':
@@ -597,7 +620,14 @@ function reconnect(call: Live, attempt: number) {
   call.pending.clear()
   // A close sent on the dropped connection may never have reached the session, so it goes out again.
   delete call.closed
-  if (call.speak || attempt >= RETRIES.length) return finish(call, call.closing ? 'close_requested' : 'connection_lost', call.closing)
+  if (call.speak || attempt >= RETRIES.length) {
+    const lost = !call.closing && !call.speak
+    finish(call, call.closing ? 'close_requested' : 'connection_lost', call.closing)
+    // The app's audio goes straight to the voice, so a call let go here would go on with nothing
+    // behind the voice: it's closed too, if a last connection gets through.
+    if (lost) closeSession(call.id, `close_hex_${++seq}`)
+    return
+  }
   trace(`lost the connection to ${call.id}, reattaching (try ${attempt + 1})`)
   setTimeout(() => {
     if (live !== call) return
@@ -805,7 +835,8 @@ function passThrough({ name, from, callee, greeting, why, format, play, started,
   openai.addEventListener('message', ({ data }) => {
     const event = JSON.parse(String(data))
     if (event.type === 'error') refuse(`OpenAI refused the ${name} session: ${event.error?.message ?? JSON.stringify(event.error)}`)
-    if (event.type !== 'session.started') return
+    // A session that starts once its caller has already hung up is let go, never taken as live.
+    if (event.type !== 'session.started' || openai.readyState !== WebSocket.OPEN) return
     up = true
     started(event.session.id)
     follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play })
@@ -926,8 +957,14 @@ function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
   if (message.event === 'stop') hangUp(twilio)
 }
 
+// A caller who hangs up before the voice session starts takes the session down with them: it's
+// closed, not left to start into a call nobody is on, and isn't counted as OpenAI refusing it.
 function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
-  if (twilio.data.openai) closeSocket(twilio.data.openai, 'close-you-phone')
+  const openai = twilio.data.openai
+  if (!openai) return
+  if (twilio.data.started) return closeSocket(openai, 'close-you-phone')
+  twilio.data.refused = true
+  openai.close()
 }
 
 // A phone or Discord caller hangs up on the session socket itself: through the call once it's live,

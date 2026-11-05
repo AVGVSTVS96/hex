@@ -1022,3 +1022,40 @@ test("a hex T3 thread's T3 tasks go under the thread it shows under, not a sende
   rmSync(join(claude, 'sessions', 'd7d7d7d7.json'))
   threads('discord', {})
 })
+
+test("a thread that works again shows only this stretch's steps and plan, not the last one's its transcript reads back over", async () => {
+  const root = mkdtempSync(join(tmpdir(), 'voice-board-again-'))
+  const claudeDir = join(root, 'claude')
+  const hexDir = join(root, 'hex')
+  const hexState = join(hexDir, 'state')
+  const dir = join(claudeDir, 'projects', hexDir.replace(/[^a-zA-Z0-9]/g, '-'))
+  for (const path of [dir, join(claudeDir, 'sessions'), join(claudeDir, 'jobs'), join(hexState, 'telegram')]) mkdirSync(path, { recursive: true })
+  const session = 'abababab-again'
+  open(hexState).keepThreads('telegram', { '-100777:5': { name: 'Again', session } })
+  const transcript = join(dir, `${session}.jsonl`)
+  const line = (minutes: number, type: string, content: object) =>
+    appendFileSync(transcript, JSON.stringify({ type, timestamp: ago(minutes), message: { id: `msg_${Math.random()}`, role: type, content: [content] } }) + '\n')
+  line(61, 'assistant', { type: 'tool_use', id: 'toolu_old', name: 'Bash', input: { command: 'rm -rf build', description: 'Wiping the old build' } })
+  line(60, 'user', { type: 'tool_result', tool_use_id: 'toolu_old', content: 'ok' })
+  line(59, 'assistant', { type: 'tool_use', id: 'toolu_plan', name: 'TodoWrite', input: { todos: [{ content: 'Old plan', status: 'in_progress', activeForm: 'Doing the old plan' }] } })
+  line(58, 'user', { type: 'tool_result', tool_use_id: 'toolu_plan', content: 'ok' })
+  const status = (status: string) => writeFileSync(join(claudeDir, 'sessions', 'abababab.json'), JSON.stringify({ pid: process.pid, sessionId: session, status, startedAt: Date.now() - 2 * 3600_000, statusUpdatedAt: Date.now() }))
+  status('idle')
+  const again = new Board(hexState, hexDir, claudeDir)
+  try {
+    const run = () => again.get('telegram:-100777:5')
+    await Bun.sleep(100)
+    status('busy')
+    await until(() => run()?.state === 'working')
+    await Bun.sleep(300)
+    expect(run()!.steps).toEqual([])
+    expect(run()!.plan).toEqual([])
+    heard(transcript, 'run the tests')
+    step(transcript, 'Bash', { command: 'bun test', description: 'Running the tests' })
+    await until(() => run()!.steps.length)
+    expect(run()!.steps.map(step => step.text)).toEqual(['Running the tests'])
+  } finally {
+    again.close()
+    rmSync(root, { recursive: true })
+  }
+})
