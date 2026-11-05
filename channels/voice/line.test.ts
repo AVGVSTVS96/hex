@@ -39,7 +39,7 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
     },
   })
   writeFileSync(join(state, '.env'), [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`].join('\n'))
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_|^CLAUDE_CONFIG_DIR$/.test(key)))
   const hex = join(home, 'hex', 'state')
   mkdirSync(join(hex, 'discord'), { recursive: true })
   before(hex)
@@ -215,4 +215,21 @@ test('on a call, a note on a shown card reaches its thread and the call and leav
   } finally {
     hub?.close()
   }
+}, 20_000)
+
+test("on a call, running answers from every thread hex has at work, not only what the call started", async () => {
+  await using call = await lineCall({
+    before: hex => {
+      mkdirSync(join(hex, 'telegram'))
+      open(hex).keepThreads('telegram', { '-1001234:7': { name: 'desk', session: '77777777-desk' } })
+      const sessions = join(hex, '..', '..', '.claude', 'sessions')
+      mkdirSync(sessions, { recursive: true })
+      writeFileSync(join(sessions, '77777777.json'), JSON.stringify({ pid: process.pid, sessionId: '77777777-desk', status: 'busy', startedAt: Date.now() }))
+    },
+  })
+  await until(() => call.steps.find(step => step.step === 'keep'))
+  call.tell('tool running {}')
+  const { text } = await until(() => call.steps.find(step => step.step === 'tool'))
+  expect(text).toStartWith('Everything hex is running, 1 thread working:')
+  expect(text).toContain('\n- desk (Telegram), working for 1 minute')
 }, 20_000)
