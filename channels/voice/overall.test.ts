@@ -51,7 +51,7 @@ test('everything hex runs, one line each: what waits on the caller first, then t
     { unit: 'clips', owner: 'telegram:-100:65', since: now - 60_000 },
     { unit: 'nightly', owner: 'discord:9', since: 0 },
   ]
-  expect(overall(runs, strays, jobs, { '-100:42': 'hex', '-100:65': 'Theo clips' }, now)).toBe(
+  expect(overall(runs, strays, jobs, { '-100:42': 'hex', '-100:65': 'hex' }, now)).toBe(
     [
       'Everything hex is running, 3 threads working, 1 waiting on you:',
       '- autofork (Telegram) waits on you: Pick a music style',
@@ -134,4 +134,19 @@ esac
     process.env.PATH = path
     rmSync(bin, { recursive: true })
   }
+})
+
+test('a job is on the board only under the name bin/job gave it, never under another thread’s session of the same unit', () => {
+  const runs = [run('lab', { agents: [agent('lab/build')] }), run('hex', { agents: [agent('hex/deploy')] })]
+  const jobs = [
+    { unit: 'build', owner: 'telegram:-100:42', since: now - 20 * 60_000 },
+    { unit: 'deploy', owner: 'telegram:-100:42', since: now - 5 * 60_000 },
+    { unit: 'sync', owner: 'discord:9', since: now - 5 * 60_000 },
+  ]
+  const strays = [{ id: '59595959-terminal', pid: 1, status: 'busy', name: 'x/sync', started: now - 60_000 }]
+  expect(overall(runs, strays, jobs, { '-100:42': 'hex' }, now).split('\n').filter(line => line.includes('The job'))).toEqual([
+    '- The job build for hex, running for 20 minutes',
+    '- The job sync, running for 5 minutes',
+  ])
+  expect(overall([run('9/sync')], [], jobs.slice(2), {}, now)).not.toContain('The job')
 })

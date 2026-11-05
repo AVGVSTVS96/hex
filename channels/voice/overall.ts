@@ -36,8 +36,8 @@ export function jobsOf(shown: string, job: string): Job[] {
 // newest step and the agents working for it, each job no session at work on the board runs for, and
 // busy sessions no thread holds. The call's own thread counts only for the agents it runs.
 export function overall(runs: Run[], strays: Session[], jobs: Job[], names: Record<string, string>, now = Date.now(), asks: Pick<Question, 'task' | 'question'>[] = []) {
-  // A job's Claude Code session is named <thread>/<unit>; one that has stopped working, but whose
-  // run still keeps it among its agents, says nothing of whether the job still runs.
+  // bin/job names a job's Claude Code session <thread>/<unit>; one that has stopped working, but
+  // whose run still keeps it among its agents, says nothing of whether the job still runs.
   const shown = new Set(
     runs
       .filter(run => run.state === 'working' || run.state === 'needs')
@@ -55,12 +55,11 @@ export function overall(runs: Run[], strays: Session[], jobs: Job[], names: Reco
       const line = agents.find(agent => agent.line)?.line ?? run.line
       return [`${place(run)}, working for ${lasted(Date.parse(run.since), now)}${line ? `: ${line}` : ''}${agents.length ? `; ${agentsOf(agents.map(agent => agent.label))}` : ''}`]
     }),
-    ...jobs
-      .filter(job => ![...shown].some(name => name.endsWith(`/${job.unit}`)))
-      .map(job => {
-        const thread = names[job.owner.slice(job.owner.indexOf(':') + 1)]
-        return `The job ${job.unit}${thread ? ` for ${thread}` : ''}, running for ${lasted(job.since, now)}`
-      }),
+    ...jobs.flatMap(job => {
+      const key = job.owner.slice(job.owner.indexOf(':') + 1)
+      if (shown.has(`${names[key] ?? key}/${job.unit}`)) return []
+      return [`The job ${job.unit}${names[key] ? ` for ${names[key]}` : ''}, running for ${lasted(job.since, now)}`]
+    }),
     ...strays.map(one => {
       const where = one.cwd && basename(one.cwd)
       const what = one.name ? `${one.name}, a Claude Code session outside any thread` : `A Claude Code session${where ? ` in ${where}` : ''} outside any thread`
