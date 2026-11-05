@@ -265,6 +265,18 @@ test('hex never rings while a call is live, and a call it placed that picks up o
   expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe(id)
 }, 20_000)
 
+test("while hex is on a call it placed to someone else, a call meant for the owner waits for it to end instead of going to them", async () => {
+  await using call = await phoneCall()
+  expect((await call.tool('phone', { to: '+15550003333', why: 'book a table' })).result).toStartWith('ringing')
+  await pickedUp(call.base, call.placed[0]!)
+  await live(call.base)
+  call.renewed()
+  const { error } = await call.tool('phone', { why: 'a reminder' })
+  expect(error).toContain('a call to +15550003333 is live')
+  expect(error).toContain('ring again once it ends')
+  expect(call.placed).toHaveLength(1)
+}, 20_000)
+
 test('notes sent while a placed call rings reach that call when it connects, and never one the caller started meanwhile', async () => {
   await using call = await phoneCall()
   await call.tool('phone', { why: 'a reminder' })

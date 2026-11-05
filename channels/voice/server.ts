@@ -758,6 +758,8 @@ async function dial(to = CALLER_NUMBER, why?: string) {
   if (!KEY || !TWILIO_SID || !TWILIO_TOKEN || !TWILIO_NUMBER || !PUBLIC_HOST)
     throw new Error(`phone calls need TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER and VOICE_PUBLIC_URL in ${join(STATE_DIR, '.env')}`)
   if (!to) throw new Error('no number to call: pass to, or set CALLER_NUMBER')
+  // On a call hex placed to someone else, what was meant for the owner isn't theirs to hear.
+  if (live?.record.callee) throw new Error(`a call to ${live.record.callee} is live, and another would end it: ring again once it ends, which a message tells you`)
   if (live || attaching) throw new Error('a call is live, and another would end it: tell the caller on this one with say or note')
   const token = crypto.randomUUID()
   const greeting = why
