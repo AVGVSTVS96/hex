@@ -284,3 +284,13 @@ test('work sent while the connection to the call is coming back still goes out a
   expect(engine.relayed).toMatchObject([{ type: 'inbound', thread: '-100123', content: 'look into it', meta: { voice_task: `${ID}:look-into-it` } }])
   expect((await engine.call()).tasks).toMatchObject([{ id: 'look-into-it', state: 'running', to: 'General' }])
 }, 20_000)
+
+test("a say the voice never confirms gives the voice session an answer instead of holding its turn", async () => {
+  await using engine = await appCall()
+  await started(engine)
+  const asked = Date.now()
+  const { error } = await engine.tool('say', { delegation_id: 'd1', text: 'CI is green.' })
+  expect(error).toBe("the voice didn't confirm it within 10s, so it may not have it")
+  expect(Date.now() - asked).toBeLessThan(12_000)
+  expect((await engine.tool('note', { text: 'still here' })).result).toBe('noted')
+}, 20_000)

@@ -12,22 +12,31 @@ const HOST = 'voice.test'
 // A phone call end to end, with a stand-in for OpenAI's live API and a recorded-style Twilio
 // media stream: the call engine runs on its own with a hub that takes everything, and the test
 // plays the caller's phone.
-async function phoneCall() {
+// late: OpenAI holds each session.start until the test lets it start.
+async function phoneCall({ late = false } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'phone-'))
   const state = join(home, '.claude', 'channels', 'voice')
   mkdirSync(state, { recursive: true })
   const audio: string[] = []
   let voice: Bun.ServerWebSocket<unknown> | undefined
+  const starts: (() => void)[] = []
+  // Each session.close OpenAI got, and whether its socket is still open.
+  const closes: string[] = []
+  let connected = 0
   const openai = Bun.serve({
     port: 0,
     fetch: (request, server) => (server.upgrade(request) ? undefined : new Response('no', { status: 400 })),
     websocket: {
       open: socket => {
         voice = socket
+        connected++
       },
+      close: () => void connected--,
       message(socket, raw) {
         const event = JSON.parse(String(raw))
-        if (event.type === 'session.start') socket.send(JSON.stringify({ type: 'session.started', session: { id: 'sess_phone', expires_at: Date.now() / 1000 + 3600 } }))
+        const begin = () => socket.send(JSON.stringify({ type: 'session.started', session: { id: 'sess_phone', expires_at: Date.now() / 1000 + 3600 } }))
+        if (event.type === 'session.start') late ? starts.push(begin) : begin()
+        if (event.type === 'session.close') closes.push(event.event_id)
         if (event.type === 'session.input_audio.append') audio.push(event.audio)
         if (event.type === 'session.close') socket.send(JSON.stringify({ type: 'session.closed', reason: 'close_requested', client_event_id: event.event_id }))
       },
@@ -79,6 +88,10 @@ step('listening', { port: server.port })`
     base,
     audio,
     steps,
+    closes,
+    connected: () => connected,
+    starting: () => until(() => starts.length),
+    start: () => starts.splice(0).forEach(begin => begin()),
     renewed: () => (plugin.stdin.write('renewed\n'), plugin.stdin.flush()),
     delegate: (id: string, offset_ms: number) => voice!.send(JSON.stringify({ type: 'session.delegation.created', delegation: { id, target: 'client' }, offset_ms })),
     say: (who: 'you' | 'voice', delta: string, start_ms: number) =>
@@ -92,14 +105,14 @@ step('listening', { port: server.port })`
   }
 }
 
-async function dialIn(base: string) {
+async function dialIn(base: string, { start = true } = {}) {
   const form = new URLSearchParams({ From: CALLER, CallSid: 'CA1' })
   const signature = createHmac('sha1', TWILIO_TOKEN).update(`https://${HOST}/twilio/incoming${[...form.keys()].sort().map(key => key + form.get(key)).join('')}`).digest('base64')
   const twiml = await fetch(`${base}/twilio/incoming`, { method: 'POST', body: form, headers: { 'x-twilio-signature': signature } }).then(r => r.text())
   const [, token] = twiml.match(/\/twilio\/([\w-]+)"/)!
   const phone = new WebSocket(`${base.replace('http', 'ws')}/twilio/${token}`)
   await new Promise(resolve => (phone.onopen = resolve))
-  phone.send(JSON.stringify({ event: 'start', start: { streamSid: 'MZ1' } }))
+  if (start) phone.send(JSON.stringify({ event: 'start', start: { streamSid: 'MZ1' } }))
   return phone
 }
 
@@ -195,4 +208,34 @@ test('the app ends only the call it names: a stale screen closing its old call l
   const ending = fetch(`${call.base}/calls/${id}?after=0`).then(r => r.json())
   expect((await end({ sessionId: id })).status).toBe(204)
   expect(await listen(call.base, id, (await ending).version, call => !!call.ended)).toMatchObject({ end: 'you' })
+}, 20_000)
+
+test('a caller who hangs up before the voice session starts leaves no call behind: the session is let go, never taken as live', async () => {
+  await using call = await phoneCall({ late: true })
+  const phone = await dialIn(call.base)
+  await call.starting()
+  phone.close()
+  await Bun.sleep(200)
+  call.start()
+  await Bun.sleep(300)
+  expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBeUndefined()
+  expect(call.connected()).toBe(0)
+  expect(call.steps.some(step => step.step === 'deliver' && step.content.startsWith('A call started'))).toBe(false)
+  expect(call.steps.some(step => step.step === 'deliver' && /didn't happen/.test(step.content))).toBe(false)
+}, 20_000)
+
+test('a handoff no words follow still reaches the voice session, once, a moment later', async () => {
+  await using call = await phoneCall()
+  await dialIn(call.base)
+  await live(call.base)
+  call.renewed()
+  call.say('you', 'is the build green?', 500)
+  await Bun.sleep(100)
+  call.delegate('d1', 900)
+  const handoffs = () => call.steps.filter(step => step.meta?.delegation_id === 'd1')
+  await until(() => handoffs().length, 6000)
+  expect(handoffs()[0].content).toContain('is the build green?')
+  call.say('voice', 'One sec.', 1200)
+  await Bun.sleep(300)
+  expect(handoffs()).toHaveLength(1)
 }, 20_000)
