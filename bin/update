@@ -35,6 +35,14 @@ if [ -z "$mode" ] && [ -n "${HEX_THREAD:-}${HEX_OWNER:-}" ] && command -v system
 fi
 
 check="$hex/worktrees/check"
+# Updates share the check folder, so each waits for the one before it, which may have shipped this main already.
+mkdir -p "$hex/worktrees"
+exec 8>"$hex/worktrees/.update.lock"
+flock 8
+if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
+  echo "up to date at $(git rev-parse --short HEAD)"
+  exit 0
+fi
 clean() {
   rm -rf "$check"
   git worktree prune
