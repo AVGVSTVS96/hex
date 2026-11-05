@@ -79,6 +79,8 @@ type Live = {
   spoke: number
   warning?: ReturnType<typeof setTimeout>
   speak?: (audio: string) => void
+  // The caller talking, which cuts off whatever of the voice's audio they haven't heard yet.
+  interrupt?: () => void
   // The first hang-up asked, which the call ends by, and whether it went out.
   closing?: string
   closed?: true
@@ -86,7 +88,8 @@ type Live = {
 type Attaching = { id: string; closing?: string }
 type Placed = { to: string; why?: string; started: string; session?: string }
 type Dial = { greeting: string; from: Source; token: string; why?: string; callee?: string }
-type Phone = Dial & { openai?: WebSocket; stream?: string; started?: true; refused?: true }
+// unheard: the voice's audio sent to Twilio that its marks say hasn't played yet, in chunks.
+type Phone = Dial & { openai?: WebSocket; stream?: string; started?: true; refused?: true; unheard: number }
 
 // What the call engine asks of the voice thread's hub: hand its session a message, hold the session
 // for a call (keep) or let it start over for the next (renew), wait for a renew on its way, and
@@ -461,14 +464,18 @@ function ringing() {
   return [...placed.values()].some(call => !call.session)
 }
 
-function follow(socket: WebSocket, record: Live['record'], { call = new Call(), speak, hello, about }: { call?: Call; speak?: Live['speak']; hello?: string; about?: Topic } = {}) {
+function follow(
+  socket: WebSocket,
+  record: Live['record'],
+  { call = new Call(), speak, interrupt, hello, about }: { call?: Call; speak?: Live['speak']; interrupt?: Live['interrupt']; hello?: string; about?: Topic } = {},
+) {
   if (live) {
     const by = live.closing
     close(live, 'close-you-moved')
     finish(live, by ? 'close_requested' : 'moved to a new call', live.closing ?? 'close-you-moved')
   }
   if (attaching) retire(attaching, 'close-you-moved')
-  const current: Live = { id: record.id, shown: new Map(), socket, call, record, pending: new Map(), rings: [], changes: new Changes(), spoke: 0, speak }
+  const current: Live = { id: record.id, shown: new Map(), socket, call, record, pending: new Map(), rings: [], changes: new Changes(), spoke: 0, speak, interrupt }
   live = current
   save(current)
   activity.changed()
@@ -572,6 +579,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
     const event = JSON.parse(String(data))
     switch (event.type) {
       case 'session.input_transcript.delta':
+        call.interrupt?.()
         return hear(call, 'you', event)
       case 'session.output_transcript.delta':
         call.spoke = Date.now()
@@ -813,12 +821,13 @@ type Passed = {
   why?: string
   format: { type: string; rate: number }
   play: (audio: string) => void
+  interrupt?: () => void
   started: (session: string) => void
   refused: (reason: string) => void
   closed: () => void
 }
 
-function passThrough({ name, from, callee, greeting, why, format, play, started, refused, closed }: Passed) {
+function passThrough({ name, from, callee, greeting, why, format, play, interrupt, started, refused, closed }: Passed) {
   const openai = new WebSocket(API, { headers: { Authorization: `Bearer ${KEY}` } } as any)
   let up = false
   let refusing = false
@@ -839,7 +848,7 @@ function passThrough({ name, from, callee, greeting, why, format, play, started,
     if (event.type !== 'session.started' || openai.readyState !== WebSocket.OPEN) return
     up = true
     started(event.session.id)
-    follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play })
+    follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play, interrupt })
   })
   openai.addEventListener('close', ({ code, reason }) => {
     trace(`OpenAI closed the ${name} session (${code} ${reason})`)
@@ -857,7 +866,16 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
     greeting: twilio.data.greeting,
     why: twilio.data.why,
     format: { type: 'audio/pcmu', rate: 8000 },
-    play: audio => twilio.send(JSON.stringify({ event: 'media', streamSid: twilio.data.stream, media: { payload: audio } })),
+    // Twilio plays what it's sent as it comes, faster than it's said, and echoes each mark once the
+    // audio before it has played or been cleared.
+    play: audio => {
+      twilio.send(JSON.stringify({ event: 'media', streamSid: twilio.data.stream, media: { payload: audio } }))
+      twilio.send(JSON.stringify({ event: 'mark', streamSid: twilio.data.stream, mark: { name: 'voice' } }))
+      twilio.data.unheard++
+    },
+    interrupt: () => {
+      if (twilio.data.unheard) twilio.send(JSON.stringify({ event: 'clear', streamSid: twilio.data.stream }))
+    },
     started: session => {
       twilio.data.started = true
       const call = placed.get(twilio.data.token)
@@ -952,6 +970,7 @@ function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
   const message = JSON.parse(String(raw))
   if (message.event === 'start') twilio.data.stream = message.start.streamSid
   if (message.event === 'start' || message.event === 'stop') trace(`Twilio stream ${message.event}`)
+  if (message.event === 'mark') twilio.data.unheard = Math.max(0, twilio.data.unheard - 1)
   if (message.event === 'media' && twilio.data.started)
     twilio.data.openai?.send(JSON.stringify({ type: 'session.input_audio.append', audio: message.media.payload }))
   if (message.event === 'stop') hangUp(twilio)
@@ -1306,7 +1325,7 @@ export function serve(voiceHub: Hub, state: string) {
       const dialed = dials.get(token)
       if (token) trace(`Twilio ${request.method} ${twimlPath ? 'TwiML' : 'stream'}, ${dialed ? 'known' : 'unknown'} token`)
       if (dialed && twimlPath) return stream(token)
-      if (dialed && dials.delete(token)) return server.upgrade(request, { data: { ...dialed } }) ? undefined : new Response('upgrade failed', { status: 400 })
+      if (dialed && dials.delete(token)) return server.upgrade(request, { data: { ...dialed, unheard: 0 } }) ? undefined : new Response('upgrade failed', { status: 400 })
       if (foreign(request)) return new Response('Forbidden', { status: 403 })
       if (pathname === '/') return home(request)
       if (!allowed(request)) return new Response('Unauthorized', { status: 401, headers: { 'www-authenticate': 'Bearer' } })

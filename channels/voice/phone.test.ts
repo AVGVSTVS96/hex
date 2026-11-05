@@ -93,6 +93,7 @@ step('listening', { port: server.port })`
     starting: () => until(() => starts.length),
     start: () => starts.splice(0).forEach(begin => begin()),
     renewed: () => (plugin.stdin.write('renewed\n'), plugin.stdin.flush()),
+    speak: (delta: string) => voice!.send(JSON.stringify({ type: 'session.output_audio.delta', delta })),
     delegate: (id: string, offset_ms: number) => voice!.send(JSON.stringify({ type: 'session.delegation.created', delegation: { id, target: 'client' }, offset_ms })),
     say: (who: 'you' | 'voice', delta: string, start_ms: number) =>
       voice!.send(JSON.stringify({ type: who === 'you' ? 'session.input_transcript.delta' : 'session.output_transcript.delta', delta, start_ms, end_ms: start_ms + 300 })),
@@ -169,6 +170,33 @@ test("a phone call's words reach the app as they're heard, and how it ended land
   expect(ended.version).toBeUndefined()
   expect(ended.turns).toHaveLength(2)
   expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBeUndefined()
+}, 20_000)
+
+test("the caller talking over the voice clears what Twilio hasn't played yet, and only that", async () => {
+  await using call = await phoneCall()
+  const phone = await dialIn(call.base)
+  await live(call.base)
+  const heard: any[] = []
+  phone.onmessage = ({ data }) => heard.push(JSON.parse(String(data)))
+  const clears = () => heard.filter(message => message.event === 'clear')
+
+  call.speak('AAAA')
+  call.speak('BBBB')
+  await until(() => heard.filter(message => message.event === 'mark').length === 2)
+  expect(heard.map(message => message.event)).toEqual(['media', 'mark', 'media', 'mark'])
+  expect(heard[0]).toEqual({ event: 'media', streamSid: 'MZ1', media: { payload: 'AAAA' } })
+
+  call.say('you', 'wait, ', 1000)
+  await until(() => clears().length)
+  expect(clears()).toEqual([{ event: 'clear', streamSid: 'MZ1' }])
+
+  // Twilio hands back every mark the clear dropped; with nothing left unplayed, more words clear nothing.
+  for (let i = 0; i < 2; i++) phone.send(JSON.stringify({ event: 'mark', streamSid: 'MZ1', mark: { name: 'voice' } }))
+  await Bun.sleep(100)
+  call.say('you', 'stop.', 1300)
+  const id = await live(call.base)
+  await listen(call.base, id, 0, record => record.turns.some((turn: any) => turn.text.includes('stop.')))
+  expect(clears()).toHaveLength(1)
 }, 20_000)
 
 test("a call's words reach the voice session only once the last call's renew is through, in order, and its end lets the session renew", async () => {
