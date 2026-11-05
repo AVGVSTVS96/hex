@@ -255,9 +255,8 @@ function resume() {
   }
 }
 
-// A resumed thread is read from its start before followThread returns, so its turn can end and the
-// board start following before followThread hands back anything to stop: the task's followers are
-// held from the outset, and one that starts after the task stopped stops at once.
+// The task's followers, the thread's and then the board's, are held from the outset, and one that
+// starts after the task stopped stops at once.
 function watch(call: string, id: string, thread: Thread, resumed: boolean) {
   stop(call, id)
   const stops: (() => void)[] = []
