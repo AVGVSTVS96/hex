@@ -184,16 +184,11 @@ test('a call whose client left while the hub was too busy to send its answer cou
   }
 })
 
-test('an SDK tool connection never takes the topic delivery stream', async () => {
-  let opened = 0
+test('a stock MCP client lists the tools and replies without an operation id', async () => {
   const serve = endpoint('telegram', 'chat', TOKEN, SERVER, {
-    call: async () => 'read', permission: () => {}, open: () => { opened++ }, close: () => {},
+    call: async () => 'read', permission: () => {}, open: () => {}, close: () => {},
   }, open(mkdtempSync(join(tmpdir(), 'operations-'))))
-  const headers = { Authorization: `Bearer ${TOKEN}`, 'X-Hex-Channel': 'chat', 'X-Hex-Thread': 'topic', 'X-Hex-Tools-Only': '1' }
-  const response = await serve(new Request('http://127.0.0.1/telegram', { headers }))
-  expect(response.status).toBe(200)
-  expect(opened).toBe(0)
-  await response.body!.cancel()
+  const headers = { Authorization: `Bearer ${TOKEN}`, 'X-Hex-Channel': 'chat', 'X-Hex-Thread': 'topic' }
   const hub = Bun.serve({ port: 0, fetch: serve })
   const client = new Client({ name: 'stock-mcp-client', version: '1' })
   try {
@@ -201,7 +196,6 @@ test('an SDK tool connection never takes the topic delivery stream', async () =>
     expect((await client.listTools()).tools).toEqual(JSON.parse(JSON.stringify(SERVER.tools)))
     const reply = await client.callTool({ name: 'reply', arguments: { text: 'ordinary reply without an operation id' } })
     expect(reply).toMatchObject({ content: [{ type: 'text', text: 'read' }] })
-    expect(opened).toBe(0)
   } finally {
     await client.close()
     hub.stop(true)

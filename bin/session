@@ -30,8 +30,6 @@ untrusted && echo "hex couldn't mark $here trusted in $config" >&2
 [ -n "${away:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 for arg; do
   shift
-  if [ "${flag:-}" = --hex-sdk ]; then sdk=$arg; flag=; continue; fi
-  if [ "$arg" = --hex-sdk ]; then flag=$arg; continue; fi
   if [ "${flag:-}" = --settings ]; then
     # The hub hands its settings over as a file, which keeps its token out of the process list.
     file=
@@ -69,7 +67,6 @@ fi
 # With several Claude accounts pooled by tokenmaxxing (github.com/anaclumos/tokenmaxxing), each session starts on the one with the most headroom left.
 [ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
-[ -z "${sdk:-}" ] || exec bun "$hex/hub/sdk.ts" launch "$sdk" "$@" --plugin-dir "$hex/plugin"
 # Anthropic's 5-hour limit charges a run with no terminal, which Claude Code labels sdk-cli, more per token than an interactive one (anthropics/claude-code#97074), and Claude Code reads its label only from the environment, where a labeled parent leaves its own.
 if [ "$bg" != --bg ] && [ ! -t 1 ]; then export CLAUDE_CODE_ENTRYPOINT=hex; else unset CLAUDE_CODE_ENTRYPOINT; fi
 exec claude --plugin-dir "$hex/plugin" "$@"

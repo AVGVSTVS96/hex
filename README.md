@@ -182,21 +182,3 @@ this repo ─────────────────▶ your fork ─�
 ## License
 
 [MIT](LICENSE)
-
-### Temporary API-credit bridge
-
-Set `env.HEX_AGENT_SDK` in your hex settings to a private JSON file to run Telegram
-threads through the official Agent SDK. Unset it to return to normal interactive
-Claude Code. You can also set `enabled: false` in the file to turn the bridge off
-without restarting the hub; topics return to interactive mode between turns. The file has `proxy`, an API-only model `prefix`, a `models` map from
-Claude's family names to upstream model IDs, and `env.ANTHROPIC_API_KEY` for the
-proxy's client key. An optional `threads` array limits the first rollout to selected
-Telegram thread IDs. Keep this file mode `0600` and outside git.
-
-The proxy must provide authenticated `GET /v1/claude/runtime?prefix=...`, returning
-`runtime: "sdk"` while the API credential is available, and `"interactive"` when
-subscription headroom returns or API credit is exhausted. The SDK sends
-`X-Proxy-API-Only: 1`; the proxy must reject subscription credentials for that
-request. The pool owns the financial decision. hex changes the actual runtime,
-preserves the conversation, and keeps its channel tools and permission relay.
-SDK sessions never fall through to subscription authentication.
