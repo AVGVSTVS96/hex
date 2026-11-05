@@ -435,6 +435,7 @@ TWILIO_AUTH_TOKEN=...
 TWILIO_NUMBER=+1...                       # your Twilio number, the caller ID
 CALLER_NUMBER=+1...                       # who "call me" rings
 VOICE_PUBLIC_URL=host.example.com         # public HTTPS host that reaches /twilio on VOICE_PORT
+TWILIO_BASE_URL=...                       # optional: another endpoint for Twilio's REST API; https://api.twilio.com if unset
 ```
 
 Twilio has to reach `/twilio` from the internet, for example with

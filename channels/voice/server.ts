@@ -23,6 +23,7 @@ const API = `${env.OPENAI_BASE_URL ?? 'https://api.openai.com/v1'}/live/sessions
 const TWILIO_SID = env.TWILIO_ACCOUNT_SID
 const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN
 const TWILIO_NUMBER = env.TWILIO_NUMBER
+const TWILIO_API = env.TWILIO_BASE_URL ?? 'https://api.twilio.com'
 const CALLER_NUMBER = env.CALLER_NUMBER
 const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//, '')
 const PUBLIC_HOSTNAME = PUBLIC_HOST ? URL.parse(`https://${PUBLIC_HOST}`)?.hostname : undefined
@@ -756,6 +757,7 @@ async function dial(to = CALLER_NUMBER, why?: string) {
   if (!KEY || !TWILIO_SID || !TWILIO_TOKEN || !TWILIO_NUMBER || !PUBLIC_HOST)
     throw new Error(`phone calls need TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER and VOICE_PUBLIC_URL in ${join(STATE_DIR, '.env')}`)
   if (!to) throw new Error('no number to call: pass to, or set CALLER_NUMBER')
+  if (live || attaching) throw new Error('a call is live, and another would end it: tell the caller on this one with say or note')
   const token = crypto.randomUUID()
   const greeting = why
     ? `You placed this phone call because: ${why}. Greet them briefly and tell them why you're calling, then listen.`
@@ -764,7 +766,7 @@ async function dial(to = CALLER_NUMBER, why?: string) {
   dials.set(token, { greeting, from: 'phone-out', token, why, ...(to !== CALLER_NUMBER && { callee: to }) })
   placed.set(token, { to, why, started: new Date().toISOString() })
   setTimeout(() => placed.get(token)?.session || placed.delete(token), 300_000)
-  const response = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
+  const response = await fetch(`${TWILIO_API}/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
     method: 'POST',
     headers: { Authorization: `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}` },
     body: new URLSearchParams({
@@ -845,6 +847,8 @@ function passThrough({ name, from, callee, greeting, why, format, play, interrup
     if (event.type === 'error') refuse(`OpenAI refused the ${name} session: ${event.error?.message ?? JSON.stringify(event.error)}`)
     // A session that starts once its caller has already hung up is let go, never taken as live.
     if (event.type !== 'session.started' || openai.readyState !== WebSocket.OPEN) return
+    // A call hex placed that picks up once another is live, as a voicemail can, never takes its place.
+    if (from === 'phone-out' && (live || attaching)) return refuse('it picked up while another call was live, so it was let go')
     up = true
     started(event.session.id)
     follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play, interrupt })

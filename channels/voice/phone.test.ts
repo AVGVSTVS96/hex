@@ -22,7 +22,10 @@ async function phoneCall({ late = false } = {}) {
   const starts: (() => void)[] = []
   // Each session.close OpenAI got, and whether its socket is still open.
   const closes: string[] = []
+  // What the voice was told with note or say, as each session got it.
+  const told: { session: string; content: string }[] = []
   let connected = 0
+  let sessions = 0
   const openai = Bun.serve({
     port: 0,
     fetch: (request, server) => (server.upgrade(request) ? undefined : new Response('no', { status: 400 })),
@@ -32,9 +35,16 @@ async function phoneCall({ late = false } = {}) {
         connected++
       },
       close: () => void connected--,
-      message(socket, raw) {
+      message(socket: Bun.ServerWebSocket<{ id?: string }>, raw) {
         const event = JSON.parse(String(raw))
-        const begin = () => socket.send(JSON.stringify({ type: 'session.started', session: { id: 'sess_phone', expires_at: Date.now() / 1000 + 3600 } }))
+        const begin = () => {
+          socket.data = { id: ++sessions === 1 ? 'sess_phone' : `sess_phone_${sessions}` }
+          socket.send(JSON.stringify({ type: 'session.started', session: { id: socket.data.id, expires_at: Date.now() / 1000 + 3600 } }))
+        }
+        if (/^session\.(thinking|commentary)\.append$/.test(event.type)) {
+          told.push({ session: socket.data?.id ?? '', content: event.content })
+          socket.send(JSON.stringify({ type: `${event.type}ed`, client_event_id: event.event_id }))
+        }
         if (event.type === 'session.start') late ? starts.push(begin) : begin()
         if (event.type === 'session.close') closes.push(event.event_id)
         if (event.type === 'session.input_audio.append') audio.push(event.audio)
@@ -42,15 +52,25 @@ async function phoneCall({ late = false } = {}) {
       },
     },
   })
+  // Twilio's REST API: each call placed, by the token its TwiML URL carries.
+  const placed: string[] = []
+  const twilio = Bun.serve({
+    port: 0,
+    fetch: async request => {
+      const url = (await request.formData()).get('Url')
+      placed.push(String(url).match(/\/twilio\/([\w-]+)\/twiml$/)![1]!)
+      return Response.json({ sid: `CA${placed.length}` }, { status: 201 })
+    },
+  })
   writeFileSync(
     join(state, '.env'),
-    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`].join('\n'),
+    [`OPENAI_API_KEY=test`, `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`, `VOICE_PORT=0`, `TWILIO_ACCOUNT_SID=AC1`, `TWILIO_AUTH_TOKEN=${TWILIO_TOKEN}`, `TWILIO_NUMBER=+15550002222`, `CALLER_NUMBER=${CALLER}`, `VOICE_PUBLIC_URL=${HOST}`, `TWILIO_BASE_URL=http://127.0.0.1:${twilio.port}`].join('\n'),
   )
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)))
   const hex = join(home, 'hex', 'state')
   mkdirSync(hex, { recursive: true })
   // The hub's side, as lines on stdout; a renewal holds until the test writes a line to stdin.
-  const engine = `import { serve } from ${JSON.stringify(join(import.meta.dir, 'server.ts'))}
+  const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, 'server.ts'))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 const lines = console[Symbol.asyncIterator]()
 const server = serve({
@@ -60,11 +80,15 @@ const server = serve({
   renewal: async () => (step('renewal'), await lines.next()),
   session: () => 'brain',
 }, ${JSON.stringify(hex)})
-step('listening', { port: server.port })`
+const tools = Bun.serve({ port: 0, fetch: async request => {
+  const { name, args } = await request.json()
+  return tool(name, args).then(result => Response.json({ result }), error => Response.json({ error: error.message }))
+} })
+step('listening', { port: server.port, tools: tools.port })`
   const plugin = Bun.spawn(['bun', '-e', engine], { env: { ...env, HOME: home }, stdin: 'pipe', stdout: 'pipe', stderr: 'ignore' })
   const steps: any[] = []
-  let listening!: (port: number) => void
-  const port = new Promise<number>(resolve => (listening = resolve))
+  let listening!: (ports: { port: number; tools: number }) => void
+  const port = new Promise<{ port: number; tools: number }>(resolve => (listening = resolve))
   void (async () => {
     let buffer = ''
     for await (const chunk of plugin.stdout) {
@@ -72,7 +96,7 @@ step('listening', { port: server.port })`
       const lines = buffer.split('\n')
       buffer = lines.pop()!
       for (const step of lines.map(line => JSON.parse(line))) {
-        if (step.step === 'listening') listening(step.port)
+        if (step.step === 'listening') listening(step)
         else steps.push(step)
       }
     }
@@ -80,15 +104,20 @@ step('listening', { port: server.port })`
   const exited = plugin.exited.then(code => Promise.reject(new Error(`the engine exited (${code}) before it listened`)))
   const listened = await Promise.race([port, exited]).catch(error => {
     openai.stop(true)
+    twilio.stop(true)
     rmSync(home, { recursive: true, force: true })
     throw error
   })
-  const base = `http://127.0.0.1:${listened}`
+  const base = `http://127.0.0.1:${listened.port}`
   return {
     base,
     audio,
     steps,
     closes,
+    told,
+    placed,
+    tool: (name: string, args: object = {}): Promise<{ result?: string; error?: string }> =>
+      fetch(`http://127.0.0.1:${listened.tools}`, { method: 'POST', body: JSON.stringify({ name, args }) }).then(r => r.json()),
     connected: () => connected,
     starting: () => until(() => starts.length),
     start: () => starts.splice(0).forEach(begin => begin()),
@@ -101,6 +130,7 @@ step('listening', { port: server.port })`
       plugin.kill()
       await plugin.exited
       openai.stop(true)
+      twilio.stop(true)
       rmSync(home, { recursive: true, force: true })
     },
   }
@@ -114,6 +144,15 @@ async function dialIn(base: string, { start = true } = {}) {
   const phone = new WebSocket(`${base.replace('http', 'ws')}/twilio/${token}`)
   await new Promise(resolve => (phone.onopen = resolve))
   if (start) phone.send(JSON.stringify({ event: 'start', start: { streamSid: 'MZ1' } }))
+  return phone
+}
+
+// A call hex placed, picked up: Twilio fetches its TwiML and opens its stream.
+async function pickedUp(base: string, token: string) {
+  await fetch(`${base}/twilio/${token}/twiml`, { method: 'POST' })
+  const phone = new WebSocket(`${base.replace('http', 'ws')}/twilio/${token}`)
+  await new Promise(resolve => (phone.onopen = resolve))
+  phone.send(JSON.stringify({ event: 'start', start: { streamSid: 'MZ2' } }))
   return phone
 }
 
@@ -197,6 +236,22 @@ test("the caller talking over the voice clears what Twilio hasn't played yet, an
   const id = await live(call.base)
   await listen(call.base, id, 0, record => record.turns.some((turn: any) => turn.text.includes('stop.')))
   expect(clears()).toHaveLength(1)
+}, 20_000)
+
+test('hex never rings while a call is live, and a call it placed that picks up once one is live, as a voicemail can, is let go', async () => {
+  await using call = await phoneCall()
+  expect((await call.tool('phone', { why: 'a reminder' })).result).toStartWith('ringing')
+  await dialIn(call.base)
+  const id = await live(call.base)
+  call.renewed()
+  expect((await call.tool('phone', { why: 'another reminder' })).error).toContain('a call is live')
+  expect(call.placed).toHaveLength(1)
+
+  const voicemail = await pickedUp(call.base, call.placed[0]!)
+  await new Promise(resolve => (voicemail.onclose = resolve))
+  const missed = await until(() => call.steps.find(step => step.step === 'deliver' && step.content.startsWith('Your phone call')))
+  expect(missed.content).toContain('another call was live')
+  expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe(id)
 }, 20_000)
 
 test("a call's words reach the voice session only once the last call's renew is through, in order, and its end lets the session renew", async () => {
