@@ -1,8 +1,8 @@
 #!/usr/bin/env bun
 // away <machine> <environment> <name> <claude args...>: runs an agent job as a T3 Code thread on another machine,
 // through this machine's T3 Code and its link to that one, so it starts the way T3 starts Claude Code, and follows it
-// the way `t3 thread start --wait` does: until its run ends, then prints its answer; it stops the thread if the job
-// stops. Having started nothing, it exits 76 when the job can't run there (claude flags a thread has no place for, no
+// the way `t3 thread start --wait` does: until its run ends and every background task it started has woken it with
+// its result, then prints its answer; it stops the thread if the job stops. Having started nothing, it exits 76 when the job can't run there (claude flags a thread has no place for, no
 // Claude there, a link that's gone) and 77 when T3 Code, here or there, doesn't answer; bin/place then tries the next
 // machine.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -266,11 +266,11 @@ console.log(`${name} runs on ${machine} as T3 Code thread ${launched.link}`)
 // pending request, checked once more, needs an answer a job can't give. With Claude, a pending request holds its turn.
 const runId = launched.runId
 // A run has ended when its status is final and the wait didn't time out: T3 times out a run a restart cut, final as
-// its status reads, while its continuation is pending.
+// its status reads, while its continuation is pending, and one whose background tasks will still wake the thread.
 const FINISHED = ['completed', 'interrupted', 'failed', 'cancelled', 'rolled_back']
 const ended = ({ status, timedOut }: { status: string; timedOut: boolean }) => FINISHED.includes(status) && !timedOut
 async function follow(): Promise<number> {
-  const slice = (timeoutMs: number) => persist(() => call('t3_thread_wait', { threadId, runId, timeoutMs }))
+  const slice = (timeoutMs: number) => persist(() => call('t3_thread_wait', { threadId, runId, timeoutMs, untilDelegatedWorkSettled: true }))
   let waited = await slice(50_000)
   while (!ended(waited)) {
     const { thread } = await persist(() => call('t3_thread_read', { threadId, limit: 1, runLimit: 1 }))
@@ -295,7 +295,7 @@ async function follow(): Promise<number> {
     ;[after, more] = [page.nextPosition, page.hasMore]
   }
   console.log(last?.text ?? `${name} ended on ${machine} with no answer`)
-  return waited.status === 'completed' ? 0 : 1
+  return (waited.resultRun ?? waited).status === 'completed' ? 0 : 1
 }
 // A thread this job can no longer follow is stopped, so nothing runs there unwatched.
 const code = await follow().catch(async (error: Error) => {
