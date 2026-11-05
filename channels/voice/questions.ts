@@ -151,7 +151,19 @@ export class Questions extends Changes {
   }
 
   find(id: string) {
-    return this.view.asks.find(question => question.id === id)
+    const listed = (id: string) => this.view.asks.find(question => question.id === id)
+    return listed(id) ?? listed(this.renamed(id) ?? id)
+  }
+
+  // An ask read out or shown by the id it was listed under, which a check since took up as one of
+  // its copies under an id of its own: answering it by the old id answers the check's.
+  private renamed(id: string): string | undefined {
+    if (this.view.asks.some(question => question.id === id)) return
+    return this.result?.asks.find((question: Written) => question.refs?.some(ref => refId(ref) === id))?.id
+  }
+
+  private listed(id: string) {
+    return this.marks.answers[id] ? id : (this.renamed(id) ?? id)
   }
 
   // The thread's own questions and its pinned status post, for its page: one hex keeps is read
@@ -198,7 +210,7 @@ export class Questions extends Changes {
   // button takes it; the other copies settle. A copy an earlier answer missed only settles, and
   // finishing that answer settles just those.
   answer(id: string, label: string, via: string): Promise<Sent> {
-    return this.take(id, label, via, false)
+    return this.take(this.listed(id), label, via, false)
   }
 
   private async answering(id: string, label: string, via: string, question: Question, taken: Taken, where: string, finishing: boolean) {
@@ -216,6 +228,7 @@ export class Questions extends Changes {
   // His own words on a question, which leave it open: they reach the thread that asked it, and
   // nothing settles.
   async note(id: string, text: string, via: string): Promise<Sent> {
+    id = this.listed(id)
     const question = this.find(id)
     if (!question) throw new Error('that question is already answered or settled')
     if (this.taking.has(id)) throw new Error('an answer to that is on its way; try again in a moment')
@@ -228,7 +241,7 @@ export class Questions extends Changes {
   // thread's copies settle only once it has heard, so one it couldn't reach stays open to try
   // again; finishing skips the threads that round already told.
   dismiss(id: string, via: string): Promise<Sent> {
-    return this.take(id, NOT_NEEDED, via, true)
+    return this.take(this.listed(id), NOT_NEEDED, via, true)
   }
 
   private async dismissing(id: string, via: string, question: Question, taken: Taken, where: string, finishing: boolean) {
@@ -255,6 +268,8 @@ export class Questions extends Changes {
   // someone has since closed it in its own app, and each thread they told hears. What fails stays
   // in the mark, so undoing again finishes it.
   async undo(id: string, via: string) {
+    const renamed = this.renamed(id)
+    if (!this.marks.answers[id] && renamed && this.marks.answers[renamed]) id = renamed
     if (this.taking.has(id)) throw new Error('that answer is still on its way; try again in a moment')
     this.taking.add(id)
     try {
@@ -296,9 +311,10 @@ export class Questions extends Changes {
     }
   }
 
-  // Whether an answer or a not needed from here still stands on the question.
+  // Whether an answer or a not needed from here still stands on the question, or is on its way.
   answered(id: string) {
-    return !!this.marks.answers[id]
+    const key = this.listed(id)
+    return this.taking.has(key) || !!this.marks.answers[key]
   }
 
   // A stuck item's one action: hex's General is asked to do it, or it's put away until it changes.

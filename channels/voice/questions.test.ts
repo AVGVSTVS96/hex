@@ -771,3 +771,44 @@ test('an old answer whose undo stops partway is kept until it is undone again', 
   expect(JSON.parse(readFileSync(join(state, 'voice', 'marks.json'), 'utf8')).answers['check:read']).toMatchObject({ undoing: true })
 })
 
+
+test("an ask read out by its own id, which a check then takes up under one of its own, is still answered by the id the caller heard", async () => {
+  ledger([asked(9, 'Ship it?', ['Yes', 'No'])])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  const heard = `telegram:${DESK}:9`
+  expect(questions.find(heard)).toBeDefined()
+  const version = questions.version
+  writeFileSync(
+    join(state, 'voice', 'check.json'),
+    JSON.stringify({
+      at: '2026-10-13T15:00:00.000Z',
+      why: 'a call ended',
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [{ id: 'check:ship', kind: 'yesno', task: `telegram:${DESK}`, at: '2026-10-13T19:00:00.000Z', question: 'Ship it', options: [{ label: 'Yes', value: 'Yes' }, { label: 'No', value: 'No' }], refs: [{ app: 'telegram', thread: DESK, message: 9 }] }],
+    }),
+  )
+  open(state).ask({ app: 'telegram', ...asked(8, 'Unrelated?', ['A']) })
+  await questions.changes(version, 2000)
+  await until(() => questions.view.asks.some(question => question.id === 'check:ship'))
+  expect(questions.find(heard)?.id).toBe('check:ship')
+  expect(await questions.answer(heard, 'Yes', 'call')).toMatchObject({ thread: `telegram:${DESK}`, settled: 1, missed: 0 })
+  expect(await until(() => lines[0])).toEqual({ type: 'answer', thread: DESK, message: 9, label: 'Yes', via: 'call' })
+  expect(questions.answered('check:ship')).toBe(true)
+  await questions.undo(heard, 'call')
+  expect(await until(() => lines.find(line => line.type === 'reopen'))).toEqual({ type: 'reopen', thread: DESK, message: 9, via: 'call' })
+  expect(questions.answered('check:ship')).toBe(false)
+})
+
+test('an answer still on its way counts as given, so an undo it turns away is not taken for one that went through', async () => {
+  ledger([asked(1, 'Ship it?', ['Yes', 'No'])])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  const id = `telegram:${DESK}:1`
+  const going = questions.answer(id, 'Yes', 'app')
+  await expect(questions.undo(id, 'app')).rejects.toThrow('still on its way')
+  expect(questions.answered(id)).toBe(true)
+  await going
+  expect(questions.answered(id)).toBe(true)
+})
