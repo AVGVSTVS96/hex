@@ -15,6 +15,7 @@ let state: string
 let chats: Chats
 let calls: unknown[][]
 
+// A fresh hex.db runs every migration: seconds of work on a loaded machine.
 beforeEach(() => {
   hexDir = mkdtempSync(join(tmpdir(), 'chat-'))
   state = join(hexDir, 'state')
@@ -25,7 +26,7 @@ beforeEach(() => {
     place: async () => ({ thread: '', link: '' }),
   } as unknown as Client)
   chats = new Chats(state)
-})
+}, 30_000)
 
 afterEach(() => {
   chats.close()
