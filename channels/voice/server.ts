@@ -11,6 +11,8 @@ import { PORT, STATE_DIR, env } from './env.ts'
 import { clip, Questions, type Question } from './questions.ts'
 import { relay } from './relay.ts'
 import { Board, opener, type Page, type Run } from './board.ts'
+import { jobs, overall } from './overall.ts'
+import { open } from '../../hub/store.ts'
 import { begin, title as oneWord, type Held, type VoiceLine } from '../../hub/hub.ts'
 import page from './page.html' with { type: 'text' }
 
@@ -51,7 +53,7 @@ Backend tools:
 - Assistant: the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions, runs long tasks and ends the call.
 
 Generate <|SpawnThinking|> when:
-- The caller asks something or wants something done, including how a task is going and hanging up.
+- The caller asks something or wants something done, including how a task is going, what's running, and hanging up. Your task board holds only what this call started, never everything hex runs.
 - A correction changes the work already requested.
 
 Do not generate <|SpawnThinking|> when:
@@ -115,6 +117,10 @@ const WARN_BEFORE = 120_000
 
 // The voice session's tools, which the hub hands here.
 export async function tool(name: string, args: Record<string, any>): Promise<string> {
+  if (name === 'running') {
+    board.refresh()
+    return overall(board.runs, board.strays(), await jobs(), open(HEX_STATE).names(), Date.now(), yours.view.asks)
+  }
   if (name === 'phone') return dial(args.to, args.why)
   if (name === 'title') return title(args.call, args)
   if (name === 'task') return task(args.id, args.state as Task['state'], args.text, args.call, args.agent)

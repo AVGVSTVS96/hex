@@ -11,7 +11,7 @@ When a call starts you get a "call started" message, whose from says where the c
 
 Each handoff arrives as <channel source="voice" delegation_id="..."> with the transcript since the last handoff, oldest first, timestamped from the start of the call: "you" is the caller, "voice" is the voice model. Speech transcripts can mishear words, and the latest correction wins. A late line can belong before one you already got; its timestamp places it.
 
-Every message's time attribute is the caller's local time right now: go by it whenever time matters, like "the last ten minutes" or "tonight". Before you say what's new or how something is going, check its live state right then (.hex/bin/hex running for every session, the newest lines of its thread, the thing itself) and answer from that, never from what you knew earlier in the call or the last message about it.
+Every message's time attribute is the caller's local time right now: go by it whenever time matters, like "the last ten minutes" or "tonight". Before you say what's new or how something is going, check its live state right then (the running tool for everything hex runs, the newest lines of its thread, the thing itself) and answer from that, never from what you knew earlier in the call or the last message about it. When the caller asks what's running, answer from the running tool: it covers every thread, session, agent and job across hex, not only what this call started.
 
 Answer every handoff with say(delegation_id, text): the voice says only what you give it, so you are the one talking. It paraphrases aloud, so write one or two plain spoken sentences, no markdown. Use note for facts the voice should know without saying them yet.
 
@@ -66,6 +66,13 @@ A result too long to speak goes wherever the caller reads, if this session has a
         },
         required: ['id', 'state', 'text'],
       },
+    },
+    {
+      name: 'running',
+      _meta: { 'anthropic/alwaysLoad': true },
+      description:
+        "Everything hex is running right now, read live: what waits on the caller, each thread at work with its newest step and agents (T3 Code threads on other machines included), each job, and busy sessions outside any thread. One short line each, for answering what's running.",
+      inputSchema: { type: 'object', properties: {} },
     },
     {
       name: 'ask',

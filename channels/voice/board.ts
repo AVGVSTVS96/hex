@@ -169,6 +169,19 @@ export class Board extends Changes {
     return [...this.threads, ...this.loose()].find(thread => `${thread.app}:${thread.id}` === id)?.session
   }
 
+  // Read every thread and session again now, for an answer that has to be live: a session whose
+  // process died (killed, crashed) leaves its record behind, so no change says it's gone.
+  refresh() {
+    clearTimeout(this.pending)
+    this.stale = { threads: true, sessions: true }
+    this.build()
+  }
+
+  // The busy sessions no run counts, other than hex's own helpers: a terminal's, or one started outside hex.
+  strays(): Session[] {
+    return [...this.sessions.values()].filter(session => busy(session) && !session.helper && !this.owners.has(session.id))
+  }
+
   rows(): Row[] {
     return this.runs.map(({ needs, lately, steps, plan, agents, ...row }) => ({ ...row, agents: agents.map(({ steps, result, ...agent }) => agent) }))
   }

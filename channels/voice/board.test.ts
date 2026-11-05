@@ -438,8 +438,22 @@ test("a running session that works for no thread isn't on the board", async () =
   job('aaaaaaaa-general', { state: 'done', detail: 'heartbeat ran again', updatedAt: ago(0) })
   await until(() => board.version !== version)
   expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  expect(board.strays().map(one => one.name).sort()).toEqual(['autofork-review', 'bassim-1'])
   rmSync(join(claude, 'sessions', '12121212.json'))
   rmSync(join(claude, 'sessions', '56565656.json'))
+})
+
+test('a session whose process died, leaving its record behind, is gone once the board reads again', async () => {
+  // Outside this process's tree, whose sessions would count it as one of their agents.
+  const pid = Number(Bun.spawnSync(['sh', '-c', 'sleep 30 >/dev/null 2>&1 & echo $!']).stdout.toString())
+  running('57575757-crashed', 'busy', pid, { kind: 'interactive', name: 'crashed-1' })
+  await until(() => board.strays().some(one => one.name === 'crashed-1'))
+  process.kill(pid, 'SIGKILL')
+  await until(() => { try { return readFileSync(`/proc/${pid}/stat`, 'utf8').includes(') Z ') } catch { return true } })
+  expect(board.strays().map(one => one.name)).toContain('crashed-1')
+  board.refresh()
+  expect(board.strays().map(one => one.name)).not.toContain('crashed-1')
+  rmSync(join(claude, 'sessions', '57575757.json'))
 })
 
 // What hex's hook writes as a session takes a prompt: the message taken and the turn begun.
@@ -625,6 +639,7 @@ test("a session whose process runs under a thread's session is one of its agents
   await until(() => review()?.state === 'working' && review()!.agents.length === 1)
   expect(review()!.agents.map(agent => [agent.id, agent.label, agent.state])).toEqual([['41014101-build', 'review-build', 'working']])
   expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
+  expect(board.strays().map(one => one.id)).not.toContain('41024102-check')
   rmSync(join(claude, 'sessions', '41014101.json'))
   await until(() => review()?.state === 'done')
   expect(board.runs.filter(run => run.app === 'claude')).toEqual([])
