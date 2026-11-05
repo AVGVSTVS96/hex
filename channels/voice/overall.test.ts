@@ -1,0 +1,77 @@
+import { expect, test } from 'bun:test'
+import type { Run } from './board.ts'
+import { jobsOf, lasted, overall } from './overall.ts'
+
+const now = Date.parse('2026-11-05T20:00:00Z')
+const ago = (minutes: number) => new Date(now - minutes * 60_000).toISOString()
+
+function run(name: string, more: Partial<Run> = {}): Run {
+  return { id: `telegram:${name}`, app: 'telegram', thread: name, name, where: 'Telegram', place: name, state: 'working', running: true, line: '', since: ago(10), at: ago(1), agents: [], steps: [], plan: [], lately: [], track: [], ...more }
+}
+
+function agent(label: string, state: Run['agents'][number]['state'] = 'working', line?: string) {
+  return { id: label, label, state, via: 'claude' as const, steps: [], ...(line && { line }) }
+}
+
+test('jobs are the units whose stop runs this hex’s bin/job --ended, with their thread and start', () => {
+  const shown = [
+    'Id=backup.service',
+    'ActiveEnterTimestamp=Thu 2026-11-05 18:00:00 UTC',
+    'ExecStopPost={ path=/bin/bun ; argv[]=/bin/bun /home/u/hex/.hex/bin/job --ended backup telegram:-100:42 ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }',
+    '',
+    'Id=ssh-agent.service',
+    'ActiveEnterTimestamp=Thu 2026-11-05 09:00:00 UTC',
+    'ExecStopPost=',
+    '',
+    'Id=other.service',
+    'ActiveEnterTimestamp=Thu 2026-11-05 19:00:00 UTC',
+    'ExecStopPost={ path=/bin/bun ; argv[]=/bin/bun /elsewhere/bin/job --ended other telegram:1 ; ignore_errors=no }',
+  ].join('\n')
+  expect(jobsOf(shown, '/home/u/hex/.hex/bin/job')).toEqual([{ unit: 'backup', owner: 'telegram:-100:42', since: Date.parse('2026-11-05T18:00:00Z') }])
+})
+
+test('nothing running says so', () => {
+  expect(overall([run('idle', { state: 'idle' }), run('done', { state: 'done' })], [], [], {}, now)).toBe('Nothing is running anywhere in hex right now.')
+})
+
+test('everything hex runs, one line each: what waits on the caller first, then threads, jobs and sessions outside any thread', () => {
+  const runs = [
+    run('voiceapp', { line: 'building', agents: [agent('Build the Tasks view', 'working', 'Editing board.ts'), agent('Check the server', 'done'), agent('review-build')] }),
+    run('autofork', { state: 'needs', needs: 'Pick a music style' }),
+    run('lab', { where: 'Discord', since: ago(150) }),
+    run('voice', { app: 'voice', where: 'Voice', agents: [agent('mail lookup')] }),
+    run('hex/clips', { app: 'claude', where: 'Claude Code', line: 'cutting clips', since: ago(1) }),
+  ]
+  const strays = [{ id: '56565656-terminal', pid: 1, status: 'busy', name: 'bassim-1', started: now - 5 * 60_000 }]
+  const jobs = [
+    { unit: 'backup', owner: 'telegram:-100:42', since: now - 3 * 24 * 60 * 60_000 },
+    { unit: 'clips', owner: 'telegram:-100:65', since: now - 60_000 },
+    { unit: 'nightly', owner: 'discord:9', since: 0 },
+  ]
+  expect(overall(runs, strays, jobs, { '-100:42': 'hex', '-100:65': 'Theo clips' }, now)).toBe(
+    [
+      'Everything hex is running, 3 threads working, 1 waiting on you:',
+      '- autofork (Telegram) waits on you: Pick a music style',
+      '- voiceapp (Telegram), working for 10 minutes: Editing board.ts; 2 agents: Build the Tasks view, review-build',
+      '- lab (Discord), working for 3 hours',
+      "- This call's agents: mail lookup",
+      '- hex/clips, working for 1 minute: cutting clips',
+      '- The job backup for hex, running for 3 days',
+      '- The job nightly for discord:9, running for a while',
+      '- bassim-1, a Claude Code session outside any thread, busy for 5 minutes',
+    ].join('\n'),
+  )
+})
+
+test('a long board says the first eight and how many more', () => {
+  const runs = Array.from({ length: 11 }, (_, i) => run(`t${i}`, { where: 'Buzz' }))
+  const said = overall(runs, [], [], {}, now).split('\n')
+  expect(said).toHaveLength(10)
+  expect(said[0]).toBe('Everything hex is running, 11 threads working:')
+  expect(said.at(-1)).toBe('and 3 more')
+})
+
+test('how long, as said aloud', () => {
+  expect([0.2, 1, 59, 60, 90, 47 * 60, 49 * 60].map(minutes => lasted(now - minutes * 60_000, now))).toEqual(['1 minute', '1 minute', '59 minutes', '1 hour', '2 hours', '47 hours', '2 days'])
+  expect(lasted(0, now)).toBe('a while')
+})

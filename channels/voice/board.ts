@@ -169,6 +169,11 @@ export class Board extends Changes {
     return [...this.threads, ...this.loose()].find(thread => `${thread.app}:${thread.id}` === id)?.session
   }
 
+  // The busy sessions no run counts, other than hex's own helpers: a terminal's, or one started outside hex.
+  strays(): Session[] {
+    return [...this.sessions.values()].filter(session => busy(session) && !session.helper && !this.owners.has(session.id))
+  }
+
   rows(): Row[] {
     return this.runs.map(({ needs, lately, steps, plan, agents, ...row }) => ({ ...row, agents: agents.map(({ steps, result, ...agent }) => agent) }))
   }
