@@ -7,7 +7,8 @@ import { basename, dirname, join } from 'path'
 // app: where it's stuck, t3 or hex itself. request: what hex's General is asked to do about it; without one,
 // the action just puts it away.
 export type Stuck = { id: string; app: string; title: string; why: string; action: string; mark: 'paused' | 'failed'; at: string; request?: string }
-// topic: the T3 project it finished in, or the thread's own title. where says the same as one line, for apps
+// topic: the T3 project it finished in, or the thread's own title. Projects T3 Code makes for a thread with
+// none, rooted at the home folder or in its own scratch, are no project. where says the same as one line, for apps
 // that still read it.
 export type Fresh = { id: string; app: string; topic: string; title: string; where: string; line: string; at: string }
 
@@ -65,15 +66,16 @@ export class T3 {
     const db = this.db!
     const threads = new Map(
       db
-        .query<Thread, []>(
-          `select t.thread_id id, t.title, p.title project,
+        .query<Thread, [string, string]>(
+          `select t.thread_id id, t.title,
+             case when p.workspace_root = ?1 or p.workspace_root like ?2 then null else p.title end project,
              json_extract(t.payload_json, '$.lastVisitedAt') visited,
              json_extract(t.payload_json, '$.limitRecovery.resetAt') "limit",
              json_extract(t.payload_json, '$.createdBy') = 'user' mine
            from orchestration_v2_projection_threads t left join projection_projects p using (project_id)
            where t.archived_at is null and t.deleted_at is null`,
         )
-        .all()
+        .all(homedir(), `${join(homedir(), '.t3')}/%`)
         .map(thread => [thread.id, thread]),
     )
     const latest = db
