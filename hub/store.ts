@@ -227,7 +227,7 @@ const migrations: (string | ((store: Store) => void))[] = [
   create unique index if not exists threads_key on threads (thread);`,
   ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
   // Every pin is its thread's status post. One written by hand keeps its words above its own
-  // 🔴 🟡 🟢 lines as the note, under which hex writes those lines. One hex can't rewrite is left
+  // 🔴 🟡 🟢 lines as the note, under which hex writes its own. One hex can't rewrite is left
   // out: its words unknown, a question, or a message hex.db says someone else wrote (Telegram keys
   // a message by chat and id, Discord by id); one it can't tell drops out at its first refused edit.
   (store: Store) => {

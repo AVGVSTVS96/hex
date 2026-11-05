@@ -694,7 +694,7 @@ function serve(token: string) {
           if (args.files) throw new Error('a status post is text: send the file in its own message')
           await ledger.rewrite(thread, post, tappable(args.text as string), pinned.message)
           said(thread, undefined, tappable(args.text as string), { edited: 'true', message_id: String(pinned.message) })
-          return `edited the status post's note (id: ${pinned.message}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
+          return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`
         }
         const msg = await message(ch, args.message_id as string)
         const files = args.files ? sendable(args.files as string[]) : undefined
@@ -728,7 +728,7 @@ function serve(token: string) {
           return was === undefined ? 'this thread has no status post' : `unpinned the status post (id: ${was})`
         }
         if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or unpin: true")
-        return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
+        return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`
       }
       case 'poll': {
         const sent = await ch.send({

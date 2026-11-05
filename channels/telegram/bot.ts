@@ -421,7 +421,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         if (file || text == null) throw new Error("a status post is text: send the file in its own message")
         await ledger.rewrite(thread, post, text, id)
         said(thread, undefined, text, { edited: 'true', message_id: String(id) })
-        return `edited the status post's note (id: ${id}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
+        return `edited the status post's note (id: ${id}); hex keeps the questions and tasks under it current`
       }
       const parseMode = args.format === 'markdownv2' ? { parse_mode: 'MarkdownV2' as const } : {}
       // A Telegram edit takes a message's buttons off unless it sends them again, and a question stays open until it's settled.
@@ -465,7 +465,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         return was === undefined ? 'this thread has no status post' : `unpinned the status post (id: ${was})`
       }
       if (typeof args.note !== 'string') throw new Error("pin takes the status post's note, or unpin: true")
-      return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); its 🔴 🟡 🟢 lines follow this thread's questions and tasks`
+      return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`
     }
     case 'forward': {
       const id = Number(args.message_id)

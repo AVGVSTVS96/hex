@@ -731,7 +731,7 @@ test('back online, the bot reads what was said while it was away, archived threa
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
   await call('pin', { note: 'Site: example.com' })
   const post = here.posted.at(-1)
-  expect(post.content).toStartWith('Site: example.com\n\n**🔴 Blocked on you')
+  expect(post.content).toBe('Site: example.com')
   expect(done).toContainEqual({ pin: post.id })
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.com' })
   const edits = () => done.filter(d => d.edit === post.id).map(d => d.options.content as string)
@@ -742,7 +742,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   const count = edits().length
   expect((await call('edit_message', { message_id: post.id, text: 'Site: example.org' })).text).toStartWith("edited the status post's note")
   expect(edits()).toHaveLength(count + 1)
-  expect(edits().at(-1)).toStartWith('Site: example.org\n\n**🔴 Blocked on you**')
+  expect(edits().at(-1)).toStartWith('Site: example.org\n\n**Waiting on you**')
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: 'Site: example.org' })
 
   await call('pin', { note: 'Site: v2' })

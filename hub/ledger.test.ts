@@ -105,7 +105,7 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   ledger.ask('-100:8', 10, 'Ship it?', ['Yes', 'No'])
   expect(await ledger.post('-100:8', 'Site: example.com', post)).toBe(21)
   const [[, , text]] = done as [[string, number, string]]
-  expect(text).toStartWith('Site: example.com\n\n**🔴 Blocked on you**\n- Ship it?')
+  expect(text).toStartWith('Site: example.com\n\n**Waiting on you**\n- Ship it?')
   expect(done[1]).toEqual(['pin', 21])
   expect(ledger.pin('-100:8')).toMatchObject({ message: 21, text, note: 'Site: example.com' })
   await ledger.rewrite('-100:8', post)
