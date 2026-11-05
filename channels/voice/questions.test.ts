@@ -804,7 +804,7 @@ test("an ask read out by its own id, which a check then takes up under one of it
   expect(questions.answered('check:ship')).toBe(false)
 })
 
-test("a check's ask undone after a later check let it go stays one card, and answering it reaches every copy", async () => {
+test("a check's ask undone after a later check let it go stays one card, and answering it reaches every copy once, however often it's undone", async () => {
   const check = (asks: object[]) => writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify({ at: '2026-10-13T15:00:00.000Z', why: 'a call ended', read: {}, fixed: [], flagged: [], stuck: [], asks }))
   const both = (fields: Partial<Question> = {}) => ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet'], fields), asked(2, 'Upgrade Twilio now?', ['Upgrade', 'Wait'], fields)])
   both()
@@ -828,6 +828,27 @@ test("a check's ask undone after a later check let it go stays one card, and ans
   lines.length = 0
   await questions.answer('check:twilio', 'Upgrade', 'app')
   await until(() => lines.length === 2)
+  expect(lines).toEqual([
+    { type: 'answer', thread: DESK, message: 1, label: 'Upgrade', via: 'app' },
+    { type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: Upgrade' },
+  ])
+
+  // Undone and answered again, it still reaches each copy once.
+  version = questions.version
+  both({ answer: { label: 'Upgrade', at: '', via: 'app' } })
+  await questions.changes(version, 2000)
+  await until(() => !questions.view.asks.length)
+  lines.length = 0
+  await questions.undo('check:twilio', 'app')
+  await until(() => lines.filter(line => line.type === 'reopen').length === 2)
+  version = questions.version
+  both()
+  await questions.changes(version, 2000)
+  await until(() => questions.view.asks.length)
+  expect(questions.view.asks.map(question => question.id)).toEqual(['check:twilio'])
+  lines.length = 0
+  await questions.answer('check:twilio', 'Upgrade', 'app')
+  await Bun.sleep(200)
   expect(lines).toEqual([
     { type: 'answer', thread: DESK, message: 1, label: 'Upgrade', via: 'app' },
     { type: 'settle', thread: DESK, message: 2, note: '✓ Answered in the app: Upgrade' },

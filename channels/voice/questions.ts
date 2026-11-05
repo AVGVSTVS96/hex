@@ -294,7 +294,9 @@ export class Questions extends Changes {
         )
       if (!curated && reopened.some(ref => refId(ref) !== id)) {
         const kept = this.marks.reopened[id]
-        this.marks.reopened[id] = { refs: [...(kept?.refs ?? []), ...reopened], question: taken?.question ?? kept?.question, at: now() }
+        // An ask undone again reopens the copies it kept: each stays one copy.
+        const refs = [...new Map([...(kept?.refs ?? []), ...reopened].map(ref => [refId(ref), ref])).values()]
+        this.marks.reopened[id] = { refs, question: taken?.question ?? kept?.question, at: now() }
       }
       const said = new Set<string>()
       for (const mark of marks) {
