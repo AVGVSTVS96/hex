@@ -334,6 +334,29 @@ test('a main thread whose session is gone is resumed again, and is never stopped
   expect(args[args.indexOf('--resume') + 1]).toBe(SESSION)
 })
 
+test("a session that dies mid-turn has its turn ended in hex's record once its channel stays gone, and a turn that ended keeps its end", async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }], reconnect: 50 })
+  const { close } = await session('chat:7')
+  open(dir).turned(SESSION, true, '2026-01-01T00:00:00.000Z')
+  writeFileSync(join(dir, 'agents'), '[]')
+  close()
+  await time.armed(50)
+  expect(open(dir).turn(SESSION).ended).toBeUndefined()
+  await time.lapse(50)
+  const { ended } = await until(() => open(dir).turn(SESSION).ended && open(dir).turn(SESSION))
+  expect(ended! > '2026-01-01T00:00:00.000Z').toBe(true)
+
+  writeFileSync(join(dir, 'agents'), JSON.stringify([{ sessionId: SESSION, pid: 42 }]))
+  hub.deliver('chat:7', 'Desk anchors', message)
+  const again = await session('chat:7')
+  open(dir).turned(SESSION, false, '2027-01-01T00:00:00.000Z')
+  writeFileSync(join(dir, 'agents'), '[]')
+  again.close()
+  await time.lapse(50)
+  await settled()
+  expect(open(dir).turn(SESSION).ended).toBe('2027-01-01T00:00:00.000Z')
+})
+
 test('a session that dies before its conversation is saved leaves the thread on its last saved one', async () => {
   const OLD = SESSION
   const NEW = '4460ed71-0000-4000-8000-000000000000'

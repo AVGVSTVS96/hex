@@ -3,13 +3,15 @@ import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
 import { toAcpNotifications } from '@agentclientprotocol/claude-agent-acp'
 import type { SessionNotification, ToolCall } from '@agentclientprotocol/sdk'
+import { running } from '../../hub/running.ts'
 import { open } from '../../hub/store.ts'
 
 export type Update = SessionNotification['update']
 export type Step = { line?: string; end?: 'done' | 'failed' }
 export type Thread = { app: string; id: string; name: string; cwd?: string; state: string }
 
-const projects = () => join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude'), 'projects')
+const claude = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+const projects = () => join(claude(), 'projects')
 const client = { sessionUpdate: async () => {} } as unknown as Parameters<typeof toAcpNotifications>[4]
 const logger = { log: () => {}, error: (...args: unknown[]) => process.stderr.write(`voice: activity: ${args.join(' ')}\n`) }
 const ID = /^[\w-]+$/
@@ -426,13 +428,15 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
   const seen = new Set<string>()
   // When the session took the message in: a copy's history from before it keeps its older times.
   let floor: string | undefined
+  // When hex's record last said the session's turn ended, as of the last look.
+  let turnEnd: string | undefined
 
   const project = join(projects(), (thread.cwd ?? hexDir).replace(/[^a-zA-Z0-9]/g, '-'))
   const transcript = (id: string) => join(project, `${id}.jsonl`)
   const store = open(thread.state)
   const taken = resumed ? store.taker(thread.id, 'voice_task', tag) : undefined
   const took = taken && ID.test(taken.by) && existsSync(transcript(taken.by)) ? taken : undefined
-  const stopState = store.watch(locate)
+  const stopState = store.watch(() => (locate(), died()))
   locate()
 
   function locate() {
@@ -445,6 +449,7 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
     stopSession(true)
     if (ended) return
     session = next
+    turnEnd = undefined
     const stop = followTranscript(transcript(session), fresh ? 0 : 'end', take)
     if (ended) stop()
     else stopSession = stop
@@ -474,6 +479,20 @@ export function followThread(thread: Thread, hexDir: string, tag: string, resume
       close()
       onStep({ end: failed ? 'failed' : 'done' })
     }
+  }
+
+  // A session that dies mid-turn never ends it in its transcript: the hub ends it in hex's record
+  // once the session is gone, and the work it was on failed.
+  function died() {
+    if (ended || !picked || !session) return
+    const end = store.turn(session).ended
+    if (end === turnEnd) return
+    turnEnd = end
+    if (!end || running(store, claude()).has(session)) return
+    stopSession(true)
+    if (ended) return
+    close()
+    onStep({ end: 'failed' })
   }
 
   function close() {

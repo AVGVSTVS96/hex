@@ -239,6 +239,30 @@ test('a message the thread took while a turn ran, queued as an attachment, is pi
   stop()
 })
 
+test("a session that dies mid-turn fails the message's work once hex's record ends its turn, and only once it's gone", async () => {
+  threads('buzz', { b6: { name: 'Dies', session: 'dies' } })
+  const path = join(project, 'dies.jsonl')
+  const record = join(home, 'claude', 'sessions', `${process.pid}.json`)
+  mkdirSync(join(home, 'claude', 'sessions'), { recursive: true })
+  writeFileSync(record, JSON.stringify({ sessionId: 'dies', pid: process.pid, status: 'busy' }))
+  write(path, said('Earlier.'), ended)
+  const steps: object[] = []
+  const stop = followThread(findThread(state, 'dies')!, hex, 'call:dies', false, step => steps.push(step))
+  write(path, asked('call:dies'), said('Starting on it.'))
+  await until(() => steps.length === 1)
+  open(state).turned('dies', true)
+  open(state).turned('dies', false)
+  await Bun.sleep(100)
+  expect(steps).toEqual([{ line: 'Starting on it.' }])
+
+  rmSync(record)
+  open(state).turned('dies', true)
+  open(state).turned('dies', false)
+  await until(() => steps.length === 2)
+  expect(steps[1]).toEqual({ end: 'failed' })
+  stop()
+})
+
 test("following a message sent before a restart starts in the session that took it, though the thread has renewed since, and goes on in the new one", () => {
   threads('buzz', { b3: { name: 'Renewed', session: 'renewed-now' } })
   const sent = (tag: string, by: string) =>
