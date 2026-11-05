@@ -968,7 +968,11 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     else become(run, { is: 'stopped' })
     // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here.
     const session = current(thread)
-    if (session) kept(store => store.turn(session).began && !store.turn(session).ended && store.turned(session, false), undefined)
+    if (session)
+      kept(store => {
+        const { began, ended } = store.turn(session)
+        if (began && !ended) store.turned(session, false)
+      }, undefined)
     if (thread === main) revive()
     else if (!started && waiting(thread).length) void launch(thread, threads[thread]?.name ?? thread)
   }
