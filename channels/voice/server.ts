@@ -87,7 +87,8 @@ type Live = {
   closed?: true
 }
 type Attaching = { id: string; closing?: string }
-type Placed = { to: string; why?: string; started: string; session?: string }
+// notes: what the voice should know once this call connects, sent while it rang.
+type Placed = { to: string; why?: string; started: string; session?: string; notes: string[] }
 type Dial = { greeting: string; from: Source; token: string; why?: string; callee?: string }
 // unheard: the voice's audio sent to Twilio that its marks say hasn't played yet, in chunks.
 type Phone = Dial & { openai?: WebSocket; stream?: string; started?: true; refused?: true; unheard: number }
@@ -115,7 +116,6 @@ let ended: string | undefined
 let seq = 0
 const dials = new Map<string, Dial>()
 const placed = new Map<string, Placed>()
-const briefing: string[] = []
 const RETRIES = [250, 1000, 2000, 4000, 8000]
 const WARN_BEFORE = 120_000
 const HANDOFF_WAIT = 3000
@@ -132,8 +132,9 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   if (name === 'task') return task(args.id, args.state as Task['state'], args.text, args.call, args.agent)
   if (name === 'send') return pass(args.thread, args.about, args.text, args.app, args.channel)
   if (name === 'answer') return answerQuestion(args.id, args.label, 'call').then(sent => `sent "${args.label}" to ${sent.topic}${missed(sent)}`)
-  if (name === 'note' && !live && ringing()) {
-    briefing.push(args.text)
+  const ringing = [...placed.values()].findLast(call => !call.session)
+  if (name === 'note' && !live && ringing) {
+    ringing.notes.push(args.text)
     return 'the call is still ringing; the voice gets this when it connects'
   }
   if (name === 'hang_up' && !live && attaching) {
@@ -460,14 +461,10 @@ function failed(record: Pick<CallRecord, 'from' | 'end' | 'reason'> & Partial<Ca
   trace(`${id} ${record.end}: ${record.reason}`)
 }
 
-function ringing() {
-  return [...placed.values()].some(call => !call.session)
-}
-
 function follow(
   socket: WebSocket,
   record: Live['record'],
-  { call = new Call(), speak, interrupt, hello, about }: { call?: Call; speak?: Live['speak']; interrupt?: Live['interrupt']; hello?: string; about?: Topic } = {},
+  { call = new Call(), speak, interrupt, notes = [], hello, about }: { call?: Call; speak?: Live['speak']; interrupt?: Live['interrupt']; notes?: string[]; hello?: string; about?: Topic } = {},
 ) {
   if (live) {
     const by = live.closing
@@ -495,7 +492,7 @@ function follow(
       ].join('\n'),
     { call: record.id, started: 'true', from: record.from, ...(about && { task: about.id }) },
   )
-  for (const text of briefing.splice(0)) void tell(current, 'note', text).catch(() => {})
+  for (const text of notes.splice(0)) void tell(current, 'note', text).catch(() => {})
   return current
 }
 
@@ -764,7 +761,7 @@ async function dial(to = CALLER_NUMBER, why?: string) {
     : 'You placed this phone call. Greet them briefly first, then listen.'
   // On a call hex placed to someone else, "you" in the transcript is them, not the owner.
   dials.set(token, { greeting, from: 'phone-out', token, why, ...(to !== CALLER_NUMBER && { callee: to }) })
-  placed.set(token, { to, why, started: new Date().toISOString() })
+  placed.set(token, { to, why, started: new Date().toISOString(), notes: [] })
   setTimeout(() => placed.get(token)?.session || placed.delete(token), 300_000)
   const response = await fetch(`${TWILIO_API}/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
     method: 'POST',
@@ -796,7 +793,6 @@ async function phoneStatus(request: Request, token: string) {
   placed.delete(token)
   dials.delete(token)
   if (call.session) return new Response(null, { status: 204 })
-  if (!ringing()) briefing.length = 0
   const error = form.get('ErrorCode') ? `, Twilio error ${form.get('ErrorCode')}` : ''
   failed(
     {
@@ -823,12 +819,13 @@ type Passed = {
   format: { type: string; rate: number }
   play: (audio: string) => void
   interrupt?: () => void
+  notes?: string[]
   started: (session: string) => void
   refused: (reason: string) => void
   closed: () => void
 }
 
-function passThrough({ name, from, callee, greeting, why, format, play, interrupt, started, refused, closed }: Passed) {
+function passThrough({ name, from, callee, greeting, why, format, play, interrupt, notes, started, refused, closed }: Passed) {
   const openai = new WebSocket(API, { headers: { Authorization: `Bearer ${KEY}` } } as any)
   let up = false
   let refusing = false
@@ -851,7 +848,7 @@ function passThrough({ name, from, callee, greeting, why, format, play, interrup
     if (from === 'phone-out' && (live || attaching)) return refuse('it picked up while another call was live, so it was let go')
     up = true
     started(event.session.id)
-    follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play, interrupt })
+    follow(openai, base(event.session.id, from, { voice: VOICE, why, callee, expires: expiry(event.session.expires_at) }), { speak: play, interrupt, notes })
   })
   openai.addEventListener('close', ({ code, reason }) => {
     trace(`OpenAI closed the ${name} session (${code} ${reason})`)
@@ -869,6 +866,7 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
     greeting: twilio.data.greeting,
     why: twilio.data.why,
     format: { type: 'audio/pcmu', rate: 8000 },
+    notes: placed.get(twilio.data.token)?.notes,
     // Twilio plays what it's sent as it comes, faster than it's said, and echoes each mark once the
     // audio before it has played or been cleared.
     play: audio => {

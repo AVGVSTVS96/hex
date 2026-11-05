@@ -254,6 +254,25 @@ test('hex never rings while a call is live, and a call it placed that picks up o
   expect((await fetch(`${call.base}/calls`).then(r => r.json())).live).toBe(id)
 }, 20_000)
 
+test('notes sent while a placed call rings reach that call when it connects, and never one the caller started meanwhile', async () => {
+  await using call = await phoneCall()
+  await call.tool('phone', { why: 'a reminder' })
+  expect((await call.tool('note', { text: 'for the call hex placed' })).result).toContain('still ringing')
+  await dialIn(call.base)
+  await live(call.base)
+  call.renewed()
+  expect((await call.tool('note', { text: 'for this call' })).result).toBe('noted')
+  expect(call.told).toEqual([{ session: 'sess_phone', content: 'for this call' }])
+}, 20_000)
+
+test('notes sent while a placed call rings reach the voice once it picks up', async () => {
+  await using call = await phoneCall()
+  await call.tool('phone', { why: 'a reminder' })
+  await call.tool('note', { text: 'the build is green' })
+  await pickedUp(call.base, call.placed[0]!)
+  expect(await until(() => call.told[0])).toEqual({ session: 'sess_phone', content: 'the build is green' })
+}, 20_000)
+
 test("a call's words reach the voice session only once the last call's renew is through, in order, and its end lets the session renew", async () => {
   await using call = await phoneCall()
   const phone = await dialIn(call.base)
