@@ -62,7 +62,7 @@ type Fan = { id: string; kind: string; label: string; startedAt?: number; doneAt
 type Entry = { at: string; state: string; detail?: string; text?: string }
 type Told = { state: Agent['state']; result?: string }
 type Stretch = Pick<Run, 'steps' | 'plan' | 'agents'>
-type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; model?: string; type?: string; told: Map<string, Told>; last?: string; said: Step[] }
+type Follower = { stop: () => void; keep: number; steps: Step[]; plan: Planned[]; planned?: string; model?: string; type?: string; told: Map<string, Told>; last?: string; said: Step[] }
 // A heartbeat's turn, as hex.db keeps it.
 type Beat = { began: string; until?: string; after?: string }
 
@@ -392,8 +392,13 @@ export class Board extends Changes {
       state === 'working' && known !== 'working' ? new Date(began).toISOString() : state === 'working' || state === 'needs' ? (streak(timeline, job?.state) ?? at) : at
     const { link } = thread
     const key = keyOf(thread)
-    const steps = state === 'working' ? this.steps(key).filter(ours) : []
-    const plan = state === 'working' ? (this.followers.get(key)?.plan ?? []) : []
+    // A follower that starts as the thread works again reads back over its last stretch, whose steps
+    // and plan are done with: only what began or ended in this stretch is shown, with a little room
+    // for a status that turned busy after the turn's first line.
+    const follower = this.followers.get(key)
+    const from = new Date(Date.parse(since) - 30_000).toISOString()
+    const steps = state === 'working' ? this.steps(key).filter(step => ours(step) && (step.end ?? step.at) >= from) : []
+    const plan = state === 'working' && follower?.planned && follower.planned >= from ? follower.plan : []
     const said = state === 'working' ? this.followers.get(key)?.said.findLast(step => step.at >= since && ours(step)) : undefined
     const detail = job?.state === 'stopped' ? undefined : job?.detail && plain(job.detail)
     const line = needs || said?.text || (state === 'working' ? '' : detail || lately[0]?.text) || ''
@@ -588,7 +593,10 @@ export class Board extends Changes {
     const told = toldOf(entry)
     if (told) follower.told.set(...told)
     for (const update of updates) {
-      if (update.sessionUpdate === 'plan') follower.plan = update.entries.map(entry => ({ text: oneLine(entry.content), state: PLANNED[entry.status] ?? 'pending' }))
+      if (update.sessionUpdate === 'plan') {
+        follower.plan = update.entries.map(entry => ({ text: oneLine(entry.content), state: PLANNED[entry.status] ?? 'pending' }))
+        follower.planned = at
+      }
       const back = backOf(update)
       const step = back && follower.steps.find(step => step.id === (update as { toolCallId: string }).toolCallId)
       if (step) Object.assign(step, back, { end: at, text: past(step.text) })
