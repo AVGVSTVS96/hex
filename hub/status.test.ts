@@ -89,3 +89,15 @@ test("an open task links to the owner's latest words for it in the thread, to re
   store.addWords(task.id, 'telegram:42:90')
   expect(statusPost(store, '-100:7', 'Note', 4096, (thread, message) => `https://t.me/c/${thread}/${message}`)).toContain('**Open**\n- [Fix the login page](https://t.me/c/-100:7/58)')
 })
+
+test("the owner's question hex answered waits on them, linked to the answer, and ideas get their own list", () => {
+  const store = new Store(dir)
+  store.ask({ asker: 'owner', app: 'telegram', thread: '-100:7', message: 70, text: 'did the migration run?', options: [] })
+  expect(statusPost(store, '-100:7', 'Note', 4096)).toBe('Note')
+  store.replied('telegram', '-100:7', { label: 'Yes, at 4:02pm.', at: new Date().toISOString(), via: 'hex', message: 72 })
+  store.createTask({ title: 'Maybe a dark mode', message: said(store, 71, 'Maybe a dark mode'), owner: '-100:7', status: 'idea' })
+  expect(statusPost(store, '-100:7', 'Note', 4096, (thread, message) => `https://t.me/c/${thread}/${message}`)).toBe(
+    ['Note', '**Waiting on you**\n- [Answered: did the migration run?](https://t.me/c/-100:7/72)', '**Ideas**\n- [Maybe a dark mode](https://t.me/c/-100:7/71)'].join('\n\n'),
+  )
+  expect(above('Note\n\n**Ideas**\n- Maybe a dark mode')).toBe('Note')
+})

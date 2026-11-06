@@ -36,7 +36,7 @@ export const server: ChannelServer = {
           },
           reply_to: {
             type: 'string',
-            description: 'Message ID to thread under. Use message_id from the inbound <channel> block.',
+            description: 'Message to quote, so a tap takes the user back to it: a message_id from this thread, or from any thread its key (telegram:<chat>:<id>).',
           },
           files: {
             type: 'array',
@@ -86,11 +86,11 @@ export const server: ChannelServer = {
       inputSchema: {
         type: 'object',
         properties: {
-          message_id: { type: 'string' },
+          message_id: { type: 'string', description: "A message_id from this thread, or from any thread its key (telegram:<chat>:<id>)." },
           text: { type: 'string', description: 'New text, or new caption for a file.' },
           file: { type: 'string', description: 'Absolute path of a file to replace the sent one with.' },
           format: formatProperty,
-          settled: { type: 'boolean', description: 'true when the question this message asked with buttons or a poll is settled or no longer stands: it stops waiting on the user, its buttons come off, and a poll nobody has voted in closes. Without it, an edit keeps a question\'s buttons. A poll\'s own text can\'t be edited.' },
+          settled: { type: 'boolean', description: 'true when the question this message asked, or answered for the user, is settled or no longer stands: it stops waiting on the user, its buttons come off, and a poll nobody has voted in closes. Without it, an edit keeps a question\'s buttons. A poll\'s own text can\'t be edited.' },
         },
         required: ['message_id'],
       },

@@ -4,17 +4,20 @@ import type { MessageId, Store, Task } from './store.ts'
 // Where the app shows a thread's message, when it has a link for one.
 export type Link = (thread: string, message: MessageId) => string | undefined
 
-// A thread's status post: the session's note, then what's waiting on the owner (its waiting
-// questions, each linked to where it was asked), its open tasks (each linked to the owner's latest
-// words for it in the thread, to reply to with more) and the last few done (linked to their proof
-// when it has a link), each from hex.db, in the room the app gives one message. A list with
-// nothing in it is left out, and a note too long to leave the lists room is cut.
+// A thread's status post: the session's note, then what's waiting on the owner (hex's questions,
+// each linked to where it was asked, and theirs hex answered, linked to the answer), its open tasks
+// and ideas (each linked to the owner's latest words for it in the thread, to reply to with more)
+// and the last few done (linked to their proof when it has a link), each from hex.db, in the room
+// the app gives one message. A list with nothing in it is left out, and a note too long to leave
+// the lists room is cut.
 export function statusPost(store: Store, thread: string, note: string, room: number, link: Link = () => undefined): string {
   const linked = (text: string, url: string | undefined) => (url ? `[${text.replace(/[[\]]/g, '')}](${url})` : text)
-  const waiting = store.questions({ thread, waiting: true }).map(question => `- ${linked(clip(question.text, 120), link(thread, question.message))}`)
-  const open = store.tasks({ owner: thread, status: ['open'] }).map(task => `- ${linked(clip(task.title, 120), latest(store, thread, task, link))}`)
+  const waiting = store
+    .questions({ thread, waiting: true })
+    .map(question => `- ${question.asker ? linked(`Answered: ${clip(question.text, 110)}`, link(thread, question.answer!.message ?? question.message)) : linked(clip(question.text, 120), link(thread, question.message))}`)
+  const tasks = (status: 'open' | 'idea') => store.tasks({ owner: thread, status: [status] }).map(task => `- ${linked(clip(task.title, 120), latest(store, thread, task, link))}`)
   const done = store.lastDone(thread, 5).map(task => `- ${linked(clip(task.title, 120), url(task.proof!))}`)
-  const sections = ([[HEADINGS[0], waiting], [HEADINGS[1], open], [HEADINGS[2], done]] as const)
+  const sections = ([[HEADINGS[0], waiting], [HEADINGS[1], tasks('open')], [HEADINGS[2], tasks('idea')], [HEADINGS[3], done]] as const)
     .filter(([, lines]) => lines.length)
     .map(([header, lines]) => ({ header: `**${header}**`, items: lines.map(line => [line]), gap: '\n' }))
   const space = room - fit(sections, 0).length - 2

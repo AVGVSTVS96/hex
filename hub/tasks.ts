@@ -29,9 +29,14 @@ export function entry(task: Task, named: Record<string, string>, done = true) {
   return [line, task.doneWhen && `  done when: ${clip(task.doneWhen, 200)}`, task.status === 'done' && task.proof && `  proof: ${clip(task.proof, 200)}`].filter(Boolean).join('\n')
 }
 
-// A question as a session reads it: where it was asked, its first line, and its buttons.
+// A question as a session reads it: where it waits (where it was asked, or for one the owner asked,
+// hex's answer), by the key a reply quotes and an edit settles from any thread, its first line, and
+// its buttons.
 export function waiting(question: Question, named: Record<string, string> = {}): string {
-  return `- ${question.app} · ${named[question.thread] ?? question.thread} · message ${question.message} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${clip(question.text, 200)}${question.options.length ? ` [${question.options.join(' | ')}]` : ''}`
+  const message = question.asker ? (question.answer?.message ?? question.message) : question.message
+  const ref = question.app === 'telegram' ? `telegram:${question.thread.split(':')[0]}:${message}` : `message ${message}`
+  const text = question.asker ? `answered my question: ${clip(question.text, 200)}` : `${clip(question.text, 200)}${question.options.length ? ` [${question.options.join(' | ')}]` : ''}`
+  return `- ${question.app} · ${named[question.thread] ?? question.thread} · ${ref} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${text}`
 }
 
 // What a session should have before it acts: the questions still waiting on the owner, then the open
@@ -46,7 +51,7 @@ export function pending(state: string, thread?: string, room = ROOM): { text: st
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {
-      header: `${whose}'s questions still waiting on my answer (edit_message with settled: true closes one I answered without replying to it, or that no longer stands):`,
+      header: `${whose}'s questions still waiting on me: yours, and mine you answered that I haven't come back to (remind me with reply, reply_to set to its key, from any thread; edit_message with settled: true and the key closes one dealt with elsewhere or that no longer stands):`,
       items: questions.map(question => [waiting(question, named)]),
       gap: '\n',
       rest: '`.hex/bin/hex questions` lists them all',

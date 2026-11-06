@@ -485,7 +485,7 @@ export class Questions extends Changes {
   private build() {
     this.threads.clear()
     this.pins.clear()
-    const questions = store(this.state).questions()
+    const questions = store(this.state).questions({ asker: 'hex' })
     for (const thread of store(this.state).threads()) this.threads.set(`${thread.app}:${thread.thread}`, thread)
     this.ledgers = Map.groupBy(questions.filter(question => question.app !== 'voice'), question => question.app)
     for (const pin of store(this.state).pins()) if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin)

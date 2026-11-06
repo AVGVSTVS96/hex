@@ -49,7 +49,7 @@ import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSy
 import { homedir } from 'os'
 import { basename, join, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, MODELS, EFFORTS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
-import { Ledger, type MessageId, type Post, type Question } from '../../hub/ledger.ts'
+import { Ledger, waits, type MessageId, type Post, type Question } from '../../hub/ledger.ts'
 import { server } from './channel.ts'
 import { voiceCalls } from './voice.ts'
 
@@ -583,7 +583,7 @@ function serve(token: string) {
 
   async function settleQuestion(thread: string, message: MessageId, note: string) {
     const question = ledger.find(thread, message)
-    if (!question || question.answer || question.settled) return
+    if (!question || !waits(question)) return
     ledger.settled(thread, message, note)
     await draw(thread, message)
   }
@@ -885,7 +885,7 @@ function serve(token: string) {
       },
     }
     hub.deliver(ch.id, nameOf(ch), message)
-    if (message.meta.reply_to_message_id) ledger.replied(ch.id, message.meta.reply_to_message_id, message.content)
+    ledger.heard(ch.id, msg.id, message.content, message.meta.reply_to_message_id)
   }
 
   // Reactions and deletes reach only a thread the hub already serves: in it,
