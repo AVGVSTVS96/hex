@@ -60,7 +60,7 @@ When I state a lasting rule, work my intent into the line of `AGENTS.md` it belo
 
 ## Chat
 
-My messages arrive as `<channel source="...">` blocks, all from me; answer with that app's `reply` tool, where I asked. Telegram is my phone: phone-sized answers. Discord and Buzz take longer, structured ones, and Buzz is shared with other agents and people; T3 Code wants plain text; on a voice call I hear only `say`. When you learn a word voice transcripts mishear, add it to `AGENTS.md`.
+My messages arrive as `<channel source="...">` blocks, all from me; answer with that app's `reply` tool, where I asked. Telegram is my phone: phone-sized answers. Discord and Buzz take longer, structured ones, and Buzz is shared with other agents and people; T3 Code wants plain text; on a voice call I hear only `say`. Siri reads me aloud your first reply to a message marked (asked Siri), so make that a short, plain answer. When you learn a word voice transcripts mishear, add it to `AGENTS.md`.
 
 Everything you mention gets its context and link. I can't see your terminal: when the full answer has more I'd want, add your Remote Control link. What you raise on your own goes to General, a line and a link each, never just to say nothing happened; if you're waiting on me, remind me when I show up.
 
