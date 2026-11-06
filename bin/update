@@ -6,31 +6,53 @@ cd "$hex"
 [ -f "$home/MEMORY.md" ] && echo "This folder still has a MEMORY.md from an older hex: fold it in once (its facts become notes, its rules and where-things-are lines move into AGENTS.md), then delete it, remove its @MEMORY.md line, and commit."
 
 mode=${1:-}
-# The session that queued this update, and when: the turn it asked from stays busy until the job wakes
-# it, so the waits leave that turn out.
-asker=${2:-}
 before=$(git rev-parse --short HEAD)
+# Each session that asked for an update, when, its thread and the main it asked for: its turn stays busy
+# until it hears, so bin/quiet leaves that turn out, and it hears as soon as what it asked for ships.
+askers="$home/state/update-askers"
+mkdir -p "$home/state"
+# tell [all] <words>: tells each asker's thread whose main is live now, or every one with all, once a thread.
+tell() {
+  every=
+  [ "$1" != all ] || { every=1; shift; }
+  exec 9>"$askers.lock"
+  flock 9
+  touch "$askers"
+  : > "$askers.left"
+  told=
+  while read -r who owner want; do
+    if [ -z "$every" ] && ! git merge-base --is-ancestor "$want" HEAD 2>/dev/null; then
+      echo "$who $owner $want" >> "$askers.left"
+    elif ! printf '%s\n' "$told" | grep -qxF "$owner"; then
+      told="$told
+$owner"
+      "$hex/bin/job" --tell hex-update "$owner" "$1" || :
+    fi
+  done < "$askers"
+  mv "$askers.left" "$askers"
+  exec 9>&-
+}
 git fetch -q origin main
 incoming=$(git rev-parse origin/main)
 
+live="shipped: hex is live at %s, with what this thread asked for; the hub restarts on it once no call is live, and each session at its next rest"
 if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   echo "up to date at $before"
+  tell "$(printf "$live" "$before")"
   exit 0
 fi
 if [ "$incoming" = "$(cat "$home/state/bad" 2>/dev/null || :)" ]; then
   echo "not updated: hex $(git rev-parse --short "$incoming") couldn't start here, so hex stays on $before"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex $(git rev-parse --short "$incoming") couldn't start here, so hex stays on $before"
   exit 1
 fi
 
-# From a hex session, which is busy itself until its turn ends, the update goes on as a job that wakes
-# the session when it ends, one at a time; run by hand, it goes on here.
+# From a hex session, which is busy itself until its turn ends, the update goes on as one job at a time,
+# which tells each asking thread as what it asked for ships; run by hand, it goes on here.
 if [ -z "$mode" ] && [ -n "${HEX_THREAD:-}${HEX_OWNER:-}" ] && command -v systemd-run >/dev/null; then
-  if systemctl --user -q is-active hex-update; then
-    echo "an update is already on its way; it ships the newest main"
-  else
-    "$hex/bin/job" hex-update "$hex/bin/update" --when-quiet ${CLAUDE_CODE_SESSION_ID:+"$CLAUDE_CODE_SESSION_ID@$(date +%s%3N)"} 2>&1 >/dev/null
-    echo "hex $(git rev-parse --short "$incoming") ships once it passes bin/check and no hex session is busy; this thread hears when it has"
-  fi
+  (flock 9; echo "${CLAUDE_CODE_SESSION_ID:--}@$(date +%s%3N) ${HEX_OWNER:-${HEX_THREAD:-}} $incoming" >> "$askers") 9>"$askers.lock"
+  systemctl --user -q is-active hex-update || "$hex/bin/job" hex-update "$hex/bin/update" --when-quiet 2>&1 >/dev/null
+  echo "hex $(git rev-parse --short "$incoming") ships once it passes bin/check and no other hex session is busy; this thread hears the moment it's live, and \`git -C $hex merge-base --is-ancestor $incoming HEAD\` succeeds from then on"
   exit 0
 fi
 
@@ -41,6 +63,7 @@ exec 8>"$hex/worktrees/.update.lock"
 flock 8
 if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   echo "up to date at $(git rev-parse --short HEAD)"
+  tell "$(printf "$live" "$(git rev-parse --short HEAD)")"
   exit 0
 fi
 clean() {
@@ -55,11 +78,12 @@ git worktree add -q --detach "$check" "$incoming"
 if ! output=$("$check/bin/check" 2>&1); then
   printf '%s\n' "$output"
   echo "not updated: hex $(git rev-parse --short "$incoming") fails bin/check"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex $(git rev-parse --short "$incoming") fails bin/check, so hex stays on $before; its output is in journalctl --user -u hex-update"
   exit 1
 fi
 
 # A busy session would take the new hooks and rules mid-turn, so hex ships only between turns.
-[ "$mode" = --now ] || "$hex/bin/quiet" "$asker"
+[ "$mode" = --now ] || "$hex/bin/quiet"
 git merge -q --ff-only "$incoming"
 bun install --cwd "$hex" --silent
 "$hex/bin/optmem"
@@ -75,8 +99,9 @@ else
   "$hex/bin/hex" restart
 fi
 echo "updated hex $before..$(git rev-parse --short HEAD); the hub restarts on it once no call is live, and each session at its next rest"
+tell "$(printf "$live" "$(git rev-parse --short HEAD)")"
 # What merged meanwhile ships next.
 if [ "$mode" = --when-quiet ]; then
   clean
-  exec "$0" --when-quiet "$asker"
+  exec "$0" --when-quiet
 fi
