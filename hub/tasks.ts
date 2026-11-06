@@ -51,7 +51,7 @@ export function pending(state: string, thread?: string, room = ROOM): { text: st
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {
-      header: `${whose}'s questions still waiting on me: yours, and mine you answered that I haven't come back to (remind me with reply, reply_to set to its key, from any thread; edit_message with settled: true and the key closes one dealt with elsewhere or that no longer stands):`,
+      header: `${whose}'s questions still waiting on me: yours, and mine you answered that I haven't come back to (remind me with reply, reply_to set to its key, from any thread; edit_message with settled: true and the key closes one my words show I've dealt with, or that no longer stands):`,
       items: questions.map(question => [waiting(question, named)]),
       gap: '\n',
       rest: '`.hex/bin/hex questions` lists them all',

@@ -362,6 +362,8 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
     case 'reply': {
       const text = tappable((args.text as string | undefined) ?? '')
       const quoted = args.reply_to != null ? located(thread, String(args.reply_to)) : undefined
+      const quotes = quoted && questionAt(quoted)
+      const quoting = quotes && quoted ? { question: quotes, message: quoted.message } : undefined
       const quote = quoted && { reply_parameters: { message_id: quoted.message, ...(quoted.chat_id !== chat_id && { chat_id: quoted.chat_id }) } }
       const files = (args.files as string[] | undefined) ?? []
       const buttons = (args.buttons as string[] | undefined) ?? []
@@ -420,7 +422,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         if (buttons.length && captioned) asked = sent.message_id
       }
       if (asked) ledger.ask(thread, asked, text, buttons)
-      else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text, !!(quoted && questionAt(quoted)))
+      else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text, quoting)
 
       return sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
     }

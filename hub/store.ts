@@ -27,11 +27,12 @@ export type TaskChange = { title?: string; status?: Status; proof?: string; done
 // A call that's the owner's: a question a thread asked with buttons, a poll or in words, in one
 // app's thread, under that app's id for the message. via: where the answer came from (the chat app's
 // own buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
-// One the owner asked hex (asker: 'owner') is under their message, its answer hex's latest reply
-// after it (via 'hex', message: that reply), and it waits on them from that answer until they next
-// write in the thread, which settles it.
+// One the owner asked hex (asker: 'owner') is under their message, its answer hex's reply that
+// quoted it, or else hex's latest reply after it until the owner next wrote there (kept: it stops
+// moving then), and it waits on them from that answer until they quote-reply to either or a
+// session settles it.
 export type MessageId = number | string
-export type Answer = { label: string; at: string; via: string; message?: MessageId }
+export type Answer = { label: string; at: string; via: string; message?: MessageId; kept?: true }
 export type Question = {
   asker?: 'owner'
   app: string
@@ -828,18 +829,21 @@ export class Store {
     return (this.db.query(`select * from questions ${where} order by n`).all(...params) as StoredQuestion[]).map(toQuestion)
   }
 
-  // hex said something in a thread: it's the answer to the owner's questions there they haven't
-  // come back to, the latest one standing.
-  replied(app: string, thread: string, answer: Answer) {
-    this.write(() => this.db.query(`update questions set answer = ? where asker = 'owner' and app = ? and thread = ? and settled is null`).run(JSON.stringify(answer), app, thread))
-  }
-
-  // The owner wrote in a thread again: they've come back to what hex answered them there.
-  returned(app: string, thread: string) {
+  // hex said something in a thread: the answer to one of the owner's questions there it quoted, or
+  // else to each whose answer still moves.
+  replied(app: string, thread: string, answer: Answer, to?: MessageId) {
+    const which = to === undefined ? `json_extract(answer, '$.kept') is null` : 'message = ?'
     this.write(() =>
       this.db
-        .query(`update questions set settled = ? where asker = 'owner' and app = ? and thread = ? and answer is not null and settled is null`)
-        .run(JSON.stringify({ note: 'you wrote there again', at: now() }), app, thread),
+        .query(`update questions set answer = ? where asker = 'owner' and app = ? and thread = ? and settled is null and ${which}`)
+        .run(JSON.stringify(to === undefined ? answer : { ...answer, kept: true }), app, thread, ...(to === undefined ? [] : [to])),
+    )
+  }
+
+  // The owner wrote in a thread again: what hex answered their questions there stops moving.
+  returned(app: string, thread: string) {
+    this.write(() =>
+      this.db.query(`update questions set answer = json_set(answer, '$.kept', json('true')) where asker = 'owner' and app = ? and thread = ? and answer is not null and settled is null`).run(app, thread),
     )
   }
 
