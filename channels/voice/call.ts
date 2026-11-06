@@ -44,20 +44,9 @@ export class Call {
   }
 
   handOff(): Turn[] {
-    const turns: Turn[] = []
-    let joins = false
-    for (const fragment of this.fragments) {
-      if (fragment.sent) {
-        joins = false
-        continue
-      }
-      fragment.sent = true
-      const last = turns.at(-1)
-      if (joins && last?.who === fragment.who) last.text += fragment.text
-      else turns.push({ who: fragment.who, text: fragment.text, start: fragment.start })
-      joins = true
-    }
-    return tidy(turns)
+    const due = this.fragments.filter(fragment => !fragment.sent)
+    for (const fragment of due) fragment.sent = true
+    return join(due).map(({ who, text, start }) => ({ who, text, start }))
   }
 
   track(task: Task, at = 0) {
@@ -99,16 +88,9 @@ export class Call {
   }
 
   record() {
-    const turns: (Turn & { end: number })[] = []
-    for (const { who, text, start, end } of this.fragments) {
-      const last = turns.findLast(turn => turn.who === who)
-      if (last && start - last.end <= PAUSE) {
-        last.text += text
-        last.end = Math.max(last.end, end)
-      } else turns.push({ who, text, start, end })
-    }
+    const turns = join(this.fragments)
     return {
-      turns: tidy(turns.sort((a, b) => a.start - b.start)).map(({ who, start, text }) => ({ who, at: start, text })),
+      turns: turns.map(({ who, start, text }) => ({ who, at: start, text })),
       tasks: [...this.moments],
       moments: [...this.marks],
     }
@@ -117,6 +99,20 @@ export class Call {
 
 function entry(task: Task) {
   return `- ${task.id} ${task.state}: ${task.text}${task.to ? ` (sent to ${task.to})` : ''}`
+}
+
+// Each speaker's words as whole turns: a fragment joins that speaker's last turn when it follows
+// within a pause, even with the other speaker's words in between, as a backchannel over a sentence.
+function join(fragments: Fragment[]) {
+  const turns: (Turn & { end: number })[] = []
+  for (const { who, text, start, end } of fragments) {
+    const last = turns.findLast(turn => turn.who === who)
+    if (last && start - last.end <= PAUSE) {
+      last.text += text
+      last.end = Math.max(last.end, end)
+    } else turns.push({ who, text, start, end })
+  }
+  return tidy(turns.sort((a, b) => a.start - b.start))
 }
 
 function tidy<T extends Turn>(turns: T[]): T[] {
