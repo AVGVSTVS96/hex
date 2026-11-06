@@ -47,7 +47,7 @@ export function stepOf(update: Update, names = nobody): Did | undefined {
       return did && { ...did, id: update.toolCallId }
     }
     case 'agent_message_chunk': {
-      const text = update.content.type === 'text' ? firstLine(update.content.text) : undefined
+      const text = update.content.type === 'text' ? firstParagraph(update.content.text) : undefined
       return text ? { kind: 'say', text } : undefined
     }
     case 'agent_thought_chunk':
@@ -148,7 +148,7 @@ function itemDid(type: string, item: any, names: Names): Did | undefined {
     case 'reasoning':
       return { kind: 'think', text: plain((item.text ?? '').replace(/^\*\*(.+?)\*\*\s*/, '$1. ')) || 'Thinking' }
     case 'assistant_message': {
-      const text = firstLine(item.text ?? '')
+      const text = firstParagraph(item.text ?? '')
       return text ? { kind: 'say', text } : undefined
     }
     case 'subagent':
@@ -299,6 +299,13 @@ export function firstLine(text: string) {
       .replace(/^(#+|[-*>]|\d+\.)\s+/, ''),
   ).trim()
   return line ? line.slice(0, 160) : undefined
+}
+
+// A text's first paragraph whole, as one line without its markdown or list markers.
+export function firstParagraph(text: string) {
+  const paragraph = text.trim().split(/\n\s*\n/)[0]!
+  const lines = paragraph.split('\n').map(line => line.trim().replace(/^(#+|[-*>]|\d+\.)\s+/, ''))
+  return unmark(lines.join(' ')).trim() || undefined
 }
 
 // Markdown's marks dropped and its links read as their words, for text shown plain.
