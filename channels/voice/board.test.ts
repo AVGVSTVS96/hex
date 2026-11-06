@@ -1095,3 +1095,23 @@ test("agents started for a task show under the topic that owns it, or for Genera
   await until(() => general()?.state === 'done')
   expect(group()?.state).toBe('done')
 })
+
+test("each task closed in the last day is finished under the run it was done for, named as that run is, whatever state the run is in", async () => {
+  const store = open(state)
+  store.deliver({ key: 'telegram:-1001234567890:9002', to: '-1001234567890:2583', from: 'telegram', author: 'owner', body: 'fix the done tab, and the call drop, and launch it' })
+  const tab = store.createTask({ title: 'Done tab', message: 'telegram:-1001234567890:9002', owner: '-1001234567890:2583' })
+  const drop = store.createTask({ title: 'Call drop', message: 'telegram:-1001234567890:9002', owner: '-1001234567890:2583' })
+  const launch = store.createTask({ title: 'Launch', message: 'telegram:-1001234567890:9002', owner: '-1001234567890', project: 'Launch plan' })
+  store.editTask(tab.id, { status: 'done', proof: 'https://github.com/x/y/pull/1 (**live**)' })
+  store.editTask(launch.id, { status: 'done', proof: 'posted' })
+  await until(() => board.finished.length === 2)
+  expect(board.finished).toEqual([
+    { id: launch.id, title: 'Launch', topic: 'Launch plan', app: 'telegram', proof: 'posted', at: expect.any(String), link: 'https://t.me/c/1234567890/1' },
+    { id: tab.id, title: 'Done tab', topic: 'voiceapp', app: 'telegram', proof: 'https://github.com/x/y/pull/1 (live)', at: expect.any(String), run: 'telegram:-1001234567890:2583' },
+  ])
+  expect(board.get('telegram:-1001234567890:2583')?.state).not.toBe('done')
+  store.editTask(drop.id, { status: 'dropped' })
+  store.editTask(tab.id, { status: 'open' })
+  await until(() => board.finished.length === 1)
+  expect(board.finished[0]!.id).toBe(launch.id)
+})

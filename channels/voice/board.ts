@@ -26,6 +26,9 @@ export type Moment = { at: string; state: State; text: string }
 export type Turn = { at: string; state: State }
 export type Row = Omit<Run, 'needs' | 'lately' | 'steps' | 'plan' | 'agents'> & { agents: Omit<Agent, 'steps' | 'result'>[] }
 export type Summary = { needs: number; working: number }
+// A task hex closed in the last day, under the run it was done for (see home) and named as that run
+// is, with what showed it done. app and link are where its thread lives.
+export type Finished = { id: string; title: string; topic: string; app: string; proof: string; at: string; run?: string; link?: string }
 // A thread off the board, as its page shows it: what hex.db and its own last job records say.
 export type Page = Pick<Run, 'id' | 'app' | 'thread' | 'name' | 'where' | 'place'> & Partial<Pick<Run, 'at' | 'line' | 'link'>>
 export type Run = {
@@ -75,6 +78,7 @@ const STEPS = 24
 const AGENT_STEPS = 12
 const RESULT = 600
 const KEEP = 7 * 24 * 60 * 60_000
+const DAY = 24 * 60 * 60_000
 const TRACK = 7 * 24 * 60 * 60_000
 const FINE = 60 * 60_000
 const GRAIN = 50
@@ -101,6 +105,7 @@ const TOLD: Record<string, Agent['state']> = { completed: 'done', failed: 'faile
 // The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
 export class Board extends Changes {
   runs: Run[] = []
+  finished: Finished[] = []
   summary: Summary = { needs: 0, working: 0 }
   counts = new Changes()
   private threads: Thread[] = []
@@ -120,6 +125,7 @@ export class Board extends Changes {
   private saving?: ReturnType<typeof setTimeout>
   private beaten = ''
   private linked = ''
+  private closed = ''
   private groups = new Map<string, Run>()
   private beats = new Map<string, Beat[]>()
 
@@ -137,9 +143,11 @@ export class Board extends Changes {
         if (JSON.stringify(this.stored()) !== JSON.stringify(this.threads)) this.mark('threads')
         const beaten = open(state).beaten()
         const linked = JSON.stringify(open(state).agentTasks())
-        if (beaten !== this.beaten || linked !== this.linked) this.schedule()
+        const closed = JSON.stringify(this.closedTasks())
+        if (beaten !== this.beaten || linked !== this.linked || closed !== this.closed) this.schedule()
         this.beaten = beaten
         this.linked = linked
+        this.closed = closed
       }),
     )
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
@@ -236,8 +244,10 @@ export class Board extends Changes {
     for (const run of runs) this.keep(run)
     runs.push(...this.group(runs))
     runs.sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at))
-    if (JSON.stringify(runs) === JSON.stringify(this.runs)) return
+    const finished = this.finish(runs)
+    if (JSON.stringify(runs) === JSON.stringify(this.runs) && JSON.stringify(finished) === JSON.stringify(this.finished)) return
     this.runs = runs
+    this.finished = finished
     this.changed()
     const summary = { needs: count(runs, 'needs'), working: count(runs, 'working') }
     if (summary.needs === this.summary.needs && summary.working === this.summary.working) return
@@ -445,12 +455,7 @@ export class Board extends Changes {
   private group(runs: Run[]): Run[] {
     const links = Object.entries(open(this.state).agentTasks())
     const taskOf = (agent: Agent) => links.find(([id]) => id === agent.id || agent.id.startsWith(id))?.[1]
-    const destination = (task: { owner: string; project?: string }) => {
-      const owner = runs.find(run => run.thread === task.owner)
-      if (owner && owner.where !== 'General' && owner.where !== 'DM') return owner.id
-      if (!task.project) return owner?.id
-      return runs.find(run => run.name === task.project && run.where !== 'General' && run.where !== 'DM')?.id ?? `project:${task.project}`
-    }
+    const destination = (task: { owner: string; project?: string }) => home(task, runs)
     const moved = new Map<string, Agent[]>()
     for (const run of runs) {
       run.agents = run.agents.filter(agent => {
@@ -491,6 +496,24 @@ export class Board extends Changes {
       fresh.push(this.groups.get(id)!)
     }
     return fresh
+  }
+
+  // The tasks closed in the last day, each under its home run, or with that run off the board, named
+  // as its project or its thread is.
+  private finish(runs: Run[]): Finished[] {
+    const all = open(this.state).threads()
+    const general = generalOf(all)
+    return this.closedTasks().map(task => {
+      const thread = all.find(row => row.thread === task.owner)
+      const id = home(task, runs)
+      const run = runs.find(run => run.id === id)
+      const topic = run?.name ?? task.project ?? (thread ? nameOf(thread, general) : 'hex')
+      return { id: task.id, title: task.title, topic, app: thread?.app ?? 'hex', proof: oneLine(plain(task.proof ?? '')), at: task.closed!, ...(run && { run: run.id }), ...(thread?.link && { link: thread.link }) }
+    })
+  }
+
+  private closedTasks() {
+    return open(this.state).finished(new Date(Date.now() - DAY).toISOString())
   }
 
   // A project's own run, from its agents: working while any is, its lane from when they worked.
@@ -681,6 +704,15 @@ export class Board extends Changes {
     }
     this.schedule()
   }
+}
+
+// The run a task's work shows under: the topic that owns it, or for a task General or the DM owns,
+// a run named for its project (a thread's of that name, or a run of the project's own).
+function home(task: { owner: string; project?: string }, runs: Run[]) {
+  const owner = runs.find(run => run.thread === task.owner)
+  if (owner && owner.where !== 'General' && owner.where !== 'DM') return owner.id
+  if (!task.project) return owner?.id
+  return runs.find(run => run.name === task.project && run.where !== 'General' && run.where !== 'DM')?.id ?? `project:${task.project}`
 }
 
 // Agents at work first, newest first, then the rest by when they ended, newest first.
