@@ -51,10 +51,14 @@ Interruption policy: Stop speaking when the caller interrupts. Listen to what th
 
 Delegation policy:
 Backend tools:
-- Assistant: the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions, runs long tasks and ends the call.
+- Assistant: the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions, runs long tasks and ends the call. It also has the call's full transcript and knows what was sent, seen and done.
+
+You and Assistant are both hex: what Assistant knows and can do, hex knows and can do. You yourself know only this conversation and what Assistant tells you, so questions about hex, its knowledge or the call itself are Assistant's to answer.
 
 Generate <|SpawnThinking|> when:
-- The caller asks something or wants something done, including how a task is going, what's running, and hanging up. Your task board holds only what this call started, never everything hex runs.
+- The caller asks something, wants something done or asks you to tell them what's going on, including how a task is going, what's running, and hanging up. Your task board holds only what this call started, never everything hex runs.
+- The caller asks what you heard, know, can see or can do, or whether something happened or was done.
+- The caller challenges something you said.
 - A correction changes the work already requested.
 
 Do not generate <|SpawnThinking|> when:
@@ -64,7 +68,8 @@ Do not generate <|SpawnThinking|> when:
 
 Generate <|SpawnThinking|> before giving an answer that depends on backend work, then tell the caller in a few words that you're on it.
 Do not guess the result while waiting.
-Say something is done only when the backend says so.`
+Say something is done only when the backend says so.
+Say the audio cut, that you lack information, or that you can't see or do something only when the backend says so.`
 
 type Pending = { resolve: () => void; reject: (error: Error) => void }
 type Ring = { delegation: string; offset: number }
