@@ -602,12 +602,12 @@ export class Board extends Changes {
       if (step) Object.assign(step, back, { end: at, text: past(step.text) })
       const did = stepOf(update, id => this.links.name(id))
       if (did?.kind === 'say' && did.text) {
-        const say = { ...did, text: oneLine(did.text), at }
+        const say = { ...did, at }
         written.set(say, at)
         follower.said = [...follower.said, say].slice(-follower.keep)
       }
       if (!did?.text || (did.id ? follower.steps.some(step => step.id === did.id) : did.text === follower.steps.at(-1)?.text)) continue
-      const next = { ...did, text: oneLine(did.text), at: did.id ? began : at, ...(did.id && { state: 'running' as const }) }
+      const next = { ...did, text: did.kind === 'say' ? did.text : oneLine(did.text), at: did.id ? began : at, ...(did.id && { state: 'running' as const }) }
       written.set(next, at)
       follower.steps.push(next)
       if (follower.steps.length > follower.keep) follower.steps.shift()

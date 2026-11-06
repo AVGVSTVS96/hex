@@ -122,14 +122,17 @@ test("Codex's turn items read like Claude's steps: a command by what it does, wi
   })
   expect(item('dynamic_tool', { toolName: 'Read', input: { file_path: '/repo/a.ts' }, output: { file: { content: 'body' } } })).toEqual({ id: 'dynamic_tool-1', at: 'b', end: 'e', kind: 'read', text: 'Read a.ts', state: 'done', detail: '/repo/a.ts' })
   expect(item('reasoning', { text: '**Weighing the options**\n\nI need a durable core.' })).toEqual({ id: 'reasoning-1', at: 'b', kind: 'think', text: 'Weighing the options. I need a durable core.' })
-  expect(item('assistant_message', { text: '**Done.** The page is up.\nMore.' })).toMatchObject({ kind: 'say', text: 'Done. The page is up.' })
+  expect(item('assistant_message', { text: '**Done.** The page is up.\nMore.\n\nNext paragraph.' })).toMatchObject({ kind: 'say', text: 'Done. The page is up. More.' })
+  const status =
+    "I told him I gave the status around 3:47pm and repeated the short version, since it may have come through garbled. It covers Monorepos on brand-it, Broadcom's last funded account running out tonight, and the two decisions waiting on him."
+  expect(item('assistant_message', { text: status })).toMatchObject({ kind: 'say', text: status })
   expect(item('subagent', { title: 'scout: look around', childThreadId: 'thread-3', prompt: 'Look around.\nThen report.' })).toMatchObject({ kind: 'agent', text: 'Handed off scout: look around', agent: 'thread-3', detail: 'Look around.' })
   expect(item('error', { title: 'Provider turn failed to start', failure: { message: 'no session id' } }, 'failed')).toMatchObject({ kind: 'tool', text: 'Provider turn failed to start', state: 'failed', result: 'no session id' })
   expect(item('user_message', { text: 'hi' })).toBeUndefined()
 })
 
-test("an agent's own words read as their first line, without markdown, and its plan as the step in progress", () => {
-  expect(headline({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '**Found it.** The hub drops\nthe rest' } })).toBe('Found it. The hub drops')
+test("an agent's own words read as their first paragraph, without markdown, and its plan as the step in progress", () => {
+  expect(headline({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '**Found it.** The hub drops\nthe rest\n\nMore later.' } })).toBe('Found it. The hub drops the rest')
   expect(headline({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: '  \n' } })).toBeUndefined()
   expect(
     headline({
