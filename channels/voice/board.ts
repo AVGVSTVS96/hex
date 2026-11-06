@@ -119,6 +119,8 @@ export class Board extends Changes {
   private tracks: Record<string, Turn[]>
   private saving?: ReturnType<typeof setTimeout>
   private beaten = ''
+  private linked = ''
+  private groups = new Map<string, Run>()
   private beats = new Map<string, Beat[]>()
 
   constructor(
@@ -134,8 +136,10 @@ export class Board extends Changes {
       open(state).watch(() => {
         if (JSON.stringify(this.stored()) !== JSON.stringify(this.threads)) this.mark('threads')
         const beaten = open(state).beaten()
-        if (beaten !== this.beaten) this.schedule()
+        const linked = JSON.stringify(open(state).agentTasks())
+        if (beaten !== this.beaten || linked !== this.linked) this.schedule()
         this.beaten = beaten
+        this.linked = linked
       }),
     )
     this.stops.push(watchDir(join(claude, 'sessions'), () => this.mark('sessions')))
@@ -230,6 +234,7 @@ export class Board extends Changes {
     const runs = [...threads, ...this.loose().map(thread => this.run(thread)).filter(run => run.state === 'working')]
     this.follow(runs)
     for (const run of runs) this.keep(run)
+    runs.push(...this.group(runs))
     runs.sort((a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at))
     if (JSON.stringify(runs) === JSON.stringify(this.runs)) return
     this.runs = runs
@@ -410,11 +415,7 @@ export class Board extends Changes {
             ...handed.filter(one => !HANDED[one.status] || one.latest || !one.end || one.end >= since).map(one => this.delegation(key, one)),
           ]
         : []
-    ).sort(
-      (a, b) =>
-        Number(a.state !== 'working') - Number(b.state !== 'working') ||
-        (a.state === 'working' ? (b.since ?? '').localeCompare(a.since ?? '') : (b.end ?? '').localeCompare(a.end ?? '')),
-    )
+    ).sort(newest)
     return {
       id: `${thread.app}:${thread.id}`,
       app: thread.app,
@@ -434,6 +435,85 @@ export class Board extends Changes {
       lately: state === 'idle' ? [] : lately,
       track: this.track(`${thread.app}:${thread.id}`, timeline),
       ...(link && { link }),
+    }
+  }
+
+  // Agents and sessions started for a task show where its work does: under the thread that owns the
+  // task when that's another run on the board, else under a run named for its project (a thread's of
+  // that name, or a run of the project's own), else where they started. A project's own run stays a
+  // week after its agents leave the board, the way a thread's does.
+  private group(runs: Run[]): Run[] {
+    const store = open(this.state)
+    const links = Object.entries(store.agentTasks())
+    const taskOf = (agent: Agent) => {
+      const linked = links.find(([id]) => id === agent.id || (id.length >= 8 && agent.id.startsWith(id)))?.[1]
+      const task = this.sessions.get(agent.id)?.task
+      return linked ?? (task ? (store.task(task) ?? undefined) : undefined)
+    }
+    const moved = new Map<string, { agents: Agent[]; task: { owner: string; project?: string } }>()
+    for (const run of runs) {
+      run.agents = run.agents.filter(agent => {
+        const task = taskOf(agent)
+        if (!task) return true
+        const owner = runs.find(one => one.thread === task.owner)
+        const named = task.project && task.project !== run.name ? (runs.find(one => one.name === task.project)?.id ?? `project:${task.project}`) : undefined
+        const to = owner && owner !== run ? owner.id : named
+        if (!to) return true
+        const group = moved.get(to) ?? { agents: [], task }
+        group.agents.push(agent)
+        moved.set(to, group)
+        return false
+      })
+    }
+    const since = new Date(Date.now() - KEEP).toISOString()
+    const fresh: Run[] = []
+    for (const [id, { agents, task }] of moved) {
+      const run = runs.find(one => one.id === id)
+      if (run) {
+        run.agents = [...run.agents, ...agents].sort(newest)
+        const working = agents.filter(agent => agent.state === 'working')
+        if (working.length && run.state !== 'working' && run.state !== 'needs') Object.assign(run, { state: 'working', since: working.map(agent => agent.since ?? run.at).sort()[0] })
+        continue
+      }
+      const thread = this.threads.find(one => one.id === task.owner)
+      const name = id.slice('project:'.length)
+      const group = this.projectRun(id, name, agents.sort(newest), thread)
+      this.groups.set(id, group)
+      fresh.push(group)
+    }
+    for (const [id, kept] of this.groups) {
+      if (fresh.some(run => run.id === id)) continue
+      if (kept.at < since) this.groups.delete(id)
+      else fresh.push({ ...kept, state: kept.state === 'working' ? 'done' : kept.state, running: false, agents: kept.agents.map(agent => (agent.state === 'working' ? { ...agent, state: 'done' } : agent)) })
+    }
+    return fresh
+  }
+
+  // A project's own run: its agents, working while any is, and its lane from when they worked.
+  private projectRun(id: string, name: string, agents: Agent[], thread?: Thread): Run {
+    const working = agents.filter(agent => agent.state === 'working')
+    const state: State = working.length ? 'working' : agents.some(agent => agent.state === 'failed') ? 'failed' : 'done'
+    const times = agents.flatMap(agent => [agent.since, agent.end].filter((at): at is string => !!at)).sort()
+    const at = times.at(-1) ?? new Date().toISOString()
+    const since = working.length ? working.map(agent => agent.since ?? at).sort()[0]! : at
+    return {
+      id,
+      app: thread?.app ?? 'hex',
+      thread: thread?.id ?? id,
+      name,
+      where: thread ? where(thread) : 'hex',
+      place: name,
+      state,
+      running: false,
+      line: oneLine(working[0]?.line ?? agents[0]?.line ?? ''),
+      since,
+      at,
+      agents,
+      steps: [],
+      plan: [],
+      lately: [],
+      track: this.track(id, busyness(agents)),
+      ...(thread?.link && { link: thread.link }),
     }
   }
 
@@ -614,6 +694,28 @@ export class Board extends Changes {
     }
     this.schedule()
   }
+}
+
+// Agents at work first, newest first, then the rest by when they ended, newest first.
+function newest(a: Agent, b: Agent) {
+  return Number(a.state !== 'working') - Number(b.state !== 'working') || (a.state === 'working' ? (b.since ?? '').localeCompare(a.since ?? '') : (b.end ?? '').localeCompare(a.end ?? ''))
+}
+
+// When a set of agents worked, as a timeline: working from when the first of them started until
+// the last one at work ended, failed if one that ended then had.
+function busyness(agents: Agent[]): Entry[] {
+  const marks = agents.flatMap(agent => [
+    ...(agent.since ? [{ at: agent.since, step: 1, state: 'working' }] : []),
+    ...(agent.since && agent.end ? [{ at: agent.end, step: -1, state: agent.state === 'failed' ? 'failed' : 'done' }] : []),
+  ])
+  let at = 0
+  return marks
+    .sort((a, b) => a.at.localeCompare(b.at) || a.step - b.step)
+    .flatMap(mark => {
+      const was = at
+      at += mark.step
+      return (was === 0 && at > 0) || (was > 0 && at === 0) ? [{ at: mark.at, state: mark.state }] : []
+    })
 }
 
 // What the voice and Claude hear about a run when the caller wants to talk it through.

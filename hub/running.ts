@@ -11,10 +11,11 @@ import type { Store } from './store.ts'
 // session's from the settings its job started it with, since Claude Code's daemon starts those with
 // its own environment, whoever started it. The session that launched it (parent), when its process
 // runs under another session's, unless it's a background session, for the same reason. Which of
-// hex's own helpers it is (HEX_HELPER: its check, its memory agent), which are nobody's work.
+// hex's own helpers it is (HEX_HELPER: its check, its memory agent), which are nobody's work, and
+// the task it was started for (HEX_TASK, from bin/job).
 // From hex's own record of its turns (hex.db's turns): when its latest turn began, and when that
 // turn ended, if it has.
-export type Session = { id: string; pid: number; job?: string; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number; thread?: string; parent?: string; helper?: string; began?: string; ended?: string }
+export type Session = { id: string; pid: number; job?: string; status: string; state?: string; detail?: string; needs?: string; kind?: string; name?: string; cwd?: string; started: number; updated?: number; thread?: string; parent?: string; helper?: string; task?: string; began?: string; ended?: string }
 
 export const CLAUDE = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
 const BUSY = new Set(['busy', 'shell'])
@@ -40,7 +41,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     const { state, detail, needs, respawnFlags } = readJson(join(claude, 'jobs', job || id.slice(0, 8), 'state.json')) ?? {}
     const progress = Object.fromEntries(Object.entries({ state, detail, needs }).filter(([, value]) => typeof value === 'string' && value))
     const env = kind === 'bg' ? launched(respawnFlags) : environ(pid)
-    sessions.set(id, { id, pid, ...(job && { job }), status, ...progress, kind, name, cwd, started, ...(updated !== undefined && { updated }), thread: served(env), ...(env.HEX_HELPER && { helper: env.HEX_HELPER }), ...store.turn(id) })
+    sessions.set(id, { id, pid, ...(job && { job }), status, ...progress, kind, name, cwd, started, ...(updated !== undefined && { updated }), thread: served(env), ...(env.HEX_HELPER && { helper: env.HEX_HELPER }), ...(env.HEX_TASK && { task: env.HEX_TASK }), ...store.turn(id) })
   }
   for (const session of sessions.values()) {
     const parent = session.kind === 'bg' ? undefined : launcher(session.pid, pids, session.id)
