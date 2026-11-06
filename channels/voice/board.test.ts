@@ -1060,12 +1060,11 @@ test("a thread that works again shows only this stretch's steps and plan, not th
   }
 })
 
-test("agents and job sessions started for a task show under the thread that owns it, else under a run named for its project, kept after they finish", async () => {
+test("agents started for a task show under the topic that owns it, or for General's task under a run of its project's own, kept once they finish", async () => {
   const store = open(state)
-  threads('telegram', { ...telegram, '-1001234567890:858': { name: 'boss', session: '85858585-boss' } })
-  store.deliver({ key: 'telegram:-1001234567890:9001', to: '-1001234567890:858', from: 'telegram', author: 'owner', body: 'check for stalls, and fix the voice bug' })
-  const stall = store.createTask({ title: 'Stall check', message: 'telegram:-1001234567890:9001', owner: '-1001234567890:858', project: 'Stall check' })
-  const voice = store.createTask({ title: 'Voice bug', message: 'telegram:-1001234567890:9001', owner: '-1001234567890:2583' })
+  store.deliver({ key: 'telegram:-1001234567890:9001', to: '-1001234567890', from: 'telegram', author: 'owner', body: 'check for stalls, and fix the voice bug' })
+  const stall = store.createTask({ title: 'Stall check', message: 'telegram:-1001234567890:9001', owner: '-1001234567890', project: 'Stall check' })
+  const voice = store.createTask({ title: 'Voice bug', message: 'telegram:-1001234567890:9001', owner: '-1001234567890:2583', project: 'hex-voice' })
   const started = Date.now() - 3 * 60_000
   const fan = [
     { id: 'achk1aaaaaaaaaaaa', kind: 'agent', label: 'Stall check 1', startedAt: started },
@@ -1073,26 +1072,26 @@ test("agents and job sessions started for a task show under the thread that owns
     { id: 'avfixaaaaaaaaaaaa', kind: 'agent', label: 'Fix the voice bug', startedAt: started + 2000 },
     { id: 'aownaaaaaaaaaaaaa', kind: 'agent', label: 'Its own', startedAt: started + 3000 },
   ]
-  job('85858585-boss', { state: 'working', detail: 'checking', updatedAt: ago(0), fan })
-  running('85858585-boss', 'busy')
-  const owned = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890:858', HEX_TASK: stall.id } })
-  afterAll(() => owned.kill())
-  running('86868686-sweep', 'busy', owned.pid, { kind: 'interactive', name: 'boss/sweep', startedAt: started + 4000 })
-  store.addAgents(stall.id, ['achk1aaaaaaaaaaaa', 'achk2aaaa'])
+  job('aaaaaaaa-general', { state: 'working', detail: 'checking', updatedAt: ago(0), fan })
+  running('aaaaaaaa-general', 'busy')
+  const sweep = Bun.spawn(['sleep', '30'], { env: { ...process.env, HEX_OWNER: 'telegram:-1001234567890' } })
+  afterAll(() => sweep.kill())
+  running('86868686-sweep', 'busy', sweep.pid, { kind: 'interactive', name: 'hex/sweep', startedAt: started + 4000 })
+  store.addAgents(stall.id, ['achk1aaaaaaaaaaaa', 'achk2aaa', '86868686-sweep'])
   store.addAgents(voice.id, ['avfixaaaaaaaaaaaa'])
-  const boss = () => board.get('telegram:-1001234567890:858')
+  expect(() => store.addAgents(voice.id, ['short'])).toThrow()
+  const general = () => board.get('telegram:-1001234567890')
   const group = () => board.get('project:Stall check')
   await until(() => group()?.agents.length === 3 && board.get('telegram:-1001234567890:2583')?.agents.some(agent => agent.id === 'avfixaaaaaaaaaaaa'))
-  expect(boss()!.agents.map(agent => agent.id)).toEqual(['aownaaaaaaaaaaaaa'])
-  expect(group()).toMatchObject({ name: 'Stall check', place: 'Stall check', state: 'working', app: 'telegram', thread: '-1001234567890:858' })
+  expect(general()!.agents.map(agent => agent.id)).toEqual(['aownaaaaaaaaaaaaa'])
+  expect(group()).toMatchObject({ name: 'Stall check', place: 'Stall check', state: 'working', app: 'hex' })
   expect(group()!.agents.map(agent => agent.id)).toEqual(['86868686-sweep', 'achk2aaaaaaaaaaaa', 'achk1aaaaaaaaaaaa'])
-  job('85858585-boss', { state: 'working', detail: 'checking', updatedAt: ago(0), fan: fan.map(one => ({ ...one, doneAt: Date.now() })) })
   rmSync(join(claude, 'sessions', '86868686.json'))
+  job('aaaaaaaa-general', { state: 'working', detail: 'checking', updatedAt: ago(0), fan: fan.map(one => ({ ...one, doneAt: Date.now() })) })
   await until(() => group()?.state === 'done')
   expect(group()!.track.map(turn => turn.state)).toEqual(['working', 'done'])
-  rmSync(join(claude, 'sessions', '85858585.json'))
-  job('85858585-boss', { state: 'done', detail: 'all checked', updatedAt: ago(0) })
-  await until(() => boss()?.state === 'done')
+  job('aaaaaaaa-general', { state: 'done', detail: 'heartbeat ran', updatedAt: ago(0) })
+  running('aaaaaaaa-general', 'idle')
+  await until(() => general()?.state === 'done')
   expect(group()?.state).toBe('done')
-  threads('telegram', telegram)
 })

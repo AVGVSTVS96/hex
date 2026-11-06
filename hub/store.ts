@@ -686,11 +686,12 @@ export class Store {
   // Agents and sessions started for a task, so what shows them shows them as its work, wherever they started.
   addAgents(id: string, agents: string[]): Task {
     return this.write(() => {
-      const task = this.task(id)
-      if (!task) throw new Error(`no task ${id}`)
+      const short = agents.find(agent => !/^[\w-]{8,}$/.test(agent))
+      if (short) throw new Error(`"${short}" isn't an agent or session id: use the id it was started with, 8 characters or more`)
+      const live = this.live(id)
       const add = this.db.query('insert into task_agents (agent, task, at) values (?, ?, ?) on conflict (agent) do update set task = excluded.task, at = excluded.at')
-      for (const agent of agents) add.run(agent, number(id), now())
-      return task
+      for (const agent of agents) add.run(agent, number(live), now())
+      return this.task(live)!
     })
   }
 
@@ -711,6 +712,7 @@ export class Store {
       }
       this.db.query('insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid').run(number(into), number(from))
       this.db.query("update tasks set status = 'dropped', merged_into = ?, closed = ? where n = ?").run(number(into), now(), number(from))
+      this.db.query('update task_agents set task = ? where task = ?').run(number(into), number(from))
       return this.task(into)!
     })
   }

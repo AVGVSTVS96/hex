@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-// job <unit> [<thread> | <task>] <command...>: run a long job as its own systemd unit in hex-jobs.slice, apart
+// job <unit> [<thread>] [<task>] <command...>: run a long job as its own systemd unit in hex-jobs.slice, apart
 // from the hub, so hex restarts don't stop it, and wake the thread that owns it when it ends. The owner
-// is the hex session that runs it, or <thread>: an open thread's key or <app>:<key> id (hex threads),
-// or the thread that owns <task>, a task id like t-12, which the job is then for.
-// The job's Claude Code sessions carry their owner in HEX_OWNER and their task in HEX_TASK, so the voice
-// app's Tasks shows them under the task's project, else their owner, and are named <owner>/<unit>
-// unless they name themselves. A job whose command is claude goes
+// is the hex session that runs it, or <thread>: an open thread's key or <app>:<key> id (hex threads).
+// A job for <task>, a task id like t-12, starts its claude session under an id hex links to that task
+// (hex task agent), so the voice app's Tasks shows it with the task's work.
+// The job's Claude Code sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them
+// under it, and are named <owner>/<unit> unless they name themselves. A job whose command is claude goes
 // to the first machine with room, or waits for one (bin/place): here it runs as a hex session in the folder
 // it was started from, through the launcher the hub starts sessions with, so it has hex's rules, memory and
 // hooks; on another machine it runs as a T3 Code thread (bin/away).
@@ -17,9 +17,9 @@ import { open, stateDir } from "../hub/store.ts"
 const [mode, ...rest] = process.argv.slice(2)
 const store = open(stateDir())
 
-// The open thread a word names, by its key or id, or the one owning the task it names, as its id.
+// The open thread a word names, by its key or id, as its id.
 function named(word: string): string | undefined {
-  const key = /^t-\d+$/.test(word) ? store.task(word)?.owner : store.key(word)
+  const key = store.key(word)
   const thread = store.threads({ open: true }).find(({ thread }) => thread === key)
   return thread && `${thread.app}:${key}`
 }
@@ -41,14 +41,12 @@ if (mode === "--ended") {
   store.deliver({ key: `job:${unit}@${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`, to: owner.slice(owner.indexOf(":") + 1), from: "job", author: "prompt", body: `[job] ${unit} ${said}`, meta: { user: "job" } })
 } else {
   const given = rest.length > 1 ? named(rest[0]!) : undefined
-  if (!given && /^t-\d+$/.test(rest[0] ?? "")) {
-    console.error(`job: ${rest[0]} isn't a task whose thread is open`)
-    process.exit(2)
-  }
   const owner = given ?? served()
-  const command = given ? rest.slice(1) : rest
+  const after = given ? rest.slice(1) : rest
+  const task = after.length > 1 && /^t-\d+$/.test(after[0]!) ? after[0] : undefined
+  const command = task ? after.slice(1) : after
   if (!mode || !command.length) {
-    console.error("usage: job <unit> [<thread>] <command...>")
+    console.error("usage: job <unit> [<thread>] [<task>] <command...>")
     process.exit(2)
   }
   if (!owner) {
@@ -59,7 +57,10 @@ if (mode === "--ended") {
   const name = `${store.names()[key] ?? key}/${mode}`
   const agent = basename(command[0]!) === "claude"
   if (!agent && /(^|[\s;&|(/])claude(\s|$)/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it from its folder as: job ${mode} claude -p "<prompt>"`)
-  const run = agent ? [`${import.meta.dir}/place`, name, ...command.slice(1)] : command
+  const session = agent && task ? crypto.randomUUID() : undefined
+  if (session) store.addAgents(task!, [session])
+  else if (task) console.error(`job: only a claude job's session can be linked to ${task}`)
+  const run = agent ? [`${import.meta.dir}/place`, name, ...(session ? ["--session-id", session] : []), ...command.slice(1)] : command
   // Like claude -p, the job reads what comes on stdin after its prompt.
   const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
   const input = piped ? ["-p", `StandardInputData=${Buffer.from(piped).toString("base64")}`] : []
@@ -68,8 +69,7 @@ if (mode === "--ended") {
   // The conversation that started the job, and when: a thread's session's own, or the one a job it runs in came from.
   const thread = served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD })
   const from = thread ? { HEX_FROM: thread, HEX_FROM_AT: new Date().toISOString() } : { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT }
-  const task = given && /^t-\d+$/.test(rest[0]!) ? { HEX_TASK: rest[0] } : {}
-  const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`]).concat(Object.entries({ ...from, ...task }).flatMap(([name, value]) => (value ? ["-E", `${name}=${value}`] : [])))
+  const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`]).concat(Object.entries(from).flatMap(([name, value]) => (value ? ["-E", `${name}=${value}`] : [])))
   await $`systemd-run --user --unit=${mode} --slice=hex-jobs.slice --same-dir ${input} ${stopping} --collect ${env} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${mode} ${owner}`)} -- ${run.map(verbatim)}`
 }
 

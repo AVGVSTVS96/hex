@@ -28,6 +28,7 @@ for (let at = 0; at < args.length; at++) {
   if (arg === '-p' || arg === '--print') continue
   else if (arg === '--model') model = args[++at]
   else if (arg === '--effort') effort = args[++at]
+  else if (arg === '--session-id') at++
   else if (/^--?[A-Za-z][\w-]*(=.*)?$/.test(arg)) quit(ELSEWHERE, `${arg} has no place in a T3 Code thread`)
   else words.push(arg)
 }

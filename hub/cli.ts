@@ -63,7 +63,7 @@ if (flags['ignore-case'] && command !== 'recall') {
 }
 // How many words each command takes before its flags; a word past them is a flag's value left
 // unquoted, which would otherwise be cut short without a word.
-const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2 } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
+const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2, agent: Infinity } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
 if (args.length > takes) {
   console.error(`hex: ${stray(args[takes]!)}`)
   process.exit(1)
