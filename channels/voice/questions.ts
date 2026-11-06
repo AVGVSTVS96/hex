@@ -46,6 +46,9 @@ export type Question = {
   links?: Link[]
   tag?: string
   places: Place[]
+  // The ids it was listed under before hex's check took it up, so what the app holds under one,
+  // like words typed and not sent yet, stays with it.
+  was?: string[]
   // Left half done from here: partly, the answer (or "Not needed") that reached only some of its
   // copies, which only it can finish, or undo; undoing, an undo that stopped partway, which only
   // undoing again finishes.
@@ -550,6 +553,7 @@ export class Questions extends Changes {
   private dress({ refs, from, options, links = [], places: _names, ...question }: Written): Question {
     const [app, ...thread] = question.task.split(':')
     const pages = [...links, ...options.flatMap(({ label, url }) => (url ? [{ label, url }] : []))].filter(page => opens(page.url))
+    const was = (refs ?? []).map(refId).filter(id => id !== question.id)
     return {
       ...question,
       app: app!,
@@ -557,6 +561,7 @@ export class Questions extends Changes {
       options: options.filter(option => !option.url),
       ...(pages.length && { links: pages }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(':') }]),
+      ...(was.length && { was }),
       ...this.half(question.id),
     }
   }
