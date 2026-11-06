@@ -36,7 +36,7 @@ export function fit(sections: Section[], room: number): string {
 export const ROOM = 9_000
 
 // A status post's own headings, under its note.
-export const HEADINGS = ['Waiting on you', 'Open', 'Done'] as const
+export const HEADINGS = ['Waiting on you', 'Open', 'Ideas', 'Done'] as const
 
 // A status post's words above its first heading: its note. Posts written before the headings were
 // plain still lead with 🔴 Blocked on you, 🟡 Pending or 🟢 Done.
