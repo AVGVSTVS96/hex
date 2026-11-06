@@ -108,8 +108,9 @@ each, with why it was calling.
 
 `why` is the reason Claude gave `phone`; `summary` and `waiting` are Claude's
 wrap-up from `title`; `moments` are Claude's exact `say` and `note` words
-(the voice paraphrases them aloud), the time-limit warning, and when the
-caller's phone took the audio (`paused`, `resumed`). `usage` is OpenAI's
+(the voice paraphrases them aloud), the time-limit warning, when the
+caller's phone took the audio (`paused`, `resumed`), and each photo or video
+they sent (`photo`, `video`, with its `media` id). `usage` is OpenAI's
 billed audio seconds, their cost, and how full the voice's context got;
 `expires` is when OpenAI ends the session, and two minutes before it the voice
 and Claude are told. `at` is milliseconds from the start of the call; `claude` is
@@ -126,6 +127,31 @@ updating its record.
 | `GET /calls/<id>?after=<version>` | the live call, once a word or anything else in it has changed (or after 25 seconds), so an app follows a phone call it isn't on |
 | `DELETE /calls/<id>` | deletes a finished call |
 | `POST /calls/<id>/moments` | `{ "kind": "paused" \| "resumed", "text": "..." }` from the app when the phone takes its audio (a phone call or Siri) and gives it back; the voice is told to wait |
+| `POST /calls/<id>/media` | `{ "media": "<id>" }`: a photo or video sent during the call (see below); 409 when the call isn't live |
+
+## Photos and video
+
+The voice model hears and speaks but can't see, and Claude Code reads images but can't watch a
+clip. So a photo or clip goes to Claude as images: a photo as it is (HEIC turned into JPEG), a clip
+as stills across it, one every five seconds up to twelve, with what was said in it, transcribed
+as Telegram's voice messages are (`TRANSCRIBE_URL`). They need `ffmpeg`.
+
+```
+ app ── POST /media (bytes) ──► state/voice/media/<id>.*    images Claude reads, and a still for the app
+ app ── POST /calls/<id>/media ──► the call's transcript: a photo or video moment
+                                   Claude: "(photo)" with image_path ──► it looks, and says what it sees
+                                   the voice: hand off, and say you're having a look
+ app ── POST /tasks/<id>/chat with media ──► that thread's session, image_path in its message
+```
+
+On a call the clip comes without sound: the call already hears the caller. A thread's session
+gets the owner's words, then a line for each photo or clip (`(photo)`, `(video 0:12, 3 stills;
+said in it: "...")`), and every image in `image_path`, as Telegram's photos arrive.
+
+| Request | Answers |
+| --- | --- |
+| `POST /media` | the file's bytes, as `image/jpeg`, `image/png`, `image/heic`, `video/mp4` or `video/quicktime`: `201 { id, kind }`, `kind` being `photo` or `video` |
+| `GET /media/<id>` | the photo, or a still from the video |
 
 ## Dropped connections and restarts
 
@@ -233,9 +259,9 @@ order (needs you, working, done, failed, idle), newest change first in each.
 | `GET /tasks/summary?after=<version>` | `{ version, needs, working }`, once a count changes |
 | `GET /tasks/<id>` | for a thread off the board (quiet for a week, or closed), a page to read: its `id`, `app`, `thread`, `name`, `where`, `place`, and where they're known its last `at`, `line` and `link`, with its `asks` and `pin`; its `chat` reads the same way, and talk, chat POST and stop answer 404. Otherwise one run, with what it `needs` from you in full, what it did `lately`, its newest `steps` (newest first: `id`, `at`, `end`, `kind`, a few words of `text`, a tool's `state`, `detail` and `result`, and the `agent` it started), its `plan`, and each agent's `result` and own `steps` |
 | `POST /tasks/<id>/talk` | during a call: the voice brings the run up, and Claude hears which thread it is |
-| `GET /tasks/<id>/chat` | `{ version, sends, total, turns, waiting }`: the thread's chat across every session it has had, from their logs (`turns`: its latest 100 of `total`, each `from` `me` or `hex` with its `text`); what you sent that its session hasn't taken in yet (`waiting`: `key`, `text`, `at`, where `key` is the one hex keeps it under, `<app>:<your key>` for words sent from here); and whether words typed here reach it (`sends`: false for T3 Code threads and sessions no app holds) |
+| `GET /tasks/<id>/chat` | `{ version, sends, total, turns, waiting }`: the thread's chat across every session it has had, from their logs (`turns`: its latest 100 of `total`, each `from` `me` or `hex` with its `text`, and the photos and videos sent with it from here as `media`: `id`, `kind`); what you sent that its session hasn't taken in yet (`waiting`: `key`, `text`, `at`, `media`, where `key` is the one hex keeps it under, `<app>:<your key>` for words sent from here); and whether words typed here reach it (`sends`: false for T3 Code threads and sessions no app holds) |
 | `GET /tasks/<id>/chat?after=<version>` | the same, once the chat changes (or after 25 seconds) |
-| `POST /tasks/<id>/chat` | `{ text, key }`: your words to the thread, as if typed in its own app; `key` (`app-` and 8 to 60 letters, digits, `-` or `_`) names the message, so sending it again delivers it once. 409 when `sends` is false |
+| `POST /tasks/<id>/chat` | `{ text, key, media }`: your words to the thread, as if typed in its own app, with the photos and videos from `/media` (`media`: their ids; `text` may be empty then); `key` (`app-` and 8 to 60 letters, digits, `-` or `_`) names the message, so sending it again delivers it once. 409 when `sends` is false |
 | `POST /tasks/<id>/stop` | your stop, as the thread's own app's Stop does it. 409 when no app holds the thread |
 
 An app starting a call with `"about": "<run id>"` in its `/session` body gets

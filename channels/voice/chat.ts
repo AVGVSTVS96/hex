@@ -1,9 +1,10 @@
-import { clients, history, type Turn } from '../../hub/hub.ts'
+import { carried, clients, history, type Turn } from '../../hub/hub.ts'
 import { owners } from '../../hub/notes.ts'
 import { open as store } from '../../hub/store.ts'
 import { Changes } from './changes.ts'
+import { caption, meta, typed, type Item } from './media.ts'
 
-export type Sent = { key: string; text: string; at: string }
+export type Sent = { key: string; text: string; at: string; media?: Turn['media'] }
 // turns: the chat's latest turns, out of all it has (total). sends: whether words typed in the app
 // reach this thread. T3 Code shows only turns it starts, and a session no app holds has no chat to
 // send through.
@@ -32,8 +33,11 @@ export class Chats {
     const id = `${where.app}:${where.thread}`
     const seen = this.seen.get(id)
     if (seen?.mark === mark) return seen.chat
-    const turns = history(kept, where.thread)
-    const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at }) => ({ key, text: body, at }))
+    const turns = history(kept, where.thread).map(turn => ({ ...turn, text: typed(turn.text, turn.media?.length ?? 0) }))
+    const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at, meta }) => {
+      const media = carried(meta)
+      return { key, text: typed(body, media?.length ?? 0), at, ...(media && { media }) }
+    })
     const fresh = { sends, total: turns.length, turns: turns.slice(-SHOWN), waiting }
     const said = JSON.stringify(fresh)
     const chat = seen?.said === said ? seen.chat : { version: Math.max((seen?.chat.version ?? 0) + 1, Date.now()), ...fresh }
@@ -55,13 +59,14 @@ export class Chats {
     this.changes.changed()
   }
 
-  // The owner's words, typed in the app, go to the thread's session the way its app's would. The
-  // app names each message, so sending it again after a lost answer delivers it once.
-  send(where: Where, text: string, key: string) {
+  // The owner's words, typed in the app, go to the thread's session the way its app's would, with
+  // the photos and clips sent with them as images it reads. The app names each message, so sending
+  // it again after a lost answer delivers it once.
+  send(where: Where, text: string, key: string, media: Item[] = []) {
     const client = sendsThrough(where)
     const name = client?.hub.name(where.thread)
     if (!name) throw new Error(`Words typed here can't reach this thread; write to it in its own app.`)
-    client.hub.deliver(where.thread, name, { content: text, key, author: 'owner', meta: { user: 'hex app', ts: new Date().toISOString() } })
+    client.hub.deliver(where.thread, name, { content: caption(text, media), key, author: 'owner', meta: { user: 'hex app', ts: new Date().toISOString(), ...meta(media) } })
   }
 
   // The owner's stop, as the thread's own app does it.
