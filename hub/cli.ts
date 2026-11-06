@@ -17,6 +17,7 @@ const USAGE = `usage:
   hex task drop <task> [--into <task it repeats>]
   hex task open <task>
   hex task edit <task> [--title '<title>'] [--owner <thread>] [--project <name>] [--done-when <outcome>]
+  hex task agent <task> <agent or session id…>
   hex task <task> [--json]
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
   hex questions [--thread <thread> | --all] [--json]
@@ -62,7 +63,7 @@ if (flags['ignore-case'] && command !== 'recall') {
 }
 // How many words each command takes before its flags; a word past them is a flag's value left
 // unquoted, which would otherwise be cut short without a word.
-const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2 } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
+const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2, agent: Infinity } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
 if (args.length > takes) {
   console.error(`hex: ${stray(args[takes]!)}`)
   process.exit(1)
@@ -234,7 +235,7 @@ function end(entry: string, room: number) {
   return `${head}…${entry.slice(from)}`
 }
 
-function task(verb: string | undefined, id: string | undefined, key: string | undefined) {
+function task(verb: string | undefined, id: string | undefined, key: string | undefined, more: string[]) {
   const thread = process.env.HEX_THREAD
   switch (verb) {
     case 'new': {
@@ -260,6 +261,9 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
     case 'edit':
       if (!id) usage()
       return show([store.editTask(id, { title: flags.title, owner: flags.owner, project: flags.project, doneWhen: flags['done-when'] })])
+    case 'agent':
+      if (!id || !more.length) usage()
+      return show([store.addAgents(id, more)])
     default: {
       const found = verb && store.task(verb)
       if (!found) throw new Error(verb ? `no task ${verb}` : USAGE)
@@ -279,7 +283,7 @@ try {
       break
     }
     case 'task':
-      task(args[0], args[1], args[2])
+      task(args[0], args[1], args[2], args.slice(2))
       break
     case 'tasks':
       show(store.tasks({ owner: flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), status: (flags.status?.split(',') ?? ['open']) as Status[] }), false)

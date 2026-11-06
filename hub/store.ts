@@ -247,6 +247,8 @@ const migrations: (string | ((store: Store) => void))[] = [
   // A thread's messages in the order they were kept, whose last says whether any came.
   'create index if not exists thread on messages ("to", n);',
   `create table if not exists operations (scope text not null, id text not null, input text not null, result text, primary key (scope, id));`,
+  // The agents and sessions started for a task, by the id Claude Code or T3 Code gave them.
+  `create table if not exists task_agents (agent text primary key, task integer not null references tasks (n), at text not null check (at ${UTC}));`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -681,6 +683,24 @@ export class Store {
     })
   }
 
+  // Agents and sessions started for a task, so what shows them shows them as its work, wherever they started.
+  addAgents(id: string, agents: string[]): Task {
+    return this.write(() => {
+      const short = agents.find(agent => !/^[\w-]{8,}$/.test(agent))
+      if (short) throw new Error(`"${short}" isn't an agent or session id: use the id it was started with, 8 characters or more`)
+      const live = this.live(id)
+      const add = this.db.query('insert into task_agents (agent, task, at) values (?, ?, ?) on conflict (agent) do update set task = excluded.task, at = excluded.at')
+      for (const agent of agents) add.run(agent, number(live), now())
+      return this.task(live)!
+    })
+  }
+
+  // The task each linked agent works for, by its id, with whose task it is and its project.
+  agentTasks(): Record<string, Pick<Task, 'id' | 'owner' | 'project'>> {
+    const rows = this.db.query('select a.agent, t.n, t.owner, t.project from task_agents a join tasks t on t.n = a.task').all() as { agent: string; n: number; owner: string; project: string | null }[]
+    return Object.fromEntries(rows.map(row => [row.agent, { id: `t-${row.n}`, owner: row.owner, ...(row.project && { project: row.project }) }]))
+  }
+
   // Folds a duplicate into the task it repeats: its words follow into's, and it's dropped.
   mergeTasks(into: string, from: string): Task {
     return this.write(() => {
@@ -692,6 +712,7 @@ export class Store {
       }
       this.db.query('insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid').run(number(into), number(from))
       this.db.query("update tasks set status = 'dropped', merged_into = ?, closed = ? where n = ?").run(number(into), now(), number(from))
+      this.db.query('update task_agents set task = ? where task = ?').run(number(into), number(from))
       return this.task(into)!
     })
   }
