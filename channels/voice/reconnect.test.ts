@@ -23,6 +23,8 @@ async function appCall({ open = false } = {}) {
   const hub = Bun.listen({ unix: join(state, 'telegram', 'hub.sock'), socket: { data: (_, data) => void relayed.push(JSON.parse(String(data))) } })
   // Each session.close the stand-in got, as `<session id> <event id>`.
   const closes: string[] = []
+  // What the engine told the voice with session.instructions.append.
+  const instructed: string[] = []
   let voice: Bun.ServerWebSocket<unknown> | undefined
   let hold = open
   // Whether the stand-in answers a session.close with session.closed.
@@ -45,6 +47,7 @@ async function appCall({ open = false } = {}) {
       open: socket => void (voice = socket),
       message(socket, raw) {
         const event = JSON.parse(String(raw))
+        if (event.type === 'session.instructions.append') instructed.push(event.content)
         if (event.type === 'session.thinking.append') socket.send(JSON.stringify({ type: 'session.thinking.appended', client_event_id: event.event_id }))
         if (event.type !== 'session.close') return
         closes.push(`${(socket.data as { id: string }).id} ${event.event_id}`)
@@ -82,6 +85,7 @@ for await (const line of console) {
   return {
     base,
     closes,
+    instructed,
     told,
     relayed,
     call,
@@ -293,4 +297,23 @@ test("a say the voice never confirms gives the voice session an answer instead o
   expect(error).toBe("the voice didn't confirm it within 10s, so it may not have it")
   expect(Date.now() - asked).toBeLessThan(12_000)
   expect((await engine.tool('note', { text: 'still here' })).result).toBe('noted')
+}, 20_000)
+
+test("a photo sent during the call shows in its transcript, reaches hex to look at, and has the voice hand off", async () => {
+  await using engine = await appCall()
+  const png = await fetch(`${engine.base}/media`, { method: 'POST', headers: { 'content-type': 'image/png' }, body: 'png bytes' })
+  expect(png.status).toBe(201)
+  const { id, kind } = await png.json()
+  expect(kind).toBe('photo')
+  expect(await fetch(`${engine.base}/media/${id}`).then(r => r.text())).toBe('png bytes')
+  expect((await fetch(`${engine.base}/media`, { method: 'POST', headers: { 'content-type': 'application/pdf' }, body: 'pdf' })).status).toBe(415)
+  expect((await fetch(`${engine.base}/calls/${ID}/media`, { method: 'POST', body: JSON.stringify({ media: id }) })).status).toBe(409)
+  await started(engine)
+  expect((await fetch(`${engine.base}/calls/${ID}/media`, { method: 'POST', body: JSON.stringify({ media: 'nothing' }) })).status).toBe(400)
+  expect((await fetch(`${engine.base}/calls/${ID}/media`, { method: 'POST', body: JSON.stringify({ media: id }) })).status).toBe(204)
+  expect((await engine.call()).moments).toEqual([{ at: expect.any(Number), kind: 'photo', text: '', media: id }])
+  await until(() => engine.told.find(told => told.meta?.image_path))
+  expect(engine.told.find(told => told.meta?.image_path)).toMatchObject({ content: 'The caller sent this from the app: (photo)', meta: { call: ID, image_path: expect.stringMatching(new RegExp(`${id}\\.png$`)) } })
+  await until(() => engine.instructed.length)
+  expect(engine.instructed[0]).toContain('<|SpawnThinking|>')
 }, 20_000)

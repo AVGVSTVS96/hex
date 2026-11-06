@@ -63,6 +63,24 @@ test('words typed in the app reach the thread as the owner, under the key the ap
   expect(calls).toMatchObject([['deliver', DESK, 'Desk', { content: 'and the docs', key: 'app-00000001', author: 'owner', meta: { user: 'hex app' } }]])
 })
 
+test("photos and clips go with the owner's words as images the session reads, and the chat shows them beside those words", () => {
+  const photo = { id: 'p1', kind: 'photo' as const, images: ['/m/p1.jpg'] }
+  const video = { id: 'v1', kind: 'video' as const, images: ['/m/v1-1.jpg'], seconds: 4, mute: true as const }
+  chats.send(where, '', 'app-00000002', [photo, video])
+  expect(calls).toMatchObject([
+    ['deliver', DESK, 'Desk', { content: '(photo)\n(video 0:04, 1 still, no sound)', meta: { image_path: '/m/p1.jpg; /m/v1-1.jpg', media: 'photo p1; video v1' } }],
+  ])
+  const store = open(state)
+  const [, , , message] = calls[0] as [string, string, string, { content: string; meta: Record<string, string> }]
+  store.deliver({ key: 'telegram:app-00000002', to: DESK, from: 'telegram', author: 'owner', body: message.content, meta: message.meta })
+  store.deliver({ key: 'telegram:app-00000003', to: DESK, from: 'telegram', author: 'owner', body: 'this one\n(photo)', meta: { media: 'photo p2' } })
+  store.take('telegram:app-00000002', NOW)
+  expect(chats.of(where)).toMatchObject({
+    turns: [{ from: 'me', text: '', media: [{ id: 'p1', kind: 'photo' }, { id: 'v1', kind: 'video' }] }],
+    waiting: [{ key: 'telegram:app-00000003', text: 'this one', media: [{ id: 'p2', kind: 'photo' }] }],
+  })
+})
+
 test("a stop goes through the app's own stop when it has one, and only where an app holds the thread", () => {
   chats.stop(where)
   clients.get('telegram')!.stop = thread => calls.push(['own stop', thread])

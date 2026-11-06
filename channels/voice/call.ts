@@ -14,8 +14,9 @@ export type Moment = Task & { at: number }
 export type Sent = { thread: string; topic: string; settled: number; missed: number }
 
 // ask: a question put on the caller's screen (its text) by its id; answered: its answer, and what
-// sending it did; undone: that answer taken back.
-export type Mark = { at: number; kind: 'say' | 'note' | 'paused' | 'resumed' | 'warned' | 'ask' | 'answered' | 'undone'; text: string; ask?: string; sent?: Sent }
+// sending it did; undone: that answer taken back; photo and video: what the caller sent from the
+// app, by its media id.
+export type Mark = { at: number; kind: 'say' | 'note' | 'paused' | 'resumed' | 'warned' | 'ask' | 'answered' | 'undone' | 'photo' | 'video'; text: string; ask?: string; sent?: Sent; media?: string }
 
 export type Saved = { turns: { who: Speaker; at: number; text: string }[]; tasks: Moment[]; moments?: Mark[] }
 

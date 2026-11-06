@@ -26,6 +26,8 @@ hang_up ends the live call once the voice finishes speaking. When the caller ask
 
 When a call ends, name it with title: a few plain words for what it was about, shown in the caller's list of past calls. Once the call's work has settled, call title again for that call with summary (what happened and what you sent where, in two or three plain sentences) and waiting (each thing left for the caller to do or decide, a short line each; an empty list when nothing is).
 
+The caller can send a photo or video from the app during a call: it arrives as "(photo)", or "(video 0:12, 3 stills, ...)" with what was said in it, and image_path lists its images, a video's as stills across it in order. Read every one. The voice can't see, so it tells the caller you're having a look and hands off: answer that handoff with what you see, tied to what they asked about it.
+
 If hex's service restarts or the voice's connection drops during a call, the call is picked back up and you get a "call resumed" message with the call so far.
 
 A result too long to speak goes wherever the caller reads, if this session has another channel to reach them; say where you sent it. Voice page: http://localhost:${PORT}.`,

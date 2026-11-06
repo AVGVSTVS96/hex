@@ -133,8 +133,9 @@ export type Held = { hear: (audio: string) => void; hangUp: () => void }
 // The voice app's call engine, once it runs in this process, for a client that holds a line.
 export const engine: { take?: (from: 'discord', greeting: string, line: VoiceLine) => Held } = {}
 
-// One message of a thread's chat as its log keeps it: the owner's, or hex's reply.
-export type Turn = { from: 'me' | 'hex'; text: string }
+// One message of a thread's chat as its log keeps it: the owner's, or hex's reply, with the photos
+// and clips the owner sent with it from the hex app.
+export type Turn = { from: 'me' | 'hex'; text: string; media?: { id: string; kind: string }[] }
 
 // Every client running in this process, so a thread can move between them.
 // place() opens a thread on the client, led by its about line if given, for a session working in cwd,
@@ -207,7 +208,16 @@ export function history(store: Store, thread: string, session?: string): Turn[] 
     if (row.from === 'terminal' || !row.taken || row.at < start) return []
     if (replied(row)) return shown(row) ? [{ from: 'hex', text: row.body } as Turn] : []
     const text = spoken(row) && row.author === 'owner' ? (row.from === 't3' ? asked(row.body) : row.body) : ''
-    return text ? [{ from: 'me', text } as Turn] : []
+    const media = carried(row.meta)
+    return text ? [{ from: 'me', text, ...(media && { media }) } as Turn] : []
+  })
+}
+
+// The hex app's photos and clips a message carried, listed in its meta as "<kind> <id>; ...".
+export function carried(meta?: Record<string, string>): Turn['media'] {
+  return meta?.media?.split('; ').map(entry => {
+    const [kind = '', id = ''] = entry.split(' ')
+    return { id, kind }
   })
 }
 

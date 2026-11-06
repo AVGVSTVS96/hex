@@ -8,6 +8,7 @@ import { CallLog, ending, usage, type CallRecord, type Ending, type Source } fro
 import { Changes } from './changes.ts'
 import { Chats } from './chat.ts'
 import { PORT, STATE_DIR, env } from './env.ts'
+import { line, Media, type Item } from './media.ts'
 import { clip, Questions, type Question } from './questions.ts'
 import { relay } from './relay.ts'
 import { Board, opener, type Page, type Run } from './board.ts'
@@ -34,6 +35,7 @@ const follows = new Map<string, () => void>()
 let board: Board
 let yours: Questions
 let chats: Chats
+let media: Media
 
 const IDENTITY = (() => {
   try {
@@ -194,7 +196,7 @@ function since(call: Live) {
   return Date.now() - Date.parse(call.record.started)
 }
 
-function remember(call: Live, kind: Mark['kind'], text: string, more: Pick<Mark, 'ask' | 'sent'> = {}) {
+function remember(call: Live, kind: Mark['kind'], text: string, more: Pick<Mark, 'ask' | 'sent' | 'media'> = {}) {
   call.call.mark({ at: since(call), kind, text, ...more })
   save(call)
 }
@@ -546,6 +548,35 @@ function talkAbout(topic: Topic) {
   deliver(`The caller asked for this from the app during the call. ${topic.claude}`, { call: live.id, task: topic.id })
   void send(live, 'session.instructions.append', topic.voice).catch(() => {})
   return new Response(null, { status: 204 })
+}
+
+// A photo or clip the caller sent from the app: it goes in the call's transcript, hex's session
+// reads it, and the voice, which can't see it, hands off so hex can say what's in it.
+async function showMedia(request: Request, id: string) {
+  const { media: name } = ((await request.json().catch(() => null)) ?? {}) as { media?: unknown }
+  const item = typeof name === 'string' ? media.get(name) : undefined
+  if (!item) return new Response('Name a photo or video sent to /media', { status: 400 })
+  if (live?.id !== id) return new Response('That call is not live', { status: 409 })
+  remember(live, item.kind, '', { media: item.id })
+  deliver(`The caller sent this from the app: ${line(item)}`, { call: live.id, image_path: item.images.join('; ') })
+  void send(live, 'session.instructions.append', `The caller just sent a ${item.kind} in the app. Only Assistant can see it: generate <|SpawnThinking|> now, then tell the caller in a few words that you're having a look.`).catch(() => {})
+  return new Response(null, { status: 204 })
+}
+
+async function upload(request: Request) {
+  const type = request.headers.get('content-type')
+  if (!type || !Media.takes(type)) return new Response('Send a JPEG, PNG or HEIC photo, or an MP4 or QuickTime video', { status: 415 })
+  try {
+    const { id, kind } = await media.add(type, await request.blob())
+    return Response.json({ id, kind }, { status: 201 })
+  } catch (error) {
+    return new Response((error as Error).message, { status: 422 })
+  }
+}
+
+function showImage(id: string) {
+  const item = media.get(id)
+  return item ? new Response(Bun.file(item.images[0]!)) : new Response('404', { status: 404 })
 }
 
 // Puts a question on the caller's screen as a card in the transcript.
@@ -1289,10 +1320,12 @@ async function showChat(url: URL, run: Run | Page, page = false) {
 }
 
 async function sendChat(request: Request, run: Run) {
-  const { text, key } = ((await request.json().catch(() => null)) ?? {}) as { text?: unknown; key?: unknown }
-  if (typeof text !== 'string' || !text.trim()) return new Response('Send some words', { status: 400 })
+  const { text = '', key, media: names = [] } = ((await request.json().catch(() => null)) ?? {}) as { text?: unknown; key?: unknown; media?: unknown }
+  const items = Array.isArray(names) ? names.map(name => (typeof name === 'string' ? media.get(name) : undefined)) : [undefined]
+  if (!items.every(item => item)) return new Response('Name each photo or video by the id /media gave it', { status: 400 })
+  if (typeof text !== 'string' || (!text.trim() && !items.length)) return new Response('Send some words, or a photo or video', { status: 400 })
   if (typeof key !== 'string' || !/^app-[\w-]{8,60}$/.test(key)) return new Response('Name the message with a key starting app-', { status: 400 })
-  return done(() => chats.send(run, text.trim(), key))
+  return done(() => chats.send(run, text.trim(), key, items as Item[]))
 }
 
 // No content once act is through, or why it couldn't be.
@@ -1329,10 +1362,14 @@ function routes(request: Request) {
   if (pathname === '/activity' && request.method === 'GET') return showActivity(new URL(request.url))
   if (pathname === '/tasks' || pathname.startsWith('/tasks/')) return runRoutes(request, new URL(request.url))
   if (/^\/(asks|stuck|fresh)(\/|$)/.test(pathname)) return questionRoutes(request, new URL(request.url))
-  const [, callId, moments] = pathname.match(/^\/calls\/([\w-]+)(\/moments)?$/) ?? []
-  if (callId && moments && request.method === 'POST') return interruption(request, callId)
-  if (callId && !moments && request.method === 'GET') return showCall(callId, new URL(request.url))
-  if (callId && !moments && request.method === 'DELETE') {
+  if (pathname === '/media' && request.method === 'POST') return upload(request)
+  const [, image] = pathname.match(/^\/media\/([\w-]+)$/) ?? []
+  if (image && request.method === 'GET') return showImage(image)
+  const [, callId, verb] = pathname.match(/^\/calls\/([\w-]+)(?:\/(moments|media))?$/) ?? []
+  if (callId && verb === 'moments' && request.method === 'POST') return interruption(request, callId)
+  if (callId && verb === 'media' && request.method === 'POST') return showMedia(request, callId)
+  if (callId && !verb && request.method === 'GET') return showCall(callId, new URL(request.url))
+  if (callId && !verb && request.method === 'DELETE') {
     if (live?.id === callId) return new Response('That call is still going', { status: 409 })
     return new Response(null, { status: calls.delete(callId) ? 204 : 404 })
   }
@@ -1347,6 +1384,7 @@ export function serve(voiceHub: Hub, state: string) {
   HEX_STATE = state
   board = new Board(state, dirname(state))
   chats = new Chats(state)
+  media = new Media(join(state, 'voice', 'media'))
   board.listen(() => {
     activity.changed()
     chats.changed()
