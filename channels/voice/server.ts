@@ -1198,7 +1198,7 @@ function topicOf(about?: string): Topic | undefined {
 async function showRuns(url: URL, runs: Board) {
   const after = url.searchParams.get('after')
   if (after) await runs.changes(Number(after), 25_000)
-  return Response.json({ version: runs.version, tasks: runs.rows() })
+  return Response.json({ version: runs.version, tasks: runs.rows(), finished: runs.finished })
 }
 
 // The Tasks button's counts: threads that need you and are working, and how many things are yours,

@@ -738,6 +738,12 @@ export class Store {
     return rows.map(toLine)
   }
 
+  // Every owner's tasks finished since a moment, newest first, without their words.
+  finished(since: string): Omit<Task, 'words'>[] {
+    const rows = this.db.query("select * from tasks where status = 'done' and closed >= ? order by closed desc, n desc").all(since) as StoredTask[]
+    return rows.map(toLine)
+  }
+
   // An app's open threads as its hub keeps them. A thread left out has closed: it keeps its row, with
   // its name and last session, for whatever reads one. A key is one thread's, so the app that keeps it
   // last has it.
