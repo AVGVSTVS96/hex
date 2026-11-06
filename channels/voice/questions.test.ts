@@ -874,3 +874,16 @@ test('an answer still on its way counts as given, so an undo it turns away is no
   await going
   expect(questions.answered(id)).toBe(true)
 })
+
+test("a check's ask names the ids its questions were listed under before it took them up, so the app keeps what was typed on them", async () => {
+  ledger([asked(1, 'Twilio?', ['Upgrade', 'Not yet']), asked(2, 'Upgrade Twilio now?', ['Upgrade', 'Wait'])])
+  questions = new Questions(state, { t3Database: '/nonexistent', t3Home: '/nonexistent', check: why => checks.push(why) })
+  expect(questions.view.asks.map(question => [question.id, question.was])).toEqual([
+    [`telegram:${DESK}:2`, undefined],
+    [`telegram:${DESK}:1`, undefined],
+  ])
+  const version = questions.version
+  writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify({ at: '2026-10-13T15:00:00.000Z', why: 'a call ended', read: {}, fixed: [], flagged: [], stuck: [], asks: [{ id: 'check:twilio', kind: 'yesno', task: `telegram:${DESK}`, at: '2026-10-11T00:00:00.000Z', question: 'Upgrade Twilio from trial', options: [{ label: 'Upgrade', value: 'Upgrade' }], refs: [{ app: 'telegram', thread: DESK, message: 1 }, { app: 'telegram', thread: DESK, message: 2 }] }] }))
+  await questions.changes(version, 2000)
+  expect(questions.view.asks.map(question => [question.id, question.was])).toEqual([['check:twilio', [`telegram:${DESK}:1`, `telegram:${DESK}:2`]]])
+})
