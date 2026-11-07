@@ -461,6 +461,22 @@ test('a settled question loses its buttons without reaching its thread, and an e
   expect((await call('edit_message', { message_id: String(third) })).error).toBe('edit_message needs text, a file, or settled')
 })
 
+test('another thread, or the DM, quotes and settles a question by its key, and a settle that finds none says so', async () => {
+  const id = Number((await call('reply', { text: 'Ship the site?', buttons: ['Ship', 'Wait'] })).text.match(/id: (\d+)/)[1])
+  const general = await connectSession({ stateDir: state, path: '/telegram', channel: CHANNEL, thread: String(FORUM) })
+  const dm = await connectSession({ stateDir: state, path: '/telegram', channel: CHANNEL, thread: String(OWNER) })
+  const reminder = Number((await dm.call('reply', { text: 'Still waiting: ship the site?', reply_to: `telegram:${FORUM}:${id}` })).text.match(/id: (\d+)/)[1])
+  expect(await called('sendMessage', p => p.text === 'Still waiting: ship the site?')).toMatchObject({ chat_id: String(OWNER), reply_parameters: { message_id: id, chat_id: String(FORUM) } })
+  expect(open(state).question('telegram', String(OWNER), reminder)).toBeNull()
+  await general.call('reply', { text: 'Ship the site, in Desk', reply_to: String(id) })
+  expect((await called('sendMessage', p => p.text === 'Ship the site, in Desk')).reply_parameters).toEqual({ message_id: id })
+  expect((await general.call('edit_message', { message_id: String(id), settled: true })).text).toBe(`settled (id: ${id})`)
+  expect(asked(id).settled).toMatchObject({ note: '✓ Settled' })
+  expect((await dm.call('edit_message', { message_id: `telegram:${FORUM}:${id}`, settled: true })).text).toBe(`no question waits on message ${id}, so nothing was settled`)
+  general.close()
+  dm.close()
+})
+
 test("edit_message settles a poll even with text, which a poll can't change, and without settled says so", async () => {
   const id = Number((await call('poll', { question: 'Ship it?', options: ['Yes', 'No'] })).text.match(/id: (\d+)/)[1])
   expect((await call('edit_message', { message_id: String(id), text: 'Ship it? Shipped.' })).error).toContain("a poll's own text can't be edited")

@@ -89,12 +89,12 @@ test("a list too long for one hook's output gives each entry with its done-when 
 test('the questions still waiting on the owner come with the tasks, and leave once answered', async () => {
   open(dir).ask({ app: 'telegram', thread: '-100:7', message: 3935, text: 'Remove the 4 old pages?\nThey are below the cutoff.', options: ['Remove', 'Keep'] })
   const shown = await hook({ session_id: 'q' }, { HEX_THREAD: '-100:7' })
-  expect(shown).toContain("This thread's questions still waiting on my answer")
-  expect(shown).toContain('- telegram · Website · message 3935 · ')
+  expect(shown).toContain("This thread's questions still waiting on me")
+  expect(shown).toContain('- telegram · Website · telegram:-100:3935 · ')
   expect(shown).toContain('Remove the 4 old pages? [Remove | Keep]')
   expect(shown).not.toContain('below the cutoff')
   open(dir).answered('telegram', '-100:7', 3935, 'Remove', 'telegram')
-  expect(await hook({ session_id: 'q' }, { HEX_THREAD: '-100:7' })).not.toContain('waiting on my answer')
+  expect(await hook({ session_id: 'q' }, { HEX_THREAD: '-100:7' })).not.toContain('waiting on me')
 })
 
 test("a job's session gets the list of the thread that started it", async () => {

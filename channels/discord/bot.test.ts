@@ -209,7 +209,7 @@ const question = (message: string) => open(state).questions({ app: 'discord' }).
 const labels = (components: any[]) => components[0].toJSON().components.map((c: any) => c.label)
 
 test('a message in a thread names the channel the thread is in', async () => {
-  const message = { ...say(here, 6, 'what did we decide in open-source?'), ...live(here) }
+  const message = { ...say(here, 6, 'what we decided in open-source'), ...live(here) }
   handlers.get('messageCreate')!(message)
   const inbound = await until(() => received.find(line => line.type === 'inbound'))
   expect(inbound.meta).toMatchObject({ chat_id: here.id, message_id: message.id, channel: 'general' })
