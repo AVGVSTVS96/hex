@@ -3,6 +3,7 @@ import { statusPost, type Link } from './status.ts'
 import { open, stateDir, type MessageId, type Pin, type Question, type Store } from './store.ts'
 
 export type { Answer, MessageId, Pin, Question } from './store.ts'
+export { waits } from './store.ts'
 
 // How an app shows a status post: the room one message has, where it shows a thread's message,
 // what it does before the post is built (like fetching the thread the links name), and how it
@@ -117,20 +118,35 @@ export class Ledger {
     return this.store.poll(this.app, poll) ?? undefined
   }
 
+  // hex asked with buttons or a poll, which answers the owner's questions there too.
   ask(thread: string, message: MessageId, text: string, options: string[], poll?: string, multiple = false) {
     this.store.ask({ app: this.app, thread, message, text, options, poll, multiple })
+    this.store.replied(this.app, thread, { label: clip(text, 60), at: new Date().toISOString(), via: 'hex', message })
   }
 
-  // A reply sent without buttons that ends by asking the owner something waits on them as a
-  // question too, with no options, until they reply to it or the session settles it.
-  said(thread: string, message: MessageId, text: string) {
-    const question = asking(text)
+  // hex replied without buttons: the answer to the owner's question it quoted, or to their questions
+  // in the thread. One that ends by asking them something waits on them as a question too, with no
+  // options, until they reply to it or the session settles it, unless it quotes a question, which
+  // it's a reminder of.
+  said(thread: string, message: MessageId, text: string, quoted?: { question: Question; message: MessageId }) {
+    const answer = { label: clip(text, 60), at: new Date().toISOString(), via: 'hex', message }
+    const { question: their } = quoted ?? {}
+    if (their?.asker && their.thread === thread && String(their.message) === String(quoted!.message)) return this.store.replied(this.app, thread, answer, their.message)
+    const question = quoted ? undefined : asking(text)
     if (question) this.ask(thread, message, question, [])
+    else this.store.replied(this.app, thread, answer)
   }
 
-  // The owner replied to a message: their words answer the question it asked in words.
-  replied(thread: string, message: MessageId, text: string) {
-    if (this.find(thread, message)?.options.length === 0) this.answered(thread, message, clip(text, 60), 'reply')
+  // The owner wrote in a thread: what hex answered them there stops moving; a quote-reply answers the
+  // question in words the message asked, or closes their own question it quotes or whose answer it
+  // quotes; and a question they ask waits on hex's answer, then on them coming back to it.
+  heard(thread: string, message: MessageId, text: string, replyTo?: MessageId) {
+    this.store.returned(this.app, thread)
+    const to = replyTo === undefined ? undefined : (this.find(thread, replyTo) ?? this.store.questions({ app: this.app, thread, asker: 'owner', waiting: true }).find(question => String(question.answer!.message) === String(replyTo)))
+    if (to?.asker) this.settled(thread, to.message, 'you replied')
+    else if (to && !to.options.length) this.answered(thread, replyTo!, clip(text, 60), 'reply')
+    const question = theirs(text)
+    if (question) this.store.ask({ asker: 'owner', app: this.app, thread, message, text: question, options: [] })
   }
 
   answered(thread: string, message: MessageId, label: string, via: string, again = false) {
@@ -180,6 +196,14 @@ export class Ledger {
     })
     return this.turn(thread, async () => this.store.unpinned(this.app, thread))
   }
+}
+
+// What the owner asks in a message: its last sentence that ends with a question mark.
+export function theirs(text: string): string | undefined {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(sentence => sentence.replace(/^[\s*_>#-]+/, '').trim())
+    .findLast(sentence => sentence.endsWith('?'))
 }
 
 // The question a message ends on: its last line, when that line asks one.

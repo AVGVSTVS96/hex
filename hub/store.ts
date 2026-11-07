@@ -24,12 +24,17 @@ export type Words = { message: string; text: string; who: Author; at: string }
 export type Task = { id: string; title: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
 export type NewTask = { title: string; message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
 export type TaskChange = { title?: string; status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string }
-// A call that's the owner's: a question a thread asked with buttons or a poll, in one app's
-// thread, under that app's id for the message. via: where the answer came from (the chat app's own
-// buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
+// A call that's the owner's: a question a thread asked with buttons, a poll or in words, in one
+// app's thread, under that app's id for the message. via: where the answer came from (the chat app's
+// own buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
+// One the owner asked hex (asker: 'owner') is under their message, its answer hex's reply that
+// quoted it, or else hex's latest reply after it until the owner next wrote there (kept: it stops
+// moving then), and it waits on them from that answer until they quote-reply to either or a
+// session settles it.
 export type MessageId = number | string
-export type Answer = { label: string; at: string; via: string }
+export type Answer = { label: string; at: string; via: string; message?: MessageId; kept?: true }
 export type Question = {
+  asker?: 'owner'
   app: string
   thread: string
   message: MessageId
@@ -51,7 +56,9 @@ export type Kept = Omit<Thread, 'app' | 'thread' | 'open'>
 // session's note over the thread's questions and tasks (status.ts).
 export type Pin = { app: string; thread: string; message: MessageId; text: string; at: string; note: string }
 export type NewQuestion = Omit<Question, 'at'> & { at?: string }
-type StoredQuestion = { app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
+// Whether a question waits on the owner, as questions({ waiting: true }) tells.
+export const waits = (question: Question) => !question.settled && (question.asker === 'owner') === !!question.answer
+type StoredQuestion = { asker: 'hex' | 'owner'; app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
 type StoredTask = { n: number; title: string; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
 
 // Migration n takes the database from user_version n to n + 1: SQL, or a step that needs more than
@@ -249,6 +256,10 @@ const migrations: (string | ((store: Store) => void))[] = [
   `create table if not exists operations (scope text not null, id text not null, input text not null, result text, primary key (scope, id));`,
   // The agents and sessions started for a task, by the id Claude Code or T3 Code gave them.
   `create table if not exists task_agents (agent text primary key, task integer not null references tasks (n), at text not null check (at ${UTC}));`,
+  // Who asked: hex, which waits on the owner's answer, or the owner, who's waited on once hex answered.
+  ({ db }: Store) => {
+    if (!db.query("select 1 from pragma_table_info('questions') where name = 'asker'").get()) db.run(`alter table questions add column asker text not null default 'hex' check (asker in ('hex', 'owner'))`)
+  },
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -787,11 +798,12 @@ export class Store {
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
-  ask({ app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {
+  ask({ asker, app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {
     this.write(() =>
       this.db
-        .query('insert into questions (app, thread, message, text, options, poll, multiple, answer, settled, at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing')
-        .run(app, thread, message, text, JSON.stringify(options), poll ?? null, multiple ? 1 : 0, answer ? JSON.stringify(answer) : null, settled ? JSON.stringify(settled) : null, at),
+        // An older hex's questions, which a step before the asker column brings in, are hex's.
+        .query(`insert into questions (${asker ? 'asker, ' : ''}app, thread, message, text, options, poll, multiple, answer, settled, at) values (${asker ? '?, ' : ''}?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing`)
+        .run(...(asker ? [asker] : []), app, thread, message, text, JSON.stringify(options), poll ?? null, multiple ? 1 : 0, answer ? JSON.stringify(answer) : null, settled ? JSON.stringify(settled) : null, at),
     )
   }
 
@@ -805,10 +817,34 @@ export class Store {
     return row && toQuestion(row)
   }
 
-  // Oldest first: every app's, or one app's or thread's, and only those still waiting on an answer.
-  questions({ app, thread, waiting }: { app?: string; thread?: string; waiting?: boolean } = {}): Question[] {
-    const [where, params] = clause([app !== undefined && ['app = ?', app], thread !== undefined && ['thread = ?', thread], waiting && ['answer is null and settled is null']])
+  // Oldest first: every app's, or one app's or thread's, one asker's, and only those still waiting
+  // on the owner: hex's they haven't answered, and theirs hex answered that they haven't come back to.
+  questions({ app, thread, asker, waiting }: { app?: string; thread?: string; asker?: 'hex' | 'owner'; waiting?: boolean } = {}): Question[] {
+    const [where, params] = clause([
+      app !== undefined && ['app = ?', app],
+      thread !== undefined && ['thread = ?', thread],
+      asker !== undefined && ['asker = ?', asker],
+      waiting && [`settled is null and (asker = 'hex' and answer is null or asker = 'owner' and answer is not null)`],
+    ])
     return (this.db.query(`select * from questions ${where} order by n`).all(...params) as StoredQuestion[]).map(toQuestion)
+  }
+
+  // hex said something in a thread: the answer to one of the owner's questions there it quoted, or
+  // else to each whose answer still moves.
+  replied(app: string, thread: string, answer: Answer, to?: MessageId) {
+    const which = to === undefined ? `json_extract(answer, '$.kept') is null` : 'message = ?'
+    this.write(() =>
+      this.db
+        .query(`update questions set answer = ? where asker = 'owner' and app = ? and thread = ? and settled is null and ${which}`)
+        .run(JSON.stringify(to === undefined ? answer : { ...answer, kept: true }), app, thread, ...(to === undefined ? [] : [to])),
+    )
+  }
+
+  // The owner wrote in a thread again: what hex answered their questions there stops moving.
+  returned(app: string, thread: string) {
+    this.write(() =>
+      this.db.query(`update questions set answer = json_set(answer, '$.kept', json('true')) where asker = 'owner' and app = ? and thread = ? and answer is not null and settled is null`).run(app, thread),
+    )
   }
 
   // The owner's answer, unless one stands already: the first tap wins, and a later one changes
@@ -1074,6 +1110,7 @@ function clause(terms: (false | undefined | [string, ...string[]])[]): [string, 
 
 function toQuestion(row: StoredQuestion): Question {
   return {
+    ...(row.asker === 'owner' && { asker: 'owner' as const }),
     app: row.app,
     thread: row.thread,
     message: row.message,

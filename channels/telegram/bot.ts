@@ -6,7 +6,7 @@ import { homedir } from 'os'
 import { basename, join, extname, sep } from 'path'
 import { startHub, clients, begin, move, preview, tappable, title, transcribe, EFFORTS, MODELS, type Message, type Permission, type Turn } from '../../hub/hub.ts'
 import { server } from './channel.ts'
-import { Ledger, type Post } from '../../hub/ledger.ts'
+import { Ledger, waits, type Post } from '../../hub/ledger.ts'
 
 const STATE_DIR = process.env.TELEGRAM_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'hex', 'telegram')
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
@@ -155,6 +155,21 @@ function threadOf(ctx: Context): string {
 function target(thread: string) {
   const [chat_id, topic] = thread.split(':')
   return { chat_id: chat_id!, extra: topic ? { message_thread_id: Number(topic) } : {} }
+}
+
+// A message by its id in this thread's chat, or in any chat by its hex.db key (telegram:<chat>:<id>) or link (t.me/c/<chat>/<id>).
+function located(thread: string, ref: string): { chat_id: string; message: number } {
+  const link = ref.match(/t\.me\/c\/(\d+)\/(?:\d+\/)?(\d+)/)
+  if (link) return { chat_id: `-100${link[1]}`, message: Number(link[2]) }
+  const key = ref.match(/^(?:telegram:)?(-?\d+)(?::\d+)?:(\d+)$/)
+  return key ? { chat_id: key[1]!, message: Number(key[2]) } : { chat_id: target(thread).chat_id, message: Number(ref) }
+}
+
+// The question at a message, in whichever of its chat's threads (a Telegram id is only unique in its chat): the one it asked, or
+// the owner's it answered that still waits on them.
+function questionAt({ chat_id, message }: { chat_id: string; message: number }) {
+  const here = ledger.questions.filter(question => question.thread === chat_id || question.thread.startsWith(`${chat_id}:`))
+  return here.find(question => String(question.message) === String(message)) ?? here.find(question => question.asker && waits(question) && String(question.answer?.message) === String(message))
 }
 
 const topicNames = new Map<string, string>()
@@ -346,7 +361,10 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
   switch (tool) {
     case 'reply': {
       const text = tappable((args.text as string | undefined) ?? '')
-      const reply_to = args.reply_to != null ? Number(args.reply_to) : undefined
+      const quoted = args.reply_to != null ? located(thread, String(args.reply_to)) : undefined
+      const quotes = quoted && questionAt(quoted)
+      const quoting = quotes && quoted ? { question: quotes, message: quoted.message } : undefined
+      const quote = quoted && { reply_parameters: { message_id: quoted.message, ...(quoted.chat_id !== chat_id && { chat_id: quoted.chat_id }) } }
       const files = (args.files as string[] | undefined) ?? []
       const buttons = (args.buttons as string[] | undefined) ?? []
       const markdown = args.format === 'markdown'
@@ -367,10 +385,10 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
 
       try {
         for (let i = 0; i < chunks.length; i++) {
-          const shouldReplyTo = reply_to != null && replyMode !== 'off' && (replyMode === 'all' || i === 0)
+          const shouldReplyTo = quote && replyMode !== 'off' && (replyMode === 'all' || i === 0)
           const opts = {
             ...extra,
-            ...(shouldReplyTo ? { reply_parameters: { message_id: reply_to } } : {}),
+            ...(shouldReplyTo ? quote : {}),
             ...silent,
             ...(i === chunks.length - 1 ? keyboard : {}),
           }
@@ -392,7 +410,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         const captioned = i === 0 && caption
         const opts = {
           ...extra,
-          ...(reply_to != null && replyMode !== 'off' ? { reply_parameters: { message_id: reply_to } } : {}),
+          ...(quote && replyMode !== 'off' ? quote : {}),
           ...silent,
           ...(captioned ? { caption, ...parseMode, ...keyboard } : {}),
         }
@@ -404,7 +422,7 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         if (buttons.length && captioned) asked = sent.message_id
       }
       if (asked) ledger.ask(thread, asked, text, buttons)
-      else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text)
+      else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text, quoting)
 
       return sentIds.length === 1 ? `sent (id: ${sentIds[0]})` : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
     }
@@ -415,10 +433,13 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       return args.remove ? 'reaction removed' : 'reacted'
     }
     case 'edit_message': {
-      const id = Number(args.message_id)
+      const at = located(thread, String(args.message_id))
+      const id = at.message
+      const question = questionAt(at)
+      const home = question?.thread ?? (at.chat_id === chat_id ? thread : at.chat_id)
       const text = args.text != null ? tappable(args.text as string) : undefined
       const file = args.file as string | undefined
-      if (Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
+      if (home === thread && Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
         if (file || text == null) throw new Error("a status post is text: send the file in its own message")
         await ledger.rewrite(thread, post, text, id)
         said(thread, undefined, text, { edited: 'true', message_id: String(id) })
@@ -426,33 +447,32 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       }
       const parseMode = args.format === 'markdownv2' ? { parse_mode: 'MarkdownV2' as const } : {}
       // A Telegram edit takes a message's buttons off unless it sends them again, and a question stays open until it's settled.
-      const question = ledger.find(thread, id)
       if (question?.poll && (text != null || file)) {
         if (!args.settled) throw new Error("a poll's own text can't be edited: reply with what changed, or settle it with settled: true")
         if (question.answer) return `the poll is already answered (${question.answer.label}), so it stays as it is; its own text can't be edited, so reply with what changed`
-        await settleQuestion(thread, id, '✓ Settled')
+        await settleQuestion(home, id, '✓ Settled')
         return `settled the poll (id: ${id}); its own text can't be edited, so reply with what changed`
       }
       const keep = question?.options.length && !question.poll && !question.answer && !question.settled && !args.settled ? { reply_markup: buttonsOf(question.options) } : {}
       if (file) {
         const caption = text != null ? { caption: text, ...parseMode } : {}
-        await bot.api.editMessageMedia(chat_id, id, { type: asPhoto(file) ? 'photo' : 'document', media: new InputFile(file), ...caption }, keep)
+        await bot.api.editMessageMedia(at.chat_id, id, { type: asPhoto(file) ? 'photo' : 'document', media: new InputFile(file), ...caption }, keep)
       } else if (text != null) {
         const edit = args.format === 'markdown'
-          ? bot.api.editMessageText(chat_id, id, { markdown: keepLines(text) }, keep)
-          : bot.api.editMessageText(chat_id, id, text, { ...parseMode, ...keep })
+          ? bot.api.editMessageText(at.chat_id, id, { markdown: keepLines(text) }, keep)
+          : bot.api.editMessageText(at.chat_id, id, text, { ...parseMode, ...keep })
         await edit.catch(err => {
           if (!/no text in the message/.test(String(err))) throw err
           if (args.format === 'markdown') throw new Error("a file's caption can't take format 'markdown'; use 'text' or 'markdownv2'")
-          return bot.api.editMessageCaption(chat_id, id, { caption: text, ...parseMode, ...keep })
+          return bot.api.editMessageCaption(at.chat_id, id, { caption: text, ...parseMode, ...keep })
         })
       } else if (!args.settled) throw new Error('edit_message needs text, a file, or settled')
       if (text != null) {
-        said(thread, undefined, text, { edited: 'true', message_id: String(id) })
-        ledger.edited(thread, id, text)
+        said(home, undefined, text, { edited: 'true', message_id: String(id) })
+        ledger.edited(home, id, text)
       }
-      if (args.settled) await settleQuestion(thread, id, '✓ Settled')
-      return `edited (id: ${id})`
+      if (args.settled && !(await settleQuestion(home, Number(question?.message ?? id), '✓ Settled'))) return `${text != null || file ? 'edited, but ' : ''}no question waits on message ${id}, so nothing was settled`
+      return `${args.settled ? 'settled' : 'edited'} (id: ${id})`
     }
     case 'delete_message': {
       const id = Number(args.message_id)
@@ -628,11 +648,13 @@ async function answerQuestion(thread: string, message: number, label: string, vi
   if (answered) await draw(thread, message)
 }
 
-async function settleQuestion(thread: string, message: number, note: string) {
+// Whether a question was waiting on the owner there to settle.
+async function settleQuestion(thread: string, message: number, note: string): Promise<boolean> {
   const question = ledger.find(thread, message)
-  if (!question || question.answer || question.settled) return
+  if (!question || !waits(question)) return false
   ledger.settled(thread, message, note)
   await draw(thread, message)
+  return true
 }
 
 // Takes back an answer given elsewhere, or a settle: the buttons come back, and the thread hears
@@ -1139,7 +1161,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     },
   }
   hub.deliver(thread, nameOf(ctx, thread), message)
-  if (message.meta.reply_to_message_id) ledger.replied(thread, Number(message.meta.reply_to_message_id), content)
+  if (msgId != null) ledger.heard(thread, msgId, content, message.meta.reply_to_message_id ? Number(message.meta.reply_to_message_id) : undefined)
 }
 
 let keeping: (() => void) | undefined

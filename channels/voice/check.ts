@@ -107,7 +107,7 @@ function gather(state: string) {
   const recent = new Date(now - RECENT).toISOString()
   const names: Record<string, string> = {}
   const pins: { pin: Ref; topic: string; text: string }[] = []
-  const questions = store(state).questions()
+  const questions = store(state).questions({ asker: 'hex' })
   const threads = store(state).threads()
   const general = generalOf(threads)
   for (const thread of threads) if (thread.app !== 'voice') names[`${thread.app}:${thread.thread}`] = nameOf(thread, general)
