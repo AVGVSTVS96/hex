@@ -629,8 +629,8 @@ export class Questions extends Changes {
   }
 }
 
-// A question as its thread asked it: its first line is the question (what's cut from a long one opens
-// its context) and the rest its context; the option the thread marked as its pick wears it. What hex
+// A question as its thread asked it: its first line is the question (a long one ends at its last
+// sentence that fits, which opens its context, or stays whole) and the rest its context; the option the thread marked as its pick wears it. What hex
 // said before asking it is its card's words.
 export function fromLedger(app: string, asked: Asked): Curated {
   const lines = plain(asked.text)
@@ -706,10 +706,7 @@ function cut(line: string, max: number): [string, string] {
   const lastAsk = line.search(/[?？][^?？]*$/)
   const fits = ends.filter(({ at }) => at >= lastAsk && at <= max)
   const end = fits.findLast(({ asks }) => asks)?.at ?? fits.findLast(({ at }) => at >= max / 2)?.at
-  if (end !== undefined) return [line.slice(0, end), line.slice(end).trim()]
-  const space = line.slice(0, max).search(/\s\S*$/)
-  const at = space >= max / 2 ? space : max - 1 - Number(/[\uD800-\uDBFF]/.test(line[max - 2] ?? ''))
-  return [`${line.slice(0, at).trimEnd()}…`, `…${line.slice(at).trim()}`]
+  return end === undefined ? [line, ''] : [line.slice(0, end), line.slice(end).trim()]
 }
 
 export function clip(text: string, max: number) {
