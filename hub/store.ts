@@ -961,27 +961,39 @@ export class Store {
     )
   }
 
-  // The session's turn ended with its answer (its Stop hook), or the owner ended it: what it took by then is handled.
+  // The session's turn ended with its answer (its Stop hook), or the hub or the owner ended it: what it took by then is handled.
   handled(session: string, at = now()) {
-    this.write(() => this.db.query('insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2)').run(session, at))
-  }
-
-  // The session is gone in the middle of a turn: the turn ends, and what the session took since it was last
-  // handled goes back to its thread untaken, so the next session there takes it as it would a new message.
-  // A turn that had ended (an answer, or a failure whose messages stay in the conversation) gives nothing back.
-  // Returns the keys given back.
-  cut(session: string, at = now()): string[] {
-    return this.write(() => {
-      const { began, ended, handled } = this.turn(session)
-      if (!began || ended) return []
-      this.turned(session, false, at)
-      const given = this.db
-        .query(`update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`)
-        .values(session, handled!) as [string][]
-      return given.map(([key]) => key)
+    this.write(() => {
+      const { began, ended } = this.turn(session)
+      if (began && !ended) this.turned(session, false, at)
+      this.db.query('insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2)').run(session, at)
     })
   }
 
+  // The thread's sessions are gone, and any whose turn never ended died in the middle of it: the turn ends,
+  // and what that session took since it was last handled goes back to the thread untaken, so the next session
+  // there takes it as it would a new message. A turn that had ended (an answer, or a failure whose messages
+  // stay in the conversation) gives nothing back. session: the one hex knows the thread by, which may have taken
+  // nothing. Returns the keys given back.
+  cut(thread: string, session?: string, at = now()): string[] {
+    return this.write(() => {
+      const open = this.db
+        .query(`select session, handled from turns where began is not null and ended is null and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`)
+        .all(thread, session ?? null) as { session: string; handled: string | null }[]
+      return open.flatMap(({ session, handled }) => {
+        this.turned(session, false, at)
+        const given = this.db
+          .query(`update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`)
+          .values(session, handled) as [string][]
+        return given.map(([key]) => key)
+      })
+    })
+  }
+
+  // Whether a session of the thread is in the middle of a turn, in hex's record of it.
+  midTurn(thread: string): boolean {
+    return !!this.db.query(`select 1 from turns where began is not null and ended is null and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`).get(thread)
+  }
 
   turn(session: string): { began?: string; ended?: string; handled?: string } {
     const row = this.db.query('select began, ended, handled from turns where session = ?').get(session) as Record<string, string | null> | null

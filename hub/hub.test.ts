@@ -395,6 +395,26 @@ test('a hub that starts after its sessions died (a reboot) gives what they never
   expect(store.turn(SESSION).ended).toBeDefined()
 })
 
+test('a session the hub stops while idle has handled what it took, even with its turn left open (Esc in an attached terminal runs no Stop hook)', async () => {
+  start({ idleStop: 50, reconnect: 50 })
+  hub.deliver('chat:7', 'Desk anchors', message)
+  await launched()
+  const line = await session('chat:7')
+  await until(() => line.received.length)
+  open(dir).turned(SESSION, true, '2026-01-01T00:00:00.000Z')
+  fold(line.received)
+  await line.send({ type: 'state', thread: 'chat:7', busy: false })
+  await time.lapse(50)
+  await until(() => calls().some(args => args[0] === 'stop'))
+  const starts = calls().filter(args => args[0] === '--bg').length
+  line.close()
+  await time.lapse(50)
+  await settled()
+  expect(open(dir).untaken('chat:7')).toEqual([])
+  expect(open(dir).turn(SESSION).handled).toBeDefined()
+  expect(calls().filter(args => args[0] === '--bg').length).toBe(starts)
+})
+
 test('a session whose turn failed (StopFailure) keeps what it took when it stops, since its conversation holds it', async () => {
   start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }], reconnect: 50 })
   hub.deliver('chat:7', 'Desk anchors', message)
