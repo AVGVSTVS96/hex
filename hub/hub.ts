@@ -964,15 +964,17 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     const started = run.phase.is === 'launching'
     if (started) fail(thread, 'its session ended before its channel connected')
     else become(run, { is: 'stopped' })
-    // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here.
-    const session = current(thread)
-    if (session)
-      kept(store => {
-        const { began, ended } = store.turn(session)
-        if (began && !ended) store.turned(session, false)
-      }, undefined)
+    // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here,
+    // and what it took without answering waits for the thread's next session.
+    cut(thread)
     if (thread === main) revive()
     else if (!started && waiting(thread).length) void launch(thread, threads[thread]?.name ?? thread)
+  }
+
+  function cut(thread: string) {
+    const session = current(thread)
+    const given = session ? kept(store => store.cut(session), []) : []
+    if (given.length) process.stderr.write(`hub: ${thread}'s session ${session!.slice(0, 8)} ended without answering ${given.length} of its messages, so the thread's next session gets them\n`)
   }
 
   async function respawn(thread: string, running: claude.Agent) {
@@ -1117,8 +1119,8 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (closing.signal.aborted || current(thread) !== session) return
     if (how === 'interrupted') {
       // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it, as of
-      // the press: a turn begun since then is left running.
-      kept(store => store.turned(session, false, pressed), undefined)
+      // the press, settling what the session took: a turn begun since then is left running.
+      kept(store => store.write(() => (store.turned(session, false, pressed), store.handled(session, pressed))), undefined)
       setState(thread, false, true)
       if ((await claude.listing(session))?.state !== 'working' && run.turn === 'background') setState(thread, false)
       return
@@ -1126,10 +1128,12 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     process.stderr.write(`hub: Esc didn't interrupt ${thread}'s turn\n`)
   }
 
-  // After the owner's stop only the thread's next message starts it again, without the prompt it
+  // The owner's stop settles what the session took, and only the thread's next message starts it again, without the prompt it
   // was opened with, though a moved copy still starts from the conversation it forks.
   function halt(thread: string) {
     const run = runs.get(thread)
+    const session = current(thread)
+    if (session) kept(store => store.handled(session), undefined)
     if (run?.failing) run.failing.retried = true
     if (run?.opening) run.opening = run.opening.fork ? { fork: run.opening.fork } : undefined
     return stop(thread)
@@ -1147,6 +1151,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   if (main || Object.keys(threads).length) {
     void claude.agents(serving).then(running => {
       const serving = new Set(Object.keys(threads).filter(thread => running.some(agent => agent.sessionId === current(thread) || boundTo(agent) === thread)))
+      for (const thread of Object.keys(threads)) if (!serving.has(thread)) cut(thread)
       for (const thread of serving) {
         const run = runOf(thread)
         if (run.phase.is !== 'stopped') continue

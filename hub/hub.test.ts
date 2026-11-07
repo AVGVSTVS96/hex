@@ -357,6 +357,43 @@ test("a session that dies mid-turn has its turn ended in hex's record once its c
   expect(open(dir).turn(SESSION).ended).toBe('2027-01-01T00:00:00.000Z')
 })
 
+test("what a session took and never answered goes to the thread's next session once it dies; what it answered stays answered", async () => {
+  start({ registry: { 'chat:7': { name: 'Desk anchors', session: SESSION } }, agents: [{ sessionId: SESSION, pid: 42 }], reconnect: 50 })
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'answered' })
+  const first = await session('chat:7')
+  await until(() => first.received.length)
+  open(dir).turned(SESSION, true)
+  fold(first.received)
+  open(dir).turned(SESSION, false)
+  open(dir).handled(SESSION)
+  hub.deliver('chat:7', 'Desk anchors', { ...message, content: 'hanging' })
+  await until(() => first.received.length === 2)
+  open(dir).turned(SESSION, true)
+  fold(first.received.slice(1))
+  writeFileSync(join(dir, 'agents'), '[]')
+  first.close()
+  await time.lapse(50)
+  await launched()
+  const next = await session('chat:7')
+  await until(() => next.received.length)
+  expect(next.received.map(each => each.content)).toEqual(['hanging'])
+  expect(holds).toContainEqual(['chat:7', 'hanging', true])
+})
+
+test('a hub that starts after its sessions died (a reboot) gives what they never answered to their threads\' next sessions', async () => {
+  const store = open(dir)
+  store.keepThreads('telegram', { 'chat:7': { name: 'Desk anchors', session: SESSION } })
+  store.deliver({ key: 'telegram:1:9', to: 'chat:7', from: 'telegram', author: 'owner', body: 'mid-turn', meta: {} })
+  store.turned(SESSION, true)
+  store.take('telegram:1:9', SESSION)
+  start({ agents: [] })
+  await launched()
+  const next = await session('chat:7')
+  await until(() => next.received.length)
+  expect(next.received[0].content).toBe('mid-turn')
+  expect(store.turn(SESSION).ended).toBeDefined()
+})
+
 test('a session that dies before its conversation is saved leaves the thread on its last saved one', async () => {
   const OLD = SESSION
   const NEW = '4460ed71-0000-4000-8000-000000000000'

@@ -73,7 +73,7 @@ async function launch(channel: string, thread: string, options: Partial<Paramete
   return { args, file, settings: JSON.parse(readFileSync(file, 'utf8')) }
 }
 
-test('a DM session the hub starts gets the chat prompt, and its settings, token included, stay in an owner-only file', async () => {
+test('a DM session the hub starts gets the chat prompt, its view\'s tail and wake through its settings, and its settings, token included, stay in an owner-only file', async () => {
   const { args, file, settings } = await launch('plugin:telegram@hex', '6296842341', { fresh: () => true })
   const system = readFileSync(args[args.indexOf('--system-prompt-file') + 1]!, 'utf8')
   expect(system).toStartWith('You are hex')
@@ -81,7 +81,8 @@ test('a DM session the hub starts gets the chat prompt, and its settings, token 
   expect(settings.claudeMdExcludes).toContain(join(home, 'AGENTS.md'))
   expect(settings.claudeMdExcludes).not.toContain(join(home, 'state/wake/CLAUDE.md'))
   expect(args[args.indexOf('--add-dir') + 1]).toBe(join(home, 'state/wake'))
-  expect(settings.env).toMatchObject({ HEX_FRESH: '1', HEX_THREAD: '6296842341' })
+  // Claude's daemon starts a --bg session in a spare process with the daemon's environment, not the launcher's.
+  expect(settings.env).toMatchObject({ HEX_FRESH: '1', HEX_THREAD: '6296842341', CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: '1' })
   expect(settings.env.HEX_TOKEN).toBeString()
   expect(args.join(' ')).not.toContain(settings.env.HEX_TOKEN)
   expect(statSync(file).mode & 0o777).toBe(0o600)

@@ -249,6 +249,12 @@ const migrations: (string | ((store: Store) => void))[] = [
   `create table if not exists operations (scope text not null, id text not null, input text not null, result text, primary key (scope, id));`,
   // The agents and sessions started for a task, by the id Claude Code or T3 Code gave them.
   `create table if not exists task_agents (agent text primary key, task integer not null references tasks (n), at text not null check (at ${UTC}));`,
+  // When a session last finished a turn: what it took before then is handled. Turns kept so far count as handled now.
+  ({ db }: Store) => {
+    if (db.query("select 1 from pragma_table_info('turns') where name = 'handled'").get()) return
+    db.run(`alter table turns add column handled text check (handled ${UTC})`)
+    db.run("update turns set handled = strftime('%Y-%m-%dT%H:%M:%fZ')")
+  },
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -954,8 +960,28 @@ export class Store {
     )
   }
 
-  turn(session: string): { began?: string; ended?: string } {
-    const row = this.db.query('select began, ended from turns where session = ?').get(session) as Record<string, string | null> | null
+  // The session's turn ended with its answer (its Stop hook), or the owner ended it: what it took by then is handled.
+  handled(session: string, at = now()) {
+    this.write(() => this.db.query('insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2)').run(session, at))
+  }
+
+  // The session is gone, its turn cut short: the turn ends, and what the session took since it was last handled
+  // goes back to its thread untaken, so the next session there takes it as it would a new message.
+  // A session hex has no turn on record for is left as it is. Returns the keys given back.
+  cut(session: string, at = now()): string[] {
+    return this.write(() => {
+      const { began, ended } = this.turn(session)
+      if (!began && !ended) return []
+      if (began && !ended) this.turned(session, false, at)
+      const given = this.db
+        .query(`update messages set taken_by = null, taken_at = null where taken_by = ?1 and author <> 'hex' and "from" <> 'terminal' and taken_at > coalesce((select handled from turns where session = ?1), '') returning key`)
+        .values(session) as [string][]
+      return given.map(([key]) => key)
+    })
+  }
+
+  turn(session: string): { began?: string; ended?: string; handled?: string } {
+    const row = this.db.query('select began, ended, handled from turns where session = ?').get(session) as Record<string, string | null> | null
     return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
   }
 

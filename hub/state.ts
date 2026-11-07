@@ -105,7 +105,11 @@ function job(session: string): { sessionId?: string; fan?: { id: string; started
 if (session_id && !recorded) {
   try {
     const store = open(stateDir())
-    store.turned(session_id, busy, at, heartbeat || (busy && heartbeats(store, session_id)))
+    store.write(() => {
+      store.turned(session_id, busy, at, heartbeat || (busy && heartbeats(store, session_id)))
+      // A turn that failed (StopFailure, an API error) answered nothing.
+      if (hook_event_name === 'Stop') store.handled(session_id, at)
+    })
   } catch (error) {
     console.error(`hex couldn't record this turn: ${error}`)
   }

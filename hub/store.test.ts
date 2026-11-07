@@ -502,6 +502,28 @@ test("a session's turns: one begins, ends, and the next begins again, an end fro
   expect(store.turn('s-2')).toEqual({ began: expect.any(String) })
 })
 
+test("a session cut short gives back what it took since it was last handled, never hex's own words or what was typed in it, and one hex has no turn for keeps all it took", async () => {
+  const store = new Store(dir)
+  const give = (key: string, from = 'telegram', author: 'owner' | 'hex' = 'owner') => store.deliver({ key: `${from}:${key}`, to: '7', from, author, body: key, meta: {} })
+  give('answered')
+  store.turned('s-1', true, '2026-10-21T10:00:00.000Z')
+  store.take('telegram:answered', 's-1')
+  store.handled('s-1')
+  await Bun.sleep(2)
+  give('open')
+  store.turned('s-1', true)
+  store.take('telegram:open', 's-1')
+  give('reply', 'telegram', 'hex')
+  store.take('telegram:reply', 's-1')
+  store.deliver({ key: 'terminal:typed', to: '7', from: 'terminal', author: 'owner', body: 'typed', meta: {} }, 's-1')
+  expect(store.cut('s-1')).toEqual(['telegram:open'])
+  expect(store.untaken('7').map(row => row.key)).toEqual(['telegram:open'])
+  expect(store.turn('s-1').ended).toBeDefined()
+  give('old')
+  store.take('telegram:old', 's-0')
+  expect(store.cut('s-0')).toEqual([])
+})
+
 test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
   const store = new Store(dir)
   store.keepThreads('telegram', { '-100:7': { name: 'tokenhub', session: 's-1', cwd: '/w' }, '-100:8': { name: 'portfolio' } })
