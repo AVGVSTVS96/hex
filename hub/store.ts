@@ -249,6 +249,12 @@ const migrations: (string | ((store: Store) => void))[] = [
   `create table if not exists operations (scope text not null, id text not null, input text not null, result text, primary key (scope, id));`,
   // The agents and sessions started for a task, by the id Claude Code or T3 Code gave them.
   `create table if not exists task_agents (agent text primary key, task integer not null references tasks (n), at text not null check (at ${UTC}));`,
+  // When a session last finished a turn: what it took before then is handled. Turns kept so far count as handled now.
+  ({ db }: Store) => {
+    if (db.query("select 1 from pragma_table_info('turns') where name = 'handled'").get()) return
+    db.run(`alter table turns add column handled text check (handled ${UTC})`)
+    db.run("update turns set handled = strftime('%Y-%m-%dT%H:%M:%fZ')")
+  },
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -910,7 +916,8 @@ export class Store {
   }
 
   // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
-  // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes.
+  // end from before the turn's begin is a late hook's, so old news. A session not heard from in TURNS goes,
+  // and one hex first hears of has handled what it took before then.
   // A heartbeat (the scheduler's hourly check) that opens a turn, because the last one ended, is
   // that turn until it ends or another prompt joins it; one inside a turn is part of that turn. Each
   // holds when the next prompt that isn't a heartbeat came (after), so a run of them reads as one,
@@ -927,7 +934,7 @@ export class Store {
       if (busy && !heartbeat) this.db.query('update beats set after = ? where session = ? and after is null').run(at, session)
       if (opens) this.db.query('insert into beats (session, began) values (?, ?)').run(session, from)
       this.db.query('delete from beats where coalesce(after, until, began) < ? and (after is not null or rowid > (select min(rowid) from beats run where run.session = beats.session and run.after is null))').run(new Date(Date.parse(at) - BEATS).toISOString())
-      if (busy) this.db.query('insert into turns (session, began) values (?, ?) on conflict (session) do update set began = excluded.began, ended = null').run(session, at)
+      if (busy) this.db.query('insert into turns (session, began, handled) values (?1, ?2, ?2) on conflict (session) do update set began = excluded.began, ended = null, handled = coalesce(handled, excluded.began)').run(session, at)
       else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
       this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
     })
@@ -954,8 +961,42 @@ export class Store {
     )
   }
 
-  turn(session: string): { began?: string; ended?: string } {
-    const row = this.db.query('select began, ended from turns where session = ?').get(session) as Record<string, string | null> | null
+  // The session's turn ended with its answer (its Stop hook), or the hub or the owner ended it: what it took by then is handled.
+  handled(session: string, at = now()) {
+    this.write(() => {
+      const { began, ended } = this.turn(session)
+      if (began && !ended) this.turned(session, false, at)
+      this.db.query('insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2)').run(session, at)
+    })
+  }
+
+  // The thread's sessions are gone, and any whose turn never ended died in the middle of it: the turn ends,
+  // and what that session took since it was last handled goes back to the thread untaken, so the next session
+  // there takes it as it would a new message. A turn that had ended (an answer, or a failure whose messages
+  // stay in the conversation) gives nothing back. session: the one hex knows the thread by, which may have taken
+  // nothing. Returns the keys given back.
+  cut(thread: string, session?: string, at = now()): string[] {
+    return this.write(() => {
+      const open = this.db
+        .query(`select session, handled from turns where began is not null and ended is null and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`)
+        .all(thread, session ?? null) as { session: string; handled: string | null }[]
+      return open.flatMap(({ session, handled }) => {
+        this.turned(session, false, at)
+        const given = this.db
+          .query(`update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`)
+          .values(session, handled) as [string][]
+        return given.map(([key]) => key)
+      })
+    })
+  }
+
+  // Whether a session of the thread is in the middle of a turn, in hex's record of it.
+  midTurn(thread: string): boolean {
+    return !!this.db.query(`select 1 from turns where began is not null and ended is null and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`).get(thread)
+  }
+
+  turn(session: string): { began?: string; ended?: string; handled?: string } {
+    const row = this.db.query('select began, ended, handled from turns where session = ?').get(session) as Record<string, string | null> | null
     return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
   }
 

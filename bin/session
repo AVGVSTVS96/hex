@@ -44,6 +44,8 @@ for arg; do
     [ -n "${chat:-}" ] && arg=$(printf '%s' "$arg" | jq -c --argjson files "$("$hex/bin/instructions" paths)" '.claudeMdExcludes += $files | .skillListingBudgetFraction = 0.0001')
     # The caller waits on every turn, so a call runs a fast model. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
     [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c '{model: "sonnet", effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
+    # Claude's daemon runs a --bg session in a spare process it started earlier, which keeps the daemon's environment, not this one, so the flag goes in the settings too.
+    flagged=$(printf '%s' "$arg" | jq -c '.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = "1"' 2>/dev/null) && arg=$flagged
     # Only hex's own settings files are written back; anyone else's goes in as the merged text.
     case $file in "$home/state/"*) (umask 077 && printf '%s\n' "$arg" > "$file.$$" && mv "$file.$$" "$file") && arg=$file ;; esac
   fi
