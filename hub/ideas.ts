@@ -2,12 +2,14 @@ import { appendFileSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { hexDir, open } from './store.ts'
 import type { Job } from './schedule.ts'
+import { clip } from './fit.ts'
 import { render } from './tasks.ts'
 
 // An idea's check: a schedules.json job that names an idea runs this instead of waking a session.
 // A small model reads the idea, what its last checks found and what the job asks it to look into,
 // searches the web, and says whether there's news. Only news reaches the idea's thread. Every check
 // goes in ideas.jsonl, with what it found and what it spent, and the next one starts from there.
+// One that fails twice in a row tells the thread once.
 
 const MODEL = 'opus'
 const CALL = 10 * 60_000
@@ -57,7 +59,8 @@ export async function research(state: string, name: string, job: Job, main: stri
     store.deliver({ key: `schedule:${name}:${id}-${task?.status ?? 'gone'}`, to, from: 'schedule', author: 'prompt', body, meta: { user: 'schedule', schedule: name } })
     return
   }
-  const past = checks(state, id).filter(check => check.finding).slice(-KEPT)
+  const all = checks(state, id)
+  const past = all.filter(check => check.finding).slice(-KEPT)
   const input = [
     render(task, store.names()),
     `What to look into: ${job.prompt}`,
@@ -70,6 +73,9 @@ export async function research(state: string, name: string, job: Job, main: stri
     if (record.news) store.fire(name, minute, to, `[${name}] News for ${id} (${task.title}): ${record.finding}`)
   } catch (error) {
     record.error = String(error)
+    // The second failure in a row is told once, so a check that stopped working isn't silent.
+    const [last, before] = [all.at(-1), all.at(-2)]
+    if (last?.error && !before?.error) store.fire(name, minute, to, `[${name}] ${id}'s idea check failed twice in a row, so its research has stopped: ${clip(record.error, 300)}`)
   }
   appendFileSync(join(state, 'ideas.jsonl'), `${JSON.stringify(record)}\n`)
 }

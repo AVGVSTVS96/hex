@@ -41,13 +41,17 @@ test("news reaches the idea's thread; a check without news wakes no one, and the
   expect(checks(dir, 't-1').map(check => [check.news, check.tokens])).toEqual([[false, 900], [true, undefined]])
 })
 
-test('a check that fails is kept with its error and wakes no one', async () => {
+test('a check that fails is kept with its error; the second failure in a row tells the thread, once', async () => {
   idea()
-  await research(dir, 'gpt-live', job, 'general', minute, async () => {
+  const fail = async () => {
     throw new Error('rate limited')
-  })
+  }
+  await research(dir, 'gpt-live', job, 'general', minute, fail)
   expect(sent()).toEqual([])
   expect(checks(dir, 't-1')[0]!.error).toContain('rate limited')
+  await research(dir, 'gpt-live', job, 'general', minute + 1440, fail)
+  await research(dir, 'gpt-live', job, 'general', minute + 2 * 1440, fail)
+  expect(sent()).toMatchObject([{ to: '-100:7', body: "[gpt-live] t-1's idea check failed twice in a row, so its research has stopped: Error: rate limited" }])
 })
 
 test("an idea that's done has nothing to look into: its thread hears once to take the job out", async () => {
