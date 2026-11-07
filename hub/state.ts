@@ -105,8 +105,9 @@ function job(session: string): { sessionId?: string; fan?: { id: string; started
 if (session_id && !recorded) {
   try {
     const store = open(stateDir())
+    const beat = heartbeat || (busy && heartbeats(store, session_id))
     store.write(() => {
-      store.turned(session_id, busy, at, heartbeat || (busy && heartbeats(store, session_id)))
+      store.turned(session_id, busy, at, beat)
       // A turn that failed (StopFailure, an API error) answered nothing.
       if (hook_event_name === 'Stop') store.handled(session_id, at)
     })

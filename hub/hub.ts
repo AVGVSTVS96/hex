@@ -586,6 +586,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       become(run, { is: 'recovering', again })
       return recover(thread)
     }
+    cut(thread)
     if (!fork && known.session && !fresh(thread)) await claude.rm(known.session)
     if (run.phase === phase) await start(thread, prompt, fork)
   }
@@ -962,19 +963,29 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   function gone(thread: string) {
     const run = runOf(thread)
     const started = run.phase.is === 'launching'
+    cut(thread)
     if (started) fail(thread, 'its session ended before its channel connected')
     else become(run, { is: 'stopped' })
-    // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here,
-    // and what it took without answering waits for the thread's next session.
-    cut(thread)
     if (thread === main) revive()
     else if (!started && waiting(thread).length) void launch(thread, threads[thread]?.name ?? thread)
   }
 
+  // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what
+  // it took without answering waits for the thread's next session.
   function cut(thread: string) {
     const session = current(thread)
-    const given = session ? kept(store => store.cut(session), []) : []
-    if (given.length) process.stderr.write(`hub: ${thread}'s session ${session!.slice(0, 8)} ended without answering ${given.length} of its messages, so the thread's next session gets them\n`)
+    const given = new Set(session ? kept(store => store.cut(session), []) : [])
+    if (!given.size) return
+    process.stderr.write(`hub: ${thread}'s session ${session!.slice(0, 8)} ended without answering ${given.size} of its messages, so the thread's next session gets them\n`)
+    for (const message of waiting(thread)) if (given.has(message.meta.key ?? '')) mark(thread, message)
+  }
+
+  function midTurn(thread: string) {
+    const session = current(thread)
+    return !!session && kept(store => {
+      const { began, ended } = store.turn(session)
+      return !!began && !ended
+    }, false)
   }
 
   async function respawn(thread: string, running: claude.Agent) {
@@ -1151,14 +1162,15 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   if (main || Object.keys(threads).length) {
     void claude.agents(serving).then(running => {
       const serving = new Set(Object.keys(threads).filter(thread => running.some(agent => agent.sessionId === current(thread) || boundTo(agent) === thread)))
-      for (const thread of Object.keys(threads)) if (!serving.has(thread)) cut(thread)
-      for (const thread of serving) {
+      // One that was mid-turn when the hub stopped may have died with it (a reboot): it gets the same wait, and if it's gone, its next session gets what it left.
+      const cutShort = Object.keys(threads).filter(thread => !serving.has(thread) && midTurn(thread))
+      for (const thread of [...serving, ...cutShort]) {
         const run = runOf(thread)
         if (run.phase.is !== 'stopped') continue
         become(run, { is: 'recovering' })
         recover(thread)
       }
-      if (main && !(fresh(main) && serving.has(main))) revive()
+      if (main && !(fresh(main) && serving.has(main)) && !cutShort.includes(main)) revive()
       wake()
     })
   }
