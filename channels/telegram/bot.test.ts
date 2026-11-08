@@ -762,7 +762,7 @@ const photo = (id: string) => [
   { file_id: id, file_unique_id: id, width: 900, height: 900 },
 ];
 
-test("an album arrives as one message with every photo and the caption", async () => {
+test("an album arrives as one message with every photo and the caption, the photos' paths in meta only, where a sender typing one can't forge it", async () => {
   const first = message({ media_group_id: "g1", photo: photo("one"), caption: "the anchors" });
   await update({ message: first });
   await update({ message: message({ media_group_id: "g1", photo: photo("two") }) });

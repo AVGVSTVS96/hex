@@ -197,6 +197,7 @@ function chunkClosingCodeBlocks(text: string, limit: number, mode: "length" | "n
   return out;
 }
 
+// Rich Markdown joins a paragraph's lines into one, as CommonMark does (https://spec.commonmark.org/0.31.2/#soft-line-breaks), but a chat reply's newline is a new line, so each line that runs on into the next ends in a hard break: two spaces.
 function keepLines(markdown: string): string {
   let fence = "";
 
@@ -233,6 +234,7 @@ function keepLines(markdown: string): string {
     .join("\n");
 }
 
+// Telegram compresses these and shows them inline, up to its 10MB photo cap (https://core.telegram.org/bots/api#sendphoto); anything else, or bigger, goes as a document.
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
 
 function asPhoto(f: string): boolean {
@@ -415,6 +417,7 @@ async function download(file_id: string, uniqueId: string): Promise<string> {
 const typing = new Map<string, ReturnType<typeof setInterval>>();
 const forums = new Map<string, Promise<boolean>>();
 
+// In a forum, General is topic 1: chat actions need that id to show inside it, while messages sent with it fail ("message thread not found"). https://core.telegram.org/bots/api#sendchataction
 const GENERAL_TOPIC = 1;
 
 async function typingTarget(thread: string) {
@@ -446,6 +449,7 @@ function sendTyping(thread: string): void {
     .catch(ignore);
 }
 
+// Telegram shows "typing…" for about 5 seconds per chat action (https://core.telegram.org/bots/api#sendchataction), so it is sent again for as long as the thread's session is busy.
 const RESEND_TYPING_EVERY = 4000;
 
 function showTyping(thread: string, busy: boolean): void {
@@ -578,6 +582,7 @@ async function place(name: string, _where?: string, about?: string) {
   };
 }
 
+// A backfill is more messages than Telegram lets a bot send in a minute, so each waits out the limit Telegram names. https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
 async function paced<T>(send: () => Promise<T>): Promise<T> {
   for (;;) {
     try {
@@ -808,6 +813,7 @@ const handlers: Handlers<typeof tools> = {
       return `settled the poll (id: ${id}); its own text can't be edited, so reply with what changed`;
     }
 
+    // A Telegram edit takes a message's buttons off unless it sends them again (https://core.telegram.org/bots/api#editmessagetext), and a question stays open until it's settled.
     const buttonsStay =
       question !== undefined &&
       question.options.length > 0 &&
@@ -1061,6 +1067,7 @@ function gone(error: string): boolean {
 
 const threadArgument = z.object({ thread: z.string().optional() });
 
+// The Bot API has no update for a deleted topic (https://core.telegram.org/bots/api#update); the first send into one is how it shows.
 const callOrForget: Call = async (caller, tool, args) => {
   try {
     return await call(caller, tool, args);
@@ -1122,6 +1129,7 @@ async function redraw(thread: string, message: number): Promise<void> {
     }
 
     if (question.settled || (question.answer && question.answer.via !== "telegram")) {
+      // A poll can't take a vote from the bot (https://core.telegram.org/bots/api#stoppoll), so one answered elsewhere closes, and stays closed.
       await bot.api.stopPoll(chat_id, message);
     }
   } catch (error) {
@@ -1265,6 +1273,7 @@ function acked(): ReactionTypeEmoji[] {
   return [{ type: "emoji", emoji: ackReaction as ReactionTypeEmoji["emoji"] }];
 }
 
+// Telegram may apply two reactions sent at once in either order (https://core.telegram.org/bots/api#setmessagereaction), so each message's go one at a time.
 const reacting = new Map<string, Promise<void>>();
 
 const asleep = new Set<string>();
@@ -1428,7 +1437,9 @@ async function slash(thread: string, text: string): Promise<boolean> {
     );
   }
 
-  if (name === "start" || !thread.startsWith("-")) {
+  const commandWouldRestartThisDmAndLoseItsConversation = !thread.startsWith("-");
+
+  if (name === "start" || commandWouldRestartThisDmAndLoseItsConversation) {
     return false;
   }
 
@@ -1472,6 +1483,7 @@ bot.on("message:photo", async (ctx) => {
   const caption = ctx.message.caption ?? "(photo)";
 
   const downloadOnceTheSenderIsAllowed = async () => {
+    // The largest size is last. https://core.telegram.org/bots/api#message
     const largest = ctx.message.photo.at(-1);
 
     if (!largest) {
@@ -1589,6 +1601,7 @@ bot.on("message:sticker", async (ctx) => {
   });
 });
 
+// Telegram only reports reactions to bots that are admins, and the update names neither the topic nor the text, so both come from the message hex.db kept. https://core.telegram.org/bots/api#messagereactionupdated
 bot.on("message_reaction", (ctx) => {
   const { chat, message_id, user, date } = ctx.messageReaction;
 
@@ -1805,6 +1818,7 @@ const REPLY_FILE_KINDS = [
   "sticker",
 ] as const;
 
+// Inside a topic, every message that isn't a reply points at the topic's first message, the one that says the topic was created. A reply to a message in another topic or chat comes as external_reply, with no text. https://core.telegram.org/bots/api#message
 async function replyMeta(msg: Context["msg"]): Promise<Record<string, string>> {
   const external = msg?.external_reply;
   const replied = external ? undefined : msg?.reply_to_message;
@@ -1891,6 +1905,7 @@ async function handleInbound(
   albums.set(group, album);
   album.parts.push(part);
   clearTimeout(album.timer);
+  // Telegram sends an album as one message per item, with no event once the last has arrived. https://core.telegram.org/bots/api#message (media_group_id)
   album.timer = setTimeout(() => {
     albums.delete(group);
     void deliverInbound(album.parts);
@@ -1990,6 +2005,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
 let keeping: (() => void) | undefined;
 
+// grammY's default error handler stops the bot and rethrows, so any throw in a handler would stop polling for good. https://grammy.dev/guide/errors
 const logInsteadOfStoppingThePolling: Parameters<typeof bot.catch>[0] = (error) => {
   process.stderr.write(`telegram hub: handler error (polling continues): ${String(error.error)}\n`);
 };
@@ -2013,6 +2029,7 @@ async function setCommandMenu() {
   }
 }
 
+// A single ETIMEDOUT, ECONNRESET or DNS failure rejects bot.start(), and without this loop the bot goes deaf. https://grammy.dev/guide/errors
 let attempt = 0;
 
 const onStart = (info: { username: string }) => {
