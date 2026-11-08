@@ -1,40 +1,40 @@
 export type Section = { header: string; items: string[][]; gap: string; rest?: string };
 
 export function clip(text: string, length: number) {
-  const first = text.trim().split("\n")[0]!;
+  const first = text.trim().split("\n")[0] ?? "";
 
   return first.length > length ? `${first.slice(0, length - 1)}…` : first;
 }
 
 const more = ({ gap, rest }: Section, left: number) =>
-  `${gap}…and ${left} more${rest ? `: ${rest}` : ""}`;
+  `${gap}…and ${left} more${rest === undefined || rest === "" ? "" : `: ${rest}`}`;
 
-// Each item in the first of its forms that still fits, and a line for the ones that didn't, within
-// room: an item goes in only if the lines that would still follow it fit too. With no room, it's
-// the least the sections can take: their headers and a line counting each one's items. A section
-// with no items is its header alone.
 export function fit(sections: Section[], room: number): string {
-  const least = sections.map(
+  const headersAndCounts = sections.map(
     (section, n) =>
-      (n ? 2 : 0) +
+      (n === 0 ? 0 : 2) +
       section.header.length +
-      (section.items.length ? more(section, section.items.length).length : 0),
+      (section.items.length > 0 ? more(section, section.items.length).length : 0),
   );
 
   let text = "";
   sections.forEach((section, n) => {
-    const after = least.slice(n + 1).reduce((sum, length) => sum + length, 0);
+    const after = headersAndCounts.slice(n + 1).reduce((sum, length) => sum + length, 0);
     const { header, items, gap } = section;
     text += `${text && "\n\n"}${header}`;
 
     const left = items.findIndex((forms, i) => {
       const owed = after + (i < items.length - 1 ? more(section, items.length - i - 1).length : 0);
-      const form = forms.find((form) => text.length + gap.length + form.length + owed <= room);
 
-      if (form === undefined) {
+      const firstThatFits = forms.find(
+        (form) => text.length + gap.length + form.length + owed <= room,
+      );
+
+      if (firstThatFits === undefined) {
         return true;
       }
-      text += gap + form;
+
+      text += gap + firstThatFits;
 
       return false;
     });
@@ -47,22 +47,20 @@ export function fit(sections: Section[], room: number): string {
   return text;
 }
 
-// Claude Code puts at most 10,000 characters of a hook's output into context and swaps the rest for
-// a path and a preview it doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output),
-// so a hook's output stays under ROOM, which leaves space for the lines around it.
+// Claude Code swaps hook output past 10,000 characters for an unread file path, so ROOM leaves space for the lines around it: https://code.claude.com/docs/en/hooks#json-output
 export const ROOM = 9000;
 
-// A status post's own headings, under its note.
 export const HEADINGS = ["Waiting on you", "Open", "Ideas", "Done"] as const;
 
-// A status post's words above its first heading: its note. Posts written before the headings were
-// plain still lead with 🔴 Blocked on you, 🟡 Pending or 🟢 Done.
+const BEFORE_PLAIN_HEADINGS =
+  /^\s*(#+\s*)?(\*\*)?(🔴|🟡|🟢)\s*(\*\*)?\s*(Blocked on you|Pending|Done)\b/u;
+
 export function above(text: string) {
   const lines = text.split("\n");
 
   const first = lines.findIndex(
     (line) =>
-      /^\s*(#+\s*)?(\*\*)?(🔴|🟡|🟢)\s*(\*\*)?\s*(Blocked on you|Pending|Done)\b/u.test(line) ||
+      BEFORE_PLAIN_HEADINGS.test(line) ||
       HEADINGS.some((heading) => line.trim() === `**${heading}**`),
   );
 

@@ -2,21 +2,18 @@ import { appendFileSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { z } from "zod";
+
 import { served } from "./running.ts";
 import { hexDir, open, spoken, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
 import { render } from "./tasks.ts";
 
-// The intent check: before a session hands the owner's work to another agent, a quick model reads the
-// brief next to the owner's words for it, their rules and hex's memory, and says whether the brief
-// asks for what they asked. A brief that drifts goes back to its session with notes, and its rewrite
-// is checked next to them. After ROUNDS sendbacks the next version goes through, so a wrong note
-// costs a rewrite or two, never a stall.
-
 const MODEL = "opus";
-const CALL = 90_000;
-const AGAIN = 15 * 60_000;
-const ROUNDS = 2;
+const JUDGE_TIMEOUT_MS = 90_000;
+const REWRITE_WINDOW_MS = 15 * 60_000;
+const SENDBACKS_BEFORE_IT_GOES_THROUGH = 2;
+const CHECKER_AUDIT_LOG = "intent.jsonl";
 
 const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task and my newest messages, my rules below, and what hex's memory says was decided.
 
@@ -24,72 +21,77 @@ The agent that gets it is as capable as you, loads my rules itself, and gets a l
 
 Answer ok when it does, or when it only reports or answers and hands over no work; wording, order and a stray wrong detail are the session's call. Answer revise when the brief drops or changes part of my ask, steers the how, or goes against my rules or a decision in memory: a note per problem, a line or two each, quoting my words where they settle it.`;
 
-const SCHEMA = {
-  type: "object",
-  properties: { verdict: { enum: ["ok", "revise"] }, notes: { type: "string" } },
-  required: ["verdict", "notes"],
-};
+const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
-const named = (text: string) => [...new Set(text.match(/\bt-\d+\b/g))];
+export type Verdict = z.infer<typeof Judged>;
 
-type Hook = {
-  session_id?: string;
-  cwd?: string;
-  tool_name?: string;
-  tool_input?: Record<string, unknown>;
-};
+// claude --json-schema rejects the draft 2020-12 $schema zod emits by default: https://github.com/anthropics/claude-code/issues/80402
+const VERDICT_JSON_SCHEMA = z.toJSONSchema(Judged, { target: "draft-07" });
 
-export type Verdict = { verdict: "ok" | "revise"; notes: string };
+const ClaudeOutput = z.object({
+  is_error: z.boolean().optional(),
+  result: z.string().optional(),
+  structured_output: Judged.optional(),
+});
 
-// A command that hands work to another agent: a job or a headless claude or codex run, here or over
-// ssh, or a message delivered to a hex thread's session.
-const HANDOFF =
-  /(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:ssh\s+\S+\s+['"]?)?(?:\S*\/)?(?:job\s+\S+\s+(?:\S+\s+)?(?:claude|codex)\b|claude\b[^;&|\n]*\s(?:-p|--print)\b|codex\s+exec\b|hex\s+deliver\b)/;
+const textOrNothing = z.string().optional().catch(undefined);
 
-// The brief a tool call hands to another agent: an agent job, a delivery to a thread, a new thread,
-// a message to a running agent or T3 Code thread, or a subagent sent to work on a task (most
-// subagents only read, and name none).
+const ToolHook = z.object({
+  session_id: z.string().optional(),
+  cwd: z.string().optional(),
+  tool_name: z.string().optional(),
+  tool_input: z.looseObject({ command: textOrNothing, prompt: textOrNothing }).optional(),
+});
+
+type Hook = z.infer<typeof ToolHook>;
+
+const named = (text: string) => [...new Set(text.match(/\bt-\d+\b/gu))];
+
+const HANDOFF_COMMAND =
+  /(?:^|[;&|(\n]|\$\()\s*(?:\w+=\S*\s+)*(?:ssh\s+\S+\s+['"]?)?(?:\S*\/)?(?:job\s+\S+\s+(?:\S+\s+)?(?:claude|codex)\b|claude\b[^;&|\n]*\s(?:-p|--print)\b|codex\s+exec\b|hex\s+deliver\b)/u;
+
+const HANDOFF_TOOL =
+  /^SendMessage$|new_thread$|^mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads)$/u;
+
 export function brief({
   tool_name: tool = "",
   tool_input: input = {},
   cwd = process.cwd(),
 }: Hook): string | undefined {
   if (tool === "Bash") {
-    const command = String(input.command ?? "");
+    const command = input.command ?? "";
 
-    if (!HANDOFF.test(command)) {
+    if (!HANDOFF_COMMAND.test(command)) {
       return;
     }
-    return [command, ...files(command, cwd).map(([path, text]) => `${path}:\n${text}`)].join(
-      "\n\n",
-    );
+
+    return [
+      command,
+      ...promptFilesNow(command, cwd).map(([path, text]) => `${path}:\n${text}`),
+    ].join("\n\n");
   }
 
   if (tool === "Agent") {
-    const prompt = String(input.prompt ?? "");
+    const prompt = input.prompt ?? "";
+    const sentToWorkOnATask = named(prompt).length > 0;
 
-    return named(prompt).length ? prompt : undefined;
+    return sentToWorkOnATask ? prompt : undefined;
   }
 
-  if (
-    /^SendMessage$|new_thread$|^mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads)$/.test(
-      tool,
-    )
-  ) {
+  if (HANDOFF_TOOL.test(tool)) {
     return JSON.stringify(input, null, 1);
   }
 }
 
-// The files a command reads its prompt from, like "$(cat ~/scratch/x/prompt.md)", as they are now.
-function files(command: string, cwd: string): [string, string][] {
-  const paths = [...new Set(command.match(/[\w.~-]*\/[\w.~/-]+/g))].map((path) =>
-    resolve(cwd, path.replace(/^~/, homedir())),
+function promptFilesNow(command: string, cwd: string): [string, string][] {
+  const paths = [...new Set(command.match(/[\w.~-]*\/[\w.~/-]+/gu))].map((path) =>
+    resolve(cwd, path.replace(/^~/u, homedir())),
   );
 
-  return paths.flatMap((path) => {
+  return paths.flatMap((path): [string, string][] => {
     try {
       return statSync(path).isFile() && statSync(path).size < 100_000 && !path.includes("/bin/")
-        ? [[path, readFileSync(path, "utf-8")] as [string, string]]
+        ? [[path, readFileSync(path, "utf-8")]]
         : [];
     } catch {
       return [];
@@ -97,53 +99,56 @@ function files(command: string, cwd: string): [string, string][] {
   });
 }
 
-// What the owner said this brief should serve: each task it names, in their words, each message of
-// theirs it cites by key, and their newest messages in the thread it comes from and the one it goes to.
+const quote = (rows: Row[]) =>
+  rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${spoken(row)}`).join("\n\n");
+
 export function asked(store: Store, thread: string | undefined, text: string): string {
   const tasks = named(text)
     .map((id) => store.task(id))
     .filter((task) => task !== null);
 
-  const cited = [...new Set(text.match(/\b(?:telegram|discord|buzz|t3|voice):[\w@.:-]*\w/g))]
-    .map((key) => store.message(key))
-    .filter((row) => row && spoken(row))
-    .slice(0, 12) as Row[];
+  const cited = [...new Set(text.match(/\b(?:telegram|discord|buzz|t3|voice):[\w@.:-]*\w/gu))]
+    .flatMap((key) => {
+      const row = store.message(key);
 
-  const newest = (key: string) =>
+      return row !== null && spoken(row) !== "" ? [row] : [];
+    })
+    .slice(0, 12);
+
+  const newest = (where: string) =>
     store
-      .said(key, 40)
-      .filter((row) => spoken(row) && !cited.some(({ key }) => key === row.key))
+      .said(where, 40)
+      .filter((row) => spoken(row) !== "" && !cited.some(({ key }) => key === row.key))
       .slice(-4);
 
-  const from = thread ? store.key(thread) : undefined;
-  const to = destination(store, text);
-
-  const quote = (rows: Row[]) =>
-    rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${spoken(row)}`).join("\n\n");
+  const from = thread === undefined || thread === "" ? undefined : store.key(thread);
+  const to = deliveredTo(store, text);
+  const fromNewest = from === undefined || from === "" ? [] : newest(from);
+  const toNewest = to === undefined || to === "" || to === from ? [] : newest(to);
 
   return [
-    tasks.length &&
-      `The tasks it names, with his words:\n\n${tasks.map((task) => render(task, store.names())).join("\n\n")}`,
-    cited.length && `His messages it cites:\n\n${quote(cited)}`,
-    from &&
-      newest(from).length &&
-      `His newest messages in the thread it comes from:\n\n${quote(newest(from))}`,
-    to &&
-      to !== from &&
-      newest(to).length &&
-      `His newest messages in the thread it goes to:\n\n${quote(newest(to))}`,
+    tasks.length > 0
+      ? `The tasks it names, with his words:\n\n${tasks.map((task) => render(task, store.names())).join("\n\n")}`
+      : "",
+    cited.length > 0 ? `His messages it cites:\n\n${quote(cited)}` : "",
+    fromNewest.length > 0
+      ? `His newest messages in the thread it comes from:\n\n${quote(fromNewest)}`
+      : "",
+    toNewest.length > 0
+      ? `His newest messages in the thread it goes to:\n\n${quote(toNewest)}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
 }
 
-// The thread a delivery goes to, by the id or name after its --to.
-function destination(store: Store, text: string): string | undefined {
-  const to = /\bhex\s+deliver\b.*?--to[= ]['"]?([^'"\s]+)/s.exec(text)?.[1];
+function deliveredTo(store: Store, text: string): string | undefined {
+  const to = /\bhex\s+deliver\b.*?--to[= ]['"]?([^'"\s]+)/su.exec(text)?.[1];
 
-  if (!to) {
+  if (to === undefined) {
     return;
   }
+
   const threads = store.threads();
 
   return (
@@ -180,26 +185,41 @@ export async function judge(input: string): Promise<Verdict> {
       "--tools",
       "",
       "--json-schema",
-      JSON.stringify(SCHEMA),
+      JSON.stringify(VERDICT_JSON_SCHEMA),
       "--system-prompt",
       `${SYSTEM}\n\n${rules}`,
       "--output-format",
       "json",
       "--no-session-persistence",
     ],
-    { cwd: hexDir(), env, stdin: new Blob([input]), stdout: "pipe", stderr: "pipe", timeout: CALL },
+    {
+      cwd: hexDir(),
+      env,
+      stdin: new Blob([input]),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: JUDGE_TIMEOUT_MS,
+    },
   );
 
   const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
-  const result = JSON.parse(out || "{}");
+  const result = ClaudeOutput.safeParse(JSON.parse(out || "{}")).data;
 
-  if (code !== 0 || result.is_error || !result.structured_output) {
-    throw new Error(`claude exited ${code}: ${String(result.result ?? "").slice(0, 300)}`);
+  if (code !== 0 || result?.is_error === true || result?.structured_output === undefined) {
+    throw new Error(`claude exited ${code}: ${(result?.result ?? "").slice(0, 300)}`);
   }
+
   return result.structured_output;
 }
 
-type Sent = { at: number; rounds: number; brief: string; notes: string };
+const SentBack = z.object({
+  at: z.number(),
+  rounds: z.number(),
+  brief: z.string(),
+  notes: z.string(),
+});
+
+type Sent = z.infer<typeof SentBack>;
 
 export type Checked = {
   verdict: Verdict | "failed";
@@ -209,8 +229,6 @@ export type Checked = {
   error?: string;
 };
 
-// Every brief is checked. One that follows a sendback is read next to the brief and notes it may be
-// rewriting, and the one after ROUNDS sendbacks goes through whatever its verdict.
 export async function check(
   hook: Hook,
   store: Store,
@@ -219,16 +237,22 @@ export async function check(
 ): Promise<Checked | undefined> {
   const text = brief(hook);
 
-  if (!text) {
+  if (text === undefined || text === "") {
     return;
   }
+
   const session = hook.session_id ?? "";
-  const sent = (JSON.parse(store.seen(session, "intent") || "null") as Sent | null) ?? undefined;
-  const last = sent?.rounds && Date.now() - sent.at < AGAIN ? sent : undefined;
+  const sent = SentBack.safeParse(JSON.parse(store.seen(session, "intent") || "null")).data;
+
+  const last =
+    sent !== undefined && sent.rounds > 0 && Date.now() - sent.at < REWRITE_WINDOW_MS
+      ? sent
+      : undefined;
+
   const round = (last?.rounds ?? 0) + 1;
 
   const before =
-    last &&
+    last !== undefined &&
     `This session's last brief, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That brief:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
 
   const words =
@@ -242,7 +266,7 @@ export async function check(
         .join("\n\n"),
     );
 
-    const through = verdict.verdict === "revise" && round > ROUNDS;
+    const through = verdict.verdict === "revise" && round > SENDBACKS_BEFORE_IT_GOES_THROUGH;
 
     if (verdict.verdict === "revise" && !through) {
       store.show(
@@ -258,17 +282,16 @@ export async function check(
     } else {
       store.unshow(session, "intent");
     }
+
     return { verdict, text, round, ...(through && { through }) };
   } catch (error) {
     return { verdict: "failed", text, round, error: String(error) };
   }
 }
 
-// The PreToolUse hook. Every outcome is logged to state/intent.jsonl, so a later audit can check the
-// checker too; a check that fails or runs long lets the work start.
 if (import.meta.main) {
   try {
-    const hook = JSON.parse((await Bun.stdin.text()) || "{}") as Hook;
+    const hook = ToolHook.parse(JSON.parse((await Bun.stdin.text()) || "{}"));
 
     const thread =
       served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD }) ??
@@ -289,17 +312,17 @@ if (import.meta.main) {
         tool: hook.tool_name,
         tasks: named(text),
         round,
-        verdict: typeof verdict === "string" ? verdict : verdict.verdict,
-        ...(through && { through }),
-        notes: typeof verdict === "string" ? error : verdict.notes,
+        verdict: verdict === "failed" ? verdict : verdict.verdict,
+        ...(through === true && { through }),
+        notes: verdict === "failed" ? error : verdict.notes,
         brief: text.slice(0, 4000),
       };
 
-      appendFileSync(join(stateDir(), "intent.jsonl"), `${JSON.stringify(record)}\n`);
+      appendFileSync(join(stateDir(), CHECKER_AUDIT_LOG), `${JSON.stringify(record)}\n`);
 
-      if (typeof verdict === "object" && verdict.verdict === "revise" && !through) {
+      if (verdict !== "failed" && verdict.verdict === "revise" && through !== true) {
         const next =
-          round < ROUNDS
+          round < SENDBACKS_BEFORE_IT_GOES_THROUGH
             ? "The check reads your rewrite next to these notes."
             : "This is its last sendback: your next version goes through whatever the check says, so weigh these notes yourself.";
 
@@ -316,6 +339,6 @@ if (import.meta.main) {
       }
     }
   } catch (error) {
-    console.error(`hex couldn't check this brief: ${error}`);
+    console.error(`hex couldn't check this brief: ${String(error)}`);
   }
 }

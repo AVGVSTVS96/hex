@@ -61,9 +61,10 @@ test("a session's turns go under the thread each was said in, and its terminal n
     ["telegram:1", "2026-10-06T17:06:00.000Z"],
     ["telegram:2", "2026-10-06T17:07:00.000Z"],
     ["discord:3", "2026-10-06T17:10:00.000Z"],
-  ]) {
+  ] as const) {
     store.db.query("update messages set at = ?1, taken_at = ?1 where key = ?2").run(at, key);
   }
+
   writeFileSync(
     join(home, "log", "2026-10-06-abc-sess.md"),
     [

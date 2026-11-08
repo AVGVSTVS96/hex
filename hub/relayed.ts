@@ -1,40 +1,39 @@
+import { z } from "zod";
+
 import { served } from "./running.ts";
 import { open, stateDir } from "./store.ts";
 
-// A hex session's message to a T3 Code thread (t3_thread_send, t3_thread_launch) is kept in hex.db's
-// relays: T3 Code records who sent it only as "an agent", and this says which thread did, so the
-// voice app's Tasks shows the run it started under that thread.
+// T3 Code records a message's sender only as user, agent or system, so the relay keeps which hex thread sent it: https://github.com/pingdotgg/t3code/blob/ade473018d32003658b7d38693e083ee2e314bd8/packages/contracts/src/orchestrationV2.ts#L89
 const from = served();
 const at = new Date().toISOString();
 
-type Ran = { threadId: string; runId: string };
+const Ran = z.object({ threadId: z.string(), runId: z.string() });
 
-// T3 Code answers with the thread and the run the message started or steered, as JSON text in a
-// content block or as structured content.
-function ran(response: unknown): Ran | undefined {
-  if (typeof response === "string") {
-    try {
-      return ran(JSON.parse(response));
-    } catch {
-      return;
-    }
-  }
+const T3Answer: z.ZodType<z.infer<typeof Ran> | undefined> = z.lazy(() =>
+  z
+    .union([
+      Ran,
+      z.string().transform((text, context) => {
+        try {
+          return T3Answer.parse(JSON.parse(text));
+        } catch {
+          context.issues.push({ code: "custom", message: "not JSON", input: text });
 
-  if (Array.isArray(response)) {
-    return response.map((block) => ran(block?.text)).find(Boolean);
-  }
-  if (!response || typeof response !== "object") {
-    return;
-  }
-  const { threadId, runId, structuredContent } = response as Record<string, unknown>;
+          return z.NEVER;
+        }
+      }),
+      z
+        .array(z.object({ text: T3Answer }).catch({ text: undefined }))
+        .transform((blocks) => blocks.find((block) => block.text !== undefined)?.text),
+      z.object({ structuredContent: T3Answer }).transform((answer) => answer.structuredContent),
+    ])
+    .catch(undefined),
+);
 
-  return typeof threadId === "string" && typeof runId === "string"
-    ? { threadId, runId }
-    : ran(structuredContent);
-}
+const ToolUse = z.object({ tool_response: T3Answer });
 
-if (from) {
-  const run = ran(JSON.parse((await Bun.stdin.text()) || "{}").tool_response);
+if (from !== undefined && from !== "") {
+  const run = ToolUse.parse(JSON.parse((await Bun.stdin.text()) || "{}")).tool_response;
 
   if (run) {
     open(stateDir()).relayed(from, run.threadId, run.runId, at);

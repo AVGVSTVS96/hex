@@ -13,48 +13,55 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { z } from "zod";
+
 import { sleep } from "./clock.ts";
 
-// A background session as `claude agents --json` lists it.
-// state: working through a turn, and while the turn waits on background agents.
-export type Agent = {
-  sessionId: string;
-  id?: string;
-  pid: number;
-  status?: string;
-  state?: string;
-  startedAt?: number;
-};
+const ListedAgent = z.object({
+  sessionId: z.string(),
+  id: z.string().optional(),
+  pid: z.number(),
+  status: z.string().optional(),
+  state: z.string().optional(),
+  startedAt: z.number().optional(),
+});
 
-// The context a session's last request sent and when; short: it wrote the five-minute cache;
-// failed: when a compaction failed since.
-export type Usage = { sent: number; at?: number; short?: boolean; failed?: number };
+export type Agent = z.infer<typeof ListedAgent>;
+
+const Listed = z
+  .array(z.unknown())
+  .transform((entries) =>
+    entries
+      .flatMap((entry) => ListedAgent.safeParse(entry).data ?? [])
+      .filter(({ pid }) => pid !== 0),
+  );
+
+export type Usage = { sent: number; at?: number | undefined; short?: boolean; failed?: number };
 
 const home = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 const short = (session: string) => session.slice(0, 8);
 
-// What a Claude process the hub starts never inherits from it: the bots' tokens, hex's own settings, and the
-// label of whatever run started the hub, which Claude Code would report for every session its daemon starts.
-const PRIVATE = /_BOT_TOKEN$|^HEX_|^BUZZ_|^CLAUDE_CODE_ENTRYPOINT$/;
+const NOT_INHERITED = /_BOT_TOKEN$|^HEX_|^BUZZ_|^CLAUDE_CODE_ENTRYPOINT$/u;
 
 export function inherited(): Record<string, string | undefined> {
-  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !PRIVATE.test(name)));
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !NOT_INHERITED.test(name)),
+  );
 }
 
-// Where systemd runs hex, sessions run in a slice of their own (HEX_SESSIONS_SLICE), so one that
-// runs out of memory can't take the hub down with it. Claude's daemon starts every session as its
-// own child, and several claude commands start the daemon, so every one the hub runs goes there.
-// systemd 254 began expanding ${VARIABLE} in a scope's command, which would rewrite a thread's
-// name or prompt, and added --expand-environment to turn that off; older ones pass it as given.
-let verbatim: string[] | undefined;
+// systemd 254 added --expand-environment and plans to expand ${VARIABLE}s in a scope's command by default: https://github.com/systemd/systemd/blob/v254/NEWS
+let keepVariablesVerbatim: string[] | undefined;
 
+// Each claude command goes in the sessions slice, since `claude agents` and `claude --bg` start the supervisor that parents every session: https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell
+// There OOMPolicy=continue keeps one session's out-of-memory kill from ending the rest: https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html#OOMPolicy=
 function contained(command: string, args: string[]): [string, string[]] {
   const slice = process.env.HEX_SESSIONS_SLICE;
 
-  if (!slice) {
+  if (slice === undefined || slice === "") {
     return [command, args];
   }
-  verbatim ??= Bun.spawnSync(["systemd-run", "--help"])
+
+  keepVariablesVerbatim ??= Bun.spawnSync(["systemd-run", "--help"])
     .stdout.toString()
     .includes("--expand-environment")
     ? ["--expand-environment=no"]
@@ -69,34 +76,38 @@ function contained(command: string, args: string[]): [string, string[]] {
       "--collect",
       `--slice=${slice}`,
       "--property=OOMPolicy=continue",
-      ...verbatim,
+      ...keepVariablesVerbatim,
       command,
       ...args,
     ],
   ];
 }
 
-// The claude commands the hub has running.
-const running = new Set<Promise<unknown>>();
+const runningCommands = new Set<Promise<unknown>>();
 
 function tracked<T>(command: Promise<T>): Promise<T> {
-  running.add(command);
-  const done = () => void running.delete(command);
-  command.then(done, done);
+  runningCommands.add(command);
+
+  const forget = () => {
+    runningCommands.delete(command);
+  };
+
+  void command.then(forget).catch(forget);
 
   return command;
 }
 
-// Resolves once no claude command is running and nothing waiting on one has started another, so
-// what the hub does next waits on something outside it: a session, a hook, its clock.
 export async function settled() {
   for (;;) {
-    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
 
-    if (!running.size) {
+    if (runningCommands.size === 0) {
       return;
     }
-    await Promise.allSettled(running);
+
+    await Promise.allSettled(runningCommands);
   }
 }
 
@@ -104,83 +115,88 @@ function run(args: string[]): Promise<string | undefined> {
   const [command, argv] = contained("claude", args);
 
   return tracked(
-    new Promise((resolve) =>
+    new Promise((resolve) => {
       execFile(command, argv, { env: inherited(), timeout: 15_000 }, (error, stdout) => {
         resolve(error ? undefined : stdout);
-      }),
-    ),
+      });
+    }),
   );
 }
 
 async function listed(): Promise<Agent[] | undefined> {
   try {
-    const list = JSON.parse((await run(["agents", "--json"])) ?? "");
-
-    return Array.isArray(list) ? list.filter((agent: Agent) => agent.pid) : undefined;
+    return Listed.safeParse(JSON.parse((await run(["agents", "--json"])) ?? "")).data;
   } catch {
     return undefined;
   }
 }
 
-// Claude's daemon runs every background session. While it's down it lists none, even with
-// sessions still running, and it comes back only for the next new session; started here instead,
-// it takes the running ones back as it comes up.
+const ignore = (): undefined => undefined;
+
+// Sessions stop unless a new supervisor connects within about a minute of the old one ending: https://code.claude.com/docs/en/agent-view#keep-sessions-running-after-the-supervisor-stops
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A supervisor that's down lists no sessions even while some run, so an empty list is trusted only once it answers.
 async function awake(asking: () => boolean) {
   if ((await run(["daemon", "status"])) !== undefined) {
     return true;
   }
+
   if (!asking()) {
     return false;
   }
+
   process.stderr.write("hub: Claude's daemon isn't answering, so the hub starts it\n");
   const [command, args] = contained("claude", ["daemon", "run"]);
   spawn(command, args, { detached: true, stdio: "ignore", env: inherited() })
-    .on("error", () => {})
+    .on("error", ignore)
     .unref();
 
   return false;
 }
 
-// Only what Claude's daemon says is running: an answer that failed or can't be read, and an empty
-// list from a daemon that's down, are asked again until it can say, never read as nothing running.
+const neverAnswered = () => new Promise<never>(ignore);
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A caller that stops asking (a closed hub) gets no answer at all, even to a question already asked.
 export async function agents(asking = () => true): Promise<Agent[]> {
   for (let tries = 0; asking(); tries++) {
-    const running = await listed();
+    const answer = await listed();
 
     if (!asking()) {
       break;
     }
-    if (running?.length || (running && (await awake(asking)) && asking())) {
-      return running;
+
+    if (answer !== undefined && (answer.length > 0 || ((await awake(asking)) && asking()))) {
+      return answer;
     }
+
     if (!asking()) {
       break;
     }
-    if (!running && !tries) {
+
+    if (answer === undefined && tries === 0) {
       process.stderr.write("hub: claude agents didn't answer, so the hub asks again\n");
     }
+
     await sleep(Math.min(1000 * 2 ** tries, 30_000));
   }
 
-  return await new Promise(() => {});
+  return await neverAnswered();
 }
 
 export async function agent(session: string, asking?: () => boolean): Promise<Agent | undefined> {
-  return (await agents(asking)).find((agent) => agent.sessionId === session);
+  return (await agents(asking)).find((candidate) => candidate.sessionId === session);
 }
 
-// The session as Claude's daemon lists it in one answer, for a caller that can't wait for a daemon
-// that's down: no answer finds none.
 export async function listing(session: string): Promise<Agent | undefined> {
-  return (await listed())?.find((agent) => agent.sessionId === session);
+  return (await listed())?.find((candidate) => candidate.sessionId === session);
 }
 
 export const stop = (session: string) => run(["stop", short(session)]);
 
-// Presses Esc in the session's own terminal, as a terminal attached to it would: the turn ends, and
-// the session and what it started in the background keep running. interrupted once the transcript
-// records it; exited when the attach ends first (the session is gone), let go when the caller does.
+const KEYS_REACH_SESSION_AFTER_ATTACHING_LINE = /Attaching[^\n]*\n[^]/u;
+const ESC = "\u001B";
+
 export function interrupt(
   cwd: string,
   session: string,
@@ -192,23 +208,27 @@ export function interrupt(
   if (from === undefined) {
     return Promise.resolve("exited");
   }
+
   if (until.aborted) {
     return Promise.resolve("let go");
   }
+
   return new Promise((resolve, reject) => {
     let attach: ReturnType<typeof Bun.spawn> | undefined;
 
-    const watcher = watch(
-      dirname(file),
-      (_, name) => name === `${session}.jsonl` && recorded(file, from) && done("interrupted"),
-    );
+    const watcher = watch(dirname(file), (_, name) => {
+      if (name === `${session}.jsonl` && interruptedSince(file, from)) {
+        finish("interrupted");
+      }
+    });
 
     let over = false;
 
-    const done = (how: "interrupted" | "exited" | "let go") => {
+    const finish = (how: "interrupted" | "exited" | "let go") => {
       if (over) {
         return;
       }
+
       over = true;
       watcher.close();
       until.removeEventListener("abort", letGo);
@@ -218,69 +238,72 @@ export function interrupt(
     };
 
     watcher.on("error", () => {
-      done("exited");
+      finish("exited");
     });
+
     const letGo = () => {
-      done("let go");
+      finish("let go");
     };
+
     let shown = "";
     let pressed = false;
 
     try {
-      // Claude Code has no command to interrupt a session's turn from outside, and an interrupt runs no Stop hook.
+      // No shell command interrupts a session's turn (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), so attach presses Esc, which stops the turn: https://code.claude.com/docs/en/interactive-mode#general-controls
+      // The Stop hook doesn't run on an interrupt: https://code.claude.com/docs/en/hooks#stop
       const [command, args] = contained("claude", ["attach", short(session)]);
       attach = Bun.spawn([command, ...args], {
         env: inherited(),
         terminal: {
           cols: 120,
           rows: 40,
-          // Attach shows its own Attaching line before it reaches the session, which drops keys
-          // until then; the session's screen follows it.
           data: (terminal, output) => {
             if (pressed) {
               return;
             }
+
             shown += Buffer.from(output).toString("latin1");
 
-            if (!/Attaching[^\n]*\n[^]/.test(shown)) {
+            if (!KEYS_REACH_SESSION_AFTER_ATTACHING_LINE.test(shown)) {
               return;
             }
+
             pressed = true;
-            terminal.write("\x1B");
+            terminal.write(ESC);
           },
         },
       });
     } catch (error) {
       watcher.close();
 
-      reject(error);
+      reject(error instanceof Error ? error : new Error(String(error)));
+
       return;
     }
 
     until.addEventListener("abort", letGo);
-    void attach.exited.then(() => {
-      done(recorded(file, from) ? "interrupted" : "exited");
+    void attach.exited.finally(() => {
+      finish(interruptedSince(file, from) ? "interrupted" : "exited");
     });
   });
 }
 
-function sizeOf(file: string) {
+function sizeOf(file: string): number | undefined {
   try {
     return statSync(file).size;
   } catch {
-    return;
+    return undefined;
   }
 }
 
-// Whether the transcript recorded an interrupt of the session's own turn after its first `from`
-// bytes. Its records of requests repeat earlier interrupts, so only the user line counts.
-function recorded(file: string, from: number) {
+function interruptedSince(file: string, from: number) {
   try {
     const size = statSync(file).size;
 
     if (size <= from) {
       return false;
     }
+
     const added = Buffer.alloc(size - from);
     const fd = openSync(file, "r");
 
@@ -296,98 +319,134 @@ function recorded(file: string, from: number) {
   }
 }
 
-function interruption(line: string) {
-  if (!line.includes("[Request interrupted by user")) {
-    return false;
-  }
+const INTERRUPTED = "[Request interrupted by user";
+
+const TokenUsage = z.object({
+  input_tokens: z.number().optional(),
+  cache_creation_input_tokens: z.number().optional(),
+  cache_read_input_tokens: z.number().optional(),
+  cache_creation: z
+    .object({
+      ephemeral_5m_input_tokens: z.number().optional(),
+      ephemeral_1h_input_tokens: z.number().optional(),
+    })
+    .optional(),
+});
+
+const TranscriptEntry = z.object({
+  type: z.string().optional(),
+  subtype: z.string().optional(),
+  timestamp: z.string().optional(),
+  isSidechain: z.boolean().optional(),
+  content: z.unknown().optional(),
+  compactMetadata: z.object({ postTokens: z.number().optional() }).optional(),
+  message: z.object({ content: z.unknown().optional(), usage: TokenUsage.optional() }).optional(),
+});
+
+function entryOf(line: string): z.infer<typeof TranscriptEntry> | undefined {
   try {
-    return interrupted(JSON.parse(line));
+    return TranscriptEntry.safeParse(JSON.parse(line)).data;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
-// Whether a transcript entry is the line Claude Code writes when Esc interrupts the session's turn.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A transcript's request records repeat earlier interrupts, so only the session's own user line counts.
+function interruption(line: string) {
+  if (!line.includes(INTERRUPTED)) {
+    return false;
+  }
+
+  const entry = entryOf(line);
+
+  return entry !== undefined && interrupted(entry);
+}
+
+const Texts = z
+  .union([
+    z.string().transform((text) => [text]),
+    z.array(
+      z
+        .object({ text: z.string().default("") })
+        .catch({ text: "" })
+        .transform(({ text }) => text),
+    ),
+  ])
+  .catch([]);
+
 export function interrupted(entry: {
-  type?: string;
-  isSidechain?: boolean;
-  message?: { content?: unknown };
+  type?: string | undefined;
+  isSidechain?: boolean | undefined;
+  message?: { content?: unknown } | undefined;
 }) {
-  const content = entry.message?.content;
-
-  const texts =
-    typeof content === "string"
-      ? [content]
-      : Array.isArray(content)
-        ? content.map((block: { text?: string }) => block.text ?? "")
-        : [];
-
   return (
     entry.type === "user" &&
-    !entry.isSidechain &&
-    texts.some((text) => text.startsWith("[Request interrupted by user"))
+    entry.isSidechain !== true &&
+    Texts.parse(entry.message?.content).some((text) => text.startsWith(INTERRUPTED))
   );
 }
 
-// `claude --bg --resume` copies the conversation to a new id while the old session's job record
-// exists, even once stopped; this clears the record and keeps the conversation.
+// `claude --bg --resume` can start a copy under a new ID, which happens while the old session's job record exists: https://code.claude.com/docs/en/agent-view#dispatch-an-agent-from-your-shell
 export const rm = (session: string) => run(["rm", short(session)]);
 
-// Restarts a running session in place from the flags it started with, running a turn it was on again.
-export const respawn = (agent: Agent) => run(["respawn", job(agent)]);
+export const respawn = (session: Agent) => run(["respawn", job(session)]);
 
-// Claude's daemon moves to a new version only when the claude it started from changes, so one started
-// through a wrapper stays on its version, and starts no session at all once that version is deleted.
-// Stopped with its sessions kept, it comes back current with the next session and takes them back.
-let checking: Promise<void> | undefined;
+// A supervisor on another version than the claude invoked picks up the new one after `claude daemon stop --any`: https://code.claude.com/docs/en/agent-view#where-state-is-stored
+let staleDaemonCheck: Promise<void> | undefined;
 
-function current() {
-  return (checking ??= (async () => {
+function restartStaleDaemon() {
+  return (staleDaemonCheck ??= (async () => {
     const [status, version] = await Promise.all([run(["daemon", "status"]), run(["--version"])]);
-    const running = status?.match(/^version:\s*(\S+)/m)?.[1];
-    const installed = version?.match(/^\S+/)?.[0];
+    const daemon = status?.match(/^version:\s*(\S+)/mu)?.[1];
+    const installed = version?.match(/^\S+/u)?.[0];
 
-    if (!running || !installed || running === installed) {
+    if (daemon === undefined || installed === undefined || daemon === installed) {
       return;
     }
+
     process.stderr.write(
-      `hub: Claude's daemon runs ${running} while claude is ${installed}, so the hub restarts it\n`,
+      `hub: Claude's daemon runs ${daemon} while claude is ${installed}, so the hub restarts it\n`,
     );
     await run(["daemon", "stop", "--any", "--keep-workers"]);
-  })().finally(() => (checking = undefined)));
+  })().finally(() => {
+    staleDaemonCheck = undefined;
+  }));
 }
 
-// Resolves with the new session's job once Claude has put it in the background.
 export async function start(
   launcher: string,
   args: string[],
   options: { cwd: string; env: Record<string, string | undefined> },
 ): Promise<string> {
-  await current();
+  await restartStaleDaemon();
 
   return await tracked(
     new Promise((resolve, reject) => {
       const [command, argv] = contained(launcher, ["--bg", ...args]);
       const child = spawn(command, argv, { ...options, stdio: ["ignore", "pipe", "pipe"] });
       let output = "";
-      child.stdout.on("data", (chunk) => (output += chunk));
-      child.stderr.on("data", (chunk) => (output += chunk));
+      child.stdout.on("data", (chunk) => {
+        output += chunk;
+      });
+      child.stderr.on("data", (chunk) => {
+        output += chunk;
+      });
       child.on("error", reject);
       child.on("close", (code) => {
-        const job = /backgrounded · (\w+)/.exec(output)?.[1];
+        const backgrounded = /backgrounded · (\w+)/u.exec(output)?.[1];
 
-        if (job) {
-          resolve(job);
-        } else {
+        if (backgrounded === undefined) {
           reject(new Error(output.trim() || `claude --bg exited with code ${code}`));
+        } else {
+          resolve(backgrounded);
         }
       });
     }),
   );
 }
 
-// Node can't wait on a process it didn't start, and pidwait isn't on every system (macOS has
-// none), so the process is checked until it's gone.
+// Only a parent can wait on a process (https://man7.org/linux/man-pages/man2/waitpid.2.html) and pidwait isn't on macOS (https://man7.org/linux/man-pages/man1/pidwait.1.html), so this polls.
 export function exited(pid: number): Promise<void> {
   return new Promise((resolve) => {
     const check = () => {
@@ -403,25 +462,37 @@ export function exited(pid: number): Promise<void> {
   });
 }
 
+const SystemError = z.object({ code: z.string().optional() });
+
 export function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
 
     return true;
   } catch (error) {
-    return (error as { code?: string }).code === "EPERM";
+    return SystemError.safeParse(error).data?.code === "EPERM";
   }
 }
 
-function job(agent: Agent) {
-  return agent.id ?? short(agent.sessionId);
+function job(session: Agent) {
+  return session.id ?? short(session.sessionId);
 }
 
-export type Job = { state?: string; detail?: string; sessionId?: string; respawnFlags?: string[] };
+export const JobState = z.object({
+  state: z.string().optional(),
+  detail: z.string().optional(),
+  needs: z.string().optional(),
+  sessionId: z.string().optional(),
+  respawnFlags: z.array(z.string()).optional(),
+});
+
+export type Job = z.infer<typeof JobState>;
 
 export function record(id: string): Job {
   try {
-    return JSON.parse(readFileSync(join(home(), "jobs", id, "state.json"), "utf-8"));
+    return JobState.parse(
+      JSON.parse(readFileSync(join(home(), "jobs", id, "state.json"), "utf-8")),
+    );
   } catch {
     return {};
   }
@@ -431,29 +502,31 @@ export function watchJob(id: string, change: () => void) {
   return watch(join(home(), "jobs", id), change);
 }
 
-type Launch = { enabledPlugins?: object; env?: Record<string, string> };
+const Launch = z.looseObject({
+  enabledPlugins: z.record(z.string(), z.unknown()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
 
-// Claude keeps the flags a session started with, since it respawns from them.
-function settingsFlag(agent: Agent) {
-  const flags = record(job(agent)).respawnFlags ?? [];
+export function settingsFlag(respawnFlags: string[] = []) {
+  const at = respawnFlags.lastIndexOf("--settings");
 
-  return flags.includes("--settings") ? flags[flags.lastIndexOf("--settings") + 1]! : "";
+  return at === -1 ? "" : (respawnFlags[at + 1] ?? "");
 }
 
-// The settings file a session started with, which a respawn reads again.
-export function settingsOf(agent: Agent): Launch | undefined {
+export function settingsOf(session: Agent): z.infer<typeof Launch> | undefined {
   try {
-    return JSON.parse(readFileSync(settingsFlag(agent), "utf-8"));
+    const file = settingsFlag(record(job(session)).respawnFlags);
+
+    return Launch.parse(JSON.parse(readFileSync(file, "utf-8")));
   } catch {
     return undefined;
   }
 }
 
 export function transcript(cwd: string, session: string) {
-  return join(home(), "projects", cwd.replaceAll(/[^a-zA-Z0-9]/g, "-"), `${session}.jsonl`);
+  return join(home(), "projects", cwd.replaceAll(/[^a-zA-Z0-9]/gu, "-"), `${session}.jsonl`);
 }
 
-// Whether any project folder has the session's conversation, or it can't be told.
 export function saved(session: string) {
   const projects = join(home(), "projects");
 
@@ -462,14 +535,13 @@ export function saved(session: string) {
       existsSync(join(projects, project, `${session}.jsonl`)),
     );
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code !== "ENOENT";
+    return SystemError.safeParse(error).data?.code !== "ENOENT";
   }
 }
 
-// What Claude Code records when /compact fails.
-const FAILED = "Error during compaction";
+const COMPACTION_FAILED = "Error during compaction";
+const NEWEST_BYTES = 2 ** 20;
 
-// From the newest usage or compaction in the session's transcript, and a failed compaction after it.
 export function usage(cwd: string, session: string): Usage {
   let file: number;
 
@@ -481,54 +553,61 @@ export function usage(cwd: string, session: string): Usage {
 
   try {
     const size = fstatSync(file).size;
-    const tail = Buffer.alloc(Math.min(size, 1 << 20));
+    const tail = Buffer.alloc(Math.min(size, NEWEST_BYTES));
     readSync(file, tail, 0, tail.length, size - tail.length);
     let failed: number | undefined;
 
-    for (const line of tail.toString("utf-8").split("\n").reverse()) {
+    for (const line of tail.toString("utf-8").split("\n").toReversed()) {
       if (
         !line.includes('"usage"') &&
         !line.includes('"compact_boundary"') &&
-        !line.includes(FAILED)
+        !line.includes(COMPACTION_FAILED)
       ) {
         continue;
       }
-      let entry: any;
 
-      try {
-        entry = JSON.parse(line);
-      } catch {
+      const entry = entryOf(line);
+
+      if (entry === undefined) {
         continue;
       }
 
-      const at = entry.timestamp ? Date.parse(entry.timestamp) : undefined;
+      const at =
+        entry.timestamp === undefined || entry.timestamp === ""
+          ? undefined
+          : Date.parse(entry.timestamp);
 
       if (entry.type === "system" && entry.subtype === "compact_boundary") {
         return { sent: entry.compactMetadata?.postTokens ?? 0, at };
       }
+
       if (
         entry.type === "system" &&
         entry.subtype === "local_command" &&
-        String(entry.content).includes(FAILED)
+        String(entry.content).includes(COMPACTION_FAILED)
       ) {
         failed ??= at ?? 0;
       }
-      const usage =
-        entry.type === "assistant" && !entry.isSidechain ? entry.message?.usage : undefined;
 
-      const sent = usage
-        ? (usage.input_tokens ?? 0) +
-          (usage.cache_creation_input_tokens ?? 0) +
-          (usage.cache_read_input_tokens ?? 0)
-        : 0;
+      const tokens =
+        entry.type === "assistant" && entry.isSidechain !== true ? entry.message?.usage : undefined;
 
-      if (sent) {
+      const sent =
+        tokens === undefined
+          ? 0
+          : (tokens.input_tokens ?? 0) +
+            (tokens.cache_creation_input_tokens ?? 0) +
+            (tokens.cache_read_input_tokens ?? 0);
+
+      if (sent !== 0 && tokens !== undefined) {
+        const cache = tokens.cache_creation;
+
         return {
           sent,
           at,
           short:
-            !!usage.cache_creation?.ephemeral_5m_input_tokens &&
-            !usage.cache_creation?.ephemeral_1h_input_tokens,
+            (cache?.ephemeral_5m_input_tokens ?? 0) !== 0 &&
+            (cache?.ephemeral_1h_input_tokens ?? 0) === 0,
           ...(failed !== undefined && { failed }),
         };
       }

@@ -1,21 +1,16 @@
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { clip } from "./fit.ts";
-import type { Job } from "./schedule.ts";
+import type { IdeaJob } from "./schedule.ts";
 import { hexDir, open } from "./store.ts";
 import { render } from "./tasks.ts";
 
-// An idea's check: a schedules.json job that names an idea runs this instead of waking a session,
-// once as soon as the job appears and then at each slot. A small model reads the idea, what its
-// last checks found and what the job asks it to look into, searches the web and hex's own logs,
-// and says whether there's news. Only news reaches the idea's thread. Every check goes in
-// ideas.jsonl with the input it was given, what it found and what it spent, so a prompt can be
-// replayed against past checks, and the next check starts from there.
-
 const MODEL = "opus";
 const CALL = 10 * 60_000;
-const KEPT = 5;
+const PAST_FINDINGS_GIVEN = 5;
 
 const SYSTEM = `You keep one of my ideas moving while it waits on me. Below are my words for it, what to look into, and what your last checks found. Look for what's new since then: on the web, and in what's happened here when the idea touches it (\`.hex/bin/hex log -- '<thread>'\` prints a thread's conversation; pipe it to rg). When there's something I'd want to hear, answer news: true with a finding of a line or two and its links. Otherwise answer news: false, with what you looked at as the finding, so the next check goes further.`;
 
@@ -25,20 +20,39 @@ const SCHEMA = {
   required: ["news", "finding"],
 };
 
-export type Found = { news: boolean; finding: string; tokens?: number; cost?: number };
+const Answer = z.object({ news: z.boolean(), finding: z.string() });
 
-export type Check = {
-  at: string;
-  schedule: string;
-  idea: string;
-  input?: string;
-  news?: boolean;
-  finding?: string;
-  tokens?: number;
-  cost?: number;
-  error?: string;
-  ended?: string;
-};
+const ClaudeResult = z.object({
+  is_error: z.boolean().optional(),
+  result: z.string().optional(),
+  structured_output: z.unknown(),
+  total_cost_usd: z.number().optional(),
+  usage: z
+    .object({
+      input_tokens: z.number().default(0),
+      output_tokens: z.number().default(0),
+      cache_read_input_tokens: z.number().default(0),
+      cache_creation_input_tokens: z.number().default(0),
+    })
+    .optional(),
+});
+
+export type Found = z.infer<typeof Answer> & { tokens?: number; cost?: number | undefined };
+
+const CheckSchema = z.object({
+  at: z.string(),
+  schedule: z.string(),
+  idea: z.string(),
+  input: z.string().optional(),
+  news: z.boolean().optional(),
+  finding: z.string().optional(),
+  tokens: z.number().optional(),
+  cost: z.number().optional(),
+  error: z.string().optional(),
+  ended: z.string().optional(),
+});
+
+export type Check = z.infer<typeof CheckSchema>;
 
 export async function look(input: string): Promise<Found> {
   const env = {
@@ -79,11 +93,14 @@ export async function look(input: string): Promise<Found> {
   );
 
   const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
-  const result = JSON.parse(out || "{}");
+  const result = ClaudeResult.parse(JSON.parse(out === "" ? "{}" : out));
 
-  if (code !== 0 || result.is_error || !result.structured_output) {
-    throw new Error(`claude exited ${code}: ${String(result.result ?? "").slice(0, 300)}`);
+  const answer = Answer.safeParse(result.structured_output);
+
+  if (code !== 0 || result.is_error === true || !answer.success) {
+    throw new Error(`claude exited ${code}: ${(result.result ?? "").slice(0, 300)}`);
   }
+
   const {
     input_tokens = 0,
     output_tokens = 0,
@@ -92,7 +109,7 @@ export async function look(input: string): Promise<Found> {
   } = result.usage ?? {};
 
   return {
-    ...result.structured_output,
+    ...answer.data,
     tokens: input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens,
     cost: result.total_cost_usd,
   };
@@ -102,32 +119,31 @@ export function checks(state: string, idea?: string): Check[] {
   try {
     return readFileSync(join(state, "ideas.jsonl"), "utf-8")
       .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line) as Check)
-      .filter((check) => !idea || check.idea === idea);
+      .filter((line) => line !== "")
+      .map((line) => CheckSchema.parse(JSON.parse(line)))
+      .filter((check) => idea === undefined || idea === "" || check.idea === idea);
   } catch {
     return [];
   }
 }
 
-// One check of the idea a job names. An idea that's done, dropped or gone has nothing left to
-// look into, and its thread hears once to take the job out.
 export async function research(
   state: string,
   name: string,
-  job: Job,
+  job: IdeaJob,
   main: string,
   minute: number,
   ask = look,
 ) {
   const store = open(state);
-  const id = job.idea!;
+  const id = job.idea;
   const task = store.task(id);
   const to = job.thread ?? task?.owner ?? main;
   const record: Check = { at: new Date().toISOString(), schedule: name, idea: id };
 
   if (!task || task.status === "done" || task.status === "dropped") {
     record.ended = task?.status ?? "gone";
+
     const body = `[${name}] ${id} is ${record.ended}, so its check in schedules.json has nothing left to look into: take the job out.`;
     store.deliver({
       key: `schedule:${name}:${id}-${record.ended}`,
@@ -139,7 +155,11 @@ export async function research(
     });
   } else {
     const all = checks(state, id);
-    const past = all.filter((check) => check.finding).slice(-KEPT);
+
+    const past = all
+      .filter((check) => check.finding !== undefined && check.finding !== "")
+      .slice(-PAST_FINDINGS_GIVEN);
+
     record.input = [
       render(task, store.names()),
       `What to look into: ${job.prompt}`,
@@ -152,15 +172,17 @@ export async function research(
     try {
       Object.assign(record, await ask(record.input));
 
-      if (record.news) {
+      if (record.news === true) {
         store.fire(name, minute, to, `[${name}] News for ${id} (${task.title}): ${record.finding}`);
       }
     } catch (error) {
       record.error = String(error);
-      // The second failure in a row is told once, so a check that stopped working isn't silent.
-      const [last, before] = [all.at(-1), all.at(-2)];
 
-      if (last?.error && !before?.error) {
+      const [last, before] = [all.at(-1), all.at(-2)];
+      const failed = (check: Check | undefined) => check?.error !== undefined && check.error !== "";
+      const secondFailureInARow = failed(last) && !failed(before);
+
+      if (secondFailureInARow) {
         store.fire(
           name,
           minute,
@@ -174,22 +196,34 @@ export async function research(
   appendFileSync(join(state, "ideas.jsonl"), `${JSON.stringify(record)}\n`);
 }
 
-// The scheduler hands every idea job over each minute, with its slot when one came due. A job
-// never checked yet runs now, so an idea's research starts the moment its job is added. Checks run
-// one at a time, in the order they came due, and a job already running skips its turn.
 const busy = new Set<string>();
-let line = Promise.resolve();
+let oneCheckAtATime = Promise.resolve();
 
-export function study(state: string, name: string, job: Job, main: string, slot?: number) {
-  if (
-    busy.has(name) ||
-    (slot === undefined && checks(state).some((check) => check.schedule === name))
-  ) {
+export function study(state: string, name: string, job: IdeaJob, main: string, slot?: number) {
+  if (busy.has(name)) {
     return;
   }
+
+  const dueOrNeverChecked =
+    slot !== undefined || !checks(state).some((check) => check.schedule === name);
+
+  if (!dueOrNeverChecked) {
+    return;
+  }
+
   busy.add(name);
-  line = line
-    .then(() => research(state, name, job, main, slot ?? Math.floor(Date.now() / 60_000)))
-    .catch((error) => process.stderr.write(`hub: ${name}'s idea check failed: ${error}\n`))
-    .finally(() => busy.delete(name));
+
+  const previous = oneCheckAtATime;
+
+  oneCheckAtATime = (async () => {
+    await previous;
+
+    try {
+      await research(state, name, job, main, slot ?? Math.floor(Date.now() / 60_000));
+    } catch (error) {
+      process.stderr.write(`hub: ${name}'s idea check failed: ${String(error)}\n`);
+    } finally {
+      busy.delete(name);
+    }
+  })();
 }

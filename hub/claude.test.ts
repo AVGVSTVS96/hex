@@ -1,3 +1,4 @@
+/* oxlint-disable eslint/no-template-curly-in-string -- the test checks that ${VARIABLE}s reach the session unexpanded */
 import { expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,7 +8,7 @@ import { start } from "./claude.ts";
 import { noClaude } from "./testing.ts";
 
 const scopes =
-  !!Bun.which("systemd-run") &&
+  Bun.which("systemd-run") !== null &&
   Bun.spawnSync(["systemd-run", "--user", "--scope", "--quiet", "true"]).success;
 
 test.skipIf(!scopes)(

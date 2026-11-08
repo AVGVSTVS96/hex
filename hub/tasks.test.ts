@@ -41,11 +41,14 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function hook(input: object, env: Record<string, string> = {}) {
+async function hook(
+  input: { session_id: string; hook_event_name?: string; source?: string },
+  env: Record<string, string> = {},
+) {
   const run = Bun.spawn(["bun", join(import.meta.dir, "tasks.ts")], {
     stdin: new Blob([JSON.stringify(input)]),
     stdout: "pipe",
-    env: { PATH: process.env.PATH!, HEX_STORE: dir, ...env },
+    env: { PATH: process.env.PATH ?? "", HEX_STORE: dir, ...env },
   });
 
   expect(await run.exited).toBe(0);
@@ -148,7 +151,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
     "This thread's open tasks (`.hex/bin/hex task <id>` has my words in full, adds to them and closes them):\nt-",
   );
   expect(shown).toMatch(
-    /\n {2}done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/,
+    /\n {2}done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/u,
   );
   expect(shown).not.toContain("damn it");
   store.deliver({
@@ -159,7 +162,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
     author: "owner",
     meta: { user: "bassim" },
   });
-  const first = /\n(t-\d+) \(open, Website\)/.exec(shown)![1]!;
+  const first = /\n(t-\d+) \(open, Website\)/u.exec(shown)?.[1] ?? "no task shown";
   store.addWords(first, "telegram:-100:300");
   expect(await hook({ session_id: "big" }, { HEX_THREAD: "-100:7" })).toContain(
     `${first} (open, Website, 2 messages): Chore`,

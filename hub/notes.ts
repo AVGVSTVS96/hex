@@ -1,47 +1,44 @@
 import { spoken } from "./store.ts";
 import type { Row, Store } from "./store.ts";
 
-// A note about something the owner said keeps their words: the ones it rests on in double quotes,
-// copied from their message, and the message's key in brackets. hex.db keeps every message word
-// for word, so whether a note quotes or rewords them can be checked rather than trusted.
-
 export const keysOf = (note: string) =>
-  [...note.matchAll(/\[([a-z0-9]+:[^\]\s]+)\]/g)].map(([, key]) => key!);
+  [...note.matchAll(/\[([a-z0-9]+:[^\]\s]+)\]/gu)].map(([, key = ""]) => key);
 
 export const quotesOf = (note: string) =>
-  [...note.matchAll(/["“]([^"“”]+)["”]/g)].map(([, words]) => words!);
+  [...note.matchAll(/["“]([^"“”]+)["”]/gu)].map(([, words = ""]) => words);
 
-// Typing turns curly quotes straight and wraps lines, and a quote may leave words out with an ellipsis.
-const plain = (text: string) =>
+const asTyped = (text: string) =>
   text
     .toLowerCase()
-    .replaceAll(/[‘’ʼ]/g, "'")
-    .replaceAll(/[“”]/g, '"')
-    .replaceAll(/\s+/g, " ")
+    .replaceAll(/[‘’ʼ]/gu, "'")
+    .replaceAll(/[“”]/gu, '"')
+    .replaceAll(/\s+/gu, " ")
     .trim();
 
-// A quote has letters or digits: "👍" or "?" would match almost any message.
-const worded = (words: string) => /[\p{L}\p{N}]/u.test(words);
+const ELLIPSIS = /\s*(?:\.\.\.|…)\s*/u;
+
+const matchesAlmostAnyMessage = (words: string) => !/[\p{L}\p{N}]/u.test(words);
 
 function quotes(body: string, words: string) {
-  if (!worded(words)) {
+  if (matchesAlmostAnyMessage(words)) {
     return false;
   }
-  const parts = plain(words)
-    .split(/\s*(?:\.\.\.|…)\s*/)
-    .filter(Boolean);
+
+  const parts = asTyped(words).split(ELLIPSIS).filter(Boolean);
 
   if (!parts.length) {
     return false;
   }
+
   let at = 0;
 
   for (const part of parts) {
-    at = plain(body).indexOf(part, at);
+    at = asTyped(body).indexOf(part, at);
 
     if (at < 0) {
       return false;
     }
+
     at += part.length;
   }
 
@@ -66,9 +63,8 @@ export function verdict(note: string, store: Store): Verdict {
 export const holds = (v: Verdict) =>
   v.keys.length > 0 && !v.unknown.length && !v.unquoted.length && v.quoted;
 
-// Why a keyed note doesn't hold, said so the session can fix it in its next call.
 export function problems(v: Verdict, withWords = true): string[] {
-  const shown = v.keys.map((row) => `[${row.key}] says:\n${cut(row.body, 1500)}`);
+  const shown = v.keys.map((row) => `[${row.key}] says:\n${cutKeepingEveryLine(row.body, 1500)}`);
 
   return [
     ...v.unknown.map(
@@ -76,19 +72,18 @@ export function problems(v: Verdict, withWords = true): string[] {
         `[${key}] isn't a message hex keeps. A message's key is the \`key\` on its channel tag.`,
     ),
     ...v.unquoted.map((words) =>
-      worded(words)
-        ? `"${words}" isn't in ${v.keys.map((row) => `[${row.key}]`).join(" or ") || "any message the note names"} as written.`
-        : `"${words}" holds no words; a quote is the owner's words.`,
+      matchesAlmostAnyMessage(words)
+        ? `"${words}" holds no words; a quote is the owner's words.`
+        : `"${words}" isn't in ${v.keys.map((row) => `[${row.key}]`).join(" or ") || "any message the note names"} as written.`,
     ),
     ...(v.keys.length && !v.quoted ? ["The note names a message without quoting it."] : []),
     ...(withWords && (v.unquoted.length || !v.quoted) ? shown : []),
   ];
 }
 
-// The owner's messages, and calls they spoke on.
 export const owners = (rows: Row[]) => rows.filter((row) => spoken(row));
 
-// Text at most size characters long, every line kept, ending in … where it was cut. fit.ts's clip
-// keeps one line, for lists.
-export const cut = (text: string, size: number) =>
-  text.length > size ? `${text.slice(0, size - 1)}…` : text;
+const cutKeepingEveryLine = (text: string, maxLength: number) =>
+  text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+
+export { cutKeepingEveryLine as cut };

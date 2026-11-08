@@ -8,6 +8,8 @@ import type { Verdict } from "./intent.ts";
 import { open } from "./store.ts";
 import type { Store } from "./store.ts";
 
+const ok = (): Promise<Verdict> => Promise.resolve({ verdict: "ok", notes: "" });
+
 let dir: string;
 let store: Store;
 
@@ -142,10 +144,11 @@ test("a rewrite is checked next to the notes it answers, and goes through after 
 
   const seen: string[] = [];
 
-  const revise = async (input: string): Promise<Verdict> => (
-    seen.push(input),
-    { verdict: "revise", notes: "He asked for the login page only." }
-  );
+  const revise = (input: string): Promise<Verdict> => {
+    seen.push(input);
+
+    return Promise.resolve({ verdict: "revise", notes: "He asked for the login page only." });
+  };
 
   expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({
     round: 1,
@@ -163,7 +166,6 @@ test("a rewrite is checked next to the notes it answers, and goes through after 
     through: true,
   });
   expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({ round: 1 });
-  const ok = async (): Promise<Verdict> => ({ verdict: "ok", notes: "" });
   expect(await check(hook, store, "telegram:-100:7", ok)).toMatchObject({
     round: 2,
     verdict: { verdict: "ok" },
@@ -178,9 +180,9 @@ test("a check that fails lets the work start", async () => {
     tool_input: { prompt: "Task t-1: fix login." },
   };
 
-  const result = await check(hook, store, undefined, async () => {
-    throw new Error("out of usage");
-  });
+  const result = await check(hook, store, undefined, () =>
+    Promise.reject(new Error("out of usage")),
+  );
 
   expect(result?.verdict).toBe("failed");
 });

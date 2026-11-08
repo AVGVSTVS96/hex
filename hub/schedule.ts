@@ -1,21 +1,11 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { study } from "./ideas.ts";
 import { open } from "./store.ts";
 import { zoneOf } from "./zone.ts";
-
-// A job in schedules.json wakes its thread (the main one, unless it names another) with
-// "[name] prompt" at each minute its five-field cron names and at each "YYYY-MM-DD HH:MM" its at
-// lists, on the owner's clock. One that names an idea checks it instead (ideas.ts), at most daily,
-// and wakes the idea's thread only with news.
-export type Job = {
-  cron?: string;
-  at?: string | string[];
-  thread?: string;
-  idea?: string;
-  prompt: string;
-};
 
 const FIELDS = [
   [0, 59],
@@ -25,94 +15,121 @@ const FIELDS = [
   [0, 7],
 ] as const;
 
-const PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/;
-const AT = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d$/;
+const PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/u;
+const AT = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d$/u;
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MINUTE = 60_000;
 
-// A part of a cron field names values inside the field's bounds, low to high, every step of one or more.
 function fits(part: string, [min, max]: readonly [number, number]) {
   const match = PART.exec(part);
 
   if (!match) {
     return false;
   }
+
   const [, from = String(min), to = from, step = "1"] = match;
 
   return Number(from) >= min && Number(to) <= max && Number(from) <= Number(to) && Number(step) > 0;
 }
 
-function isCron(cron: unknown) {
-  const fields = typeof cron === "string" ? cron.trim().split(/\s+/) : [];
+function isCron(cron: string) {
+  const fields = cron.trim().split(/\s+/u);
 
   return (
-    fields.length === 5 &&
-    fields.every((field, index) => field.split(",").every((part) => fits(part, FIELDS[index]!)))
+    fields.length === FIELDS.length &&
+    FIELDS.every((bounds, index) =>
+      (fields[index] ?? "").split(",").every((part) => fits(part, bounds)),
+    )
   );
 }
 
-function isAt(at: unknown) {
+function isAt(at: string) {
+  if (!AT.test(at)) {
+    return false;
+  }
+
   try {
-    return typeof at === "string" && AT.test(at) && !!Temporal.PlainDateTime.from(at);
+    Temporal.PlainDateTime.from(at);
+
+    return true;
   } catch {
     return false;
   }
 }
 
-export function parse(text: string): Record<string, Job> {
-  const jobs: Record<string, Job> = JSON.parse(text);
+const notCron = (issue: { input: unknown }) =>
+  `${JSON.stringify(issue.input)} is not a five-field cron expression`;
 
-  for (const [name, job] of Object.entries(jobs)) {
-    if (typeof job?.prompt !== "string" || job.prompt === "") {
-      throw new Error(`${name}: prompt is missing`);
-    }
-    if (job.cron === undefined && job.at === undefined) {
-      throw new Error(`${name}: it needs a cron or an at`);
-    }
-    if (job.cron !== undefined && !isCron(job.cron)) {
-      throw new Error(`${name}: ${JSON.stringify(job.cron)} is not a five-field cron expression`);
-    }
-    if (![job.at ?? []].flat().every(isAt)) {
-      throw new Error(`${name}: at must be "YYYY-MM-DD HH:MM", or a list of them`);
-    }
-    if (job.thread !== undefined && typeof job.thread !== "string") {
-      throw new Error(`${name}: thread must be a thread's id`);
-    }
-    if (job.idea !== undefined && !/^t-\d+$/.test(String(job.idea))) {
-      throw new Error(`${name}: idea must be an idea's id, like t-12`);
-    }
-    if (job.idea !== undefined && job.cron !== undefined && !/^\d+\s+\d+\s/.test(job.cron.trim())) {
-      throw new Error(
-        `${name}: an idea's check runs at most daily, so its cron names one minute and one hour`,
-      );
-    }
+const notAt = 'at must be "YYYY-MM-DD HH:MM", or a list of them';
+const notIdea = "idea must be an idea's id, like t-12";
+const At = z.string().refine(isAt, { error: notAt });
+
+const JobSchema = z
+  .object(
+    {
+      prompt: z.string({ error: "prompt is missing" }).min(1, { error: "prompt is missing" }),
+      cron: z.string({ error: notCron }).refine(isCron, { error: notCron }).optional(),
+      at: z.union([At, z.array(At)], { error: notAt }).optional(),
+      thread: z.string({ error: "thread must be a thread's id" }).optional(),
+      idea: z
+        .string({ error: notIdea })
+        .regex(/^t-\d+$/u, { error: notIdea })
+        .optional(),
+    },
+    { error: "prompt is missing" },
+  )
+  .refine((job) => job.cron !== undefined || job.at !== undefined, {
+    error: "it needs a cron or an at",
+  })
+  .refine(
+    (job) =>
+      job.idea === undefined || job.cron === undefined || /^\d+\s+\d+\s/u.test(job.cron.trim()),
+    { error: "an idea's check runs at most daily, so its cron names one minute and one hour" },
+  );
+
+export type Job = z.infer<typeof JobSchema>;
+
+export type IdeaJob = Job & { idea: string };
+
+const Jobs = z.record(z.string(), JobSchema);
+
+export function parse(text: string): Record<string, Job> {
+  const parsed = Jobs.safeParse(JSON.parse(text));
+
+  if (parsed.success) {
+    return parsed.data;
   }
 
-  return jobs;
+  const [issue] = parsed.error.issues;
+  const name = issue?.path[0];
+
+  throw new Error(
+    issue === undefined || name === undefined
+      ? z.prettifyError(parsed.error)
+      : `${String(name)}: ${issue.message}`,
+  );
 }
 
-// A minute as a clock in the zone reads it.
-type Wall = { minute: number; hour: number; day: number; month: number; weekday: number };
+type WallClock = { minute: number; hour: number; day: number; month: number; weekday: number };
 
 const clocks = new Map<string | undefined, Intl.DateTimeFormat>();
 
-function wall(minute: number, zone?: string): Wall {
+function wall(minute: number, zone?: string): WallClock {
   let clock = clocks.get(zone);
 
   if (!clock) {
-    clocks.set(
-      zone,
-      (clock = new Intl.DateTimeFormat("en-US", {
-        timeZone: zone,
-        hourCycle: "h23",
-        weekday: "short",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-      })),
-    );
+    clock = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      hourCycle: "h23",
+      weekday: "short",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    clocks.set(zone, clock);
   }
+
   const part = Object.fromEntries(
     clock.formatToParts(minute * MINUTE).map(({ type, value }) => [type, value]),
   );
@@ -122,7 +139,7 @@ function wall(minute: number, zone?: string): Wall {
     hour: Number(part.hour),
     day: Number(part.day),
     month: Number(part.month),
-    weekday: DAYS.indexOf(part.weekday!),
+    weekday: DAYS.indexOf(part.weekday ?? ""),
   };
 }
 
@@ -137,10 +154,10 @@ function inField(spec: string, [min, max]: readonly [number, number], value: num
   });
 }
 
-function onCron(cron: string, at: Wall) {
+function onCron(cron: string, at: WallClock) {
   const [minute = "", hour = "", monthDay = "", month = "", weekDay = ""] = cron
     .trim()
-    .split(/\s+/);
+    .split(/\s+/u);
 
   const onMonthDay = inField(monthDay, FIELDS[2], at.day);
 
@@ -158,17 +175,10 @@ function onCron(cron: string, at: Wall) {
   );
 }
 
-// The minute an at comes on the owner's clock, read as Temporal reads a wall time: the first of
-// the two when clocks go back, and as far past the jump as it was set when they skip it.
 function minuteOf(at: string, zone = Temporal.Now.timeZoneId()) {
   return Temporal.PlainDateTime.from(at).toZonedDateTime(zone).epochMilliseconds / MINUTE;
 }
 
-// One check at minute now (since the epoch): each job's newest slot since the last check fires,
-// which after the hub was down is the newest one it missed, marked late. The first check ever fires
-// nothing, and a schedules.json that can't be read or doesn't load fires nothing until it does,
-// telling the main thread once what's wrong with one that doesn't load. An at is its own minute;
-// only a cron is looked for minute by minute, back from now, before the store is held for the write.
 export function check(
   storeDir: string,
   hexDir: string,
@@ -190,7 +200,8 @@ export function check(
   try {
     jobs = parse(text);
   } catch (error) {
-    const body = `[schedules] schedules.json no longer loads, so no job runs until it's fixed: ${(error as Error).message}`;
+    const body = `[schedules] schedules.json no longer loads, so no job runs until it's fixed: ${error instanceof Error ? error.message : String(error)}`;
+
     store.deliver({
       key: `schedule:broken@${Bun.hash(text).toString(36)}`,
       to: main,
@@ -214,42 +225,51 @@ export function check(
   };
 
   for (const [name, job] of Object.entries(jobs)) {
-    for (const at of [job.at ?? []].flat()) found(name, minuteOf(at, zone));
+    for (const at of [job.at ?? []].flat()) {
+      found(name, minuteOf(at, zone));
+    }
   }
-  const left = new Map(Object.entries(jobs).filter(([, job]) => job.cron !== undefined));
 
-  for (let minute = now; minute > since && left.size; minute--) {
+  const cronsLeft = new Map(
+    Object.entries(jobs).flatMap(([name, job]) =>
+      job.cron === undefined ? [] : [[name, job.cron] as const],
+    ),
+  );
+
+  for (let minute = now; minute > since && cronsLeft.size > 0; minute--) {
     const at = wall(minute, zone);
 
-    for (const [name, job] of left) {
-      if (!onCron(job.cron!, at)) {
+    for (const [name, cron] of cronsLeft) {
+      if (!onCron(cron, at)) {
         continue;
       }
-      left.delete(name);
+
+      cronsLeft.delete(name);
       found(name, minute);
     }
   }
 
   store.write(() => {
     for (const [name, minute] of slots) {
-      if (!jobs[name]!.idea)
-        store.fire(
-          name,
-          minute,
-          jobs[name]!.thread ?? main,
-          `[${name}] ${jobs[name]!.prompt}`,
-          minute < now,
-        );
+      const job = jobs[name];
+
+      if (job !== undefined && (job.idea ?? "") === "") {
+        store.fire(name, minute, job.thread ?? main, `[${name}] ${job.prompt}`, minute < now);
+      }
     }
+
     store.check(now);
   });
 
   for (const [name, job] of Object.entries(jobs)) {
-    if (job.idea) research(storeDir, name, job, main, slots.get(name));
+    const { idea } = job;
+
+    if (idea !== undefined && idea !== "") {
+      research(storeDir, name, { ...job, idea }, main, slots.get(name));
+    }
   }
 }
 
-// The hub's scheduler: a check at its start, then at the top of every minute.
 export function schedule(storeDir: string, hexDir: string, main: string): () => void {
   let timer: ReturnType<typeof setTimeout>;
 
@@ -257,7 +277,7 @@ export function schedule(storeDir: string, hexDir: string, main: string): () => 
     try {
       check(storeDir, hexDir, main);
     } catch (error) {
-      process.stderr.write(`hub: the scheduler couldn't check schedules.json: ${error}\n`);
+      process.stderr.write(`hub: the scheduler couldn't check schedules.json: ${String(error)}\n`);
     }
 
     timer = setTimeout(tick, MINUTE - (Date.now() % MINUTE));
