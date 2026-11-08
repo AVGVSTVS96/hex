@@ -1992,8 +1992,8 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
 test("each option that stands for a poll's option shows its screenshot, raw and once a check takes it up and renames it", () => {
   ledger([
     asked(7, "One call button?", ["One (my pick)", "Both"], {
+      shots: [png(state, "one", 40, 20), png(state, "both", 10, 20)],
       poll: "p7",
-      shots: ["/s/one.png", "/s/both.png"],
     }),
     asked(8, "Ship it?", ["Yes", "No"]),
   ]);
@@ -2003,8 +2003,11 @@ test("each option that stands for a poll's option shows its screenshot, raw and 
     check: () => {},
   });
   const raw = `telegram:${DESK}:7`;
-  expect(questions.find(raw)?.options.map((option) => option.shot)).toEqual([0, 1]);
-  expect(questions.shot(raw, 1)).toBe("/s/both.png");
+  expect(questions.find(raw)?.options.map(({ shot, shape }) => [shot, shape])).toEqual([
+    [0, 2],
+    [1, 0.5],
+  ]);
+  expect(questions.shot(raw, 1)).toBe(join(state, "both.png"));
   expect(questions.find(`telegram:${DESK}:8`)?.options.map((option) => option.shot)).toEqual([
     undefined,
     undefined,
@@ -2047,7 +2050,18 @@ test("each option that stands for a poll's option shows its screenshot, raw and 
     0,
     undefined,
   ]);
-  expect(questions.shot("check:button", 0)).toBe("/s/one.png");
-  expect(questions.shot(raw, 0)).toBe("/s/one.png");
+  expect(questions.shot("check:button", 0)).toBe(join(state, "one.png"));
+  expect(questions.shot(raw, 0)).toBe(join(state, "one.png"));
   expect(questions.shot("check:button", 2)).toBeUndefined();
 });
+
+// A PNG header of that size, all a shape is read from.
+function png(dir: string, name: string, width: number, height: number) {
+  const bytes = Buffer.alloc(24);
+  bytes.writeUInt32BE(0x89504e47, 0);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  const file = join(dir, `${name}.png`);
+  writeFileSync(file, bytes);
+  return file;
+}

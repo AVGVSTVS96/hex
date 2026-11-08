@@ -16,13 +16,15 @@ import { T3, type Fresh, type Stuck } from "./t3.ts";
 export type Kind = "pick" | "yesno" | "do" | "look";
 // value: the button's own label, when the option stands for one.
 // detail: what answering with it does for them, costs and gives up, in a plain sentence.
-// shot: its screenshot, /asks/<id>/shots/<shot>, when the question it answers was asked with them.
+// shot: its screenshot, /asks/<id>/shots/<shot>, when the question it answers was asked with them,
+// and shape, that screenshot's width over its height, so it takes its room before it arrives.
 export type Option = {
   label: string;
   value?: string;
   pick?: boolean;
   detail?: string;
   shot?: number;
+  shape?: number;
 };
 // A page a question points to; opening it answers nothing.
 export type Link = { label: string; url: string };
@@ -801,9 +803,10 @@ export class Questions extends Changes {
       ...question,
       app: app!,
       topic: this.topic(question.task),
-      options: options.map(({ shot: _, ...option }) => {
+      options: options.map(({ shot: _, shape: __, ...option }) => {
         const shot = shown && option.value ? shown.options.indexOf(option.value) : -1;
-        return shot < 0 ? option : { ...option, shot };
+        const shape = shot < 0 ? undefined : shapeOf(shown!.shots![shot]!);
+        return shape ? { ...option, shot, shape } : option;
       }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(":") }]),
       ...(was.length && { was }),
@@ -921,6 +924,31 @@ function waiting(note: string) {
   const parts = note.trim().split(/\n\s*\n/);
   const theirs = parts.filter((part) => /\bon you\b/i.test(part));
   return (theirs.length ? theirs : parts.slice(0, 1)).join("\n\n");
+}
+
+const shapes = new Map<string, number | undefined>();
+
+// A PNG's or JPEG's width over its height, from its header; nothing for a file it can't read.
+function shapeOf(file: string) {
+  if (!shapes.has(file)) shapes.set(file, readShape(file));
+  return shapes.get(file);
+}
+
+function readShape(file: string) {
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(file);
+  } catch {
+    return;
+  }
+  if (bytes.readUInt32BE(0) === 0x89504e47) return bytes.readUInt32BE(16) / bytes.readUInt32BE(20);
+  for (
+    let at = 2;
+    bytes[at] === 0xff && at + 9 < bytes.length;
+    at += 2 + bytes.readUInt16BE(at + 2)
+  )
+    if (bytes[at + 1]! >= 0xc0 && bytes[at + 1]! <= 0xc3)
+      return bytes.readUInt16BE(at + 7) / bytes.readUInt16BE(at + 5);
 }
 
 function refId({ app, thread, message }: Ref) {
