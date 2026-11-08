@@ -62,6 +62,7 @@ import type {
 
 import {
   startHub,
+  dispatch,
   clients,
   begin,
   move,
@@ -72,10 +73,10 @@ import {
   MODELS,
   EFFORTS,
 } from "../../hub/hub.ts";
-import type { Message, Permission, Turn } from "../../hub/hub.ts";
+import type { Handlers, Message, Permission, Turn } from "../../hub/hub.ts";
 import { Ledger, waits } from "../../hub/ledger.ts";
 import type { MessageId, Post, Question } from "../../hub/ledger.ts";
-import { server } from "./channel.ts";
+import { server, tools } from "./channel.ts";
 import { voiceCalls } from "./voice.ts";
 
 const STATE_DIR =
@@ -988,287 +989,287 @@ function serve(token: string) {
     }
   }
 
-  async function call(
-    caller: string,
-    tool: string,
-    args: Record<string, unknown>,
-  ): Promise<string> {
-    if (tool === "new_thread") {
-      const name = title(args.title as string);
-      const app = (args.app as string | undefined) ?? "discord";
-      const about = args.about as string | undefined;
-      const where = args.channel as string | undefined;
+  async function at(caller: string, named?: string) {
+    const thread = named === undefined || named === "" ? caller : hub.find(named);
+
+    return { thread, ch: await threadChannel(thread) };
+  }
+
+  const gone = (thread: string) =>
+    client.channels.fetch(thread).then(
+      () => false,
+      (error: unknown) =>
+        (error as { code?: unknown } | undefined)?.code === RESTJSONErrorCodes.UnknownChannel,
+    );
+
+  const handlers: Handlers<typeof tools> = {
+    new_thread: async (caller, args) => {
+      const name = title(args.title);
+      const app = args.app ?? "discord";
+      const { about, channel: where } = args;
 
       if (app !== "discord") {
-        return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt as string, { about, where })).link}`;
+        return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt, { about, ...(where === undefined ? {} : { where }) })).link}`;
       }
       const here = await threadChannel(caller);
       const parent = where ?? (here.isThread() ? here.parent?.name : undefined);
-      const { thread, link } = await place(name, parent, about, args.tags as string[] | undefined);
-      hub.open(thread, name, args.prompt as string);
+      const { thread, link } = await place(name, parent, about, args.tags);
+      hub.open(thread, name, args.prompt);
 
       return `started thread "${name}": ${link}`;
-    }
+    },
 
-    if (tool === "fetch_messages") {
-      return await history(caller, args);
-    }
-    if (tool === "list_channels") {
-      return await listChannels();
-    }
-    if (tool === "search_messages") {
-      return await search(args);
-    }
-    if (tool === "forward") {
+    fetch_messages: history,
+
+    list_channels: listChannels,
+
+    search_messages: (_caller, args) => search(args),
+
+    forward: async (caller, args) => {
       if (!args.thread && !args.channel) {
         throw new Error("name a thread or channel to forward to");
       }
       const to = args.channel
-        ? await textChannel(args.channel as string)
-        : await threadChannel(hub.find(args.thread as string));
+        ? await textChannel(args.channel)
+        : await threadChannel(hub.find(args.thread!));
 
       const sent = await (
-        await message(await threadChannel(caller), args.message_id as string)
+        await message(await threadChannel(caller), args.message_id)
       ).forward(to.id);
 
       return `forwarded (id: ${sent.id})`;
-    }
+    },
 
-    const thread = args.thread ? hub.find(args.thread as string) : caller;
+    reply: async (caller, args) => {
+      const { thread, ch } = await at(caller, args.thread);
+      const access = loadAccess();
+      const text = tappable(args.text);
+      const reply_to = args.reply_to;
+      const files = sendable(args.files ?? []);
+      const labels = args.buttons;
+      const multiple = !!args.multiple;
+      const components = labels?.length ? choices(labels, multiple) : undefined;
 
-    if (
-      tool === "close_thread" &&
-      (await client.channels.fetch(thread).then(
-        () => false,
-        (error) => error?.code === RESTJSONErrorCodes.UnknownChannel,
-      ))
-    ) {
-      const name = hub.name(thread) ?? thread;
-      void hub.retire(thread);
-      void ledger.forget(thread);
+      const limit = Math.max(
+        100,
+        Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT),
+      );
 
-      return `forgot "${name}": its Discord thread no longer exists`;
-    }
+      const replyMode = access.replyToMode ?? "first";
+      const chunks = fenced(text, limit, access.chunkMode ?? "newline");
+      const sentIds: string[] = [];
 
-    const ch = await threadChannel(thread);
-    const access = loadAccess();
+      try {
+        for (const [i, content] of chunks.entries()) {
+          const shouldReplyTo =
+            reply_to != null && replyMode !== "off" && (replyMode === "all" || i === 0);
 
-    switch (tool) {
-      case "reply": {
-        const text = tappable(args.text as string);
-        const reply_to = args.reply_to as string | undefined;
-        const files = sendable((args.files as string[] | undefined) ?? []);
-        const labels = args.buttons as string[] | undefined;
-        const multiple = !!args.multiple;
-        const components = labels?.length ? choices(labels, multiple) : undefined;
+          const sent = await ch.send({
+            content,
+            ...(args.silent ? { flags: MessageFlags.SuppressNotifications } : {}),
+            ...(i === 0 && files.length > 0 ? { files } : {}),
+            ...(i === chunks.length - 1 && components ? { components } : {}),
+            ...(shouldReplyTo
+              ? { reply: { messageReference: reply_to, failIfNotExists: false } }
+              : {}),
+          });
 
-        const limit = Math.max(
-          100,
-          Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT),
+          said(thread, sent.id, content);
+          sentIds.push(sent.id);
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
+        throw new Error(
+          `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
+          { cause: error },
         );
+      }
+      const last = sentIds.at(-1);
 
-        const replyMode = access.replyToMode ?? "first";
-        const chunks = fenced(text, limit, access.chunkMode ?? "newline");
-        const sentIds: string[] = [];
-
-        try {
-          for (let i = 0; i < chunks.length; i++) {
-            const shouldReplyTo =
-              reply_to != null && replyMode !== "off" && (replyMode === "all" || i === 0);
-
-            const sent = await ch.send({
-              content: chunks[i],
-              ...(args.silent ? { flags: MessageFlags.SuppressNotifications } : {}),
-              ...(i === 0 && files.length > 0 ? { files } : {}),
-              ...(i === chunks.length - 1 && components ? { components } : {}),
-              ...(shouldReplyTo
-                ? { reply: { messageReference: reply_to, failIfNotExists: false } }
-                : {}),
-            });
-
-            said(thread, sent.id, chunks[i]!);
-            sentIds.push(sent.id);
-          }
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
-          throw new Error(
-            `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
-          );
-        }
-
-        if (labels?.length) {
-          ledger.ask(thread, sentIds.at(-1)!, text, labels, undefined, multiple);
-        } else if (text && sentIds.length) {
-          ledger.said(thread, sentIds.at(-1)!, text);
-        }
-
-        return sentIds.length === 1
-          ? `sent (id: ${sentIds[0]})`
-          : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
+      if (labels?.length) {
+        ledger.ask(thread, last!, text, labels, undefined, multiple);
+      } else if (text && last !== undefined) {
+        ledger.said(thread, last, text);
       }
 
-      case "react": {
-        const msg = await message(ch, args.message_id as string);
+      return sentIds.length === 1
+        ? `sent (id: ${sentIds[0]})`
+        : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
+    },
 
-        if (!args.remove) {
-          await msg.react(args.emoji as string);
+    react: async (caller, args) => {
+      const { ch } = await at(caller);
+      const msg = await message(ch, args.message_id);
 
-          return "reacted";
-        }
+      if (!args.remove) {
+        await msg.react(args.emoji);
 
-        const { id, name } = parseEmoji(args.emoji as string) ?? {};
-        const mine = msg.reactions.cache.get((id || name)!);
-
-        if (!mine?.me) {
-          throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
-        }
-        await mine.users.remove();
-
-        return "reaction removed";
+        return "reacted";
       }
 
-      case "edit_message": {
-        const pinned = ledger.pin(thread);
+      const { id, name } = parseEmoji(args.emoji) ?? {};
+      const mine = msg.reactions.cache.get((id || name)!);
 
-        if (pinned?.message === args.message_id && args.text !== undefined) {
-          if (args.files) {
-            throw new Error("a status post is text: send the file in its own message");
-          }
-          await ledger.rewrite(thread, post, tappable(args.text as string), pinned.message);
-          said(thread, undefined, tappable(args.text as string), {
-            edited: "true",
-            message_id: String(pinned.message),
-          });
-
-          return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`;
-        }
-
-        const msg = await message(ch, args.message_id as string);
-        const files = args.files ? sendable(args.files as string[]) : undefined;
-
-        const edited =
-          args.text !== undefined || files
-            ? await msg.edit({
-                ...(args.text === undefined ? {} : { content: tappable(args.text as string) }),
-                ...(files ? { files, attachments: [] } : {}),
-              })
-            : msg;
-
-        if (args.text !== undefined) {
-          said(thread, undefined, tappable(args.text as string), {
-            edited: "true",
-            message_id: edited.id,
-          });
-          ledger.edited(thread, edited.id, args.text as string);
-        }
-
-        if (args.settled) {
-          await settleQuestion(thread, edited.id, "✓ Settled");
-        }
-        return `edited (id: ${edited.id})`;
+      if (!mine?.me) {
+        throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
       }
+      await mine.users.remove();
 
-      case "delete_message": {
-        const msg = await message(ch, args.message_id as string);
+      return "reaction removed";
+    },
 
-        if (msg.author.id !== client.user!.id) {
-          throw new Error("the bot can only delete its own messages");
+    edit_message: async (caller, args) => {
+      const { thread, ch } = await at(caller);
+      const pinned = ledger.pin(thread);
+
+      if (pinned !== undefined && pinned.message === args.message_id && args.text !== undefined) {
+        if (args.files) {
+          throw new Error("a status post is text: send the file in its own message");
         }
-        deleting.add(msg.id);
-        await msg.delete().catch((error) => {
-          deleting.delete(msg.id);
-          throw error;
-        });
-        await ledger.deleted(thread, msg.id);
-
-        return "deleted";
-      }
-
-      case "pin": {
-        if (args.unpin) {
-          const was = await ledger.unpin(thread, post, args.message_id as string | undefined);
-
-          return was === undefined
-            ? "this thread has no status post"
-            : `unpinned the status post (id: ${was})`;
-        }
-
-        if (typeof args.note !== "string") {
-          throw new Error("pin takes the status post's note, or unpin: true");
-        }
-        return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`;
-      }
-
-      case "poll": {
-        const sent = await ch.send({
-          poll: {
-            question: { text: args.question as string },
-            answers: (args.options as string[]).map((text) => ({ text })),
-            allowMultiselect: !!args.multiple,
-            duration: 24,
-          },
+        await ledger.rewrite(thread, post, tappable(args.text), pinned.message);
+        said(thread, undefined, tappable(args.text), {
+          edited: "true",
+          message_id: String(pinned.message),
         });
 
-        said(thread, sent.id, args.question as string, {
-          poll: (args.options as string[]).join(" / "),
-        });
-        ledger.ask(thread, sent.id, args.question as string, args.options as string[], sent.id);
-
-        return `sent poll (id: ${sent.id})`;
+        return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`;
       }
 
-      case "download_attachment": {
-        const msg = await message(ch, args.message_id as string);
-        const attachments = msg.messageSnapshots.first()?.attachments ?? msg.attachments;
+      const msg = await message(ch, args.message_id);
+      const files = args.files ? sendable(args.files) : undefined;
 
-        if (attachments.size === 0) {
-          return "message has no attachments";
-        }
-        const lines: string[] = [];
+      const edited =
+        args.text !== undefined || files
+          ? await msg.edit({
+              ...(args.text === undefined ? {} : { content: tappable(args.text) }),
+              ...(files ? { files, attachments: [] } : {}),
+            })
+          : msg;
 
-        for (const att of attachments.values()) {
-          const path = await downloadAttachment(att);
-          const kb = (att.size / 1024).toFixed(0);
-          lines.push(`  ${path}  (${safeAttName(att)}, ${att.contentType ?? "unknown"}, ${kb}KB)`);
-        }
-
-        return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
+      if (args.text !== undefined) {
+        said(thread, undefined, tappable(args.text), { edited: "true", message_id: edited.id });
+        ledger.edited(thread, edited.id, args.text);
       }
 
-      case "rename_thread": {
-        const name = title(args.title as string);
-        await inThread(ch).setName(name);
-        hub.rename(thread, name);
+      if (args.settled) {
+        await settleQuestion(thread, edited.id, "✓ Settled");
+      }
+      return `edited (id: ${edited.id})`;
+    },
 
-        return `renamed to "${name}"`;
+    delete_message: async (caller, args) => {
+      const { thread, ch } = await at(caller);
+      const msg = await message(ch, args.message_id);
+
+      if (msg.author.id !== client.user!.id) {
+        throw new Error("the bot can only delete its own messages");
+      }
+      deleting.add(msg.id);
+      await msg.delete().catch((error: unknown) => {
+        deleting.delete(msg.id);
+        throw error;
+      });
+      await ledger.deleted(thread, msg.id);
+
+      return "deleted";
+    },
+
+    pin: async (caller, args) => {
+      const { thread } = await at(caller);
+
+      if (args.unpin) {
+        const was = await ledger.unpin(thread, post, args.message_id);
+
+        return was === undefined
+          ? "this thread has no status post"
+          : `unpinned the status post (id: ${was})`;
       }
 
-      case "close_thread": {
-        const closing = inThread(ch);
-        hub.retire(thread);
-        await closing.setArchived(true);
+      if (args.note === undefined) {
+        throw new Error("pin takes the status post's note, or unpin: true");
+      }
+      return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`;
+    },
 
-        return `archived "${closing.name}"; its session stops once it's idle`;
+    poll: async (caller, args) => {
+      const { thread, ch } = await at(caller);
+
+      const sent = await ch.send({
+        poll: {
+          question: { text: args.question },
+          answers: args.options.map((text) => ({ text })),
+          allowMultiselect: !!args.multiple,
+          duration: 24,
+        },
+      });
+
+      said(thread, sent.id, args.question, { poll: args.options.join(" / ") });
+      ledger.ask(thread, sent.id, args.question, args.options, sent.id);
+
+      return `sent poll (id: ${sent.id})`;
+    },
+
+    download_attachment: async (caller, args) => {
+      const { ch } = await at(caller);
+      const msg = await message(ch, args.message_id);
+      const attachments = msg.messageSnapshots.first()?.attachments ?? msg.attachments;
+
+      if (attachments.size === 0) {
+        return "message has no attachments";
+      }
+      const lines: string[] = [];
+
+      for (const att of attachments.values()) {
+        const path = await downloadAttachment(att);
+        const kb = (att.size / 1024).toFixed(0);
+        lines.push(`  ${path}  (${safeAttName(att)}, ${att.contentType ?? "unknown"}, ${kb}KB)`);
       }
 
-      case "handoff": {
-        const to = args.to as string;
-        const name = args.title ? title(args.title as string) : nameOf(ch);
-        const target = await move(hub, thread, to, name, args.channel as string | undefined);
-        await ch.send(`Moved to ${to}: ${target}`);
+      return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
+    },
 
-        if (ch.isThread()) {
-          await ch.setArchived(true);
-        }
-        return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
-      }
+    rename_thread: async (caller, args) => {
+      const { thread, ch } = await at(caller);
+      const name = title(args.title);
+      await inThread(ch).setName(name);
+      hub.rename(thread, name);
 
-      default: {
-        throw new Error(`unknown tool: ${tool}`);
+      return `renamed to "${name}"`;
+    },
+
+    close_thread: async (caller, args) => {
+      const thread = args.thread ? hub.find(args.thread) : caller;
+
+      if (await gone(thread)) {
+        const name = hub.name(thread) ?? thread;
+        void hub.retire(thread);
+        void ledger.forget(thread);
+
+        return `forgot "${name}": its Discord thread no longer exists`;
       }
-    }
-  }
+      const closing = inThread(await threadChannel(thread));
+      hub.retire(thread);
+      await closing.setArchived(true);
+
+      return `archived "${closing.name}"; its session stops once it's idle`;
+    },
+
+    handoff: async (caller, args) => {
+      const { thread, ch } = await at(caller);
+      const { to } = args;
+      const name = args.title ? title(args.title) : nameOf(ch);
+      const target = await move(hub, thread, to, name, args.channel);
+      await ch.send(`Moved to ${to}: ${target}`);
+
+      if (ch.isThread()) {
+        await ch.setArchived(true);
+      }
+      return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
+    },
+  };
+
+  const call = dispatch(tools, handlers);
 
   const dms = new Set<string>();
 
