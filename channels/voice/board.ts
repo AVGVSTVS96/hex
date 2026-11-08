@@ -499,13 +499,18 @@ export class Board extends Changes {
   }
 
   // The tasks closed in the last day, each under its home run, or with that run off the board, named
-  // as its project or its thread is.
+  // as its project or its thread is. A task General or the DM owns with no project is done where its
+  // proof was posted, when that's a topic of its own.
   private finish(runs: Run[]): Finished[] {
-    const all = open(this.state).threads()
+    const store = open(this.state)
+    const all = store.threads()
     const general = generalOf(all)
+    const aside = (row?: Stored) => !row || ['General', 'DM'].includes(where(threadOf(row, general)))
     return this.closedTasks().map(task => {
-      const thread = all.find(row => row.thread === task.owner)
-      const id = home(task, runs)
+      const owner = all.find(row => row.thread === task.owner)
+      const posted = !task.project && aside(owner) ? all.find(row => row.thread === store.message(task.proof?.split(/\s/)[0] ?? '')?.to) : undefined
+      const thread = posted && !aside(posted) ? posted : owner
+      const id = home({ ...task, owner: thread?.thread ?? task.owner }, runs)
       const run = runs.find(run => run.id === id)
       const topic = run?.name ?? task.project ?? (thread ? nameOf(thread, general) : 'hex')
       return { id: task.id, title: task.title, topic, app: thread?.app ?? 'hex', proof: oneLine(plain(task.proof ?? '')), at: task.closed!, ...(run && { run: run.id }), ...(thread?.link && { link: thread.link }) }
