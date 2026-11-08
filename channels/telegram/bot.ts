@@ -1,5 +1,13 @@
 #!/usr/bin/env bun
-import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from "node:fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  statSync,
+  realpathSync,
+  chmodSync,
+  copyFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, extname, sep } from "node:path";
 
@@ -32,6 +40,7 @@ const STATE_DIR =
 const ACCESS_FILE = join(STATE_DIR, "access.json");
 const ENV_FILE = join(STATE_DIR, ".env");
 const INBOX_DIR = join(STATE_DIR, "inbox");
+const KEPT_POLL_SHOTS_DIR = join(STATE_DIR, "shots");
 const MAIN = process.env.HEX_MAIN_THREAD;
 
 // oxlint-disable-next-line eslint/no-empty-function -- what Telegram refuses here (a chat action, a reaction, a button's look) changes nothing hex relies on
@@ -917,15 +926,63 @@ const handlers: Handlers<typeof tools> = {
   poll: async (caller, args) => {
     const { chat_id, extra } = target(caller);
     const { question, options } = args;
+    const shots = (args.files ?? []).map((file) => realpathSync(file));
+
+    if (shots.length > 0 && shots.length !== options.length) {
+      throw new Error(
+        `files are one screenshot per option: ${shots.length} for ${options.length} options`,
+      );
+    }
+
+    for (const shot of shots) {
+      if (!asPhoto(shot)) {
+        throw new Error(`a screenshot is a photo under 10MB: ${shot}`);
+      }
+    }
+
+    const album =
+      shots.length > 0
+        ? await bot.api.sendMediaGroup(
+            chat_id,
+            shots.map((shot, i) => ({
+              type: "photo" as const,
+              media: new InputFile(shot),
+              caption: options[i] ?? "",
+            })),
+            extra,
+          )
+        : [];
+
+    for (const [i, sent] of album.entries()) {
+      said(caller, sent.message_id, options[i] ?? "", { file: basename(shots[i] ?? "") });
+    }
 
     const sent = await bot.api.sendPoll(chat_id, question, options, {
       ...extra,
+      ...(album[0] !== undefined && { reply_parameters: { message_id: album[0].message_id } }),
       is_anonymous: false,
       allows_multiple_answers: args.multiple === true,
     });
 
     said(caller, sent.message_id, question, { poll: options.join(" / ") });
-    ledger.ask(caller, sent.message_id, question, options, sent.poll.id);
+
+    const kept = join(KEPT_POLL_SHOTS_DIR, String(sent.message_id));
+
+    if (shots.length > 0) {
+      mkdirSync(kept, { recursive: true });
+    }
+
+    const keep = shots.map((shot, i) => {
+      const copy = join(kept, `${i}${extname(shot)}`);
+      copyFileSync(shot, copy);
+
+      return copy;
+    });
+
+    ledger.ask(caller, sent.message_id, question, options, {
+      poll: sent.poll.id,
+      ...(keep.length > 0 && { shots: keep }),
+    });
 
     return `sent poll (id: ${sent.message_id})`;
   },

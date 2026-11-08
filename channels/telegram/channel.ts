@@ -131,6 +131,13 @@ export const tools = [
         .max(12)
         .describe("When you have a pick, end its option with (my pick)."),
       multiple: z.boolean().describe("Allow picking more than one option.").optional(),
+      files: z
+        .array(z.string())
+        .max(10)
+        .describe(
+          "For a choice between looks: one screenshot per option, in the options' order (absolute paths), showing what picking it gives; an option that keeps things as they are shows how they are now. They go above the poll, and hex voice shows each under its option.",
+        )
+        .optional(),
     }),
   }),
   tool({

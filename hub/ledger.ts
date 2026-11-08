@@ -2,7 +2,7 @@ import { above, clip } from "./fit.ts";
 import { statusPost } from "./status.ts";
 import type { Link } from "./status.ts";
 import { open, stateDir } from "./store.ts";
-import type { MessageId, NewQuestion, Pin, Question, Store } from "./store.ts";
+import type { MessageId, Pin, Question, Store } from "./store.ts";
 
 export type { Answer, MessageId, Pin, Question } from "./store.ts";
 
@@ -170,16 +170,9 @@ export class Ledger {
     message: MessageId,
     text: string,
     options: string[],
-    poll?: string,
-    multiple = false,
+    how: Pick<Question, "poll" | "multiple" | "shots"> = {},
   ) {
-    const question: NewQuestion = { app: this.app, thread, message, text, options, multiple };
-
-    if (poll !== undefined) {
-      question.poll = poll;
-    }
-
-    this.store.ask(question);
+    this.store.ask({ app: this.app, thread, message, text, options, ...how });
     this.store.replied(this.app, thread, {
       label: clip(text, 60),
       at: new Date().toISOString(),

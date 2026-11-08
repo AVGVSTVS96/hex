@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,7 +58,9 @@ const apiPayload = z.looseObject({
   reply_markup: z.looseObject({ inline_keyboard: z.array(z.array(Button)) }).optional(),
   reply_parameters: z.looseObject({}).optional(),
   commands: z.array(z.looseObject({ command: z.string() })).optional(),
-  media: z.looseObject({}).optional(),
+  media: z
+    .union([z.array(z.looseObject({ caption: z.string().optional() })), z.looseObject({})])
+    .optional(),
 });
 
 type Payload = z.infer<typeof apiPayload>;
@@ -118,6 +120,10 @@ function answer(call: Call): object | boolean {
       const sent = sentMessage(call);
 
       return { ...sent, poll: { id: `poll-${sent.message_id}` } };
+    }
+
+    case "sendMediaGroup": {
+      return Array.isArray(payload.media) ? payload.media.map(() => sentMessage(call)) : [];
     }
 
     case "forwardMessages": {
@@ -1216,6 +1222,34 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
   ).toBe(`no question waits on message ${id}, so nothing was settled`);
   general.close();
   dm.close();
+});
+
+test("a poll's screenshots go above it as one album, each captioned with its option, and its question keeps them", async () => {
+  const one = join(outbox, `one-${Date.now()}.png`);
+  const both = join(outbox, `both-${Date.now()}.png`);
+  writeFileSync(one, "png");
+  writeFileSync(both, "png");
+
+  expect(
+    (await call("poll", { question: "Buttons?", options: ["One", "Both"], files: [one] })).error,
+  ).toContain("one screenshot per option");
+
+  const before = calls.length;
+
+  const id = idIn(
+    await call("poll", { question: "Buttons?", options: ["One", "Both"], files: [one, both] }),
+  );
+
+  const [album, poll] = calls.slice(before);
+
+  expect(album?.method).toBe("sendMediaGroup");
+  expect(album?.payload.media).toMatchObject([{ caption: "One" }, { caption: "Both" }]);
+  expect(poll?.payload.reply_parameters).toEqual({ message_id: id - 2 });
+
+  const kept = asked(id).shots ?? [];
+
+  expect(kept.map((shot) => readFileSync(shot, "utf-8"))).toEqual(["png", "png"]);
+  expect(kept.some((shot) => shot.startsWith(outbox))).toBe(false);
 });
 
 test("edit_message settles a poll even with text, which a poll can't change, and without settled says so", async () => {

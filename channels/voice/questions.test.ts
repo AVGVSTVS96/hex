@@ -1591,87 +1591,6 @@ test("a question names every place it was asked, each thread once at its open qu
   });
 });
 
-test("a check written before places and links were typed still gives each question its places, and its url options as links", () => {
-  ledger([asked(1, "Read the review?", ["Done", "Later"])]);
-  writeFileSync(
-    join(state, "voice", "check.json"),
-    JSON.stringify({
-      at: "2026-10-13T20:00:00.000Z",
-      why: "a call ended",
-      read: {},
-      fixed: [],
-      flagged: [],
-      stuck: [],
-      asks: [
-        {
-          id: "check:review",
-          kind: "do",
-          task: `telegram:${DESK}`,
-          at: "",
-          question: "Read the review",
-          options: [
-            { label: "Done", value: "Done" },
-            { label: "Open PR #2", url: "https://github.com/x/pull/2" },
-          ],
-          places: ["desk", "hex"],
-          refs: [{ app: "telegram", thread: DESK, message: 1 }],
-        },
-        {
-          id: "check:pin",
-          kind: "do",
-          task: `telegram:${GROUP}`,
-          at: "",
-          question: "File the claim",
-          options: [{ label: "Done" }],
-          places: ["hex"],
-        },
-      ],
-    }),
-  );
-  questions = new Questions(state, {
-    t3Database: "/nonexistent",
-    t3Home: "/nonexistent",
-    check: (why) => {
-      checks.push(why);
-    },
-  });
-  expect(
-    questions.view.asks.map((question) => [
-      question.id,
-      question.options,
-      question.links,
-      question.places,
-    ]),
-  ).toEqual([
-    [
-      "check:review",
-      [{ label: "Done", value: "Done" }],
-      [{ label: "Open PR #2", url: "https://github.com/x/pull/2" }],
-      [
-        {
-          app: "telegram",
-          place: "desk",
-          task: `telegram:${DESK}`,
-          link: "https://t.me/c/1234/5/1",
-        },
-      ],
-    ],
-    [
-      "check:pin",
-      [{ label: "Done" }],
-      undefined,
-      [
-        {
-          app: "telegram",
-          place: "General",
-          task: `telegram:${GROUP}`,
-          link: "https://t.me/c/1234/1",
-        },
-      ],
-    ],
-  ]);
-});
-
 test("a status post's page is read from hex.db as it opens, and only a new note starts a check, not the lines hex rewrites", async () => {
   const pin = {
     message: 7,
@@ -1721,46 +1640,6 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   store.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.org" });
   await until(() => checks.length);
   expect(checks).toEqual(["a pinned post changed"]);
-});
-
-test("a check.json's links reach the app only when they open a page or an app, its old url options included", () => {
-  writeFileSync(
-    join(state, "voice", "check.json"),
-    JSON.stringify({
-      at: "2026-10-13T15:00:00.000Z",
-      why: "a call ended",
-      read: {},
-      fixed: [],
-      flagged: [],
-      stuck: [],
-      asks: [
-        {
-          id: "check:read",
-          kind: "look",
-          task: `telegram:${DESK}`,
-          at: "",
-          question: "Read it",
-          options: [
-            { label: "Seen" },
-            { label: "Notes", url: "file:///home/a/notes.md" },
-            { label: "PR", url: "https://github.com/a/b/pull/2" },
-          ],
-          links: [{ label: "Report", url: "/home/a/report.md" }],
-        },
-      ],
-    }),
-  );
-  questions = new Questions(state, {
-    t3Database: "/nonexistent",
-    t3Home: "/nonexistent",
-    check: (why) => {
-      checks.push(why);
-    },
-  });
-  expect(questions.find("check:read")).toMatchObject({
-    options: [{ label: "Seen" }],
-    links: [{ label: "PR", url: "https://github.com/a/b/pull/2" }],
-  });
 });
 
 test("an answered ask the check lists again without buttons is flagged, not listed", () => {
@@ -2272,3 +2151,80 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
     options,
   });
 });
+
+test("each option that stands for a poll's option shows its screenshot, raw and once a check takes it up and renames it", () => {
+  ledger([
+    asked(7, "One call button?", ["One (my pick)", "Both"], {
+      shots: [png(state, "one", 40, 20), png(state, "both", 10, 20)],
+      poll: "p7",
+    }),
+    asked(8, "Ship it?", ["Yes", "No"]),
+  ]);
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+  const raw = `telegram:${DESK}:7`;
+  expect(questions.find(raw)?.options.map((option) => [option.shot, option.shape])).toEqual([
+    [0, 2],
+    [1, 0.5],
+  ]);
+  expect(questions.shot(raw, 1)).toBe(join(state, "both.png"));
+  expect(questions.find(`telegram:${DESK}:8`)?.options.map((option) => option.shot)).toEqual([
+    undefined,
+    undefined,
+  ]);
+  questions.close();
+
+  writeFileSync(
+    join(state, "voice", "check.json"),
+    JSON.stringify({
+      at: "2026-10-13T20:00:00.000Z",
+      why: "a call ended",
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [
+        {
+          id: "check:button",
+          kind: "pick",
+          task: `telegram:${DESK}`,
+          at: "",
+          question: "One call button on the project page?",
+          options: [
+            { label: "Both", value: "Both" },
+            { label: "One button", value: "One (my pick)", pick: true },
+            { label: "Neither", shot: 1 },
+          ],
+          refs: [{ app: "telegram", thread: DESK, message: 7 }],
+        },
+      ],
+    }),
+  );
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+  expect(questions.find("check:button")?.options.map((option) => option.shot)).toEqual([
+    1,
+    0,
+    undefined,
+  ]);
+  expect(questions.shot("check:button", 0)).toBe(join(state, "one.png"));
+  expect(questions.shot(raw, 0)).toBe(join(state, "one.png"));
+  expect(questions.shot("check:button", 2)).toBeUndefined();
+});
+
+function png(dir: string, name: string, width: number, height: number) {
+  const bytes = Buffer.alloc(24);
+  bytes.writeUInt32BE(0x89_50_4e_47, 0);
+  bytes.writeUInt32BE(width, 16);
+  bytes.writeUInt32BE(height, 20);
+  const file = join(dir, `${name}.png`);
+  writeFileSync(file, bytes);
+
+  return file;
+}

@@ -2470,6 +2470,16 @@ async function questionRoutes(request: Request, url: URL) {
       : new Response("No check yet", { status: 404 });
   }
 
+  const [, shown, n] = /^\/asks\/([^/]+)\/shots\/(\d+)$/u.exec(url.pathname) ?? [];
+
+  if (filled(shown) && request.method === "GET") {
+    const file = questions.shot(decodeURIComponent(shown), Number(n));
+
+    return file !== undefined && (await Bun.file(file).exists())
+      ? new Response(Bun.file(file))
+      : new Response("No such screenshot", { status: 404 });
+  }
+
   const [, asked] = /^\/asks\/([^/]+)\/words$/u.exec(url.pathname) ?? [];
 
   if (filled(asked) && request.method === "GET") {

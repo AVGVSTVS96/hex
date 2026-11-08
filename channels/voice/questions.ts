@@ -11,7 +11,7 @@ import type { Thread } from "../../hub/store.ts";
 import { generalOf, nameOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";
-import { before, Check, final, opens } from "./check.ts";
+import { before, Check, final } from "./check.ts";
 import { linkAt, Links } from "./links.ts";
 import { relay } from "./relay.ts";
 import { T3 } from "./t3.ts";
@@ -30,7 +30,13 @@ const OptionSchema = z.object({
   detail: z.string().exactOptional(),
 });
 
-export type Option = z.infer<typeof OptionSchema>;
+type CuratedOption = z.infer<typeof OptionSchema>;
+
+export type Option = CuratedOption & {
+  shot?: number;
+  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads an option's screenshot width over height by this name
+  shape?: number;
+};
 
 const LinkSchema = z.object({ label: z.string(), url: z.string() });
 
@@ -103,17 +109,12 @@ const CuratedSchema = z.object({
 
 export type Curated = z.infer<typeof CuratedSchema>;
 
-export type Question = Omit<Curated, "from" | "refs"> & {
+export type Question = Omit<Curated, "from" | "refs" | "options"> & {
+  options: Option[];
   app: string;
   topic: string;
   places: Place[];
 };
-
-const WrittenBeforeLinksWereTyped = CuratedSchema.extend({
-  options: z.array(OptionSchema.extend({ url: z.string().exactOptional() })),
-});
-
-type Written = z.infer<typeof WrittenBeforeLinksWereTyped>;
 
 export type Words = { place: string; at?: string; text: string };
 
@@ -139,14 +140,14 @@ const CheckFile = z.object({
   at: z.string(),
   why: z.string(),
   read: z.record(z.string(), z.number()),
-  asks: z.array(WrittenBeforeLinksWereTyped),
+  asks: z.array(CuratedSchema),
   fixed: z.array(NoteSchema),
   flagged: z.array(NoteSchema),
   stuck: z.array(Waiting),
   inputs: z.string().exactOptional(),
 });
 
-export type CheckResult = Omit<z.infer<typeof CheckFile>, "asks"> & { asks: Curated[] };
+export type CheckResult = z.infer<typeof CheckFile>;
 
 export type View = {
   version: number;
@@ -205,7 +206,7 @@ export class Questions extends Changes {
   private readonly pins = new Map<string, Pin>();
   private readonly links: Links;
   private readonly calls: string;
-  private result: z.infer<typeof CheckFile> | undefined;
+  private result: CheckResult | undefined;
   private checkStamp: string | undefined;
   private readonly marks: Marks;
   private readonly taking = new Set<string>();
@@ -215,6 +216,7 @@ export class Questions extends Changes {
   private readonly check: (why: string) => void;
   private seen?: { pins: string; t3: string };
   private callPlaces = new Map<string, CallPlace>();
+  private readonly shots = new Map<string, string[]>();
   private lastCallPlaces = new Map<string, CallPlace>();
   private readonly state: string;
 
@@ -287,6 +289,12 @@ export class Questions extends Changes {
     for (const stop of this.stops) {
       stop();
     }
+  }
+
+  shot(id: string, n: number): string | undefined {
+    const asked = this.find(id);
+
+    return asked && this.shots.get(asked.id)?.[n];
   }
 
   find(id: string) {
@@ -900,6 +908,7 @@ export class Questions extends Changes {
   }
 
   private build() {
+    this.shots.clear();
     this.threads.clear();
     this.pins.clear();
     const questions = store(this.state).questions({ asker: "hex" });
@@ -1056,22 +1065,21 @@ export class Questions extends Changes {
         : {};
   }
 
-  private dress({ refs, from, options, links = [], ...question }: Written): Question {
+  private dress({ refs, from, options, ...question }: Curated): Question {
     const [app = "", ...thread] = question.task.split(":");
-
-    const pages = [
-      ...links,
-      ...options.flatMap(({ label, url }) => (filled(url) ? [{ label, url }] : [])),
-    ].filter((page) => opens(page.url));
-
     const was = (refs ?? []).map(refId).filter((id) => id !== question.id);
+
+    const shown = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.shots !== undefined);
+
+    if (shown?.shots !== undefined) {
+      this.shots.set(question.id, shown.shots);
+    }
 
     return {
       ...question,
       app,
       topic: this.topic(question.task),
-      options: options.filter((option) => !filled(option.url)),
-      ...(pages.length > 0 && { links: pages }),
+      options: options.map((option) => withItsShot(option, shown)),
       places: this.places(from ?? [...(refs ?? []), { app, thread: thread.join(":") }]),
       ...(was.length > 0 && { was }),
       ...this.half(question.id),
@@ -1231,6 +1239,62 @@ function waiting(note: string) {
   const whatTheProjectIs = parts.slice(0, 1);
 
   return (onTheOwner.length > 0 ? onTheOwner : whatTheProjectIs).join("\n\n");
+}
+
+function withItsShot(option: CuratedOption, shown: Asked | undefined): Option {
+  const shot =
+    shown?.shots === undefined || option.value === undefined
+      ? -1
+      : shown.options.indexOf(option.value);
+
+  const widthOverHeight = widthOverHeightOf(shown?.shots?.[shot]);
+
+  return widthOverHeight !== undefined && widthOverHeight > 0
+    ? // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads an option's screenshot width over height by this name
+      { ...option, shot, shape: widthOverHeight }
+    : option;
+}
+
+const widthOverHeightOfEachFile = new Map<string, number | undefined>();
+
+function widthOverHeightOf(file: string | undefined) {
+  if (file === undefined) {
+    return;
+  }
+
+  if (!widthOverHeightOfEachFile.has(file)) {
+    widthOverHeightOfEachFile.set(file, readWidthOverHeight(file));
+  }
+
+  return widthOverHeightOfEachFile.get(file);
+}
+
+const PNG_SIGNATURE = 0x89_50_4e_47;
+
+function readWidthOverHeight(file: string) {
+  let bytes: Buffer;
+
+  try {
+    bytes = readFileSync(file);
+  } catch {
+    return;
+  }
+
+  if (bytes.readUInt32BE(0) === PNG_SIGNATURE) {
+    return bytes.readUInt32BE(16) / bytes.readUInt32BE(20);
+  }
+
+  for (
+    let at = 2;
+    bytes[at] === 0xff && at + 9 < bytes.length;
+    at += 2 + bytes.readUInt16BE(at + 2)
+  ) {
+    const marker = bytes[at + 1] ?? 0;
+
+    if (marker >= 0xc0 && marker <= 0xc3) {
+      return bytes.readUInt16BE(at + 7) / bytes.readUInt16BE(at + 5);
+    }
+  }
 }
 
 function refId({ app, thread, message }: Ref) {

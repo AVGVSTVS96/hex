@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import type { SQLQueryBindings } from "bun:sqlite";
 import {
   appendFileSync,
   existsSync,
@@ -105,6 +106,7 @@ export type Question = {
   at: string;
   poll?: string;
   multiple?: boolean;
+  shots?: string[];
   answer?: Answer;
   settled?: { note: string; at: string };
 };
@@ -207,6 +209,7 @@ const QuestionRow = z
     at: z.string(),
     poll: TextOrAbsent,
     multiple: z.number(),
+    shots: TextOrAbsent.optional(),
     answer: TextOrAbsent,
     settled: TextOrAbsent,
   })
@@ -220,6 +223,7 @@ const QuestionRow = z
     at: row.at,
     ...(row.poll !== undefined && { poll: row.poll }),
     ...(row.multiple !== 0 && { multiple: true }),
+    ...(row.shots !== undefined && { shots: fromJson(Labels, row.shots) }),
     ...(row.answer !== undefined && { answer: fromJson(AnswerJson, row.answer) }),
     ...(row.settled !== undefined && { settled: fromJson(SettledJson, row.settled) }),
   }));
@@ -589,6 +593,15 @@ const appendOnlyMigrations: ((store: Store) => void)[] = [
   },
   sql(`create table if not exists holds (n integer primary key, by text not null, why text not null, message text, until text check (until ${SORTABLE_UTC}), at text not null check (at ${SORTABLE_UTC}));
   create table if not exists held (hold integer not null references holds (n), thread text not null, ended text check (ended ${SORTABLE_UTC}), ending text, woke text, settled text check (settled ${SORTABLE_UTC}), primary key (hold, thread));`),
+  ({ db }: Store) => {
+    if (
+      db.query("select 1 from pragma_table_info('questions') where name = 'shots'").get() === null
+    ) {
+      db.run(
+        "alter table questions add column shots text check (json_valid(shots) and json_type(shots) = 'array')",
+      );
+    }
+  },
 ];
 
 function apps(dir: string): [string, string][] {
@@ -1853,28 +1866,36 @@ export class Store {
     options,
     poll,
     multiple,
+    shots,
     at = now(),
     answer,
     settled,
   }: NewQuestion) {
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // An older hex's questions, brought in by steps before the asker and shots columns exist, are hex's and fill only the columns they had.
+    const row = {
+      ...(asker !== undefined && { asker }),
+      app,
+      thread,
+      message,
+      text,
+      options: JSON.stringify(options),
+      poll: poll ?? null,
+      multiple: multiple === true ? 1 : 0,
+      ...(shots !== undefined && shots.length > 0 && { shots: JSON.stringify(shots) }),
+      answer: answer === undefined ? null : JSON.stringify(answer),
+      settled: settled === undefined ? null : JSON.stringify(settled),
+      at,
+    } satisfies Record<string, SQLQueryBindings>;
+
+    const columns = Object.keys(row);
+
     this.write(() =>
       this.db
         .query(
-          `insert into questions (${asker === undefined ? "" : "asker, "}app, thread, message, text, options, poll, multiple, answer, settled, at) values (${asker === undefined ? "" : "?, "}?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing`,
+          `insert into questions (${columns.join(", ")}) values (${columns.map(() => "?").join(", ")}) on conflict do nothing`,
         )
-        .run(
-          ...(asker === undefined ? [] : [asker]),
-          app,
-          thread,
-          message,
-          text,
-          JSON.stringify(options),
-          poll ?? null,
-          multiple === true ? 1 : 0,
-          answer === undefined ? null : JSON.stringify(answer),
-          settled === undefined ? null : JSON.stringify(settled),
-          at,
-        ),
+        .run(...Object.values(row)),
     );
   }
 

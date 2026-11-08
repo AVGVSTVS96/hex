@@ -1287,7 +1287,7 @@ function serve(token: string) {
       }
 
       if (asks) {
-        ledger.ask(thread, last, text, labels, undefined, multiple);
+        ledger.ask(thread, last, text, labels, { multiple });
       } else if (text !== "") {
         ledger.said(thread, last, text);
       }
@@ -1413,7 +1413,7 @@ function serve(token: string) {
       });
 
       said(thread, sent.id, args.question, { poll: args.options.join(" / ") });
-      ledger.ask(thread, sent.id, args.question, args.options, sent.id);
+      ledger.ask(thread, sent.id, args.question, args.options, { poll: sent.id });
 
       return `sent poll (id: ${sent.id})`;
     },
