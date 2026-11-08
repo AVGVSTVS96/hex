@@ -20,7 +20,7 @@ Fonts and the icon come from `site/`, so the videos and the site stay one design
 ## Make a video
 
 ```sh
-cd media && npm install
+bun install
 node render.mjs launch serve           # watch it live; click to play with sound, ?t=12 to jump
 node render.mjs launch stills 12 30.5  # PNGs of single moments, in out/launch/
 node render.mjs launch audio           # soundtrack.wav: music and effects, mixed to -14 LUFS (needs SOUND_LAYER)

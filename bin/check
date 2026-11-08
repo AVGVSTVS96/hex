@@ -10,11 +10,10 @@ trap 'rm -rf "$out"' EXIT
 # Discord's voice (prism-media) requires ffmpeg-static only when it's installed, which a bundle can't tell.
 build="bun build --target bun --external ffmpeg-static"
 bun install --silent
-for plugin in telegram discord buzz t3 voice; do
-  bun install --cwd "channels/$plugin" --silent
+jq -e 'all(.plugins[]; .source == "./\(.name)")' channels/.claude-plugin/marketplace.json >/dev/null
+for plugin in $(jq -r '.plugins[].name' channels/.claude-plugin/marketplace.json); do
   $build "channels/$plugin/bot.ts" --outdir "$out/$plugin" >/dev/null
   jq -e --arg plugin "$plugin" '.mcpServers[$plugin].type == "http"' "channels/$plugin/.mcp.json" >/dev/null
-  jq -e --arg plugin "$plugin" 'any(.plugins[]; .source == "./\($plugin)")' channels/.claude-plugin/marketplace.json >/dev/null
 done
 $build channels/buzz/provider.ts --outdir "$out/provider" >/dev/null
 $build hub/serve.ts --outdir "$out/hub" >/dev/null
