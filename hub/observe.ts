@@ -331,6 +331,7 @@ async function claude(input: string): Promise<Answer> {
   return answer;
 }
 
+// OptMem leaves due compressions to whoever writes a note, and only this agent writes notes: https://github.com/VictorTaelin/OptMem/blob/1fb164cf39028047781f72ac3bb1e5a691c1dcb0/README.md#while-working-register-memories-mandatory
 export async function nap(memo = MEMO, compress = summarize, stillHoldsLease = () => true) {
   while (stillHoldsLease()) {
     const asked = Bun.spawnSync([memo, "nap"], {
@@ -403,6 +404,7 @@ async function summarize(prompt: string) {
   return answer?.line.trim() ?? "";
 }
 
+// A session re-reads its memory file from disk after compacting, so each pass leaves it current: https://code.claude.com/docs/en/memory#instructions-seem-lost-after-compact
 export function refresh() {
   Bun.spawnSync([join(import.meta.dir, "..", "bin", "wake")], {
     stdout: "ignore",
@@ -460,6 +462,7 @@ export function queue(state: string, turn: Pass) {
     const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {
+      // Claude Code kills a hook still running when a -p session ends, so the pass runs detached: https://code.claude.com/docs/en/hooks#run-hooks-in-the-background
       spawn(process.execPath, [import.meta.path], {
         detached: true,
         stdio: ["ignore", "ignore", observeLog],

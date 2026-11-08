@@ -3,6 +3,7 @@ import { z } from "zod";
 import { served } from "./running.ts";
 import { open, stateDir } from "./store.ts";
 
+// T3 Code records a message's sender only as user, agent or system, so the relay keeps which hex thread sent it: https://github.com/pingdotgg/t3code/blob/ade473018d32003658b7d38693e083ee2e314bd8/packages/contracts/src/orchestrationV2.ts#L89
 const from = served();
 const at = new Date().toISOString();
 

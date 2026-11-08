@@ -38,6 +38,7 @@ export function loaded(
   return [[file, text], ...imports.flatMap((target) => loaded(target, seen, depth + 1, read))];
 }
 
+// Plugin files edited on disk, like hooks, reach a running session only on restart or /reload-plugins: https://code.claude.com/docs/en/plugins/cli-reference#reload-plugins
 export const STARTUP = {
   hooks: "plugin/hooks/hooks.json",
   skills: "plugin/skills",
