@@ -54,13 +54,23 @@ async function run(state: string) {
       for (let why = take(join(dir, 'next')); why; why = take(join(dir, 'next'))) {
         await pass(state, why).then(
           () => rmSync(join(dir, 'error'), { force: true }),
-          error => writeFileSync(join(dir, 'error'), `${new Date().toISOString()} ${why}: ${error instanceof Error ? error.message : error}\n`),
+          error => failed(state, `${new Date().toISOString()} ${why}: ${error instanceof Error ? error.message : error}`),
         )
       }
     } finally {
       rmSync(join(dir, 'lock'), { force: true })
     }
   }
+}
+
+// A failed pass leaves its error in check/error until one succeeds, and General hears of the first
+// in a run of them, since until then the owner's list goes stale with nothing settled.
+export function failed(state: string, error: string) {
+  const file = join(state, 'voice', 'check', 'error')
+  const first = !existsSync(file)
+  writeFileSync(file, `${error}\n`)
+  const general = first && generalOf(store(state).threads())
+  if (general) store(state).deliver({ key: `check:failed:${createHash('sha256').update(error).digest('hex').slice(0, 12)}`, to: general.thread, from: 'check', author: 'prompt', body: `[check] hex's question check failed, so nothing on the owner's Needs you list settles until it runs again: ${clip(error, 600)}. Its next failures stay in ${file} until a pass succeeds.`, meta: { user: 'check' } })
 }
 
 function hold(lock: string): boolean {
@@ -239,7 +249,7 @@ function messages(hexDir: string) {
 // A read-only pass: it reads files and searches, its own folder holding every message (messages.md,
 // as `hex log` prints them) and every thread (threads.json), and its only effect is the JSON it returns.
 function claude(input: string, hexDir: string, state: string) {
-  const args = ['-p', '--model', MODEL, '--effort', 'medium', '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--tools', 'Read,Grep,Glob', '--strict-mcp-config', '--setting-sources', 'project', '--no-session-persistence', '--add-dir', hexDir, join(homedir(), '.claude', 'projects')]
+  const args = ['-p', '--model', MODEL, '--effort', 'medium', '--output-format', 'json', '--json-schema', JSON.stringify(SCHEMA), '--tools', 'Read,Grep,Glob', '--safe-mode', '--no-session-persistence', '--add-dir', hexDir, join(homedir(), '.claude', 'projects')]
   const cwd = mkdtempSync(join(tmpdir(), 'hex-check-'))
   writeFileSync(join(cwd, 'messages.md'), messages(hexDir))
   writeFileSync(join(cwd, 'threads.json'), JSON.stringify(store(state).threads(), null, 1))

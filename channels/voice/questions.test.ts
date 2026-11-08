@@ -6,7 +6,7 @@ import { tmpdir } from 'os'
 import { homedir } from 'os'
 import { join } from 'path'
 import { Questions, fromLedger } from './questions.ts'
-import { before, digest, vet } from './check.ts'
+import { before, digest, failed, vet } from './check.ts'
 import { T3 } from './t3.ts'
 import { until } from '../../hub/until.ts'
 import type { Pin, Question } from '../../hub/ledger.ts'
@@ -878,4 +878,19 @@ test("a check's ask names the ids its questions were listed under before it took
   writeFileSync(join(state, 'voice', 'check.json'), JSON.stringify({ at: '2026-10-13T15:00:00.000Z', why: 'a call ended', read: {}, fixed: [], flagged: [], stuck: [], asks: [{ id: 'check:twilio', kind: 'yesno', task: `telegram:${DESK}`, at: '2026-10-11T00:00:00.000Z', question: 'Upgrade Twilio from trial', options: [{ label: 'Upgrade', value: 'Upgrade' }], refs: [{ app: 'telegram', thread: DESK, message: 1 }, { app: 'telegram', thread: DESK, message: 2 }] }] }))
   await questions.changes(version, 2000)
   expect(questions.view.asks.map(question => [question.id, question.was])).toEqual([['check:twilio', [`telegram:${DESK}:1`, `telegram:${DESK}:2`]]])
+})
+
+test('General hears of the first failed check in a run of them, and of the first after one succeeds', () => {
+  const store = open(state)
+  store.keepThreads('telegram', { [GROUP]: { name: 'hex' } })
+  mkdirSync(join(state, 'voice', 'check'), { recursive: true })
+  const told = () => (store.db.query(`select body from messages where "to" = ? and "from" = 'check'`).all(GROUP) as { body: string }[]).map(row => row.body)
+  failed(state, 'monday: the check hit a limit')
+  failed(state, 'tuesday: the check hit a limit')
+  expect(told()).toHaveLength(1)
+  expect(told()[0]).toContain('monday: the check hit a limit')
+  expect(readFileSync(join(state, 'voice', 'check', 'error'), 'utf8')).toBe('tuesday: the check hit a limit\n')
+  rmSync(join(state, 'voice', 'check', 'error'))
+  failed(state, 'wednesday: the check hit a limit')
+  expect(told()).toHaveLength(2)
 })
