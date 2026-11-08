@@ -10,32 +10,33 @@ import {
   AudioPlayerStatus,
   VoiceConnectionStatus,
 } from "@discordjs/voice";
-import type { AudioPlayer } from "@discordjs/voice";
+import type { AudioPlayer, AudioReceiveStream } from "@discordjs/voice";
 import type { Client, VoiceBasedChannel } from "discord.js";
 import OpusScript from "opusscript";
 
 import { engine } from "../../hub/hub.ts";
 import type { Held } from "../../hub/hub.ts";
 
-// Discord's audio is 48 kHz stereo in 20 ms Opus frames; the call engine's is 24 kHz mono PCM.
-const RATE = 48_000;
+const DISCORD_STEREO_RATE = 48_000;
+const ENGINE_MONO_RATE = 24_000;
 const TICK = 100;
-const SILENCE = Buffer.alloc((24_000 * 2 * TICK) / 1000);
-const CUSHION = Buffer.alloc((RATE * 4 * TICK) / 1000);
+const SILENCE = Buffer.alloc((ENGINE_MONO_RATE * 2 * TICK) / 1000);
+const JITTER_CUSHION = Buffer.alloc((DISCORD_STEREO_RATE * 4 * TICK) / 1000);
 const PAUSE = 300;
 const QUIET = 64;
 
-// 48 kHz stereo to 24 kHz mono: each sample averages two frames of both channels.
 export function narrow(pcm: Buffer): Buffer {
-  const out = Buffer.alloc(pcm.length >> 2);
+  const out = Buffer.alloc(Math.floor(pcm.length / 4));
 
   for (let i = 0, o = 0; o < out.length; i += 8, o += 2) {
     out.writeInt16LE(
-      (pcm.readInt16LE(i) +
-        pcm.readInt16LE(i + 2) +
-        pcm.readInt16LE(i + 4) +
-        pcm.readInt16LE(i + 6)) >>
-        2,
+      Math.floor(
+        (pcm.readInt16LE(i) +
+          pcm.readInt16LE(i + 2) +
+          pcm.readInt16LE(i + 4) +
+          pcm.readInt16LE(i + 6)) /
+          4,
+      ),
       o,
     );
   }
@@ -43,14 +44,17 @@ export function narrow(pcm: Buffer): Buffer {
   return out;
 }
 
-// 24 kHz mono to 48 kHz stereo: each new sample sits halfway to the next.
 export function widen(pcm: Buffer): Buffer {
-  const samples = pcm.length >> 1;
+  const samples = Math.floor(pcm.length / 2);
   const out = Buffer.alloc(samples * 8);
 
   for (let i = 0; i < samples; i++) {
     const sample = pcm.readInt16LE(i * 2);
-    const between = (sample + (i + 1 < samples ? pcm.readInt16LE(i * 2 + 2) : sample)) >> 1;
+
+    const between = Math.floor(
+      (sample + (i + 1 < samples ? pcm.readInt16LE(i * 2 + 2) : sample)) / 2,
+    );
+
     out.writeInt16LE(sample, i * 8);
     out.writeInt16LE(sample, i * 8 + 2);
     out.writeInt16LE(between, i * 8 + 4);
@@ -62,16 +66,18 @@ export function widen(pcm: Buffer): Buffer {
 
 function silent(pcm: Buffer): boolean {
   for (let i = 0; i < pcm.length; i += 2) {
-    if (Math.abs(pcm.readInt16LE(i)) > QUIET) return false;
+    if (Math.abs(pcm.readInt16LE(i)) > QUIET) {
+      return false;
+    }
   }
 
   return true;
 }
 
-// The voice comes as one unbroken stream, its pauses as silence, and Discord shows the bot speaking
-// for as long as it sends audio. So a pause longer than PAUSE ends a stretch of speech, and the next
-// sound starts a new one behind a short cushion that absorbs the stream's jitter. A player that ran
-// dry and stopped mid-stretch takes the next sound as a new stretch.
+const failed = (what: string) => (cause: unknown) => {
+  process.stderr.write(`discord hub: ${what}: ${String(cause)}\n`);
+};
+
 export function speaker(player: AudioPlayer) {
   let stretch: PassThrough | undefined;
   let quiet = 0;
@@ -94,7 +100,7 @@ export function speaker(player: AudioPlayer) {
 
     if (!stretch) {
       stretch = new PassThrough();
-      stretch.write(CUSHION);
+      stretch.write(JITTER_CUSHION);
       player.play(createAudioResource(stretch, { inputType: StreamType.Raw }));
     }
 
@@ -102,10 +108,8 @@ export function speaker(player: AudioPlayer) {
   };
 }
 
-// The owner's voice, decoded as it comes. Discord sends nothing while they're quiet, but the voice
-// model takes its turn on hearing silence, so every quiet TICK is sent as silence.
 export function listener(hear: (audio: string) => void) {
-  const decoder = new OpusScript(RATE, 2, OpusScript.Application.VOIP);
+  const decoder = new OpusScript(DISCORD_STEREO_RATE, 2, OpusScript.Application.VOIP);
   let heard = Date.now();
 
   const quiet = setInterval(() => {
@@ -124,9 +128,7 @@ export function listener(hear: (audio: string) => void) {
       try {
         hear(narrow(Buffer.from(decoder.decode(opus))).toString("base64"));
       } catch (error) {
-        process.stderr.write(
-          `discord hub: dropped a voice packet that wouldn't decode: ${error}\n`,
-        );
+        failed("dropped a voice packet that wouldn't decode")(error);
       }
     },
     close() {
@@ -136,8 +138,8 @@ export function listener(hear: (audio: string) => void) {
   };
 }
 
-// The owner joining one of the server's voice channels calls hex there, through the voice app's
-// call engine, like a phone call; leaving, or hex hanging up, ends it. One call at a time.
+type Live = { ear?: ReturnType<typeof listener>; voice?: AudioReceiveStream };
+
 export function voiceCalls(client: Client, owner: (user: string) => boolean) {
   let current: { channel: string; end: () => void } | undefined;
 
@@ -158,8 +160,7 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
     });
 
     let held: Held | undefined;
-    let ear: ReturnType<typeof listener> | undefined;
-    let voice: ReturnType<typeof connection.receiver.subscribe> | undefined;
+    const live: Live = {};
     let over = false;
 
     const end = () => {
@@ -174,8 +175,8 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
       }
 
       held?.hangUp();
-      voice?.destroy();
-      ear?.close();
+      live.voice?.destroy();
+      live.ear?.close();
 
       if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
         connection.destroy();
@@ -183,7 +184,7 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
     };
 
     current = { channel: channel.id, end };
-    // A disconnect that is only a move or a region change starts signalling again on its own.
+    // A disconnect that's a move or a region change reconnects on its own: https://discordjs.guide/voice/voice-connections#handling-disconnects
     connection.on(VoiceConnectionStatus.Disconnected, () => {
       Promise.race([
         entersState(connection, VoiceConnectionStatus.Signalling, 5000),
@@ -191,15 +192,15 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
       ]).catch(end);
     });
     connection.on(VoiceConnectionStatus.Destroyed, end);
-    connection.on("error", (err) => {
-      process.stderr.write(`discord hub: the voice connection failed: ${err}\n`);
+    connection.on("error", (error) => {
+      failed("the voice connection failed")(error);
       end();
     });
 
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
     } catch (error) {
-      process.stderr.write(`discord hub: couldn't join #${channel.name}: ${error}\n`);
+      failed(`couldn't join #${channel.name}`)(error);
 
       end();
 
@@ -211,9 +212,7 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
     }
 
     const player = createAudioPlayer({ behaviors: { maxMissedFrames: 50 } });
-    player.on("error", (err) =>
-      process.stderr.write(`discord hub: the voice's audio failed: ${err}\n`),
-    );
+    player.on("error", failed("the voice's audio failed"));
     connection.subscribe(player);
 
     try {
@@ -223,19 +222,25 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
         { play: speaker(player), end },
       );
     } catch (error) {
-      process.stderr.write(`discord hub: ${error}\n`);
+      process.stderr.write(`discord hub: ${String(error)}\n`);
 
       end();
 
       return;
     }
 
-    ear = listener(held.hear);
-    voice = connection.receiver.subscribe(user, { end: { behavior: EndBehaviorType.Manual } });
-    voice.on("data", (opus: Buffer) => {
-      ear?.packet(opus);
+    const ear = listener(held.hear);
+    live.ear = ear;
+
+    const voice = connection.receiver.subscribe(user, {
+      end: { behavior: EndBehaviorType.Manual },
     });
-    voice.on("error", (err) => process.stderr.write(`discord hub: voice receive failed: ${err}\n`));
+
+    live.voice = voice;
+    voice.on("data", (opus: Buffer) => {
+      ear.packet(opus);
+    });
+    voice.on("error", failed("voice receive failed"));
     process.stderr.write(`discord hub: on a call in #${channel.name}\n`);
   }
 
@@ -249,9 +254,7 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
     }
 
     if (after.channel && !current) {
-      void call(after.channel, after.id).catch((err: unknown) =>
-        process.stderr.write(`discord hub: voice call failed: ${err}\n`),
-      );
+      void call(after.channel, after.id).catch(failed("voice call failed"));
     }
   });
 }

@@ -282,7 +282,7 @@ async function messagesAfter(ch: Listened, from: string): Promise<DiscordMessage
   }
 }
 
-// Discord lists archived threads newest-archived first: https://discord.com/developers/docs/resources/channel#list-public-archived-threads
+// Discord lists archived threads newest-archived first: https://docs.discord.com/developers/resources/channel#list-public-archived-threads
 async function archivedSince(
   ch: TextChannel | NewsChannel | ForumChannel,
   from: string,
@@ -999,7 +999,7 @@ function serve(token: string) {
       .catch(() => null);
   }
 
-  // Discord's typing indicator lasts 10 seconds: https://discord.com/developers/docs/resources/channel#trigger-typing-indicator
+  // Discord's typing indicator lasts 10 seconds: https://docs.discord.com/developers/resources/channel#trigger-typing-indicator
   function showTyping(thread: string, busy: boolean): void {
     process.stderr.write(`discord hub: ${thread} ${busy ? "busy" : "idle"}\n`);
     clearInterval(typing.get(thread));
@@ -1678,7 +1678,7 @@ function serve(token: string) {
     });
   }
 
-  // Discord's delete event doesn't say who deleted the message: https://discord.com/developers/docs/events/gateway-events#message-delete
+  // Discord's delete event doesn't say who deleted the message: https://docs.discord.com/developers/events/gateway-events#message-delete
   async function handleDelete(msg: DiscordMessage | PartialMessage): Promise<void> {
     if (deleting.delete(msg.id)) {
       return;
@@ -1790,7 +1790,7 @@ function serve(token: string) {
     }
   }
 
-  // Discord wants the first answer to a tap within 3 seconds: https://discord.com/developers/docs/interactions/receiving-and-responding#responding-to-an-interaction
+  // Discord wants the first answer to a tap within 3 seconds: https://docs.discord.com/developers/interactions/receiving-and-responding#responding-to-an-interaction
   async function handleTap(tap: ButtonInteraction): Promise<void> {
     if (!allowed(tap.user.id)) {
       await tap.deferUpdate();
