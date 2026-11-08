@@ -183,6 +183,8 @@ if (session_id && !recorded) {
     const beat = heartbeat || (busy && wokenByHeartbeatTask(store, session_id));
 
     store.write(() => {
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
       store.turned(session_id, busy, at, beat);
 
       if (answered && background) {

@@ -42,6 +42,8 @@ export function loaded(
 export const STARTUP = {
   hooks: "plugin/hooks/hooks.json",
   skills: "plugin/skills",
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The flags hex's launcher works out for a session take effect only as its process starts, so a restart or resume picks up a change and compacting doesn't.
   launcher: [
     "bin/session",
     "bin/identity",
