@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-test("the plugin's own settings win over a key the hub's environment still carries", () => {
+test("the plugin's own settings win over a key the hub's environment still carries, and stay out of the environment its sessions inherit", () => {
   const home = mkdtempSync(join(tmpdir(), "voice-env-"));
 
   try {
@@ -11,7 +11,7 @@ test("the plugin's own settings win over a key the hub's environment still carri
     writeFileSync(join(home, ".claude", "channels", "voice", ".env"), "OPENAI_API_KEY=current\n");
 
     const read = `import { env } from ${JSON.stringify(join(import.meta.dir, "env.ts"))}
-console.log(env.OPENAI_API_KEY, env.VOICE_PUBLIC_URL)`;
+console.log(env.OPENAI_API_KEY, env.VOICE_PUBLIC_URL, process.env.OPENAI_API_KEY)`;
 
     const run = Bun.spawnSync(["bun", "-e", read], {
       env: {
@@ -22,7 +22,7 @@ console.log(env.OPENAI_API_KEY, env.VOICE_PUBLIC_URL)`;
       },
     });
 
-    expect(run.stdout.toString().trim()).toBe("current voice.test");
+    expect(run.stdout.toString().trim()).toBe("current voice.test revoked");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
