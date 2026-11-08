@@ -206,7 +206,7 @@ beforeAll(() => {
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
   mkdirSync(join(home, ".t3/userdata"), { recursive: true });
   symlinkSync(join(HEX, "node_modules"), join(home, ".hex/node_modules"));
-  cpSync(join(HEX, "bin/away"), join(home, ".hex/bin/away"));
+  cpSync(join(HEX, "bin/away"), join(home, ".hex/bin/away"), { dereference: true });
   script(join(home, ".hex/bin/identity"), 'echo "You are hex."');
   script(
     join(home, ".hex/bin/t3-mcp-headers"),

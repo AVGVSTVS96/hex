@@ -20,6 +20,7 @@ beforeEach(() => {
   copyFileSync(join(import.meta.dir, "../../bin/live-status"), join(home, ".hex/bin/live-status"));
   copyFileSync(join(import.meta.dir, "../../bin/hex"), join(home, ".hex/bin/hex"));
   symlinkSync(join(import.meta.dir, "../../hub"), join(home, ".hex/hub"));
+  symlinkSync(join(import.meta.dir, "../../node_modules"), join(home, ".hex/node_modules"));
 
   const commit = (msg: string) => {
     sh(
