@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   statSync,
   writeFileSync,
 } from "node:fs";
@@ -37,8 +38,10 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "session-"));
 
   for (const dir of ["bin", "chat", "hub"]) {
-    cpSync(join(HEX, dir), join(home, ".hex", dir), { recursive: true });
+    cpSync(join(HEX, dir), join(home, ".hex", dir), { recursive: true, verbatimSymlinks: true });
   }
+
+  symlinkSync(join(HEX, "node_modules"), join(home, ".hex/node_modules"));
 
   mkdirSync(join(home, ".claude"));
   mkdirSync(join(home, "state"));
