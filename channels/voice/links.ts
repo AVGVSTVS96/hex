@@ -1,20 +1,16 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync, watch } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { existsSync, readFileSync, watch } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import type { MessageId } from "../../hub/ledger.ts";
 import { open } from "../../hub/store.ts";
 import type { Item } from "./activity.ts";
 
-// Work a hex thread handed to another T3 Code thread with delegate_task: the child thread, the task
-// that runs it, and how it went. parent is the hex thread that handed it off, as <app>:<key>; hex
-// is the child's own hex thread, when it runs on hex; latest, that it was handed off since the
-// thread was last asked something (T3 Code wakes a thread when its delegations finish with a
-// message of its own, which doesn't count).
-// A relay is a message any hex thread sent a T3 thread (hub/relayed.ts keeps them): the task is
-// the run it started, and latest says that run is still the thread's newest, so the thread's work
-// is the relay's until something else asks it.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A relay is a message any hex thread sent a T3 thread: the thread's work is the relay's until
+   something else asks it. T3 Code wakes a thread when its delegations finish with a message of its
+   own, which doesn't count as asking it. */
 export type Delegation = {
   id: string;
   task: string;
@@ -35,8 +31,11 @@ const T3_HOME = join(homedir(), ".t3", "userdata");
 const DATABASE = "statev2.sqlite";
 const REFRESH = 500;
 const ITEMS = 40;
-// How a handoff that has ended went, by its status in T3 Code.
-export const HANDED: Record<string, "done" | "failed" | "stopped"> = {
+
+type HandoffEnd = "done" | "failed" | "stopped";
+
+// oxlint-disable-next-line anti-slop/no-known-value-widening -- callers look up any status T3 Code reports, and one that hasn't ended has no entry.
+export const HANDED: Record<string, HandoffEnd> = {
   completed: "done",
   idle: "done",
   failed: "failed",
@@ -44,6 +43,7 @@ export const HANDED: Record<string, "done" | "failed" | "stopped"> = {
   cancelled: "stopped",
   rolled_back: "stopped",
 };
+
 const SHOWN = [
   "command_execution",
   "web_search",
@@ -55,40 +55,57 @@ const SHOWN = [
   "error",
 ];
 
-// What T3 Code's own database, read only, says of hex's T3 threads: what each is called there, what
-// it handed off, and the turns of those that don't run on hex, read when asked and again whenever T3
-// Code writes or hex.db does (its relays). Where a thread opens in its own app is hex.db's (Thread.link): linkAt only adds a message.
-// T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev. */
 export class Links {
   private threads = new Map<string, { thread: string; title: string }>();
   private handed: Delegation[] = [];
   private ran = new Map<string, string>();
   private above = new Map<string, { parent: string; since: string }>();
   private starts = new Map<string, { parent: string; since: string; shown: boolean }>();
-  private items = new Map<string, Item[]>();
-  private titles = new Map<string, string | undefined>();
-  private environment?: string;
-  private db?: Database;
-  private watcher?: ReturnType<typeof watch>;
-  private unwatch?: () => void;
+  private readonly items = new Map<string, Item[]>();
+  private readonly titles = new Map<string, string | undefined>();
+  private readonly state: string;
+  private readonly changed: () => void;
+  private readonly scheme: string;
+  private readonly environment: string | undefined;
+  private readonly db?: Database;
+  private readonly watcher?: ReturnType<typeof watch>;
+  private readonly unwatch?: () => void;
   private relays = "";
-  private pending?: ReturnType<typeof setTimeout>;
+  private pending: ReturnType<typeof setTimeout> | undefined;
 
   constructor(
-    private state: string,
-    private changed: () => void,
-    private t3 = T3_HOME,
-    private scheme = process.env.T3_APP_SCHEME || "t3code",
+    state: string,
+    changed: () => void,
+    t3 = T3_HOME,
+    scheme = word(process.env.T3_APP_SCHEME) ?? "t3code",
   ) {
+    this.state = state;
+    this.changed = changed;
+    this.scheme = scheme;
     const database = join(t3, DATABASE);
-    if (!existsSync(database)) return;
+
+    if (!existsSync(database)) {
+      return;
+    }
+
     this.environment = word(readFile(join(t3, "environment-id"))?.trim());
     this.db = new Database(database, { readonly: true });
-    this.watcher = watch(t3, (_, file) => file?.startsWith(DATABASE) && this.schedule());
+    this.watcher = watch(t3, (_, file) => {
+      if (file?.startsWith(DATABASE) === true) {
+        this.schedule();
+      }
+    });
     this.relays = JSON.stringify(open(state).relays());
-    this.unwatch = open(state).watch(
-      () => this.relays !== (this.relays = JSON.stringify(open(state).relays())) && this.schedule(),
-    );
+    this.unwatch = open(state).watch(() => {
+      const relays = JSON.stringify(open(state).relays());
+
+      if (relays !== this.relays) {
+        this.relays = relays;
+        this.schedule();
+      }
+    });
     this.read();
   }
 
@@ -99,81 +116,99 @@ export class Links {
     this.db?.close();
   }
 
-  // What the thread is called in its own app, where hex knows it by another name: T3 Code's title.
   title(app: string, id: string): string | undefined {
     return app === "t3" ? word(this.threads.get(id)?.title) : undefined;
   }
 
-  // What a hex thread handed off, oldest first.
   delegations(app: string, id: string) {
     return this.handed.filter((one) => one.parent === `${app}:${id}`);
   }
 
-  // Whether a hex T3 thread is work another hex thread handed off, so it shows under that one, as
-  // long as that one shows: two T3 threads that send each other work would otherwise both hide.
   delegated(app: string, id: string) {
     return (
       app === "t3" && this.owners(id).some((owner) => this.shows(owner, new Set([`t3:${id}`])))
     );
   }
 
-  // The thread a hex T3 thread shows under, when it shows under another: the one that last handed
-  // its T3 thread work, as owner() has it, where that one shows and still counts as an owner; else
-  // the newest that does.
   under(app: string, id: string) {
-    if (app !== "t3" || !this.delegated(app, id)) return;
-    const shows = (parent?: string) => !!parent && this.shows(parent, new Set([`t3:${id}`]));
+    if (app !== "t3" || !this.delegated(app, id)) {
+      return;
+    }
+
+    const shows = (parent?: string) =>
+      parent !== undefined && parent !== "" && this.shows(parent, new Set([`t3:${id}`]));
+
     const last = this.starts.get(this.threads.get(id)?.thread ?? "")?.parent;
-    if (last && this.owners(id).includes(last) && shows(last)) return last;
-    const handoffs = this.handed.filter(
-      (one) => one.hex === id && (!one.relay || one.latest) && shows(one.parent),
-    );
-    return handoffs.reduce<Delegation | undefined>(
-      (newest, one) => (!newest || (one.since ?? "") >= (newest.since ?? "") ? one : newest),
-      undefined,
-    )?.parent;
+
+    if (last !== undefined && last !== "" && this.owners(id).includes(last) && shows(last)) {
+      return last;
+    }
+
+    let newest: Delegation | undefined;
+
+    for (const one of this.handed) {
+      if (
+        one.hex === id &&
+        (one.relay !== true || one.latest) &&
+        shows(one.parent) &&
+        (newest === undefined || (one.since ?? "") >= (newest.since ?? ""))
+      ) {
+        newest = one;
+      }
+    }
+
+    return newest?.parent;
   }
 
   private owners(id: string) {
     return this.handed
-      .filter((one) => one.hex === id && (!one.relay || one.latest))
+      .filter((one) => one.hex === id && (one.relay !== true || one.latest))
       .map((one) => one.parent);
   }
 
-  // Whether a thread shows: on its own, or under an owner that does without coming back through it.
   private shows(thread: string, passed: Set<string>): boolean {
-    if (passed.has(thread)) return false;
+    if (passed.has(thread)) {
+      return false;
+    }
+
     const owners = thread.startsWith("t3:") ? this.owners(thread.slice(3)) : [];
+
     return (
-      !owners.length || owners.some((owner) => this.shows(owner, new Set([...passed, thread])))
+      owners.length === 0 || owners.some((owner) => this.shows(owner, new Set([...passed, thread])))
     );
   }
 
-  // Whether T3 Code runs this Claude Code session.
   runs(session: string) {
     return this.ran.has(session);
   }
 
-  // The hex thread a Claude Code session T3 Code runs works for, as <app>:<key>: the one that last
-  // handed its T3 thread work, whatever came of it (then, while that handoff shows as a working
-  // delegation, handed); or, where another T3 thread handed it work since, whichever that one's goes to.
   owner(session: string): { thread: string; handed: boolean } | undefined {
     const seen = new Set<string>();
-    for (let thread = this.ran.get(session); thread && !seen.has(thread);) {
+
+    for (
+      let thread = this.ran.get(session);
+      thread !== undefined && thread !== "" && !seen.has(thread);
+    ) {
       const one = this.starts.get(thread);
       const up = this.above.get(thread);
-      if (one && (!up || one.since >= up.since))
-        return { thread: one.parent, handed: !seen.size && one.shown };
+
+      if (one !== undefined && (up === undefined || one.since >= up.since)) {
+        return { thread: one.parent, handed: seen.size === 0 && one.shown };
+      }
+
       seen.add(thread);
       thread = up?.parent;
     }
   }
 
-  // A T3 task or thread's title, by either id.
   name(id: string) {
-    const one = this.handed.find((one) => one.task === id || one.id === id);
-    if (one) return one.title;
-    if (!this.titles.has(id))
+    const one = this.handed.find((handoff) => handoff.task === id || handoff.id === id);
+
+    if (one) {
+      return one.title;
+    }
+
+    if (!this.titles.has(id)) {
       this.titles.set(
         id,
         word(
@@ -184,12 +219,14 @@ export class Links {
             .get(id)?.title,
         ),
       );
+    }
+
     return this.titles.get(id);
   }
 
-  // A T3 thread's newest turn items that read as steps, newest first.
   turns(thread: string) {
     let items = this.items.get(thread);
+
     if (!items) {
       items = (
         this.db
@@ -198,46 +235,64 @@ export class Links {
            where thread_id = ? and type in (${SHOWN.map((type) => `'${type}'`).join(", ")}) order by ordinal desc limit ${ITEMS}`,
           )
           .all(thread) ?? []
-      ).map((item) => ({ ...item, payload: JSON.parse(item.payload) }));
+      ).map((item) => {
+        const payload: unknown = JSON.parse(item.payload);
+
+        return { ...item, payload };
+      });
       this.items.set(thread, items);
     }
+
     return items;
   }
 
-  private deep(thread?: string) {
-    return (
-      thread &&
-      this.environment &&
-      `${this.scheme}://threads/${this.environment}/${encodeURIComponent(thread)}`
-    );
+  private deep(thread: string) {
+    return thread === "" || this.environment === undefined
+      ? undefined
+      : `${this.scheme}://threads/${this.environment}/${encodeURIComponent(thread)}`;
   }
 
   private schedule() {
-    if (this.pending) return;
+    if (this.pending !== undefined) {
+      return;
+    }
+
     this.pending = setTimeout(() => {
       this.pending = undefined;
-      if (this.read()) this.changed();
+
+      if (this.read()) {
+        this.changed();
+      }
     }, REFRESH);
   }
 
-  // A hex thread's key is the session id the T3 Code ACP agent holds as its native thread. Turns that
-  // were asked for may have moved with any write, so they're read again when next asked.
   private read() {
+    const db = this.db;
+
+    if (db === undefined) {
+      return false;
+    }
+
     try {
-      const rows = this.db!.query<{ key: string; thread: string; title: string }, []>(
-        `select json_extract(p.payload_json, '$.nativeThreadRef.nativeId') key, json_extract(p.payload_json, '$.appThreadId') thread, t.title
+      const rows = db
+        .query<{ key: string; thread: string; title: string }, []>(
+          `select json_extract(p.payload_json, '$.nativeThreadRef.nativeId') key, json_extract(p.payload_json, '$.appThreadId') thread, t.title
            from orchestration_v2_projection_provider_threads p
            join orchestration_v2_projection_threads t on t.thread_id = json_extract(p.payload_json, '$.appThreadId')
            where p.driver = 'acpRegistry' and t.deleted_at is null
            order by p.updated_at`,
-      ).all();
+        )
+        .all();
+
       const threads = new Map(rows.map(({ key, thread, title }) => [key, { thread, title }]));
       const keys = new Map(rows.map(({ key, thread }) => [thread, key]));
-      const subagents = this.db!.query<
-        Omit<Delegation, "hex" | "link" | "latest"> & { driver: string; latest: number | null },
-        []
-      >(
-        `select s.child_thread_id id, s.subagent_id task, s.thread_id parent, s.driver, s.status, s.started_at since, s.completed_at "end",
+
+      const subagents = db
+        .query<
+          Omit<Delegation, "hex" | "link" | "latest"> & { driver: string; latest: number | null },
+          []
+        >(
+          `select s.child_thread_id id, s.subagent_id task, s.thread_id parent, s.driver, s.status, s.started_at since, s.completed_at "end",
              coalesce(json_extract(s.payload_json, '$.title'), 'a task') title, json_extract(s.payload_json, '$.model') model,
              substr(json_extract(s.payload_json, '$.result'), 1, 1000) result,
              s.started_at >= (select max(m.created_at) from orchestration_v2_projection_messages m
@@ -245,11 +300,14 @@ export class Links {
            from orchestration_v2_projection_subagents s
            where s.origin = 'app_owned' and s.child_thread_id is not null
            order by s.started_at`,
-      ).all();
+        )
+        .all();
+
       const handed = subagents
         .filter((row) => keys.has(row.parent))
         .map(({ driver, latest, parent, ...row }): Delegation => {
           const hex = driver === "acpRegistry" ? keys.get(row.id) : undefined;
+
           return omit({
             ...row,
             parent: `t3:${keys.get(parent)}`,
@@ -259,7 +317,8 @@ export class Links {
             latest: latest === 1,
           });
         });
-      const run = this.db!.query<
+
+      const run = db.query<
         Omit<Delegation, "id" | "task" | "parent" | "hex" | "link" | "latest"> & { latest: number },
         [string]
       >(
@@ -270,23 +329,32 @@ export class Links {
          from orchestration_v2_projection_runs r join orchestration_v2_projection_threads t on t.thread_id = r.thread_id
          where r.run_id = ? and t.deleted_at is null`,
       );
-      // The newest hex handoff to each T3 thread: a delegation by when it started, or a relay by when
-      // hex sent it, queued or not (one to a thread its sender delegated before shows as that
-      // delegation), and whether it shows as a working delegation.
+
       const starts = new Map<string, { parent: string; since: string; shown: boolean }>();
+
       const start = (thread: string, parent: string, since = "", shown = false) => {
-        if (since >= (starts.get(thread)?.since ?? ""))
+        if (since >= (starts.get(thread)?.since ?? "")) {
           starts.set(thread, { parent, since, shown });
+        }
       };
-      for (const one of handed) start(one.id, one.parent, one.since, !HANDED[one.status]);
+
+      for (const one of handed) {
+        start(one.id, one.parent, one.since, !HANDED[one.status]);
+      }
+
       const relayed = open(this.state)
         .relays()
         .flatMap(({ from, thread, run: task, at }): Delegation[] => {
           const ran = run.get(task);
           const hex = keys.get(thread);
-          if (!ran || from === `t3:${hex}`) return [];
+
+          if (!ran || from === `t3:${hex}`) {
+            return [];
+          }
+
           const behind = handed.findLast((one) => one.parent === from && one.id === thread);
           start(thread, from, at, !HANDED[(behind ?? ran).status]);
+
           return behind
             ? []
             : [
@@ -303,23 +371,28 @@ export class Links {
                 }),
               ];
         });
+
       handed.push(...relayed);
+
       const ran = new Map(
-        this.db!.query<{ session: string; thread: string }, []>(
-          `select json_extract(payload_json, '$.nativeThreadRef.nativeId') session, json_extract(payload_json, '$.appThreadId') thread
+        db
+          .query<{ session: string; thread: string }, []>(
+            `select json_extract(payload_json, '$.nativeThreadRef.nativeId') session, json_extract(payload_json, '$.appThreadId') thread
              from orchestration_v2_projection_provider_threads where driver = 'claudeAgent' order by updated_at`,
-        )
+          )
           .all()
           .map(({ session, thread }) => [session, thread]),
       );
-      // The T3 thread that last handed off each one, and when.
+
       const above = new Map(
         subagents.map(({ id, parent, since }) => [id, { parent, since: since ?? "" }]),
       );
+
       const asked = this.items.size > 0;
       this.items.clear();
       this.titles.clear();
       const now = JSON.stringify([[...threads], handed, [...ran], [...above], [...starts]]);
+
       if (
         !asked &&
         now ===
@@ -330,46 +403,74 @@ export class Links {
             [...this.above],
             [...this.starts],
           ])
-      )
+      ) {
         return false;
+      }
+
       this.threads = threads;
       this.handed = handed;
       this.ran = ran;
       this.above = above;
       this.starts = starts;
+
       return true;
     } catch (error) {
-      process.stderr.write(`voice: links: couldn't read T3 Code's threads: ${error}\n`);
+      process.stderr.write(`voice: links: couldn't read T3 Code's threads: ${String(error)}\n`);
+
       return false;
     }
   }
 }
 
-// What a delegation handed back; T3 Code fills in a placeholder for one that ended without a word.
-function handedBack(result?: string) {
-  return result && !/^Child task ended with status \w+\.$/.test(result) ? result : undefined;
+const T3_PLACEHOLDER_FOR_NO_RESULT = /^Child task ended with status \w+\.$/u;
+
+function handedBack(result: string | null | undefined) {
+  return result !== undefined &&
+    result !== null &&
+    result !== "" &&
+    !T3_PLACEHOLDER_FOR_NO_RESULT.test(result)
+    ? result
+    : undefined;
 }
+
+type Absent<V> = [Extract<V, null | undefined>] extends [never] ? false : true;
+
+type Present<T> = { [K in keyof T as Absent<T[K]> extends true ? never : K]: T[K] } & {
+  [K in keyof T as Absent<T[K]> extends true ? K : never]?: Exclude<T[K], null | undefined>;
+};
 
 function omit<T extends object>(record: T) {
-  return Object.fromEntries(Object.entries(record).filter(([, value]) => value != null)) as T;
+  // SAFETY: only entries holding null or undefined are dropped, which leaves each kept value of its type.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- Object.fromEntries can't carry the record's keys.
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== null && value !== undefined),
+  ) as Present<T>;
 }
 
-function word(value: unknown) {
-  return typeof value === "string" && value ? value : undefined;
+function word(value: string | null | undefined) {
+  return value === undefined || value === null || value === "" ? undefined : value;
 }
 
 function readFile(path: string) {
   try {
-    return readFileSync(path, "utf8");
-  } catch {}
+    return readFileSync(path, "utf-8");
+  } catch {
+    return null;
+  }
 }
 
-// A message's own link where its app has one (in a Telegram group or topic, or a Discord thread), else
-// its thread's.
 export function linkAt(app: string, link: string | undefined, message?: MessageId) {
-  if (!link || message === undefined) return link;
-  if (app === "discord") return `${link}/${message}`;
-  if (app === "telegram" && link.startsWith("https://t.me/c/"))
-    return `${link.replace(/\/1$/, "")}/${message}`;
+  if (link === undefined || link === "" || message === undefined) {
+    return link;
+  }
+
+  if (app === "discord") {
+    return `${link}/${message}`;
+  }
+
+  if (app === "telegram" && link.startsWith("https://t.me/c/")) {
+    return `${link.replace(/\/1$/u, "")}/${message}`;
+  }
+
   return link;
 }

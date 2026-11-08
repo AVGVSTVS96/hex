@@ -1,18 +1,35 @@
-import { mkdirSync } from "fs";
-import { join } from "path";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
-import { engine, startHub } from "../../hub/hub.ts";
+import { dispatch, engine, startHub } from "../../hub/hub.ts";
+import type { Handlers } from "../../hub/hub.ts";
 import { hexDir } from "../../hub/store.ts";
-import { server } from "./channel.ts";
+import { server, tools } from "./channel.ts";
 import { serve, take, tool } from "./server.ts";
+
+const filled = (value: string | undefined) => value !== undefined && value !== "";
 
 const STATE = join(hexDir(), "state");
 const THREAD = "voice";
 const stateDir = process.env.VOICE_STATE_DIR ?? join(STATE, THREAD);
+
 mkdirSync(stateDir, { recursive: true });
 
-// One session, always running, takes every call: it stays warm for the whole call and starts
-// over once the call ends, so each call gets a new session that reads the call chat.
+const handlers: Handlers<typeof tools> = {
+  say: async (_, args) => await tool("say", args),
+  note: async (_, args) => await tool("note", args),
+  task: async (_, args) => await tool("task", args),
+  running: async (_, args) => await tool("running", args),
+  ask: async (_, args) => await tool("ask", args),
+  answer: async (_, args) => await tool("answer", args),
+  send: async (_, args) => await tool("send", args),
+  title: async (_, args) => await tool("title", args),
+  phone: async (_, args) => await tool("phone", args),
+  hang_up: async (_, args) => await tool("hang_up", args),
+};
+
+const eachCallGetsAFreshSessionThatReadsTheCallChat = () => true;
+
 const hub = startHub({
   stateDir,
   channel: process.env.VOICE_CHANNEL ?? "plugin:voice@hex",
@@ -20,25 +37,34 @@ const hub = startHub({
   main: THREAD,
   mainName: THREAD,
   hexDir: hexDir(),
-  fresh: () => true,
+  fresh: eachCallGetsAFreshSessionThatReadsTheCallChat,
   limits: { capacity: 0 },
-  launcher: process.env.HEX_LAUNCHER,
-  call: (_, name, args) => tool(name, args),
+  ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
+  call: dispatch(tools, handlers),
+  // oxlint-disable-next-line eslint/no-empty-function -- the voice hub shows no session status anywhere
   state: () => {},
-  failed: (_, reason) =>
-    process.stderr.write(`voice hub: the voice session couldn't start: ${reason}\n`),
+  failed: (_, reason) => {
+    process.stderr.write(`voice hub: the voice session couldn't start: ${reason}\n`);
+  },
 });
 
 serve(
   {
-    deliver: (content, meta) =>
+    deliver: (content, meta) => {
       hub.deliver(THREAD, THREAD, {
         content,
         meta,
-        author: meta.callee ? "other" : meta.delegation_id || meta.ended ? "call" : "prompt",
-      }),
+        author: filled(meta.callee)
+          ? "other"
+          : filled(meta.delegation_id) || filled(meta.ended)
+            ? "call"
+            : "prompt",
+      });
+    },
     keep: () => hub.keep(THREAD),
-    renew: () => hub.renew(THREAD),
+    renew: () => {
+      hub.renew(THREAD);
+    },
     renewal: () => hub.renewal(THREAD),
     session: () => hub.session(THREAD),
   },

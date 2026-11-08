@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { checks, research, study, type Found } from "./ideas.ts";
+import { checks, research } from "./ideas.ts";
+import type { Found } from "./ideas.ts";
 import { open, Store } from "./store.ts";
 
 let dir: string;
@@ -17,14 +18,20 @@ afterEach(() => {
 });
 
 const minute = Date.UTC(2026, 10, 9, 17) / 60_000;
+
 const sent = () =>
   open(dir)
     .untaken()
     .filter((row) => row.from === "schedule");
+
+const fail = () => Promise.reject(new Error("rate limited"));
+const neverAsked = () => Promise.resolve({ news: true, finding: "never asked" });
+
 const job = { cron: "0 9 * * 1", idea: "t-1", prompt: "Is GPT Live 1.1 on the API yet?" };
 
 function idea() {
   const store = new Store(dir);
+
   store.deliver({
     key: "telegram:-100:5",
     to: "-100:7",
@@ -33,6 +40,7 @@ function idea() {
     body: "swap in GPT Live 1.1 once it is on the API",
     meta: { user: "owner" },
   });
+
   return store.createTask({
     title: "Swap in GPT Live 1.1",
     message: "telegram:-100:5",
@@ -44,7 +52,13 @@ function idea() {
 test("news reaches the idea's thread; a check without news wakes no one, and the next one starts from both", async () => {
   idea();
   const inputs: string[] = [];
-  const ask = (found: Found) => async (input: string) => (inputs.push(input), found);
+
+  const ask = (found: Found) => (input: string) => {
+    inputs.push(input);
+
+    return Promise.resolve(found);
+  };
+
   await research(
     dir,
     "gpt-live",
@@ -85,12 +99,10 @@ test("news reaches the idea's thread; a check without news wakes no one, and the
 
 test("a check that fails is kept with its error; the second failure in a row tells the thread, once", async () => {
   idea();
-  const fail = async () => {
-    throw new Error("rate limited");
-  };
+
   await research(dir, "gpt-live", job, "general", minute, fail);
   expect(sent()).toEqual([]);
-  expect(checks(dir, "t-1")[0]!.error).toContain("rate limited");
+  expect(checks(dir, "t-1")[0]?.error).toContain("rate limited");
   await research(dir, "gpt-live", job, "general", minute + 1440, fail);
   await research(dir, "gpt-live", job, "general", minute + 2 * 1440, fail);
   expect(sent()).toMatchObject([
@@ -104,9 +116,8 @@ test("a check that fails is kept with its error; the second failure in a row tel
 test("an idea that's done has nothing to look into: its thread hears once to take the job out", async () => {
   const { id } = idea();
   open(dir).editTask(id, { status: "done", proof: "shipped" });
-  const ask = async () => ({ news: true, finding: "never asked" });
-  await research(dir, "gpt-live", job, "general", minute, ask);
-  await research(dir, "gpt-live", job, "general", minute + 1440, ask);
+  await research(dir, "gpt-live", job, "general", minute, neverAsked);
+  await research(dir, "gpt-live", job, "general", minute + 1440, neverAsked);
   expect(sent()).toMatchObject([
     {
       to: "-100:7",
@@ -121,11 +132,10 @@ test("an idea that's done has nothing to look into: its thread hears once to tak
 
 test("each check keeps the input it was given, so a prompt can be replayed against it", async () => {
   idea();
-  await research(dir, "gpt-live", job, "general", minute, async () => ({
-    news: false,
-    finding: "nothing yet",
-  }));
-  expect(checks(dir, "t-1")[0]!.input).toContain(
+  await research(dir, "gpt-live", job, "general", minute, () =>
+    Promise.resolve({ news: false, finding: "nothing yet" }),
+  );
+  expect(checks(dir, "t-1")[0]?.input).toContain(
     "What to look into: Is GPT Live 1.1 on the API yet?",
   );
 });

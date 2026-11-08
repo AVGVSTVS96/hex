@@ -1,13 +1,21 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { chmodSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { CallLog, summary, type CallRecord } from "./calls.ts";
+import { CallLog, summary } from "./calls.ts";
+import type { CallRecord } from "./calls.ts";
 
 function scratch() {
   const dir = mkdtempSync(join(tmpdir(), "calls-"));
-  return { calls: new CallLog(dir), [Symbol.dispose]: () => rmSync(dir, { recursive: true }) };
+
+  return {
+    dir,
+    calls: new CallLog(dir),
+    [Symbol.dispose]: () => {
+      rmSync(dir, { recursive: true });
+    },
+  };
 }
 
 const record = (id: string, started: string, extra: Partial<CallRecord> = {}): CallRecord => ({
@@ -82,6 +90,17 @@ test("the list leaves out hex's own words, and keeps the summary and what waits"
       waiting: ["Merge the PR"],
     }),
   );
+
   expect(listed).not.toHaveProperty("moments");
   expect(listed).toMatchObject({ summary: "Checked CI.", waiting: ["Merge the PR"] });
+});
+
+test("a past call is parsed again only once its file changes, since the list is read on every change to a live call and parsing every record each time would stall the engine, phone audio and all", () => {
+  using log = scratch();
+  log.calls.save(record("one", "2026-11-01T10:00:00.000Z"));
+  expect(log.calls.list().map((call) => call.preview)).toEqual(["Is the build green?"]);
+
+  chmodSync(join(log.dir, "one.json"), 0o000);
+
+  expect(log.calls.list().map((call) => call.preview)).toEqual(["Is the build green?"]);
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { appendFileSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { SessionNotification } from "@agentclientprotocol/sdk";
 
@@ -20,10 +20,12 @@ const prompt = {
   isMeta: true,
   message: { content: '<channel source="t3">hi</channel>' },
 };
+
 const text = (id: string, words: string) => ({
   type: "assistant",
   message: { id, content: [{ type: "text", text: words }] },
 });
+
 const bash = {
   type: "assistant",
   message: {
@@ -31,11 +33,13 @@ const bash = {
     content: [{ type: "tool_use", id: "tool1", name: "Bash", input: { command: "pwd" } }],
   },
 };
+
 const result = {
   type: "user",
   uuid: "u1",
   message: { content: [{ type: "tool_result", tool_use_id: "tool1", content: "/work" }] },
 };
+
 const done = { type: "system", subtype: "turn_duration" };
 
 beforeEach(() => {
@@ -51,7 +55,7 @@ afterEach(() => {
 });
 
 function write(...entries: object[]) {
-  appendFileSync(path, entries.map((entry) => JSON.stringify(entry) + "\n").join(""));
+  appendFileSync(path, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
 }
 
 function start(since?: number) {
@@ -87,11 +91,8 @@ test("a new session streams from its start, once its transcript appears", async 
   expect(ended).toBe(0);
   write(done);
   await until(() => ended);
-  expect(updates).toEqual([
-    expect.objectContaining({
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "hello" },
-    }),
+  expect(updates).toMatchObject([
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hello" } },
   ]);
 });
 
@@ -109,9 +110,7 @@ test("a forked session streams from its start without the conversation it copied
     done,
   );
   await until(() => ended);
-  expect(updates).toEqual([
-    expect.objectContaining({ content: { type: "text", text: "I said anchors are in" } }),
-  ]);
+  expect(updates).toMatchObject([{ content: { type: "text", text: "I said anchors are in" } }]);
 });
 
 test("a turn_duration before the prompt is an earlier turn ending, not this one", async () => {
@@ -123,11 +122,19 @@ test("a turn_duration before the prompt is an earlier turn ending, not this one"
 
 test("a line written in two pieces is read once it is whole", async () => {
   start(0);
-  const line = JSON.stringify(text("m1", "whole")) + "\n";
-  writeFileSync(path, JSON.stringify(prompt) + "\n" + line.slice(0, 20));
+  const line = `${JSON.stringify(text("m1", "whole"))}\n`;
+  writeFileSync(path, `${JSON.stringify(prompt)}\n${line.slice(0, 20)}`);
   await Bun.sleep(100);
   expect(updates).toEqual([]);
   appendFileSync(path, line.slice(20));
   await until(() => updates.length);
   expect(updates[0]).toMatchObject({ content: { text: "whole" } });
+});
+
+test("a Stop hook that runs before the watch sees the turn's last batch still streams it and ends the turn", () => {
+  start(0);
+  write(prompt, text("m1", "the last reply"), done);
+  reader?.settle();
+  expect(updates).toMatchObject([{ content: { text: "the last reply" } }]);
+  expect(ended).toBe(1);
 });

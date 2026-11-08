@@ -8,11 +8,14 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { basename, join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join } from "node:path";
+
+import { z } from "zod";
 
 import { open, Store } from "./store.ts";
+import type { NewRow } from "./store.ts";
 import { until } from "./until.ts";
 
 let dir: string;
@@ -32,16 +35,35 @@ const message = {
   body: "remind me to buy Cheryl a salty treat",
   author: "owner",
   meta: { user: "bassim" },
-};
+} satisfies NewRow;
+
+function said(out: string) {
+  return out.split("\n").filter((line) => /^(on|Telegram)/u.test(line));
+}
+
+function anyString(): string {
+  // oxlint-disable-next-line typescript/no-unsafe-return -- bun types its asymmetric matchers as any
+  return expect.any(String);
+}
+
+function containing(text: string): string {
+  // oxlint-disable-next-line typescript/no-unsafe-return -- bun types its asymmetric matchers as any
+  return expect.stringContaining(text);
+}
+
+function matching(pattern: RegExp): string {
+  // oxlint-disable-next-line typescript/no-unsafe-return -- bun types its asymmetric matchers as any
+  return expect.stringMatching(pattern);
+}
 
 test("a message is kept once, word for word, and a resend under its key changes nothing", () => {
   const store = new Store(dir);
   expect(store.deliver(message)).toBe(true);
   expect(store.deliver({ ...message, body: "something else" })).toBe(false);
-  const kept = store.message(message.key)!;
+  const kept = store.message(message.key);
   expect(kept).toMatchObject({ ...message });
-  expect(kept.at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
-  expect(kept.taken).toBeUndefined();
+  expect(kept?.at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u);
+  expect(kept?.taken).toBeUndefined();
 });
 
 test("a key has to start with its sender, so the keys hex makes stay its own", () => {
@@ -55,13 +77,15 @@ test("a key has to start with its sender, so the keys hex makes stay its own", (
 
 test("a message reads as its newest edit, made in any topic of its chat, even when only the edit was kept", () => {
   const store = new Store(dir);
+
   const sent = {
     key: "telegram:-100:42",
     to: "-100:7",
     from: "telegram",
     author: "hex",
     body: "Deploy at 5",
-  };
+  } satisfies NewRow;
+
   store.deliver(sent);
   expect(store.latest(sent.key)?.body).toBe("Deploy at 5");
   store.deliver({
@@ -123,7 +147,7 @@ test("the first session to take a message has it, and it leaves what waits", () 
   expect(store.take(message.key, "session-a")).toBe(true);
   expect(store.take(message.key, "session-b")).toBe(false);
   expect(store.take("telegram:-100:99", "session-a")).toBe(false);
-  expect(store.message(message.key)!.taken!.by).toBe("session-a");
+  expect(store.message(message.key)?.taken?.by).toBe("session-a");
   expect(store.untaken("-100:7").map((row) => row.body)).toEqual(["and some chips"]);
   expect(store.untaken().map((row) => row.key)).toEqual(["telegram:-100:43", "telegram:-100:44"]);
 });
@@ -167,7 +191,7 @@ test("a schedule's slot fires once, and its next slot fires whether or not the l
     from: "schedule",
     meta: { user: "schedule", schedule: "heartbeat" },
   });
-  expect(store.message("schedule:call@2026-10-18T21:45Z")!.meta!.late).toBe("true");
+  expect(store.message("schedule:call@2026-10-18T21:45Z")?.meta?.late).toBe("true");
 });
 
 test("the scheduler keeps the last minute it checked", () => {
@@ -183,7 +207,11 @@ test("a change committed in another process rings the bell, and a write that cha
   expect(open(dir)).toBe(store);
   let rang = 0;
   store.keepThreads("telegram", { general: { name: "General" } });
-  const stop = store.watch(() => rang++);
+
+  const stop = store.watch(() => {
+    rang++;
+  });
+
   const cli = Bun.spawn([
     "bun",
     join(import.meta.dir, "cli.ts"),
@@ -196,6 +224,7 @@ test("a change committed in another process rings the bell, and a write that cha
     "build",
     "ended",
   ]);
+
   expect(await cli.exited).toBe(0);
   await until(() => rang > 0);
   expect(store.message("job:build:abc")).toMatchObject({
@@ -204,17 +233,24 @@ test("a change committed in another process rings the bell, and a write that cha
     body: "[job] build ended",
     meta: { user: "job" },
   });
-  const bell = readFileSync(join(dir, "hex.bell"), "utf8");
+  const bell = readFileSync(join(dir, "hex.bell"), "utf-8");
   expect(store.take("job:nothing:here", "session-a")).toBe(false);
-  expect(readFileSync(join(dir, "hex.bell"), "utf8")).toBe(bell);
+  expect(readFileSync(join(dir, "hex.bell"), "utf-8")).toBe(bell);
   stop();
 });
 
 test("a listener runs at the first ring, then once for each change, however many times the bell rings for it", async () => {
   const store = open(dir);
   let rang = 0;
-  const stop = store.watch(() => rang++);
-  for (let ring = 0; ring < 5; ring++) appendFileSync(join(dir, "hex.bell"), ".");
+
+  const stop = store.watch(() => {
+    rang++;
+  });
+
+  for (let ring = 0; ring < 5; ring++) {
+    appendFileSync(join(dir, "hex.bell"), ".");
+  }
+
   await until(() => rang > 0);
   await Bun.sleep(100);
   expect(rang).toBe(1);
@@ -229,13 +265,15 @@ test("hex watch prints a line once it listens and one for each change to hex.db,
   const watch = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, "watch"], {
     stdout: "pipe",
   });
+
   try {
     const lines = watch.stdout.getReader();
     const line = async () => new TextDecoder().decode((await lines.read()).value);
-    expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n$/);
+    expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n$/u);
     expect(existsSync(join(dir, "hex.db"))).toBe(false);
     const store = open(dir);
     let n = 0;
+
     const change = () =>
       store.deliver({
         key: `job:watched:${n++}`,
@@ -244,8 +282,9 @@ test("hex watch prints a line once it listens and one for each change to hex.db,
         author: "prompt",
         body: "one",
       });
+
     change();
-    expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n/);
+    expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n/u);
     await lines.cancel();
     await until(() => watch.exitCode !== null || void change(), 10_000);
     expect(watch.exitCode).toBe(0);
@@ -257,9 +296,11 @@ test("hex watch prints a line once it listens and one for each change to hex.db,
 test("a change right after the one the bell just rang for is still heard", async () => {
   const store = open(dir);
   const seen: (string | undefined)[] = [];
+
   const stop = store.watch(() => {
     seen.push(store.message("job:quick:2")?.body);
-    if (seen.length === 1)
+
+    if (seen.length === 1) {
       store.deliver({
         key: "job:quick:2",
         to: "general",
@@ -267,7 +308,9 @@ test("a change right after the one the bell just rang for is still heard", async
         author: "prompt",
         body: "two",
       });
+    }
   });
+
   store.deliver({ key: "job:quick:1", to: "general", from: "job", author: "prompt", body: "one" });
   await until(() => seen.at(-1) === "two");
   stop();
@@ -281,6 +324,7 @@ test("hex deliver says how to call it when something is missing", async () => {
     const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, "deliver", ...args], {
       stderr: "pipe",
     });
+
     expect(await cli.exited).toBe(2);
     expect(await new Response(cli.stderr).text()).toContain(
       "hex deliver <from>[:<id>] --to <thread>",
@@ -290,6 +334,7 @@ test("hex deliver says how to call it when something is missing", async () => {
 
 test("hex deliver reaches a thread by its id, and a sender alone gets a key of its own", async () => {
   open(dir).keepThreads("discord", { "1561": { name: "Fixhex" } });
+
   const cli = Bun.spawn([
     "bun",
     join(import.meta.dir, "cli.ts"),
@@ -302,10 +347,11 @@ test("hex deliver reaches a thread by its id, and a sender alone gets a key of i
     "hex General",
     "look at the build",
   ]);
+
   expect(await cli.exited).toBe(0);
   expect(open(dir).said("1561", 1)).toMatchObject([
     {
-      key: expect.stringMatching(/^hex:[0-9a-f-]{36}$/),
+      key: matching(/^hex:[0-9a-f-]{36}$/u),
       from: "hex",
       author: "prompt",
       body: "look at the build",
@@ -317,6 +363,7 @@ test("hex deliver reaches a thread by its id, and a sender alone gets a key of i
 test("hex deliver reaches a thread by its session's id or the 8 characters hex running prints, and refuses a session that works for no thread", async () => {
   const claude = join(dir, "claude");
   mkdirSync(join(claude, "sessions"), { recursive: true });
+
   const session = (
     sessionId: string,
     name: string,
@@ -324,7 +371,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     store = dir,
     jobId = `job${sessionId.slice(0, 5)}`,
   ) => {
-    const job = thread && (jobId || sessionId.slice(0, 8));
+    const job = thread === undefined ? "" : thread && (jobId || sessionId.slice(0, 8));
     writeFileSync(
       join(claude, "sessions", `${sessionId}.json`),
       JSON.stringify({
@@ -336,7 +383,11 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
         ...(job && jobId && { jobId }),
       }),
     );
-    if (!job) return;
+
+    if (!job) {
+      return;
+    }
+
     const settings = join(claude, `${thread}.json`);
     writeFileSync(
       settings,
@@ -353,6 +404,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
       }),
     );
   };
+
   session("38b69086-82da-46a4-8a80-802ddb4fbec5", "hex/seqno-plugins2");
   session("38b69086-ffff-4000-8000-000000000000", "hex/seqno-import2");
   session("9762845b-0000-4000-8000-000000000000", "hex keyboard", "-100:452");
@@ -374,6 +426,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     "-100:452": { name: "hex keyboard" },
     "-100:65": { name: "Theo clips" },
   });
+
   const deliver = async (to: string) => {
     const cli = Bun.spawn(
       [
@@ -388,6 +441,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
       ],
       { stderr: "pipe", env: { ...Bun.env, CLAUDE_CONFIG_DIR: claude } },
     );
+
     return { code: await cli.exited, said: await new Response(cli.stderr).text() };
   };
 
@@ -397,40 +451,42 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     "addfa113-11f6-4698-9b9e-c80b1d5aebdf",
     "9762845b",
     "7ac61e5d",
-  ])
+  ]) {
     expect(await deliver(to)).toEqual({ code: 0, said: "" });
-  for (const to of ["5cc4f530", "3d599dd0"])
+  }
+
+  for (const to of ["5cc4f530", "3d599dd0"]) {
     expect(await deliver(to)).toEqual({
       code: 0,
-      said: expect.stringContaining("is closed, so this waits until it opens"),
+      said: containing("is closed, so this waits until it opens"),
     });
+  }
+
   expect(await deliver("e3bbf1d4")).toEqual({
     code: 1,
-    said: expect.stringContaining(
+    said: containing(
       "e3bbf1d4-0000-4000-8000-000000000000 (another hex) is a session no thread holds",
     ),
   });
   expect(await deliver("d4365c34-312f-4a52-9704-36fcf657e5b9")).toEqual({
     code: 1,
-    said: expect.stringContaining(
-      "no thread or running session is d4365c34-312f-4a52-9704-36fcf657e5b9",
-    ),
+    said: containing("no thread or running session is d4365c34-312f-4a52-9704-36fcf657e5b9"),
   });
   expect(await deliver("38b69086-82")).toEqual({
     code: 1,
-    said: expect.stringContaining(
+    said: containing(
       '38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2) is a session no thread holds, so it would never take this message: message it with Claude Code\'s SendMessage to "hex/seqno-plugins2"',
     ),
   });
   expect(await deliver("38b69086")).toEqual({
     code: 1,
-    said: expect.stringContaining(
+    said: containing(
       "38b69086 starts more than one session's id: 38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2), 38b69086-ffff-4000-8000-000000000000 (hex/seqno-import2)",
     ),
   });
   expect(await deliver("d4365c34")).toEqual({
     code: 1,
-    said: expect.stringContaining("no thread or running session is d4365c34"),
+    said: containing("no thread or running session is d4365c34"),
   });
   expect(
     open(dir)
@@ -450,30 +506,33 @@ test("hex deliver finds a thread by its name too, keeps one for a closed thread 
     "-100:2": { name: "hex" },
     selfheal: { name: "Old notes" },
   });
+
   const deliver = async (to: string) => {
     const cli = Bun.spawn(
       ["bun", join(import.meta.dir, "cli.ts"), dir, "deliver", "hex", "--to", to, "hello"],
       { stderr: "pipe", env: { ...Bun.env, CLAUDE_CONFIG_DIR: join(dir, "claude") } },
     );
+
     return { code: await cli.exited, said: await new Response(cli.stderr).text() };
   };
-  for (const to of ["SelfHeal", "HEX", "T3: notes"])
+
+  for (const to of ["SelfHeal", "HEX", "T3: notes"]) {
     expect(await deliver(to)).toEqual({ code: 0, said: "" });
+  }
+
   expect(await deliver("0F3A9C1E-0000-4000-8000-000000000000")).toEqual({
     code: 0,
-    said: expect.stringContaining(
+    said: containing(
       "the thread 0f3a9c1e-0000-4000-8000-000000000000 is closed, so this waits until it opens again",
     ),
   });
   expect(await deliver("Self heal")).toEqual({
     code: 1,
-    said: expect.stringContaining('no thread is "Self heal" (hex threads lists them)'),
+    said: containing('no thread is "Self heal" (hex threads lists them)'),
   });
   expect(await deliver("1d056dde-a8e8-479f-842c-e9d7eb6e6e5d")).toEqual({
     code: 1,
-    said: expect.stringContaining(
-      "no thread or running session is 1d056dde-a8e8-479f-842c-e9d7eb6e6e5d",
-    ),
+    said: containing("no thread or running session is 1d056dde-a8e8-479f-842c-e9d7eb6e6e5d"),
   });
   expect(
     open(dir)
@@ -507,17 +566,19 @@ test("a task from before titles gets its first words as its title", () => {
   store.db.run("drop table turns; drop table relays");
   store.db.run("pragma user_version = 10");
   store.db.close();
-  expect(new Store(dir).task("t-1")!.title).toBe("Fix the login page. It 500s on submit.");
+  expect(new Store(dir).task("t-1")?.title).toBe("Fix the login page. It 500s on submit.");
 });
 
 test("a task has a clean title of its own, and its words still come from the message", () => {
   const store = new Store(dir);
   store.deliver(ask);
+
   const task = store.createTask({
     title: "  Sharpen the logo on retina ",
     message: ask.key,
     owner: "-100:7",
   });
+
   expect(task).toMatchObject({ title: "Sharpen the logo on retina", words: [{ text: ask.body }] });
   expect(() => store.createTask({ title: " ", message: ask.key, owner: "-100:7" })).toThrow(
     "needs a title",
@@ -551,7 +612,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
       message: ask.key,
       quote: "the logo looks blurry on retina",
       owner: "-100:7",
-    }).words[0]!.text,
+    }).words[0]?.text,
   ).toBe("the logo looks blurry on retina");
   expect(() =>
     store.createTask({
@@ -579,7 +640,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   store.db.run(
     "insert or replace into messages (key, \"to\", \"from\", author, body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'owner', 'Fix it', '2026-10-19T00:00:00.000Z')",
   );
-  expect(store.message(ask.key)!.body).toBe(ask.body);
+  expect(store.message(ask.key)?.body).toBe(ask.body);
   expect(() =>
     store.db.run(
       "insert or replace into words (rowid, task, message, text) values (1, 1, 'telegram:-100:50', 'Fix the login page.')",
@@ -587,9 +648,9 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   ).toThrow("never rewritten");
   expect(store.tasks().map((task) => task.id)).toEqual(["t-2", "t-1"]);
   expect(store.tasks({ owner: "-100:7", status: ["open"], words: false })).toEqual(
-    store.tasks({ owner: "-100:7", status: ["open"] }).map(({ words, ...task }) => task),
+    store.tasks({ owner: "-100:7", status: ["open"] }).map(({ words: _words, ...task }) => task),
   );
-  expect(store.task("t-1")!.words[0]!.text).toBe(ask.body);
+  expect(store.task("t-1")?.words[0]?.text).toBe(ask.body);
 });
 
 test("a task can be cut down to the words that ask, still quoted as written", () => {
@@ -603,7 +664,7 @@ test("a task can be cut down to the words that ask, still quoted as written", ()
   expect(
     store.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
   ).toEqual(["Fix the login page."]);
-  expect(store.task("t-1")!.words.map((words) => words.text)).toEqual(["Fix the login page."]);
+  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual(["Fix the login page."]);
   expect(() => store.db.run("update words set text = 'Fix it all' where task = 1")).toThrow(
     "only ever cut down",
   );
@@ -616,7 +677,7 @@ test("cutting a whole message down keeps the other asks quoted from it", () => {
   store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
   store.addWords("t-1", ask.key, "the logo looks blurry on retina");
   store.requote("t-1", ask.key, "Fix the login page.");
-  expect(store.task("t-1")!.words.map((words) => words.text)).toEqual([
+  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "the logo looks blurry on retina",
   ]);
@@ -646,13 +707,13 @@ test("cutting takes the whole message and leaves quotes picked on purpose alone"
   store.addWords("t-1", "telegram:-100:51");
   store.addWords("t-1", ask.key, "Fix the login page.");
   store.requote("t-1", ask.key, "Fix the login page.");
-  expect(store.task("t-1")!.words.map((words) => words.text)).toEqual([
+  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "Also the docs.",
   ]);
   store.addWords("t-1", ask.key, "the logo looks blurry on retina");
   expect(() => store.requote("t-1", ask.key, "blurry")).toThrow("holds no whole message");
-  expect(store.task("t-1")!.words.map((words) => words.text)).toEqual([
+  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "Also the docs.",
     "the logo looks blurry on retina",
@@ -664,8 +725,10 @@ test("cutting takes the whole message and leaves quotes picked on purpose alone"
 
 test("a task from a T3 Code prompt holds what was asked, not T3's instructions around it", () => {
   const store = new Store(dir);
+
   const body =
     "<t3_code_instructions>\n## T3 Code interaction mode: Default\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n<runtime_info>opus</runtime_info>";
+
   store.deliver({
     key: "t3:1",
     to: "thread-1",
@@ -675,7 +738,7 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.createTask({ title: "Fix it", message: "t3:1", owner: "thread-1" }).words[0]!.text,
+    store.createTask({ title: "Fix it", message: "t3:1", owner: "thread-1" }).words[0]?.text,
   ).toBe("ship it");
   expect(() => store.addWords("t-1", "t3:1", body)).toThrow("isn't in");
   expect(store.addWords("t-1", "t3:1").words.map((words) => words.text)).toEqual(["ship it"]);
@@ -700,12 +763,14 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     "[image: /inbox/1.png]",
   ]);
   store.addWords("t-2", "t3:2");
-  expect(store.task("t-2")!.words.map((words) => words.text)).toEqual([
+  expect(store.task("t-2")?.words.map((words) => words.text)).toEqual([
     "ship",
     "[image: /inbox/1.png]",
   ]);
+
   const attached =
     "<t3_code_instructions>\nx\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n[image: /inbox/2.png]";
+
   store.deliver({
     key: "t3:5",
     to: "thread-1",
@@ -719,8 +784,10 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
       .createTask({ title: "Fix it", message: "t3:5", owner: "thread-1" })
       .words.map((words) => words.text),
   ).toEqual(["ship it", "[image: /inbox/2.png]"]);
+
   const tagged =
     "<user_request>\nmake the header say\n<title>Hello</title>\n</user_request>\n\n<runtime_info>opus</runtime_info>";
+
   store.deliver({
     key: "t3:4",
     to: "thread-1",
@@ -730,7 +797,7 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.createTask({ title: "Fix it", message: "t3:4", owner: "thread-1" }).words[0]!.text,
+    store.createTask({ title: "Fix it", message: "t3:4", owner: "thread-1" }).words[0]?.text,
   ).toBe("make the header say\n<title>Hello</title>");
   store.deliver({
     key: "t3:3",
@@ -741,12 +808,12 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.createTask({ title: "Fix it", message: "t3:3", owner: "thread-1" }).words[0]!.text,
+    store.createTask({ title: "Fix it", message: "t3:3", owner: "thread-1" }).words[0]?.text,
   ).toBe("and the docs");
   store.deliver({ ...ask, key: "telegram:-100:51", body: "paste: <user_request>x</user_request>" });
   expect(
-    store.createTask({ title: "Fix it", message: "telegram:-100:51", owner: "-100:7" }).words[0]!
-      .text,
+    store.createTask({ title: "Fix it", message: "telegram:-100:51", owner: "-100:7" }).words[0]
+      ?.text,
   ).toBe("paste: <user_request>x</user_request>");
 });
 
@@ -754,15 +821,17 @@ test("follow-ups are added after what was said first, and a repeat changes nothi
   const store = new Store(dir);
   store.deliver(ask);
   store.deliver({ ...message, key: "telegram:-100:51", body: "and make it work on mobile" });
+
   const task = store.createTask({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
+
   store.addWords(task.id, "telegram:-100:51");
   store.addWords(task.id, "telegram:-100:51");
-  expect(store.task(task.id)!.words.map((words) => words.text)).toEqual([
+  expect(store.task(task.id)?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "and make it work on mobile",
   ]);
@@ -771,14 +840,17 @@ test("follow-ups are added after what was said first, and a repeat changes nothi
 test("done needs a proof, and the states are the four a task has", () => {
   const store = new Store(dir);
   store.deliver(ask);
+
   const { id } = store.createTask({
     title: "Fix it",
     message: ask.key,
     owner: "-100:7",
     status: "idea",
   });
+
   expect(() => store.editTask(id, { status: "done" })).toThrow();
-  expect(() => store.editTask(id, { status: "finished" as any })).toThrow();
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion anti-slop/require-safety-comment-for-type-assertion -- a status outside the four, to show the store refuses it
+  expect(() => store.editTask(id, { status: "finished" as never })).toThrow();
   store.editTask(id, { project: "site", doneWhen: "it signs in" });
   expect(store.editTask(id, { owner: "-100:9", project: undefined })).toMatchObject({
     owner: "-100:9",
@@ -797,19 +869,22 @@ test("a task keeps when it was closed: set when it ends, kept through later edit
   const store = new Store(dir);
   store.deliver(ask);
   const { id } = store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  expect(store.task(id)!.closed).toBeUndefined();
+  expect(store.task(id)).toMatchObject({ id, status: "open" });
+  expect(store.task(id)?.closed).toBeUndefined();
   const { closed } = store.editTask(id, { status: "done", proof: "https://example.com/pr/1" });
   expect(closed).toBeString();
   expect(store.editTask(id, { proof: "https://example.com/pr/2" }).closed).toBe(closed);
   expect(store.editTask(id, { status: "open" }).closed).toBeUndefined();
+
   const duplicate = store.createTask({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
+
   expect(store.mergeTasks(id, duplicate.id)).toMatchObject({ status: "open" });
-  expect(store.task(duplicate.id)!.closed).toBeString();
+  expect(store.task(duplicate.id)?.closed).toBeString();
 });
 
 test("a merge puts the duplicate's words after the task's own, drops it, and its follow-ups go where it went", () => {
@@ -822,17 +897,20 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
     body: "the login page is broken",
   });
   store.deliver({ ...message, key: "telegram:-100:61", to: "-100:9", body: "still broken btw" });
+
   const kept = store.createTask({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
+
   const duplicate = store.createTask({
     title: "Fix it",
     message: "telegram:-100:60",
     owner: "-100:9",
   });
+
   const merged = store.mergeTasks(kept.id, duplicate.id);
   expect(merged.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
@@ -840,7 +918,7 @@ test("a merge puts the duplicate's words after the task's own, drops it, and its
   ]);
   expect(store.task(duplicate.id)).toMatchObject({ status: "dropped", mergedInto: kept.id });
   expect(store.addWords(duplicate.id, "telegram:-100:61").id).toBe(kept.id);
-  expect(store.task(kept.id)!.words).toHaveLength(3);
+  expect(store.task(kept.id)?.words).toHaveLength(3);
   expect(() => store.editTask(duplicate.id, { status: "open" })).toThrow();
   expect(() => store.mergeTasks(kept.id, duplicate.id)).toThrow("dropped");
   expect(() => store.mergeTasks(kept.id, kept.id)).toThrow("itself");
@@ -850,27 +928,30 @@ test("hex log reads every thread a name means, a delivery to that name asks for 
   const store = open(dir);
   store.keepThreads("telegram", { "629": { name: "DM" } });
   store.keepThreads("discord", { "1560": { name: "DM" } });
-  for (const [key, to, body] of [
-    ["telegram:629:1", "629", "on Telegram"],
-    ["discord:1560:1", "1560", "on Discord"],
-    ["telegram:629:2", "629", "Telegram again"],
-  ]) {
-    store.deliver({ key: key!, to: to!, from: key!.split(":")[0]!, author: "owner", body: body! });
+
+  for (const [from, key, to, body] of [
+    ["telegram", "telegram:629:1", "629", "on Telegram"],
+    ["discord", "discord:1560:1", "1560", "on Discord"],
+    ["telegram", "telegram:629:2", "629", "Telegram again"],
+  ] as const) {
+    store.deliver({ key, to, from, author: "owner", body });
     await Bun.sleep(5);
   }
+
   const hex = async (...args: string[]) => {
     const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, ...args], {
       stdout: "pipe",
       stderr: "pipe",
       env: { ...Bun.env, MEMORY_DIR: join(dir, "memory"), CLAUDE_CONFIG_DIR: join(dir, "claude") },
     });
+
     return {
       code: await cli.exited,
       out: await new Response(cli.stdout).text(),
       err: await new Response(cli.stderr).text(),
     };
   };
-  const said = (out: string) => out.split("\n").filter((line) => /^(on|Telegram)/.test(line));
+
   expect(said((await hex("log", "--", "dm")).out)).toEqual([
     "on Telegram",
     "on Discord",
@@ -886,7 +967,7 @@ test("hex log reads every thread a name means, a delivery to that name asks for 
   ]);
   expect(await hex("deliver", "hex", "--to", "DM", "hello")).toMatchObject({
     code: 1,
-    err: expect.stringContaining(
+    err: containing(
       'more than one thread is named "DM", so send to one by its id: discord:1560, telegram:629',
     ),
   });
@@ -931,12 +1012,12 @@ test("each app's threads.json comes into hex.db once, as that app's open threads
       },
       { app: "telegram", thread: "-100:9", name: "Errands", open: false },
       { app: basename(dir), thread: "7", name: "Outside a hex", open: true },
-    ].sort((a, b) => a.app.localeCompare(b.app) || a.thread.localeCompare(b.thread)),
+    ].toSorted((a, b) => a.app.localeCompare(b.app) || a.thread.localeCompare(b.thread)),
   );
   expect(
     ["telegram/threads.json", "threads.json"].map((file) => existsSync(join(dir, file))),
   ).toEqual([false, false]);
-  expect(readFileSync(join(dir, "telegram", "threads.json.moved-to-hex.db"), "utf8")).toContain(
+  expect(readFileSync(join(dir, "telegram", "threads.json.moved-to-hex.db"), "utf-8")).toContain(
     "Desk",
   );
 });
@@ -968,11 +1049,13 @@ test("a session that ended loses what it was shown, and log/'s turns headed t be
 
 test("each app's relays.jsonl comes into hex.db once, the newest run per pair of threads", () => {
   mkdirSync(join(dir, "discord"));
+
   const lines = [
     { at: "2026-10-21T10:00:00.000Z", from: "fix", thread: "thread-prims", run: "run-1" },
     { at: "2026-10-21T10:05:00.000Z", from: "fix", thread: "thread-codex", run: "run-2" },
     { at: "2026-10-21T10:10:00.000Z", from: "fix", thread: "thread-prims", run: "run-3" },
   ];
+
   writeFileSync(
     join(dir, "discord", "relays.jsonl"),
     [...lines.map((line) => JSON.stringify(line)), "not json", ""].join("\n"),
@@ -988,28 +1071,31 @@ test("each app's relays.jsonl comes into hex.db once, the newest run per pair of
 test("a session's turns: one begins, ends, and the next begins again, an end from before its begin is old news, and one not heard from in 30 days goes", () => {
   const store = new Store(dir);
   store.turned("s-1", true);
-  expect(store.turn("s-1")).toEqual({ began: expect.any(String), handled: expect.any(String) });
+  expect(store.turn("s-1")).toEqual({ began: anyString(), handled: anyString() });
   store.turned("s-1", false);
-  const { began, ended } = store.turn("s-1");
-  expect(ended! >= began!).toBe(true);
+  const { began = "", ended = "" } = store.turn("s-1");
+  expect(began).not.toBe("");
+  expect(ended >= began).toBe(true);
   store.turned("s-1", true, "2026-10-21T10:00:00.000Z");
   store.turned("s-1", false, "2026-10-21T09:59:59.000Z");
   expect(store.turn("s-1")).toEqual({
     began: "2026-10-21T10:00:00.000Z",
-    handled: expect.any(String),
+    handled: anyString(),
   });
   store.db.run(
     "update turns set began = '2026-01-01T00:00:00.000Z', ended = '2026-01-01T00:00:01.000Z'",
   );
   store.turned("s-2", true);
   expect(store.turn("s-1")).toEqual({});
-  expect(store.turn("s-2")).toEqual({ began: expect.any(String), handled: expect.any(String) });
+  expect(store.turn("s-2")).toEqual({ began: anyString(), handled: anyString() });
 });
 
 test("a thread's sessions cut short mid-turn give back what they took since last handled, never hex's own words or what was typed in them; a turn that ended, answered, failed or handled by the hub, gives nothing back", async () => {
   const store = new Store(dir);
+
   const give = (key: string, from = "telegram", author: "owner" | "hex" = "owner") =>
     store.deliver({ key: `${from}:${key}`, to: "7", from, author, body: key, meta: {} });
+
   give("answered");
   store.turned("s-1", true, "2026-10-21T10:00:00.000Z");
   store.take("telegram:answered", "s-1");
@@ -1028,7 +1114,7 @@ test("a thread's sessions cut short mid-turn give back what they took since last
   store.turned("s-2", true, "2026-10-21T10:00:00.000Z");
   store.take("telegram:unsaved", "s-2");
   expect(store.midTurn("7")).toBe(true);
-  expect(store.cut("7").sort()).toEqual(["telegram:open", "telegram:unsaved"]);
+  expect(store.cut("7").toSorted()).toEqual(["telegram:open", "telegram:unsaved"]);
   expect(store.untaken("7").map((row) => row.key)).toEqual(["telegram:open", "telegram:unsaved"]);
   expect(store.turn("s-1").ended).toBeDefined();
   expect(store.midTurn("7")).toBe(false);
@@ -1103,12 +1189,17 @@ test("a thread's key names it in every app, and its id is <app>:<key>", async ()
       (id) => store.key(id),
     ),
   ).toEqual(["1561", "1561", "-100:7", "-100:7", "slack:1", "abc", "constructor"]);
-  expect([store.names().constructor, store.ids().constructor]).toEqual([undefined, undefined]);
+  expect(["constructor" in store.names(), "constructor" in store.ids()]).toEqual([false, false]);
+
   const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, "threads", "--json"], {
     stdout: "pipe",
   });
+
   expect(
-    JSON.parse(await new Response(cli.stdout).text()).map(({ id }: { id: string }) => id),
+    z
+      .array(z.object({ id: z.string() }))
+      .parse(JSON.parse(await new Response(cli.stdout).text()))
+      .map(({ id }) => id),
   ).toEqual(["buzz:abc", "discord:1561", "discord:1562", "telegram:-100:7"]);
 });
 
@@ -1125,7 +1216,7 @@ test("a key two apps had before keys were global keeps its open, then newest, ro
   ]);
 });
 
-test("what a session was shown is kept per kind, until its context loses it", () => {
+test("what a session was shown is kept per kind until its context loses it, and a tasks record unchanged for 2 days goes, since a session's end leaves it behind and one still there just gets its whole list again", () => {
   const store = new Store(dir);
   expect(store.seen("session-a", "tasks")).toBe("");
   store.show("session-a", "tasks", "one");
@@ -1153,21 +1244,24 @@ test("what a session was shown is kept per kind, until its context loses it", ()
 
 test("hex task makes a task from a message by its key, and the owner is the thread asking", async () => {
   open(dir).deliver(ask);
+
   const hex = async (...args: string[]) => {
     const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, ...args], {
       stdout: "pipe",
       stderr: "pipe",
       env: { ...process.env, HEX_THREAD: "chat:3" },
     });
+
     return {
       code: await cli.exited,
       out: await new Response(cli.stdout).text(),
       err: await new Response(cli.stderr).text(),
     };
   };
+
   expect(await hex("task", "new", ask.key, "--done-when", "it signs in")).toMatchObject({
     code: 1,
-    err: expect.stringContaining("needs a title"),
+    err: containing("needs a title"),
   });
   expect(
     await hex(
@@ -1191,28 +1285,28 @@ test("hex task makes a task from a message by its key, and the owner is the thre
   expect((await hex("tasks")).out).toContain("t-1 (open, chat:3): Fix the login page\n");
   expect(await hex("task", "edit", "t-1", "--title", "Make sign-in work")).toMatchObject({
     code: 0,
-    out: expect.stringContaining(": Make sign-in work\n"),
+    out: containing(": Make sign-in work\n"),
   });
   expect(await hex("task", "done", "t-1")).toMatchObject({
     code: 1,
-    err: expect.stringContaining("--proof"),
+    err: containing("--proof"),
   });
   expect(await hex("task", "done", "t-1", "--proof", "shipped", "in", "abc123")).toMatchObject({
     code: 1,
-    err: expect.stringContaining("\"in\" isn't a flag's value"),
+    err: containing("\"in\" isn't a flag's value"),
   });
   expect((await hex("tasks", "--status", "open")).out).toBe((await hex("tasks")).out);
   expect(await hex("task", "new", ask.key, "--title", "Fix", "the", "login")).toMatchObject({
     code: 1,
-    err: expect.stringContaining("\"the\" isn't a flag's value"),
+    err: containing("\"the\" isn't a flag's value"),
   });
   expect(await hex("task", "edit", "t-1", "--title", "Make", "it", "work")).toMatchObject({
     code: 1,
-    err: expect.stringContaining('"it" isn\'t'),
+    err: containing('"it" isn\'t'),
   });
   expect(
     await hex("task", "new", ask.key, "--title", "Fix login", "--quote", "fix login"),
-  ).toMatchObject({ code: 1, err: expect.stringContaining("as written") });
+  ).toMatchObject({ code: 1, err: containing("as written") });
   expect((await hex("message", ask.key)).out).toBe(`${ask.body}\n`);
 });
 
@@ -1232,13 +1326,16 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
     text: "Status: by hand",
     note: "Status: by hand",
   });
+
   const hex = async (...args: string[]) => {
     const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, "pins", ...args], {
       stdout: "pipe",
       env: { ...process.env, HEX_THREAD: "chat:3", HEX_MAIN: "" },
     });
+
     return (await new Response(cli.stdout).text()).trim();
   };
+
   expect(await hex()).toBe("telegram · chat:3 · message 9 · Site: example.com");
   expect((await hex("--all")).split("\n")).toEqual([
     "discord · 1561 · message 1562 · Status: by hand",
@@ -1251,7 +1348,7 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
       message: "1562",
       text: "Status: by hand",
       note: "Status: by hand",
-      at: expect.any(String),
+      at: anyString(),
       threadId: "discord:1561",
     },
   ]);
@@ -1263,6 +1360,7 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
 
 test("a question keeps its first answer, a poll's vote replaces the one before, and taking one back says whether there was one", () => {
   const store = new Store(dir);
+
   const question = {
     app: "telegram",
     thread: "-100:7",
@@ -1270,15 +1368,16 @@ test("a question keeps its first answer, a poll's vote replaces the one before, 
     text: "Deploy now?",
     options: ["Deploy", "Wait"],
   };
+
   store.ask(question);
   expect(store.answered("telegram", "-100:7", 41, "Wait", "telegram")).toBe(true);
   expect(store.answered("telegram", "-100:7", 41, "Deploy", "app")).toBe(false);
-  expect(store.question("telegram", "-100:7", 41)!.answer).toMatchObject({
+  expect(store.question("telegram", "-100:7", 41)?.answer).toMatchObject({
     label: "Wait",
     via: "telegram",
   });
   expect(store.answered("telegram", "-100:7", 41, "Deploy", "telegram", true)).toBe(true);
-  expect(store.question("telegram", "-100:7", 41)!.answer).toMatchObject({ label: "Deploy" });
+  expect(store.question("telegram", "-100:7", 41)?.answer).toMatchObject({ label: "Deploy" });
   expect(store.reopened("telegram", "-100:7", 41)).toBe(true);
   expect(store.reopened("telegram", "-100:7", 41)).toBe(false);
   expect(store.answered("telegram", "-100:7", 99, "Wait", "telegram")).toBe(false);
@@ -1293,20 +1392,23 @@ test("an answer and the message that wakes its thread with it land together or n
     text: "Deploy now?",
     options: ["Deploy", "Wait"],
   });
+
   const wake = {
     key: "telegram:tap:1",
     to: "-100:7",
     from: "telegram",
     author: "owner",
     body: "Wait",
-  };
+  } satisfies NewRow;
+
   expect(() =>
     store.write(() => {
       store.answered("telegram", "-100:7", 41, "Wait", "telegram");
       throw new Error("killed before the wake was kept");
     }),
   ).toThrow("killed");
-  expect(store.question("telegram", "-100:7", 41)!.answer).toBeUndefined();
+  expect(store.question("telegram", "-100:7", 41)).toMatchObject({ message: 41 });
+  expect(store.question("telegram", "-100:7", 41)?.answer).toBeUndefined();
   expect(
     store.write(
       () => store.answered("telegram", "-100:7", 41, "Wait", "telegram") && store.deliver(wake),
@@ -1331,7 +1433,8 @@ test("messages kept under a sender's name get one of hex's five authors, and kee
   store.db.run(
     "create index unauthored on messages (n) where author = ''; pragma user_version = 15",
   );
-  const kept = (key: string, from: string, author: string, meta?: object) =>
+
+  const kept = (key: string, from: string, author: string, meta?: Record<string, string>) =>
     store.db
       .query(
         'insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)',
@@ -1342,9 +1445,10 @@ test("messages kept under a sender's name get one of hex's five authors, and kee
         from,
         author,
         "hi",
-        meta ? JSON.stringify(meta) : null,
+        meta === undefined ? null : JSON.stringify(meta),
         "2026-10-21T10:00:00.000Z",
       );
+
   kept("telegram:1", "telegram", "hex General", { user: "hex General" });
   kept("job:a:1", "job", "job");
   kept("schedule:b@1", "schedule", "schedule", { user: "schedule" });
@@ -1367,13 +1471,14 @@ test("messages kept under a sender's name get one of hex's five authors, and kee
   ]);
 });
 
-test("a message's author is the owner, hex, a prompt, a call or someone other", () => {
+test("a message's author is the owner, hex, a prompt (what hex itself tells a session: a job's end, a schedule, another thread, the hub), a call or someone other", () => {
   const store = new Store(dir);
   expect(() =>
     store.deliver({
       key: "telegram:-100:90",
       to: "-100:7",
       from: "telegram",
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion anti-slop/require-safety-comment-for-type-assertion -- no author, to show the store refuses it
       author: "" as never,
       body: "hi",
     }),
@@ -1383,6 +1488,7 @@ test("a message's author is the owner, hex, a prompt, a call or someone other", 
       key: "job:x:1",
       to: "-100:7",
       from: "job",
+      // oxlint-disable-next-line typescript/no-unsafe-type-assertion anti-slop/require-safety-comment-for-type-assertion -- an author outside the five, to show the store refuses it
       author: "job" as never,
       body: "hi",
     }),
@@ -1414,22 +1520,26 @@ test("the profile is its newest version, put in place only over the one a writer
     "# Who he is\n- Ships any day",
     "# Who he is\n- Ships on fridays",
   ]);
+
   const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, "profile"], {
     stdout: "pipe",
   });
+
   expect(await new Response(cli.stdout).text()).toBe("# Who he is\n- Ships any day\n");
 });
 
 test("a profile kept in state/profile.md comes into hex.db with its history, in order and once each, and the files move aside", () => {
   writeFileSync(join(dir, "profile.md"), "# Who he is\n- Third\n");
+
   const history = [
     { at: "2026-10-21T13:00:00.000Z", profile: "# Always\n- First" },
     { at: "2026-10-21T13:32:54.590Z", profile: "# Always\n- First" },
     { at: "2026-10-21T15:09:00.000Z", profile: "# Who he is\n- Second" },
   ];
+
   writeFileSync(
     join(dir, "profile.md.history"),
-    history.map((each) => JSON.stringify(each)).join("\n") + '\n{"at": "broken\n',
+    `${history.map((each) => JSON.stringify(each)).join("\n")}\n{"at": "broken\n`,
   );
   const store = new Store(dir);
   expect(store.profiles().map(({ body }) => body)).toEqual([
@@ -1437,9 +1547,9 @@ test("a profile kept in state/profile.md comes into hex.db with its history, in 
     "# Who he is\n- Second",
     "# Always\n- First",
   ]);
-  expect(store.profiles()[1]!.at).toBe("2026-10-21T13:32:54.590Z");
-  expect(store.profiles()[2]!.at).toBe("2026-10-21T13:00:00.000Z");
-  expect(readFileSync(join(dir, "profile.md.moved-to-hex.db"), "utf8")).toBe(
+  expect(store.profiles()[1]?.at).toBe("2026-10-21T13:32:54.590Z");
+  expect(store.profiles()[2]?.at).toBe("2026-10-21T13:00:00.000Z");
+  expect(readFileSync(join(dir, "profile.md.moved-to-hex.db"), "utf-8")).toBe(
     "# Who he is\n- Third\n",
   );
   expect(() => store.db.run("delete from profiles")).toThrow("never taken away");
@@ -1468,30 +1578,36 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     body: "Tell selfheal, so it can be fixed properly at the root next run",
     meta: { edited: "true", message_id: "52" },
   });
-  const message = async (...args: string[]) => {
+
+  const hexMessage = async (...args: string[]) => {
     const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, "message", ...args], {
       stdout: "pipe",
       stderr: "pipe",
     });
+
     await cli.exited;
+
     return (
       (await new Response(cli.stdout).text()).trim() +
-      (await new Response(cli.stderr).text()).trim().replace(/^./, " $&")
+      (await new Response(cli.stderr).text()).trim().replace(/^./u, " $&")
     );
   };
-  expect(await message("telegram:-100:52")).toBe(
+
+  expect(await hexMessage("telegram:-100:52")).toBe(
     "Tell selfheal, so it can be fixed properly at the root next run (edited: these are the words of telegram:-100:52@1, the key to quote them under)",
   );
-  expect(JSON.parse(await message("telegram:-100:52", "--json"))).toMatchObject({
+  expect(JSON.parse(await hexMessage("telegram:-100:52", "--json"))).toMatchObject({
     key: "telegram:-100:52",
     meta: { edit: "telegram:-100:52@1" },
   });
+
   const task = store.createTask({
     title: "Fix it at the root",
     message: "telegram:-100:52",
     quote: "Tell selfheal",
     owner: "-100:7",
   });
+
   expect(() => store.addWords(task.id, "telegram:-100:52", "fixed properly at the root")).toThrow(
     "is in telegram:-100:52@1, the owner's edit of telegram:-100:52: quote it under that key",
   );
@@ -1520,10 +1636,10 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     body: "another chat",
     meta: { edited: "true", message_id: "52" },
   });
-  expect(await message("telegram:-100:52@1")).toBe(
+  expect(await hexMessage("telegram:-100:52@1")).toBe(
     "Tell selfheal, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
   );
-  expect(await message("telegram:-100:52@2")).toBe(
+  expect(await hexMessage("telegram:-100:52@2")).toBe(
     "Tell selfheal, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
   );
   store.deliver({
@@ -1542,8 +1658,8 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     body: "second edit",
     meta: { edited: "true", message_id: "e1" },
   });
-  expect(await message("buzz:e2")).toBe(
+  expect(await hexMessage("buzz:e2")).toBe(
     "second edit (edited: these are the words of buzz:e3, the key to quote them under)",
   );
-  expect(await message("buzz:e3")).toBe("second edit");
+  expect(await hexMessage("buzz:e3")).toBe("second edit");
 });

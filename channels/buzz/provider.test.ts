@@ -9,16 +9,16 @@ import {
   chmodSync,
   statSync,
   existsSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
+import { z } from "zod";
 
 import { respond } from "./provider.ts";
 
-// Buzz's crates/buzz-backend-kubernetes/tests/fixtures/provider-wire/deploy-full-launch.request.json,
-// recorded from Desktop's real deploy payload builder.
+// Recorded from Desktop's real deploy payload builder: https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/crates/buzz-backend-kubernetes/tests/fixtures/provider-wire/deploy-full-launch.request.json
 const fixture = {
   op: "deploy",
   request_id: "req-6",
@@ -86,25 +86,29 @@ HOME="${join(dir, "home")}" exec sh -c "$last"
   chmodSync(ssh, 0o755);
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
-function fakeHex(home: string) {
-  mkdirSync(join(home, ".hex", "bin"), { recursive: true });
+function fakeHex(hexHome: string) {
+  mkdirSync(join(hexHome, ".hex", "bin"), { recursive: true });
   writeFileSync(
-    join(home, ".hex", "bin", "hex"),
+    join(hexHome, ".hex", "bin", "hex"),
     `#!/bin/sh
 echo "$@" >> "${dir}/restarts"
 echo "hex started; its log is state/hub.log"
 `,
   );
-  chmodSync(join(home, ".hex", "bin", "hex"), 0o755);
+  chmodSync(join(hexHome, ".hex", "bin", "hex"), 0o755);
 }
 
-function request(config: object = { target: "me@box", home }, agent: object = {}) {
+type Fields = Record<string, string | null>;
+
+function request(config?: Fields, agent: Fields = {}) {
   return JSON.stringify({
     ...fixture,
     agent: { ...fixture.agent, auth_tag: AUTH_TAG, ...agent },
-    provider_config: config,
+    provider_config: config ?? { target: "me@box", home },
   });
 }
 
@@ -112,22 +116,24 @@ function run(input: string) {
   const result = Bun.spawnSync(["bun", join(import.meta.dir, "provider.ts")], {
     stdin: new TextEncoder().encode(input),
   });
+
   return {
     code: result.exitCode,
-    out: JSON.parse(result.stdout.toString()),
+    out: z.record(z.string(), z.unknown()).parse(JSON.parse(result.stdout.toString())),
     err: result.stderr.toString(),
   };
 }
 
 const envFile = () => join(home, "state", "buzz", ".env");
-const mode = (path: string) => statSync(path).mode & 0o777;
+const permissionBits = (path: string) => statSync(path).mode % 0o1000;
+
 const lines = (file: string) =>
-  existsSync(file) ? readFileSync(file, "utf8").trim().split("\n") : [];
+  existsSync(file) ? readFileSync(file, "utf-8").trim().split("\n") : [];
 
 test("info has exactly the fields Desktop accepts", () => {
   const { code, out } = run('{"op":"info","request_id":"req-1"}');
   expect(code).toBe(0);
-  expect(Object.keys(out).sort()).toEqual([
+  expect(Object.keys(out).toSorted()).toEqual([
     "config_schema",
     "description",
     "name",
@@ -144,27 +150,27 @@ test("info has exactly the fields Desktop accepts", () => {
 
 test("deploy writes the credentials over ssh stdin and restarts hex", () => {
   expect(respond(request(), ssh)).toEqual({ ok: true, agent_id: `me@box:${home}` });
-  expect(readFileSync(envFile(), "utf8")).toBe(
+  expect(readFileSync(envFile(), "utf-8")).toBe(
     `BUZZ_RELAY_URL=wss://relay.example\nBUZZ_PRIVATE_KEY=${fixture.agent.private_key_nsec}\nBUZZ_AUTH_TAG=${AUTH_TAG}\n`,
   );
-  expect(mode(envFile())).toBe(0o600);
-  expect(mode(join(home, "state", "buzz"))).toBe(0o700);
+  expect(permissionBits(envFile())).toBe(0o600);
+  expect(permissionBits(join(home, "state", "buzz"))).toBe(0o700);
   expect(lines(join(dir, "restarts"))).toEqual(["restart"]);
-  expect(lines(join(dir, "calls")).map((line) => JSON.parse(line))).toEqual([
-    ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "me@box", "sh -s"],
-  ]);
+  expect(
+    lines(join(dir, "calls")).map((line) => z.array(z.string()).parse(JSON.parse(line))),
+  ).toEqual([["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "me@box", "sh -s"]]);
 });
 
 test("redeploys are idempotent and tighten a loose .env", () => {
   mkdirSync(join(home, "state", "buzz"), { recursive: true, mode: 0o755 });
   writeFileSync(envFile(), "OLD=1\n", { mode: 0o644 });
   const first = respond(request(), ssh);
-  const written = readFileSync(envFile(), "utf8");
+  const written = readFileSync(envFile(), "utf-8");
   expect(respond(request(), ssh)).toEqual(first);
-  expect(readFileSync(envFile(), "utf8")).toBe(written);
+  expect(readFileSync(envFile(), "utf-8")).toBe(written);
   expect(readdirSync(join(home, "state", "buzz"))).toEqual([".env"]);
-  expect(mode(envFile())).toBe(0o600);
-  expect(mode(join(home, "state", "buzz"))).toBe(0o700);
+  expect(permissionBits(envFile())).toBe(0o600);
+  expect(permissionBits(join(home, "state", "buzz"))).toBe(0o700);
   expect(lines(join(dir, "restarts"))).toEqual(["restart", "restart"]);
 });
 
@@ -178,7 +184,7 @@ test("home defaults to ~/hex on the target", () => {
     agent_id: "me@box:~/hex",
   });
   expect(lines(join(dir, "restarts"))).toEqual(["restart", "restart"]);
-  expect(mode(envFile())).toBe(0o600);
+  expect(permissionBits(envFile())).toBe(0o600);
 });
 
 test("a home with quotes and spaces is quoted for the remote shell", () => {
@@ -188,38 +194,40 @@ test("a home with quotes and spaces is quoted for the remote shell", () => {
     ok: true,
     agent_id: `me@box:${odd}`,
   });
-  expect(readFileSync(join(odd, "state", "buzz", ".env"), "utf8")).toStartWith(
+  expect(readFileSync(join(odd, "state", "buzz", ".env"), "utf-8")).toStartWith(
     "BUZZ_RELAY_URL=wss://relay.example\n",
   );
 });
 
 test("bad input is refused with ok:false and a non-zero exit", () => {
   const cases: [string, RegExp][] = [
-    [JSON.stringify({ ...fixture, provider_config: { target: "me@box", home } }), /auth_tag/],
-    [request({ home }), /target/],
-    [request({ target: "-oProxyCommand=touch /tmp/x", home }), /target/],
-    [request(undefined, { auth_tag: JSON.stringify(["p", OWNER]) }), /auth_tag/],
-    [request(undefined, { auth_tag: null }), /auth_tag/],
-    [request(undefined, { private_key_nsec: nip19.npubEncode(OWNER) }), /private_key_nsec/],
+    [JSON.stringify({ ...fixture, provider_config: { target: "me@box", home } }), /auth_tag/u],
+    [request({ home }), /target/u],
+    [request({ target: "-oProxyCommand=touch /tmp/x", home }), /target/u],
+    [request(undefined, { auth_tag: JSON.stringify(["p", OWNER]) }), /auth_tag/u],
+    [request(undefined, { auth_tag: null }), /auth_tag/u],
+    [request(undefined, { private_key_nsec: nip19.npubEncode(OWNER) }), /private_key_nsec/u],
     [
       request(undefined, {
         private_key_nsec: `${nip19.nsecEncode(generateSecretKey())}\nBUZZ_X=1`,
       }),
-      /private_key_nsec/,
+      /private_key_nsec/u,
     ],
-    [request(undefined, { relay_url: "https://relay.example" }), /relay_url/],
-    [request(undefined, { relay_url: "wss://relay.example\nBUZZ_X=1" }), /relay_url/],
-    ['{"op":"undeploy"}', /unknown op/],
-    ["not json", /./],
+    [request(undefined, { relay_url: "https://relay.example" }), /relay_url/u],
+    [request(undefined, { relay_url: "wss://relay.example\nBUZZ_X=1" }), /relay_url/u],
+    ['{"op":"undeploy"}', /unknown op/u],
+    ["not json", /./u],
   ];
+
   for (const [input, error] of cases) {
     const { code, out, err } = run(input);
     expect(code).toBe(1);
     expect(Object.keys(out)).toEqual(["ok", "error"]);
     expect(out.ok).toBe(false);
     expect(out.error).toMatch(error);
-    expect(err).toContain(out.error);
+    expect(err).toContain(String(out.error));
   }
+
   expect(existsSync(join(home, "state"))).toBe(false);
 });
 

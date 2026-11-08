@@ -1,20 +1,40 @@
 import type { Filter } from "nostr-tools/filter";
-import { finalizeEvent, getPublicKey, type Event } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
+import { z } from "zod";
+
+type Template = { kind: number; content: string; tags: string[][]; created_at?: number };
 
 export type Relay = {
   pubkey: string;
-  publish(event: {
-    kind: number;
-    content: string;
-    tags: string[][];
-    created_at?: number;
-  }): Promise<Event>;
-  subscribe(filters: Filter[], onEvent: (event: Event) => void): () => void;
-  query(filters: Filter[]): Promise<Event[]>;
-  close(): void;
+  publish: (event: Template) => Promise<Event>;
+  subscribe: (filters: Filter[], onEvent: (event: Event) => void) => () => void;
+  query: (filters: Filter[]) => Promise<Event[]>;
+  close: () => void;
 };
 
 type Request = { message: unknown[]; events?: Event[]; done: (error?: string) => void };
+
+export const nostrEvent = z.looseObject({
+  id: z.string(),
+  pubkey: z.string(),
+  created_at: z.number(),
+  kind: z.number(),
+  tags: z.array(z.array(z.string())),
+  content: z.string(),
+  sig: z.string(),
+});
+
+const frame = z.union([
+  z.tuple([z.literal("AUTH"), z.string()], z.unknown()),
+  z.tuple([z.literal("OK"), z.string(), z.boolean(), z.string().default("")], z.unknown()),
+  z.tuple([z.literal("EVENT"), z.string(), nostrEvent], z.unknown()),
+  z.tuple([z.literal("EOSE"), z.string()], z.unknown()),
+  z.tuple([z.literal("CLOSED"), z.string(), z.string().default("")], z.unknown()),
+  z.tuple([z.literal("NOTICE"), z.string()], z.unknown()),
+]);
+
+const handled = new Set(["AUTH", "OK", "EVENT", "EOSE", "CLOSED", "NOTICE"]);
 
 const TIMEOUT = 20_000;
 const PING = 30_000;
@@ -32,13 +52,15 @@ export function connectRelay({
   authTag: string[];
 }): Relay {
   const pubkey = getPublicKey(secretKey);
+
   const subs = new Map<
     string,
     { filters: Filter[]; onEvent: (event: Event) => void; stored?: Event[] }
   >();
+
   const seen = new Set<string>();
   const requests = new Map<string, Request>();
-  let socket: WebSocket | undefined;
+  let socket: Bun.WebSocket | undefined;
   let auth = "";
   let ready = false;
   let closed = false;
@@ -48,32 +70,32 @@ export function connectRelay({
   let next = 0;
 
   function send(message: unknown[]) {
-    if (ready) socket!.send(JSON.stringify(message));
+    if (ready) {
+      socket?.send(JSON.stringify(message));
+    }
   }
 
-  function sign(template: {
-    kind: number;
-    content: string;
-    tags: string[][];
-    created_at?: number;
-  }) {
+  function sign(template: Template) {
     return finalizeEvent(
       { created_at: now(), ...template, tags: [...template.tags, authTag] },
       secretKey,
     );
   }
 
-  // A subscription starts where its filters say and resumes after a drop from
-  // shortly before the connection was last alive. Stored events come newest
-  // first, so they're held until EOSE and delivered oldest first; an event seen
-  // once is never delivered again.
-  function req(id: string, filters: Filter[], since = 0) {
-    subs.get(id)!.stored = [];
+  function req(id: string, filters: Filter[], resumeFrom = 0) {
+    const sub = subs.get(id);
+
+    if (sub) {
+      sub.stored = [];
+    }
+
     send([
       "REQ",
       id,
       ...filters.map((filter) =>
-        filter.since === undefined ? filter : { ...filter, since: Math.max(filter.since, since) },
+        filter.since === undefined
+          ? filter
+          : { ...filter, since: Math.max(filter.since, resumeFrom) },
       ),
     ]);
   }
@@ -81,85 +103,169 @@ export function connectRelay({
   function flush(id: string) {
     const sub = subs.get(id);
     const stored = sub?.stored;
-    if (!stored) return;
-    sub.stored = undefined;
-    for (const event of stored.sort(
+
+    if (!stored) {
+      return;
+    }
+
+    delete sub.stored;
+
+    for (const each of stored.toSorted(
       (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-    ))
-      sub.onEvent(event);
+    )) {
+      sub.onEvent(each);
+    }
   }
 
   function open() {
-    const ws = (socket = new WebSocket(url));
+    // SAFETY: Bun's global WebSocket is Bun.WebSocket, which has ping() and terminate().
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion, anti-slop/no-chained-type-assertions -- lib.dom's WebSocket type is the wrong one under Bun
+    const ws = new WebSocket(url) as unknown as Bun.WebSocket;
+    socket = ws;
     ws.addEventListener("message", ({ data }) => {
-      if (ready) alive = now();
+      if (ready) {
+        alive = now();
+      }
+
       answered = true;
+
       try {
-        handle(JSON.parse(String(data)));
+        read(String(data));
       } catch (error) {
-        process.stderr.write(`buzz hub: dropped a bad frame from the relay: ${error}\n`);
+        process.stderr.write(`buzz hub: dropped a bad frame from the relay: ${String(error)}\n`);
       }
     });
-    ws.addEventListener("pong", () => (answered = true));
+    ws.addEventListener("pong", () => {
+      answered = true;
+    });
     ws.addEventListener("close", () => {
-      if (socket !== ws) return;
+      if (socket !== ws) {
+        return;
+      }
+
       socket = undefined;
       ready = false;
-      if (closed) return;
+
+      if (closed) {
+        return;
+      }
+
       const delay = Math.min(1000 * 2 ** attempt++, 30_000);
       process.stderr.write(`buzz hub: relay connection lost, reconnecting in ${delay / 1000}s\n`);
       setTimeout(open, delay);
     });
-    ws.addEventListener("error", () => {});
   }
 
-  function handle([type, id, ...rest]: any[]) {
-    if (type === "AUTH") {
-      const event = sign({
-        kind: 22242,
-        content: "",
-        tags: [
-          ["relay", url],
-          ["challenge", id],
-        ],
-      });
-      auth = event.id;
-      socket!.send(JSON.stringify(["AUTH", event]));
+  function read(data: string) {
+    const raw: unknown = JSON.parse(data);
+    const parsed = frame.safeParse(raw);
+
+    if (parsed.success) {
+      handle(parsed.data);
+    } else if (Array.isArray(raw) && handled.has(String(raw[0]))) {
+      throw new Error(z.prettifyError(parsed.error));
     }
-    if (type === "OK" && id === auth) {
-      if (!rest[0]) {
-        process.stderr.write(`buzz hub: relay refused auth: ${rest[1]}\n`);
-        return socket!.close();
+  }
+
+  function handle(message: z.output<typeof frame>) {
+    switch (message[0]) {
+      case "AUTH": {
+        const signed = sign({
+          kind: 22_242,
+          content: "",
+          tags: [
+            ["relay", url],
+            ["challenge", message[1]],
+          ],
+        });
+
+        auth = signed.id;
+        socket?.send(JSON.stringify(["AUTH", signed]));
+
+        return;
       }
-      ready = true;
-      attempt = 0;
-      for (const [sub, { filters }] of subs) req(sub, filters, alive - OVERLAP);
-      for (const request of requests.values()) send(request.message);
-    }
-    if (type === "OK" && id !== auth)
-      requests.get(id)?.done(rest[0] ? undefined : rest[1] || "refused");
-    if (type === "EVENT") {
-      const sub = subs.get(id);
-      if (sub && !seen.has(rest[0].id)) {
-        seen.add(rest[0].id);
-        if (sub.stored) sub.stored.push(rest[0]);
-        else sub.onEvent(rest[0]);
+
+      case "OK": {
+        const [, id, ok, reason] = message;
+
+        if (id !== auth) {
+          requests.get(id)?.done(ok ? undefined : reason || "refused");
+
+          return;
+        }
+
+        if (!ok) {
+          process.stderr.write(`buzz hub: relay refused auth: ${reason}\n`);
+          socket?.close();
+
+          return;
+        }
+
+        ready = true;
+        attempt = 0;
+
+        for (const [sub, { filters }] of subs) {
+          req(sub, filters, alive - OVERLAP);
+        }
+
+        for (const pending of requests.values()) {
+          send(pending.message);
+        }
+
+        return;
       }
-      requests.get(id)?.events?.push(rest[0]);
-    }
-    if (type === "EOSE" && requests.has(id)) {
-      send(["CLOSE", id]);
-      requests.get(id)!.done();
-    }
-    if (type === "EOSE") flush(id);
-    if (type === "CLOSED") {
-      if (requests.has(id)) requests.get(id)!.done(rest[0] || "closed");
-      else if (subs.has(id)) {
+
+      case "EVENT": {
+        const [, id, received] = message;
+        const sub = subs.get(id);
+
+        if (sub && !seen.has(received.id)) {
+          seen.add(received.id);
+
+          if (sub.stored) {
+            sub.stored.push(received);
+          } else {
+            sub.onEvent(received);
+          }
+        }
+
+        requests.get(id)?.events?.push(received);
+
+        return;
+      }
+
+      case "EOSE": {
+        const id = message[1];
+        const pending = requests.get(id);
+
+        if (pending) {
+          send(["CLOSE", id]);
+          pending.done();
+        }
+
         flush(id);
-        process.stderr.write(`buzz hub: relay closed a subscription: ${rest[0]}\n`);
+
+        return;
+      }
+
+      case "CLOSED": {
+        const [, id, reason] = message;
+        const pending = requests.get(id);
+
+        if (pending) {
+          pending.done(reason || "closed");
+        } else if (subs.has(id)) {
+          flush(id);
+          process.stderr.write(`buzz hub: relay closed a subscription: ${reason}\n`);
+        }
+
+        return;
+      }
+
+      case "NOTICE": {
+        process.stderr.write(`buzz hub: relay notice: ${message[1]}\n`);
       }
     }
-    if (type === "NOTICE") process.stderr.write(`buzz hub: relay notice: ${id}\n`);
   }
 
   function request<T>(
@@ -168,26 +274,52 @@ export function connectRelay({
     result: (events: Event[]) => T,
     collect = false,
   ): Promise<T> {
-    if (closed) return Promise.reject(new Error("the relay connection is closed"));
+    if (closed) {
+      return Promise.reject(new Error("the relay connection is closed"));
+    }
+
     return new Promise((resolve, reject) => {
       const events: Event[] = [];
-      const timer = setTimeout(() => done("timed out"), TIMEOUT);
+
+      const timer = setTimeout(() => {
+        done("timed out");
+      }, TIMEOUT);
+
       function done(error?: string) {
         clearTimeout(timer);
         requests.delete(id);
-        if (error) reject(new Error(error));
-        else resolve(result(events));
+
+        if (error !== undefined && error !== "") {
+          reject(new Error(error));
+        } else {
+          resolve(result(events));
+        }
       }
-      requests.set(id, { message, done, ...(collect ? { events } : {}) });
+
+      const pending: Request = { message, done };
+
+      if (collect) {
+        pending.events = events;
+      }
+
+      requests.set(id, pending);
       send(message);
     });
   }
 
   const ping = setInterval(() => {
-    if (!ready) return;
-    if (!answered) return socket!.terminate();
+    if (!ready) {
+      return;
+    }
+
+    if (!answered) {
+      socket?.terminate();
+
+      return;
+    }
+
     answered = false;
-    socket!.ping();
+    socket?.ping();
   }, PING);
 
   open();
@@ -196,12 +328,14 @@ export function connectRelay({
     pubkey,
     publish(template) {
       const event = sign(template);
+
       return request(event.id, ["EVENT", event], () => event);
     },
     subscribe(filters, onEvent) {
       const id = `s${++next}`;
       subs.set(id, { filters, onEvent });
       req(id, filters);
+
       return () => {
         subs.delete(id);
         send(["CLOSE", id]);
@@ -209,6 +343,7 @@ export function connectRelay({
     },
     query(filters) {
       const id = `q${++next}`;
+
       return request(
         id,
         ["REQ", id, ...filters],
@@ -219,7 +354,11 @@ export function connectRelay({
     close() {
       closed = true;
       clearInterval(ping);
-      for (const request of requests.values()) request.done("the relay connection is closed");
+
+      for (const pending of requests.values()) {
+        pending.done("the relay connection is closed");
+      }
+
       socket?.close();
     },
   };

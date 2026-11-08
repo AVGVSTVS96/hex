@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open } from "./store.ts";
 
@@ -41,14 +41,19 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-async function hook(input: object, env: Record<string, string> = {}) {
+async function hook(
+  input: { session_id: string; hook_event_name?: string; source?: string },
+  env: Record<string, string> = {},
+) {
   const run = Bun.spawn(["bun", join(import.meta.dir, "tasks.ts")], {
     stdin: new Blob([JSON.stringify(input)]),
     stdout: "pipe",
-    env: { PATH: process.env.PATH!, HEX_STORE: dir, ...env },
+    env: { PATH: process.env.PATH ?? "", HEX_STORE: dir, ...env },
   });
+
   expect(await run.exited).toBe(0);
-  return new Response(run.stdout).text();
+
+  return await new Response(run.stdout).text();
 }
 
 test("a thread's session gets its own open tasks as clean entries, once, and again when they change", async () => {
@@ -56,6 +61,7 @@ test("a thread's session gets its own open tasks as clean entries, once, and aga
     { session_id: "a", hook_event_name: "UserPromptSubmit" },
     { HEX_THREAD: "-100:7" },
   );
+
   expect(first).toContain("This thread's open tasks");
   expect(first).toContain("t-1 (open, Website): Fix the login page\n  done when: it signs in");
   expect(first).not.toContain("It 500s on submit");
@@ -121,6 +127,7 @@ test("a session with no tasks hears nothing", async () => {
 
 test("a list too long for one hook's output gives each entry with its done-when while it fits, then one line, and never the owner's words", async () => {
   const store = open(dir);
+
   for (let n = 0; n < 120; n++) {
     store.deliver({
       key: `telegram:-100:${100 + n}`,
@@ -137,13 +144,14 @@ test("a list too long for one hook's output gives each entry with its done-when 
       doneWhen: "the build is tidy ".repeat(8),
     });
   }
+
   const shown = await hook({ session_id: "big" }, { HEX_THREAD: "-100:7" });
   expect(shown.length).toBeLessThan(10_000);
   expect(shown).toContain(
     "This thread's open tasks (`.hex/bin/hex task <id>` has my words in full, adds to them and closes them):\nt-",
   );
   expect(shown).toMatch(
-    /\n  done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/,
+    /\n {2}done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/u,
   );
   expect(shown).not.toContain("damn it");
   store.deliver({
@@ -154,7 +162,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
     author: "owner",
     meta: { user: "bassim" },
   });
-  const first = shown.match(/\n(t-\d+) \(open, Website\)/)![1]!;
+  const first = /\n(t-\d+) \(open, Website\)/u.exec(shown)?.[1] ?? "no task shown";
   store.addWords(first, "telegram:-100:300");
   expect(await hook({ session_id: "big" }, { HEX_THREAD: "-100:7" })).toContain(
     `${first} (open, Website, 2 messages): Chore`,

@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 
@@ -10,23 +10,30 @@ const home = mkdtempSync(join(tmpdir(), "quiet-"));
 const sessions = join(home, "config/sessions");
 const state = join(home, "state");
 const store = open(state);
+
 const env = {
   ...process.env,
   CLAUDE_CONFIG_DIR: join(home, "config"),
   HEX_STORE: state,
   HEX_QUIET_MS: "100",
 };
-afterAll(() => rmSync(home, { recursive: true }));
+
+afterAll(() => {
+  rmSync(home, { recursive: true });
+});
+
+const startQuiet = () => Bun.spawn([join(HEX, "bin/quiet")], { env, stdout: "pipe" });
 
 test("bin/quiet waits while a session hex started is mid-turn, and not on other sessions or one whose turn ended since Claude Code called it busy", async () => {
   mkdirSync(sessions, { recursive: true });
+
   const status = (
     file: string,
     name: string,
     kind: string,
-    status: string,
+    turn: string,
     at = Date.now() - 1000,
-  ) =>
+  ) => {
     writeFileSync(
       join(sessions, file),
       JSON.stringify({
@@ -34,10 +41,12 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
         sessionId: name,
         name,
         kind,
-        status,
+        status: turn,
         statusUpdatedAt: at,
       }),
     );
+  };
+
   status("1.json", "ours", "bg", "busy");
   status("2.json", "theirs", "interactive", "busy");
   writeFileSync(
@@ -90,8 +99,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
     }),
   );
   store.turned("later", true);
-  const quiet = () => Bun.spawn([join(HEX, "bin/quiet")], { env, stdout: "pipe" });
-  const first = quiet();
+  const first = startQuiet();
   await Bun.sleep(300);
   expect(first.exitCode).toBeNull();
   await Bun.sleep(5);
@@ -103,7 +111,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
   expect(await new Response(first.stdout).text()).toBe("waiting on: asker, later\n");
   await Bun.sleep(5);
   store.turned("asker", true);
-  const next = quiet();
+  const next = startQuiet();
   await Bun.sleep(500);
   expect(next.exitCode).toBeNull();
   next.kill();

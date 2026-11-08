@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { clients, type Client } from "../../hub/hub.ts";
+import { clients } from "../../hub/hub.ts";
+import type { Client, Hub } from "../../hub/hub.ts";
 import { open } from "../../hub/store.ts";
 import { Chats } from "./chat.ts";
 
@@ -15,23 +16,42 @@ let hexDir: string;
 let state: string;
 let chats: Chats;
 let calls: unknown[][];
+let delivered: Parameters<Hub["deliver"]>[2][];
+let telegram: Client;
 
-// A fresh hex.db runs every migration: seconds of work on a loaded machine.
+function withOnly(hub: Pick<Hub, "name" | "deliver" | "stop">): Client {
+  // SAFETY: Chats reaches a client's hub only through name, deliver and stop.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a fake of the three methods Chats uses
+  const partial = hub as Hub;
+
+  return { hub: partial, place: () => Promise.resolve({ thread: "", link: "" }) };
+}
+
+const aFreshHexDbRunsEveryMigrationForSecondsOnALoadedMachine = 30_000;
+
 beforeEach(() => {
   hexDir = mkdtempSync(join(tmpdir(), "chat-"));
   state = join(hexDir, "state");
   mkdirSync(state, { recursive: true });
   calls = [];
-  clients.set("telegram", {
-    hub: {
-      name: () => "Desk",
-      deliver: (...args: unknown[]) => calls.push(["deliver", ...args]),
-      stop: (thread: string) => calls.push(["hub stop", thread]),
+  delivered = [];
+  telegram = withOnly({
+    name: () => "Desk",
+    deliver: (thread, name, message) => {
+      calls.push(["deliver", thread, name, message]);
+      delivered.push(message);
+
+      return true;
     },
-    place: async () => ({ thread: "", link: "" }),
-  } as unknown as Client);
+    stop: (thread) => {
+      calls.push(["hub stop", thread]);
+
+      return Promise.resolve();
+    },
+  });
+  clients.set("telegram", telegram);
   chats = new Chats(state);
-}, 30_000);
+}, aFreshHexDbRunsEveryMigrationForSecondsOnALoadedMachine);
 
 afterEach(() => {
   chats.close();
@@ -114,6 +134,7 @@ test("words typed in the app reach the thread as the owner, under the key the ap
 
 test("photos and clips go with the owner's words as images the session reads, and the chat shows them beside those words", () => {
   const photo = { id: "p1", kind: "photo" as const, images: ["/m/p1.jpg"] };
+
   const video = {
     id: "v1",
     kind: "video" as const,
@@ -121,6 +142,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     seconds: 4,
     mute: true as const,
   };
+
   chats.send(where, "", "app-00000002", [photo, video]);
   expect(calls).toMatchObject([
     [
@@ -134,12 +156,13 @@ test("photos and clips go with the owner's words as images the session reads, an
     ],
   ]);
   const store = open(state);
-  const [, , , message] = calls[0] as [
-    string,
-    string,
-    string,
-    { content: string; meta: Record<string, string> },
-  ];
+
+  const [message] = delivered;
+
+  if (!message) {
+    throw new Error("nothing was delivered");
+  }
+
   store.deliver({
     key: "telegram:app-00000002",
     to: DESK,
@@ -176,10 +199,16 @@ test("photos and clips go with the owner's words as images the session reads, an
 
 test("a stop goes through the app's own stop when it has one, and only where an app holds the thread", () => {
   chats.stop(where);
-  clients.get("telegram")!.stop = (thread) => calls.push(["own stop", thread]);
+  telegram.stop = (thread) => {
+    calls.push(["own stop", thread]);
+  };
+
   chats.stop(where);
-  clients.get("telegram")!.hub.name = () => undefined;
-  expect(() => chats.stop(where)).toThrow();
+  telegram.hub.name = () => {};
+
+  expect(() => {
+    chats.stop(where);
+  }).toThrow();
   expect(calls).toEqual([
     ["hub stop", DESK],
     ["own stop", DESK],
@@ -187,18 +216,23 @@ test("a stop goes through the app's own stop when it has one, and only where an 
 });
 
 test("an app that shows only turns it starts, doesn't hold the thread, or isn't here can't take words from here", () => {
-  clients.get("telegram")!.hub.name = () => undefined;
+  telegram.hub.name = () => {};
+
   expect(chats.of(where).sends).toBe(false);
-  clients.get("telegram")!.hub.name = () => "Desk";
-  clients.get("telegram")!.waits = true;
+  telegram.hub.name = () => "Desk";
+  telegram.waits = true;
   expect(chats.of(where).sends).toBe(false);
-  expect(() => chats.send(where, "hi", "app-0002")).toThrow();
-  expect(() => chats.send({ ...where, app: "claude" }, "hi", "app-0003")).toThrow();
+  expect(() => {
+    chats.send(where, "hi", "app-0002");
+  }).toThrow();
+  expect(() => {
+    chats.send({ ...where, app: "claude" }, "hi", "app-0003");
+  }).toThrow();
 });
 
 test("a wait for the chat ends when it changes, and not on a change elsewhere", async () => {
   const { version } = chats.of(where);
-  const waited = chats.next(() => where, version, 5_000);
+  const waited = chats.next(() => where, version, 5000);
   open(state).deliver({
     key: "telegram:5",
     to: "-1009:1",

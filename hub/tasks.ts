@@ -1,84 +1,101 @@
-import { dirname } from "path";
+import { dirname } from "node:path";
+
+import { z } from "zod";
 
 import { clip, fit, ROOM } from "./fit.ts";
-import { line } from "./holds.ts";
+import { line as holdLine } from "./holds.ts";
 import { served } from "./running.ts";
-import { open, stateDir, type Question, type Task } from "./store.ts";
+import { open, stateDir } from "./store.ts";
+import type { Question, Task } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
+const given = (value: string | undefined): value is string => value !== undefined && value !== "";
+
 function facts(task: Task, named: Record<string, string>, said?: string) {
-  const facts = [
+  const parts = [
     task.status,
     named[task.owner] ?? task.owner,
-    task.project && `project ${task.project}`,
-    task.mergedInto && `merged into ${task.mergedInto}`,
+    given(task.project) ? `project ${task.project}` : "",
+    given(task.mergedInto) ? `merged into ${task.mergedInto}` : "",
     said,
   ];
-  return `${task.id} (${facts.filter(Boolean).join(", ")})`;
+
+  return `${task.id} (${parts.filter(Boolean).join(", ")})`;
 }
 
-// A task as `hex task` shows it: its title and facts on one line, then each of the owner's words in
-// full, under the key of the message they came from.
 export function render(task: Task, named: Record<string, string> = {}): string {
   const lines = [`${facts(task, named)}: ${task.title}`];
-  if (task.doneWhen) lines.push(`  done when: ${task.doneWhen}`);
-  if (task.proof) lines.push(`  proof: ${task.proof}`);
-  for (const words of task.words) {
-    lines.push(`  [${words.message} · ${words.who} · ${words.at.slice(0, 16).replace("T", " ")}Z]`);
-    lines.push(...words.text.split("\n").map((line) => `    ${line}`));
+
+  if (given(task.doneWhen)) {
+    lines.push(`  done when: ${task.doneWhen}`);
   }
+
+  if (given(task.proof)) {
+    lines.push(`  proof: ${task.proof}`);
+  }
+
+  for (const words of task.words) {
+    lines.push(
+      `  [${words.message} · ${words.who} · ${words.at.slice(0, 16).replace("T", " ")}Z]`,
+      ...words.text.split("\n").map((line) => `    ${line}`),
+    );
+  }
+
   return lines.join("\n");
 }
 
-// A task as a session's prompt carries it: the clean entry, its title and what done looks like. The
-// owner's words stay in hex.db, for `hex task` to show in full.
-export function entry(task: Task, named: Record<string, string>, done = true) {
+export function entry(task: Task, named: Record<string, string>, withDoneLines = true) {
   const messages = new Set(task.words.map((words) => words.message)).size;
   const line = `${facts(task, named, messages > 1 ? `${messages} messages` : undefined)}: ${clip(task.title, 150)}`;
-  if (!done) return line;
+
+  if (!withDoneLines) {
+    return line;
+  }
+
   return [
     line,
-    task.doneWhen && `  done when: ${clip(task.doneWhen, 200)}`,
-    task.status === "done" && task.proof && `  proof: ${clip(task.proof, 200)}`,
+    given(task.doneWhen) ? `  done when: ${clip(task.doneWhen, 200)}` : "",
+    task.status === "done" && given(task.proof) ? `  proof: ${clip(task.proof, 200)}` : "",
   ]
     .filter(Boolean)
     .join("\n");
 }
 
-// A question as a session reads it: where it waits (where it was asked, or for one the owner asked,
-// hex's answer), by the key a reply quotes and an edit settles from any thread, its first line, and
-// its buttons.
 export function waiting(question: Question, named: Record<string, string> = {}): string {
-  const message = question.asker
-    ? (question.answer?.message ?? question.message)
-    : question.message;
+  const whereItWaits =
+    question.asker === "owner" ? (question.answer?.message ?? question.message) : question.message;
+
   const ref =
     question.app === "telegram"
-      ? `telegram:${question.thread.split(":")[0]}:${message}`
-      : `message ${message}`;
-  const text = question.asker
-    ? `answered my question: ${clip(question.text, 200)}`
-    : `${clip(question.text, 200)}${question.options.length ? ` [${question.options.join(" | ")}]` : ""}`;
+      ? `telegram:${question.thread.split(":")[0] ?? ""}:${whereItWaits}`
+      : `message ${whereItWaits}`;
+
+  const text =
+    question.asker === "owner"
+      ? `answered my question: ${clip(question.text, 200)}`
+      : `${clip(question.text, 200)}${question.options.length ? ` [${question.options.join(" | ")}]` : ""}`;
+
   return `- ${question.app} · ${named[question.thread] ?? question.thread} · ${ref} · ${question.at.slice(0, 16).replace("T", " ")}Z: ${text}`;
 }
 
-// What a session should have before it acts: the work on hold anywhere, then the questions still
-// waiting on the owner, then the open tasks it serves, newest first, each as its clean entry. seen
-// holds every entry by its id, those that didn't fit too, so the next push can say only what
-// changed. Every session sees every hold, since the owner's word in any thread can lift one; for
-// questions and tasks, main sees every thread's and a thread its own.
-export function pending(
-  state: string,
-  thread?: string,
-  room = ROOM,
-): { text: string; seen: Record<string, string> } {
+export function pending(state: string, thread?: string, room = ROOM) {
   const store = open(state);
-  const tasks = store.tasks({ owner: thread, status: ["open"] });
-  const questions = store.questions({ thread, waiting: true });
+
+  const tasks =
+    thread === undefined
+      ? store.tasks({ status: ["open"] })
+      : store.tasks({ owner: thread, status: ["open"] });
+
+  const questions =
+    thread === undefined
+      ? store.questions({ waiting: true })
+      : store.questions({ thread, waiting: true });
+
   const zone = zoneOf(dirname(state));
-  const holds = store.holds().map((hold) => [hold.id, line(hold, store, zone)] as const);
+  const holds = store.holds().map((hold) => [hold.id, holdLine(hold, store, zone)] as const);
   const named = store.names();
-  const whose = thread ? "This thread" : "Every thread";
+  const whose = thread === undefined || thread === "" ? "Every thread" : "This thread";
+
   const sections = [
     {
       header:
@@ -100,73 +117,96 @@ export function pending(
       rest: "`.hex/bin/hex tasks` lists them all",
     },
   ];
-  const seen = Object.fromEntries([
+
+  const seenEvenIfCut: Record<string, string> = Object.fromEntries([
     ...holds,
-    ...questions.map((question) => [
-      `${question.app}:${question.thread}:${question.message}`,
-      waiting(question, named),
-    ]),
-    ...tasks.map((task) => [task.id, entry(task, named)]),
+    ...questions.map(
+      (question) =>
+        [
+          `${question.app}:${question.thread}:${question.message}`,
+          waiting(question, named),
+        ] as const,
+    ),
+    ...tasks.map((task) => [task.id, entry(task, named)] as const),
   ]);
+
   return {
     text: fit(
       sections.filter((section) => section.items.length),
       room,
     ),
-    seen,
+    seen: seenEvenIfCut,
   };
 }
 
-// What changed between two pushes: each new or edited entry in full, and a line for each one that
-// left.
 export function changes(before: Record<string, string>, now: Record<string, string>): string {
   const fresh = Object.entries(now)
-    .filter(([id, line]) => before[id] !== line)
-    .map(([, line]) => line);
+    .filter(([id, shown]) => before[id] !== shown)
+    .map(([, shown]) => shown);
+
   const gone = Object.entries(before)
     .filter(([id]) => !(id in now))
-    .map(([, line]) => line.split("\n")[0]!.replace(/^- /, ""));
+    .map(([, shown]) => (shown.split("\n")[0] ?? "").replace(/^- /u, ""));
+
   return [
-    fresh.length && `New or changed since you last saw the list:\n${fresh.join("\n")}`,
-    gone.length && `No longer open or waiting:\n${gone.map((line) => `- ${line}`).join("\n")}`,
+    fresh.length > 0 ? `New or changed since you last saw the list:\n${fresh.join("\n")}` : "",
+    gone.length > 0
+      ? `No longer open or waiting:\n${gone.map((first) => `- ${first}`).join("\n")}`
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
 }
 
-// The UserPromptSubmit and SessionStart hook: a session gets the whole list the first time and once a
-// compaction or a clear took it away, and after that only what changed.
+const PromptHook = z.object({ session_id: z.string().optional(), source: z.string().optional() });
+
+const Pushed = z.object({ seen: z.record(z.string(), z.string()), sent: z.number() });
+
+const nonEmpty = (value: string | undefined) => (value === "" ? undefined : value);
+
 if (import.meta.main) {
   try {
-    const { session_id, source } = JSON.parse((await Bun.stdin.text()) || "{}") as {
-      session_id?: string;
-      source?: string;
-    };
-    if (session_id) {
+    const { session_id: session, source } = PromptHook.parse(
+      JSON.parse((await Bun.stdin.text()) || "{}"),
+    );
+
+    if (session !== undefined && session !== "") {
       const store = open(stateDir());
-      if (source === "compact" || source === "clear") store.unshow(session_id, "tasks");
-      // A job's session works for the thread that started it.
-      const owner = process.env.HEX_THREAD || served();
-      const thread = process.env.HEX_MAIN || !owner ? undefined : store.key(owner);
+
+      if (source === "compact" || source === "clear") {
+        store.unshow(session, "tasks");
+      }
+
+      const worksFor = nonEmpty(process.env.HEX_THREAD) ?? served();
+      const isMain = nonEmpty(process.env.HEX_MAIN) !== undefined;
+
+      const thread =
+        isMain || worksFor === undefined || worksFor === "" ? undefined : store.key(worksFor);
+
       const { text, seen } = pending(stateDir(), thread);
-      // Diffs since the last whole list add up in sent; once they'd pass its length, the whole list
-      // goes again, so a session that lost a push catches up.
       const whole = text || "No open tasks or questions waiting on me now.";
-      const last = store.seen(session_id, "tasks");
+      const last = store.seen(session, "tasks");
+
       const before = last.startsWith("{")
-        ? (JSON.parse(last) as { seen: Record<string, string>; sent: number })
+        ? (Pushed.safeParse(JSON.parse(last)).data ?? null)
         : null;
-      const diff = before && changes(before.seen, seen);
-      const out = diff && before.sent + diff.length < whole.length ? diff : whole;
-      const record = Object.keys(seen).length
-        ? JSON.stringify({ seen, sent: out === diff ? before!.sent + diff.length : 0 })
-        : "";
-      if (before ? diff : record !== last) {
-        store.show(session_id, "tasks", record);
+
+      const diff = before === null ? "" : changes(before.seen, seen);
+      const diffsSinceWholeList = before === null ? 0 : before.sent + diff.length;
+      const sendWhole = diff === "" || diffsSinceWholeList >= whole.length;
+      const out = sendWhole ? whole : diff;
+
+      const record =
+        Object.keys(seen).length > 0
+          ? JSON.stringify({ seen, sent: sendWhole ? 0 : diffsSinceWholeList })
+          : "";
+
+      if (before === null ? record !== last : diff !== "") {
+        store.show(session, "tasks", record);
         console.log(out);
       }
     }
   } catch (error) {
-    console.error(`hex couldn't read its tasks: ${error}`);
+    console.error(`hex couldn't read its tasks: ${String(error)}`);
   }
 }

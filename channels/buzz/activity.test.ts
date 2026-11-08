@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
-import { randomUUID } from "crypto";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { Filter } from "nostr-tools/filter";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
-import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from "nostr-tools/pure";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
+import { z } from "zod";
 
 import { until } from "../../hub/until.ts";
 import { startActivity } from "./activity.ts";
@@ -29,7 +31,55 @@ let activity: ReturnType<typeof startActivity>;
 let published: { event: Event; at: number }[];
 let filters: Filter[][];
 let deliver: (event: Event) => void;
-let cancels: object[];
+let cancels: Parameters<Parameters<typeof startActivity>[0]["cancel"]>[0][];
+
+type Json = z.core.util.JSONType;
+
+const Frame = z.looseObject({
+  kind: z.string(),
+  seq: z.number(),
+  turnId: z.unknown().exactOptional(),
+  channelId: z.unknown().exactOptional(),
+  sessionId: z.unknown().exactOptional(),
+  agentIndex: z.unknown().exactOptional(),
+  startedAt: z.unknown().exactOptional(),
+  payload: z.unknown().exactOptional(),
+});
+
+const Batch = z.object({ seq: z.number(), payload: z.object({ events: z.array(Frame) }) });
+
+const Update = z.looseObject({
+  sessionUpdate: z.string(),
+  content: z
+    .union([z.looseObject({ text: z.string().exactOptional() }), z.array(z.unknown())])
+    .exactOptional(),
+});
+
+function textOf({ content }: z.output<typeof Update>) {
+  return Array.isArray(content) ? undefined : content?.text;
+}
+
+const AcpRead = z.object({
+  payload: z.looseObject({
+    jsonrpc: z.string(),
+    method: z.string(),
+    params: z.looseObject({ sessionId: z.string(), update: Update }),
+  }),
+});
+
+const SessionNew = z.object({
+  payload: z.object({ params: z.object({ systemPrompt: z.string() }) }),
+});
+
+function nth<Item>(items: Item[], index: number): Item {
+  const item = items.at(index);
+
+  if (item === undefined) {
+    throw new Error(`nothing at ${index} of ${items.length}`);
+  }
+
+  return item;
+}
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "activity-"));
@@ -43,26 +93,35 @@ beforeEach(() => {
   writeFileSync(join(hexDir, "MEMORY.md"), "Bassim likes short answers.\n");
   writeFileSync(join(hexDir, ".hex", "HEX.md"), "How hex works.\n");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
-  const projects = join(dir, "claude", "projects", hexDir.replace(/[^a-zA-Z0-9]/g, "-"));
+  const projects = join(dir, "claude", "projects", hexDir.replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   mkdirSync(projects, { recursive: true });
   transcript = join(projects, `${SESSION}.jsonl`);
   published = [];
   filters = [];
   cancels = [];
+
   const relay: Relay = {
     pubkey: agent,
-    publish: async (event) => {
-      published.push({ event: event as Event, at: Date.now() });
-      return event as Event;
+    publish: (template) => {
+      const event = finalizeEvent(
+        { created_at: Math.floor(Date.now() / 1000), ...template },
+        agentKey,
+      );
+
+      published.push({ event, at: Date.now() });
+
+      return Promise.resolve(event);
     },
     subscribe: (wanted, onEvent) => {
       filters.push(wanted);
       deliver = onEvent;
+
       return () => {};
     },
-    query: async () => [],
+    query: () => Promise.resolve([]),
     close: () => {},
   };
+
   activity = startActivity({
     relay,
     secretKey: agentKey,
@@ -70,6 +129,7 @@ beforeEach(() => {
     hexDir,
     cancel: (target) => {
       cancels.push(target);
+
       return "sent";
     },
   });
@@ -81,10 +141,10 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function line(entry: object) {
+function line(entry: Record<string, Json>) {
   appendFileSync(
     transcript,
-    JSON.stringify({
+    `${JSON.stringify({
       parentUuid: null,
       isSidechain: false,
       userType: "external",
@@ -95,11 +155,11 @@ function line(entry: object) {
       uuid: randomUUID(),
       timestamp: new Date().toISOString(),
       ...entry,
-    }) + "\n",
+    })}\n`,
   );
 }
 
-function assistant(id: string, block: object) {
+function assistant(id: string, block: Record<string, Json>) {
   line({
     type: "assistant",
     requestId: "req_01",
@@ -149,8 +209,7 @@ function bash(id: string, tool: string, command: string, output: string) {
   });
 }
 
-// What Claude Code writes once a turn's Stop hooks have run.
-function stopHooks() {
+function stopHooksRan() {
   line({
     type: "system",
     subtype: "stop_hook_summary",
@@ -168,25 +227,35 @@ function plaintexts() {
   return published.map(({ event }) => decrypt(event.content, key));
 }
 
-function frames(): any[] {
-  return plaintexts().flatMap((text) => {
-    const frame = JSON.parse(text);
-    return frame.kind === "batch" ? frame.payload.events : [frame];
-  });
+function sent(): z.output<typeof Frame>[] {
+  return plaintexts().map((text) => Frame.parse(JSON.parse(text)));
+}
+
+function frames(): z.output<typeof Frame>[] {
+  return sent().flatMap((frame) =>
+    frame.kind === "batch" ? Batch.parse(frame).payload.events : [frame],
+  );
+}
+
+function reads() {
+  return frames()
+    .filter((frame) => frame.kind === "acp_read")
+    .map((frame) => AcpRead.parse(frame).payload);
 }
 
 function updates() {
-  return frames()
-    .filter((frame) => frame.kind === "acp_read")
-    .map((frame) => frame.payload.params.update);
+  return reads().map((payload) => payload.params.update);
 }
 
-function control(payload: object, options: { from?: Uint8Array; created_at?: number } = {}) {
+function control(
+  payload: Record<string, Json>,
+  options: { from?: Uint8Array; created_at?: number } = {},
+) {
   const from = options.from ?? ownerKey;
   deliver(
     finalizeEvent(
       {
-        kind: 24200,
+        kind: 24_200,
         created_at: options.created_at ?? Math.floor(Date.now() / 1000),
         tags: [
           ["p", agent],
@@ -207,7 +276,7 @@ test("a turn streams its new transcript lines as ACP session updates, then compl
   assistant("msg_01", { type: "thinking", thinking: "Check the clock.", signature: "sig" });
   bash("msg_01", "toolu_01", "date", "Tue Oct  6 12:00:00 UTC 2026");
   assistant("msg_02", { type: "text", text: "It's noon." });
-  stopHooks();
+  stopHooksRan();
   await until(() => updates().some((update) => update.sessionUpdate === "agent_message_chunk"));
   activity.idle(ROOT);
   await until(() => frames().some((frame) => frame.kind === "turn_completed"));
@@ -222,7 +291,7 @@ test("a turn streams its new transcript lines as ACP session updates, then compl
     "acp_read",
     "turn_completed",
   ]);
-  expect(all[0].payload).toEqual({
+  expect(nth(all, 0).payload).toEqual({
     source: "channel",
     triggeringEventIds: [TRIGGER],
     threadRootEventId: ROOT,
@@ -233,24 +302,24 @@ test("a turn streams its new transcript lines as ACP session updates, then compl
       (frame) =>
         frame.channelId === CHANNEL &&
         frame.agentIndex === 0 &&
-        frame.startedAt === all[0].startedAt,
+        frame.startedAt === nth(all, 0).startedAt,
     ),
   ).toBe(true);
   expect(all.slice(1).every((frame) => frame.sessionId === SESSION)).toBe(true);
   expect(all.map((frame) => frame.seq)).toEqual(
-    [...all.map((frame) => frame.seq)].sort((a, b) => a - b),
+    all.map((frame) => frame.seq).toSorted((a, b) => a - b),
   );
 
-  const read = all.filter((frame) => frame.kind === "acp_read");
+  const read = reads();
   expect(
     read.every(
-      (frame) =>
-        frame.payload.jsonrpc === "2.0" &&
-        frame.payload.method === "session/update" &&
-        frame.payload.params.sessionId === SESSION,
+      (payload) =>
+        payload.jsonrpc === "2.0" &&
+        payload.method === "session/update" &&
+        payload.params.sessionId === SESSION,
     ),
   ).toBe(true);
-  const [thought, call, result, message] = read.map((frame) => frame.payload.params.update);
+  const [thought, call, result, message] = read.map((payload) => payload.params.update);
   expect(thought).toMatchObject({
     sessionUpdate: "agent_thought_chunk",
     content: { type: "text", text: "Check the clock." },
@@ -272,46 +341,60 @@ test("a turn streams its new transcript lines as ACP session updates, then compl
     content: { type: "text", text: "It's noon." },
     messageId: "msg_02",
   });
-  expect(plaintexts().join()).not.toContain("an earlier turn");
-  expect(plaintexts().join()).not.toContain("what time is it");
+  expect(plaintexts().join(",")).not.toContain("an earlier turn");
+  expect(plaintexts().join(",")).not.toContain("what time is it");
 
   for (const { event } of published) {
-    expect(event.kind).toBe(24200);
+    expect(event.kind).toBe(24_200);
     expect(event.tags).toEqual([
       ["p", owner],
       ["agent", agent],
       ["frame", "telemetry"],
     ]);
   }
+
   expect(filters).toEqual([
-    [{ kinds: [24200], "#p": [agent], authors: [owner], since: expect.any(Number) }],
+    // oxlint-disable-next-line typescript/no-unsafe-assignment -- bun types its asymmetric matchers as any
+    [{ kinds: [24_200], "#p": [agent], authors: [owner], since: expect.any(Number) }],
   ]);
-}, 15000);
+}, 15_000);
 
 test("at most one relay event a second, with what piled up sent as one batch", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
-  for (let i = 0; i < 20; i++) assistant(`msg_${i}`, { type: "text", text: `step ${i}` });
+
+  for (let i = 0; i < 20; i++) {
+    assistant(`msg_${i}`, { type: "text", text: `step ${i}` });
+  }
+
   await until(() => published.length);
-  for (let i = 0; i < 5; i++) assistant(`msg_late_${i}`, { type: "text", text: `late ${i}` });
+
+  for (let i = 0; i < 5; i++) {
+    assistant(`msg_late_${i}`, { type: "text", text: `late ${i}` });
+  }
+
   await until(
     () =>
       updates().filter((update) => update.sessionUpdate === "agent_message_chunk").length === 25,
   );
   expect(published.length).toBeGreaterThan(1);
 
-  const gaps = published.slice(1).map(({ at }, i) => at - published[i]!.at);
+  const gaps = published.slice(1).map(({ at }, i) => at - nth(published, i).at);
   expect(gaps.every((gap) => gap >= 900)).toBe(true);
-  const batches = plaintexts()
-    .map((text) => JSON.parse(text))
-    .filter((frame) => frame.kind === "batch");
+
+  const batches = sent()
+    .filter((frame) => frame.kind === "batch")
+    .map((frame) => Batch.parse(frame));
+
   expect(batches.length).toBeGreaterThan(0);
+
   for (const batch of batches) {
     expect(batch.payload.events.length).toBeGreaterThan(1);
-    expect(batch.seq).toBe(batch.payload.events.at(-1).seq);
+    expect(batch.seq).toBe(nth(batch.payload.events, -1).seq);
   }
+
   const seqs = frames().map((frame) => frame.seq);
-  expect(seqs).toEqual([...new Set(seqs)].sort((a, b) => a - b));
-}, 15000);
+  expect(seqs).toEqual([...new Set(seqs)].toSorted((a, b) => a - b));
+}, 15_000);
 
 test("a turn reported over before its last step is written completes once Claude Code has written it", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -321,14 +404,16 @@ test("a turn reported over before its last step is written completes once Claude
   await Bun.sleep(1100);
   expect(frames().some((frame) => frame.kind === "turn_completed")).toBe(false);
   assistant("msg_02", { type: "text", text: "all done" });
-  stopHooks();
+  stopHooksRan();
   await until(() => frames().some((frame) => frame.kind === "turn_completed"));
   expect(
     frames()
       .filter((frame) => frame.kind === "acp_read" || frame.kind === "turn_completed")
-      .map((frame) => frame.payload.params?.update.content.text ?? frame.kind),
+      .map((frame) =>
+        frame.kind === "acp_read" ? textOf(AcpRead.parse(frame).payload.params.update) : frame.kind,
+      ),
   ).toEqual(["working on it", "all done", "turn_completed"]);
-}, 15000);
+}, 15_000);
 
 test("an interrupted turn, which runs no Stop hooks, completes at the line Claude Code writes for the interrupt", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -368,8 +453,8 @@ test("a turn whose session was stopped completes with what it wrote, and the nex
       .map((frame) => frame.kind)
       .filter((kind) => kind.startsWith("turn_")),
   ).toEqual(["turn_started", "turn_completed", "turn_started", "turn_completed", "turn_started"]);
-  expect(updates().map((update) => update.content.text)).toEqual(["halfway"]);
-}, 15000);
+  expect(updates().map(textOf)).toEqual(["halfway"]);
+}, 15_000);
 
 test("session/new is sent once per session, with AGENTS.md and what it imports", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -379,12 +464,12 @@ test("session/new is sent once per session, with AGENTS.md and what it imports",
 
   const news = frames().filter((frame) => frame.kind === "acp_write");
   expect(news).toHaveLength(1);
-  expect(news[0].payload).toMatchObject({
+  expect(nth(news, 0).payload).toMatchObject({
     jsonrpc: "2.0",
     method: "session/new",
     params: { cwd: hexDir },
   });
-  expect(news[0].payload.params.systemPrompt).toBe(`<workspace>
+  expect(SessionNew.parse(nth(news, 0)).payload.params.systemPrompt).toBe(`<workspace>
 ${hexDir}
 </workspace>
 
@@ -407,7 +492,7 @@ You are hex.
 ── MEMORY.md ──
 Bassim likes short answers.
 </agent-instructions>`);
-}, 15000);
+}, 15_000);
 
 test("a session learned mid-turn picks up the lines written since the turn began", async () => {
   assistant("msg_old", { type: "text", text: "an earlier turn" });
@@ -417,45 +502,48 @@ test("a session learned mid-turn picks up the lines written since the turn began
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
   assistant("msg_02", { type: "text", text: "second" });
   await until(() => updates().length === 2);
-  expect(updates().map((update) => update.content.text)).toEqual(["first", "second"]);
+  expect(updates().map(textOf)).toEqual(["first", "second"]);
   expect(frames().filter((frame) => frame.kind === "turn_started")).toHaveLength(1);
-}, 15000);
+}, 15_000);
 
 test("a transcript that appears late and arrives in pieces is read whole", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
   await Bun.sleep(1100);
-  const text =
-    JSON.stringify({
-      type: "assistant",
-      uuid: randomUUID(),
-      timestamp: new Date().toISOString(),
-      sessionId: SESSION,
-      message: {
-        id: "msg_01",
-        role: "assistant",
-        content: [{ type: "text", text: "héllo wörld" }],
-      },
-    }) + "\n";
+
+  const text = `${JSON.stringify({
+    type: "assistant",
+    uuid: randomUUID(),
+    timestamp: new Date().toISOString(),
+    sessionId: SESSION,
+    message: {
+      id: "msg_01",
+      role: "assistant",
+      content: [{ type: "text", text: "héllo wörld" }],
+    },
+  })}\n`;
+
   const bytes = Buffer.from(text);
   const middle = bytes.indexOf(Buffer.from("ö")) + 1;
   appendFileSync(transcript, bytes.subarray(0, middle));
   await Bun.sleep(1100);
   appendFileSync(transcript, bytes.subarray(middle));
   await until(() => updates().length === 1);
-  expect(updates()[0].content.text).toBe("héllo wörld");
-}, 15000);
+  expect(textOf(nth(updates(), 0))).toBe("héllo wörld");
+}, 15_000);
 
 test("an oversized tool result is cut down to fit one frame", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
-  bash("msg_01", "toolu_01", "cat big", "x".repeat(200_000) + "THE END");
+  bash("msg_01", "toolu_01", "cat big", `${"x".repeat(200_000)}THE END`);
   await until(() => updates().some((update) => update.sessionUpdate === "tool_call_update"));
   expect(plaintexts().every((text) => Buffer.byteLength(text) <= 65_535)).toBe(true);
+
   const result = JSON.stringify(
     updates().find((update) => update.sessionUpdate === "tool_call_update"),
   );
+
   expect(result).toContain("characters cut");
   expect(result).toContain("THE END");
-}, 15000);
+}, 15_000);
 
 test("cancel_turn from the owner cancels the open turn and answers with control_result", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -474,31 +562,31 @@ test("cancel_turn from the owner cancels the open turn and answers with control_
   expect(cancels).toEqual([{ channel: CHANNEL, thread: ROOT, session: SESSION }]);
   const results = frames().filter((frame) => frame.kind === "control_result");
   expect(results).toHaveLength(1);
-  expect(results[0]).toMatchObject({
+  expect(nth(results, 0)).toMatchObject({
     channelId: CHANNEL,
     turnId: null,
     payload: { type: "cancel_turn", status: "sent", requestId: "r4" },
   });
-}, 15000);
+}, 15_000);
 
 test("turn_liveness every 10 s while a turn is open, none after it completes", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
   await until(() => published.length);
   setSystemTime(new Date(Date.now() + 10_500));
   await until(() => frames().some((frame) => frame.kind === "turn_liveness"));
-  stopHooks();
+  stopHooksRan();
   activity.idle(ROOT);
   setSystemTime(new Date(Date.now() + 10_500));
   await until(() => frames().some((frame) => frame.kind === "turn_completed"));
   await Bun.sleep(1100);
   const liveness = frames().filter((frame) => frame.kind === "turn_liveness");
   expect(liveness).toHaveLength(1);
-  expect(liveness[0]).toMatchObject({
+  expect(nth(liveness, 0)).toMatchObject({
     channelId: CHANNEL,
     sessionId: SESSION,
     payload: { threadRootEventId: ROOT },
   });
-}, 15000);
+}, 15_000);
 
 test("log_follow answers with the buffered tail, then streams new lines until the lease lapses", async () => {
   activity.log("buzz hub: one");
@@ -527,10 +615,10 @@ test("log_follow answers with the buffered tail, then streams new lines until th
         frame.turnId === null,
     ),
   ).toBe(true);
-}, 15000);
+}, 15_000);
 
 test("log_follow with nothing buffered still answers, so Desktop knows logs work", async () => {
   control({ type: "log_follow", requestId: "l1", tail: 200 });
   await until(() => frames().some((frame) => frame.kind === "log"));
-  expect(frames()[0].payload).toEqual({ lines: [], dropped: 0 });
-}, 15000);
+  expect(nth(frames(), 0).payload).toEqual({ lines: [], dropped: 0 });
+}, 15_000);

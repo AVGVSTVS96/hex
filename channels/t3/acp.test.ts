@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { createServer, type Server, type Socket } from "net";
-import { tmpdir } from "os";
-import { join } from "path";
-import { createInterface } from "readline";
-import { Readable } from "stream";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createServer } from "node:net";
+import type { Server, Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
 
 import type { Subprocess } from "bun";
+import { z } from "zod";
 
 import { until } from "../../hub/until.ts";
 
@@ -21,22 +23,49 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const server of servers.splice(0)) server.close();
-  for (const proxy of proxies.splice(0)) proxy.kill();
+  for (const server of servers.splice(0)) {
+    server.close();
+  }
+
+  for (const proxy of proxies.splice(0)) {
+    proxy.kill();
+  }
+
   rmSync(dir, { recursive: true, force: true });
 });
 
-// A hub on acp.sock that answers each request with what `answer` writes back.
-function hub(answer: (request: any, socket: Socket) => void) {
-  const server = createServer((socket) =>
-    createInterface({ input: socket }).on("line", (line) => answer(JSON.parse(line), socket)),
-  );
+const rpc = z.looseObject({
+  id: z.union([z.string(), z.number()]).optional(),
+  method: z.string().optional(),
+  params: z
+    .looseObject({
+      update: z.looseObject({ content: z.looseObject({ text: z.string() }) }).optional(),
+    })
+    .optional(),
+});
+
+type Rpc = z.infer<typeof rpc>;
+
+function hubAnsweringEachRequestWith(answer: (request: Rpc, socket: Socket) => void) {
+  const server = createServer((socket) => {
+    createInterface({ input: socket }).on("line", (line) => {
+      answer(rpc.parse(JSON.parse(line)), socket);
+    });
+  });
+
   servers.push(server);
-  return new Promise<Server>((resolve) => server.listen(path, () => resolve(server)));
+
+  return new Promise<Server>((resolve) => {
+    server.listen(path, () => {
+      resolve(server);
+    });
+  });
 }
 
-const write = (socket: Socket, message: object) =>
+const write = (socket: Socket, message: Rpc) => {
   socket.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+};
+
 const said = (text: string) => ({
   method: "session/update",
   params: {
@@ -50,8 +79,11 @@ const said = (text: string) => ({
 });
 
 test("a thread's history a hub restart cut short loads again without repeating what T3 has", async () => {
-  const first = await hub((request, socket) => {
-    if (request.method !== "session/load") return;
+  const first = await hubAnsweringEachRequestWith((request, socket) => {
+    if (request.method !== "session/load") {
+      return;
+    }
+
     write(socket, said("one"));
     write(socket, said("two"));
     setTimeout(() => {
@@ -59,30 +91,42 @@ test("a thread's history a hub restart cut short loads again without repeating w
       socket.destroy();
     }, 100);
   });
+
   const proxy = Bun.spawn(["bun", join(import.meta.dir, "acp.ts"), path], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
   });
+
   proxies.push(proxy);
-  const out: any[] = [];
-  createInterface({ input: Readable.fromWeb(proxy.stdout as any) }).on("line", (line) =>
-    out.push(JSON.parse(line)),
-  );
+  const out: Rpc[] = [];
+  createInterface({ input: Readable.from(proxy.stdout) }).on("line", (line) => {
+    out.push(rpc.parse(JSON.parse(line)));
+  });
   await Bun.sleep(100);
-  proxy.stdin.write(
+  void proxy.stdin.write(
     `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "session/load", params: { sessionId: "s1", cwd: dir, mcpServers: [] } })}\n`,
   );
-  proxy.stdin.flush();
+  void proxy.stdin.flush();
   await until(() => out.length === 2);
-  await new Promise((resolve) => first.on("close", resolve));
-  await hub((request, socket) => {
-    if (request.method !== "session/load") return write(socket, { id: request.id, result: {} });
-    for (const text of ["one", "two", "three"]) write(socket, said(text));
+  await new Promise((resolve) => {
+    first.on("close", resolve);
+  });
+  await hubAnsweringEachRequestWith((request, socket) => {
+    if (request.method !== "session/load") {
+      write(socket, { id: request.id, result: {} });
+
+      return;
+    }
+
+    for (const text of ["one", "two", "three"]) {
+      write(socket, said(text));
+    }
+
     write(socket, { id: request.id, result: {} });
   });
   await until(() => out.some((message) => message.id === 1));
-  expect(out.map((message) => message.params?.update.content.text ?? message.id)).toEqual([
+  expect(out.map((message) => message.params?.update?.content.text ?? message.id)).toEqual([
     "one",
     "two",
     "three",

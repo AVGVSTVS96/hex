@@ -7,14 +7,21 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { dirname, join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+import { z } from "zod";
 
 import { open } from "../../hub/store.ts";
 
 const BIN = join(import.meta.dir, "../../bin");
 const SESSION = "addfa113-0000-4000-8000-000000000000";
+
+const Told = z.object({
+  systemMessage: z.string(),
+  hookSpecificOutput: z.object({ additionalContext: z.string() }).optional(),
+});
 
 let home: string;
 
@@ -22,15 +29,20 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "rules-"));
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
   mkdirSync(join(home, ".claude"));
-  for (const script of ["rules", "identity", "instructions"])
+
+  for (const script of ["rules", "identity", "instructions"]) {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
+  }
+
   symlinkSync(join(BIN, "../hub"), join(home, ".hex/hub"));
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n\n- Keep it short.\n");
   writeFileSync(join(home, ".hex/HEX.md"), "# How you work\n\nAnswer in plain words.\n");
   writeFileSync(join(home, ".claude/CLAUDE.md"), "# Global\n");
 });
 
-afterEach(() => rmSync(home, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 function hook(
   event: "SessionStart" | "UserPromptSubmit" | "SessionEnd",
@@ -48,7 +60,9 @@ function hook(
       ...env,
     },
   });
+
   expect(run.exitCode).toBe(0);
+
   return run.stdout.toString();
 }
 
@@ -89,7 +103,7 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
   Bun.spawnSync([join(home, ".hex/bin/instructions"), "hold", held], {
     env: { ...process.env, HOME: home },
   });
-  const copy = readFileSync(join(held, "CLAUDE.md"), "utf8");
+  const copy = readFileSync(join(held, "CLAUDE.md"), "utf-8");
   expect(copy).toContain("Answer in plain words.");
   hook("SessionStart", "startup", env);
   writeFileSync(
@@ -97,7 +111,7 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
     "# How you work\n\nAnswer in plain words, with a link.\n",
   );
   expect(hook("SessionStart", "resume", env)).toBe("");
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf8")).toBe(copy);
+  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toBe(copy);
   expect(hook("UserPromptSubmit", undefined, env)).toContain(
     "+Answer in plain words, with a link.",
   );
@@ -106,13 +120,13 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
   expect(hook("SessionStart", "resume", env) + hook("UserPromptSubmit", undefined, env)).toBe("");
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n\n- Keep it shorter.\n");
   hook("SessionStart", "compact", env);
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf8")).toContain("- Keep it shorter.");
+  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toContain("- Keep it shorter.");
   expect(hook("UserPromptSubmit", undefined, env)).toBe("");
 });
 
 test("a change too long to show points to the files instead", () => {
   hook("SessionStart");
-  writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n\n" + "- A long rule.\n".repeat(1000));
+  writeFileSync(join(home, "AGENTS.md"), `@.hex/HEX.md\n\n${"- A long rule.\n".repeat(1000)}`);
   const out = hook("UserPromptSubmit");
   expect(out).toContain("read them again");
   expect(out.length).toBeLessThan(10_000);
@@ -134,9 +148,7 @@ test("a memory pass rewriting the wake HEX.md imports is no change to the rules"
   expect(hook("UserPromptSubmit")).toBe("");
 });
 
-// hex as git records it: each update a commit at its own time (seconds), and the session's process
-// started at `started`, as Claude Code's record of it says.
-function commit(at: number, path: string, text: string) {
+function commit(atSeconds: number, path: string, text: string) {
   const git = (...args: string[]) =>
     Bun.spawnSync(
       [
@@ -154,26 +166,39 @@ function commit(at: number, path: string, text: string) {
       {
         env: {
           ...process.env,
-          GIT_COMMITTER_DATE: `@${at} +0000`,
-          GIT_AUTHOR_DATE: `@${at} +0000`,
+          GIT_COMMITTER_DATE: `@${atSeconds} +0000`,
+          GIT_AUTHOR_DATE: `@${atSeconds} +0000`,
           GIT_CONFIG_GLOBAL: "/dev/null",
           GIT_CONFIG_SYSTEM: "/dev/null",
         },
       },
     );
+
   mkdirSync(dirname(join(home, ".hex", path)), { recursive: true });
   writeFileSync(join(home, ".hex", path), text);
   git("add", path);
   git("commit", "-qm", path);
 }
 
-function updates(started: number, ...changes: [at: number, path: string, text: string][]) {
+function updates(
+  sessionStartedAtSeconds: number,
+  ...changes: [atSeconds: number, path: string, text: string][]
+) {
   Bun.spawnSync(["git", "init", "-q", join(home, ".hex")]);
-  for (const change of changes) commit(...change);
+
+  for (const change of changes) {
+    commit(...change);
+  }
+
   mkdirSync(join(home, ".claude/sessions"), { recursive: true });
   writeFileSync(
     join(home, ".claude/sessions", `${process.pid}.json`),
-    JSON.stringify({ pid: process.pid, sessionId: SESSION, startedAt: started * 1000, cwd: home }),
+    JSON.stringify({
+      pid: process.pid,
+      sessionId: SESSION,
+      startedAt: sessionStartedAtSeconds * 1000,
+      cwd: home,
+    }),
   );
 }
 
@@ -184,9 +209,9 @@ test("a session started before an update to its hooks hears so once, and its own
     [3000, "plugin/hooks/hooks.json", '{"hooks":{"Stop":[]}}'],
   );
   hook("SessionStart");
-  const out = JSON.parse(hook("UserPromptSubmit"));
+  const out = Told.parse(JSON.parse(hook("UserPromptSubmit")));
   expect(out.systemMessage).toContain("/reload-plugins for its new hooks");
-  expect(out.hookSpecificOutput.additionalContext).toContain(
+  expect(out.hookSpecificOutput?.additionalContext).toContain(
     "Claude Code reads hex's hooks only at start",
   );
   expect(hook("UserPromptSubmit")).toBe("");
@@ -216,7 +241,7 @@ test("after hearing once, a session hears again only of a later update to what i
   commit(4000, "README.md", "hex");
   expect(hook("UserPromptSubmit")).toBe("");
   commit(5000, "plugin/skills/echo/SKILL.md", "Restate the ask.");
-  const out = JSON.parse(hook("UserPromptSubmit"));
+  const out = Told.parse(JSON.parse(hook("UserPromptSubmit")));
   expect(out.systemMessage).toContain("/reload-plugins for its new hooks and skills.");
 });
 
@@ -245,7 +270,7 @@ test("a session started after the update says nothing", () => {
 
 test("a launcher change tells the owner to quit and resume through bin/session, in the folder the session started in", () => {
   updates(2000, [1000, "bin/session", "exec claude"], [3000, "bin/session", 'exec claude "$@"']);
-  const out = JSON.parse(hook("UserPromptSubmit"));
+  const out = Told.parse(JSON.parse(hook("UserPromptSubmit")));
   expect(out.systemMessage).toContain(
     `quit it and run cd '${home}' && '${home}/.hex/bin/session' --resume ${SESSION} for its new launch flags`,
   );

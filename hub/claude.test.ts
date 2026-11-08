@@ -1,13 +1,14 @@
+/* oxlint-disable eslint/no-template-curly-in-string -- the test checks that ${VARIABLE}s reach the session unexpanded */
 import { expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { start } from "./claude.ts";
 import { noClaude } from "./testing.ts";
 
 const scopes =
-  !!Bun.which("systemd-run") &&
+  Bun.which("systemd-run") !== null &&
   Bun.spawnSync(["systemd-run", "--user", "--scope", "--quiet", "true"]).success;
 
 test.skipIf(!scopes)(
@@ -23,6 +24,7 @@ test.skipIf(!scopes)(
     const path = process.env.PATH;
     process.env.HEX_SESSIONS_SLICE = "hex-sessions.slice";
     process.env.PATH = noClaude();
+
     try {
       expect(
         await start(launcher, ["--name", "cost of ${HOME}", "echo $PATH ${PATH}"], {
@@ -30,7 +32,7 @@ test.skipIf(!scopes)(
           env: process.env,
         }),
       ).toBe("job12345");
-      expect(readFileSync(join(dir, "args"), "utf8")).toBe(
+      expect(readFileSync(join(dir, "args"), "utf-8")).toBe(
         "--bg\n--name\ncost of ${HOME}\necho $PATH ${PATH}\n",
       );
     } finally {

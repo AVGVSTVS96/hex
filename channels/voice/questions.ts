@@ -1,39 +1,60 @@
-import { readFileSync, renameSync, statSync, watch, writeFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { readFileSync, renameSync, statSync, watch, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
-import { type Question as Asked, type MessageId, type Pin } from "../../hub/ledger.ts";
+import { z } from "zod";
+
+import type { Question as Asked, MessageId, Pin } from "../../hub/ledger.ts";
 import { statusPost } from "../../hub/status.ts";
-import { open as store, type Thread } from "../../hub/store.ts";
+import { open as store } from "../../hub/store.ts";
+import type { Thread } from "../../hub/store.ts";
 import { generalOf, nameOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";
 import { before, Check, final } from "./check.ts";
 import { linkAt, Links } from "./links.ts";
 import { relay } from "./relay.ts";
-import { T3, type Fresh, type Stuck } from "./t3.ts";
+import { T3 } from "./t3.ts";
+import type { Fresh, Stuck } from "./t3.ts";
 
-export type Kind = "pick" | "yesno" | "do" | "look";
-// value: the button's own label, when the option stands for one.
-// detail: what answering with it does for them, costs and gives up, in a plain sentence.
-// shot: its screenshot, /asks/<id>/shots/<shot>, when the question it answers was asked with them,
-// and shape, that screenshot's width over its height, so it takes its room before it arrives.
-export type Option = {
-  label: string;
-  value?: string;
-  pick?: boolean;
-  detail?: string;
+const KindSchema = z.enum(["pick", "yesno", "do", "look"]);
+
+export type Kind = z.infer<typeof KindSchema>;
+
+const MessageIdSchema = z.union([z.number(), z.string()]);
+
+const OptionSchema = z.object({
+  label: z.string(),
+  value: z.string().exactOptional(),
+  pick: z.boolean().exactOptional(),
+  detail: z.string().exactOptional(),
+});
+
+type CuratedOption = z.infer<typeof OptionSchema>;
+
+export type Option = CuratedOption & {
   shot?: number;
+  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads an option's screenshot width over height by this name
   shape?: number;
 };
-// A page a question points to; opening it answers nothing.
-export type Link = { label: string; url: string };
-// An answer or a not needed given here, kept so undo can take it back whatever the check or the
-// ledger says by then: the question as asked, the threads it told, the copies it reached and
-// missed, whether an undo of it stopped partway, and the answer it was given over, which one undo
-// takes back too.
-// Marks from before these were kept have only label, at and via.
-// finishing: it only finished the one under it. dismissed: it was a not needed.
+
+const LinkSchema = z.object({ label: z.string(), url: z.string() });
+
+export type Link = z.infer<typeof LinkSchema>;
+
+const RefSchema = z.object({ app: z.string(), thread: z.string(), message: MessageIdSchema });
+
+export type Ref = z.infer<typeof RefSchema>;
+
+const SourceSchema = z.object({
+  app: z.string(),
+  thread: z.string().exactOptional(),
+  message: MessageIdSchema.exactOptional(),
+  call: z.string().exactOptional(),
+});
+
+export type Source = z.infer<typeof SourceSchema>;
+
 export type Answer = {
   label: string;
   at: string;
@@ -47,60 +68,87 @@ export type Answer = {
   dismissed?: boolean;
   before?: Answer;
 };
+
+const AnswerSchema: z.ZodType<Answer> = z.object({
+  label: z.string(),
+  at: z.string(),
+  via: z.string(),
+  question: z.string().exactOptional(),
+  told: z.array(z.string()).exactOptional(),
+  refs: z.array(RefSchema).exactOptional(),
+  missed: z.array(RefSchema).exactOptional(),
+  finishing: z.boolean().exactOptional(),
+  undoing: z.boolean().exactOptional(),
+  dismissed: z.boolean().exactOptional(),
+  get before() {
+    return AnswerSchema.exactOptional();
+  },
+});
+
 type Taken = Answer & Required<Pick<Answer, "question" | "told" | "refs" | "missed">>;
-export type Ref = { app: string; thread: string; message: MessageId };
-// Where a question was asked, as hex's check found it: a thread, with the message when it knows it
-// (a question, a pinned post, a plain message), or a call.
-export type Source = { app: string; thread?: string; message?: MessageId; call?: string };
-// Each place a question was asked, for its row: the app, what the place is called there, the hex thread
-// or call it is, and a link that opens it, the message itself where the app has one. A place
-// without a link is still known to be where it was asked.
+
 export type Place = { app: string; place: string; task?: string; call?: string; link?: string };
-export type Question = {
-  id: string;
-  kind: Kind;
-  task: string;
+
+const CuratedSchema = z.object({
+  id: z.string(),
+  kind: KindSchema,
+  task: z.string(),
+  at: z.string(),
+  question: z.string(),
+  context: z.string().exactOptional(),
+  why: z.string().exactOptional(),
+  options: z.array(OptionSchema),
+  links: z.array(LinkSchema).exactOptional(),
+  tag: z.string().exactOptional(),
+  was: z.array(z.string()).exactOptional(),
+  partly: z.string().exactOptional(),
+  undoing: z.literal(true).exactOptional(),
+  from: z.array(SourceSchema).exactOptional(),
+  refs: z.array(RefSchema).exactOptional(),
+});
+
+export type Curated = z.infer<typeof CuratedSchema>;
+
+export type Question = Omit<Curated, "from" | "refs" | "options"> & {
+  options: Option[];
   app: string;
   topic: string;
-  at: string;
-  question: string;
-  context?: string;
-  // Why hex picks the option it marks, so its pick can be weighed and not just taken.
-  why?: string;
-  options: Option[];
-  links?: Link[];
-  tag?: string;
   places: Place[];
-  // The ids it was listed under before hex's check took it up, so what the app holds under one,
-  // like words typed and not sent yet, stays with it.
-  was?: string[];
-  // Left half done from here: partly, the answer (or "Not needed") that reached only some of its
-  // copies, which only it can finish, or undo; undoing, an undo that stopped partway, which only
-  // undoing again finishes.
-  partly?: string;
-  undoing?: true;
 };
-// hex's check rewrites the raw questions into these: one per decision, however many places asked
-// it (from; refs are the open questions with buttons among them, which an answer goes back to), in
-// the order that unblocks the most, with its pick and what it costs.
-export type Curated = Omit<Question, "app" | "topic" | "places"> & {
-  from?: Source[];
-  refs?: Ref[];
-};
-// Where an ask came from in its thread's own words, for its card under "From <place>": the place as
-// Tasks names it, when it was said there, and the words as written.
+
 export type Words = { place: string; at?: string; text: string };
-export type Note = { title: string; text: string; did?: string };
-export type CheckResult = {
-  at: string;
-  why: string;
-  read: Record<string, number>;
-  asks: Curated[];
-  fixed: Note[];
-  flagged: Note[];
-  stuck: Omit<Stuck, "app">[];
-  inputs?: string;
-};
+
+const NoteSchema = z.object({
+  title: z.string(),
+  text: z.string(),
+  did: z.string().exactOptional(),
+});
+
+export type Note = z.infer<typeof NoteSchema>;
+
+const Waiting = z.object({
+  id: z.string(),
+  title: z.string(),
+  why: z.string(),
+  action: z.string(),
+  mark: z.enum(["paused", "failed"]),
+  at: z.string(),
+  request: z.string().exactOptional(),
+}) satisfies z.ZodType<Omit<Stuck, "app">>;
+
+const CheckFile = z.object({
+  at: z.string(),
+  why: z.string(),
+  read: z.record(z.string(), z.number()),
+  asks: z.array(CuratedSchema),
+  fixed: z.array(NoteSchema),
+  flagged: z.array(NoteSchema),
+  stuck: z.array(Waiting),
+  inputs: z.string().exactOptional(),
+});
+
+export type CheckResult = z.infer<typeof CheckFile>;
+
 export type View = {
   version: number;
   asks: Question[];
@@ -108,68 +156,105 @@ export type View = {
   fresh: (Fresh & { read: boolean })[];
   check: { at: string; why: string; fixed: number; flagged: number } | null;
 };
-// reopened: copies of a check's ask that an undo gave their buttons back after a later check let
-// the ask go, by its id, with its question, so they stay one ask until a check lists them again.
-type Reopened = { refs: Ref[]; question?: string; at: string };
-type Marks = {
-  answers: Record<string, Answer>;
-  sent: Record<string, string>;
-  dismissed: Record<string, string>;
-  read: Record<string, string>;
-  reopened: Record<string, Reopened>;
-};
 
-const KEEP = 14 * 24 * 60 * 60_000;
+const ReopenedSchema = z.object({
+  refs: z.array(RefSchema),
+  question: z.string().exactOptional(),
+  at: z.string(),
+});
+
+const MarksFile = z.object({
+  answers: z.record(z.string(), AnswerSchema).exactOptional(),
+  sent: z.record(z.string(), z.string()).exactOptional(),
+  dismissed: z.record(z.string(), z.string()).exactOptional(),
+  read: z.record(z.string(), z.string()).exactOptional(),
+  reopened: z.record(z.string(), ReopenedSchema).exactOptional(),
+});
+
+type Marks = Required<z.infer<typeof MarksFile>>;
+
+const CallRecord = z.object({
+  title: z.string().exactOptional(),
+  summary: z.string().exactOptional(),
+  started: z.string().exactOptional(),
+  ended: z.string().exactOptional(),
+});
+
+type HubStep =
+  | { type: "settle"; thread: string; message: MessageId; note: string }
+  | { type: "answer"; thread: string; message: MessageId; label: string; via: string };
+
+const KEEP_MARKS_MS = 14 * 24 * 60 * 60_000;
 const CALLS = join(homedir(), ".claude", "channels", "voice", "calls");
-const WHERE: Record<string, string> = { app: "in the app", call: "on a call" };
-const NOT_NEEDED = "Not needed";
-const PICK = /\s*[(\[]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/i;
-// A call's title and start as its record last read, under that record's stamp.
-type CallPlace = { stamp: string; title?: string; started?: string };
 
-// Everything waiting on the owner, in one list: each question a hex thread asked with buttons or a
-// poll and nobody has answered (from each app's ledger), as hex's check last rewrote them; what's
-// stuck and what finished since he looked (T3 Code's own records, and what the check found). An
-// answer goes back the way a tap in the chat app would, through that app's hub.
+const WHERE = new Map([
+  ["app", "in the app"],
+  ["call", "on a call"],
+]);
+
+const NOT_NEEDED = "Not needed";
+
+const PICK = /\s*[([]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/iu;
+
+type CallPlace = { stamp: string; title: string | undefined; started: string | undefined };
+
 export class Questions extends Changes {
   view: Omit<View, "version"> = { asks: [], stuck: [], fresh: [], check: null };
   counts = new Changes();
   private ledgers = new Map<string, Asked[]>();
-  private threads = new Map<string, Thread>();
-  private pins = new Map<string, Pin>();
-  private links: Links;
-  private calls: string;
-  private result?: CheckResult;
-  private checkStamp?: string;
-  private marks: Marks;
-  private taking = new Set<string>();
+  private readonly threads = new Map<string, Thread>();
+  private readonly pins = new Map<string, Pin>();
+  private readonly links: Links;
+  private readonly calls: string;
+  private result: CheckResult | undefined;
+  private checkStamp: string | undefined;
+  private readonly marks: Marks;
+  private readonly taking = new Set<string>();
   private pending?: ReturnType<typeof setTimeout>;
-  private stops: (() => void)[] = [];
-  private t3: T3;
-  private check: (why: string) => void;
+  private readonly stops: (() => void)[] = [];
+  private readonly t3: T3;
+  private readonly check: (why: string) => void;
   private seen?: { pins: string; t3: string };
   private callPlaces = new Map<string, CallPlace>();
-  private shots = new Map<string, string[]>();
+  private readonly shots = new Map<string, string[]>();
   private lastCallPlaces = new Map<string, CallPlace>();
+  private readonly state: string;
 
   constructor(
-    private state: string,
+    state: string,
     {
       t3Database,
       t3Home,
       calls = CALLS,
-      check = (why) => new Check(state).start(why),
+      check = (why) => {
+        new Check(state).start(why);
+      },
     }: { t3Database?: string; t3Home?: string; calls?: string; check?: (why: string) => void } = {},
   ) {
     super();
+    this.state = state;
     this.check = check;
     this.calls = calls;
-    this.links = new Links(state, () => this.schedule(), t3Home);
+    this.links = new Links(
+      state,
+      () => {
+        this.schedule();
+      },
+      t3Home,
+    );
     this.marks = readMarks(join(state, "voice", "marks.json"));
-    this.t3 = new T3(() => this.schedule(), t3Database);
-    this.stops.push(store(state).watch(() => this.schedule()));
+    this.t3 = new T3(() => {
+      this.schedule();
+    }, t3Database);
     this.stops.push(
-      watchDir(join(state, "voice"), (file) => file === "check.json" && this.schedule()),
+      store(state).watch(() => {
+        this.schedule();
+      }),
+      watchDir(join(state, "voice"), (file) => {
+        if (file === "check.json") {
+          this.schedule();
+        }
+      }),
     );
     this.build();
   }
@@ -178,17 +263,18 @@ export class Questions extends Changes {
     return this.result;
   }
 
-  // Tasks opened with questions newer than the last check, or a call ended: hex checks again.
   opened() {
     const checked = this.result?.at ?? "";
+
     if (
       [...this.ledgers.values()].some((questions) =>
         questions.some(
           (question) => !question.answer && !question.settled && question.at > checked,
         ),
       )
-    )
+    ) {
       this.check("you opened Tasks");
+    }
   }
 
   called() {
@@ -199,61 +285,75 @@ export class Questions extends Changes {
     clearTimeout(this.pending);
     this.t3.close();
     this.links.close();
-    for (const stop of this.stops) stop();
+
+    for (const stop of this.stops) {
+      stop();
+    }
   }
 
-  // The file of an open ask's nth screenshot.
   shot(id: string, n: number): string | undefined {
     const asked = this.find(id);
+
     return asked && this.shots.get(asked.id)?.[n];
   }
 
   find(id: string) {
-    const listed = (id: string) => this.view.asks.find((question) => question.id === id);
+    const listed = (key: string) => this.view.asks.find((question) => question.id === key);
+
     return listed(id) ?? listed(this.renamed(id) ?? id);
   }
 
-  // An ask read out or shown by the id it was listed under, which a check since took up as one of
-  // its copies under an id of its own: answering it by the old id answers the check's.
   private renamed(id: string): string | undefined {
-    if (this.view.asks.some((question) => question.id === id)) return;
+    if (this.view.asks.some((question) => question.id === id)) {
+      return;
+    }
+
     const copies = new Set([id, ...(this.marks.reopened[id]?.refs ?? []).map(refId)]);
-    return this.result?.asks.find((question: Curated) =>
-      question.refs?.some((ref) => copies.has(refId(ref))),
+
+    return this.result?.asks.find(
+      (question) => question.refs?.some((ref) => copies.has(refId(ref))) === true,
     )?.id;
   }
 
   private listed(id: string) {
-    return this.marks.answers[id] ? id : (this.renamed(id) ?? id);
+    return this.marks.answers[id] === undefined ? (this.renamed(id) ?? id) : id;
   }
 
-  // The thread's own questions and its pinned status post, for its page: one hex keeps is read
-  // from hex.db as the page opens, in full.
   of(id: string) {
     const pin = this.pins.get(id);
     const thread = id.slice(id.indexOf(":") + 1);
     const text = pin && statusPost(store(this.state), thread, pin.note, Infinity);
+
     return {
       asks: this.view.asks.filter((question) => question.task === id),
-      ...(text && { pin: text }),
+      ...(filled(text) && { pin: text }),
     };
   }
 
-  // An ask's words from the first of its places that has them: a question with what hex said just
-  // before it, a plain message with what came before it, a pinned post's waiting part, a call's
-  // wrap-up. An ask the check hasn't rewritten shows its own text as its question and context, so
-  // only what hex said before it is left.
   words(id: string): Words | undefined {
     const curated = this.result?.asks.find((question) => question.id === id);
     const raw = curated ? undefined : this.refs(id)[0];
-    if (!this.find(id) || (!curated && !raw)) return;
-    for (const source of curated ? (curated.from ?? curated.refs ?? []) : [raw!]) {
-      const words = source.call
+
+    const sources: Source[] | undefined = curated
+      ? (curated.from ?? curated.refs ?? [])
+      : raw && [raw];
+
+    const listed = this.find(id);
+
+    if (listed === undefined || sources === undefined) {
+      return;
+    }
+
+    for (const source of sources) {
+      const words = filled(source.call)
         ? this.callWords(source.call)
-        : source.thread &&
-          source.message !== undefined &&
-          this.threadWords(source.app, source.thread, source.message, !!curated);
-      if (words) return words;
+        : filled(source.thread) && source.message !== undefined
+          ? this.threadWords(source.app, source.thread, source.message, curated !== undefined)
+          : undefined;
+
+      if (words) {
+        return words;
+      }
     }
   }
 
@@ -267,31 +367,36 @@ export class Questions extends Changes {
     const asked = this.asked({ app, thread, message });
     const pin = this.pins.get(`${app}:${thread}`);
     const pinned = !asked && pin && String(pin.message) === String(message) ? pin : undefined;
+    // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Store#find(thread, message) is not Array#find
     const row = asked || pinned ? undefined : db.find(thread, message);
+
     const said =
       asked ?? (row && { app, thread, message, text: row.body, at: row.at, options: [] });
+
     const text = said
       ? [...before(db, app, said, Infinity), ...(own ? [said.text] : [])].join("\n\n")
       : pinned
         ? waiting(pinned.note)
         : "";
-    if (!text.trim()) return;
-    return { place: this.thread(app, thread, message).place, at: (said ?? pinned)!.at, text };
+
+    const at = (said ?? pinned)?.at;
+
+    if (at === undefined || text.trim() === "") {
+      return;
+    }
+
+    return { place: this.thread(app, thread, message).place, at, text };
   }
 
   private callWords(id: string): Words | undefined {
-    const call = readJson(join(this.calls, `${id}.json`));
-    if (call?.summary)
-      return {
-        place: call.title ?? "a call",
-        ...((call.ended ?? call.started) && { at: call.ended ?? call.started }),
-        text: call.summary,
-      };
+    const call = readJson(join(this.calls, `${id}.json`), CallRecord);
+    const at = call?.ended ?? call?.started;
+
+    if (call !== undefined && filled(call.summary)) {
+      return { place: call.title ?? "a call", ...(filled(at) && { at }), text: call.summary };
+    }
   }
 
-  // An answer goes to its first open copy, as its tap would, or to its thread in words when no
-  // button takes it; the other copies settle. A copy an earlier answer missed only settles, and
-  // finishing that answer settles just those.
   answer(id: string, label: string, via: string): Promise<Sent> {
     return this.take(this.listed(id), label, via, false);
   }
@@ -309,6 +414,7 @@ export class Questions extends Changes {
     const refs = this.left(id, taken);
     const missed = new Set(chain(taken.before).flatMap((mark) => (mark.missed ?? []).map(refId)));
     const first = refs.find((ref) => !missed.has(refId(ref)));
+
     const settle = (ref: Ref) =>
       this.reach(taken, ref, {
         type: "settle",
@@ -316,48 +422,53 @@ export class Questions extends Changes {
         message: ref.message,
         note: `✓ Answered ${where}: ${label}`,
       });
-    if (finishing) return this.each(refs, settle);
-    if (first && this.asked(first)!.options.includes(value))
-      await this.reach(taken, first, {
-        type: "answer",
-        thread: first.thread,
-        message: first.message,
-        label: value,
-        via,
-      });
-    else
-      await this.inform(
-        taken,
-        first ? place(first) : question.task,
-        `(answered ${where}) ${question.question}: ${label}`,
-        via,
-      );
-    return this.each(
+
+    if (finishing) {
+      return await tryEach(refs, settle);
+    }
+
+    await (first && this.asked(first)?.options.includes(value) === true
+      ? this.reach(taken, first, {
+          type: "answer",
+          thread: first.thread,
+          message: first.message,
+          label: value,
+          via,
+        })
+      : this.inform(
+          taken,
+          first ? place(first) : question.task,
+          `(answered ${where}) ${question.question}: ${label}`,
+          via,
+        ));
+
+    return await tryEach(
       refs.filter((ref) => !taken.refs.includes(ref)),
       settle,
     );
   }
 
-  // His own words on a question, which leave it open: they reach the thread that asked it, and
-  // nothing settles.
   async note(id: string, text: string, via: string): Promise<Sent> {
-    id = this.listed(id);
-    const question = this.find(id);
-    if (!question) throw new Error("that question is already answered or settled");
-    if (this.taking.has(id))
+    const key = this.listed(id);
+    const question = this.find(key);
+
+    if (!question) {
+      throw new Error("that question is already answered or settled");
+    }
+
+    if (this.taking.has(key)) {
       throw new Error("an answer to that is on its way; try again in a moment");
+    }
+
     await this.tell(
       question.task,
-      `(note written ${WHERE[via] ?? via}) ${question.question}: ${text}`,
+      `(note written ${WHERE.get(via) ?? via}) ${question.question}: ${text}`,
       via,
     );
+
     return { ...this.sent(question.task, 0), missed: 0 };
   }
 
-  // Puts away a question that no longer matters: its own thread and every thread its open copies are
-  // in hear it, so none keeps waiting, and the copies settle, which takes it off the list. A
-  // thread's copies settle only once it has heard, so one it couldn't reach stays open to try
-  // again; finishing skips the threads that round already told.
   dismiss(id: string, via: string): Promise<Sent> {
     return this.take(this.listed(id), NOT_NEEDED, via, true);
   }
@@ -371,147 +482,212 @@ export class Questions extends Changes {
     finishing: boolean,
   ) {
     const told = new Set(finishing ? round(taken.before).flatMap((mark) => mark.told ?? []) : []);
+
     const say = async (thread: string) => {
-      if (told.has(thread)) return;
+      if (told.has(thread)) {
+        return;
+      }
+
       await this.inform(taken, thread, `(not needed, said ${where}) ${question.question}`, via);
       told.add(thread);
     };
+
     await say(question.task);
     const failed: unknown[] = [];
+
     for (const [thread, copies] of Map.groupBy(this.left(id, taken), place)) {
-      const heard = await say(thread).then(
-        () => true,
-        (error) => (
-          failed.push(error, ...copies.map(() => error)),
-          taken.missed.push(...copies),
-          false
-        ),
+      try {
+        await say(thread);
+      } catch (error) {
+        failed.push(error, ...copies.map(() => error));
+        taken.missed.push(...copies);
+        continue;
+      }
+
+      failed.push(
+        ...(await tryEach(copies, (ref) =>
+          this.reach(taken, ref, {
+            type: "settle",
+            thread: ref.thread,
+            message: ref.message,
+            note: `✓ ${NOT_NEEDED}, said ${where}`,
+          }),
+        )),
       );
-      if (heard)
-        failed.push(
-          ...(await this.each(copies, (ref) =>
-            this.reach(taken, ref, {
-              type: "settle",
-              thread: ref.thread,
-              message: ref.message,
-              note: `✓ ${NOT_NEEDED}, said ${where}`,
-            }),
-          )),
-        );
     }
+
     return failed;
   }
 
-  // Takes back an answer or a not needed given in the app or on a call, with any it was given over:
-  // each copy they reached, or the ledger shows closed from here, gets its buttons back unless
-  // someone has since closed it in its own app, and each thread they told hears. What fails stays
-  // in the mark, so undoing again finishes it.
-  async undo(id: string, via: string) {
-    const renamed = this.renamed(id);
-    if (!this.marks.answers[id] && renamed && this.marks.answers[renamed]) id = renamed;
-    if (this.taking.has(id))
+  async undo(asked: string, via: string) {
+    const renamed = this.renamed(asked);
+
+    const id =
+      this.marks.answers[asked] === undefined &&
+      filled(renamed) &&
+      this.marks.answers[renamed] !== undefined
+        ? renamed
+        : asked;
+
+    if (this.taking.has(id)) {
       throw new Error("that answer is still on its way; try again in a moment");
+    }
+
     this.taking.add(id);
+
     try {
       const taken = this.marks.answers[id];
       const marks = chain(taken);
       const closed = this.refs(id).filter((ref) => !this.open(ref));
+
       const refs = [
         ...new Map(
           [...marks.flatMap((mark) => mark.refs ?? []), ...closed].map((ref) => [refId(ref), ref]),
         ).values(),
       ].filter((ref) => this.ours(ref));
-      if (!taken && !refs.length) throw new Error("there is no answer here to take back");
+
+      if (!taken && !refs.length) {
+        throw new Error("there is no answer here to take back");
+      }
+
       const curated = this.result?.asks.find((question) => question.id === id);
       const failed: unknown[] = [];
       const stuck: Ref[] = [];
       const reopened: Ref[] = [];
       let did = false;
-      for (const ref of refs)
-        await relay(this.state, ref.app, {
-          type: "reopen",
-          thread: ref.thread,
-          message: ref.message,
-          via,
-        }).then(
-          () => (
-            (did = true),
-            reopened.push(ref),
-            marks.forEach(
-              (mark) => (mark.refs = mark.refs?.filter((done) => refId(done) !== refId(ref))),
-            )
-          ),
-          (error) => (failed.push(error), stuck.push(ref)),
-        );
-      if (!curated && reopened.some((ref) => refId(ref) !== id)) {
-        const kept = this.marks.reopened[id];
-        // An ask undone again reopens the copies it kept: each stays one copy.
-        const refs = [
-          ...new Map([...(kept?.refs ?? []), ...reopened].map((ref) => [refId(ref), ref])).values(),
-        ];
-        this.marks.reopened[id] = { refs, question: taken?.question ?? kept?.question, at: now() };
-      }
-      const said = new Set<string>();
-      for (const mark of marks) {
-        mark.question ??= curated?.question;
-        const told = (mark.told ??= curated ? [curated.task] : []);
-        for (const thread of [...told]) {
-          const line = `(took back) ${mark.question}: ${mark.label}`;
-          const sent = said.has(`${thread} ${line}`)
-            ? Promise.resolve()
-            : this.tell(thread, line, via);
-          await sent.then(
-            () => (
-              (did = true),
-              said.add(`${thread} ${line}`),
-              told.splice(told.indexOf(thread), 1)
-            ),
-            (error) => failed.push(error),
-          );
+
+      for (const ref of refs) {
+        try {
+          await relay(this.state, ref.app, {
+            type: "reopen",
+            thread: ref.thread,
+            message: ref.message,
+            via,
+          });
+        } catch (error) {
+          failed.push(error);
+          stuck.push(ref);
+          continue;
+        }
+
+        did = true;
+        reopened.push(ref);
+
+        for (const mark of marks) {
+          if (mark.refs) {
+            mark.refs = mark.refs.filter((done) => refId(done) !== refId(ref));
+          }
         }
       }
-      if (!failed.length) delete this.marks.answers[id];
-      else
+
+      if (!curated && reopened.some((ref) => refId(ref) !== id)) {
+        const kept = this.marks.reopened[id];
+        const question = taken?.question ?? kept?.question;
+
+        const eachCopyOnce = [
+          ...new Map([...(kept?.refs ?? []), ...reopened].map((ref) => [refId(ref), ref])).values(),
+        ];
+
+        this.marks.reopened[id] = {
+          refs: eachCopyOnce,
+          ...(question !== undefined && { question }),
+          at: now(),
+        };
+      }
+
+      const said = new Set<string>();
+
+      for (const mark of marks) {
+        if (curated) {
+          mark.question ??= curated.question;
+        }
+
+        const notTold: string[] = [];
+
+        for (const thread of mark.told ?? (curated ? [curated.task] : [])) {
+          const line = `(took back) ${mark.question}: ${mark.label}`;
+
+          if (!said.has(`${thread} ${line}`)) {
+            try {
+              await this.tell(thread, line, via);
+            } catch (error) {
+              failed.push(error);
+              notTold.push(thread);
+              continue;
+            }
+          }
+
+          did = true;
+          said.add(`${thread} ${line}`);
+        }
+
+        mark.told = notTold;
+      }
+
+      if (failed.length) {
         Object.assign(
           (this.marks.answers[id] = taken ?? { label: "", at: now(), via, refs: stuck, told: [] }),
           { undoing: true, at: now() },
         );
-      this.saveMarks();
-      if (failed.length)
-        throw new Error(
-          `part of it couldn't be taken back; undo again to finish (${failed[0] instanceof Error ? failed[0].message : failed[0]})`,
+      } else {
+        this.marks.answers = Object.fromEntries(
+          Object.entries(this.marks.answers).filter(([key]) => key !== id),
         );
-      if (!did)
+      }
+
+      this.saveMarks();
+
+      if (failed.length) {
+        throw new Error(
+          `part of it couldn't be taken back; undo again to finish (${failed[0] instanceof Error ? failed[0].message : String(failed[0])})`,
+        );
+      }
+
+      if (!did) {
         throw new Error(
           "nothing was left to take back: its copies were answered or closed in their own apps since",
         );
-      if (!refs.length) this.check("you took back an answer");
+      }
+
+      if (!refs.length) {
+        this.check("you took back an answer");
+      }
     } finally {
       this.taking.delete(id);
     }
   }
 
-  // Whether an answer or a not needed from here still stands on the question, or is on its way.
   answered(id: string) {
     const key = this.listed(id);
-    return this.taking.has(key) || !!this.marks.answers[key];
+
+    return this.taking.has(key) || this.marks.answers[key] !== undefined;
   }
 
-  // A stuck item's one action: hex's General is asked to do it, or it's put away until it changes.
   async act(id: string) {
-    const item = this.view.stuck.find((item) => item.id === id);
-    if (!item) throw new Error("that is no longer stuck");
-    if (item.request) {
-      // A second tap while the first is on its way would ask General twice.
-      if (this.taking.has(id)) throw new Error("that request is on its way");
+    const item = this.view.stuck.find((each) => each.id === id);
+
+    if (!item) {
+      throw new Error("that is no longer stuck");
+    }
+
+    if (filled(item.request)) {
+      if (this.taking.has(id)) {
+        throw new Error("that request is on its way");
+      }
+
       this.taking.add(id);
+
       try {
         await this.tell(this.general(), item.request, "app", "prompt");
       } finally {
         this.taking.delete(id);
       }
+
       this.marks.sent[id] = now();
-    } else this.marks.dismissed[id] = now();
+    } else {
+      this.marks.dismissed[id] = now();
+    }
+
     this.saveMarks();
   }
 
@@ -522,37 +698,56 @@ export class Questions extends Changes {
 
   private refs(id: string): Ref[] {
     const curated = this.result?.asks.find((question) => question.id === id);
-    if (curated) return curated.refs ?? [];
-    if (this.marks.reopened[id]) return this.marks.reopened[id].refs;
-    for (const [app, questions] of this.ledgers) {
-      const asked = questions.find((question) => refId({ app, ...question }) === id);
-      if (asked) return [{ app, thread: asked.thread, message: asked.message }];
+
+    if (curated) {
+      return curated.refs ?? [];
     }
+
+    const reopened = this.marks.reopened[id];
+
+    if (reopened) {
+      return reopened.refs;
+    }
+
+    for (const [app, questions] of this.ledgers) {
+      const asked = questions.find((question) => refId(question) === id);
+
+      if (asked) {
+        return [{ app, thread: asked.thread, message: asked.message }];
+      }
+    }
+
     return [];
   }
 
-  // An answer or a not needed, one at a time per question. Its first step has to go through; after
-  // that every copy is tried, what went out is kept for undo, and the copies it missed are kept too.
-  // Over an earlier answer it goes only once the list is past it (until then the tap came from a
-  // list that hadn't caught up), and not over an undo that stopped partway. When the only copies
-  // left open are ones the earlier answer missed, it's that answer being finished, and only the
-  // same answer can finish it; a copy it never saw means the question was asked again.
   private async take(id: string, label: string, via: string, dismissed: boolean): Promise<Sent> {
-    if (this.taking.has(id))
+    if (this.taking.has(id)) {
       throw new Error("an answer to that is on its way; try again in a moment");
+    }
+
     this.taking.add(id);
+
     try {
       const question = this.find(id);
       const kept = this.marks.answers[id];
       const standing = this.standing(id);
-      if (!question || standing === "stale")
+
+      if (!question || standing === "stale") {
         throw new Error("that question is already answered or settled");
-      if (standing === "undoing")
+      }
+
+      if (standing === "undoing") {
         throw new Error("taking back the last answer to this stopped partway; undo it again first");
-      const finishing = standing === "finishing";
-      if (finishing && kept!.label !== label)
-        throw new Error(`part of "${kept!.label}" went out; send it again to finish, or undo it`);
-      if (finishing) dismissed = isDismissal(kept!);
+      }
+
+      const finishing = standing === "finishing" && kept !== undefined;
+
+      if (finishing && kept.label !== label) {
+        throw new Error(`part of "${kept.label}" went out; send it again to finish, or undo it`);
+      }
+
+      const notNeeded = finishing ? isDismissal(kept) : dismissed;
+
       const taken: Taken = {
         label,
         at: now(),
@@ -561,46 +756,51 @@ export class Questions extends Changes {
         told: [],
         refs: [],
         missed: [],
-        dismissed,
+        dismissed: notNeeded,
         ...(finishing && { finishing }),
         ...(kept && { before: kept }),
       };
-      const where = WHERE[via] ?? via;
-      const failed = await (dismissed
+
+      const where = WHERE.get(via) ?? via;
+
+      const failed = await (notNeeded
         ? this.dismissing(id, via, question, taken, where, finishing)
         : this.answering(id, label, via, question, taken, where, finishing));
-      if (!taken.told.length && !taken.refs.length)
-        throw failed[0] ?? new Error("that question is already answered or settled");
+
+      if (taken.told.length === 0 && taken.refs.length === 0) {
+        const [error] = failed;
+
+        throw error instanceof Error
+          ? error
+          : new Error("that question is already answered or settled");
+      }
+
       this.marks.answers[id] = taken;
       this.saveMarks();
-      const first = finishing ? round(kept).at(-1)! : taken;
-      return {
-        ...this.sent(first.told?.[0] ?? place((first.refs ?? taken.refs)[0]!), taken.refs.length),
-        missed: failed.length,
-      };
+      const first = (finishing ? round(kept).at(-1) : undefined) ?? taken;
+      const firstRef = (first.refs ?? taken.refs)[0];
+      const thread = first.told?.[0] ?? (firstRef ? place(firstRef) : question.task);
+
+      return { ...this.sent(thread, taken.refs.length), missed: failed.length };
     } finally {
       this.taking.delete(id);
     }
   }
 
-  // Tries every step, so one hub that's down doesn't stop the rest, and gives back what failed.
-  private async each<T>(steps: T[], step: (each: T) => Promise<void>) {
-    const failed: unknown[] = [];
-    for (const each of steps) await step(each).catch((error) => failed.push(error));
-    return failed;
-  }
-
-  // The question's copies still open that no answer from here has reached.
   private left(id: string, answer: Answer | undefined) {
     const reached = new Set(chain(answer).flatMap((mark) => (mark.refs ?? []).map(refId)));
+
     return this.refs(id).filter((ref) => this.open(ref) && !reached.has(refId(ref)));
   }
 
-  private async reach(taken: Taken, ref: Ref, message: object) {
-    await relay(this.state, ref.app, message).catch((error) => {
+  private async reach(taken: Taken, ref: Ref, message: HubStep) {
+    try {
+      await relay(this.state, ref.app, message);
+    } catch (error) {
       taken.missed.push(ref);
       throw error;
-    });
+    }
+
     taken.refs.push(ref);
   }
 
@@ -609,29 +809,46 @@ export class Questions extends Changes {
     taken.told.push(thread);
   }
 
-  // Where the answers from here leave a question, which take and the list both go by: undoing
-  // while an undo of them stopped partway; stale while a copy they reached still reads open (the
-  // list hasn't caught up) or it has no copies; finishing when its only open copies are ones they
-  // missed, which only the same label finishes, by whichever route, with that answer's own verb;
-  // otherwise free, as when it was asked again.
   private standing(id: string): "stale" | "undoing" | "finishing" | "free" {
     const kept = this.marks.answers[id];
-    if (!kept) return "free";
-    if (kept.undoing) return "undoing";
+
+    if (!kept) {
+      return "free";
+    }
+
+    if (kept.undoing === true) {
+      return "undoing";
+    }
+
     const marks = chain(kept);
-    if (!this.refs(id).length || marks.some((mark) => mark.refs?.some((ref) => this.open(ref))))
+
+    const listHasNotCaughtUp = marks.some(
+      (mark) => mark.refs?.some((ref) => this.open(ref)) === true,
+    );
+
+    if (this.refs(id).length === 0 || listHasNotCaughtUp) {
       return "stale";
+    }
+
     const missed = new Set(marks.flatMap((mark) => (mark.missed ?? []).map(refId)));
     const left = this.left(id, kept);
-    return left.length && left.every((ref) => missed.has(refId(ref))) ? "finishing" : "free";
+    const onlyMissedLeft = left.length > 0 && left.every((ref) => missed.has(refId(ref)));
+
+    return onlyMissedLeft ? "finishing" : "free";
   }
 
-  // Whether a copy is open, or was closed from here rather than by a tap in its own app or its thread.
   private ours(ref: Ref) {
     const asked = this.asked(ref);
-    if (!asked) return false;
-    if (asked.answer) return !!WHERE[asked.answer.via];
-    return !asked.settled || /^✓ (Answered|Not needed)/.test(asked.settled.note);
+
+    if (!asked) {
+      return false;
+    }
+
+    if (asked.answer) {
+      return WHERE.has(asked.answer.via);
+    }
+
+    return !asked.settled || /^✓ (Answered|Not needed)/u.test(asked.settled.note);
   }
 
   private sent(thread: string, settled: number) {
@@ -649,13 +866,14 @@ export class Questions extends Changes {
 
   private open(ref: Ref) {
     const asked = this.asked(ref);
+
     return !!asked && !asked.answer && !asked.settled;
   }
 
-  // An answer is the owner's; a stuck item's request is hex's check's words, sent on the owner's tap.
-  private tell(id: string, content: string, via: string, author = "owner") {
-    const [app, ...thread] = id.split(":");
-    return relay(this.state, app!, {
+  private tell(id: string, content: string, via: string, author: "owner" | "prompt" = "owner") {
+    const [app = "", ...thread] = id.split(":");
+
+    return relay(this.state, app, {
       type: "inbound",
       thread: thread.join(":"),
       content,
@@ -666,13 +884,17 @@ export class Questions extends Changes {
 
   private general() {
     const general = generalOf(this.threads.values());
-    if (!general) throw new Error("hex has no Telegram General to send this to");
+
+    if (!general) {
+      throw new Error("hex has no Telegram General to send this to");
+    }
+
     return `${general.app}:${general.thread}`;
   }
 
-  // What a question's thread is called, as its run on the board is.
   private topic(task: string) {
     const thread = this.threads.get(task);
+
     return thread
       ? nameOf(thread, generalOf(this.threads.values()))
       : task.slice(task.lastIndexOf(":") + 1);
@@ -680,7 +902,9 @@ export class Questions extends Changes {
 
   private schedule() {
     clearTimeout(this.pending);
-    this.pending = setTimeout(() => this.build(), 30);
+    this.pending = setTimeout(() => {
+      this.build();
+    }, 30);
   }
 
   private build() {
@@ -688,56 +912,90 @@ export class Questions extends Changes {
     this.threads.clear();
     this.pins.clear();
     const questions = store(this.state).questions({ asker: "hex" });
-    for (const thread of store(this.state).threads())
+
+    for (const thread of store(this.state).threads()) {
       this.threads.set(`${thread.app}:${thread.thread}`, thread);
+    }
+
     this.ledgers = Map.groupBy(
       questions.filter((question) => question.app !== "voice"),
       (question) => question.app,
     );
-    for (const pin of store(this.state).pins())
-      if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin);
+
+    for (const pin of store(this.state).pins()) {
+      if (pin.text !== "") {
+        this.pins.set(`${pin.app}:${pin.thread}`, pin);
+      }
+    }
+
     const check = join(this.state, "voice", "check.json");
     const stamp = stampOf(check);
+
     if (stamp !== this.checkStamp) {
-      this.result = readJson(check);
-      this.checkStamp = this.result || !stamp ? stamp : undefined;
+      this.result = readJson(check, CheckFile);
+      this.checkStamp = this.result !== undefined || stamp === "" ? stamp : undefined;
     }
-    [this.lastCallPlaces, this.callPlaces] = [this.callPlaces, new Map()];
+
+    [this.lastCallPlaces, this.callPlaces] = [this.callPlaces, new Map<string, CallPlace>()];
     this.notice();
     const used = new Set<string>();
-    const curated = (this.result?.asks ?? []).flatMap((question: Curated) => {
-      for (const ref of question.refs ?? []) used.add(refId(ref));
-      const live = question.refs?.length
-        ? question.refs.some((ref) => this.open(ref))
-        : !this.marks.answers[question.id];
+
+    const curated = (this.result?.asks ?? []).flatMap((question) => {
+      for (const ref of question.refs ?? []) {
+        used.add(refId(ref));
+      }
+
+      const live =
+        question.refs !== undefined && question.refs.length > 0
+          ? question.refs.some((ref) => this.open(ref))
+          : this.marks.answers[question.id] === undefined;
+
       return live ? [this.dress(question)] : [];
     });
+
     const reopened = Object.entries(this.marks.reopened).flatMap(([id, { refs, question }]) => {
-      const open = refs.filter((ref) => this.open(ref));
-      if (!open[0] || refs.some((ref) => used.has(refId(ref)))) return [];
-      for (const ref of refs) used.add(refId(ref));
-      const asked = fromLedger(open[0].app, this.asked(open[0])!);
-      return [this.dress({ ...asked, id, refs, from: refs, ...(question && { question }) })];
+      const first = refs.find((ref) => this.open(ref));
+      const asked = first && this.asked(first);
+
+      if (first === undefined || asked === undefined || refs.some((ref) => used.has(refId(ref)))) {
+        return [];
+      }
+
+      for (const ref of refs) {
+        used.add(refId(ref));
+      }
+
+      return [
+        this.dress({
+          ...fromLedger(first.app, asked),
+          id,
+          refs,
+          from: refs,
+          ...(filled(question) && { question }),
+        }),
+      ];
     });
-    const raw = [...this.ledgers].flatMap(([app, questions]) =>
-      questions
-        .filter(
-          (question) =>
-            !question.answer && !question.settled && !used.has(refId({ app, ...question })),
-        )
+
+    const raw = [...this.ledgers].flatMap(([app, ledger]) =>
+      ledger
+        .filter((question) => !question.answer && !question.settled && !used.has(refId(question)))
         .map((question) => this.dress(fromLedger(app, question))),
     );
+
     raw.sort((a, b) => b.at.localeCompare(a.at));
     const checked = this.result?.at ?? "";
+
     const stuck = [
       ...this.t3.stuck,
       ...(this.result?.stuck ?? []).map((item) => ({ ...item, app: "hex" })),
-    ]
-      .filter((item) => !this.marks.dismissed[item.id])
-      .map((item) => ({
-        ...item,
-        ...(this.marks.sent[item.id] && { sent: this.marks.sent[item.id] }),
-      }));
+    ].flatMap((item) => {
+      const sent = this.marks.sent[item.id];
+
+      return filled(this.marks.dismissed[item.id])
+        ? []
+        : [{ ...item, ...(filled(sent) && { sent }) }];
+    });
+
     const view: Omit<View, "version"> = {
       asks: [
         ...raw.filter((question) => question.at > checked),
@@ -746,7 +1004,7 @@ export class Questions extends Changes {
         ...raw.filter((question) => question.at <= checked),
       ],
       stuck,
-      fresh: this.t3.fresh.map((item) => ({ ...item, read: !!this.marks.read[item.id] })),
+      fresh: this.t3.fresh.map((item) => ({ ...item, read: filled(this.marks.read[item.id]) })),
       check: this.result
         ? {
             at: this.result.at,
@@ -756,221 +1014,311 @@ export class Questions extends Changes {
           }
         : null,
     };
-    if (JSON.stringify(view) === JSON.stringify(this.view)) return;
+
+    if (JSON.stringify(view) === JSON.stringify(this.view)) {
+      return;
+    }
+
     const moved =
       view.asks.length !== this.view.asks.length || view.stuck.length !== this.view.stuck.length;
+
     this.view = view;
     this.changed();
-    if (moved) this.counts.changed();
+
+    if (moved) {
+      this.counts.changed();
+    }
   }
 
-  // A pinned post that changed or a T3 run that ended starts a check; the first read only takes note.
   private notice() {
-    const now = {
+    const current = {
       pins: JSON.stringify([...this.pins].map(([id, pin]) => [id, pin.note])),
       t3: JSON.stringify(
         [this.t3.stuck, this.t3.fresh].map((items) => items.map((item) => item.id)),
       ),
     };
-    const why = !this.seen
-      ? undefined
-      : now.pins !== this.seen.pins
-        ? "a pinned post changed"
-        : now.t3 !== this.seen.t3
-          ? "a T3 run ended"
-          : undefined;
-    this.seen = now;
-    if (why) this.check(why);
+
+    const why =
+      this.seen === undefined
+        ? undefined
+        : current.pins === this.seen.pins
+          ? current.t3 === this.seen.t3
+            ? undefined
+            : "a T3 run ended"
+          : "a pinned post changed";
+
+    this.seen = current;
+
+    if (why) {
+      this.check(why);
+    }
   }
 
-  // An ask's half-done state, for the app to offer what finishes it.
   private half(id: string): Pick<Question, "partly" | "undoing"> {
     const standing = this.standing(id);
+    const kept = this.marks.answers[id];
+
     return standing === "undoing"
       ? { undoing: true }
-      : standing === "finishing"
-        ? { partly: this.marks.answers[id]!.label }
+      : standing === "finishing" && kept
+        ? { partly: kept.label }
         : {};
   }
 
-  // Each option that stands for one of a poll's options shows that option's screenshot.
   private dress({ refs, from, options, ...question }: Curated): Question {
-    const [app, ...thread] = question.task.split(":");
+    const [app = "", ...thread] = question.task.split(":");
     const was = (refs ?? []).map(refId).filter((id) => id !== question.id);
-    const shown = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.shots);
-    if (shown) this.shots.set(question.id, shown.shots!);
+
+    const shown = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.shots !== undefined);
+
+    if (shown?.shots !== undefined) {
+      this.shots.set(question.id, shown.shots);
+    }
+
     return {
       ...question,
-      app: app!,
+      app,
       topic: this.topic(question.task),
-      options: options.map(({ shot: _, shape: __, ...option }) => {
-        const shot = shown && option.value ? shown.options.indexOf(option.value) : -1;
-        const shape = shot < 0 ? undefined : shapeOf(shown!.shots![shot]!);
-        return shape ? { ...option, shot, shape } : option;
-      }),
-      places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(":") }]),
-      ...(was.length && { was }),
+      options: options.map((option) => withItsShot(option, shown)),
+      places: this.places(from ?? [...(refs ?? []), { app, thread: thread.join(":") }]),
+      ...(was.length > 0 && { was }),
       ...this.half(question.id),
     };
   }
 
-  // Every place a question was asked, the ones that open first, each newest first where it's known
-  // when: each call, and each thread once, at the message that matters most there: its open question, else its pinned post, else
-  // any message, else the thread itself.
   private places(from: Source[]): Place[] {
     const best = new Map<string, Source>();
+
     for (const source of from) {
-      if (!source.call && !source.thread) continue;
-      const key = source.call ? `call:${source.call}` : `${source.app}:${source.thread}`;
+      if (!filled(source.call) && !filled(source.thread)) {
+        continue;
+      }
+
+      const key = filled(source.call) ? `call:${source.call}` : `${source.app}:${source.thread}`;
       const held = best.get(key);
-      if (!held || this.rank(source) < this.rank(held)) best.set(key, source);
+
+      if (!held || this.rank(source) < this.rank(held)) {
+        best.set(key, source);
+      }
     }
+
     return [...best.values()]
       .map((source) =>
-        source.call
+        filled(source.call)
           ? this.call(source.call)
-          : this.thread(source.app, source.thread!, source.message),
+          : this.thread(source.app, source.thread ?? "", source.message),
       )
-      .sort((a, b) => Number(!!b.link) - Number(!!a.link) || (b.at ?? "").localeCompare(a.at ?? ""))
-      .map(({ at, ...place }) => place);
+      .toSorted(
+        (a, b) =>
+          Number(filled(b.link)) - Number(filled(a.link)) || (b.at ?? "").localeCompare(a.at ?? ""),
+      )
+      .map(({ at: _at, ...where }) => where);
   }
 
-  private rank({ app, thread, message, call }: Source) {
-    if (call || message === undefined) return 3;
-    if (this.open({ app, thread: thread!, message })) return 0;
+  private rank({ app, thread = "", message, call }: Source) {
+    if (filled(call) || message === undefined) {
+      return 3;
+    }
+
+    if (this.open({ app, thread, message })) {
+      return 0;
+    }
+
     return String(this.pins.get(`${app}:${thread}`)?.message) === String(message) ? 1 : 2;
   }
 
-  // A thread's place, and when it asked there: the question's or the pinned post's time.
-  private thread(app: string, thread: string, message?: MessageId): Place & { at?: string } {
+  private thread(
+    app: string,
+    thread: string,
+    message?: MessageId,
+  ): Place & { at?: string | undefined } {
     const key = `${app}:${thread}`;
     const general = generalOf(this.threads.values());
     const dm = app === "telegram" && !thread.includes(":") && !thread.startsWith("-");
-    const place =
+
+    const name =
       general && `${general.app}:${general.thread}` === key
         ? "General"
         : dm
           ? "DM"
           : (this.links.title(app, thread) ?? this.threads.get(key)?.name ?? thread);
+
     const link = linkAt(app, this.threads.get(key)?.link, message);
     const pin = this.pins.get(key);
+
     const at =
       message === undefined
         ? undefined
         : pin && String(pin.message) === String(message)
           ? pin.at
           : this.asked({ app, thread, message })?.at;
-    return { app, place, task: key, ...(link && { link }), at };
+
+    return { app, place: name, task: key, ...(filled(link) && { link }), at };
   }
 
-  // A call's record holds its whole transcript, megabytes for a long one, so its title and start are
-  // read again only once the file changes, or after a read that failed; a call no build asks for drops out.
-  private call(id: string): Place & { at?: string } {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* A call's record holds its whole transcript, megabytes for a long one, so its title and start
+     are read again only once the file changes. */
+  private call(id: string): Place & { at?: string | undefined } {
     const file = join(this.calls, `${id}.json`);
     const stamp = stampOf(file);
     const kept = this.callPlaces.get(id) ?? this.lastCallPlaces.get(id);
     let known = kept?.stamp === stamp ? kept : undefined;
+
     if (!known) {
-      const call = readJson(file);
+      const call = readJson(file, CallRecord);
       known = { stamp: call ? stamp : "", title: call?.title, started: call?.started };
     }
+
     this.callPlaces.set(id, known);
+
     return { app: "voice", place: known.title ?? "a call", call: id, at: known.started };
   }
 
-  // Marks are kept 14 days, but a final answer for good: an ask a pinned post still mentions would
-  // come back without one.
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* Marks are kept 14 days, but a final answer for good: an ask a pinned post still mentions would
+     come back without one. */
   private saveMarks() {
-    const since = new Date(Date.now() - KEEP).toISOString();
-    for (const book of Object.values(this.marks) as Record<string, string | Answer>[])
-      for (const [id, at] of Object.entries(book))
-        if (typeof at === "string" ? at < since : at.at < since && !final(at)) delete book[id];
+    const since = new Date(Date.now() - KEEP_MARKS_MS).toISOString();
+
+    const recent = (book: Record<string, string>) =>
+      Object.fromEntries(Object.entries(book).filter(([, at]) => at >= since));
+
+    const marks = this.marks;
+    marks.sent = recent(marks.sent);
+    marks.dismissed = recent(marks.dismissed);
+    marks.read = recent(marks.read);
+
+    marks.answers = Object.fromEntries(
+      Object.entries(marks.answers).filter(([, answer]) => answer.at >= since || final(answer)),
+    );
+
+    marks.reopened = Object.fromEntries(
+      Object.entries(marks.reopened).filter(([, kept]) => kept.at >= since),
+    );
+
     const file = join(this.state, "voice", "marks.json");
-    writeFileSync(`${file}.tmp`, JSON.stringify(this.marks, null, 1) + "\n");
+    writeFileSync(`${file}.tmp`, `${JSON.stringify(this.marks, null, 1)}\n`);
     renameSync(`${file}.tmp`, file);
     this.schedule();
   }
 }
 
-// A question as its thread asked it: its first line is the question and the rest its context; the
-// option the thread marked as its pick wears it. What hex said before asking it is its card's words.
 export function fromLedger(app: string, asked: Asked): Curated {
   const lines = plain(asked.text)
     .split("\n")
     .map((line) => line.trim())
-    .filter(Boolean);
+    .filter((line) => line !== "");
+
   const options = asked.options.map((value) => {
-    const label = value.replace(PICK, "").trim() || value;
+    const unmarked = value.replace(PICK, "").trim();
+    const label = unmarked === "" ? value : unmarked;
+
     return { label, value, ...(label !== value && { pick: true }) };
   });
+
   const [question, rest] = cut(lines[0] ?? "", 160);
   const context = [...(rest ? [rest] : []), ...lines.slice(1)].join("\n");
+
   return {
-    id: refId({ app, ...asked }),
+    id: refId({ app, thread: asked.thread, message: asked.message }),
     kind: asked.options.length <= 2 ? "yesno" : "pick",
     task: `${app}:${asked.thread}`,
     at: asked.at,
-    question: question.replace(/:$/, ""),
-    ...(context && { context }),
+    question: question.replace(/:$/u, ""),
+    ...(context !== "" && { context }),
     options,
     refs: [{ app, thread: asked.thread, message: asked.message }],
     from: [{ app, thread: asked.thread, message: asked.message }],
   };
 }
 
-// A pinned post's waiting part: the paragraphs of its note that say what's on the owner, or, when
-// none does, its first paragraph, which says what the project is.
 function waiting(note: string) {
-  const parts = note.trim().split(/\n\s*\n/);
-  const theirs = parts.filter((part) => /\bon you\b/i.test(part));
-  return (theirs.length ? theirs : parts.slice(0, 1)).join("\n\n");
+  const parts = note.trim().split(/\n\s*\n/u);
+  const onTheOwner = parts.filter((part) => /\bon you\b/iu.test(part));
+  const whatTheProjectIs = parts.slice(0, 1);
+
+  return (onTheOwner.length > 0 ? onTheOwner : whatTheProjectIs).join("\n\n");
 }
 
-const shapes = new Map<string, number | undefined>();
+function withItsShot(option: CuratedOption, shown: Asked | undefined): Option {
+  const shot =
+    shown?.shots === undefined || option.value === undefined
+      ? -1
+      : shown.options.indexOf(option.value);
 
-// A PNG's or JPEG's width over its height, from its header; nothing for a file it can't read.
-function shapeOf(file: string) {
-  if (!shapes.has(file)) shapes.set(file, readShape(file));
-  return shapes.get(file);
+  const widthOverHeight = widthOverHeightOf(shown?.shots?.[shot]);
+
+  return widthOverHeight !== undefined && widthOverHeight > 0
+    ? // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads an option's screenshot width over height by this name
+      { ...option, shot, shape: widthOverHeight }
+    : option;
 }
 
-function readShape(file: string) {
+const widthOverHeightOfEachFile = new Map<string, number | undefined>();
+
+function widthOverHeightOf(file: string | undefined) {
+  if (file === undefined) {
+    return;
+  }
+
+  if (!widthOverHeightOfEachFile.has(file)) {
+    widthOverHeightOfEachFile.set(file, readWidthOverHeight(file));
+  }
+
+  return widthOverHeightOfEachFile.get(file);
+}
+
+const PNG_SIGNATURE = 0x89_50_4e_47;
+
+function readWidthOverHeight(file: string) {
   let bytes: Buffer;
+
   try {
     bytes = readFileSync(file);
   } catch {
     return;
   }
-  if (bytes.readUInt32BE(0) === 0x89504e47) return bytes.readUInt32BE(16) / bytes.readUInt32BE(20);
+
+  if (bytes.readUInt32BE(0) === PNG_SIGNATURE) {
+    return bytes.readUInt32BE(16) / bytes.readUInt32BE(20);
+  }
+
   for (
     let at = 2;
     bytes[at] === 0xff && at + 9 < bytes.length;
     at += 2 + bytes.readUInt16BE(at + 2)
-  )
-    if (bytes[at + 1]! >= 0xc0 && bytes[at + 1]! <= 0xc3)
+  ) {
+    const marker = bytes[at + 1] ?? 0;
+
+    if (marker >= 0xc0 && marker <= 0xc3) {
       return bytes.readUInt16BE(at + 7) / bytes.readUInt16BE(at + 5);
+    }
+  }
 }
 
 function refId({ app, thread, message }: Ref) {
   return `${app}:${thread}:${message}`;
 }
 
-// An answer and every one it was given over, newest first.
 function chain(answer: Answer | undefined) {
   const marks: Answer[] = [];
-  for (let mark = answer; mark; mark = mark.before) marks.push(mark);
+
+  for (let mark = answer; mark; mark = mark.before) {
+    marks.push(mark);
+  }
+
   return marks;
 }
 
-// Whether a mark was a not needed; one kept before marks said so is known by its label.
 function isDismissal(mark: Answer) {
   return mark.dismissed ?? mark.label === NOT_NEEDED;
 }
 
-// The marks of one answer: it and those that finished it, newest first, its first send last.
 function round(answer: Answer | undefined) {
   const marks = chain(answer);
-  const start = marks.findIndex((mark) => !mark.finishing);
+  const start = marks.findIndex((mark) => mark.finishing !== true);
+
   return marks.slice(0, start + 1);
 }
 
@@ -980,22 +1328,31 @@ function place({ app, thread }: Ref) {
 
 function plain(text: string) {
   return text
-    .replace(/```[\s\S]*?(```|$)/g, "")
-    .replace(/\*\*|__|`/g, "")
-    .replace(/^#+\s+/gm, "");
+    .replaceAll(/```[\s\S]*?(```|$)/gu, "")
+    .replaceAll(/\*\*|__|`/gu, "")
+    .replaceAll(/^#+\s+/gmu, "");
 }
 
-// A long line ends at its last question mark outside brackets, and what follows opens its context;
-// one with none stays whole.
 function cut(line: string, max: number): [string, string] {
-  if (line.length <= max) return [line, ""];
+  if (line.length <= max) {
+    return [line, ""];
+  }
+
   let depth = 0;
   let end = line.length;
+
   for (let i = 0; i < line.length; i++) {
-    if ("([{（".includes(line[i]!)) depth++;
-    else if (")]}）".includes(line[i]!)) depth = Math.max(0, depth - 1);
-    else if (!depth && "?？".includes(line[i]!)) end = i + 1;
+    const char = line.charAt(i);
+
+    if ("([{（".includes(char)) {
+      depth++;
+    } else if (")]}）".includes(char)) {
+      depth = Math.max(0, depth - 1);
+    } else if (depth === 0 && "?？".includes(char)) {
+      end = i + 1;
+    }
   }
+
   return [line.slice(0, end), line.slice(end).trim()];
 }
 
@@ -1003,13 +1360,14 @@ export function clip(text: string, max: number) {
   return text.length > max
     ? `${text
         .slice(0, max - 1)
-        .replace(/[\uD800-\uDBFF]$/, "")
+        .replace(/[\uD800-\uDBFF]$/u, "")
         .trimEnd()}…`
     : text;
 }
 
 function readMarks(file: string): Marks {
-  const marks = readJson(file) ?? {};
+  const marks = readJson(file, MarksFile) ?? {};
+
   return {
     answers: marks.answers ?? {},
     sent: marks.sent ?? {},
@@ -1022,25 +1380,56 @@ function readMarks(file: string): Marks {
 function stampOf(path: string) {
   try {
     const { mtimeMs, size } = statSync(path);
+
     return `${mtimeMs}:${size}`;
   } catch {
     return "";
   }
 }
 
-function readJson(path: string) {
+function readJson<Schema extends z.ZodType>(
+  path: string,
+  schema: Schema,
+): z.infer<Schema> | undefined {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {}
+    const parsed = schema.safeParse(JSON.parse(readFileSync(path, "utf-8")));
+
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function watchDir(dir: string, changed: (file: string | null) => void) {
   try {
-    const watcher = watch(dir, (_, file) => changed(file));
-    return () => watcher.close();
+    const watcher = watch(dir, (_, file) => {
+      changed(file);
+    });
+
+    return () => {
+      watcher.close();
+    };
   } catch {
-    return () => {};
+    return () => null;
   }
+}
+
+async function tryEach<T>(steps: T[], step: (each: T) => Promise<void>) {
+  const failed: unknown[] = [];
+
+  for (const each of steps) {
+    try {
+      await step(each);
+    } catch (error) {
+      failed.push(error);
+    }
+  }
+
+  return failed;
+}
+
+function filled(text: string | undefined): text is string {
+  return text !== undefined && text !== "";
 }
 
 function now() {

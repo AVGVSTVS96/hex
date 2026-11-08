@@ -1,12 +1,24 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { asking, Ledger } from "./ledger.ts";
+import type { Post } from "./ledger.ts";
 import { open, Store } from "./store.ts";
 
 let dir: string;
+
+const rejection = <T>(promise: Promise<T>) => promise.then(() => "resolved", String);
+
+function found<T>(value: T | undefined): T {
+  if (value === undefined) {
+    throw new Error("the ledger has none");
+  }
+
+  return value;
+}
+
 let file: string;
 
 beforeEach(() => {
@@ -25,12 +37,14 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
     text: "📌 **desk**\nShipping today\n\n🔴 **Blocked on you**\n- old",
     at: "2026-10-18T09:00:00.000Z",
   };
+
   const post = {
     message: "12",
     text: "Site: example.com\n\nmore",
     note: "Site: example.com",
     at: "2026-10-18T09:30:00.000Z",
   };
+
   writeFileSync(
     file,
     JSON.stringify({
@@ -87,7 +101,7 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
     options: ["Deploy", "Wait"],
     at: "2026-10-18T08:00:00.000Z",
   });
-  expect(ledger.byPoll("p-42")!.answer).toMatchObject({ label: "B", via: "telegram" });
+  expect(found(ledger.byPoll("p-42")).answer).toMatchObject({ label: "B", via: "telegram" });
   expect(ledger.find("-100:7", 43)).toBeUndefined();
   expect(ledger.find("-100:7", 44)).toBeUndefined();
   expect(ledger.pin("-100:7")).toEqual({
@@ -99,7 +113,7 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.pin("-100:8")).toEqual({ app: "telegram", thread: "-100:8", ...post });
   expect(ledger.pin("-100:9")).toBeUndefined();
   expect(existsSync(file)).toBe(false);
-  expect(readFileSync(`${file}.moved-to-hex.db`, "utf8")).toContain("Deploy now?");
+  expect(readFileSync(`${file}.moved-to-hex.db`, "utf-8")).toContain("Deploy now?");
   expect(open(dir).pins()).toHaveLength(2);
 });
 
@@ -122,12 +136,14 @@ test("a hex.db that took a ledger in at each start brings in only what an older 
   store.db.run(
     "drop table turns; drop table relays; create table files (name text primary key, body text not null); create table shown (session text primary key, digest text not null); alter table seen drop column at; pragma user_version = 19",
   );
+
   const taken = {
     pins: {
       "-100:7": { message: 9, text: "old", at: "2026-10-18T09:00:00.000Z" },
       "-100:8": { message: 12, text: "rolled back", at: "2026-10-19T09:00:00.000Z" },
     },
   };
+
   store.db
     .query("insert into files (name, body) values (?, ?)")
     .run("telegram/ledger.json", JSON.stringify(taken));
@@ -170,7 +186,7 @@ test("a question stays open through an edit and leaves the waiting list only whe
   ledger.reopened("-100:7", 41);
   ledger.answered("-100:7", 41, "Deploy", "app");
   expect(ledger.find("-100:7", 41)).toMatchObject({ answer: { label: "Deploy", via: "app" } });
-  expect(ledger.find("-100:7", 41)!.settled).toBeUndefined();
+  expect(found(ledger.find("-100:7", 41)).settled).toBeUndefined();
   open(dir).pinned({
     app: "telegram",
     thread: "-100:7",
@@ -183,22 +199,41 @@ test("a question stays open through an edit and leaves the waiting list only whe
   expect(ledger.pin("-100:7")).toBeUndefined();
 });
 
-test("a status post is sent under its note and pinned in place of the last, rewritten from hex.db, and a pin made meanwhile stands", async () => {
+test("a status post is sent under its note and pinned in place of the last, rewritten from hex.db; a pin made meanwhile stands, and one the app will never edit stays pinned in the chat for the session to unpin", async () => {
   const ledger = new Ledger(dir, "telegram");
   const done: unknown[][] = [];
   let next = 20;
-  const post = {
+
+  const post: Post = {
     room: 4096,
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
     link: () => undefined,
-    send: async (_: string, text: string) => (done.push(["send", ++next, text]), next),
-    edit: async (_: string, message: unknown, text: string) =>
-      void done.push(["edit", message, text]),
-    pin: async (_: string, message: unknown) => void done.push(["pin", message]),
-    unpin: async (_: string, message: unknown) => void done.push(["unpin", message]),
+    send: (_, text) => {
+      next += 1;
+      done.push(["send", next, text]);
+
+      return Promise.resolve(next);
+    },
+    edit: (_, message, text) => {
+      done.push(["edit", message, text]);
+
+      return Promise.resolve(true);
+    },
+    pin: (_, message) => {
+      done.push(["pin", message]);
+
+      return Promise.resolve();
+    },
+    unpin: (_, message) => {
+      done.push(["unpin", message]);
+
+      return Promise.resolve();
+    },
   };
+
   ledger.ask("-100:8", 10, "Ship it?", ["Yes", "No"]);
   expect(await ledger.post("-100:8", "Site: example.com", post)).toBe(21);
-  const [[, , text]] = done as [[string, number, string]];
+  const text = String(done[0]?.[2]);
   expect(text).toStartWith("Site: example.com\n\n**Waiting on you**\n- Ship it?");
   expect(done[1]).toEqual(["pin", 21]);
   expect(ledger.pin("-100:8")).toMatchObject({ message: 21, text, note: "Site: example.com" });
@@ -207,16 +242,18 @@ test("a status post is sent under its note and pinned in place of the last, rewr
 
   await ledger.rewrite("-100:8", post, "Site: example.org\n\n**🔴 Blocked on you**\n- copied", 21);
   expect(new Ledger(dir, "telegram").pin("-100:8")).toMatchObject({ note: "Site: example.org" });
-  await expect(ledger.rewrite("-100:8", post, "Site: elsewhere", 99)).rejects.toThrow(
+  expect(await rejection(ledger.rewrite("-100:8", post, "Site: elsewhere", 99))).toContain(
     "no longer the status post",
   );
 
-  await expect(
-    ledger.post("-100:8", "Site: unpinnable", {
-      ...post,
-      pin: async () => Promise.reject(new Error("not enough rights")),
-    }),
-  ).rejects.toThrow("rights");
+  expect(
+    await rejection(
+      ledger.post("-100:8", "Site: unpinnable", {
+        ...post,
+        pin: () => Promise.reject(new Error("not enough rights")),
+      }),
+    ),
+  ).toContain("rights");
   expect(ledger.pin("-100:8")).toMatchObject({ message: 21 });
   next = 21;
   expect(await ledger.post("-100:8", "Site: moved", post)).toBe(22);
@@ -226,16 +263,16 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   ]);
   expect(ledger.pin("-100:8")).toMatchObject({ message: 22, note: "Site: moved" });
 
-  const closed = { ...post, edit: async () => false };
-  const before = ledger.pin("-100:8")!;
+  const closed: Post = { ...post, edit: () => Promise.resolve(false) };
+  const before = ledger.pin("-100:8");
   ledger.ask("-100:8", 15, "Rename it?", ["Yes", "No"]);
   await ledger.rewrite("-100:8", closed);
   expect(ledger.pin("-100:8")).toEqual(before);
-  await expect(ledger.rewrite("-100:8", closed, "Site: closed", 22)).rejects.toThrow("closed");
+  expect(await rejection(ledger.rewrite("-100:8", closed, "Site: closed", 22))).toContain("closed");
 
-  const slow = {
+  const slow: Post = {
     ...post,
-    edit: async (...args: [string, unknown, string]) => {
+    edit: async (...args) => {
       open(dir).pinned({
         app: "telegram",
         thread: "-100:8",
@@ -243,20 +280,23 @@ test("a status post is sent under its note and pinned in place of the last, rewr
         text: "Status: another post",
         note: "Status: another post",
       });
-      await post.edit(...args);
+
+      return await post.edit(...args);
     },
   };
+
   await ledger.rewrite("-100:8", slow, "Site: example.net");
-  expect(ledger.pin("-100:8")).toEqual({
+  const { at, ...standing } = found(ledger.pin("-100:8"));
+  expect(standing).toEqual({
     app: "telegram",
     thread: "-100:8",
     message: 11,
     text: "Status: another post",
     note: "Status: another post",
-    at: expect.any(String),
   });
+  expect(at).toBeString();
 
-  await ledger.rewrite("-100:8", { ...post, edit: async () => null });
+  await ledger.rewrite("-100:8", { ...post, edit: () => Promise.resolve(null) });
   expect(ledger.pin("-100:8")).toBeUndefined();
   expect(done.at(-1)).not.toEqual(["unpin", 11]);
   await ledger.post("-100:8", "Site: again", post);
@@ -288,13 +328,13 @@ test("a reply that ends asking something waits on the owner until they reply to 
   expect(ledger.find("-100:7", 70)).toMatchObject({ text: "Is that order right?", options: [] });
   expect(ledger.find("-100:7", 71)).toBeUndefined();
   ledger.heard("-100:7", 80, "yes, plans first", 70);
-  expect(ledger.find("-100:7", 70)!.answer).toMatchObject({
+  expect(found(ledger.find("-100:7", 70)).answer).toMatchObject({
     label: "yes, plans first",
     via: "reply",
   });
   ledger.ask("-100:7", 72, "Deploy now?", ["Deploy", "Wait"]);
   ledger.heard("-100:7", 81, "not yet", 72);
-  expect(ledger.find("-100:7", 72)!.answer).toBeUndefined();
+  expect(found(ledger.find("-100:7", 72)).answer).toBeUndefined();
   expect(asking("> - Want me to merge it?")).toBe("Want me to merge it?");
 });
 
@@ -318,17 +358,17 @@ test("the owner's question waits on them once hex answers, until they quote-repl
   ledger.heard("-100:7", 94, "now the docs");
   ledger.said("-100:7", 95, "Docs are up.");
   expect(ledger.find("-100:7", 90)).toMatchObject({ answer: { message: 93, kept: true } });
-  expect(ledger.find("-100:7", 90)!.settled).toBeUndefined();
+  expect(found(ledger.find("-100:7", 90)).settled).toBeUndefined();
   ledger.said("-100:7", 96, "Yes, the migration ran at 4:02pm.", {
-    question: ledger.find("-100:7", 90)!,
+    question: found(ledger.find("-100:7", 90)),
     message: 90,
   });
   expect(ledger.find("-100:7", 90)).toMatchObject({ answer: { message: 96, kept: true } });
   ledger.heard("-100:7", 97, "nice, thanks", 96);
-  expect(ledger.find("-100:7", 90)!.settled).toMatchObject({ note: "you replied" });
+  expect(found(ledger.find("-100:7", 90)).settled).toMatchObject({ note: "you replied" });
   ledger.heard("-100:7", 98, "and is the cache warm?");
   ledger.said("-100:7", 99, "Yes.");
   ledger.heard("-100:7", 100, "what about the queue?", 98);
-  expect(ledger.find("-100:7", 98)!.settled).toMatchObject({ note: "you replied" });
+  expect(found(ledger.find("-100:7", 98)).settled).toMatchObject({ note: "you replied" });
   expect(store.questions({ waiting: true })).toEqual([]);
 });

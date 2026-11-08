@@ -1,63 +1,160 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { z } from "zod";
+
 import { clock } from "./clock.ts";
 import type { Store } from "./store.ts";
 
-// reads: for a tool that reads or writes by its arguments, whether a call only reads. It stays here: a
-// function never reaches the session's tool list.
-export type Tool = {
-  name: string;
+export type ToolArguments = z.input<z.ZodObject>;
+
+export type Tool<Name extends string = string, Input extends z.ZodObject = z.ZodObject> = {
+  name: Name;
   description: string;
-  inputSchema: object;
+  input: Input;
   annotations?: { readOnlyHint?: boolean };
-  reads?: (args: Record<string, unknown>) => boolean;
+  reads?: (args: z.output<Input>) => boolean;
   _meta?: object;
 };
-// What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
+
+export function tool<const Name extends string, Input extends z.ZodObject>(
+  definition: Tool<Name, Input>,
+): Tool<Name, Input> {
+  return definition;
+}
+
+export function toolList(tools: readonly Tool[]) {
+  return tools.map(({ input, reads: _reads, ...rest }) => {
+    const { $schema: _schema, ...inputSchema } = z.toJSONSchema(input, { io: "input" });
+
+    return { ...rest, inputSchema };
+  });
+}
+
+export type Handlers<Tools extends readonly Tool[]> = {
+  [Each in Tools[number] as Each["name"]]: (
+    caller: string,
+    args: z.output<Each["input"]>,
+  ) => Promise<string>;
+};
+
+type AnyHandler = (caller: string, args: never) => Promise<string>;
+
+export function dispatch<const Tools extends readonly Tool[]>(
+  tools: Tools,
+  handlers: NoInfer<Handlers<Tools>>,
+): (caller: string, name: string, args: ToolArguments) => Promise<string> {
+  const byName = new Map<string, Tool>(tools.map((each) => [each.name, each]));
+  const run: Partial<Record<string, AnyHandler>> = handlers;
+
+  return async (caller, name, args) => {
+    const each = byName.get(name);
+    const handler = run[name];
+
+    if (each === undefined || handler === undefined) {
+      throw new Error(`unknown tool: ${name}`);
+    }
+
+    const parsed = each.input.safeParse(args);
+
+    if (!parsed.success) {
+      throw new Error(z.prettifyError(parsed.error));
+    }
+
+    // SAFETY: handlers holds one handler per tool name, and this one takes what its tool's schema just parsed.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- TypeScript can't tie a tool's handler to its schema once both are looked up by name
+    return await handler(caller, parsed.data as never);
+  };
+}
+
 export type ChannelServer = {
   title: string;
   instructions: string;
-  tools: Tool[];
+  tools: readonly Tool[];
   permission?: boolean;
 };
+
+export const PermissionRequest = z.object({
+  request_id: z.string(),
+  tool_name: z.string(),
+  description: z.string(),
+  input_preview: z.string(),
+});
+
+export type Permission = z.output<typeof PermissionRequest>;
+
 export type Payload =
   | { type: "inbound"; content: string; meta: Record<string, string> }
   | { type: "permission"; request_id: string; behavior: string };
+
 export type Line = { send: (payload: Payload) => void };
 
 type Hooks = {
-  call: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>;
-  permission: (thread: string, request: any) => void;
+  call: (thread: string, tool: string, args: ToolArguments) => Promise<string>;
+  permission: (thread: string, request: Permission) => void;
   open: (thread: string, line: Line) => void;
   close: (thread: string, line: Line) => void;
 };
 
-// The revisions whose standalone GET stream carries server notifications. Claude Code first probes
-// `server/discover` for 2026-07-28, where it registers no channel ("no unsolicited notification
-// path"), and falls back to `initialize` when that's declined.
-const REVISIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+// The revisions whose standalone GET stream carries server notifications. Claude Code first probes `server/discover` for 2026-07-28, where it registers no channel ("no unsolicited notification path"), and falls back to `initialize` when that's declined. https://modelcontextprotocol.io/specification/2025-11-25/basic/transports
+const REVISIONS_WHOSE_GET_STREAM_CARRIES_NOTIFICATIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const encoder = new TextEncoder();
 const NUDGE = 250;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Bun notices a disconnected request on the next event-loop tick.
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
-type Result = { content: { type: "text"; text: string }[]; isError?: true };
+const untilBunNoticesADisconnect = () =>
+  new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
+type Result = { content: { type: "text"; text: string }[]; isError?: true | undefined };
+
 const failure = (text: string): Result => ({ content: [{ type: "text", text }], isError: true });
 
-// How far a session initialized here is from listening. Claude Code drops channel messages that come
-// before it listens and says nothing when it starts, but it registers its channel handler in the same
-// step as its tools/list_changed handler, so once its stream is open and it has listed the tools, it's
-// told they changed, and the list that answers is the sign it listens. A session starting cold
-// registers them a while after it lists the tools and drops what came before, so it's told again
-// until it answers.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// How far a session initialized here is from listening. Claude Code drops channel messages that come before it listens and says nothing when it starts, but it registers its channel handler in the same step as its tools/list_changed handler, so once its stream is open and it has listed the tools, it's told they changed, and the list that answers is the sign it listens. A session starting cold registers them a while after it lists the tools and drops what came before, so it's told again until it answers.
 type Handshake =
   | { is: "initialized" }
   | { is: "listed" }
   | { is: "streaming"; nudge: () => void; open: () => void }
   | { is: "nudged"; open: () => void };
 
-// A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here
-// with their binding and the hub's token in headers. Every session id is taken as it comes, so a
-// session that connected before the hub restarted carries on where it was without initializing again.
+const Rpc = z.object({
+  id: z.union([z.string(), z.number(), z.null()]).optional(),
+  method: z.string().optional(),
+  params: z.unknown().optional(),
+});
+
+type RpcId = string | number | null;
+
+const Initialize = z.object({ protocolVersion: z.string() });
+
+const ToolCall = z.object({
+  name: z.string(),
+  arguments: z.record(z.string(), z.unknown()).optional(),
+  _meta: z
+    .object({ "claudecode/toolUseId": z.string().optional().catch(undefined) })
+    .optional()
+    .catch(undefined),
+});
+
+type Answer =
+  | Result
+  | { tools: ReturnType<typeof toolList> }
+  | {
+      protocolVersion: string | undefined;
+      capabilities: { tools: { listChanged: boolean }; experimental: object };
+      serverInfo: { name: string; version: string };
+      instructions: string;
+    }
+  | Record<string, never>;
+
+function result(id: RpcId, value: Answer) {
+  return Response.json({ jsonrpc: "2.0", id, result: value });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here with their binding and the hub's token in headers. Every session id is taken as it comes, so a session that connected before the hub restarted carries on where it was without initializing again.
 export function endpoint(
   name: string,
   channel: string,
@@ -70,71 +167,97 @@ export function endpoint(
   const starting = new Map<string, Handshake>();
 
   function threadOf(request: Request) {
-    const thread = request.headers.get("x-hex-thread");
-    return request.headers.get("x-hex-channel") === channel && thread ? thread : undefined;
-  }
+    const thread =
+      request.headers.get("x-hex-channel") === channel ? request.headers.get("x-hex-thread") : null;
 
-  function result(id: unknown, value: object) {
-    return Response.json({ jsonrpc: "2.0", id, result: value });
+    return thread === null || thread === "" ? undefined : thread;
   }
 
   const active = new Map<string, Promise<Result>>();
-  const tools = new Map(server.tools.map((tool) => [tool.name, tool]));
-  const reads = (tool: string, args: Record<string, unknown>) =>
-    !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args));
+  const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
+  const list = toolList(server.tools);
+
+  const reads = (toolName: string, args: ToolArguments) => {
+    const each = tools.get(toolName);
+
+    if (each?.annotations?.readOnlyHint === true) {
+      return true;
+    }
+
+    const parsed = each?.input.safeParse(args);
+
+    return parsed?.success === true && each?.reads?.(parsed.data) === true;
+  };
+
   async function once(
     thread: string | undefined,
-    tool: string,
-    args: Record<string, unknown>,
+    toolName: string,
+    args: ToolArguments,
     gone: AbortSignal,
     id: string,
   ): Promise<Result> {
-    if (gone.aborted)
-      return failure(`${tool} didn't run: you stopped waiting before the hub read it`);
-    if (reads(tool, args)) return call(thread, tool, args);
-    if (!thread) return call(thread, tool, args);
+    if (gone.aborted) {
+      return failure(`${toolName} didn't run: you stopped waiting before the hub read it`);
+    }
+
+    if (reads(toolName, args) || thread === undefined) {
+      return await call(thread, toolName, args);
+    }
+
     const scope = `${channel}:${thread}`;
     const key = JSON.stringify([scope, id]);
-    const value = [tool, args];
+    const value = [toolName, args];
     const kept = store.operation(scope, id, JSON.stringify(value));
-    if (!isDeepStrictEqual(JSON.parse(kept.input), value))
-      return failure(`${tool} didn't run: identity ${id} already identifies a different call`);
-    if (!kept.fresh) {
-      if (kept.result !== null) return JSON.parse(kept.result);
-      return (
-        active.get(key) ??
-        failure(
-          `${tool} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
-        )
-      );
+
+    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
+      return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
     }
-    const answer = call(thread, tool, args)
-      .then((result) => {
-        store.finishOperation(scope, id, JSON.stringify(result));
-        return result;
+
+    if (!kept.fresh) {
+      if (kept.result !== null) {
+        return Kept.parse(JSON.parse(kept.result));
+      }
+
+      return await (active.get(key) ??
+        failure(
+          `${toolName} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
+        ));
+    }
+
+    const answer = call(thread, toolName, args)
+      .then((answered) => {
+        store.finishOperation(scope, id, JSON.stringify(answered));
+
+        return answered;
       })
-      .finally(() => active.delete(key));
+      .finally(() => {
+        active.delete(key);
+      });
+
     active.set(key, answer);
-    return answer;
+
+    return await answer;
   }
 
   async function call(
     thread: string | undefined,
-    tool: string,
-    args: Record<string, unknown>,
+    toolName: string,
+    args: ToolArguments,
   ): Promise<Result> {
     try {
-      if (!thread)
+      if (thread === undefined) {
         throw new Error(
           `this session is not bound to a ${server.title} thread (HEX_THREAD is unset)`,
         );
-      return { content: [{ type: "text", text: await hooks.call(thread, tool, args) }] };
+      }
+
+      return { content: [{ type: "text", text: await hooks.call(thread, toolName, args) }] };
     } catch (error) {
       return {
         content: [
           {
             type: "text",
-            text: `${tool} failed: ${error instanceof Error ? error.message : String(error)}`,
+            text: `${toolName} failed: ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
         isError: true,
@@ -143,169 +266,283 @@ export function endpoint(
   }
 
   function listed(session: string | null) {
-    const step = session ? starting.get(session) : undefined;
-    if (step?.is === "initialized") starting.set(session!, { is: "listed" });
+    if (session === null || session === "") {
+      return;
+    }
+
+    const step = starting.get(session);
+
+    if (step?.is === "initialized") {
+      starting.set(session, { is: "listed" });
+    }
+
     if (step?.is === "streaming") {
-      starting.set(session!, { is: "nudged", open: step.open });
+      starting.set(session, { is: "nudged", open: step.open });
       step.nudge();
     }
+
     if (step?.is === "nudged") {
-      starting.delete(session!);
+      starting.delete(session);
       step.open();
     }
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Bun starts a response's body only once it sends it, so writes wait for that.
   function stream(thread: string | undefined, session: string | null) {
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
     let line: Line | undefined;
     let keepAlive: ReturnType<typeof setInterval> | undefined;
-    const waiting = [": open\n\n"];
+    const untilBunSendsTheBody = [": open\n\n"];
+
     const write = (text: string) => {
-      if (!controller) return void waiting.push(text);
+      if (!controller) {
+        untilBunSendsTheBody.push(text);
+
+        return;
+      }
+
       try {
         controller.enqueue(encoder.encode(text));
       } catch {
         gone();
       }
     };
-    const event = (message: object) =>
+
+    const event = (
+      message: ReturnType<typeof notification> | { method: "notifications/tools/list_changed" },
+    ) => {
       write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", ...message })}\n\n`);
+    };
+
     function gone() {
       clearInterval(keepAlive);
-      if (session) starting.delete(session);
-      if (thread && line) hooks.close(thread, line);
+
+      if (session !== null && session !== "") {
+        starting.delete(session);
+      }
+
+      if (thread !== undefined && line) {
+        hooks.close(thread, line);
+      }
+
       line = undefined;
     }
+
     const body = new ReadableStream<Uint8Array>({
       start(started) {
         controller = started;
-        for (const text of waiting.splice(0)) write(text);
+
+        for (const text of untilBunSendsTheBody.splice(0)) {
+          write(text);
+        }
       },
       cancel: gone,
     });
-    if (thread) {
-      line = { send: (payload) => event(notification(payload, zone())) };
+
+    if (thread !== undefined) {
+      line = {
+        send: (payload) => {
+          event(notification(payload, zone()));
+        },
+      };
       keepAlive = setInterval(write, 15_000, ": keepalive\n\n");
-      const open = () => line && hooks.open(thread, line);
+
+      const open = () => {
+        if (line) {
+          hooks.open(thread, line);
+        }
+      };
+
+      const handshaking = session === null || session === "" ? undefined : session;
+
       const nudge = () => {
         event({ method: "notifications/tools/list_changed" });
-        clock.setTimeout(() => line && starting.get(session!)?.is === "nudged" && nudge(), NUDGE);
+        clock.setTimeout(() => {
+          if (line && handshaking !== undefined && starting.get(handshaking)?.is === "nudged") {
+            nudge();
+          }
+        }, NUDGE);
       };
-      const step = session ? starting.get(session) : undefined;
-      if (!step) open();
-      else if (step.is === "listed") {
-        starting.set(session!, { is: "nudged", open });
+
+      const step = handshaking === undefined ? undefined : starting.get(handshaking);
+
+      if (handshaking === undefined || !step) {
+        open();
+      } else if (step.is === "listed") {
+        starting.set(handshaking, { is: "nudged", open });
         nudge();
-      } else starting.set(session!, { is: "streaming", nudge, open });
+      } else {
+        starting.set(handshaking, { is: "streaming", nudge, open });
+      }
     }
+
     return new Response(body, {
       headers: {
         "content-type": "text/event-stream",
         "cache-control": "no-cache",
-        ...(session && { "mcp-session-id": session }),
+        ...(session !== null && session !== "" && { "mcp-session-id": session }),
       },
     });
   }
 
   const handle = async (request: Request): Promise<Response> => {
-    // The token comes as Authorization: Claude Code then takes a refusal as a failed connection,
-    // where with any other header it marks the server as needing a login for 15 minutes.
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // The token comes as Authorization: Claude Code then takes a refusal as a failed connection, where with any other header it marks the server as needing a login for 15 minutes.
     if (
       request.headers.has("origin") ||
       !["127.0.0.1", "localhost"].includes(new URL(request.url).hostname) ||
       request.headers.get("authorization") !== `Bearer ${token}`
-    )
+    ) {
       return new Response("Forbidden", { status: 403 });
+    }
+
     const thread = threadOf(request);
     const session = request.headers.get("mcp-session-id");
-    if (request.method === "GET") return stream(thread, session);
-    if (request.method === "DELETE") return new Response(null, { status: 204 });
-    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
-    let message: any;
+
+    if (request.method === "GET") {
+      return stream(thread, session);
+    }
+
+    if (request.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
+
+    let message: unknown;
+
     try {
       message = await request.json();
     } catch {
       return Response.json(
-        { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
+        { jsonrpc: "2.0", id: null, error: { code: -32_700, message: "Parse error" } },
         { status: 400 },
       );
     }
-    const { id, method, params } = message ?? {};
-    if (id === undefined || !method) {
-      if (method === "notifications/claude/channel/permission_request" && thread)
-        hooks.permission(thread, params);
+
+    const rpc = Rpc.safeParse(message);
+    const { id, method, params } = rpc.success ? rpc.data : {};
+
+    if (id === undefined || method === undefined || method === "") {
+      const asked = PermissionRequest.safeParse(params);
+
+      if (
+        method === "notifications/claude/channel/permission_request" &&
+        thread !== undefined &&
+        asked.success
+      ) {
+        hooks.permission(thread, asked.data);
+      }
+
       return new Response(null, { status: 202 });
     }
+
     if (method === "initialize") {
       const opened = crypto.randomUUID();
       starting.set(opened, { is: "initialized" });
+
       const capabilities = {
         tools: { listChanged: true },
         experimental: {
           "claude/channel": {},
-          ...(server.permission && { "claude/channel/permission": {} }),
+          ...(server.permission === true && { "claude/channel/permission": {} }),
         },
       };
-      const revision = REVISIONS.includes(params?.protocolVersion)
-        ? params.protocolVersion
-        : REVISIONS[0];
+
+      const asked = Initialize.safeParse(params);
+
+      const revision =
+        asked.success &&
+        REVISIONS_WHOSE_GET_STREAM_CARRIES_NOTIFICATIONS.includes(asked.data.protocolVersion)
+          ? asked.data.protocolVersion
+          : REVISIONS_WHOSE_GET_STREAM_CARRIES_NOTIFICATIONS[0];
+
       const response = result(id, {
         protocolVersion: revision,
         capabilities,
         serverInfo: { name, version: "1.0.0" },
         instructions: server.instructions,
       });
+
       response.headers.set("mcp-session-id", opened);
+
       return response;
     }
+
     if (method === "tools/list") {
       listed(session);
-      return result(id, { tools: server.tools });
+
+      return result(id, { tools: list });
     }
+
     if (method === "tools/call") {
-      await tick();
-      // Stock Claude Code sends its tool-use identity outside the model's arguments.
-      const toolUse = params?._meta?.["claudecode/toolUseId"];
+      await untilBunNoticesADisconnect();
+      const asked = ToolCall.safeParse(params);
+
+      if (!asked.success) {
+        return result(id, failure(`invalid tools/call: ${z.prettifyError(asked.error)}`));
+      }
+
+      const toolUse = asked.data._meta?.["claudecode/toolUseId"];
+
       const operation =
-        typeof toolUse === "string" && toolUse
+        toolUse !== undefined && toolUse !== ""
           ? JSON.stringify(["tool", toolUse])
-          : session
+          : session !== null && session !== ""
             ? JSON.stringify(["mcp", session, id])
             : crypto.randomUUID();
+
       return result(
         id,
-        await once(thread, params?.name, params?.arguments ?? {}, request.signal, operation),
+        await once(thread, asked.data.name, asked.data.arguments ?? {}, request.signal, operation),
       );
     }
-    if (method === "ping") return result(id, {});
+
+    if (method === "ping") {
+      return result(id, {});
+    }
+
     return Response.json({
       jsonrpc: "2.0",
       id,
-      error: { code: -32601, message: `Method not found: ${method}` },
+      error: { code: -32_601, message: `Method not found: ${method}` },
     });
   };
 
   return handle;
 }
 
+const Kept = z.object({
+  content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
+  isError: z.literal(true).optional(),
+});
+
 function notification(payload: Payload, zone: string) {
-  if (payload.type === "inbound")
+  if (payload.type === "inbound") {
     return {
       method: "notifications/claude/channel",
       params: { content: payload.content, meta: local(payload.meta, zone) },
     };
+  }
+
   return {
     method: "notifications/claude/channel/permission",
     params: { request_id: payload.request_id, behavior: payload.behavior },
   };
 }
 
-// The apps stamp a message in UTC, and a session that reads 06:31Z writes it down as 6:31am, so the
-// tag carries the owner's clock time with its offset instead.
-export function local(meta: Record<string, string>, zone: string): Record<string, string> {
-  const at = meta.ts ? Date.parse(meta.ts) : NaN;
-  if (Number.isNaN(at)) return meta;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The apps stamp a message in UTC, and a session that reads 06:31Z writes it down as 6:31am, so the tag carries the owner's clock time with its offset instead.
+export function local(meta: Record<string, string>, zone: string): typeof meta {
+  const at = meta.ts === undefined || meta.ts === "" ? Number.NaN : Date.parse(meta.ts);
+
+  if (Number.isNaN(at)) {
+    return meta;
+  }
+
   try {
     return {
       ...meta,

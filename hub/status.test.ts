@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { above } from "./fit.ts";
 import { statusPost } from "./status.ts";
@@ -27,6 +27,7 @@ const said = (store: Store, n: number, body: string) => {
     author: "owner",
     meta: { user: "owner" },
   });
+
   return key;
 };
 
@@ -49,21 +50,25 @@ test("a status post is the note over the thread's waiting questions, open tasks 
     text: "Elsewhere?",
     options: ["Yes", "No"],
   });
-  const open = store.createTask({
+
+  store.createTask({
     title: "Fix the login page",
     message: said(store, 50, "Fix the login page"),
     owner: "-100:7",
   });
+
   const old = store.createTask({
     title: "Rename the repo",
     message: said(store, 52, "Rename the repo"),
     owner: "-100:7",
   });
+
   const done = store.createTask({
     title: "Blur the logo less",
     message: said(store, 51, "Blur the logo less"),
     owner: "-100:7",
   });
+
   store.createTask({
     title: "Not this thread",
     message: said(store, 53, "Not this thread"),
@@ -93,7 +98,7 @@ test("a status post is the note over the thread's waiting questions, open tasks 
     ),
   ).toContain("**Waiting on you**\n- [Ship today?](https://t.me/c/-100:7/60)\n\n");
 
-  for (let n = 54; n < 58; n++)
+  for (let n = 54; n < 58; n++) {
     store.editTask(
       store.createTask({
         title: `Later ${n}`,
@@ -102,6 +107,8 @@ test("a status post is the note over the thread's waiting questions, open tasks 
       }).id,
       { status: "done", proof: "ok" },
     );
+  }
+
   const latest = statusPost(store, "-100:7", note, 4096);
   expect(latest).toContain("- [Blur the logo less]");
   expect(latest).not.toContain("Rename the repo");
@@ -109,30 +116,38 @@ test("a status post is the note over the thread's waiting questions, open tasks 
 
 test("a status post fits the room the app gives one message, saying how many more there are", () => {
   const store = new Store(dir);
-  for (let n = 0; n < 40; n++)
+
+  for (let n = 0; n < 40; n++) {
     store.createTask({
       title: `Task number ${n} with enough words to take some room`,
       message: said(store, n, `Task number ${n} with enough words to take some room`),
       owner: "-100:7",
     });
-  for (let room = 300; room <= 2100; room += 7)
+  }
+
+  for (let room = 300; room <= 2100; room += 7) {
     expect(statusPost(store, "-100:7", "Note", room).length).toBeLessThanOrEqual(room);
+  }
+
   const long = statusPost(store, "-100:7", "x".repeat(3000), 2000);
   expect(long.length).toBeLessThanOrEqual(2000);
-  expect(long).toMatch(/^x+…\n\n\*\*Open\*\*\n…and 40 more$/);
+  expect(long).toMatch(/^x+…\n\n\*\*Open\*\*\n…and 40 more$/u);
+
   const text = statusPost(store, "-100:7", "Note", 2000);
-  expect(text).toMatch(/\n…and \d+ more$/);
+  expect(text).toMatch(/\n…and \d+ more$/u);
 });
 
 test("a done task links to the first link in its proof, without the markdown or punctuation around it", () => {
   const store = new Store(dir);
+
   const proofs = [
     "merged in `https://github.com/o/r/pull/3`.",
     "(see https://en.wikipedia.org/wiki/Foo_(bar))",
     "**https://example.com/a**",
     "commit abc123",
   ];
-  proofs.forEach((proof, n) =>
+
+  for (const [n, proof] of proofs.entries()) {
     store.editTask(
       store.createTask({
         title: `Task ${n}`,
@@ -140,9 +155,10 @@ test("a done task links to the first link in its proof, without the markdown or 
         owner: "-100:7",
       }).id,
       { status: "done", proof },
-    ),
-  );
-  expect(statusPost(store, "-100:7", "Note", 4096).split("**Done**\n")[1]!.split("\n")).toEqual([
+    );
+  }
+
+  expect(statusPost(store, "-100:7", "Note", 4096).split("**Done**\n")[1]?.split("\n")).toEqual([
     "- Task 3",
     "- [Task 2](https://example.com/a)",
     "- [Task 1](https://en.wikipedia.org/wiki/Foo_(bar))",
@@ -169,11 +185,13 @@ test("a status post's note is its words above its first heading, plain or an old
 
 test("an open task links to the owner's latest words for it in the thread, to reply to with more", () => {
   const store = new Store(dir);
+
   const task = store.createTask({
     title: "Fix the login page",
     message: said(store, 50, "Fix the login page"),
     owner: "-100:7",
   });
+
   store.addWords(task.id, said(store, 58, "and the signup page"));
   store.deliver({
     key: "telegram:42:90",

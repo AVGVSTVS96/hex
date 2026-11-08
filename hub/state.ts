@@ -1,29 +1,51 @@
-import { readdirSync, readFileSync } from "fs";
-import { connect } from "net";
-import { join } from "path";
+import { readdirSync, readFileSync } from "node:fs";
+import { connect } from "node:net";
+import { join } from "node:path";
+
+import { z } from "zod";
 
 import { CLAUDE } from "./running.ts";
 import { open, stateDir } from "./store.ts";
+import type { Store } from "./store.ts";
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env;
 const at = new Date().toISOString();
 const busy = process.argv[2] === "busy";
 
-// Claude Code counts a session with these running as still working, and shells or monitors as not.
-const WORKING = new Set(["subagent", "workflow"]);
-// A message hex kept has its key first on its channel tag. Claude Code sends each channel message
-// as its own prompt, so only the opening tag is hex's: one further in is the message's own words.
-const KEY = /^<channel source="[^"]*" key="([^"]+)"/;
+const TASKS_CLAUDE_CODE_COUNTS_AS_WORKING = new Set(["subagent", "workflow"]);
 
-async function input(): Promise<{
-  prompt?: unknown;
-  session_id?: string;
-  background_tasks?: { type?: string }[];
-  last_assistant_message?: string;
-  hook_event_name?: string;
-}> {
+const KEY_ON_OPENING_CHANNEL_TAG = /^<channel source="[^"]*" key="([^"]+)"/u;
+
+// https://code.claude.com/docs/en/hooks#exit-code-2-behavior-per-event
+const BLOCK_PROMPT = 2;
+
+const given = (value: string | undefined): value is string => value !== undefined && value !== "";
+const ignore = (): undefined => undefined;
+
+const HookInput = z.object({
+  prompt: z.string().optional().catch(undefined),
+  session_id: z.string().optional(),
+  background_tasks: z.array(z.object({ type: z.string().optional() })).optional(),
+  last_assistant_message: z.string().optional(),
+  hook_event_name: z.string().optional(),
+});
+
+const SessionRecord = z.object({
+  sessionId: z.string(),
+  status: z.string(),
+  statusUpdatedAt: z.number(),
+});
+
+const JobRecord = z.object({
+  sessionId: z.string().optional(),
+  fan: z.array(z.object({ id: z.string(), startedAt: z.number().optional() })).optional(),
+});
+
+type Job = z.infer<typeof JobRecord>;
+
+async function input(): Promise<z.infer<typeof HookInput>> {
   try {
-    return JSON.parse(await Bun.stdin.text());
+    return HookInput.parse(JSON.parse(await Bun.stdin.text()));
   } catch {
     return {};
   }
@@ -36,177 +58,215 @@ const {
   last_assistant_message,
   hook_event_name,
 } = await input();
-const fromChat = typeof prompt === "string" && prompt.startsWith("<channel source=");
-const background = !busy && !!background_tasks?.some((task) => WORKING.has(task.type ?? ""));
-const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined;
 
-// The session takes the message its prompt brings in, in the store itself while it can reach it,
-// or else through the hub. One that was taken already is a second copy (the hub sends again what it
-// can't tell a session took), so Claude Code drops it.
-// A heartbeat's turn is recorded as it's taken, so no look at hex.db finds it taken but not yet a turn.
-let untold = key;
+const fromChat = prompt?.startsWith("<channel source=") === true;
+
+const background =
+  !busy &&
+  background_tasks?.some((task) => TASKS_CLAUDE_CODE_COUNTS_AS_WORKING.has(task.type ?? "")) ===
+    true;
+
+const key =
+  busy && prompt !== undefined && fromChat
+    ? KEY_ON_OPENING_CHANNEL_TAG.exec(prompt)?.[1]
+    : undefined;
+
+const answered = hook_event_name === "Stop";
+
+let leftForTheHubToTake = key;
 let recorded = false;
 let heartbeat = false;
-if (key) {
+
+if (key !== undefined) {
   try {
     const store = open(stateDir());
     heartbeat = store.message(key)?.meta?.schedule === "heartbeat";
     const flipped = heartbeat ? busySince(session_id) : undefined;
     let took: boolean;
+
     try {
-      took = store.write(
-        () =>
-          store.take(key, session_id) &&
-          (!session_id || (store.turned(session_id, busy, at, heartbeat, flipped), true)),
-      );
+      const takenAsOneTurn = () =>
+        store.take(key, session_id) &&
+        (!session_id || (store.turned(session_id, busy, at, heartbeat, flipped), true));
+
+      took = store.write(takenAsOneTurn);
       recorded = took && !!session_id;
     } catch (error) {
-      console.error(`hex couldn't record this turn: ${error}`);
+      console.error(`hex couldn't record this turn: ${String(error)}`);
       const mine = store.message(key)?.taken?.by === session_id;
       took = mine || store.take(key, session_id);
       recorded = mine;
     }
-    if (took) untold = undefined;
-    else if (store.message(key)) {
+
+    const secondCopyTheHubResent = !took && store.message(key) !== null;
+
+    if (took) {
+      leftForTheHubToTake = undefined;
+    } else if (secondCopyTheHubResent) {
       console.error(`hex gave this session ${key} already`);
-      process.exit(2);
+      process.exit(BLOCK_PROMPT);
     }
-  } catch {}
-}
-
-// A task a run of heartbeats started wakes the session with its notification, which is the
-// heartbeats' own work: Claude Code's job record says when each task started.
-function heartbeats(store: ReturnType<typeof open>, session: string) {
-  const task =
-    typeof prompt === "string" && prompt.startsWith("<task-notification")
-      ? prompt.match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
-      : undefined;
-  const beats = task ? store.beats(session) : [];
-  const first = beats.slice(beats.findLastIndex((beat) => beat.after) + 1)[0];
-  if (!first) return false;
-  const fan: { id: string; startedAt?: number }[] = job(session)?.fan ?? [];
-  return (fan.find((one) => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began);
-}
-
-// When Claude Code last marked the session busy, from its own record of the session.
-function busySince(session: string): number | undefined {
-  try {
-    const dir = join(CLAUDE, "sessions");
-    const times = readdirSync(dir).flatMap((file) => {
-      try {
-        const record = JSON.parse(readFileSync(join(dir, file), "utf8"));
-        return record.sessionId === session &&
-          record.status === "busy" &&
-          typeof record.statusUpdatedAt === "number"
-          ? [record.statusUpdatedAt as number]
-          : [];
-      } catch {
-        return [];
-      }
-    });
-    return times.length ? Math.max(...times) : undefined;
-  } catch {}
-}
-
-// The session's job record: in the folder named for its id, or one a renewed job kept.
-function job(
-  session: string,
-): { sessionId?: string; fan?: { id: string; startedAt?: number }[] } | undefined {
-  const read = (id: string) => {
-    try {
-      return JSON.parse(readFileSync(join(CLAUDE, "jobs", id, "state.json"), "utf8"));
-    } catch {}
-  };
-  const own = read(session.slice(0, 8));
-  if (own?.sessionId === session) return own;
-  try {
-    for (const id of readdirSync(join(CLAUDE, "jobs"))) {
-      const record = read(id);
-      if (record?.sessionId === session) return record;
-    }
-  } catch {}
-}
-
-// The turn began or ended, in hex's own record of it (store.ts turned), which bin/quiet goes by.
-if (session_id && !recorded) {
-  try {
-    const store = open(stateDir());
-    const beat = heartbeat || (busy && heartbeats(store, session_id));
-    store.write(() => {
-      store.turned(session_id, busy, at, beat);
-      // A turn that failed (StopFailure, an API error) answered nothing, and one whose background agents still work
-      // isn't done with what it took.
-      if (hook_event_name === "Stop" && background) store.waitsOnAgents(session_id, at);
-      else if (hook_event_name === "Stop") store.handled(session_id, at);
-    });
-  } catch (error) {
-    console.error(`hex couldn't record this turn: ${error}`);
+  } catch {
+    leftForTheHubToTake = key;
   }
 }
 
-// What's typed in a session's terminal is kept like any message, already taken by the session: the
-// owner's, except the prompt a job's session opens on (the hub keeps the prompt it starts a session
-// with itself; a turn's end, below, keeps its answers). Typed into a job's session later, by someone
-// attached to it, it's the owner's again.
-const said =
+function wokenByHeartbeatTask(store: Store, session: string) {
+  const task =
+    prompt?.startsWith("<task-notification") === true
+      ? /<task-id>([\w-]+)<\/task-id>/u.exec(prompt)?.[1]
+      : undefined;
+
+  const beats = task === undefined ? [] : store.beats(session);
+  const first = beats.slice(beats.findLastIndex((beat) => beat.after !== undefined) + 1)[0];
+
+  if (!first) {
+    return false;
+  }
+
+  const fan = job(session)?.fan ?? [];
+
+  return (fan.find((one) => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began);
+}
+
+function filesIn(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+function busySince(session: string): number | undefined {
+  const dir = join(CLAUDE, "sessions");
+
+  const times = filesIn(dir).flatMap((file) => {
+    try {
+      const record = SessionRecord.parse(JSON.parse(readFileSync(join(dir, file), "utf-8")));
+
+      return record.sessionId === session && record.status === "busy"
+        ? [record.statusUpdatedAt]
+        : [];
+    } catch {
+      return [];
+    }
+  });
+
+  return times.length > 0 ? Math.max(...times) : undefined;
+}
+
+function readJob(folder: string): Job {
+  try {
+    return JobRecord.parse(
+      JSON.parse(readFileSync(join(CLAUDE, "jobs", folder, "state.json"), "utf-8")),
+    );
+  } catch {
+    return {};
+  }
+}
+
+function job(session: string): Job | undefined {
+  const folderNamedForItsId = readJob(session.slice(0, 8));
+
+  if (folderNamedForItsId.sessionId === session) {
+    return folderNamedForItsId;
+  }
+
+  return filesIn(join(CLAUDE, "jobs"))
+    .map(readJob)
+    .find((keptByARenewedJob) => keptByARenewedJob.sessionId === session);
+}
+
+if (session_id && !recorded) {
+  try {
+    const store = open(stateDir());
+    const beat = heartbeat || (busy && wokenByHeartbeatTask(store, session_id));
+
+    store.write(() => {
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
+      store.turned(session_id, busy, at, beat);
+
+      if (answered && background) {
+        store.waitsOnAgents(session_id, at);
+      } else if (answered) {
+        store.handled(session_id, at);
+      }
+    });
+  } catch (error) {
+    console.error(`hex couldn't record this turn: ${String(error)}`);
+  }
+}
+
+const typedInTheTerminal =
   busy &&
-  typeof prompt === "string" &&
+  prompt !== undefined &&
   !fromChat &&
-  !/^(\/|<(local-command|command-|system-reminder|task-notification|(agent|cross-session|teammate)-message[\s>]))/.test(
+  !/^(\/|<(local-command|command-|system-reminder|task-notification|(agent|cross-session|teammate)-message[\s>]))/u.test(
     prompt,
   )
     ? prompt
     : undefined;
-if (said && session_id) {
+
+if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id) {
   try {
     const store = open(stateDir());
     const to = HEX_THREAD ?? session_id;
-    const author = HEX_OWNER && !HEX_THREAD && !store.said(to, 1).length ? "prompt" : "owner";
-    const started =
+    const opensAJob = given(HEX_OWNER) && !given(HEX_THREAD) && store.said(to, 1).length === 0;
+    const author = opensAJob ? "prompt" : "owner";
+
+    const theHubStartedTheSessionWithIt =
       author === "owner" &&
-      store.said(to, 20).some((row) => row.from === "hub" && row.body.trim() === said.trim());
-    if (!started)
+      store
+        .said(to, 20)
+        .some((row) => row.from === "hub" && row.body.trim() === typedInTheTerminal.trim());
+
+    if (!theHubStartedTheSessionWithIt) {
       store.deliver(
         {
           key: `terminal:${crypto.randomUUID()}`,
           to,
           from: "terminal",
           author,
-          body: said,
+          body: typedInTheTerminal,
           meta: { session: session_id },
         },
         session_id,
       );
-  } catch {}
+    }
+  } catch {
+    ignore();
+  }
 }
 
-// A turn that ended is kept and queued for memories before the hub hears of it (observe.ts). One
-// that failed keeps nothing: its last message is the API's error, and the session's next pass takes
-// what it had taken.
-if (!busy && session_id && hook_event_name === "Stop") {
+if (!busy && session_id && answered) {
   try {
     const { ended } = await import("./observe.ts");
     ended(stateDir(), session_id, last_assistant_message);
   } catch (error) {
-    process.stderr.write(`hex couldn't keep this turn: ${error}\n`);
+    process.stderr.write(`hex couldn't keep this turn: ${String(error)}\n`);
   }
 }
 
-if (HEX_HUB && HEX_THREAD && (!busy || fromChat)) {
-  connect(HEX_HUB)
-    .on("connect", function () {
-      this.end(
-        JSON.stringify({
+if (given(HEX_HUB) && given(HEX_THREAD) && (!busy || fromChat)) {
+  const socket = connect(HEX_HUB);
+
+  socket
+    .on("connect", () => {
+      socket.end(
+        `${JSON.stringify({
           type: "state",
           thread: HEX_THREAD,
           busy,
           ...(background && { background }),
           ...(hook_event_name === "StopFailure" && { failed: true }),
-          ...(untold && { taken: [untold] }),
+          ...(leftForTheHubToTake !== undefined && { taken: [leftForTheHubToTake] }),
           ...(session_id && { session: session_id }),
-        }) + "\n",
-        () => this.destroy(),
+        })}\n`,
+        () => {
+          socket.destroy();
+        },
       );
     })
-    .on("error", () => {});
+    .on("error", ignore);
 }
