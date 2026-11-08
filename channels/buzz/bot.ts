@@ -86,32 +86,6 @@ function readEnvFile(): string {
   }
 }
 
-for (const line of readEnvFile().split("\n")) {
-  const [, name, value] = /^(\w+)=(.*)$/u.exec(line) ?? [];
-
-  if (name !== undefined && value !== undefined) {
-    process.env[name] = value;
-  }
-}
-
-const RELAY_URL = process.env.BUZZ_RELAY_URL;
-const PRIVATE_KEY = process.env.BUZZ_PRIVATE_KEY;
-const AUTH_TAG = process.env.BUZZ_AUTH_TAG;
-
-if (!isGiven(RELAY_URL) || !isGiven(PRIVATE_KEY) || !isGiven(AUTH_TAG)) {
-  process.stderr.write(
-    `buzz hub: no BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY and BUZZ_AUTH_TAG in ${ENV_FILE}, Buzz stays off\n`,
-  );
-} else {
-  process.on("unhandledRejection", (error) => {
-    process.stderr.write(`buzz hub: unhandled rejection: ${String(error)}\n`);
-  });
-  process.on("uncaughtException", (error) => {
-    process.stderr.write(`buzz hub: uncaught exception: ${String(error)}\n`);
-  });
-  serve(RELAY_URL, secretKeyOf(PRIVATE_KEY), authTagSchema.parse(JSON.parse(AUTH_TAG)));
-}
-
 function loadAccess(): z.output<typeof access> {
   let raw: unknown;
 
@@ -1726,4 +1700,30 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     memory?.close();
     relay.close();
   }
+}
+
+for (const line of readEnvFile().split("\n")) {
+  const [, name, value] = /^(\w+)=(.*)$/u.exec(line) ?? [];
+
+  if (name !== undefined && value !== undefined) {
+    process.env[name] = value;
+  }
+}
+
+const RELAY_URL = process.env.BUZZ_RELAY_URL;
+const PRIVATE_KEY = process.env.BUZZ_PRIVATE_KEY;
+const AUTH_TAG = process.env.BUZZ_AUTH_TAG;
+
+if (!isGiven(RELAY_URL) || !isGiven(PRIVATE_KEY) || !isGiven(AUTH_TAG)) {
+  process.stderr.write(
+    `buzz hub: no BUZZ_RELAY_URL, BUZZ_PRIVATE_KEY and BUZZ_AUTH_TAG in ${ENV_FILE}, Buzz stays off\n`,
+  );
+} else {
+  process.on("unhandledRejection", (error) => {
+    process.stderr.write(`buzz hub: unhandled rejection: ${String(error)}\n`);
+  });
+  process.on("uncaughtException", (error) => {
+    process.stderr.write(`buzz hub: uncaught exception: ${String(error)}\n`);
+  });
+  serve(RELAY_URL, secretKeyOf(PRIVATE_KEY), authTagSchema.parse(JSON.parse(AUTH_TAG)));
 }
