@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { Database } from 'bun:sqlite'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { open } from '../../hub/store.ts'
 
-// bin/job against a fake systemd-run that records what it was asked to run.
+// bin/job against a fake systemd-run that records what it was asked to run, and a fake systemctl whose
+// active units are the lines of active.txt and whose system state is system.txt's.
 
 const HEX = join(import.meta.dir, '../..')
 const home = mkdtempSync(join(tmpdir(), 'job-'))
@@ -15,7 +16,7 @@ const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !n
 const session = { HEX_CHANNEL: 'plugin:t3@hex', HEX_THREAD: 'stray-key' }
 
 beforeAll(() => {
-  for (const file of ['bin/job', 'bin/hex', 'bin/session', 'hub/cli.ts', 'hub/fit.ts', 'hub/notes.ts', 'hub/tasks.ts', 'hub/schedule.ts', 'hub/clock.ts', 'hub/store.ts', 'hub/running.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
+  for (const file of ['bin/job', 'bin/hex', 'bin/session', 'hub/cli.ts', 'hub/fit.ts', 'hub/notes.ts', 'hub/tasks.ts', 'hub/schedule.ts', 'hub/clock.ts', 'hub/store.ts', 'hub/running.ts', 'hub/claude.ts', 'hub/until.ts']) cpSync(join(HEX, file), join(home, '.hex', file))
   for (const [app, threads] of Object.entries({
     t3: { 'stray-key': { name: 'hex' } },
     telegram: { '-100123:908': { name: 'autofork' } },
@@ -26,6 +27,13 @@ beforeAll(() => {
   mkdirSync(join(home, 'fake'))
   writeFileSync(join(home, 'fake/systemd-run'), `#!/bin/sh\njq -cn '$ARGS.positional' --args -- "$@" > "${ran}"\n`)
   chmodSync(join(home, 'fake/systemd-run'), 0o755)
+  writeFileSync(join(home, 'fake/systemctl'), `#!/bin/sh
+case "$1" in
+  is-system-running) cat "${home}/system.txt" 2>/dev/null || echo running ;;
+  --user) for unit; do :; done; grep -qx "$unit" "${home}/active.txt" 2>/dev/null ;;
+esac
+`)
+  chmodSync(join(home, 'fake/systemctl'), 0o755)
 })
 afterAll(() => rmSync(home, { recursive: true }))
 
@@ -40,7 +48,7 @@ const value = (args: string[], name: string) => args.find(arg => arg.startsWith(
 test("a job a hex session starts is its thread's, in that session's own app, and its sessions are named for it", () => {
   const { args, error } = run(['round3', 'make', 'all'], session)
   expect(args.slice(args.indexOf('--'))).toEqual(['--', 'make', 'all'])
-  expect(args).toContain('--same-dir')
+  expect(args).toContain(`--working-directory=${home}`)
   expect(args).toContain('--slice=hex-jobs.slice')
   expect(error).toBe('')
   expect(value(args, 'HEX_OWNER')).toBe('t3:stray-key')
@@ -54,8 +62,12 @@ test('an agent job goes to a machine with room, from the folder it was started f
   expect(priced.at(-1)).toBe('cost $$5 in $$HOME')
   const project = mkdtempSync(join(home, 'deck-'))
   const away = run(['deck', 'claude', '-p', 'build it', '--model', 'opus'], session, project)
-  expect(away.args).toContain('--same-dir')
-  expect(away.args.slice(away.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/place'), 'hex/deck', '-p', 'build it', '--model', 'opus'])
+  expect(away.args).toContain(`--working-directory=${project}`)
+  expect(away.args.slice(away.args.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/place'), 'hex/deck', '--session-id', expect.stringMatching(/^[0-9a-f-]{36}$/), '-p', 'build it', '--model', 'opus'])
+  const chosen = run(['deck', 'claude', '--session-id', 'abc', '-p', 'go'], session).args
+  expect(chosen.slice(chosen.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/place'), 'hex/deck', '--session-id', 'abc', '-p', 'go'])
+  const resumed = run(['deck', 'claude', '--resume', 'abc', '-p', 'go on'], session).args
+  expect(resumed.slice(resumed.indexOf('--'))).toEqual(['--', join(home, '.hex/bin/place'), 'hex/deck', '--resume', 'abc', '-p', 'go on'])
   expect(value(away.args, 'StandardInputData')).toBeUndefined()
   const piped = run(['deck', 'claude', '-p'], session, home, 'Build the Usage tab.\n')
   expect(Buffer.from(value(piped.args, 'StandardInputData')!, 'base64').toString()).toBe('Build the Usage tab.\n')
@@ -126,4 +138,39 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
     { to: '-100123:908', from: 'job', body: expect.stringContaining('[job] topic ended'), meta: JSON.stringify({ user: 'job' }) },
     { to: '-100123:909', from: 'job', body: expect.stringContaining('[job] early ended'), meta: JSON.stringify({ user: 'job' }) },
   ])
+})
+
+test('a job that runs already is refused', () => {
+  writeFileSync(join(home, 'active.txt'), 'busy\n')
+  expect(run(['busy', 'make'], session).code).toBe(1)
+  rmSync(join(home, 'active.txt'))
+})
+
+test("a job the machine going down stopped carries on as hex starts: a claude job in its own conversation, any other job told to its owner", () => {
+  const jobs = join(home, 'state/jobs')
+  rmSync(jobs, { recursive: true, force: true })
+  const config = join(home, 'claude')
+  mkdirSync(join(config, 'projects/-deck'), { recursive: true })
+  writeFileSync(join(config, 'projects/-deck/s-1.jsonl'), '{}\n')
+  run(['deck', 'claude', '--session-id', 's-1', '-p', 'build the deck', '--model', 'opus'], session)
+  run(['early', 'claude', '--session-id', 's-2', '-p', 'never saved'], session)
+  run(['make', 'make', 'all'], session)
+  run(['live', 'make', 'all'], session)
+  writeFileSync(join(home, 'active.txt'), 'live\n')
+  writeFileSync(join(home, 'system.txt'), 'stopping\n')
+  const end = (unit: string) => Bun.spawnSync(['bun', job, '--ended', unit, 't3:stray-key'], { env: { ...env, PATH: `${join(home, 'fake')}:${env.PATH}` } })
+  end('make')
+  expect(readFileSync(join(jobs, 'make.json'), 'utf8')).toContain('"make","all"')
+  rmSync(join(home, 'system.txt'))
+  rmSync(ran, { force: true })
+  const resumed = Bun.spawnSync(['bun', job, '--resume'], { cwd: home, env: { ...env, PATH: `${join(home, 'fake')}:${env.PATH}`, CLAUDE_CONFIG_DIR: config }, stderr: 'pipe' })
+  expect(resumed.exitCode).toBe(0)
+  const args = JSON.parse(readFileSync(ran, 'utf8')) as string[]
+  expect(args).toContain('--unit=deck')
+  expect(args.slice(args.indexOf('--'), -1)).toEqual(['--', join(home, '.hex/bin/place'), 'hex/deck', '-p', '--model', 'opus', '--resume', 's-1'])
+  expect(args.at(-1)).toContain('carry on')
+  expect(readdirSync(jobs).sort()).toEqual(['deck.json', 'live.json'])
+  const told = new Database(join(home, 'state/hex.db')).query(`select body from messages where "from" = 'job' and key like 'job:%:%' and (body like '%resumed%' or body like '%hasn''t run%') order by rowid`).values().flat().sort()
+  expect(told).toEqual([expect.stringContaining('[job] deck stopped when the machine went down, and resumed'), expect.stringContaining('[job] early stopped'), expect.stringContaining('[job] make stopped')])
+  rmSync(join(home, 'active.txt'))
 })
