@@ -36,7 +36,7 @@ export type Handlers<Tools extends readonly Tool[]> = {
 
 export function dispatch<const Tools extends readonly Tool[]>(
   tools: Tools,
-  handlers: Handlers<Tools>,
+  handlers: NoInfer<Handlers<Tools>>,
 ): (caller: string, name: string, args: Record<string, unknown>) => Promise<string> {
   const byName = new Map<string, Tool>(tools.map((each) => [each.name, each]));
   // SAFETY: Handlers<Tools> has one entry per tool name, each taking that tool's parsed input.

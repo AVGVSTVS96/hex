@@ -355,7 +355,8 @@ test("a stock MCP client lists the tools and replies without an operation id", a
         requestInit: { headers },
       }),
     );
-    expect((await client.listTools()).tools).toEqual(toolList(SERVER.tools));
+    const listed: unknown = (await client.listTools()).tools;
+    expect(listed).toEqual(toolList(SERVER.tools));
 
     const reply = await client.callTool({
       name: "reply",
