@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -8,8 +10,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import type { FSWatcher } from "node:fs";
-import { AsyncLocalStorage } from "node:async_hooks";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
 
@@ -170,6 +170,19 @@ type Saved = Settings & {
 };
 
 type Timer = ReturnType<typeof setTimeout>;
+
+type SessionEnv = {
+  HEX_CHANNEL: string;
+  HEX_THREAD: string;
+  HEX_HUB: string;
+  HEX_PORT: string;
+  HEX_TOKEN: string;
+  HEX_STORE: string;
+  MCP_TIMEOUT?: string;
+  HEX_MAIN?: string;
+  HEX_FRESH?: string;
+  HEX_HELD?: string;
+};
 
 // Where a thread's session stands. launching: the hub started or restarted it and waits for its
 // channel, so one that ends first failed to start. recovering: it runs without its channel, which
@@ -490,6 +503,16 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, "utf-8").trim();
 }
 
+function startupFiles(hex: string | undefined) {
+  return hex === undefined || hex === ""
+    ? []
+    : Object.values(STARTUP)
+        .flat()
+        .map((path) => join(hex, path));
+}
+
+const ignore = (): void => undefined;
+
 function toMessageWithKeyFirstForTheHook(row: Row): Message {
   return { content: row.body, author: row.author, meta: { key: row.key, ...row.meta } };
 }
@@ -514,11 +537,7 @@ export function startHub({
   limits,
   hexDir = process.cwd(),
   launcher = "claude",
-  startup = process.env.HEX_STARTUP
-    ? Object.values(STARTUP)
-        .flat()
-        .map((path) => join(process.env.HEX_STARTUP!, path))
-    : [],
+  startup = startupFiles(process.env.HEX_STARTUP),
   link,
 }: {
   stateDir: string;
@@ -711,7 +730,7 @@ export function startHub({
     if (run.renew) {
       void cycle(thread, running);
     } else {
-      stop(thread);
+      void stop(thread);
     }
     letGo(thread);
   }
@@ -757,19 +776,19 @@ export function startHub({
       return;
     }
     if (thread === main) {
-      run.rest = clock.setTimeout(stopIfIdle, cacheWarm, thread);
+      run.rest = clock.setTimeout(() => void stopIfIdle(thread), cacheWarm);
     } else if (run.leaving) {
-      stop(thread);
+      void stop(thread);
     } else if (fresh(thread)) {
       const left = warmFor(thread);
 
       if (left === 0 && rested) {
         void handOff(thread, true);
       } else if (left !== undefined) {
-        run.rest = clock.setTimeout(handOff, left, thread);
+        run.rest = clock.setTimeout(() => void handOff(thread), left);
       }
     } else {
-      run.rest = clock.setTimeout(stopIfIdle, idleStop, thread);
+      run.rest = clock.setTimeout(() => void stopIfIdle(thread), idleStop);
     }
   }
 
@@ -837,7 +856,7 @@ export function startHub({
     }
 
     if (thread !== main) {
-      stop(thread);
+      void stop(thread);
     }
   }
 
@@ -926,7 +945,7 @@ export function startHub({
       run.leaving = resolve;
 
       if (run.phase.is !== "live") {
-        forget(thread);
+        forget(thread, resolve);
         return;
       }
       void stopIfIdle(thread);
@@ -944,7 +963,7 @@ export function startHub({
     return retire(thread);
   }
 
-  function forget(thread: string) {
+  function forget(thread: string, leaving: (session: string) => void) {
     const run = runOf(thread);
     const session = threads.get(thread)?.session ?? "";
     threads.delete(thread);
@@ -954,7 +973,7 @@ export function startHub({
     runs.delete(thread);
     rmSync(settingsOf(thread), { force: true });
     rmSync(heldOf(thread), { recursive: true, force: true });
-    run.leaving!(session);
+    leaving(session);
   }
 
   function adopt(thread: string, name: string, session: string, prompt?: string, cwd?: string) {
@@ -972,18 +991,18 @@ export function startHub({
     }
     const wanted = nameOrThread.trim().toLowerCase();
 
-    const matches = [...threads]
-      .filter(([, known]) => known.name.toLowerCase() === wanted)
-      .map(([thread]) => thread);
+    const matches = [...threads].flatMap(([thread, known]) =>
+      known.name.toLowerCase() === wanted ? [thread] : [],
+    );
+    const [only] = matches;
 
-    if (matches.length !== 1) {
-      throw new Error(
-        matches.length
-          ? `more than one thread is named "${nameOrThread}"`
-          : `no thread named "${nameOrThread}"`,
-      );
+    if (matches.length > 1) {
+      throw new Error(`more than one thread is named "${nameOrThread}"`);
     }
-    return matches[0]!;
+    if (only === undefined) {
+      throw new Error(`no thread named "${nameOrThread}"`);
+    }
+    return only;
   }
 
   function savedOf(thread: string) {
@@ -1023,7 +1042,11 @@ export function startHub({
   async function launch(
     thread: string,
     name: string,
-    { cwd, again, ...given }: Opening & { cwd?: string | undefined; again?: boolean | undefined } = {},
+    {
+      cwd,
+      again,
+      ...given
+    }: Opening & { cwd?: string | undefined; again?: boolean | undefined } = {},
   ) {
     const run = runOf(thread);
 
@@ -1048,7 +1071,8 @@ export function startHub({
     }
     // A fork's first start has no session to find; after a failed one, the session it started may run on.
     if (fork && !run.failing) {
-      return await start(thread, prompt, fork);
+      await start(thread, prompt, fork);
+      return;
     }
     const running = await sessionOf(thread);
 
@@ -1112,11 +1136,18 @@ export function startHub({
   function configure(thread: string, settings: Settings) {
     const known = savedOf(thread);
 
-    for (const [key, value] of Object.entries(settings) as [keyof Settings, string | undefined][]) {
-      if (value) {
-        known[key] = value;
+    if ("model" in settings) {
+      if (settings.model) {
+        known.model = settings.model;
       } else {
-        delete known[key];
+        delete known.model;
+      }
+    }
+    if ("effort" in settings) {
+      if (settings.effort) {
+        known.effort = settings.effort;
+      } else {
+        delete known.effort;
       }
     }
 
@@ -1135,17 +1166,26 @@ export function startHub({
   // A respawn reads the same file, so it gets the hub's current token too. It runs without the
   // launcher, so the file keeps what the launcher added and renews only the hub's keys.
   function writeSettings(thread: string, launched: ReturnType<typeof claude.settingsOf> = {}) {
-    const env = {
+    const env: SessionEnv = {
       HEX_CHANNEL: channel,
       HEX_THREAD: thread,
       HEX_HUB: socketPath,
       HEX_PORT: String(port),
       HEX_TOKEN: token,
       HEX_STORE: storeDir,
-      ...(connect ? { MCP_TIMEOUT: String(connect) } : {}),
-      ...(general && thread === main ? { HEX_MAIN: "1" } : {}),
-      ...(fresh(thread) ? { HEX_FRESH: "1" } : { HEX_HELD: heldOf(thread) }),
     };
+
+    if (connect) {
+      env.MCP_TIMEOUT = String(connect);
+    }
+    if (general && thread === main) {
+      env.HEX_MAIN = "1";
+    }
+    if (fresh(thread)) {
+      env.HEX_FRESH = "1";
+    } else {
+      env.HEX_HELD = heldOf(thread);
+    }
 
     writeFileSync(
       settingsOf(thread),
@@ -1233,7 +1273,10 @@ export function startHub({
       const { state: status, detail } = claude.record(job);
 
       if (status === "failed") {
-        fail(thread, detail || "the session failed to start");
+        fail(
+          thread,
+          detail === undefined || detail === "" ? "the session failed to start" : detail,
+        );
       }
     };
 
@@ -1266,7 +1309,8 @@ export function startHub({
     if (run.renew === "underway") {
       run.renew = undefined;
     }
-    const failing = (run.failing ??= { count: 0 });
+    run.failing ??= { count: 0 };
+    const { failing } = run;
     failing.count++;
 
     if (!phase.again) {
@@ -1282,15 +1326,18 @@ export function startHub({
     if (!phase.again || failing.count === 1) {
       failed(thread, reason);
     }
+    const generalMain = generalHub?.main;
+
     if (
       failing.count >= TELL_AFTER &&
       !failing.told &&
       generalHub &&
+      generalMain !== undefined &&
       !(general && thread === main)
     ) {
       failing.told = true;
       const content = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
-      generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? "hex", {
+      generalHub.deliver(generalMain, generalHub.name(generalMain) ?? "hex", {
         content,
         author: "prompt",
         meta: { user: "hub" },
@@ -1306,7 +1353,7 @@ export function startHub({
   function lost(thread: string, reason: string) {
     const known = threads.get(thread);
     const run = runOf(thread);
-    const session = /source session (\S+) not found/.exec(reason)?.[1];
+    const session = /source session (\S+) not found/u.exec(reason)?.[1];
 
     if (
       !known ||
@@ -1320,20 +1367,18 @@ export function startHub({
     const body = `[hub] Claude Code no longer has the conversation of session ${session}, which this thread was to continue, so you're a new session without it; say so when you reply.`;
 
     if (
-      !kept(
-        (store) => (
-          store.deliver({
-            key,
-            to: thread,
-            from: "hub",
-            author: "prompt",
-            body,
-            meta: { user: "hub" },
-          }),
-          true
-        ),
-        false,
-      )
+      !kept((store) => {
+        store.deliver({
+          key,
+          to: thread,
+          from: "hub",
+          author: "prompt",
+          body,
+          meta: { user: "hub" },
+        });
+
+        return true;
+      }, false)
     ) {
       return false;
     }
@@ -1444,18 +1489,24 @@ export function startHub({
   function route(thread: string, name: string, message: Message) {
     const run = runOf(thread);
 
-    if (run.ending) {
-      hold(thread, message);
+    const { ending } = run;
 
-      return void run.ending.then(() => {
+    if (ending) {
+      hold(thread, message);
+      void (async () => {
+        await ending;
         resume(thread, name);
-      });
+      })();
+
+      return;
     }
 
     if (run.phase.is === "live") {
-      (stale(thread) && !onCall.has(run)) || spent(thread)
-        ? void refresh(thread, message)
-        : run.phase.line.send({ type: "inbound", ...message });
+      if ((stale(thread) && !onCall.has(run)) || spent(thread)) {
+        void refresh(thread, message);
+      } else {
+        run.phase.line.send({ type: "inbound", ...message });
+      }
       return;
     }
     hold(thread, message);
@@ -1486,7 +1537,10 @@ export function startHub({
   function waiting(thread: string): Message[] {
     const rows = kept((store) => store.untaken(thread), []);
 
-    return [...rows.map(toMessageWithKeyFirstForTheHook), ...runOf(thread).queue.filter((message) => !message.meta.key)];
+    return [
+      ...rows.map(toMessageWithKeyFirstForTheHook),
+      ...runOf(thread).queue.filter((message) => !message.meta.key),
+    ];
   }
 
   // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any
@@ -1570,7 +1624,9 @@ export function startHub({
     const session = current(thread);
 
     if (!session) {
-      return await launch(thread, savedOf(thread).name, { prompt });
+      await launch(thread, savedOf(thread).name, { prompt });
+
+      return;
     }
     void cycle(thread, await claude.agent(session, serving), prompt);
   }
@@ -1627,7 +1683,8 @@ export function startHub({
     const was = run.phase;
     const job = was.is === "launching" ? was.job : undefined;
     become(run, { is: "live", line });
-    run.failing = run.opening = undefined;
+    run.failing = undefined;
+    run.opening = undefined;
 
     if (general && thread === main) {
       reached(api);
@@ -1662,11 +1719,13 @@ export function startHub({
       void renew(thread);
     }
 
-    void sessionOf(thread).then((running) => {
+    void (async () => {
+      const running = await sessionOf(thread);
+
       if (running && run.phase.is === "live" && run.phase.line === line) {
         note(thread, running.sessionId);
       }
-    });
+    })();
 
     if (was.is === "launching") {
       for (const each of retries) {
@@ -1690,7 +1749,7 @@ export function startHub({
     setState(thread, false);
 
     if (run.leaving) {
-      forget(thread);
+      forget(thread, run.leaving);
       return;
     }
     for (const message of waiting(thread)) {
@@ -1713,7 +1772,7 @@ export function startHub({
     if (closed || phase.is === "stopped" || phase.is === "live" || phase.deadline) {
       return;
     }
-    phase.deadline = clock.setTimeout(async () => {
+    const reconnectOrRecover = async () => {
       phase.deadline = undefined;
       const starting = phase.is === "launching" && clock.now() - since < connect;
 
@@ -1741,10 +1800,14 @@ export function startHub({
       // A respawn starts from the flags the session started with, which read the thread's current
       // settings file only for a session the hub started that way.
       if (claude.settingsOf(running)) {
-        return await respawn(thread, running);
+        await respawn(thread, running);
+
+        return;
       }
       void cycle(thread, running);
-    }, reconnect);
+    };
+
+    phase.deadline = clock.setTimeout(() => void reconnectOrRecover(), reconnect);
   }
 
   function gone(thread: string) {
@@ -1921,7 +1984,7 @@ export function startHub({
         }
       }
     });
-    socket.on("error", () => {});
+    socket.on("error", ignore);
   }).listen(socketPath);
 
   function handle(request: HubRequest) {
@@ -1965,13 +2028,18 @@ export function startHub({
         return;
       }
       case "mirror": {
-        void mirror(api, find(request.thread), request.to, request.where).then(
-          (link) => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
-          (error: unknown) =>
+        const thread = find(request.thread);
+
+        void (async () => {
+          try {
+            const link = await mirror(api, thread, request.to, request.where);
+            process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`);
+          } catch (error) {
             process.stderr.write(
               `hub: couldn't mirror ${request.thread} to ${request.to}: ${String(error)}\n`,
-            ),
-        );
+            );
+          }
+        })();
       }
     }
   }
@@ -2023,15 +2091,19 @@ export function startHub({
     }, PRESS);
     const pressed = new Date().toISOString();
 
-    const how = await claude
-      .interrupt(cwdOf(thread), session, AbortSignal.any([deadline.signal, closing.signal]))
-      .catch(
-        (error) =>
-          void process.stderr.write(`hub: couldn't interrupt ${thread}'s turn: ${error}\n`),
-      )
-      .finally(() => {
-        clock.clearTimeout(timer);
-      });
+    let how: Awaited<ReturnType<typeof claude.interrupt>> | undefined;
+
+    try {
+      how = await claude.interrupt(
+        cwdOf(thread),
+        session,
+        AbortSignal.any([deadline.signal, closing.signal]),
+      );
+    } catch (error) {
+      process.stderr.write(`hub: couldn't interrupt ${thread}'s turn: ${String(error)}\n`);
+    } finally {
+      clock.clearTimeout(timer);
+    }
 
     if (closing.signal.aborted || current(thread) !== session) {
       return;
@@ -2044,7 +2116,10 @@ export function startHub({
       }, undefined);
       setState(thread, false, true);
 
-      if ((await claude.listing(session))?.state !== "working" && runOf(thread).turn === "background") {
+      if (
+        (await claude.listing(session))?.state !== "working" &&
+        runOf(thread).turn === "background"
+      ) {
         setState(thread, false);
       }
       return;
@@ -2080,8 +2155,9 @@ export function startHub({
   // Sessions that outlived the hub (a hub restart) reconnect, or recover. A fresh main thread's
   // launch never resumes, so one still running waits for its session instead of starting another.
   if (main || threads.size) {
-    void claude.agents(serving).then((running) => {
-      const serving = new Set(
+    void (async () => {
+      const running = await claude.agents(serving);
+      const outlived = new Set(
         [...threads.keys()].filter((thread) =>
           running.some((agent) => agent.sessionId === current(thread) || boundTo(agent) === thread),
         ),
@@ -2089,10 +2165,10 @@ export function startHub({
 
       // One that was mid-turn when the hub stopped may have died with it (a reboot): it gets the same wait, and if it's gone, its next session gets what it left.
       const cutShort = [...threads.keys()].filter(
-        (thread) => !serving.has(thread) && kept((store) => store.midTurn(thread), false),
+        (thread) => !outlived.has(thread) && kept((store) => store.midTurn(thread), false),
       );
 
-      for (const thread of [...serving, ...cutShort]) {
+      for (const thread of [...outlived, ...cutShort]) {
         const run = runOf(thread);
 
         if (run.phase.is !== "stopped") {
@@ -2102,20 +2178,17 @@ export function startHub({
         recover(thread);
       }
 
-      if (main && !(fresh(main) && serving.has(main)) && !cutShort.includes(main)) {
+      if (main && !(fresh(main) && outlived.has(main)) && !cutShort.includes(main)) {
         revive();
       }
       wake();
-    });
+    })();
   }
 
-  const unwatch = kept(
-    (store) => store.watch(wake),
-    () => {},
-  );
-
-  const unschedule = general && main ? schedule(storeDir, hexDir, main) : () => {};
-  const unhold = general && main ? holding(storeDir) : () => {};
+  const unwatch = kept((store) => store.watch(wake), ignore);
+  const unschedule = general && main ? schedule(storeDir, hexDir, main) : ignore;
+  const unhold = general && main ? holding(storeDir) : ignore;
+  const retryCompactions = () => void recompact();
 
   const api = {
     deliver,
@@ -2173,7 +2246,7 @@ export function startHub({
       unschedule();
       unhold();
       retries.delete(retry);
-      answered.delete(recompact);
+      answered.delete(retryCompactions);
 
       if (generalHub === api) {
         generalHub = undefined;
@@ -2194,7 +2267,7 @@ export function startHub({
   };
 
   retries.add(retry);
-  answered.add(recompact);
+  answered.add(retryCompactions);
 
   if (general && main) {
     generalHub = api;
@@ -2224,6 +2297,7 @@ export async function begin(
   const there = client(app);
   const opened = await there.place(name, where, about);
 
+  // oxlint-disable-next-line anti-slop/no-runtime-typeof -- first is TypeScript's own union of a prompt and a message, not unparsed input
   if (typeof first === "string") {
     there.hub.open(opened.thread, name, first, cwd);
   } else {
@@ -2245,9 +2319,13 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
   const cwd = from.cwd(thread);
   const { thread: dest, link } = await target.place(name, where, undefined, cwd);
 
-  const filled = Promise.resolve(target.backfill?.(dest, from.history(thread))).catch((error) => {
-    process.stderr.write(`hub: couldn't backfill ${to} thread ${dest}: ${error}\n`);
-  });
+  const filled = (async () => {
+    try {
+      await target.backfill?.(dest, from.history(thread));
+    } catch (error) {
+      process.stderr.write(`hub: couldn't backfill ${to} thread ${dest}: ${String(error)}\n`);
+    }
+  })();
 
   return { target, session, dest, link, filled, cwd };
 }
@@ -2270,15 +2348,20 @@ export async function move(
     : `This conversation just moved to ${to}, into the thread "${name}". Your ${to} tools now post there. Carry on where you left off.`;
 
   if (copy) {
-    void filled.then(() => {
-      prompt
-        ? target.hub.fork(dest, name, session, prompt, cwd)
-        : target.hub.follow(dest, name, session, cwd);
-    });
+    void (async () => {
+      await filled;
+
+      if (prompt === undefined) {
+        target.hub.follow(dest, name, session, cwd);
+      } else {
+        target.hub.fork(dest, name, session, prompt, cwd);
+      }
+    })();
   } else {
-    void Promise.all([from.release(thread), filled]).then(([session]) => {
-      target.hub.adopt(dest, name, session, prompt, cwd);
-    });
+    void (async () => {
+      const [released] = await Promise.all([from.release(thread), filled]);
+      target.hub.adopt(dest, name, released, prompt, cwd);
+    })();
   }
   return link;
 }
