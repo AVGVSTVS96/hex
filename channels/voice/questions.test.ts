@@ -1,28 +1,67 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { createServer } from "net";
-import type { Server } from "net";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import type { Server } from "node:net";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
-import { tmpdir, homedir } from "os";
+
+import { z } from "zod";
 
 import type { Pin, Question } from "../../hub/ledger.ts";
 import { open } from "../../hub/store.ts";
+import type { NewRow } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
 import { before, digest, failed, vet } from "./check.ts";
 import { Questions, fromLedger } from "./questions.ts";
+import type { Curated, Source } from "./questions.ts";
 import { T3 } from "./t3.ts";
 
 const GROUP = "-1001234";
 const DESK = `${GROUP}:5`;
 let state: string;
+const HubLineSchema = z.looseObject({ type: z.string() });
+
 let questions: Questions;
 let hub: Server;
-let lines: any[];
+let lines: z.infer<typeof HubLineSchema>[];
 let checks: string[];
 
+function parseLines(chunk: string) {
+  return chunk
+    .trim()
+    .split("\n")
+    .map((line) => HubLineSchema.parse(JSON.parse(line)));
+}
+
+function listed(id: string) {
+  const question = questions.find(id);
+
+  return question !== undefined;
+}
+
+async function rejection(promise: Promise<unknown>) {
+  try {
+    await promise;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  throw new Error("expected it to be refused");
+}
+
+function savedMarks() {
+  return z
+    .object({
+      answers: z.record(z.string(), z.looseObject({})),
+      read: z.record(z.string(), z.string()),
+      dismissed: z.record(z.string(), z.string()),
+    })
+    .parse(JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8")));
+}
+
 function ledger(
-  kept: Omit<Question, "app">[],
+  kept: (Omit<Question, "app"> & Partial<Pick<Question, "app">>)[],
   pins: Record<string, Omit<Pin, "app" | "thread" | "note"> & { note?: string }> = {},
 ) {
   const store = open(state);
@@ -42,6 +81,7 @@ function ledger(
 
 function asked(message: number, text: string, options: string[], fields: Partial<Question> = {}) {
   return {
+    app: "telegram",
     thread: DESK,
     message,
     text,
@@ -63,16 +103,13 @@ beforeEach(async () => {
   checks = [];
   hub = createServer((socket) => {
     socket.setEncoding("utf-8");
-    socket.on("data", (chunk: string) =>
-      lines.push(
-        ...chunk
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line)),
-      ),
-    );
+    socket.on("data", (chunk: string) => {
+      lines.push(...parseLines(chunk));
+    });
   });
-  await new Promise<void>((resolve) => hub.listen(join(state, "telegram", "hub.sock"), resolve));
+  await new Promise<void>((resolve) => {
+    hub.listen(join(state, "telegram", "hub.sock"), resolve);
+  });
 });
 
 afterEach(() => {
@@ -134,7 +171,7 @@ test("a long first line ends at its last question, however short", () => {
   );
 
   expect(question.question).toBe("Should we ship tonight?");
-  expect(question.context!.startsWith("The redesign")).toBe(true);
+  expect(question.context?.startsWith("The redesign")).toBe(true);
 });
 
 test("a long first line never ends inside brackets, and a long question stays whole", () => {
@@ -179,19 +216,32 @@ test("a short first line that ends in an ellipsis keeps no context of its own", 
   expect(fromLedger("telegram", asked(1, "Ship it…", ["Yes", "No"])).context).toBeUndefined();
 });
 
-// Messages kept in DESK on Oct 13, each at its time ('18:01:00') and with its id in the chat.
 type Said = [
-  string,
-  string,
-  Partial<{ id: number; author: "hex" | "owner"; to: string; meta: Record<string, string> }>?,
+  timeOnOct13: string,
+  body: string,
+  fields?: Partial<{
+    id: number;
+    author: "hex" | "owner";
+    to: string;
+    meta: Record<string, string>;
+  }>,
 ];
 
-function said(lines: Said[]) {
-  const store = open(state);
-  const key = (n: number, id?: number) => `telegram:${GROUP}:${id ?? 100 + n}`;
-  store.past(
-    lines.map(([time, body, { id, author = "hex", to = DESK, meta } = {}], n) => [
-      { key: key(n, id), to, from: "telegram", author, body, ...(meta && { meta }) },
+function chatKey(n: number, id?: number) {
+  return `telegram:${GROUP}:${id ?? 100 + n}`;
+}
+
+function said(rows: Said[]) {
+  open(state).past(
+    rows.map(([time, body, fields = {}], n): [NewRow, string] => [
+      {
+        key: chatKey(n, fields.id),
+        to: fields.to ?? DESK,
+        from: "telegram",
+        author: fields.author ?? "hex",
+        body,
+        ...(fields.meta && { meta: fields.meta }),
+      },
       `2026-10-13T${time}.000Z`,
     ]),
     "session",
@@ -249,9 +299,11 @@ test("a question the check hasn't rewritten yet keeps its own words on the card 
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
-  expect(questions.find(`telegram:${DESK}:9`)!.context).toBe("Caddy is mine.");
+  expect(questions.find(`telegram:${DESK}:9`)?.context).toBe("Caddy is mine.");
   expect(questions.words(`telegram:${DESK}:9`)).toEqual({
     place: "desk",
     at: "2026-10-13T19:00:00.000Z",
@@ -296,7 +348,7 @@ test("the check's asks read their words from their first place that has them: a 
     },
   );
 
-  const ask = (id: string, from: object[]) => ({
+  const ask = (id: string, from: Source[]) => ({
     id,
     kind: "pick",
     task: `telegram:${DESK}`,
@@ -332,7 +384,9 @@ test("the check's asks read their words from their first place that has them: a 
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
     calls,
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(questions.words("check:question")).toEqual({
     place: "desk",
@@ -370,7 +424,9 @@ test("open questions come newest first with a link to each, answered and settled
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(
     questions.view.asks.map((question) => [
@@ -422,7 +478,9 @@ test("General's questions sit under General, the name its places and its run go 
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(
     questions.view.asks.map((question) => [
@@ -478,7 +536,9 @@ test("the check’s version of a question stands in for every place that asked i
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(questions.view.asks.map((question) => question.id)).toEqual([
     `telegram:${DESK}:9`,
@@ -522,7 +582,7 @@ test("the check’s version of a question stands in for every place that asked i
     author: "owner",
     meta: { user: "hex app" },
   });
-  await until(() => !questions.find("check:read"));
+  await until(() => !listed("check:read"));
   await questions.undo("check:read", "app");
   await until(() => questions.find("check:read"));
   expect(checks).toContain("you took back an answer");
@@ -533,7 +593,9 @@ test("an answer that lands in the ledger takes the question off the list, and un
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   const version = questions.version;
   await questions.answer(`telegram:${DESK}:1`, "Yes", "app");
@@ -582,7 +644,9 @@ test("a note reaches the thread that asked and leaves the question open, with no
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(
     await questions.note(`telegram:${DESK}:1`, "i wish i could get more context", "app"),
@@ -638,7 +702,9 @@ test("not needed takes a question off the list, settles its copies and tells its
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(await questions.dismiss(`telegram:${DESK}:1`, "app")).toEqual({
     thread: `telegram:${DESK}`,
@@ -657,10 +723,10 @@ test("not needed takes a question off the list, settles its copies and tells its
     },
     { type: "settle", thread: DESK, message: 1, note: "✓ Not needed, said in the app" },
   ]);
-  await expect(questions.dismiss(`telegram:${DESK}:1`, "app")).rejects.toThrow(
+  expect(await rejection(questions.dismiss(`telegram:${DESK}:1`, "app"))).toContain(
     "already answered or settled",
   );
-  await expect(questions.answer(`telegram:${DESK}:1`, "Yes", "app")).rejects.toThrow(
+  expect(await rejection(questions.answer(`telegram:${DESK}:1`, "Yes", "app"))).toContain(
     "already answered or settled",
   );
   ledger([
@@ -689,14 +755,14 @@ test("not needed takes a question off the list, settles its copies and tells its
     settled: 0,
     missed: 0,
   });
-  await until(() => !questions.find("check:read"));
+  await until(() => !listed("check:read"));
   await questions.undo("check:read", "app");
   await until(() => questions.find("check:read"));
   expect(lines.map((line) => line.content)).toEqual([
     "(not needed, said in the app) Read the review",
     "(took back) Read the review: Not needed",
   ]);
-  await expect(questions.undo("check:read", "app")).rejects.toThrow(
+  expect(await rejection(questions.undo("check:read", "app"))).toContain(
     "there is no answer here to take back",
   );
 });
@@ -734,7 +800,9 @@ test("an answer its buttons can’t take settles every copy, and undo reopens th
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(await questions.answer("check:twilio", "after the launch", "app")).toEqual({
     thread: `telegram:${DESK}`,
@@ -766,71 +834,63 @@ test("an answer its buttons can’t take settles every copy, and undo reopens th
   ]);
 });
 
-const TWO_HUBS = {
+const TWILIO = {
+  id: "check:twilio",
+  kind: "do",
+  task: `telegram:${DESK}`,
   at: "",
-  why: "",
-  read: {},
-  fixed: [],
-  flagged: [],
-  stuck: [],
-  asks: [
-    {
-      id: "check:twilio",
-      kind: "do",
-      task: `telegram:${DESK}`,
-      at: "",
-      question: "Upgrade Twilio",
-      options: [
-        { label: "Upgrade", value: "Upgrade" },
-        { label: "Not yet", value: "Not yet" },
-      ],
-      refs: [
-        { app: "telegram", thread: DESK, message: 1 },
-        { app: "discord", thread: DESK, message: 2 },
-      ],
-    },
+  question: "Upgrade Twilio",
+  options: [
+    { label: "Upgrade", value: "Upgrade" },
+    { label: "Not yet", value: "Not yet" },
+  ],
+  refs: [
+    { app: "telegram", thread: DESK, message: 1 },
+    { app: "discord", thread: DESK, message: 2 },
   ],
 };
 
+const TWO_HUBS = { at: "", why: "", read: {}, fixed: [], flagged: [], stuck: [], asks: [TWILIO] };
+
 async function discordHub() {
   mkdirSync(join(state, "discord"), { recursive: true });
-  const heard: any[] = [];
+  const heard: z.infer<typeof HubLineSchema>[] = [];
 
   const server = createServer((socket) => {
     socket.setEncoding("utf-8");
-    socket.on("data", (chunk: string) =>
-      heard.push(
-        ...chunk
-          .trim()
-          .split("\n")
-          .map((line) => JSON.parse(line)),
-      ),
-    );
+    socket.on("data", (chunk: string) => {
+      heard.push(...parseLines(chunk));
+    });
   });
 
-  await new Promise<void>((resolve) => server.listen(join(state, "discord", "hub.sock"), resolve));
+  await new Promise<void>((resolve) => {
+    server.listen(join(state, "discord", "hub.sock"), resolve);
+  });
 
   return {
     heard,
     stop: () =>
-      new Promise<void>((resolve) =>
-        server.close(
-          () => (rmSync(join(state, "discord", "hub.sock"), { force: true }), resolve()),
-        ),
-      ),
+      new Promise<void>((resolve) => {
+        server.close(() => {
+          rmSync(join(state, "discord", "hub.sock"), { force: true });
+          resolve();
+        });
+      }),
   };
 }
 
 test("a not needed with one hub down still reaches the rest and says what it missed, and the copy left open can be settled later", async () => {
   ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
-    { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" } as any,
+    { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" },
   ]);
   writeFileSync(join(state, "voice", "check.json"), JSON.stringify(TWO_HUBS));
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   await until(() => questions.find("check:twilio"));
   expect(await questions.dismiss("check:twilio", "app")).toEqual({
@@ -841,17 +901,19 @@ test("a not needed with one hub down still reaches the rest and says what it mis
   });
   await until(() => lines.length === 2);
   expect(lines.map((line) => line.type)).toEqual(["inbound", "settle"]);
-  await expect(questions.dismiss("check:twilio", "app")).rejects.toThrow(
+  expect(await rejection(questions.dismiss("check:twilio", "app"))).toContain(
     "already answered or settled",
   );
-  expect(questions.find("check:twilio")!.partly).toBeUndefined();
+  const twilio = questions.find("check:twilio");
+  expect(twilio).toBeDefined();
+  expect(twilio?.partly).toBeUndefined();
 
   ledger([
     {
       ...asked(1, "Twilio?", ["Upgrade", "Not yet"]),
       settled: { note: "✓ Not needed, said in the app", at: "" },
     },
-    { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" } as any,
+    { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" },
   ]);
   await Bun.sleep(150);
   expect(questions.find("check:twilio")).toMatchObject({ partly: "Not needed" });
@@ -881,13 +943,15 @@ test("a not needed with one hub down still reaches the rest and says what it mis
 test("an answer that missed a copy is finished by the same answer, which only settles it, and no other answer goes over it", async () => {
   ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
-    { ...asked(2, "Upgrade Twilio now?", ["Upgrade", "Not yet"]), app: "discord" } as any,
+    { ...asked(2, "Upgrade Twilio now?", ["Upgrade", "Not yet"]), app: "discord" },
   ]);
   writeFileSync(join(state, "voice", "check.json"), JSON.stringify(TWO_HUBS));
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   await until(() => questions.find("check:twilio"));
   expect(await questions.answer("check:twilio", "Upgrade", "app")).toEqual({
@@ -901,15 +965,15 @@ test("an answer that missed a copy is finished by the same answer, which only se
       ...asked(1, "Twilio?", ["Upgrade", "Not yet"]),
       answer: { label: "Upgrade", at: "", via: "app" },
     },
-    { ...asked(2, "Upgrade Twilio now?", ["Upgrade", "Not yet"]), app: "discord" } as any,
+    { ...asked(2, "Upgrade Twilio now?", ["Upgrade", "Not yet"]), app: "discord" },
   ]);
   await Bun.sleep(150);
   expect(questions.find("check:twilio")).toMatchObject({ partly: "Upgrade" });
-  expect(questions.find("check:twilio")!.undoing).toBeUndefined();
-  await expect(questions.answer("check:twilio", "Not yet", "app")).rejects.toThrow(
+  expect(questions.find("check:twilio")?.undoing).toBeUndefined();
+  expect(await rejection(questions.answer("check:twilio", "Not yet", "app"))).toContain(
     'part of "Upgrade" went out',
   );
-  await expect(questions.dismiss("check:twilio", "app")).rejects.toThrow(
+  expect(await rejection(questions.dismiss("check:twilio", "app"))).toContain(
     'part of "Upgrade" went out',
   );
   const discord = await discordHub();
@@ -935,24 +999,26 @@ test("an option labelled Not needed that missed a copy is finished as the answer
 
   const hubs = {
     ...TWO_HUBS,
-    asks: [{ ...TWO_HUBS.asks[0]!, options: options.map((label) => ({ label, value: label })) }],
+    asks: [{ ...TWILIO, options: options.map((label) => ({ label, value: label })) }],
   };
 
   ledger([
     asked(1, "Twilio?", options),
-    { ...asked(2, "Upgrade Twilio now?", options), app: "discord" } as any,
+    { ...asked(2, "Upgrade Twilio now?", options), app: "discord" },
   ]);
   writeFileSync(join(state, "voice", "check.json"), JSON.stringify(hubs));
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   await until(() => questions.find("check:twilio"));
   await questions.answer("check:twilio", "Not needed", "app");
   ledger([
     { ...asked(1, "Twilio?", options), answer: { label: "Not needed", at: "", via: "app" } },
-    { ...asked(2, "Upgrade Twilio now?", options), app: "discord" } as any,
+    { ...asked(2, "Upgrade Twilio now?", options), app: "discord" },
   ]);
   await Bun.sleep(150);
   expect(questions.find("check:twilio")).toMatchObject({ partly: "Not needed" });
@@ -977,14 +1043,16 @@ test("an option labelled Not needed that missed a copy is finished as the answer
 test("a question asked again while an earlier answer missed a copy is answered on the new copy, and the missed one only settles", async () => {
   ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
-    { ...asked(2, "Twilio?", ["Upgrade", "Not yet"]), app: "discord" } as any,
+    { ...asked(2, "Twilio?", ["Upgrade", "Not yet"]), app: "discord" },
     asked(3, "Twilio, again?", ["Upgrade", "Not yet"]),
   ]);
   writeFileSync(join(state, "voice", "check.json"), JSON.stringify(TWO_HUBS));
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   await until(() => questions.find("check:twilio"));
   await questions.answer("check:twilio", "Upgrade", "app");
@@ -993,7 +1061,7 @@ test("a question asked again while an earlier answer missed a copy is answered o
       ...asked(1, "Twilio?", ["Upgrade", "Not yet"]),
       answer: { label: "Upgrade", at: "", via: "app" },
     },
-    { ...asked(2, "Twilio?", ["Upgrade", "Not yet"]), app: "discord" } as any,
+    { ...asked(2, "Twilio?", ["Upgrade", "Not yet"]), app: "discord" },
     asked(3, "Twilio, again?", ["Upgrade", "Not yet"]),
   ]);
 
@@ -1001,7 +1069,7 @@ test("a question asked again while an earlier answer missed a copy is answered o
     ...TWO_HUBS,
     asks: [
       {
-        ...TWO_HUBS.asks[0]!,
+        ...TWILIO,
         refs: [
           { app: "discord", thread: DESK, message: 2 },
           { app: "telegram", thread: DESK, message: 3 },
@@ -1030,14 +1098,16 @@ test("a question asked again while an earlier answer missed a copy is answered o
 test("an undo with a hub down takes back what it can, keeps the rest, and finishes when tried again", async () => {
   ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
-    { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" } as any,
+    { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" },
   ]);
   writeFileSync(join(state, "voice", "check.json"), JSON.stringify(TWO_HUBS));
   let discord = await discordHub();
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   await until(() => questions.find("check:twilio"));
   expect(await questions.answer("check:twilio", "Upgrade", "app")).toEqual({
@@ -1047,7 +1117,7 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
     missed: 0,
   });
   await discord.stop();
-  await expect(questions.undo("check:twilio", "app")).rejects.toThrow("undo again to finish");
+  expect(await rejection(questions.undo("check:twilio", "app"))).toContain("undo again to finish");
   await until(() => lines.some((line) => line.type === "reopen"));
   ledger([
     asked(1, "Twilio?", ["Upgrade", "Not yet"]),
@@ -1055,12 +1125,12 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
       ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]),
       app: "discord",
       settled: { note: "✓ Answered in the app: Upgrade", at: "" },
-    } as any,
+    },
   ]);
   await Bun.sleep(150);
   expect(questions.find("check:twilio")).toMatchObject({ undoing: true });
-  expect(questions.find("check:twilio")!.partly).toBeUndefined();
-  await expect(questions.answer("check:twilio", "Not yet", "app")).rejects.toThrow(
+  expect(questions.find("check:twilio")?.partly).toBeUndefined();
+  expect(await rejection(questions.answer("check:twilio", "Not yet", "app"))).toContain(
     "undo it again first",
   );
   discord = await discordHub();
@@ -1070,10 +1140,10 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
     await until(() => discord.heard.some((line) => line.type === "reopen"));
     ledger([
       asked(1, "Twilio?", ["Upgrade", "Not yet"]),
-      { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" } as any,
+      { ...asked(2, "Upgrade Twilio now?", ["Go", "Wait"]), app: "discord" },
     ]);
     await Bun.sleep(150);
-    await expect(questions.undo("check:twilio", "app")).rejects.toThrow(
+    expect(await rejection(questions.undo("check:twilio", "app"))).toContain(
       "no answer here to take back",
     );
     expect(await questions.answer("check:twilio", "Not yet", "app")).toMatchObject({
@@ -1115,7 +1185,9 @@ test("a question asked again over an earlier answer can be answered, and one und
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   await until(() => questions.find("check:ship"));
   await questions.dismiss("check:ship", "app");
@@ -1184,7 +1256,9 @@ test("a stuck item with a request goes to General once, however fast it is tappe
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   const [, twice] = await Promise.allSettled([questions.act("disk"), questions.act("disk")]);
   expect(twice).toMatchObject({
@@ -1201,14 +1275,9 @@ test("a stuck item with a request goes to General once, however fast it is tappe
   await questions.act("runs");
   expect(lines).toHaveLength(1);
   await until(() => questions.view.stuck.length === 1);
-  expect(questions.view.stuck[0]).toMatchObject({
-    id: "disk",
-    app: "hex",
-    sent: expect.any(String),
-  });
-  expect(
-    JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8")).dismissed.runs,
-  ).toBeString();
+  expect(questions.view.stuck[0]).toMatchObject({ id: "disk", app: "hex" });
+  expect(questions.view.stuck[0]?.sent).toBeString();
+  expect(savedMarks().dismissed.runs).toBeString();
 });
 
 test("T3 Code’s records give what waits on a limit, what never started, what failed unseen, and what finished since you looked", () => {
@@ -1229,7 +1298,13 @@ test("T3 Code’s records give what waits on a limit, what never started, what f
     [homedir(), join(homedir(), ".t3", "scratch")],
   );
 
-  const thread = (id: string, payload: object, project = "p") =>
+  type Payload = {
+    limitRecovery?: { resetAt: string };
+    lastVisitedAt?: string;
+    createdBy?: string;
+  };
+
+  const thread = (id: string, payload: Payload, project = "p") =>
     db.run(`insert into orchestration_v2_projection_threads values (?, ?, ?, null, null, ?)`, [
       id,
       project,
@@ -1272,14 +1347,16 @@ test("T3 Code’s records give what waits on a limit, what never started, what f
     ["queued thread: queued since Oct 9", "Resume", "paused"],
     ["broken thread ended in an error", "Look", "failed"],
   ]);
-  expect(stuck.every((item) => item.request)).toBe(true);
+  expect(stuck.every((item) => item.request !== undefined && item.request !== "")).toBe(true);
   expect(fresh.map((item) => [item.topic, item.where])).toEqual([
     ["hex", "T3 · hex"],
     ["loose thread", "T3"],
     ["scratch thread", "T3"],
   ]);
-  expect(fresh[0]).toEqual({
-    id: expect.stringMatching(/^t3-done-/),
+  const [done] = fresh;
+  expect(done?.id).toMatch(/^t3-done-/u);
+  expect({ ...done, id: "t3-done-…" }).toEqual({
+    id: "t3-done-…",
     app: "t3",
     topic: "hex",
     title: "finished thread",
@@ -1356,7 +1433,7 @@ test("a check’s verdict is held to the ledger: real open refs and buttons only
   expect(verdict.settle).toEqual([
     { ...ref(3), note: "Settled: Tech Live, picked on a call with a very long note".slice(0, 60) },
   ]);
-  expect(verdict.stuck[0]!.id).toBe("check-disk");
+  expect(verdict.stuck[0]?.id).toBe("check-disk");
 });
 
 test("a closed thread's open question stays a check's ref, so answering the question settles it", () => {
@@ -1391,7 +1468,7 @@ test("a closed thread's open question stays a check's ref, so answering the ques
   });
 });
 
-test("a question names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers", () => {
+test("a question names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers", async () => {
   const DM = "777";
   const THREAD = "1560277464146644992";
   open(state).keepThreads("telegram", {
@@ -1470,7 +1547,9 @@ test("a question names every place it was asked, each thread once at its open qu
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
     calls,
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   const [duo] = questions.view.asks;
   expect(duo).toMatchObject({
@@ -1480,7 +1559,7 @@ test("a question names every place it was asked, each thread once at its open qu
     ],
     links: [{ label: "Apple Store", url: "https://apple.com/store" }],
   });
-  expect(duo!.places).toEqual([
+  expect(duo?.places).toEqual([
     {
       app: "telegram",
       place: "General",
@@ -1501,8 +1580,11 @@ test("a question names every place it was asked, each thread once at its open qu
     join(calls, "live_1.json"),
     JSON.stringify({ id: "live_1", title: "Apple refund", started: "2026-10-13T18:00:00.000Z" }),
   );
-  (questions as unknown as { build(): void }).build();
-  expect(questions.view.asks[0]!.places.at(-1)).toEqual({
+  const version = questions.version;
+  const check = join(state, "voice", "check.json");
+  writeFileSync(check, readFileSync(check));
+  await questions.changes(version, 2000);
+  expect(questions.view.asks[0]?.places.at(-1)).toEqual({
     app: "voice",
     place: "Apple refund",
     call: "live_1",
@@ -1549,7 +1631,9 @@ test("a check written before places and links were typed still gives each questi
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(
     questions.view.asks.map((question) => [
@@ -1617,18 +1701,20 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
-  expect(questions.of(`telegram:${DESK}`).pin).toBe(
-    `Site: example.com\n\n**Waiting on you**\n- Ship it?\n\n**Open**\n- ${task.title}`,
-  );
+
+  const shown = `Site: example.com\n\n**Waiting on you**\n- Ship it?\n\n**Open**\n- ${task.title}`;
+  expect(questions.of(`telegram:${DESK}`).pin).toBe(shown);
   expect(questions.of(`telegram:${GROUP}`).pin).toBe("Status: by hand");
 
   store.pinned({
     app: "telegram",
     thread: DESK,
     ...pin,
-    text: questions.of(`telegram:${DESK}`).pin!,
+    text: shown,
   });
   await Bun.sleep(150);
   expect(checks).toEqual([]);
@@ -1667,7 +1753,9 @@ test("a check.json's links reach the app only when they open a page or an app, i
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(questions.find("check:read")).toMatchObject({
     options: [{ label: "Seen" }],
@@ -1686,13 +1774,15 @@ test("an answered ask the check lists again without buttons is flagged, not list
     from: [],
   };
 
+  const signedIn = { label: "Done", at: "2026-10-13T12:00:00.000Z", via: "app" };
+
   const verdict = vet(
     { asks: [ask, { ...ask, id: "check:other" }], settle: [], fixed: [], flagged: [], stuck: [] },
     {},
     {
       threads: {},
       calls: [],
-      answered: { "check:sign-in": { label: "Done", at: "2026-10-13T12:00:00.000Z", via: "app" } },
+      answered: { "check:sign-in": signedIn },
     },
   );
 
@@ -1706,15 +1796,20 @@ test("an answered ask the check lists again without buttons is flagged, not list
 });
 
 test("the check's fingerprint takes in the answers it reads, and stays the same for the same records", () => {
-  const records = (answered: object) =>
-    ({
-      open: [],
-      closed: [],
-      answered,
-      pins: [],
-      calls: [],
-      t3: { stuck: [], fresh: [] },
-    }) as unknown as Parameters<typeof digest>[0];
+  type Records = Parameters<typeof digest>[0];
+
+  const records = (answered: Records["answered"]): Records => ({
+    now: "",
+    threads: {},
+    open: [],
+    closed: [],
+    answered,
+    pins: [],
+    calls: [],
+    t3: { stuck: [], fresh: [] },
+    previous: undefined,
+    ledgers: {},
+  });
 
   const seen = { label: "Seen", at: "2026-10-13T00:00:00.000Z", via: "app" };
   expect(digest(records({ "check:read": seen }))).toBe(
@@ -1732,6 +1827,7 @@ test("a check's links keep only what opens a page or an app on the phone", () =>
     "buzz://channel/x",
     "discord://-/channels/1",
     "file:///home/a/report.md",
+    // oxlint-disable-next-line eslint/no-script-url -- a link the check has to drop
     "javascript:alert(1)",
     "/home/a/report.md",
   ];
@@ -1759,7 +1855,7 @@ test("a check's links keep only what opens a page or an app on the phone", () =>
     { threads: {}, calls: [] },
   );
 
-  expect(verdict.asks[0]!.links!.map((link) => link.url)).toEqual(urls.slice(0, 5));
+  expect(verdict.asks[0]?.links?.map((link) => link.url)).toEqual(urls.slice(0, 5));
 });
 
 test("an answer with no buttons is kept for good, other marks and unfinished answers for 14 days", () => {
@@ -1784,10 +1880,12 @@ test("an answer with no buttons is kept for good, other marks and unfinished ans
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   questions.read("t3-done-1");
-  const marks = JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8"));
+  const marks = savedMarks();
   expect([Object.keys(marks.answers), Object.keys(marks.read)]).toEqual([
     ["check:read"],
     ["t3-done-1"],
@@ -1836,13 +1934,15 @@ test("an old answer whose undo stops partway is kept until it is undone again", 
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
-  await new Promise((resolve) => hub.close(resolve));
-  await expect(questions.undo("check:read", "app")).rejects.toThrow("undo again to finish");
-  expect(
-    JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8")).answers["check:read"],
-  ).toMatchObject({ undoing: true });
+  await new Promise((resolve) => {
+    hub.close(resolve);
+  });
+  expect(await rejection(questions.undo("check:read", "app"))).toContain("undo again to finish");
+  expect(savedMarks().answers["check:read"]).toMatchObject({ undoing: true });
 });
 
 test("an ask read out by its own id, which a check then takes up under one of its own, is still answered by the id the caller heard", async () => {
@@ -1850,7 +1950,9 @@ test("an ask read out by its own id, which a check then takes up under one of it
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   const heard = `telegram:${DESK}:9`;
   expect(questions.find(heard)).toBeDefined();
@@ -1880,7 +1982,7 @@ test("an ask read out by its own id, which a check then takes up under one of it
       ],
     }),
   );
-  open(state).ask({ app: "telegram", ...asked(8, "Unrelated?", ["A"]) });
+  open(state).ask(asked(8, "Unrelated?", ["A"]));
   await questions.changes(version, 2000);
   await until(() => questions.view.asks.some((question) => question.id === "check:ship"));
   expect(questions.find(heard)?.id).toBe("check:ship");
@@ -1907,8 +2009,15 @@ test("an ask read out by its own id, which a check then takes up under one of it
   expect(questions.answered("check:ship")).toBe(false);
 });
 
+function twoTwilios(fields: Partial<Question> = {}) {
+  ledger([
+    asked(1, "Twilio?", ["Upgrade", "Not yet"], fields),
+    asked(2, "Upgrade Twilio now?", ["Upgrade", "Wait"], fields),
+  ]);
+}
+
 test("a check's ask undone after a later check let it go stays one card, and answering it reaches every copy once, however often it's undone", async () => {
-  const check = (asks: object[]) => {
+  const check = (asks: Curated[]) => {
     writeFileSync(
       join(state, "voice", "check.json"),
       JSON.stringify({
@@ -1923,14 +2032,7 @@ test("a check's ask undone after a later check let it go stays one card, and ans
     );
   };
 
-  const both = (fields: Partial<Question> = {}) => {
-    ledger([
-      asked(1, "Twilio?", ["Upgrade", "Not yet"], fields),
-      asked(2, "Upgrade Twilio now?", ["Upgrade", "Wait"], fields),
-    ]);
-  };
-
-  both();
+  twoTwilios();
   check([
     {
       id: "check:twilio",
@@ -1948,11 +2050,13 @@ test("a check's ask undone after a later check let it go stays one card, and ans
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   await questions.answer("check:twilio", "Upgrade", "app");
   let version = questions.version;
-  both({ answer: { label: "Upgrade", at: "", via: "app" } });
+  twoTwilios({ answer: { label: "Upgrade", at: "", via: "app" } });
   check([]);
   await questions.changes(version, 2000);
   await until(() => !questions.view.asks.length);
@@ -1960,7 +2064,7 @@ test("a check's ask undone after a later check let it go stays one card, and ans
   await questions.undo("check:twilio", "app");
   await until(() => lines.filter((line) => line.type === "reopen").length === 2);
   version = questions.version;
-  both();
+  twoTwilios();
   await questions.changes(version, 2000);
   await until(() => questions.view.asks.length);
   expect(questions.view.asks.map((question) => [question.id, question.question])).toEqual([
@@ -1975,16 +2079,15 @@ test("a check's ask undone after a later check let it go stays one card, and ans
     { type: "settle", thread: DESK, message: 2, note: "✓ Answered in the app: Upgrade" },
   ]);
 
-  // Undone and answered again, it still reaches each copy once.
   version = questions.version;
-  both({ answer: { label: "Upgrade", at: "", via: "app" } });
+  twoTwilios({ answer: { label: "Upgrade", at: "", via: "app" } });
   await questions.changes(version, 2000);
   await until(() => !questions.view.asks.length);
   lines.length = 0;
   await questions.undo("check:twilio", "app");
   await until(() => lines.filter((line) => line.type === "reopen").length === 2);
   version = questions.version;
-  both();
+  twoTwilios();
   await questions.changes(version, 2000);
   await until(() => questions.view.asks.length);
   expect(questions.view.asks.map((question) => question.id)).toEqual(["check:twilio"]);
@@ -2002,11 +2105,13 @@ test("an answer still on its way counts as given, so an undo it turns away is no
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   const id = `telegram:${DESK}:1`;
   const going = questions.answer(id, "Yes", "app");
-  await expect(questions.undo(id, "app")).rejects.toThrow("still on its way");
+  expect(await rejection(questions.undo(id, "app"))).toContain("still on its way");
   expect(questions.answered(id)).toBe(true);
   await going;
   expect(questions.answered(id)).toBe(true);
@@ -2020,7 +2125,9 @@ test("a check's ask names the ids its questions were listed under before it took
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
+    check: (why) => {
+      checks.push(why);
+    },
   });
   expect(questions.view.asks.map((question) => [question.id, question.was])).toEqual([
     [`telegram:${DESK}:2`, undefined],
@@ -2064,11 +2171,12 @@ test("General hears of the first failed check in a run of them, and of the first
   mkdirSync(join(state, "voice", "check"), { recursive: true });
 
   const told = () =>
-    (
-      store.db
-        .query(`select body from messages where "to" = ? and "from" = 'check'`)
-        .all(GROUP) as { body: string }[]
-    ).map((row) => row.body);
+    store.db
+      .query<{ body: string }, [string]>(
+        `select body from messages where "to" = ? and "from" = 'check'`,
+      )
+      .all(GROUP)
+      .map((row) => row.body);
 
   failed(state, "monday: the check hit a limit");
   failed(state, "tuesday: the check hit a limit");
@@ -2085,7 +2193,7 @@ test("General hears of the first failed check in a run of them, and of the first
 test("an ask stays only while a place still asks it: an open question, an open thread's pinned post, a recent call, or a message from the last three days", () => {
   const old = new Date(Date.now() - 4 * 24 * 60 * 60_000).toISOString();
 
-  const ask = (id: string, at: string, from: object[]) => ({
+  const ask = (id: string, at: string, from: Source[]) => ({
     id,
     kind: "do" as const,
     task: `telegram:${DESK}`,
