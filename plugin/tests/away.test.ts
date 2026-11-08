@@ -12,11 +12,13 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// bin/away against a fake T3 Code MCP server that records each tool call.
+import { z } from "zod";
 
 const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "away-"));
-let calls: { name: string; arguments: Record<string, any> }[] = [];
+const ToolCall = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()) });
+const Request = z.object({ id: z.number().optional(), method: z.string(), params: z.unknown().optional() });
+let calls: z.infer<typeof ToolCall>[] = [];
 let waits: object[] = [];
 let drop = 0;
 let refuse: string | undefined;
@@ -40,13 +42,9 @@ const server = Bun.serve({
       return new Response(null, { status: 200 });
     }
 
-    const body = (await request.json()) as {
-      id?: number;
-      method: string;
-      params: { name: string; arguments: Record<string, any> };
-    };
+    const body = Request.parse(await request.json());
 
-    // As MCP's Streamable HTTP asks: a new session starts without the old one's id.
+    // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management: a new session starts without the old one's id.
     if (body.method === "initialize" && request.headers.has("mcp-session-id")) {
       return new Response("already initialized", { status: 400 });
     }
@@ -70,25 +68,26 @@ const server = Bun.serve({
       return new Response(null, { status: 202 });
     }
 
-    calls.push(body.params);
+    const call = ToolCall.parse(body.params);
+    calls.push(call);
 
-    if (body.params.name === "t3_thread_launch" && launchSlow-- > 0) {
-      await Bun.sleep(3_000);
+    if (call.name === "t3_thread_launch" && launchSlow-- > 0) {
+      await Bun.sleep(3000);
     }
 
-    if (body.params.name === "t3_thread_launch" && launchDrop-- > 0 && (launched = true)) {
+    if (call.name === "t3_thread_launch" && launchDrop-- > 0 && (launched = true)) {
       return new Response("relay timed out", { status: 504 });
     }
 
-    if (body.params.name === "t3_thread_wait" && drop-- > 0) {
+    if (call.name === "t3_thread_wait" && drop-- > 0) {
       return new Response("gone", { status: 502 });
     }
 
-    if (body.params.name === "t3_thread_wait" && refused-- > 0) {
+    if (call.name === "t3_thread_wait" && refused-- > 0) {
       return new Response("expired", { status: 401 });
     }
 
-    if (body.params.name === "t3_thread_wait" && flaky-- > 0) {
+    if (call.name === "t3_thread_wait" && flaky-- > 0) {
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
@@ -96,7 +95,7 @@ const server = Bun.serve({
       });
     }
 
-    if (body.params.name === "orchestrator_capabilities" && unlinked) {
+    if (call.name === "orchestrator_capabilities" && unlinked) {
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
@@ -107,7 +106,7 @@ const server = Bun.serve({
       });
     }
 
-    if (body.params.name === refuse) {
+    if (call.name === refuse) {
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
@@ -118,61 +117,74 @@ const server = Bun.serve({
       });
     }
 
-    const answers: Record<string, () => unknown> = {
-      orchestrator_capabilities: () => ({
-        providers: [
-          {
-            providerInstanceId: "claudeAgent",
-            models: [
-              { id: "claude-opus-4-1" },
-              { id: "claude-opus-5-5" },
-              { id: "claude-sonnet-5-5" },
-            ],
-          },
-        ],
+    const answers = new Map(
+      Object.entries({
+        orchestrator_capabilities: () => ({
+          providers: [
+            {
+              providerInstanceId: "claudeAgent",
+              models: [
+                { id: "claude-opus-4-1" },
+                { id: "claude-opus-5-5" },
+                { id: "claude-sonnet-5-5" },
+              ],
+            },
+          ],
+        }),
+        t3_thread_launch: () => {
+          launched = true;
+
+          return { threadId: "t1", runId: "r1", link: "<t3-thread://v2/env-mac/t1>" };
+        },
+        t3_thread_list: () => ({
+          nextCursor: null,
+          threads: launched
+            ? [
+                {
+                  threadId: "t1",
+                  title: "hex/deck · inv1",
+                  latestRunId: "r1",
+                  link: "<t3-thread://v2/env-mac/t1>",
+                },
+              ]
+            : [],
+        }),
+        t3_thread_wait: () =>
+          waits.shift() ??
+          (running
+            ? { status: "running", timedOut: true }
+            : { status: "completed", timedOut: false }),
+        t3_thread_read: () => ({
+          thread: { pendingRequestCount: asked.length },
+          items: [
+            { type: "user_message", text: "go" },
+            { type: "assistant_message", text: "Built the Usage tab." },
+          ],
+          hasMore: false,
+        }),
+        t3_thread_interrupt: () => {
+          running = false;
+
+          return {};
+        },
+        t3_pending_request: () =>
+          call.arguments.action === "list"
+            ? { requestIds: asked }
+            : { requestId: asked[0], questions: [{ question: "Which branch should I push to?" }] },
       }),
-      t3_thread_launch: () => (
-        (launched = true),
-        { threadId: "t1", runId: "r1", link: "<t3-thread://v2/env-mac/t1>" }
-      ),
-      t3_thread_list: () => ({
-        nextCursor: null,
-        threads: launched
-          ? [
-              {
-                threadId: "t1",
-                title: "hex/deck · inv1",
-                latestRunId: "r1",
-                link: "<t3-thread://v2/env-mac/t1>",
-              },
-            ]
-          : [],
-      }),
-      t3_thread_wait: () =>
-        waits.shift() ??
-        (running
-          ? { status: "running", timedOut: true }
-          : { status: "completed", timedOut: false }),
-      t3_thread_read: () => ({
-        thread: { pendingRequestCount: asked.length },
-        items: [
-          { type: "user_message", text: "go" },
-          { type: "assistant_message", text: "Built the Usage tab." },
-        ],
-        hasMore: false,
-      }),
-      t3_thread_interrupt: () => ((running = false), {}),
-      t3_pending_request: () =>
-        body.params.arguments.action === "list"
-          ? { requestIds: asked }
-          : { requestId: asked[0], questions: [{ question: "Which branch should I push to?" }] },
-    };
+    );
+
+    const answer = answers.get(call.name);
+
+    if (answer === undefined) {
+      throw new Error(`no answer for ${call.name}`);
+    }
 
     return Response.json({
       jsonrpc: "2.0",
       id: body.id,
       result: {
-        content: [{ type: "text", text: JSON.stringify(answers[body.params.name]!()) }],
+        content: [{ type: "text", text: JSON.stringify(answer()) }],
         isError: false,
       },
     });
@@ -257,7 +269,7 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
   expect(await out()).toBe(
     "hex/deck runs on mac as T3 Code thread <t3-thread://v2/env-mac/t1>\nBuilt the Usage tab.\n",
   );
-  const launch = calls.find(({ name }) => name === "t3_thread_launch")!.arguments;
+  const launch = calls.find(({ name }) => name === "t3_thread_launch")?.arguments ?? {};
   expect(launch).toMatchObject({
     environmentId: "env-mac",
     scratch: true,
@@ -275,7 +287,9 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
   const waited = calls.filter(({ name }) => name === "t3_thread_wait");
   expect(waited).toHaveLength(4);
   expect(
-    waited.every(({ arguments: input }) => input.runId === "r1" && input.untilDelegatedWorkSettled),
+    waited.every(
+      ({ arguments: input }) => input.runId === "r1" && input.untilDelegatedWorkSettled === true,
+    ),
   ).toBe(true);
 }, 20_000);
 
@@ -319,7 +333,7 @@ test("a job can't run there, having started nothing, with claude flags a thread 
   expect(calls.some(({ name }) => name === "t3_thread_launch")).toBe(false);
 });
 
-test("stopping the job stops its thread", async () => {
+test("stopping the job stops its thread, and the stop counts once its run has ended", async () => {
   reset();
   running = true;
   const { run } = away(["-p", "Build it."]);
@@ -330,12 +344,11 @@ test("stopping the job stops its thread", async () => {
 
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
-  expect(calls.find(({ name }) => name === "t3_thread_interrupt")!.arguments).toMatchObject({
+  expect(calls.find(({ name }) => name === "t3_thread_interrupt")?.arguments).toMatchObject({
     environmentId: "env-mac",
     threadId: "t1",
     stop: true,
   });
-  // The stop counts once the run has ended.
   expect(calls.at(-1)).toMatchObject({ name: "t3_thread_wait", arguments: { threadId: "t1" } });
 });
 
@@ -400,9 +413,9 @@ test("a job stopped while its launch is on its way stops the thread the launch a
 test("a launch that was tried and refused fails the job there, rather than moving it to a machine where it could run twice", async () => {
   reset();
   refuse = "t3_thread_launch";
-  const refused = away(["-p", "Build it."]);
-  expect(await refused.run.exited).toBe(1);
-  expect(await refused.error()).toContain("hex/deck couldn't start on mac");
+  const launch = away(["-p", "Build it."]);
+  expect(await launch.run.exited).toBe(1);
+  expect(await launch.error()).toContain("hex/deck couldn't start on mac");
 });
 
 test("a stop that can't reach the thread tells the job's owner where it may still be running", async () => {
