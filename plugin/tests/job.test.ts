@@ -54,7 +54,7 @@ beforeAll(() => {
     "hub/claude.ts",
     "hub/until.ts",
   ]) {
-    cpSync(join(HEX, file), join(home, ".hex", file));
+    cpSync(join(HEX, file), join(home, ".hex", file), { dereference: true });
   }
 
   for (const [app, threads] of Object.entries({

@@ -14,5 +14,5 @@
     "noEmit": true,
     "skipLibCheck": true
   },
-  "include": ["hub", "channels", "plugin", "tools", "oxlint.config.ts"]
+  "include": ["bin", "hub", "channels", "plugin", "tools", "oxlint.config.ts"]
 }

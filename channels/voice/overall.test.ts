@@ -197,7 +197,7 @@ test("a busy session with no name is said by its folder, never its id", () => {
 
 test("jobs come from systemctl's own output, its start read in any zone the machine keeps", async () => {
   const bin = mkdtempSync(join(tmpdir(), "voice-systemctl-"));
-  const job = realpathSync(join(import.meta.dir, "..", "..", "bin", "job"));
+  const job = join(realpathSync(join(import.meta.dir, "..", "..", "bin")), "job");
   writeFileSync(
     join(bin, "systemctl"),
     `#!/bin/sh
@@ -268,7 +268,7 @@ test("a job whose session at work renamed itself shows once, as that session", (
 
 test("a job is at work when a busy Claude Code session runs in its unit's cgroup", async () => {
   const root = mkdtempSync(join(tmpdir(), "voice-cgroup-"));
-  const job = realpathSync(join(import.meta.dir, "..", "..", "bin", "job"));
+  const job = join(realpathSync(join(import.meta.dir, "..", "..", "bin")), "job");
 
   const unit = (name: string, pids: number[]) => {
     mkdirSync(join(root, "cg", name), { recursive: true });

@@ -46,9 +46,9 @@ export const STARTUP = {
   // The flags hex's launcher works out for a session take effect only as its process starts, so a restart or resume picks up a change and compacting doesn't.
   launcher: [
     "bin/session",
-    "bin/identity",
-    "bin/instructions",
-    "bin/chat",
+    "bin/identity.ts",
+    "bin/instructions.ts",
+    "bin/chat.ts",
     "hub/loaded.ts",
     "hub/fit.ts",
   ],

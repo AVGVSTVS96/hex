@@ -16,7 +16,7 @@ export type Job = { unit: string; owner: AppColonKey; since: number; working: bo
 const SHOWN = 8;
 
 export async function jobs(cgroups = "/sys/fs/cgroup", claude = CLAUDE): Promise<Job[]> {
-  const job = join(import.meta.dir, "..", "..", "bin", "job");
+  const job = join(real(join(import.meta.dir, "..", "..", "bin")), "job");
 
   const units = (
     await systemctlInUtcOffTheCallAudiosEventLoop(
@@ -40,7 +40,7 @@ export async function jobs(cgroups = "/sys/fs/cgroup", claude = CLAUDE): Promise
       )
     : "";
 
-  return jobsOf(shown, real(job), (group) => busyIn(join(cgroups, group), claude));
+  return jobsOf(shown, job, (group) => busyIn(join(cgroups, group), claude));
 }
 
 export function jobsOf(shown: string, job: string, working = (_group: string) => false): Job[] {

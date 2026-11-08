@@ -6,10 +6,10 @@ hex runs wherever Claude Code does, on a machine that stays on: a home server, a
 
 ## 1. Check what's there
 
-`git`, `curl`, `jq`, `python3`, `bun` and `claude` must be on the `PATH`.
+`git`, `curl`, `jq`, `bun` and `claude` must be on the `PATH`.
 
 - Missing `bun`: install it from https://bun.sh.
-- Missing `jq` or `python3`: install it with the system package manager, after asking.
+- Missing `jq`: install it with the system package manager, after asking.
 - Missing `claude`: install Claude Code from https://claude.com/claude-code. The person signs in by running `claude` once **(you)**.
 
 ## 2. Make their hex
