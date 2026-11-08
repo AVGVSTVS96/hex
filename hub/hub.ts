@@ -347,7 +347,7 @@ export function tappable(text: string): string {
 // first sent; with a session, from the first message that session took, the conversation it has.
 export function history(store: Store, thread: string, session?: string): Turn[] {
   const rows = store.said(thread);
-  const start = session ? (rows.find((row) => row.taken?.by === session)?.at ?? "9") : "";
+  const start = present(session) ? (rows.find((row) => row.taken?.by === session)?.at ?? "9") : "";
 
   return rows.flatMap((row): Turn[] => {
     if (row.from === "terminal" || !row.taken || row.at < start) {
@@ -380,7 +380,7 @@ const Transcript = z.object({ text: z.string().optional() });
 export async function transcribe(recording: () => Promise<string>): Promise<string | undefined> {
   const { TRANSCRIBE_URL: url, TRANSCRIBE_MODEL: model, TRANSCRIBE_API_KEY: key } = process.env;
 
-  if (!url || !model) {
+  if (!present(url) || !present(model)) {
     return;
   }
   const path = await recording();
@@ -391,7 +391,7 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
   const res = await fetch(url, {
     method: "POST",
     body: form,
-    headers: key ? { authorization: `Bearer ${key}` } : {},
+    headers: present(key) ? { authorization: `Bearer ${key}` } : {},
   });
 
   if (!res.ok) {
@@ -420,7 +420,7 @@ const LIMITS: Limits = {
 };
 
 function capacityFrom(tokens?: string) {
-  if (!tokens) {
+  if (!present(tokens)) {
     return 350_000;
   }
   if (!/^\d+$/u.test(tokens)) {
@@ -512,6 +512,10 @@ function startupFiles(hex: string | undefined) {
 }
 
 const ignore = (): void => undefined;
+
+function present(text: string | undefined): text is string {
+  return text !== undefined && text !== "";
+}
 
 function toMessageWithKeyFirstForTheHook(row: Row): Message {
   return { content: row.body, author: row.author, meta: { key: row.key, ...row.meta } };
@@ -605,7 +609,11 @@ export function startHub({
         .threads({ app, open: true })
         .map(({ app: _app, open: _open, link: _link, thread, fork, model, ...known }) => [
           thread,
-          { ...known, ...(model && { model: family(model) }), ...(fork && { from: fork }) },
+          {
+            ...known,
+            ...(present(model) && { model: family(model) }),
+            ...(present(fork) && { from: fork }),
+          },
         ]),
     );
   }
@@ -712,7 +720,7 @@ export function startHub({
     const run = runOf(thread);
     const session = current(thread);
 
-    if (!session) {
+    if (!present(session)) {
       return;
     }
     const running = await claude.agent(session, serving);
@@ -805,14 +813,17 @@ export function startHub({
       sent: context,
       at,
       short,
-    } = session ? claude.usage(cwdOf(thread), session) : { sent: 0 };
+    } = present(session) ? claude.usage(cwdOf(thread), session) : { sent: 0 };
 
     if (!context) {
       return;
     }
     return context >= capacity
       ? 0
-      : Math.max(0, (at ?? clock.now()) + (short ? cacheWarm / 12 : cacheWarm) - clock.now());
+      : Math.max(
+          0,
+          (at ?? clock.now()) + (short === true ? cacheWarm / 12 : cacheWarm) - clock.now(),
+        );
   }
 
   // A session on a call takes every message of the call, so a call never changes sessions midway.
@@ -841,7 +852,7 @@ export function startHub({
     run.rest = undefined;
     const session = current(thread);
 
-    if (!session) {
+    if (!present(session)) {
       return;
     }
     const running = await claude.agent(session, serving);
@@ -875,7 +886,7 @@ export function startHub({
     for (const [thread, run] of runs) {
       const session = current(thread);
 
-      if (run.compacting === undefined || !session) {
+      if (run.compacting === undefined || !present(session)) {
         continue;
       }
       const { sent: context, failed: failedAt } = claude.usage(cwdOf(thread), session);
@@ -916,7 +927,7 @@ export function startHub({
     run.rest = undefined;
     const session = running?.sessionId ?? current(thread);
 
-    if (!session) {
+    if (!present(session)) {
       return Promise.resolve();
     }
     if (run.ending) {
@@ -961,7 +972,7 @@ export function startHub({
     if (thread === main) {
       throw new Error("the main thread stays here");
     }
-    if (!threads.get(thread)?.session) {
+    if (!present(threads.get(thread)?.session)) {
       throw new Error("this thread has no session yet");
     }
     return retire(thread);
@@ -981,10 +992,10 @@ export function startHub({
   }
 
   function adopt(thread: string, name: string, session: string, prompt?: string, cwd?: string) {
-    threads.set(thread, { name, session, ...(cwd && { cwd }) });
+    threads.set(thread, { name, session, ...(present(cwd) && { cwd }) });
     save();
 
-    if (prompt) {
+    if (present(prompt)) {
       void launch(thread, name, { prompt });
     }
   }
@@ -1029,12 +1040,12 @@ export function startHub({
   }
 
   function follow(thread: string, name: string, session: string, cwd?: string) {
-    threads.set(thread, { name, from: session, ...(cwd && { cwd }) });
+    threads.set(thread, { name, from: session, ...(present(cwd) && { cwd }) });
     save();
   }
 
   function register(thread: string, name: string, cwd?: string) {
-    const known = threads.get(thread) ?? { name, ...(cwd && { cwd }) };
+    const known = threads.get(thread) ?? { name, ...(present(cwd) && { cwd }) };
     threads.set(thread, known);
 
     return known;
@@ -1057,14 +1068,14 @@ export function startHub({
     if (closed || underway(run)) {
       return;
     }
-    if (given.prompt || given.fork) {
+    if (present(given.prompt) || present(given.fork)) {
       run.opening = given;
     }
     const { prompt, fork, quiet = false } = run.opening ?? {};
     const known = register(thread, name, cwd);
     claim(thread);
 
-    if ((prompt && !quiet) || run.queue.length) {
+    if ((present(prompt) && !quiet) || run.queue.length > 0) {
       setState(thread, true);
     }
     const phase: Phase = { is: "launching", again };
@@ -1074,7 +1085,7 @@ export function startHub({
       mark(thread, message);
     }
     // A fork's first start has no session to find; after a failed one, the session it started may run on.
-    if (fork && !run.failing) {
+    if (present(fork) && !run.failing) {
       await start(thread, prompt, fork);
       return;
     }
@@ -1092,7 +1103,7 @@ export function startHub({
 
     cut(thread);
 
-    if (!fork && known.session && !fresh(thread)) {
+    if (!present(fork) && present(known.session) && !fresh(thread)) {
       await claude.rm(known.session);
     }
     if (run.phase === phase) {
@@ -1121,8 +1132,8 @@ export function startHub({
     const { model, effort } = savedOf(thread);
 
     return [
-      ...(model ? ["--model", model] : []),
-      ...(effort ? ["--effort", effort] : []),
+      ...(present(model) ? ["--model", model] : []),
+      ...(present(effort) ? ["--effort", effort] : []),
       ...args(thread),
     ];
   }
@@ -1141,14 +1152,14 @@ export function startHub({
     const known = savedOf(thread);
 
     if ("model" in settings) {
-      if (settings.model) {
+      if (present(settings.model)) {
         known.model = settings.model;
       } else {
         delete known.model;
       }
     }
     if ("effort" in settings) {
-      if (settings.effort) {
+      if (present(settings.effort)) {
         known.effort = settings.effort;
       } else {
         delete known.effort;
@@ -1207,7 +1218,7 @@ export function startHub({
     writeSettings(thread);
 
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
-    if (prompt) {
+    if (present(prompt)) {
       kept(
         (store) =>
           store.deliver(
@@ -1232,11 +1243,11 @@ export function startHub({
       save();
     }
 
-    const source = fork ?? (known.session ? undefined : known.from);
+    const source = fork ?? (present(known.session) ? undefined : known.from);
 
-    const resumeArgs = source
+    const resumeArgs = present(source)
       ? ["--resume", source, "--fork-session"]
-      : known.session && !fresh(thread)
+      : present(known.session) && !fresh(thread)
         ? ["--resume", known.session]
         : [];
 
@@ -1254,7 +1265,7 @@ export function startHub({
             ...launchArgs,
             "--settings",
             settingsOf(thread),
-            ...(prompt ? [prompt] : []),
+            ...(present(prompt) ? [prompt] : []),
           ],
           { cwd: known.cwd ?? hexDir, env: inherited },
         ),
@@ -1317,7 +1328,7 @@ export function startHub({
     const { failing } = run;
     failing.count++;
 
-    if (!phase.again) {
+    if (phase.again !== true) {
       failing.retried = false;
     }
     process.stderr.write(
@@ -1327,14 +1338,14 @@ export function startHub({
     for (const message of waiting(thread)) {
       mark(thread, message);
     }
-    if (!phase.again || failing.count === 1) {
+    if (phase.again !== true || failing.count === 1) {
       failed(thread, reason);
     }
     const generalMain = generalHub?.main;
 
     if (
       failing.count >= TELL_AFTER &&
-      !failing.told &&
+      failing.told !== true &&
       generalHub &&
       generalMain !== undefined &&
       !(general && thread === main)
@@ -1361,7 +1372,7 @@ export function startHub({
 
     if (
       !known ||
-      !session ||
+      !present(session) ||
       ![known.session, known.from, run.opening?.fork].includes(session) ||
       claude.saved(session)
     ) {
@@ -1483,10 +1494,10 @@ export function startHub({
     const { handed } = runOf(thread);
     const { key } = message.meta;
 
-    if (key && handed.has(key)) {
+    if (present(key) && handed.has(key)) {
       return;
     }
-    if (key) {
+    if (present(key)) {
       handed.add(key);
     }
     forward(thread, name, message);
@@ -1532,7 +1543,7 @@ export function startHub({
     const run = runOf(thread);
     const { key } = message.meta;
 
-    if (!key || run.waiting.has(key)) {
+    if (!present(key) || run.waiting.has(key)) {
       return;
     }
     run.waiting.set(key, message);
@@ -1545,7 +1556,7 @@ export function startHub({
 
     return [
       ...rows.map(toMessageWithKeyFirstForTheHook),
-      ...runOf(thread).queue.filter((message) => !message.meta.key),
+      ...runOf(thread).queue.filter((message) => !present(message.meta.key)),
     ];
   }
 
@@ -1588,7 +1599,7 @@ export function startHub({
     for (const [thread, run] of runs) {
       if (
         !run.failing ||
-        run.failing.retried ||
+        run.failing.retried === true ||
         run.phase.is !== "stopped" ||
         !(thread === main || run.opening || waiting(thread).length)
       ) {
@@ -1629,7 +1640,7 @@ export function startHub({
   async function restart(thread: string, prompt?: string) {
     const session = current(thread);
 
-    if (!session) {
+    if (!present(session)) {
       await launch(thread, savedOf(thread).name, { prompt });
 
       return;
@@ -1652,10 +1663,10 @@ export function startHub({
       return;
     }
     const working = fresh(thread)
-      ? run.turn === "busy" || (running && running.status !== "idle")
+      ? run.turn === "busy" || (running !== undefined && running.status !== "idle")
       : running?.status === "busy";
 
-    if (working && !run.queue.length) {
+    if (working && run.queue.length === 0) {
       phase.line.send({ type: "inbound", ...message });
       return;
     }
@@ -1701,9 +1712,9 @@ export function startHub({
     if (!threads.has(thread)) {
       threads.set(thread, { name: thread });
     }
-    const id = job && claude.record(job).sessionId;
+    const id = present(job) ? claude.record(job).sessionId : undefined;
 
-    if (id) {
+    if (present(id)) {
       note(thread, id);
     }
     const given = waiting(thread);
@@ -1782,7 +1793,7 @@ export function startHub({
       phase.deadline = undefined;
       const starting = phase.is === "launching" && clock.now() - since < connect;
 
-      if (starting && pid && claude.alive(pid)) {
+      if (starting && pid !== undefined && pid !== 0 && claude.alive(pid)) {
         recover(thread, since, pid);
         return;
       }
@@ -1856,7 +1867,7 @@ export function startHub({
     const run = runOf(thread);
     const id = running.id ?? running.sessionId.slice(0, 8);
 
-    if (run.phase.is === "launching" && run.phase.respawned) {
+    if (run.phase.is === "launching" && run.phase.respawned === true) {
       process.stderr.write(`hub: ${thread}'s session ${id} restarted and still has no channel\n`);
 
       fail(thread, "its session runs, but its channel never connects");
@@ -1891,7 +1902,11 @@ export function startHub({
     const run = runOf(thread);
     const known = threads.get(thread);
 
-    if (!run.unsaved || !known || !existsSync(claude.transcript(cwdOf(thread), run.unsaved))) {
+    if (
+      !present(run.unsaved) ||
+      !known ||
+      !existsSync(claude.transcript(cwdOf(thread), run.unsaved))
+    ) {
       return;
     }
     known.session = run.unsaved;
@@ -1923,8 +1938,8 @@ export function startHub({
     const session = current(thread);
 
     if (
-      !run.awaited &&
-      session &&
+      run.awaited !== true &&
+      present(session) &&
       run.phase.is === "live" &&
       run.turn === "done" &&
       !run.handed.size &&
@@ -2080,7 +2095,7 @@ export function startHub({
     const run = runOf(thread);
     const session = current(thread);
 
-    if (!session || run.turn === "background") {
+    if (!present(session) || run.turn === "background") {
       return;
     }
     const agent = await claude.listing(session);
@@ -2143,7 +2158,7 @@ export function startHub({
       run.failing.retried = true;
     }
     if (run?.opening) {
-      run.opening = run.opening.fork ? { fork: run.opening.fork } : undefined;
+      run.opening = present(run.opening.fork) ? { fork: run.opening.fork } : undefined;
     }
     return stop(thread);
   }
@@ -2151,7 +2166,7 @@ export function startHub({
   // The main thread is always running: started with the hub, and started again when its session
   // is gone.
   function revive() {
-    if (!main || closed || runOf(main).phase.is === "live") {
+    if (!present(main) || closed || runOf(main).phase.is === "live") {
       return;
     }
     rename(main, mainName);
@@ -2160,7 +2175,7 @@ export function startHub({
 
   // Sessions that outlived the hub (a hub restart) reconnect, or recover. A fresh main thread's
   // launch never resumes, so one still running waits for its session instead of starting another.
-  if (main || threads.size) {
+  if (present(main) || threads.size > 0) {
     void (async () => {
       const running = await claude.agents(serving);
       const outlived = new Set(
@@ -2184,7 +2199,7 @@ export function startHub({
         recover(thread);
       }
 
-      if (main && !(fresh(main) && outlived.has(main)) && !cutShort.includes(main)) {
+      if (present(main) && !(fresh(main) && outlived.has(main)) && !cutShort.includes(main)) {
         revive();
       }
       wake();
@@ -2192,8 +2207,8 @@ export function startHub({
   }
 
   const unwatch = kept((store) => store.watch(wake), ignore);
-  const unschedule = general && main ? schedule(storeDir, hexDir, main) : ignore;
-  const unhold = general && main ? holding(storeDir) : ignore;
+  const unschedule = general && present(main) ? schedule(storeDir, hexDir, main) : ignore;
+  const unhold = general && present(main) ? holding(storeDir) : ignore;
   const retryCompactions = () => void recompact();
 
   const api = {
@@ -2220,7 +2235,7 @@ export function startHub({
     turned: (thread: string) => {
       const session = current(thread);
 
-      if (session) {
+      if (present(session)) {
         queue(storeDir, { session, by: new Date().toISOString(), thread });
       }
     },
@@ -2275,7 +2290,7 @@ export function startHub({
   retries.add(retry);
   answered.add(retryCompactions);
 
-  if (general && main) {
+  if (general && present(main)) {
     generalHub = api;
   }
   return api;
@@ -2319,7 +2334,7 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
   const target = client(to);
   const session = from.session(thread);
 
-  if (!session) {
+  if (!present(session)) {
     throw new Error("this thread has no session yet");
   }
   const cwd = from.cwd(thread);
@@ -2349,9 +2364,10 @@ export async function move(
 ) {
   const { target, session, dest, link, filled, cwd } = await carry(from, thread, to, name, where);
 
-  const prompt = target.waits
-    ? undefined
-    : `This conversation just moved to ${to}, into the thread "${name}". Your ${to} tools now post there. Carry on where you left off.`;
+  const prompt =
+    target.waits === true
+      ? undefined
+      : `This conversation just moved to ${to}, into the thread "${name}". Your ${to} tools now post there. Carry on where you left off.`;
 
   if (copy) {
     void (async () => {
