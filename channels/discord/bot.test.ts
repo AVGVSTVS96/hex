@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect as netConnect } from "node:net";
+import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -106,11 +107,11 @@ type FakeMessage = {
   poll: FakePoll | null;
   thread: FakeChannel | null;
   reactions: {
-    cache: discord.Collection<string, { me: boolean; users: { remove: () => Promise<unknown> } }>;
+    cache: discord.Collection<string, { me: boolean; users: { remove: () => Promise<void> } }>;
   };
-  react: (emoji: string) => Promise<unknown>;
-  pin: () => Promise<unknown>;
-  unpin: () => Promise<unknown>;
+  react: (emoji: string) => Promise<void>;
+  pin: () => Promise<void>;
+  unpin: () => Promise<void>;
   edit: (options: Sent) => Promise<FakeMessage>;
   forward: (to: string) => Promise<{ id: string }>;
   delete: () => Promise<void>;
@@ -121,6 +122,38 @@ type FakeMessage = {
   mentions?: { has: () => boolean };
   startThread?: () => Promise<FakeChannel>;
 };
+
+type SearchPayload = {
+  total_results?: number;
+  messages?: object[][];
+  threads?: { id: string; name: string }[];
+  message?: string;
+  code?: number;
+  retry_after?: number;
+};
+
+type HookPayload = {
+  type: "state" | "answer" | "reopen" | "settle";
+  thread: string;
+  busy?: boolean;
+  background?: boolean;
+  message?: string;
+  label?: string;
+  via?: string;
+  note?: string;
+};
+
+const Saved = z.object({ id: z.string() });
+
+const isText = (value: string | Sent | Query): value is string => typeof value === "string";
+
+const record = (step: Done) => {
+  done.push(step);
+
+  return Promise.resolve();
+};
+
+const ARCHIVED_PER_PAGE = 2;
 
 type HookPost = {
   content: string;
@@ -183,9 +216,9 @@ const handlers = new Map<string, (...args: unknown[]) => void>();
 const owner: Author = { id: OWNER, username: "bassim", bot: false, partial: false };
 const bot: Author = { id: BOT, username: "hex", bot: true };
 const done: Done[] = [];
-let found: object = {};
-let sent = 0;
-let opened = 0;
+let found: SearchPayload = {};
+let sentCount = 0;
+let threadsOpened = 0;
 let logins = 0;
 
 function emit(event: string, ...args: unknown[]) {
@@ -222,7 +255,6 @@ const lastPosted = (ch: FakeChannel) => nth(ch.posted, -1);
 
 const newestFirst = (a: FakeMessage, b: FakeMessage) => Number(BigInt(b.id) - BigInt(a.id));
 
-// A guild channel or thread whose messages the fake REST answers newest-first, as Discord does.
 function channel(
   id: string,
   fields: Partial<FakeChannel> & Pick<FakeChannel, "name" | "type">,
@@ -242,12 +274,12 @@ function channel(
     permissionsFor: () => ({ has: () => ch.visible }),
     sendTyping: () => Promise.resolve(),
     send: (input: string | Sent) => {
-      const options = typeof input === "string" ? { content: input } : input;
+      const options = isText(input) ? { content: input } : input;
       done.push({ send: options, in: id });
 
       return Promise.resolve(
         say(ch, 59, options.content ?? "", {
-          id: String(BigInt(snowflake(59)) + BigInt(++sent)),
+          id: String(BigInt(snowflake(59)) + BigInt(++sentCount)),
           author: bot,
           components: options.components?.map((row) => row.toJSON()) ?? [],
         }),
@@ -262,13 +294,13 @@ function channel(
 
       const holder = parent.isThreadOnly() ? ch : parent;
 
-      return await message(holder, id);
+      return await postedIn(holder, id);
     },
     posted: messages,
     messages: {
       fetch: async (query: string | Query) => {
-        if (typeof query === "string") {
-          return await message(ch, query);
+        if (isText(query)) {
+          return await postedIn(ch, query);
         }
 
         const { limit, before, after } = query;
@@ -302,7 +334,7 @@ function channel(
         });
 
         return Promise.resolve(
-          channel(String(9000 + ++opened), {
+          channel(String(9000 + ++threadsOpened), {
             name,
             type: ChannelType.PublicThread,
             parent: ch,
@@ -314,7 +346,6 @@ function channel(
         Promise.resolve({
           threads: new Collection([...channels].filter(([, c]) => c.parent === ch && !c.archived)),
         }),
-      // Newest-archived first, as Discord lists them, two to a page so a test can reach the second.
       fetchArchived: ({ before, limit = 50 } = {}) => {
         const shelf = [...channels.values()]
           .filter(
@@ -325,7 +356,7 @@ function channel(
           )
           .toSorted((a, b) => (b.archiveTimestamp ?? 0) - (a.archiveTimestamp ?? 0));
 
-        const page = shelf.slice(0, Math.min(limit, 2));
+        const page = shelf.slice(0, Math.min(limit, ARCHIVED_PER_PAGE));
 
         return Promise.resolve({
           threads: new Collection(page.map((c) => [c.id, c])),
@@ -341,13 +372,12 @@ function channel(
   return ch;
 }
 
-function message(ch: FakeChannel, id: string): Promise<FakeMessage> {
+function postedIn(ch: FakeChannel, id: string): Promise<FakeMessage> {
   const kept = ch.posted.find((m) => m.id === id);
 
   return kept ? Promise.resolve(kept) : Promise.reject(new Error("Unknown Message"));
 }
 
-// A message whose Discord calls land in done; deleting it fires the gateway's messageDelete.
 function say(
   where: FakeChannel,
   minute: number,
@@ -371,9 +401,9 @@ function say(
     poll: null,
     thread: null,
     reactions: { cache: new Collection() },
-    react: (emoji: string) => Promise.resolve(done.push({ react: emoji, on: posted.id })),
-    pin: () => Promise.resolve(done.push({ pin: posted.id })),
-    unpin: () => Promise.resolve(done.push({ unpin: posted.id })),
+    react: (emoji: string) => record({ react: emoji, on: posted.id }),
+    pin: () => record({ pin: posted.id }),
+    unpin: () => record({ unpin: posted.id }),
     edit: (options: Sent) => {
       done.push({ edit: posted.id, options });
 
@@ -512,20 +542,21 @@ class Client {
   once(event: string, handler: (...args: unknown[]) => void) {
     return this.on(event, handler);
   }
-  login = () => {
-    logins += 1;
+  login = failFirstLogin;
+}
 
-    return logins === 1
-      ? Promise.reject(new Error("getaddrinfo ETIMEOUT discord.com"))
-      : Promise.resolve("token");
-  };
+function failFirstLogin() {
+  logins += 1;
+
+  return logins === 1
+    ? Promise.reject(new Error("getaddrinfo ETIMEOUT discord.com"))
+    : Promise.resolve("token");
 }
 
 void mock.module("discord.js", () => ({ ...discord, Client }));
 
 const state = mkdtempSync(join(tmpdir(), "discord-"));
 
-// Each open thread as the hub keeps it in hex.db, by its id.
 const saved = () =>
   Object.fromEntries(
     open(state)
@@ -537,13 +568,13 @@ afterAll(() => {
   rmSync(state, { recursive: true, force: true });
 });
 
-const Inbound = z.object({
+const InboundLine = z.object({
   type: z.literal("inbound"),
   content: z.string(),
   meta: z.record(z.string(), z.string()),
 });
 
-type Inbound = z.output<typeof Inbound>;
+type Inbound = z.output<typeof InboundLine>;
 
 const Permission = z.object({
   type: z.literal("permission"),
@@ -553,7 +584,7 @@ const Permission = z.object({
 
 const inbounds = (lines: unknown[]): Inbound[] =>
   lines.flatMap((line) => {
-    const parsed = Inbound.safeParse(line);
+    const parsed = InboundLine.safeParse(line);
 
     return parsed.success ? [parsed.data] : [];
   });
@@ -582,6 +613,7 @@ beforeAll(async () => {
     TRANSCRIBE_URL: TRANSCRIBER,
     TRANSCRIBE_MODEL: "whisper",
   });
+
   const fake = async (url: string | URL | Request, init?: RequestInit) => {
     if (url === "https://cdn.discord/voice-message.ogg") {
       return new Response("ogg");
@@ -607,8 +639,13 @@ beforeAll(async () => {
   ({ received, call, send, ask } = await session(here.id));
 });
 
-// A session bound to thread, connected once the hub has registered it. Its hooks go to hub.sock,
-// which handles a line as it reads it, so a hook has taken effect once the hub closes its socket.
+const hubHandled = (socket: Socket) =>
+  new Promise<void>((resolve) => {
+    socket.on("close", () => {
+      resolve();
+    });
+  });
+
 async function session(thread: string) {
   const line = await connect({
     stateDir: state,
@@ -617,10 +654,10 @@ async function session(thread: string) {
     thread,
   });
 
-  const hook = async (payload: object) => {
+  const hook = async (payload: HookPayload) => {
     const socket = netConnect(join(state, "hub.sock"));
     socket.end(`${JSON.stringify(payload)}\n`);
-    await new Promise((resolve) => socket.on("close", resolve));
+    await hubHandled(socket);
   };
 
   await line.call("list_channels", {});
@@ -643,6 +680,25 @@ const question = (asked: string) =>
     .questions({ app: "discord" })
     .find((each) => each.message === asked);
 
+const arrived = (id: string, edited?: string) =>
+  inbound(received, (line) => line.meta.message_id === id && line.meta.edited === edited);
+
+const refused = (id: string) => `the bot can't read ${id}; list_channels shows the channels it can`;
+
+const prompt = (request_id: string) => ({
+  request_id,
+  tool_name: "Bash",
+  description: "Run the tests",
+  input_preview: JSON.stringify({ command: "bun test", description: "Run the tests" }),
+});
+
+const permissions = () =>
+  received.flatMap((line) => {
+    const parsed = Permission.safeParse(line);
+
+    return parsed.success ? [parsed.data] : [];
+  });
+
 const labels = (components: Built[] | undefined) =>
   components?.[0]?.toJSON().components.map((c) => c.label);
 
@@ -658,9 +714,6 @@ test("a message in a thread names the channel the thread is in", async () => {
 });
 
 test("a reply says which message it answers, an edit comes back marked edited, and a forward carries what was forwarded", async () => {
-  const arrived = (id: string, edited?: string) =>
-    inbound(received, (line) => line.meta.message_id === id && line.meta.edited === edited);
-
   const asked = say(here, 7, "which anchors?");
 
   const reply = {
@@ -761,9 +814,6 @@ test("fetch_messages drills into a thread by the id of the message it hangs off,
 });
 
 test("sessions read only text channels and threads in the server the bot can see, never a DM", async () => {
-  const refused = (id: string) =>
-    `the bot can't read ${id}; list_channels shows the channels it can`;
-
   expect((await call("fetch_messages", { channel: "hidden" })).error).toBe(refused(hidden.id));
   expect((await call("fetch_messages", { channel: "nowhere" })).error).toBe(
     "no text or forum channel named #nowhere",
@@ -788,7 +838,7 @@ test("a reaction reaches a served thread with what it was on, a removal says so,
     channelId: here.id,
     channel: here,
     partial: true,
-    fetch: async () => msg,
+    fetch: () => Promise.resolve(msg),
   };
 
   const thumbs = { message: partial, emoji: { toString: () => "👍" } };
@@ -902,7 +952,7 @@ test("react takes off only the bot's own reaction, and edit_message replaces the
   const msg = say(here, 15, "pin me");
   msg.reactions.cache.set("👀", {
     me: true,
-    users: { remove: async () => done.push({ unreact: msg.id }) },
+    users: { remove: () => record({ unreact: msg.id }) },
   });
   expect((await call("react", { message_id: msg.id, emoji: "👀", remove: true })).text).toBe(
     "reaction removed",
@@ -1138,7 +1188,7 @@ test("a tag in an announcement channel starts a thread like in a text channel", 
     channel: news,
     mentions: { has: () => true },
     react: () => Promise.resolve(),
-    startThread: async () => thread,
+    startThread: () => Promise.resolve(thread),
     id: thread.id,
   };
 
@@ -1161,7 +1211,7 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
     channelId: here.id,
     channel: here,
     partial: true,
-    fetch: async () => lunch,
+    fetch: () => Promise.resolve(lunch),
   };
 
   emit("messagePollVoteAdd", { id: 2, poll: { message: partial } }, OWNER);
@@ -1203,17 +1253,14 @@ test("a DM is its own session named DM, a message reaches it while it works, and
 
   emit("messageCreate", message);
 
-  const inbound = await until(() =>
+  const quick = await until(() =>
     inbounds(mine.received).find((line) => line.content === "quick one"),
   );
 
-  expect(inbound.meta.chat_id).toBe(dm.id);
-  expect(inbound.meta.channel).toBeUndefined();
+  expect(quick.meta.chat_id).toBe(dm.id);
+  expect(quick.meta.channel).toBeUndefined();
   await mine.call("reply", { text: "on it, from the DM" });
-  expect(done).toContainEqual({
-    send: expect.objectContaining({ content: "on it, from the DM" }),
-    in: dm.id,
-  });
+  expect(done.some((d) => d.in === dm.id && d.send?.content === "on it, from the DM")).toBe(true);
   expect((await mine.call("close_thread", {})).error).toBe("a DM is not a thread");
 });
 
@@ -1225,12 +1272,22 @@ test("closing a thread Discord no longer has forgets it, instead of failing on t
 });
 
 test("once connected the bot leaves the id of its server in guild.json, so the voice app can link a thread, and registers its slash commands", async () => {
-  let registered: any[] = [];
+  let registered: { name: string }[] = [];
   emit("clientReady", {
     user: { tag: "hex#0000" },
-    application: { commands: { set: async (commands: any[]) => (registered = commands) } },
+    application: {
+      commands: {
+        set: (commands: { name: string }[]) => {
+          registered = commands;
+
+          return Promise.resolve(commands);
+        },
+      },
+    },
   });
-  expect(JSON.parse(readFileSync(join(state, "guild.json"), "utf-8"))).toEqual({ id: GUILD });
+  expect(Saved.parse(JSON.parse(readFileSync(join(state, "guild.json"), "utf-8")))).toEqual({
+    id: GUILD,
+  });
   await until(() => registered.length);
   expect(registered.map((command) => command.name)).toEqual(["model", "effort", "compact", "stop"]);
 });
@@ -1239,14 +1296,7 @@ test("a first login that fails, as with no network at boot, is tried again", asy
   await until(() => logins >= 2);
 });
 
-test("a permission prompt asks in the thread with Allow and Deny, a tap answers it, and one still open when the turn ends stops asking", async () => {
-  const prompt = (request_id: string) => ({
-    request_id,
-    tool_name: "Bash",
-    description: "Run the tests",
-    input_preview: JSON.stringify({ command: "bun test", description: "Run the tests" }),
-  });
-
+test("a permission prompt asks in the thread with Allow and Deny, a tap answers it, and one still open when the turn ends stops asking, since Claude Code says nothing when it's answered in the session", async () => {
   await ask(prompt("abcde"));
   const asked = await until(() => here.posted.findLast((m) => m.content.startsWith("🔐")));
   expect(asked.content).toBe("🔐 **Bash**: Run the tests\n```\ncommand: bun test\n```");
@@ -1269,14 +1319,7 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
       return Promise.resolve();
     },
   });
-  const permission = () =>
-    received.flatMap((line) => {
-      const parsed = Permission.safeParse(line);
-
-      return parsed.success ? [parsed.data] : [];
-    });
-
-  expect(await until(() => permission().at(0))).toMatchObject({
+  expect(await until(() => permissions().at(0))).toMatchObject({
     request_id: "abcde",
     behavior: "allow",
   });
@@ -1289,15 +1332,15 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
 
   await ask(prompt("fghij"));
 
-  const open = await until(() =>
+  const stillOpen = await until(() =>
     here.posted.findLast((m) => m.content.startsWith("🔐") && m !== asked),
   );
 
   await send({ type: "state", thread: here.id, busy: false, background: true });
   await Bun.sleep(100);
-  expect(done.some((d) => d.edit === open.id)).toBe(false);
+  expect(done.some((d) => d.edit === stillOpen.id)).toBe(false);
   await send({ type: "state", thread: here.id, busy: false });
-  const moot = await until(() => done.find((d) => d.edit === open.id));
+  const moot = await until(() => done.find((d) => d.edit === stillOpen.id));
   expect(labels(moot.options?.components)).toEqual(["No longer waiting"]);
 });
 
@@ -1416,7 +1459,7 @@ test("buttons with multiple come as a menu, and a pick of several comes back as 
   ]);
 });
 
-test("an image arrives already downloaded, as image_path, next to its listing", async () => {
+test("an image arrives already downloaded, as image_path, next to its listing, which goes in meta where the sender can't forge it", async () => {
   const shot = {
     id: "62",
     name: "shot.png",
@@ -1432,10 +1475,10 @@ test("an image arrives already downloaded, as image_path, next to its listing", 
   };
 
   emit("messageCreate", message);
-  const arrived = await inbound(received, (line) => line.meta.message_id === message.id);
-  expect(arrived.meta.image_path).toMatch(/inbox\/\d+-62\.png$/);
-  expect(readFileSync(arrived.meta.image_path ?? "", "utf-8")).toBe("png bytes");
-  expect(arrived.meta.attachments).toBe("shot.png (image/png, 1KB)");
+  const withImage = await inbound(received, (line) => line.meta.message_id === message.id);
+  expect(withImage.meta.image_path).toMatch(/inbox\/\d+-62\.png$/u);
+  expect(readFileSync(withImage.meta.image_path ?? "", "utf-8")).toBe("png bytes");
+  expect(withImage.meta.attachments).toBe("shot.png (image/png, 1KB)");
 });
 
 test("new_thread opens with its about line and forwards nothing from the thread that opened it", async () => {
@@ -1454,7 +1497,7 @@ test("new_thread opens with its about line and forwards nothing from the thread 
   });
 
   await s.send({ type: "state", thread: desk.id, busy: false });
-  const thread = [...channels.values()].find((ch) => ch.name === "Anchors")!;
+  const thread = named("Anchors");
   await session(thread.id);
   expect(result.text).toBe(
     `started thread "Anchors": https://discord.com/channels/${GUILD}/${thread.id}`,
@@ -1493,7 +1536,7 @@ test("new_thread in a forum opens a post with its tags, and fetch_messages lists
       })
     ).error,
   ).toBe("#ideas has the tags Bug, Idea");
-  const post = [...channels.values()].find((ch) => ch.name === "Glare")!;
+  const post = named("Glare");
   await session(post.id);
   expect((await call("fetch_messages", { channel: "ideas" })).text).toContain(
     `Glare  (post ${post.id}, 0 replies)`,
@@ -1501,13 +1544,18 @@ test("new_thread in a forum opens a post with its tags, and fetch_messages lists
 });
 
 test("new_thread with another app opens the thread there through the hub", async () => {
-  const opened: any[] = [];
+  const calls: unknown[][] = [];
+  const buzz: Pick<Hub, "open"> = { open: (...args) => void calls.push(args) };
+
   clients.set("buzz", {
-    hub: { open: (...args: any[]) => opened.push(args) } as any,
-    place: async (name, where, about) => (
-      opened.push(["place", name, where, about]),
-      { thread: "b1", link: "buzz://b1" }
-    ),
+    // SAFETY: begin reaches the other app's hub only through open, which the fake has.
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a fake of the one Hub method begin uses
+    hub: buzz as Hub,
+    place: (name, where, about) => {
+      calls.push(["place", name, where, about]);
+
+      return Promise.resolve({ thread: "b1", link: "buzz://b1" });
+    },
   });
   expect(
     (
@@ -1519,7 +1567,7 @@ test("new_thread with another app opens the thread there through the hub", async
       })
     ).text,
   ).toBe('started thread "Relay" in buzz: buzz://b1');
-  expect(opened).toEqual([
+  expect(calls).toEqual([
     ["place", "Relay", undefined, "From Discord"],
     ["b1", "Relay", "fix the relay", undefined],
   ]);
@@ -1530,8 +1578,8 @@ test("new_thread with another app opens the thread there through the hub", async
 });
 
 test("slash commands set a thread's model and effort, and answer only the owner in a thread with a session", async () => {
-  const desk = channels.get("5100")!;
-  const replies: any[] = [];
+  const desk = named("desk");
+  const replies: { content: string; flags?: number }[] = [];
 
   const command = (commandName: string, value?: string, user = owner, channelId = desk.id) => {
     emit("interactionCreate", {
@@ -1542,7 +1590,8 @@ test("slash commands set a thread's model and effort, and answer only the owner 
       user,
       channelId,
       options: { getString: () => value },
-      reply: async (options: any) => replies.push(options),
+      reply: (options: { content: string; flags?: number }) =>
+        Promise.resolve(replies.push(options)),
     });
   };
 
@@ -1632,22 +1681,28 @@ test("a backfill posts each line through one webhook of the channel, as the owne
     allowedMentions: { parse: [] },
   };
 
-  expect(hooked.map(({ content, ...rest }) => rest)).toEqual([me, hex, hex, me]);
+  expect(hooked.map(({ content: _content, ...rest }) => rest)).toEqual([me, hex, hex, me]);
   expect(hooked.every(({ content }) => content.length <= 2000)).toBe(true);
-  expect(hooked.map(({ content }) => content.replaceAll(/\s/g, "")).join("")).toBe(
+  expect(hooked.map(({ content }) => content.replaceAll(/\s/gu, "")).join("")).toBe(
     `howfullisyourcontext?${"a".repeat(1990)}${"b".repeat(100)}@everyonethanks`,
   );
 });
 
 test("back online, the bot reads what was said while it was away, archived threads too (past the first page), oldest first, as if live, and each message reaches its session once", async () => {
   const someone = { id: "8888", username: "someone", bot: false };
-  const away = { inGuild: () => true, mentions: { has: () => false }, react: async () => {} };
+
+  const away = {
+    inGuild: () => true,
+    mentions: { has: () => false },
+    react: () => Promise.resolve(),
+  };
+
   const first = say(here, 61, "did the anchors ship?", away);
 
   const tag = say(general, 62, "<@1000> anchors", {
     ...away,
     mentions: { has: () => true },
-    startThread: async () => tagged,
+    startThread: () => Promise.resolve(tagged),
   });
 
   const tagged = channel(tag.id, {
@@ -1709,7 +1764,9 @@ test("back online, the bot reads what was said while it was away, archived threa
       .filter((line) => late.has(line.meta.message_id ?? ""))
       .map((line) => line.content),
   ).toEqual(["did the anchors ship?", "one more thing"]);
-  expect(JSON.parse(readFileSync(join(state, "cursor.json"), "utf-8"))).toEqual({ id: revived.id });
+  expect(Saved.parse(JSON.parse(readFileSync(join(state, "cursor.json"), "utf-8")))).toEqual({
+    id: revived.id,
+  });
 });
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
@@ -1719,10 +1776,10 @@ test("a status post is the session's note over lines hex keeps current from the 
   expect(done).toContainEqual({ pin: post.id });
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: "Site: example.com" });
 
-  const edits = () => done.filter((d) => d.edit === post.id).map((d) => d.options?.content ?? "");
+  const edits = () => done.flatMap((d) => (d.edit === post.id ? [d.options?.content ?? ""] : []));
 
   await call("reply", { text: "Rename the site?", buttons: ["Yes", "No"] });
-  await until(() => /\n- \[?Rename the site\?/.test(edits().at(-1) ?? ""));
+  await until(() => /\n- \[?Rename the site\?/u.test(edits().at(-1) ?? ""));
 
   const count = edits().length;
   expect(
