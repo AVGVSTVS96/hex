@@ -1128,3 +1128,15 @@ test("a task General owns with no project is finished in the topic its proof was
   expect(board.finished.find(task => task.id === mic.id)).toMatchObject({ topic: 'voiceapp', run: 'telegram:-1001234567890:2583' })
   expect(board.finished.find(task => task.id === chat.id)).toMatchObject({ topic: 'General' })
 })
+
+test("a task General owns with no project is finished in the topic that closed it or started its agents, before where its proof was posted", async () => {
+  const store = open(state)
+  store.deliver({ key: 'telegram:-1001234567890:9020', to: '-1001234567890', from: 'telegram', author: 'owner', body: 'pool and keyboard' })
+  const pool = store.createTask({ title: 'Pool', message: 'telegram:-1001234567890:9020', owner: '-1001234567890' })
+  const keys = store.createTask({ title: 'Keys', message: 'telegram:-1001234567890:9020', owner: '-1001234567890' })
+  store.addAgents(pool.id, ['poolagent1'], '-1001234567890:2583')
+  store.editTask(pool.id, { status: 'done', proof: 'https://github.com/x/y/pull/2', doneIn: '-1001234567890' })
+  store.editTask(keys.id, { status: 'done', proof: 'https://github.com/x/y/pull/3', doneIn: '-1001234567890:2583' })
+  await until(() => board.finished.filter(task => [pool.id, keys.id].includes(task.id)).length === 2)
+  expect(board.finished.filter(task => [pool.id, keys.id].includes(task.id)).map(task => task.topic)).toEqual(['voiceapp', 'voiceapp'])
+})

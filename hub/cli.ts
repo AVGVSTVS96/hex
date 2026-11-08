@@ -254,7 +254,7 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
       return show([store.requote(id, key, flags.quote)])
     case 'done':
       if (!id || !flags.proof) throw new Error('a task is done with --proof: a link or a fact that shows it')
-      return show([store.editTask(id, { status: 'done', proof: flags.proof })])
+      return show([store.editTask(id, { status: 'done', proof: flags.proof, doneIn: thread })])
     case 'drop':
       if (!id) usage()
       return show([flags.into ? store.mergeTasks(flags.into, id) : store.editTask(id, { status: 'dropped' })])
@@ -266,7 +266,7 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
       return show([store.editTask(id, { title: flags.title, owner: flags.owner, project: flags.project, doneWhen: flags['done-when'] })])
     case 'agent':
       if (!id || !more.length) usage()
-      return show([store.addAgents(id, more)])
+      return show([store.addAgents(id, more, thread)])
     default: {
       const found = verb && store.task(verb)
       if (!found) throw new Error(verb ? `no task ${verb}` : USAGE)
