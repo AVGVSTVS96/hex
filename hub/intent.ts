@@ -15,7 +15,9 @@ const REWRITE_WINDOW_MS = 15 * 60_000;
 const SENDBACKS_BEFORE_IT_GOES_THROUGH = 2;
 const CHECKER_AUDIT_LOG = "intent.jsonl";
 
-const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task and the newest of mine this session got, my rules below, and what hex's memory says was decided.
+const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task, the newest of mine this session got and the work hex handed it, my rules below, and what hex's memory says was decided.
+
+A session works on what hex hands it too: a request from General or another session, or a job's own prompt, each carrying work of mine. A brief for that work answers to it, even when my newest words there are about something else.
 
 The agent that gets it is as capable as you, loads my rules itself, and gets a link to my conversation. Every wall a brief puts up costs it performance: a plan for how to do the work, a guess or lead handed over as where to look, a limit or caution I didn't give for this ask. Those steer a smarter agent away from solving what I asked, even when worded as something to check. So the brief that works carries every part of what I asked, my words where the wording matters, the facts it has checked, and where the result goes, and leaves the how to the agent.
 
@@ -102,8 +104,26 @@ function promptFilesNow(command: string, cwd: string): [string, string][] {
 const quote = (rows: Row[]) =>
   rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${spoken(row)}`).join("\n\n");
 
+const unshown = (rows: Row[], shown: Row[]) =>
+  rows.filter((row) => !shown.some(({ key }) => key === row.key));
+
 const newest = (rows: Row[], shown: Row[]) =>
-  rows.filter((row) => spoken(row) !== "" && !shown.some(({ key }) => key === row.key)).slice(-4);
+  unshown(rows, shown)
+    .filter((row) => spoken(row) !== "")
+    .slice(-4);
+
+const handed = (rows: Row[], shown: Row[]) =>
+  unshown(rows, shown)
+    .filter((row) => row.author === "prompt")
+    .slice(-3);
+
+const said = (row: Row) =>
+  row.author === "prompt"
+    ? `${row.from === "terminal" ? "the prompt it started with" : `handed to it by ${row.meta?.user ?? row.from}`}:\n${row.body.slice(0, 4000)}`
+    : `his:\n${spoken(row)}`;
+
+const got = (rows: Row[]) =>
+  rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z] ${said(row)}`).join("\n\n");
 
 export function asked(store: Store, session: string, text: string): string {
   const tasks = [...new Set([...named(text), store.tasks.agentTasks()[session]?.id ?? ""])].flatMap(
@@ -118,20 +138,24 @@ export function asked(store: Store, session: string, text: string): string {
     })
     .slice(0, 12);
 
-  const got = newest(store.messages.taken(session, 40), cited);
+  const taken = store.messages.taken(session, 40);
+  const picked = new Set([...newest(taken, cited), ...handed(taken, cited)]);
+  const given = taken.filter((row) => picked.has(row));
   const to = deliveredTo(store, text);
 
   const toNewest =
-    to === undefined || to === "" ? [] : newest(store.messages.said(to, 40), [...cited, ...got]);
+    to === undefined || to === "" ? [] : newest(store.messages.said(to, 40), [...cited, ...given]);
 
   return [
     tasks.length > 0
       ? `The tasks it names or this session works on, with his words:\n\n${tasks.map((task) => render(task, store.threads.names())).join("\n\n")}`
       : "",
     cited.length > 0 ? `His messages it cites:\n\n${quote(cited)}` : "",
-    got.length > 0 ? `His newest messages this session got:\n\n${quote(got)}` : "",
+    given.length > 0
+      ? `The newest words this session got, oldest first, his and the work hex handed it:\n\n${got(given)}`
+      : "",
     toNewest.length > 0
-      ? `His newest messages in the thread it goes to:\n\n${quote(toNewest)}`
+      ? `His newest messages in the thread it goes to, which that thread's own session answers:\n\n${quote(toNewest)}`
       : "",
   ]
     .filter(Boolean)

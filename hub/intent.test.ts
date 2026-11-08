@@ -110,8 +110,44 @@ test("the words a brief is checked against: its tasks and the newest this sessio
 
   const words = asked(store, "main", `Task ${task.id}: make login fast.`);
   expect(words).toContain(`${task.id} (open`);
-  expect(words).toContain("His newest messages this session got:\n\n[telegram:-100:50");
+  expect(words).toContain(
+    "this session got, oldest first, his and the work hex handed it:\n\n[telegram:-100:50 · ",
+  );
+  expect(words).toContain("Z] his:\nMake the login page load fast.");
   expect(words).not.toContain("On it.");
+});
+
+test("work hex handed a session is read next to his words, newest last", () => {
+  store.messages.deliver(
+    {
+      key: "hex:general-1",
+      to: "-100:7",
+      from: "hex",
+      body: "hex bug: jobs started by the service can't find npm.",
+      author: "prompt",
+      meta: { user: "hex General" },
+    },
+    "main",
+  );
+  store.messages.deliver(
+    {
+      key: "terminal:job-1",
+      to: "-100:7",
+      from: "terminal",
+      body: "Fix the service PATH for every hex user.",
+      author: "prompt",
+      meta: { session: "job" },
+    },
+    "job",
+  );
+
+  const main = asked(store, "main", "claude -p 'Fix the service PATH.'");
+  expect(main.indexOf("Make the login page")).toBeLessThan(main.indexOf("hex bug: jobs"));
+  expect(main).toContain("handed to it by hex General:\nhex bug: jobs");
+
+  const job = asked(store, "job", "hex deliver hex --to=Website 'Run the PATH probe.'");
+  expect(job).toContain("the prompt it started with:\nFix the service PATH");
+  expect(job).toContain("which that thread's own session answers:\n\n[telegram:-100:50");
 });
 
 test("a job is held to its own task, not to what the owner said to its thread since", () => {
@@ -155,7 +191,7 @@ test("a delivery is checked against the words it cites and the thread it goes to
   );
 
   expect(words).toContain("His messages it cites:\n\n[telegram:-100:90");
-  expect(words).toContain("the thread it goes to:\n\n[telegram:-100:50");
+  expect(words).toContain("session answers:\n\n[telegram:-100:50");
   expect(words).not.toContain("this session got");
 });
 
