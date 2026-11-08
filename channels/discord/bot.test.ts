@@ -1,12 +1,14 @@
-import { afterAll, beforeAll, expect, mock, test } from "bun:test";
+import { afterAll, beforeAll, expect, mock, spyOn, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect as netConnect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import * as discord from "discord.js";
+import { z } from "zod";
 
 import { clients } from "../../hub/hub.ts";
+import type { Hub } from "../../hub/hub.ts";
 import { open } from "../../hub/store.ts";
 import { connect, noClaude } from "../../hub/testing.ts";
 import { until } from "../../hub/until.ts";
@@ -29,23 +31,205 @@ const GUILD = "3000";
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 5, 12, minute));
 const snowflake = (minute: number) => SnowflakeUtil.generate({ timestamp: at(minute) }).toString();
 
-type Channel = Record<string, any>;
+type Component = {
+  type: number;
+  label?: string;
+  custom_id?: string;
+  style?: number;
+  disabled?: boolean;
+  min_values?: number;
+  max_values?: number;
+  options?: { label: string; value: string; default?: boolean }[];
+};
 
-const channels = new Map<string, Channel>();
-const handlers = new Map<string, (...args: any[]) => void>();
-const owner = { id: OWNER, username: "bassim", bot: false, partial: false };
-const bot = { id: BOT, username: "hex", bot: true };
-const done: any[] = [];
+type Row = { type: number; components: Component[] };
+
+type Built = { toJSON: () => Row };
+
+type Sent = {
+  content?: string;
+  flags?: number;
+  files?: string[];
+  attachments?: never[];
+  components?: Built[];
+};
+
+type Done = {
+  send?: Sent;
+  in?: string;
+  edit?: string;
+  options?: Sent;
+  create?: string;
+  message?: string;
+  appliedTags?: string[];
+  react?: string;
+  on?: string;
+  pin?: string;
+  unpin?: string;
+  unreact?: string;
+  forward?: string;
+  to?: string;
+  delete?: string;
+  get?: string;
+  query?: string;
+};
+
+type Author = {
+  id: string;
+  username: string;
+  bot?: boolean;
+  partial?: boolean;
+  displayName?: string;
+  displayAvatarURL?: () => string;
+};
+
+type FakeAttachment = { id: string; name: string; url: string; contentType: string; size: number };
+
+type FakePoll = {
+  question: { text: string };
+  answers: discord.Collection<number, { text: string }>;
+  allowMultiselect?: boolean;
+};
+
+type FakeMessage = {
+  id: string;
+  content: string;
+  createdAt: Date;
+  author: Author;
+  channel: FakeChannel;
+  channelId: string;
+  flags: discord.MessageFlagsBitField;
+  attachments: discord.Collection<string, FakeAttachment>;
+  messageSnapshots: discord.Collection<string, object>;
+  components: Row[];
+  stickers: discord.Collection<string, { name: string; url: string }>;
+  poll: FakePoll | null;
+  thread: FakeChannel | null;
+  reactions: {
+    cache: discord.Collection<string, { me: boolean; users: { remove: () => Promise<unknown> } }>;
+  };
+  react: (emoji: string) => Promise<unknown>;
+  pin: () => Promise<unknown>;
+  unpin: () => Promise<unknown>;
+  edit: (options: Sent) => Promise<FakeMessage>;
+  forward: (to: string) => Promise<{ id: string }>;
+  delete: () => Promise<void>;
+  type?: discord.MessageType;
+  reference?: { messageId: string };
+  fetchReference?: () => Promise<FakeMessage>;
+  inGuild?: () => boolean;
+  mentions?: { has: () => boolean };
+  startThread?: () => Promise<FakeChannel>;
+};
+
+type HookPost = {
+  content: string;
+  threadId: string;
+  username: string;
+  avatarURL: string;
+  allowedMentions: { parse: never[] };
+};
+
+type Query = { limit: number; before?: string; after?: string };
+
+type FakeChannel = {
+  id: string;
+  name: string;
+  type: discord.ChannelType;
+  guildId: string | undefined;
+  visible: boolean;
+  archived: boolean;
+  archiveTimestamp?: number;
+  parent: FakeChannel | null;
+  parentId?: string;
+  messageCount?: number;
+  lastMessageId?: string;
+  ownerId?: string;
+  availableTags?: { id: string; name: string }[];
+  guild?: { members: { me: { displayName: string } } };
+  setArchived?: () => Promise<void>;
+  fetchWebhooks?: () => Promise<discord.Collection<string, object>>;
+  createWebhook?: (options: { name: string }) => Promise<object>;
+  isThread: () => boolean;
+  isThreadOnly: () => boolean;
+  isDMBased: () => boolean;
+  permissionsFor: () => { has: () => boolean };
+  sendTyping: () => Promise<void>;
+  send: (input: string | Sent) => Promise<FakeMessage>;
+  fetchStarterMessage: () => Promise<FakeMessage>;
+  posted: FakeMessage[];
+  messages: {
+    fetch: (
+      query: string | Query,
+    ) => Promise<FakeMessage | discord.Collection<string, FakeMessage>>;
+    edit: (message: string, options: Sent) => Promise<FakeMessage | undefined>;
+  };
+  threads: {
+    create: (options: {
+      name: string;
+      message?: { content: string };
+      appliedTags?: string[];
+    }) => Promise<FakeChannel>;
+    fetchActive: () => Promise<{ threads: discord.Collection<string, FakeChannel> }>;
+    fetchArchived: (options?: {
+      before?: number;
+      limit?: number;
+    }) => Promise<{ threads: discord.Collection<string, FakeChannel>; hasMore: boolean }>;
+  };
+};
+
+const channels = new Map<string, FakeChannel>();
+const handlers = new Map<string, (...args: unknown[]) => void>();
+const owner: Author = { id: OWNER, username: "bassim", bot: false, partial: false };
+const bot: Author = { id: BOT, username: "hex", bot: true };
+const done: Done[] = [];
 let found: object = {};
 let sent = 0;
 let opened = 0;
 let logins = 0;
 
-// A guild channel or thread whose messages the fake REST answers newest-first, as Discord does.
-function channel(id: string, fields: Channel): Channel {
-  const messages: Channel[] = [];
+function emit(event: string, ...args: unknown[]) {
+  const handler = handlers.get(event);
 
-  const ch: Channel = {
+  if (!handler) {
+    throw new Error(`the bot doesn't listen for ${event}`);
+  }
+
+  handler(...args);
+}
+
+function nth<T>(items: T[], index: number): T {
+  const item = items[index < 0 ? items.length + index : index];
+
+  if (item === undefined) {
+    throw new Error(`there's no item ${index}`);
+  }
+
+  return item;
+}
+
+function named(name: string): FakeChannel {
+  const ch = [...channels.values()].find((each) => each.name === name);
+
+  if (!ch) {
+    throw new Error(`no channel named ${name}`);
+  }
+
+  return ch;
+}
+
+const lastPosted = (ch: FakeChannel) => nth(ch.posted, -1);
+
+const newestFirst = (a: FakeMessage, b: FakeMessage) => Number(BigInt(b.id) - BigInt(a.id));
+
+// A guild channel or thread whose messages the fake REST answers newest-first, as Discord does.
+function channel(
+  id: string,
+  fields: Partial<FakeChannel> & Pick<FakeChannel, "name" | "type">,
+): FakeChannel {
+  const messages: FakeMessage[] = [];
+
+  const ch: FakeChannel = {
     id,
     guildId: GUILD,
     visible: true,
@@ -56,77 +240,97 @@ function channel(id: string, fields: Channel): Channel {
     isThreadOnly: () => ch.type === ChannelType.GuildForum,
     isDMBased: () => ch.type === ChannelType.DM,
     permissionsFor: () => ({ has: () => ch.visible }),
-    sendTyping: async () => {},
-    send: async (input: string | Channel) => {
+    sendTyping: () => Promise.resolve(),
+    send: (input: string | Sent) => {
       const options = typeof input === "string" ? { content: input } : input;
       done.push({ send: options, in: id });
 
-      return say(ch, 59, options.content ?? "", {
-        id: String(BigInt(snowflake(59)) + BigInt(++sent)),
-        author: bot,
-        components: options.components?.map((row: any) => row.toJSON()) ?? [],
-      });
+      return Promise.resolve(
+        say(ch, 59, options.content ?? "", {
+          id: String(BigInt(snowflake(59)) + BigInt(++sent)),
+          author: bot,
+          components: options.components?.map((row) => row.toJSON()) ?? [],
+        }),
+      );
     },
-    fetchStarterMessage: async () => (ch.parent.isThreadOnly() ? ch : ch.parent).messages.fetch(id),
+    fetchStarterMessage: async () => {
+      const { parent } = ch;
+
+      if (!parent) {
+        throw new Error(`${id} hangs off no channel`);
+      }
+
+      const holder = parent.isThreadOnly() ? ch : parent;
+
+      return await message(holder, id);
+    },
     posted: messages,
     messages: {
-      fetch: async (query: string | { limit: number; before?: string; after?: string }) => {
+      fetch: async (query: string | Query) => {
         if (typeof query === "string") {
-          return await (messages.find((m) => m.id === query) ??
-            Promise.reject(new Error("Unknown Message")));
+          return await message(ch, query);
         }
 
         const { limit, before, after } = query;
-        const newest = (a: Channel, b: Channel) => Number(BigInt(b.id) - BigInt(a.id));
 
-        const page = after
-          ? messages
-              .filter((m) => BigInt(m.id) > BigInt(after))
-              .toSorted(newest)
-              .slice(-limit)
-          : messages
-              .filter((m) => !before || BigInt(m.id) < BigInt(before))
-              .toSorted(newest)
-              .slice(0, limit);
+        const page =
+          after === undefined
+            ? messages
+                .filter((m) => before === undefined || BigInt(m.id) < BigInt(before))
+                .toSorted(newestFirst)
+                .slice(0, limit)
+            : messages
+                .filter((m) => BigInt(m.id) > BigInt(after))
+                .toSorted(newestFirst)
+                .slice(-limit);
 
         return new Collection(page.map((m) => [m.id, m]));
       },
-      edit: async (message: string, options: Channel) => (
-        done.push({ edit: message, options }),
-        messages.find((m) => m.id === message)
-      ),
+      edit: (edited: string, options: Sent) => {
+        done.push({ edit: edited, options });
+
+        return Promise.resolve(messages.find((m) => m.id === edited));
+      },
     },
     threads: {
-      create: async ({ name, message, appliedTags }: Channel) => {
+      create: ({ name, message: starter, appliedTags }) => {
         done.push({
           create: name,
           in: id,
-          ...(message && { message: message.content }),
+          ...(starter && { message: starter.content }),
           ...(appliedTags && { appliedTags }),
         });
 
-        return channel(String(9000 + ++opened), {
-          name,
-          type: ChannelType.PublicThread,
-          parent: ch,
-          parentId: id,
-        });
+        return Promise.resolve(
+          channel(String(9000 + ++opened), {
+            name,
+            type: ChannelType.PublicThread,
+            parent: ch,
+            parentId: id,
+          }),
+        );
       },
-      fetchActive: async () => ({
-        threads: new Collection([...channels].filter(([, c]) => c.parent === ch && !c.archived)),
-      }),
+      fetchActive: () =>
+        Promise.resolve({
+          threads: new Collection([...channels].filter(([, c]) => c.parent === ch && !c.archived)),
+        }),
       // Newest-archived first, as Discord lists them, two to a page so a test can reach the second.
-      fetchArchived: async ({ before, limit = 50 }: { before?: number; limit?: number } = {}) => {
+      fetchArchived: ({ before, limit = 50 } = {}) => {
         const shelf = [...channels.values()]
-          .filter((c) => c.parent === ch && c.archived && (!before || c.archiveTimestamp < before))
-          .toSorted((a, b) => b.archiveTimestamp - a.archiveTimestamp);
+          .filter(
+            (c) =>
+              c.parent === ch &&
+              c.archived &&
+              (before === undefined || (c.archiveTimestamp ?? 0) < before),
+          )
+          .toSorted((a, b) => (b.archiveTimestamp ?? 0) - (a.archiveTimestamp ?? 0));
 
         const page = shelf.slice(0, Math.min(limit, 2));
 
-        return {
+        return Promise.resolve({
           threads: new Collection(page.map((c) => [c.id, c])),
           hasMore: shelf.length > page.length,
-        };
+        });
       },
     },
     ...fields,
@@ -137,11 +341,22 @@ function channel(id: string, fields: Channel): Channel {
   return ch;
 }
 
+function message(ch: FakeChannel, id: string): Promise<FakeMessage> {
+  const kept = ch.posted.find((m) => m.id === id);
+
+  return kept ? Promise.resolve(kept) : Promise.reject(new Error("Unknown Message"));
+}
+
 // A message whose Discord calls land in done; deleting it fires the gateway's messageDelete.
-function say(where: Channel, minute: number, content: string, fields: Channel = {}): Channel {
+function say(
+  where: FakeChannel,
+  minute: number,
+  content: string,
+  fields: Partial<FakeMessage> = {},
+): FakeMessage {
   const id = snowflake(minute);
 
-  const message: Channel = {
+  const posted: FakeMessage = {
     id,
     content,
     createdAt: at(minute),
@@ -156,22 +371,32 @@ function say(where: Channel, minute: number, content: string, fields: Channel = 
     poll: null,
     thread: null,
     reactions: { cache: new Collection() },
-    react: async (emoji: string) => done.push({ react: emoji, on: message.id }),
-    pin: async () => done.push({ pin: message.id }),
-    unpin: async () => done.push({ unpin: message.id }),
-    edit: async (options: Channel) => (done.push({ edit: message.id, options }), message),
-    forward: async (to: string) => (done.push({ forward: message.id, to }), { id: "7777" }),
-    delete: async () => {
-      done.push({ delete: message.id });
-      handlers.get("messageDelete")!(message);
+    react: (emoji: string) => Promise.resolve(done.push({ react: emoji, on: posted.id })),
+    pin: () => Promise.resolve(done.push({ pin: posted.id })),
+    unpin: () => Promise.resolve(done.push({ unpin: posted.id })),
+    edit: (options: Sent) => {
+      done.push({ edit: posted.id, options });
+
+      return Promise.resolve(posted);
+    },
+    forward: (to: string) => {
+      done.push({ forward: posted.id, to });
+
+      return Promise.resolve({ id: "7777" });
+    },
+    delete: () => {
+      done.push({ delete: posted.id });
+      emit("messageDelete", posted);
+
+      return Promise.resolve();
     },
     ...fields,
   };
 
-  where.posted.push(message);
-  where.lastMessageId = message.id;
+  where.posted.push(posted);
+  where.lastMessageId = posted.id;
 
-  return message;
+  return posted;
 }
 
 const openSource = channel("4000", { name: "open-source", type: ChannelType.GuildText });
@@ -213,11 +438,11 @@ const here = channel("5000", {
   parent: general,
 });
 
-const live = (where: Channel) => ({
+const live = (where: FakeChannel) => ({
   inGuild: () => true,
   channel: where,
   mentions: { has: () => false },
-  react: async () => {},
+  react: () => Promise.resolve(),
 });
 
 class Client {
@@ -229,12 +454,12 @@ class Client {
   };
   channels = {
     cache: channels,
-    fetch: async (id: string) => {
-      if (!channels.has(id)) {
-        throw Object.assign(new Error("Unknown Channel"), { code: 10003 });
-      }
+    fetch: (id: string) => {
+      const ch = channels.get(id);
 
-      return channels.get(id);
+      return ch
+        ? Promise.resolve(ch)
+        : Promise.reject(Object.assign(new Error("Unknown Channel"), { code: 10_003 }));
     },
   };
   guilds = {
@@ -246,47 +471,53 @@ class Client {
           systemChannel: general,
           channels: {
             cache: channels,
-            fetch: async () =>
-              new Collection(
-                [...channels].filter(([, ch]) => ch.guildId === GUILD && !ch.isThread()),
-              ),
-            fetchActiveThreads: async () => ({
-              threads: new Collection(
-                [...channels].filter(
-                  ([, ch]) => ch.guildId === GUILD && ch.isThread() && !ch.archived,
+            fetch: () =>
+              Promise.resolve(
+                new Collection(
+                  [...channels].filter(([, ch]) => ch.guildId === GUILD && !ch.isThread()),
                 ),
               ),
-            }),
+            fetchActiveThreads: () =>
+              Promise.resolve({
+                threads: new Collection(
+                  [...channels].filter(
+                    ([, ch]) => ch.guildId === GUILD && ch.isThread() && !ch.archived,
+                  ),
+                ),
+              }),
           },
         },
       ],
     ]),
   };
   users = {
-    fetch: async (id: string) => (id === OWNER ? owner : { id, username: "someone" }),
-    createDM: async (id: string) =>
-      id === OWNER ? dm : await Promise.reject(new Error("Cannot send messages to this user")),
+    fetch: (id: string) => Promise.resolve(id === OWNER ? owner : { id, username: "someone" }),
+    createDM: (id: string) =>
+      id === OWNER
+        ? Promise.resolve(dm)
+        : Promise.reject(new Error("Cannot send messages to this user")),
   };
   rest = {
-    get: async (route: string, { query }: { query: URLSearchParams }) => (
-      done.push({ get: route, query: query.toString() }),
-      found
-    ),
+    get: (route: string, { query }: { query: URLSearchParams }) => {
+      done.push({ get: route, query: query.toString() });
+
+      return Promise.resolve(found);
+    },
   };
-  on(event: string, handler: (...args: any[]) => void) {
+  on(event: string, handler: (...args: unknown[]) => void) {
     handlers.set(event, handler);
 
     return this;
   }
-  once(event: string, handler: (...args: any[]) => void) {
+  once(event: string, handler: (...args: unknown[]) => void) {
     return this.on(event, handler);
   }
-  login = async () => {
-    if (++logins === 1) {
-      throw new Error("getaddrinfo ETIMEOUT discord.com");
-    }
+  login = () => {
+    logins += 1;
 
-    return "token";
+    return logins === 1
+      ? Promise.reject(new Error("getaddrinfo ETIMEOUT discord.com"))
+      : Promise.resolve("token");
   };
 }
 
@@ -295,7 +526,7 @@ void mock.module("discord.js", () => ({ ...discord, Client }));
 const state = mkdtempSync(join(tmpdir(), "discord-"));
 
 // Each open thread as the hub keeps it in hex.db, by its id.
-const saved = (): Record<string, any> =>
+const saved = () =>
   Object.fromEntries(
     open(state)
       .threads({ open: true })
@@ -306,10 +537,38 @@ afterAll(() => {
   rmSync(state, { recursive: true, force: true });
 });
 
-let received: any[];
-let call: (tool: string, args: object) => Promise<any>;
-let send: (payload: object) => void;
-let ask: (request: object) => Promise<Response>;
+const Inbound = z.object({
+  type: z.literal("inbound"),
+  content: z.string(),
+  meta: z.record(z.string(), z.string()),
+});
+
+type Inbound = z.output<typeof Inbound>;
+
+const Permission = z.object({
+  type: z.literal("permission"),
+  request_id: z.string(),
+  behavior: z.string(),
+});
+
+const inbounds = (lines: unknown[]): Inbound[] =>
+  lines.flatMap((line) => {
+    const parsed = Inbound.safeParse(line);
+
+    return parsed.success ? [parsed.data] : [];
+  });
+
+const inbound = (lines: unknown[], check: (line: Inbound) => boolean) =>
+  until(() => inbounds(lines).find(check));
+
+type Session = Awaited<ReturnType<typeof session>>;
+
+let received: unknown[];
+let call: Session["call"];
+let send: Session["send"];
+let ask: Session["ask"];
+
+const realFetch = globalThis.fetch;
 
 beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [OWNER] }));
@@ -323,8 +582,7 @@ beforeAll(async () => {
     TRANSCRIBE_URL: TRANSCRIBER,
     TRANSCRIBE_MODEL: "whisper",
   });
-  const fetch = globalThis.fetch;
-  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+  const fake = async (url: string | URL | Request, init?: RequestInit) => {
     if (url === "https://cdn.discord/voice-message.ogg") {
       return new Response("ogg");
     }
@@ -334,16 +592,17 @@ beforeAll(async () => {
     }
 
     if (url !== TRANSCRIBER) {
-      return await fetch(url, init);
+      return await realFetch(url, init);
     }
 
-    return Response.json({
-      text:
-        (init!.body as FormData).get("model") === "whisper"
-          ? " anchors ship friday "
-          : "wrong model",
-    });
-  }) as any;
+    const model = init?.body instanceof FormData ? init.body.get("model") : null;
+
+    return Response.json({ text: model === "whisper" ? " anchors ship friday " : "wrong model" });
+  };
+
+  spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(fake, { preconnect: realFetch.preconnect }),
+  );
   await import("./bot.ts");
   ({ received, call, send, ask } = await session(here.id));
 });
@@ -358,15 +617,17 @@ async function session(thread: string) {
     thread,
   });
 
-  const send = async (payload: object) => {
-    const hook = netConnect(join(state, "hub.sock"));
-    hook.end(`${JSON.stringify(payload)}\n`);
-    await new Promise((resolve) => hook.on("close", resolve));
+  const hook = async (payload: object) => {
+    const socket = netConnect(join(state, "hub.sock"));
+    socket.end(`${JSON.stringify(payload)}\n`);
+    await new Promise((resolve) => socket.on("close", resolve));
   };
 
   await line.call("list_channels", {});
 
-  return { received: line.received, call: line.call, send, ask: line.ask };
+  const lines: unknown[] = line.received;
+
+  return { received: lines, call: line.call, send: hook, ask: line.ask };
 }
 
 const book = () => ({
@@ -377,18 +638,19 @@ const book = () => ({
   ),
 });
 
-const question = (message: string) =>
+const question = (asked: string) =>
   open(state)
     .questions({ app: "discord" })
-    .find((question) => question.message === message)!;
+    .find((each) => each.message === asked);
 
-const labels = (components: any[]) => components[0].toJSON().components.map((c: any) => c.label);
+const labels = (components: Built[] | undefined) =>
+  components?.[0]?.toJSON().components.map((c) => c.label);
 
 test("a message in a thread names the channel the thread is in", async () => {
   const message = { ...say(here, 6, "what we decided in open-source"), ...live(here) };
-  handlers.get("messageCreate")!(message);
-  const inbound = await until(() => received.find((line) => line.type === "inbound"));
-  expect(inbound.meta).toMatchObject({
+  emit("messageCreate", message);
+  const first = await until(() => inbounds(received).at(0));
+  expect(first.meta).toMatchObject({
     chat_id: here.id,
     message_id: message.id,
     channel: "general",
@@ -396,13 +658,8 @@ test("a message in a thread names the channel the thread is in", async () => {
 });
 
 test("a reply says which message it answers, an edit comes back marked edited, and a forward carries what was forwarded", async () => {
-  const inbound = (id: string, edited?: string) =>
-    until(() =>
-      received.find(
-        (line) =>
-          line.type === "inbound" && line.meta.message_id === id && line.meta.edited === edited,
-      ),
-    );
+  const arrived = (id: string, edited?: string) =>
+    inbound(received, (line) => line.meta.message_id === id && line.meta.edited === edited);
 
   const asked = say(here, 7, "which anchors?");
 
@@ -411,21 +668,18 @@ test("a reply says which message it answers, an edit comes back marked edited, a
     ...live(here),
     type: MessageType.Reply,
     reference: { messageId: asked.id },
-    fetchReference: async () => asked,
+    fetchReference: () => Promise.resolve(asked),
   };
 
-  handlers.get("messageCreate")!(reply);
-  expect((await inbound(reply.id)).meta).toMatchObject({
+  emit("messageCreate", reply);
+  expect((await arrived(reply.id)).meta).toMatchObject({
     reply_to_message_id: asked.id,
     reply_to_user: "bassim",
     reply_to_text: "which anchors?",
   });
 
-  handlers.get("messageUpdate")!(
-    { ...reply, partial: false },
-    { ...reply, content: "the right ones" },
-  );
-  const edit = await inbound(reply.id, "true");
+  emit("messageUpdate", { ...reply, partial: false }, { ...reply, content: "the right ones" });
+  const edit = await arrived(reply.id, "true");
   expect(edit.content).toBe("the right ones");
   expect(edit.meta.new_thread).toBeUndefined();
 
@@ -445,8 +699,8 @@ test("a reply says which message it answers, an edit comes back marked edited, a
     ]),
   };
 
-  handlers.get("messageCreate")!(forward);
-  const forwarded = await inbound(forward.id);
+  emit("messageCreate", forward);
+  const forwarded = await arrived(forward.id);
   expect(forwarded.content).toBe("ship it friday");
   expect(forwarded.meta.forwarded).toBe("true");
 });
@@ -464,13 +718,13 @@ test("a voice message arrives as its transcript, with the recording still listed
     ...say(here, 40, ""),
     ...live(here),
     flags: new MessageFlagsBitField(MessageFlags.IsVoiceMessage),
-    attachments: new Collection([[recording.id, recording]]),
+    attachments: new Collection<string, FakeAttachment>([[recording.id, recording]]),
   };
 
-  handlers.get("messageCreate")!(voice);
+  emit("messageCreate", voice);
 
   const heard = await until(() =>
-    received.find((line) => line.type === "inbound" && line.meta.message_id === voice.id),
+    inbounds(received).find((line) => line.meta.message_id === voice.id),
   );
 
   expect(heard).toMatchObject({
@@ -526,9 +780,6 @@ test("list_channels names the text, announcement and forum channels the bot can 
   );
 });
 
-const inbound = (lines: any[], check: (line: any) => boolean) =>
-  until(() => lines.find((line) => line.type === "inbound" && check(line)));
-
 test("a reaction reaches a served thread with what it was on, a removal says so, and reactions elsewhere or by others are dropped", async () => {
   const msg = say(here, 10, "ship the anchors?");
 
@@ -541,7 +792,7 @@ test("a reaction reaches a served thread with what it was on, a removal says so,
   };
 
   const thumbs = { message: partial, emoji: { toString: () => "👍" } };
-  handlers.get("messageReactionAdd")!(thumbs, owner);
+  emit("messageReactionAdd", thumbs, owner);
   const added = await inbound(received, (line) => line.meta.reaction_to_message_id === msg.id);
   expect(added.content).toBe("(reaction: 👍)");
   expect(added.meta).toMatchObject({
@@ -553,27 +804,27 @@ test("a reaction reaches a served thread with what it was on, a removal says so,
   });
   expect(added.meta.reaction_removed).toBeUndefined();
 
-  handlers.get("messageReactionRemove")!(thumbs, owner);
+  emit("messageReactionRemove", thumbs, owner);
   const removed = await inbound(received, (line) => line.meta.reaction_removed === "true");
   expect(removed.content).toBe("(reaction removed: 👍)");
 
   const stranger = say(here, 11, "not mine");
-  handlers.get("messageReactionAdd")!(
+  emit(
+    "messageReactionAdd",
     { message: stranger, emoji: { toString: () => "🎉" } },
     { id: "8888", username: "someone", partial: false },
   );
-  handlers.get("messageReactionAdd")!({ message: rebased, emoji: { toString: () => "🎉" } }, owner);
+  emit("messageReactionAdd", { message: rebased, emoji: { toString: () => "🎉" } }, owner);
   await Bun.sleep(100);
-  expect(received.some((line) => line.meta?.reaction === "🎉")).toBe(false);
+  expect(inbounds(received).some((line) => line.meta.reaction === "🎉")).toBe(false);
 });
 
 test("a reaction on the message a served thread hangs off reaches that thread", async () => {
   const ci2 = await session(ciThread.id);
-  handlers.get("messageReactionAdd")!(
-    { message: ci, emoji: { toString: () => "<:ship:123>" } },
-    owner,
-  );
-  expect((await inbound(ci2.received, (line) => line.meta.reaction)).meta).toMatchObject({
+  emit("messageReactionAdd", { message: ci, emoji: { toString: () => "<:ship:123>" } }, owner);
+  expect(
+    (await inbound(ci2.received, (line) => line.meta.reaction !== undefined)).meta,
+  ).toMatchObject({
     chat_id: ciThread.id,
     reaction: "<:ship:123>",
     reaction_to_message_id: ci.id,
@@ -582,13 +833,14 @@ test("a reaction on the message a served thread hangs off reaches that thread", 
 
 test("a deleted message is reported with its text when known, but the bot's own delete_message is not echoed back", async () => {
   const typo = say(here, 12, "teh anchors");
-  handlers.get("messageDelete")!(typo);
+  emit("messageDelete", typo);
   expect((await inbound(received, (line) => line.meta.deleted === "true")).meta).toMatchObject({
     message_id: typo.id,
     deleted_text: "teh anchors",
   });
 
-  handlers.get("messageDeleteBulk")!(
+  emit(
+    "messageDeleteBulk",
     new Collection([
       ["1", { id: "1234", channelId: here.id, channel: here, partial: true, content: null }],
     ]),
@@ -604,28 +856,32 @@ test("a deleted message is reported with its text when known, but the bot's own 
     "the bot can only delete its own messages",
   );
   await Bun.sleep(100);
-  expect(received.some((line) => line.meta?.message_id === mine.id)).toBe(false);
+  expect(inbounds(received).some((line) => line.meta.message_id === mine.id)).toBe(false);
 });
 
 test("reply buttons go on the last chunk, and a tap locks them on the choice and comes back as its label", async () => {
   const sent = await call("reply", { text: "merge it?", buttons: ["Yes", "No"], silent: true });
-  const posted = here.posted.at(-1);
+  const posted = lastPosted(here);
   expect(sent.text).toBe(`sent (id: ${posted.id})`);
-  expect(done.at(-1).send.flags).toBe(discord.MessageFlags.SuppressNotifications);
-  expect(posted.components[0].components.map((b: any) => [b.label, b.disabled])).toEqual([
+  expect(done.at(-1)?.send?.flags).toBe(discord.MessageFlags.SuppressNotifications);
+  expect(nth(posted.components, 0).components.map((b) => [b.label, b.disabled])).toEqual([
     ["Yes", false],
     ["No", false],
   ]);
 
-  let update: any;
-  handlers.get("interactionCreate")!({
+  let update: Sent | undefined;
+  emit("interactionCreate", {
     isButton: () => true,
     user: owner,
     customId: "1",
     channelId: here.id,
     createdAt: at(14),
     message: posted,
-    update: async (options: any) => (update = options),
+    update: (options: Sent) => {
+      update = options;
+
+      return Promise.resolve();
+    },
   });
   const tap = await inbound(received, (line) => line.meta.button === "true");
   expect(tap.content).toBe("No");
@@ -635,7 +891,7 @@ test("reply buttons go on the last chunk, and a tap locks them on the choice and
     button_message_id: posted.id,
   });
   expect(
-    update.components[0].toJSON().components.map((b: any) => [b.label, b.disabled, b.style]),
+    update?.components?.[0]?.toJSON().components.map((b) => [b.label, b.disabled, b.style]),
   ).toEqual([
     ["Yes", true, discord.ButtonStyle.Secondary],
     ["No", true, discord.ButtonStyle.Primary],
@@ -667,7 +923,7 @@ test("react takes off only the bot's own reaction, and edit_message replaces the
 
 test("forward sends a message from this thread into another thread by name or a channel", async () => {
   const msg = say(here, 16, "the left anchors");
-  handlers.get("threadUpdate")!({ name: ciThread.id }, ciThread);
+  emit("threadUpdate", { name: ciThread.id }, ciThread);
   expect((await call("forward", { message_id: msg.id, thread: "flaky CI" })).text).toBe(
     "forwarded (id: 7777)",
   );
@@ -698,7 +954,7 @@ test("the message a thread was started from is found in the channel it hangs off
 
 test("a thread the owner opens on his message starts from that message, kept in hex.db, and keeps the name he gave it", async () => {
   const asked = say(general, 18, "audit the hex workers", live(general));
-  handlers.get("messageCreate")!({ ...asked });
+  emit("messageCreate", { ...asked });
 
   const thread = channel(asked.id, {
     name: "audit hex workers, keep on track",
@@ -714,18 +970,16 @@ test("a thread the owner opens on his message starts from that message, kept in 
     ...say(thread, 19, ""),
     ...live(thread),
     type: MessageType.ThreadStarterMessage,
-    fetchReference: async () => asked,
+    fetchReference: () => Promise.resolve(asked),
   };
 
-  handlers.get("messageCreate")!(starter);
+  emit("messageCreate", starter);
   const then = { ...say(thread, 19, "and keep them on track"), ...live(thread) };
-  handlers.get("messageCreate")!(then);
+  emit("messageCreate", then);
   await inbound(s.received, (line) => line.meta.message_id === then.id);
 
   const heard = () =>
-    s.received
-      .filter((line) => line.type === "inbound")
-      .map((line) => [line.content, line.meta.message_id, line.meta.new_thread]);
+    inbounds(s.received).map((line) => [line.content, line.meta.message_id, line.meta.new_thread]);
 
   expect(heard()).toEqual([
     ["audit the hex workers", asked.id, undefined],
@@ -737,7 +991,8 @@ test("a thread the owner opens on his message starts from that message, kept in 
     meta: { ts: at(18).toISOString() },
   });
 
-  handlers.get("messageUpdate")!(
+  emit(
+    "messageUpdate",
     { ...asked, partial: false },
     { ...asked, content: "audit every hex worker" },
   );
@@ -757,18 +1012,19 @@ test("a thread someone else opens on the owner's message stays theirs: his edit 
   });
 
   asked.thread = thread;
-  handlers.get("messageCreate")!({
+  emit("messageCreate", {
     ...say(thread, 21, "", { author: someone }),
     ...live(thread),
     type: MessageType.ThreadStarterMessage,
-    fetchReference: async () => asked,
+    fetchReference: () => Promise.resolve(asked),
   });
-  handlers.get("messageUpdate")!(
+  emit(
+    "messageUpdate",
     { ...asked, partial: false },
     { ...asked, content: "thinking out loud, edited" },
   );
   const then = { ...say(here, 28, "back to work"), ...live(here) };
-  handlers.get("messageCreate")!(then);
+  emit("messageCreate", then);
   await inbound(received, (line) => line.meta.message_id === then.id);
   expect(open(state).untaken(thread.id)).toEqual([]);
 });
@@ -827,7 +1083,7 @@ test("stickers and polls arrive described, and a new forum post carries its titl
     ]),
   };
 
-  handlers.get("messageCreate")!(sticker);
+  emit("messageCreate", sticker);
   const waved = await inbound(received, (line) => line.meta.message_id === sticker.id);
   expect(waved.content).toBe("(sticker)");
   expect(waved.meta.stickers).toBe("wave (https://media.discordapp.net/stickers/1.png)");
@@ -845,7 +1101,7 @@ test("stickers and polls arrive described, and a new forum post carries its titl
     },
   };
 
-  handlers.get("messageCreate")!(poll);
+  emit("messageCreate", poll);
   const asked = await inbound(received, (line) => line.meta.message_id === poll.id);
   expect(asked.content).toBe("(poll)");
   expect(asked.meta).toMatchObject({ poll: "Lunch?", poll_options: "Tacos; Ramen" });
@@ -855,12 +1111,12 @@ test("stickers and polls arrive described, and a new forum post carries its titl
     name: "Dark mode",
     type: ChannelType.PublicThread,
     parent: ideas,
-    setArchived: async () => {},
+    setArchived: () => Promise.resolve(),
   });
 
   const s = await session(thread.id);
   const post = { ...say(thread, 24, "it hurts my eyes", { id: thread.id }), ...live(thread) };
-  handlers.get("messageCreate")!(post);
+  emit("messageCreate", post);
   const opened = await inbound(s.received, (line) => line.meta.message_id === thread.id);
   expect(opened.meta).toMatchObject({ channel: "ideas", post_title: "Dark mode" });
   expect(opened.meta.new_thread).toBeUndefined();
@@ -881,12 +1137,12 @@ test("a tag in an announcement channel starts a thread like in a text channel", 
     inGuild: () => true,
     channel: news,
     mentions: { has: () => true },
-    react: async () => {},
+    react: () => Promise.resolve(),
     startThread: async () => thread,
     id: thread.id,
   };
 
-  handlers.get("messageCreate")!(tag);
+  emit("messageCreate", tag);
   const opened = await inbound(s.received, (line) => line.meta.message_id === thread.id);
   expect(opened.content).toBe("launch post review");
   expect(opened.meta).toMatchObject({ channel: "news", new_thread: "true" });
@@ -908,7 +1164,7 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
     fetch: async () => lunch,
   };
 
-  handlers.get("messagePollVoteAdd")!({ id: 2, poll: { message: partial } }, OWNER);
+  emit("messagePollVoteAdd", { id: 2, poll: { message: partial } }, OWNER);
   const voted = await inbound(received, (line) => line.meta.poll_message_id === lunch.id);
   expect(voted.content).toBe("(vote: Ramen)");
   expect(voted.meta).toMatchObject({
@@ -919,17 +1175,17 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
   });
   expect(voted.meta.vote_removed).toBeUndefined();
 
-  handlers.get("messagePollVoteRemove")!({ id: 2, poll: { message: lunch } }, OWNER);
+  emit("messagePollVoteRemove", { id: 2, poll: { message: lunch } }, OWNER);
   expect((await inbound(received, (line) => line.meta.vote_removed === "true")).content).toBe(
     "(vote removed: Ramen)",
   );
 
   const theirs = say(here, 27, "", { poll: { question: { text: "Dinner?" }, answers } });
-  handlers.get("messagePollVoteAdd")!({ id: 1, poll: { message: theirs } }, OWNER);
-  handlers.get("messagePollVoteAdd")!({ id: 1, poll: { message: lunch } }, "8888");
+  emit("messagePollVoteAdd", { id: 1, poll: { message: theirs } }, OWNER);
+  emit("messagePollVoteAdd", { id: 1, poll: { message: lunch } }, "8888");
   await Bun.sleep(100);
   expect(
-    received.some((line) => line.meta?.poll === "Dinner?" || line.meta?.vote === "Tacos"),
+    inbounds(received).some((line) => line.meta.poll === "Dinner?" || line.meta.vote === "Tacos"),
   ).toBe(false);
 });
 
@@ -942,13 +1198,13 @@ test("a DM is its own session named DM, a message reaches it while it works, and
     inGuild: () => false,
     channel: dm,
     mentions: { has: () => false },
-    react: async () => {},
+    react: () => Promise.resolve(),
   };
 
-  handlers.get("messageCreate")!(message);
+  emit("messageCreate", message);
 
   const inbound = await until(() =>
-    mine.received.find((line) => line.type === "inbound" && line.content === "quick one"),
+    inbounds(mine.received).find((line) => line.content === "quick one"),
   );
 
   expect(inbound.meta.chat_id).toBe(dm.id);
@@ -970,7 +1226,7 @@ test("closing a thread Discord no longer has forgets it, instead of failing on t
 
 test("once connected the bot leaves the id of its server in guild.json, so the voice app can link a thread, and registers its slash commands", async () => {
   let registered: any[] = [];
-  handlers.get("clientReady")!({
+  emit("clientReady", {
     user: { tag: "hex#0000" },
     application: { commands: { set: async (commands: any[]) => (registered = commands) } },
   });
@@ -992,29 +1248,40 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
   });
 
   await ask(prompt("abcde"));
-  const asked = await until(() => here.posted.findLast((m: any) => m.content.startsWith("🔐")));
+  const asked = await until(() => here.posted.findLast((m) => m.content.startsWith("🔐")));
   expect(asked.content).toBe("🔐 **Bash**: Run the tests\n```\ncommand: bun test\n```");
-  expect(asked.components[0].components.map((b: any) => [b.label, b.custom_id, b.style])).toEqual([
+  expect(nth(asked.components, 0).components.map((b) => [b.label, b.custom_id, b.style])).toEqual([
     ["Allow", "perm:allow:abcde", ButtonStyle.Success],
     ["Deny", "perm:deny:abcde", ButtonStyle.Danger],
   ]);
 
-  let update: any;
-  handlers.get("interactionCreate")!({
+  let update: Sent | undefined;
+  emit("interactionCreate", {
     isButton: () => true,
     user: owner,
     customId: "perm:allow:abcde",
     channelId: here.id,
     createdAt: at(41),
     message: asked,
-    update: async (options: any) => (update = options),
+    update: (options: Sent) => {
+      update = options;
+
+      return Promise.resolve();
+    },
   });
-  expect(await until(() => received.find((line) => line.type === "permission"))).toMatchObject({
+  const permission = () =>
+    received.flatMap((line) => {
+      const parsed = Permission.safeParse(line);
+
+      return parsed.success ? [parsed.data] : [];
+    });
+
+  expect(await until(() => permission().at(0))).toMatchObject({
     request_id: "abcde",
     behavior: "allow",
   });
   expect(
-    update.components[0].toJSON().components.map((b: any) => [b.label, b.disabled, b.style]),
+    update?.components?.[0]?.toJSON().components.map((b) => [b.label, b.disabled, b.style]),
   ).toEqual([
     ["Allow", true, ButtonStyle.Success],
     ["Deny", true, ButtonStyle.Secondary],
@@ -1023,7 +1290,7 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
   await ask(prompt("fghij"));
 
   const open = await until(() =>
-    here.posted.findLast((m: any) => m.content.startsWith("🔐") && m !== asked),
+    here.posted.findLast((m) => m.content.startsWith("🔐") && m !== asked),
   );
 
   await send({ type: "state", thread: here.id, busy: false, background: true });
@@ -1031,7 +1298,7 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
   expect(done.some((d) => d.edit === open.id)).toBe(false);
   await send({ type: "state", thread: here.id, busy: false });
   const moot = await until(() => done.find((d) => d.edit === open.id));
-  expect(labels(moot.options.components)).toEqual(["No longer waiting"]);
+  expect(labels(moot.options?.components)).toEqual(["No longer waiting"]);
 });
 
 test("a question with buttons goes in the ledger: a tap answers it there, and one answered in hex's app closes its buttons, reaches the thread, and can be taken back", async () => {
@@ -1039,7 +1306,7 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
     text: "Which anchors?\nThe left ones are cheaper.",
     buttons: ["Left", "Right"],
   });
-  const asked = here.posted.at(-1);
+  const asked = lastPosted(here);
   expect(question(asked.id)).toMatchObject({
     thread: here.id,
     text: "Which anchors?\nThe left ones are cheaper.",
@@ -1052,69 +1319,69 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
     content: "Right",
     meta: { user: "hex app", button: "true", button_message_id: asked.id },
   });
-  expect(labels(done.findLast((d) => d.edit === asked.id).options.components)).toEqual([
+  expect(labels(done.findLast((d) => d.edit === asked.id)?.options?.components)).toEqual([
     "✓ Answered in the app: Right",
   ]);
-  expect(question(asked.id).answer).toMatchObject({ label: "Right", via: "app" });
+  expect(question(asked.id)?.answer).toMatchObject({ label: "Right", via: "app" });
 
   await send({ type: "reopen", thread: here.id, message: asked.id, via: "app" });
   expect((await inbound(received, (line) => line.meta.took_back === "Right")).content).toBe(
     "(took back: Right)",
   );
-  expect(labels(done.findLast((d) => d.edit === asked.id).options.components)).toEqual([
+  expect(labels(done.findLast((d) => d.edit === asked.id)?.options?.components)).toEqual([
     "Left",
     "Right",
   ]);
 
-  handlers.get("interactionCreate")!({
+  emit("interactionCreate", {
     isButton: () => true,
     user: owner,
     customId: "0",
     channelId: here.id,
     createdAt: at(44),
     message: asked,
-    update: async () => {},
+    update: () => Promise.resolve(),
   });
-  await until(() => question(asked.id).answer?.via === "discord");
+  await until(() => question(asked.id)?.answer?.via === "discord");
 
   await call("reply", { text: "Ship today?", buttons: ["Yes", "No"] });
-  const later = here.posted.at(-1);
+  const later = lastPosted(here);
   await call("edit_message", { message_id: later.id, text: "Ship today, before five?" });
-  expect(question(later.id).settled).toBeUndefined();
+  expect(question(later.id)?.settled).toBeUndefined();
   await send({ type: "settle", thread: here.id, message: later.id, note: "Settled: shipped" });
-  await until(() => question(later.id).settled);
-  expect(labels(done.findLast((d) => d.edit === later.id).options.components)).toEqual([
+  await until(() => question(later.id)?.settled);
+  expect(labels(done.findLast((d) => d.edit === later.id)?.options?.components)).toEqual([
     "Settled: shipped",
   ]);
 
   await call("reply", { text: "Rename it?", buttons: ["Yes", "No"] });
-  const renamed = here.posted.at(-1);
+  const renamed = lastPosted(here);
   await call("edit_message", {
     message_id: renamed.id,
     text: "Renamed, as you said in the call.",
     settled: true,
   });
-  expect(question(renamed.id).settled).toMatchObject({ note: "✓ Settled" });
-  expect(labels(done.findLast((d) => d.edit === renamed.id).options.components)).toEqual([
+  expect(question(renamed.id)?.settled).toMatchObject({ note: "✓ Settled" });
+  expect(labels(done.findLast((d) => d.edit === renamed.id)?.options?.components)).toEqual([
     "✓ Settled",
   ]);
 
   await call("reply", { text: "Keep the old name?", buttons: ["Yes", "No"] });
-  const kept = here.posted.at(-1);
+  const kept = lastPosted(here);
   await call("edit_message", { message_id: kept.id, settled: true });
   expect(question(kept.id)).toMatchObject({
     text: "Keep the old name?",
     settled: { note: "✓ Settled" },
   });
-  expect(labels(done.findLast((d) => d.edit === kept.id).options.components)).toEqual([
+  expect(labels(done.findLast((d) => d.edit === kept.id)?.options?.components)).toEqual([
     "✓ Settled",
   ]);
 });
 
 test("buttons with multiple come as a menu, and a pick of several comes back as their labels and locks the menu on them", async () => {
   await call("reply", { text: "Which files?", buttons: ["a.ts", "b.ts", "c.ts"], multiple: true });
-  const asked = here.posted.at(-1);
-  const select = asked.components[0].components[0];
+  const asked = lastPosted(here);
+  const select = nth(nth(asked.components, 0).components, 0);
   expect(select).toMatchObject({
     type: ComponentType.StringSelect,
     custom_id: "menu",
@@ -1123,8 +1390,8 @@ test("buttons with multiple come as a menu, and a pick of several comes back as 
   });
   expect(question(asked.id)).toMatchObject({ options: ["a.ts", "b.ts", "c.ts"], multiple: true });
 
-  let update: any;
-  handlers.get("interactionCreate")!({
+  let update: Sent | undefined;
+  emit("interactionCreate", {
     isButton: () => false,
     isStringSelectMenu: () => true,
     user: owner,
@@ -1133,13 +1400,17 @@ test("buttons with multiple come as a menu, and a pick of several comes back as 
     channelId: here.id,
     createdAt: at(45),
     message: asked,
-    update: async (options: any) => (update = options),
+    update: (options: Sent) => {
+      update = options;
+
+      return Promise.resolve();
+    },
   });
   const pick = await inbound(received, (line) => line.meta.button_message_id === asked.id);
   expect(pick.content).toBe("a.ts; c.ts");
-  const locked = update.components[0].toJSON().components[0];
-  expect(locked.disabled).toBe(true);
-  expect(locked.options.filter((o: any) => o.default).map((o: any) => o.label)).toEqual([
+  const locked = update?.components?.[0]?.toJSON().components[0];
+  expect(locked?.disabled).toBe(true);
+  expect(locked?.options?.filter((o) => o.default === true).map((o) => o.label)).toEqual([
     "a.ts",
     "c.ts",
   ]);
@@ -1157,13 +1428,13 @@ test("an image arrives already downloaded, as image_path, next to its listing", 
   const message = {
     ...say(here, 46, "what is this?"),
     ...live(here),
-    attachments: new Collection([[shot.id, shot]]),
+    attachments: new Collection<string, FakeAttachment>([[shot.id, shot]]),
   };
 
-  handlers.get("messageCreate")!(message);
+  emit("messageCreate", message);
   const arrived = await inbound(received, (line) => line.meta.message_id === message.id);
   expect(arrived.meta.image_path).toMatch(/inbox\/\d+-62\.png$/);
-  expect(readFileSync(arrived.meta.image_path, "utf-8")).toBe("png bytes");
+  expect(readFileSync(arrived.meta.image_path ?? "", "utf-8")).toBe("png bytes");
   expect(arrived.meta.attachments).toBe("shot.png (image/png, 1KB)");
 });
 
@@ -1189,8 +1460,8 @@ test("new_thread opens with its about line and forwards nothing from the thread 
     `started thread "Anchors": https://discord.com/channels/${GUILD}/${thread.id}`,
   );
   expect(done.find((d) => d.create === "Anchors")).toEqual({ create: "Anchors", in: general.id });
-  expect(thread.posted[0].content).toBe("Spun off from desk");
-  expect(done.filter((d) => d.forward && d.to === thread.id)).toEqual([]);
+  expect(nth(thread.posted, 0).content).toBe("Spun off from desk");
+  expect(done.filter((d) => d.forward !== undefined && d.to === thread.id)).toEqual([]);
 });
 
 test("new_thread in a forum opens a post with its tags, and fetch_messages lists a forum's posts", async () => {
@@ -1263,7 +1534,7 @@ test("slash commands set a thread's model and effort, and answer only the owner 
   const replies: any[] = [];
 
   const command = (commandName: string, value?: string, user = owner, channelId = desk.id) => {
-    handlers.get("interactionCreate")!({
+    emit("interactionCreate", {
       isButton: () => false,
       isStringSelectMenu: () => false,
       isChatInputCommand: () => true,
@@ -1296,12 +1567,16 @@ test("slash commands set a thread's model and effort, and answer only the owner 
 });
 
 test("a backfill posts each line through one webhook of the channel, as the owner or the bot, split to fit", async () => {
-  const hooked: any[] = [];
+  const hooked: HookPost[] = [];
 
   const hook = {
     owner: { id: BOT },
     token: "secret",
-    send: async (options: any) => void hooked.push(options),
+    send: (options: HookPost) => {
+      hooked.push(options);
+
+      return Promise.resolve();
+    },
   };
 
   const created: string[] = [];
@@ -1309,11 +1584,17 @@ test("a backfill posts each line through one webhook of the channel, as the owne
   const repo = channel("4100", {
     name: "repo",
     type: ChannelType.GuildText,
-    fetchWebhooks: async () =>
-      new Collection(
-        created.length ? [["h1", hook]] : [["h0", { owner: { id: "42" }, token: "theirs" }]],
+    fetchWebhooks: () =>
+      Promise.resolve(
+        new Collection<string, object>(
+          created.length > 0 ? [["h1", hook]] : [["h0", { owner: { id: "42" }, token: "theirs" }]],
+        ),
       ),
-    createWebhook: async ({ name }: { name: string }) => (created.push(name), hook),
+    createWebhook: ({ name }) => {
+      created.push(name);
+
+      return Promise.resolve(hook);
+    },
   });
 
   const thread = channel("4101", {
@@ -1324,7 +1605,12 @@ test("a backfill posts each line through one webhook of the channel, as the owne
   });
 
   Object.assign(owner, { displayName: "Bassim", displayAvatarURL: () => "https://cdn/owner.png" });
-  const backfill = clients.get("discord")!.backfill!;
+  const backfill = clients.get("discord")?.backfill;
+
+  if (!backfill) {
+    throw new Error("the Discord client has no backfill");
+  }
+
   await backfill(thread.id, [
     { from: "me", text: "how full is your context?" },
     { from: "hex", text: `${"a".repeat(1990)}\n\n${"b".repeat(100)}` },
@@ -1384,7 +1670,7 @@ test("back online, the bot reads what was said while it was away, archived threa
     parent: general,
     archived: true,
     archiveTimestamp: at(69).getTime(),
-    setArchived: async () => {},
+    setArchived: () => Promise.resolve(),
   });
 
   for (const minute of [70, 71]) {
@@ -1400,10 +1686,10 @@ test("back online, the bot reads what was said while it was away, archived threa
   const reopened = await session(shelved.id);
   const revived = say(shelved, 68, "back to the old plan", away);
 
-  handlers.get("shardReady")!(0);
-  handlers.get("messageCreate")!(first);
+  emit("shardReady", 0);
+  emit("messageCreate", first);
   const then = { ...say(here, 67, "one more thing"), ...live(here) };
-  handlers.get("messageCreate")!(then);
+  emit("messageCreate", then);
 
   const opened = await inbound(opening.received, (line) => line.meta.message_id === tag.id);
   expect(opened).toMatchObject({
@@ -1419,8 +1705,8 @@ test("back online, the bot reads what was said while it was away, archived threa
   await inbound(received, (line) => line.meta.message_id === then.id);
   const late = new Set([first.id, theirs.id, then.id]);
   expect(
-    received
-      .filter((line) => line.type === "inbound" && late.has(line.meta.message_id))
+    inbounds(received)
+      .filter((line) => late.has(line.meta.message_id ?? ""))
       .map((line) => line.content),
   ).toEqual(["did the anchors ship?", "one more thing"]);
   expect(JSON.parse(readFileSync(join(state, "cursor.json"), "utf-8"))).toEqual({ id: revived.id });
@@ -1428,13 +1714,12 @@ test("back online, the bot reads what was said while it was away, archived threa
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
   await call("pin", { note: "Site: example.com" });
-  const post = here.posted.at(-1);
+  const post = lastPosted(here);
   expect(post.content).toBe("Site: example.com");
   expect(done).toContainEqual({ pin: post.id });
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: "Site: example.com" });
 
-  const edits = () =>
-    done.filter((d) => d.edit === post.id).map((d) => d.options.content as string);
+  const edits = () => done.filter((d) => d.edit === post.id).map((d) => d.options?.content ?? "");
 
   await call("reply", { text: "Rename the site?", buttons: ["Yes", "No"] });
   await until(() => /\n- \[?Rename the site\?/.test(edits().at(-1) ?? ""));
@@ -1448,7 +1733,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: "Site: example.org" });
 
   await call("pin", { note: "Site: v2" });
-  const next = here.posted.at(-1);
+  const next = lastPosted(here);
   expect(done).toContainEqual({ unpin: post.id });
   expect(book().pins[here.id]).toMatchObject({ message: next.id, note: "Site: v2" });
   await call("pin", { unpin: true });
