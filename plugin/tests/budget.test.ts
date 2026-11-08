@@ -3,11 +3,20 @@ import { copyFileSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 const BIN = join(import.meta.dir, "../../bin");
 
 const env = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !name.startsWith("HEX_")),
 );
+
+const HookOutput = z.object({
+  hookSpecificOutput: z
+    .object({ permissionDecision: z.string(), permissionDecisionReason: z.string() })
+    .optional(),
+  reason: z.string().optional(),
+});
 
 let home: string;
 
@@ -29,7 +38,7 @@ afterEach(() => {
   rmSync(home, { recursive: true });
 });
 
-function hook(tool_name: string, tool_input: object, budget = "20") {
+function hook(tool_name: string, tool_input: Record<string, string>, budget = "20") {
   const run = Bun.spawnSync([join(home, ".hex/bin/budget")], {
     stdin: Buffer.from(
       JSON.stringify({
@@ -44,7 +53,7 @@ function hook(tool_name: string, tool_input: object, budget = "20") {
   expect(run.exitCode).toBe(0);
   const out = run.stdout.toString();
 
-  return out ? JSON.parse(out) : null;
+  return out ? HookOutput.parse(JSON.parse(out)) : null;
 }
 
 const edit = (old_string: string, new_string: string, file = "AGENTS.md") =>
@@ -60,11 +69,11 @@ test("an edit past the budget is refused, with the numbers and what to do instea
     "- Keep it short.\n- Always add one more long rule for this one moment.",
   );
 
-  expect(out.hookSpecificOutput.permissionDecision).toBe("deny");
-  expect(out.hookSpecificOutput.permissionDecisionReason).toContain(
+  expect(out?.hookSpecificOutput?.permissionDecision).toBe("deny");
+  expect(out?.hookSpecificOutput?.permissionDecisionReason).toContain(
     "AGENTS.md and SOUL.md from 13 to 24 words, over the 20",
   );
-  expect(out.hookSpecificOutput.permissionDecisionReason).toContain(
+  expect(out?.hookSpecificOutput?.permissionDecisionReason).toContain(
     "Work the change into the line it belongs to",
   );
 });
@@ -75,7 +84,7 @@ test("imported files count, and hex's own files under .hex/ do not", () => {
       "A sharp friend.",
       "A sharp friend who knows my whole setup, my machines and more.",
       "SOUL.md",
-    ).hookSpecificOutput.permissionDecision,
+    )?.hookSpecificOutput?.permissionDecision,
   ).toBe("deny");
   expect(
     hook("Edit", {
@@ -89,8 +98,8 @@ test("imported files count, and hex's own files under .hex/ do not", () => {
 test("a new import counts the words of the file it brings in", () => {
   writeFileSync(join(home, "prefs.md"), "- rule\n".repeat(10));
   expect(
-    edit("- Keep it short.", "- Keep it short.\n@prefs.md").hookSpecificOutput
-      .permissionDecisionReason,
+    edit("- Keep it short.", "- Keep it short.\n@prefs.md")?.hookSpecificOutput
+      ?.permissionDecisionReason,
   ).toContain("AGENTS.md, SOUL.md, and prefs.md from 13 to 34 words");
 });
 
@@ -98,7 +107,7 @@ test("writing a file AGENTS.md already imports counts it", () => {
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n@SOUL.md\n@prefs.md\n");
   expect(
     hook("Write", { file_path: join(home, "prefs.md"), content: "- rule\n".repeat(20) })
-      .hookSpecificOutput.permissionDecision,
+      ?.hookSpecificOutput?.permissionDecision,
   ).toBe("deny");
 });
 
@@ -123,7 +132,7 @@ test("files already over the budget can always get shorter", () => {
         new_string: "- Keep it short, please.",
       },
       "5",
-    ).hookSpecificOutput.permissionDecision,
+    )?.hookSpecificOutput?.permissionDecision,
   ).toBe("deny");
 });
 
@@ -132,14 +141,14 @@ test("a whole-file write counts its new text", () => {
     hook("Write", {
       file_path: join(home, "AGENTS.md"),
       content: `@.hex/HEX.md\n@SOUL.md\n\n${"- rule\n".repeat(20)}`,
-    }).hookSpecificOutput.permissionDecision,
+    })?.hookSpecificOutput?.permissionDecision,
   ).toBe("deny");
 });
 
 test("a shell command that left the files over the budget is told to cut them back", () => {
   writeFileSync(join(home, "AGENTS.md"), `@.hex/HEX.md\n@SOUL.md\n\n${"- rule\n".repeat(20)}`);
-  expect(hook("Bash", { command: `echo '- rule' >> ${join(home, "AGENTS.md")}` }).reason).toContain(
-    "now 49 words, over the 20",
-  );
+  expect(
+    hook("Bash", { command: `echo '- rule' >> ${join(home, "AGENTS.md")}` })?.reason,
+  ).toContain("now 49 words, over the 20");
   expect(hook("Bash", { command: "ls" })).toBeNull();
 });
