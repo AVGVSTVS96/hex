@@ -29,10 +29,6 @@ void up.then(general => {
   rmSync(rollback)
 })
 
-await Promise.all([
-  import('../channels/telegram/bot.ts'),
-  import('../channels/discord/bot.ts'),
-  import('../channels/buzz/bot.ts'),
-  import('../channels/t3/bot.ts'),
-  import('../channels/voice/bot.ts'),
-])
+const channels = join(hex, 'channels')
+const { plugins } = JSON.parse(readFileSync(join(channels, '.claude-plugin/marketplace.json'), 'utf8')) as { plugins: { source: string }[] }
+await Promise.all(plugins.map(plugin => import(join(channels, plugin.source, 'bot.ts'))))

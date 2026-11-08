@@ -63,9 +63,7 @@ case "${1:-}" in
     (. "$hex/bin/settings"; bun "$hex/bin/job" --resume) || :
     first= second= third=
     while :; do
-      for dir in channels/telegram channels/discord channels/buzz channels/t3 channels/voice; do
-        bun install --no-summary --cwd "$hex/$dir" >/dev/null || :
-      done
+      bun install --no-summary --cwd "$hex" >/dev/null || :
       # Read at every start, so a restart takes the settings as they are now.
       (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") &
       hub=$!
