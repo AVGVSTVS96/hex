@@ -48,7 +48,7 @@ export const STARTUP = {
     "bin/session",
     "bin/identity.ts",
     "bin/instructions.ts",
-    "bin/chat",
+    "bin/chat.ts",
     "hub/loaded.ts",
     "hub/fit.ts",
   ],
