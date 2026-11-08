@@ -16,12 +16,26 @@ export type Moment = Task & { at: number };
 
 type AppColonThread = string;
 
+type ThreadName = string;
+
+type OpenCopiesAnAnswerOrSettleReached = number;
+
+type CopiesOrThreadsWhoseHubWasDownLeftAsTheyWere = number;
+
 export type Sent = {
   thread: AppColonThread;
-  topic: string;
-  settled: number;
-  missed: number;
+  topic: ThreadName;
+  settled: OpenCopiesAnAnswerOrSettleReached;
+  missed: CopiesOrThreadsWhoseHubWasDownLeftAsTheyWere;
 };
+
+type QuestionIdPutOnTheCallersScreen = string;
+
+type WhatSendingTheAnswerDid = Sent;
+
+type MediaIdTheCallerSentFromTheApp = string;
+
+type AnswerTakenBack = "undone";
 
 export type Mark = {
   at: number;
@@ -33,13 +47,13 @@ export type Mark = {
     | "warned"
     | "ask"
     | "answered"
-    | "undone"
+    | AnswerTakenBack
     | "photo"
     | "video";
   text: string;
-  ask?: string;
-  sent?: Sent;
-  media?: string;
+  ask?: QuestionIdPutOnTheCallersScreen;
+  sent?: WhatSendingTheAnswerDid;
+  media?: MediaIdTheCallerSentFromTheApp;
 };
 
 export type Saved = {

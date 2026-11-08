@@ -74,6 +74,10 @@ const CALLS = join(homedir(), ".claude", "channels", "voice", "calls");
 const RECENT = 3 * 24 * 60 * 60_000;
 const LONG = 2400;
 
+const ONE_MARK_SO_A_BURST_OF_EVENTS_COSTS_ONE_MORE_PASS_AT_MOST = "next";
+
+const ownProcessThatOutlivesTheVoiceSession = { detached: true, stdio: "ignore" } as const;
+
 export class Check {
   private readonly dir: string;
   private readonly state: string;
@@ -91,13 +95,14 @@ export class Check {
   }
 
   start(why: string) {
-    writeFileSync(join(this.dir, "next"), why);
+    writeFileSync(join(this.dir, ONE_MARK_SO_A_BURST_OF_EVENTS_COSTS_ONE_MORE_PASS_AT_MOST), why);
 
     if (!this.running) {
-      spawn(process.execPath, [import.meta.path, this.state], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
+      spawn(
+        process.execPath,
+        [import.meta.path, this.state],
+        ownProcessThatOutlivesTheVoiceSession,
+      ).unref();
     }
   }
 }
@@ -105,9 +110,16 @@ export class Check {
 async function passPerMarkWhileHoldingTheLock(state: string) {
   const dir = join(state, "voice", "check");
 
-  while (existsSync(join(dir, "next")) && hold(join(dir, "lock"))) {
+  while (
+    existsSync(join(dir, ONE_MARK_SO_A_BURST_OF_EVENTS_COSTS_ONE_MORE_PASS_AT_MOST)) &&
+    hold(join(dir, "lock"))
+  ) {
     try {
-      for (let why = take(join(dir, "next")); why !== undefined; why = take(join(dir, "next"))) {
+      for (
+        let why = take(join(dir, ONE_MARK_SO_A_BURST_OF_EVENTS_COSTS_ONE_MORE_PASS_AT_MOST));
+        why !== undefined;
+        why = take(join(dir, ONE_MARK_SO_A_BURST_OF_EVENTS_COSTS_ONE_MORE_PASS_AT_MOST))
+      ) {
         try {
           await pass(state, why);
           rmSync(join(dir, "error"), { force: true });
@@ -163,7 +175,9 @@ async function pass(state: string, why: string) {
   const records = gather(state);
   const inputs = digest(records);
 
-  if (records.previous?.inputs === inputs) {
+  const recordsUnchangedSinceTheLastPassSoOpusIsSkipped = records.previous?.inputs === inputs;
+
+  if (recordsUnchangedSinceTheLastPassSoOpusIsSkipped) {
     return;
   }
 

@@ -64,7 +64,14 @@ export type Did = {
 
 export type Names = (id: string) => string | undefined;
 
-export type Item = { id: string; type: string; status: string; payload: unknown };
+export type CodexTurnItemAsT3CodeKeepsIt = {
+  id: string;
+  type: string;
+  status: string;
+  payload: unknown;
+};
+
+export type Item = CodexTurnItemAsT3CodeKeepsIt;
 
 const loose = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
 

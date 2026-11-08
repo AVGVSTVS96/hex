@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ function scratch() {
   const dir = mkdtempSync(join(tmpdir(), "calls-"));
 
   return {
+    dir,
     calls: new CallLog(dir),
     [Symbol.dispose]: () => {
       rmSync(dir, { recursive: true });
@@ -92,4 +93,14 @@ test("the list leaves out hex's own words, and keeps the summary and what waits"
 
   expect(listed).not.toHaveProperty("moments");
   expect(listed).toMatchObject({ summary: "Checked CI.", waiting: ["Merge the PR"] });
+});
+
+test("a past call is parsed again only once its file changes, since the list is read on every change to a live call and parsing every record each time would stall the engine, phone audio and all", () => {
+  using log = scratch();
+  log.calls.save(record("one", "2026-11-01T10:00:00.000Z"));
+  expect(log.calls.list().map((call) => call.preview)).toEqual(["Is the build green?"]);
+
+  chmodSync(join(log.dir, "one.json"), 0o000);
+
+  expect(log.calls.list().map((call) => call.preview)).toEqual(["Is the build green?"]);
 });
