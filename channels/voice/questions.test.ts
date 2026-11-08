@@ -1471,85 +1471,6 @@ test("a question names every place it was asked, each thread once at its open qu
   });
 });
 
-test("a check written before places and links were typed still gives each question its places, and its url options as links", () => {
-  ledger([asked(1, "Read the review?", ["Done", "Later"])]);
-  writeFileSync(
-    join(state, "voice", "check.json"),
-    JSON.stringify({
-      at: "2026-10-13T20:00:00.000Z",
-      why: "a call ended",
-      read: {},
-      fixed: [],
-      flagged: [],
-      stuck: [],
-      asks: [
-        {
-          id: "check:review",
-          kind: "do",
-          task: `telegram:${DESK}`,
-          at: "",
-          question: "Read the review",
-          options: [
-            { label: "Done", value: "Done" },
-            { label: "Open PR #2", url: "https://github.com/x/pull/2" },
-          ],
-          places: ["desk", "hex"],
-          refs: [{ app: "telegram", thread: DESK, message: 1 }],
-        },
-        {
-          id: "check:pin",
-          kind: "do",
-          task: `telegram:${GROUP}`,
-          at: "",
-          question: "File the claim",
-          options: [{ label: "Done" }],
-          places: ["hex"],
-        },
-      ],
-    }),
-  );
-  questions = new Questions(state, {
-    t3Database: "/nonexistent",
-    t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
-  });
-  expect(
-    questions.view.asks.map((question) => [
-      question.id,
-      question.options,
-      question.links,
-      question.places,
-    ]),
-  ).toEqual([
-    [
-      "check:review",
-      [{ label: "Done", value: "Done" }],
-      [{ label: "Open PR #2", url: "https://github.com/x/pull/2" }],
-      [
-        {
-          app: "telegram",
-          place: "desk",
-          task: `telegram:${DESK}`,
-          link: "https://t.me/c/1234/5/1",
-        },
-      ],
-    ],
-    [
-      "check:pin",
-      [{ label: "Done" }],
-      undefined,
-      [
-        {
-          app: "telegram",
-          place: "General",
-          task: `telegram:${GROUP}`,
-          link: "https://t.me/c/1234/1",
-        },
-      ],
-    ],
-  ]);
-});
-
 test("a status post's page is read from hex.db as it opens, and only a new note starts a check, not the lines hex rewrites", async () => {
   const pin = {
     message: 7,
@@ -1594,44 +1515,6 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   store.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.org" });
   await until(() => checks.length);
   expect(checks).toEqual(["a pinned post changed"]);
-});
-
-test("a check.json's links reach the app only when they open a page or an app, its old url options included", () => {
-  writeFileSync(
-    join(state, "voice", "check.json"),
-    JSON.stringify({
-      at: "2026-10-13T15:00:00.000Z",
-      why: "a call ended",
-      read: {},
-      fixed: [],
-      flagged: [],
-      stuck: [],
-      asks: [
-        {
-          id: "check:read",
-          kind: "look",
-          task: `telegram:${DESK}`,
-          at: "",
-          question: "Read it",
-          options: [
-            { label: "Seen" },
-            { label: "Notes", url: "file:///home/a/notes.md" },
-            { label: "PR", url: "https://github.com/a/b/pull/2" },
-          ],
-          links: [{ label: "Report", url: "/home/a/report.md" }],
-        },
-      ],
-    }),
-  );
-  questions = new Questions(state, {
-    t3Database: "/nonexistent",
-    t3Home: "/nonexistent",
-    check: (why) => checks.push(why),
-  });
-  expect(questions.find("check:read")).toMatchObject({
-    options: [{ label: "Seen" }],
-    links: [{ label: "PR", url: "https://github.com/a/b/pull/2" }],
-  });
 });
 
 test("an answered ask the check lists again without buttons is flagged, not listed", () => {
@@ -2104,4 +1987,56 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
     why: "It is the only one as fast as the server.",
     options,
   });
+});
+
+test("a poll's screenshots go with its ask, labeled by their options, raw and once a check takes it up", () => {
+  ledger([
+    asked(7, "One call button?", ["One (my pick)", "Both"], {
+      poll: "p7",
+      shots: ["/s/one.png", "/s/both.png"],
+    }),
+    asked(8, "Ship it?", ["Yes", "No"]),
+  ]);
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+  const raw = `telegram:${DESK}:7`;
+  expect(questions.find(raw)?.shots).toEqual(["One", "Both"]);
+  expect(questions.shot(raw, 1)).toBe("/s/both.png");
+  expect(questions.find(`telegram:${DESK}:8`)?.shots).toBeUndefined();
+  questions.close();
+
+  writeFileSync(
+    join(state, "voice", "check.json"),
+    JSON.stringify({
+      at: "2026-10-13T20:00:00.000Z",
+      why: "a call ended",
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [
+        {
+          id: "check:button",
+          kind: "pick",
+          task: `telegram:${DESK}`,
+          at: "",
+          question: "One call button on the project page?",
+          options: [{ label: "One" }, { label: "Both" }],
+          refs: [{ app: "telegram", thread: DESK, message: 7 }],
+        },
+      ],
+    }),
+  );
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+  expect(questions.find("check:button")?.shots).toEqual(["One", "Both"]);
+  expect(questions.shot("check:button", 0)).toBe("/s/one.png");
+  expect(questions.shot(raw, 0)).toBe("/s/one.png");
+  expect(questions.shot("check:button", 2)).toBeUndefined();
 });

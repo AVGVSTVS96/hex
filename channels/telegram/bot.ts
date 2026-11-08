@@ -680,13 +680,38 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
     case "poll": {
       const question = args.question as string;
       const options = args.options as string[];
+      const shots = ((args.files as string[] | undefined) ?? []).map((file) => realpathSync(file));
+      if (shots.length && shots.length !== options.length)
+        throw new Error(
+          `files are one screenshot per option: ${shots.length} for ${options.length} options`,
+        );
+      for (const shot of shots)
+        if (!asPhoto(shot)) throw new Error(`a screenshot is a photo under 10MB: ${shot}`);
+      const album = shots.length
+        ? await bot.api.sendMediaGroup(
+            chat_id,
+            shots.map((shot, i) => ({
+              type: "photo" as const,
+              media: new InputFile(shot),
+              caption: options[i],
+            })),
+            extra,
+          )
+        : [];
+      album.forEach((sent, i) =>
+        said(thread, sent.message_id, options[i]!, { file: basename(shots[i]!) }),
+      );
       const sent = await bot.api.sendPoll(chat_id, question, options, {
         ...extra,
+        ...(album[0] && { reply_parameters: { message_id: album[0].message_id } }),
         is_anonymous: false,
         allows_multiple_answers: !!args.multiple,
       });
       said(thread, sent.message_id, question, { poll: options.join(" / ") });
-      ledger.ask(thread, sent.message_id, question, options, sent.poll.id);
+      ledger.ask(thread, sent.message_id, question, options, {
+        poll: sent.poll.id,
+        ...(shots.length && { shots }),
+      });
       return `sent poll (id: ${sent.message_id})`;
     }
     case "rename_thread": {

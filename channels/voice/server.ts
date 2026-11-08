@@ -1694,6 +1694,13 @@ async function questionRoutes(request: Request, url: URL) {
     return questions.lastCheck
       ? Response.json(questions.lastCheck)
       : new Response("No check yet", { status: 404 });
+  const [, shown, n] = url.pathname.match(/^\/asks\/([^/]+)\/shots\/(\d+)$/) ?? [];
+  if (shown && request.method === "GET") {
+    const file = questions.shot(decodeURIComponent(shown), Number(n));
+    return file && (await Bun.file(file).exists())
+      ? new Response(Bun.file(file))
+      : new Response("No such screenshot", { status: 404 });
+  }
   const [, asked] = url.pathname.match(/^\/asks\/([^/]+)\/words$/) ?? [];
   if (asked && request.method === "GET") {
     const words = questions.words(decodeURIComponent(asked));

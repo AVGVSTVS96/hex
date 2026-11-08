@@ -912,7 +912,7 @@ function serve(token: string) {
             `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
           );
         }
-        if (labels?.length) ledger.ask(thread, sentIds.at(-1)!, text, labels, undefined, multiple);
+        if (labels?.length) ledger.ask(thread, sentIds.at(-1)!, text, labels, { multiple });
         else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text);
 
         return sentIds.length === 1
@@ -997,7 +997,9 @@ function serve(token: string) {
         said(thread, sent.id, args.question as string, {
           poll: (args.options as string[]).join(" / "),
         });
-        ledger.ask(thread, sent.id, args.question as string, args.options as string[], sent.id);
+        ledger.ask(thread, sent.id, args.question as string, args.options as string[], {
+          poll: sent.id,
+        });
         return `sent poll (id: ${sent.id})`;
       }
       case "download_attachment": {

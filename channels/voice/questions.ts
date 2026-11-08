@@ -8,7 +8,7 @@ import { open as store, type Thread } from "../../hub/store.ts";
 import { generalOf, nameOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";
-import { before, Check, final, opens } from "./check.ts";
+import { before, Check, final } from "./check.ts";
 import { linkAt, Links } from "./links.ts";
 import { relay } from "./relay.ts";
 import { T3, type Fresh, type Stuck } from "./t3.ts";
@@ -60,6 +60,8 @@ export type Question = {
   why?: string;
   options: Option[];
   links?: Link[];
+  // The labels of the options its screenshots show, one each, in order: /asks/<id>/shots/<n> is one.
+  shots?: string[];
   tag?: string;
   places: Place[];
   // The ids it was listed under before hex's check took it up, so what the app holds under one,
@@ -74,15 +76,9 @@ export type Question = {
 // hex's check rewrites the raw questions into these: one per decision, however many places asked
 // it (from; refs are the open questions with buttons among them, which an answer goes back to), in
 // the order that unblocks the most, with its pick and what it costs.
-export type Curated = Omit<Question, "app" | "topic" | "places"> & {
+export type Curated = Omit<Question, "app" | "topic" | "places" | "shots"> & {
   from?: Source[];
   refs?: Ref[];
-};
-// A check.json written before places and links were typed: its places were names and a link was an
-// option with a url. The next pass rewrites it.
-type Written = Omit<Curated, "options"> & {
-  places?: string[];
-  options: (Option & { url?: string })[];
 };
 // Where an ask came from in its thread's own words, for its card under "From <place>": the place as
 // Tasks names it, when it was said there, and the words as written.
@@ -146,6 +142,7 @@ export class Questions extends Changes {
   private check: (why: string) => void;
   private seen?: { pins: string; t3: string };
   private callPlaces = new Map<string, CallPlace>();
+  private shots = new Map<string, string[]>();
   private lastCallPlaces = new Map<string, CallPlace>();
 
   constructor(
@@ -198,6 +195,12 @@ export class Questions extends Changes {
     for (const stop of this.stops) stop();
   }
 
+  // The file of an open ask's nth screenshot.
+  shot(id: string, n: number): string | undefined {
+    const asked = this.find(id);
+    return asked && this.shots.get(asked.id)?.[n];
+  }
+
   find(id: string) {
     const listed = (id: string) => this.view.asks.find((question) => question.id === id);
     return listed(id) ?? listed(this.renamed(id) ?? id);
@@ -208,7 +211,7 @@ export class Questions extends Changes {
   private renamed(id: string): string | undefined {
     if (this.view.asks.some((question) => question.id === id)) return;
     const copies = new Set([id, ...(this.marks.reopened[id]?.refs ?? []).map(refId)]);
-    return this.result?.asks.find((question: Written) =>
+    return this.result?.asks.find((question: Curated) =>
       question.refs?.some((ref) => copies.has(refId(ref))),
     )?.id;
   }
@@ -674,6 +677,7 @@ export class Questions extends Changes {
   }
 
   private build() {
+    this.shots.clear();
     this.threads.clear();
     this.pins.clear();
     const questions = store(this.state).questions({ asker: "hex" });
@@ -694,7 +698,7 @@ export class Questions extends Changes {
     [this.lastCallPlaces, this.callPlaces] = [this.callPlaces, new Map()];
     this.notice();
     const used = new Set<string>();
-    const curated = (this.result?.asks ?? []).flatMap((question: Written) => {
+    const curated = (this.result?.asks ?? []).flatMap((question: Curated) => {
       for (const ref of question.refs ?? []) used.add(refId(ref));
       const live = question.refs?.length
         ? question.refs.some((ref) => this.open(ref))
@@ -782,26 +786,18 @@ export class Questions extends Changes {
         : {};
   }
 
-  private dress({
-    refs,
-    from,
-    options,
-    links = [],
-    places: _names,
-    ...question
-  }: Written): Question {
+  private dress({ refs, from, ...question }: Curated): Question {
     const [app, ...thread] = question.task.split(":");
-    const pages = [
-      ...links,
-      ...options.flatMap(({ label, url }) => (url ? [{ label, url }] : [])),
-    ].filter((page) => opens(page.url));
     const was = (refs ?? []).map(refId).filter((id) => id !== question.id);
+    const shown = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.shots);
+    if (shown) this.shots.set(question.id, shown.shots!);
     return {
       ...question,
       app: app!,
       topic: this.topic(question.task),
-      options: options.filter((option) => !option.url),
-      ...(pages.length && { links: pages }),
+      ...(shown && {
+        shots: shown.options.map((value) => value.replace(PICK, "").trim() || value),
+      }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(":") }]),
       ...(was.length && { was }),
       ...this.half(question.id),
