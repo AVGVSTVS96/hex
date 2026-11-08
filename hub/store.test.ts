@@ -1132,6 +1132,35 @@ test("a thread's sessions cut short mid-turn give back what they took since last
   expect(store.cut("7")).toEqual([]);
 });
 
+test("a session that only posted in a thread, as General does opening a topic, isn't one of its sessions: cutting the thread leaves that session's turn and what it took alone", () => {
+  const store = new Store(dir);
+  store.deliver({
+    key: "telegram:ask",
+    to: "general",
+    from: "telegram",
+    author: "owner",
+    body: "make a topic",
+    meta: {},
+  });
+  store.turned("general-1", true, "2026-10-21T10:00:00.000Z");
+  store.take("telegram:ask", "general-1");
+  store.deliver(
+    {
+      key: "telegram:opened",
+      to: "topic",
+      from: "telegram",
+      author: "hex",
+      body: "this topic is its home",
+      meta: {},
+    },
+    "general-1",
+  );
+  expect(store.midTurn("topic")).toBe(false);
+  expect(store.cut("topic")).toEqual([]);
+  expect(store.untaken("general")).toEqual([]);
+  expect(store.midTurn("general")).toBe(true);
+});
+
 test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
   const store = new Store(dir);
   store.keepThreads("telegram", {
