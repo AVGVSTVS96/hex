@@ -4080,7 +4080,7 @@ test("an operation keeps its result across Stop events regardless of elapsed tim
     if (ran) {
       waiting.shift()!();
     }
-    expect((await repeat).content[0].text).toBe(`reply ${text}`);
+    expect((await repeat).content[0]?.text).toBe(`reply ${text}`);
 
     return !ran;
   };
