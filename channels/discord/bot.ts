@@ -25,6 +25,7 @@ import {
   ButtonStyle,
   StringSelectMenuBuilder,
   ApplicationCommandOptionType,
+  ComponentType,
   ApplicationIntegrationType,
   InteractionContextType,
   DiscordjsErrorCodes,
@@ -45,9 +46,6 @@ import type {
   ChatInputApplicationCommandData,
   PollAnswer,
   PartialPollAnswer,
-  ActionRow,
-  ButtonComponent,
-  StringSelectMenuComponent,
   Attachment,
   Collection,
   Channel,
@@ -108,21 +106,7 @@ for (const line of readEnvFile().split("\n")) {
   }
 }
 
-const TOKEN = process.env.DISCORD_BOT_TOKEN;
-
-if (TOKEN !== undefined && TOKEN !== "") {
-  process.on("unhandledRejection", (error) => {
-    process.stderr.write(`discord hub: unhandled rejection: ${String(error)}\n`);
-  });
-  process.on("uncaughtException", (error) => {
-    process.stderr.write(`discord hub: uncaught exception: ${String(error)}\n`);
-  });
-  serve(TOKEN);
-} else {
-  process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
-}
-
-const Access = z.object({
+const AccessFile = z.object({
   allowFrom: z.array(z.string()).default([]),
   ackReaction: z.string().optional(),
   replyToMode: z.enum(["off", "first", "all"]).optional(),
@@ -130,7 +114,7 @@ const Access = z.object({
   chunkMode: z.enum(["length", "newline"]).optional(),
 });
 
-type Access = z.output<typeof Access>;
+type Access = z.output<typeof AccessFile>;
 
 const Coded = z.object({ code: z.union([z.string(), z.number()]) });
 
@@ -141,7 +125,7 @@ const failed = (what: string) => (cause: unknown) =>
 
 function loadAccess(): Access {
   try {
-    return Access.parse(JSON.parse(readFileSync(ACCESS_FILE, "utf-8")));
+    return AccessFile.parse(JSON.parse(readFileSync(ACCESS_FILE, "utf-8")));
   } catch (error) {
     if (codeOf(error) !== "ENOENT") {
       process.stderr.write(
@@ -228,7 +212,101 @@ async function messageIn(ch: Conversation, id: string): Promise<DiscordMessage> 
   return msg;
 }
 
-const filled = (text: string | undefined): text is string => text !== undefined && text !== "";
+const filled = (text: string | null | undefined): text is string =>
+  text !== undefined && text !== null && text !== "";
+
+const withoutMentions = (text: string) => text.replaceAll(/<@[!&]?\d+>/gu, "").trim();
+
+const failure = (what: string) => failed(`${what} failed`);
+
+const allowed = (user: string) => loadAccess().allowFrom.includes(user);
+
+async function replyMeta(msg: DiscordMessage): Promise<Record<string, string>> {
+  const repliedTo = msg.reference?.messageId;
+
+  if (msg.type !== MessageType.Reply || !filled(repliedTo)) {
+    return {};
+  }
+
+  const replied = await msg.fetchReference().catch(() => null);
+
+  if (replied === null) {
+    return { reply_to_message_id: repliedTo };
+  }
+
+  const atts = listed(replied.attachments);
+
+  return {
+    reply_to_message_id: replied.id,
+    reply_to_user: replied.author.username,
+    ...(replied.content !== "" && { reply_to_text: replied.content }),
+    ...(atts.length > 0 && { reply_to_attachments: atts.join("; ") }),
+  };
+}
+
+const Cursor = z.object({ id: z.string() });
+
+function keepCursor(id: string) {
+  writeFileSync(`${CURSOR_FILE}.tmp`, `${JSON.stringify({ id })}\n`);
+  renameSync(`${CURSOR_FILE}.tmp`, CURSOR_FILE);
+
+  return id;
+}
+
+function readCursor(): string {
+  try {
+    return Cursor.parse(JSON.parse(readFileSync(CURSOR_FILE, "utf-8"))).id;
+  } catch {
+    return keepCursor(SnowflakeUtil.generate().toString());
+  }
+}
+
+type Listened = TextChannel | NewsChannel | AnyThreadChannel | DMChannel;
+
+async function after(ch: Listened, from: string): Promise<DiscordMessage[]> {
+  const found: DiscordMessage[] = [];
+
+  for (let since = from; ;) {
+    const page = [...(await ch.messages.fetch({ after: since, limit: 100 })).values()];
+    found.push(...page);
+
+    if (page.length < 100) {
+      return found;
+    }
+
+    for (const m of page) {
+      if (BigInt(m.id) > BigInt(since)) {
+        since = m.id;
+      }
+    }
+  }
+}
+
+// Discord lists archived threads newest-archived first: https://discord.com/developers/docs/resources/channel#list-public-archived-threads
+async function archivedSince(
+  ch: TextChannel | NewsChannel | ForumChannel,
+  from: string,
+): Promise<AnyThreadChannel[]> {
+  const since = SnowflakeUtil.timestampFrom(from);
+  const found: AnyThreadChannel[] = [];
+
+  for (let before: number | undefined; ;) {
+    const page = await ch.threads.fetchArchived({
+      ...(before !== undefined && { before }),
+      limit: 100,
+    });
+
+    const threads = [...page.threads.values()];
+    found.push(...threads);
+    const oldest = Math.min(...threads.map((t) => t.archiveTimestamp ?? 0));
+
+    if (!page.hasMore || threads.length === 0 || oldest < since) {
+      return found;
+    }
+
+    before = oldest;
+  }
+}
 
 const ANSWERED_IN = new Map([
   ["app", "in the app"],
@@ -1436,61 +1514,34 @@ function serve(token: string) {
     backfill,
   });
 
-  const allowed = (user: string) => loadAccess().allowFrom.includes(user);
   voiceCalls(client, allowed);
 
-  // A tag in a channel starts a thread on that message, Claude-tag style; inside a thread
-  // every message reaches its session without one, and so does the message it hangs off
-  // once the hub serves that thread.
   async function threadOf(msg: DiscordMessage): Promise<Conversation | undefined> {
     if (msg.channel.isDMBased()) {
       dms.add(msg.channelId);
     }
 
-    if (msg.channel.isThread() || msg.channel.isDMBased()) {
-      return msg.channel as Conversation;
+    if (msg.channel.isThread() || msg.channel.type === ChannelType.DM) {
+      return msg.channel;
     }
 
     if (!isText(msg.channel)) {
       return;
     }
 
-    if (msg.thread && hub.name(msg.thread.id)) {
+    if (msg.thread !== null && filled(hub.name(msg.thread.id))) {
       return msg.thread;
     }
 
-    if (!client.user || !msg.mentions.has(client.user)) {
+    if (client.user === null || !msg.mentions.has(client.user)) {
       return;
     }
 
-    const words = msg.content
-      .replaceAll(/<@[!&]?\d+>/g, "")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
+    const words = withoutMentions(msg.content)
+      .split(/\s+/u)
+      .filter((word) => word !== "");
 
     return await (msg.thread ?? msg.startThread({ name: words[0] ?? "Thread" }));
-  }
-
-  async function replyMeta(msg: DiscordMessage): Promise<Record<string, string>> {
-    if (msg.type !== MessageType.Reply || !msg.reference?.messageId) {
-      return {};
-    }
-
-    const replied = await msg.fetchReference().catch(() => null);
-
-    if (!replied) {
-      return { reply_to_message_id: msg.reference.messageId };
-    }
-
-    const atts = listed(replied.attachments);
-
-    return {
-      reply_to_message_id: replied.id,
-      reply_to_user: replied.author.username,
-      ...(replied.content ? { reply_to_text: replied.content } : {}),
-      ...(atts.length > 0 ? { reply_to_attachments: atts.join("; ") } : {}),
-    };
   }
 
   async function handleInbound(
@@ -1504,34 +1555,32 @@ function serve(token: string) {
       return;
     }
 
-    // A thread opened on a message begins with an empty starter pointing at it: that message is what opens the thread.
-    if (msg.type === MessageType.ThreadStarterMessage) {
-      return await handleInbound(await msg.fetchReference(), edited, msg.channel as ThreadChannel);
+    if (msg.type === MessageType.ThreadStarterMessage && msg.channel.isThread()) {
+      await handleInbound(await msg.fetchReference(), edited, msg.channel);
+
+      return;
     }
 
     const ch = thread ?? (await threadOf(msg));
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
 
     const opened = !edited && ch.id === msg.id;
-    const tagged = opened && ch.isThread() && ch.ownerId === client.user!.id;
-    const forum = ch.isThread() && !!ch.parent?.isThreadOnly();
+    const tagged = opened && ch.isThread() && ch.ownerId === bot().id;
+    const forum = ch.isThread() && ch.parent?.isThreadOnly() === true;
 
-    if (ch.isThread() && ch.archived) {
+    if (ch.isThread() && ch.archived === true) {
       await ch.setArchived(false).catch(() => null);
     }
 
     void ch.sendTyping().catch(() => null);
 
-    if (access.ackReaction) {
+    if (filled(access.ackReaction)) {
       void msg.react(access.ackReaction).catch(() => null);
     }
 
-    // Attachments are listed (name/type/size) and only images are downloaded: the model
-    // calls download_attachment for the rest. The listing goes in meta only, since an
-    // in-content annotation is forgeable by the sender.
     const forwarded = msg.messageSnapshots.first();
     const source = forwarded ?? msg;
     const atts = listed(source.attachments);
@@ -1540,46 +1589,44 @@ function serve(token: string) {
     const voiced = source.flags.has(MessageFlags.IsVoiceMessage);
     const heard = voiced ? await hear(source.attachments.first()) : undefined;
     const shots = edited || voiced ? [] : await images(source.attachments);
+    const said = withoutMentions(source.content);
+
+    const placeholder =
+      atts.length > 0 ? "(attachment)" : stickers.length > 0 ? "(sticker)" : poll ? "(poll)" : "";
 
     const message: Message = {
       author: "owner",
-      key: edited ? `${msg.id}@${msg.editedTimestamp}` : msg.id,
-      content: heard
+      key: edited ? `${msg.id}@${String(msg.editedTimestamp)}` : msg.id,
+      content: filled(heard)
         ? `(voice message) ${heard}`
         : voiced
           ? "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)"
-          : source.content.replaceAll(/<@[!&]?\d+>/g, "").trim() ||
-            (atts.length > 0
-              ? "(attachment)"
-              : stickers.length > 0
-                ? "(sticker)"
-                : poll
-                  ? "(poll)"
-                  : ""),
+          : said === ""
+            ? placeholder
+            : said,
       meta: {
         chat_id: ch.id,
         message_id: msg.id,
         user: msg.author.username,
         user_id: msg.author.id,
         ts: msg.createdAt.toISOString(),
-        ...(ch.isThread() && ch.parent ? { channel: ch.parent.name } : {}),
-        ...(tagged ? { new_thread: "true" } : {}),
-        ...(opened && forum ? { post_title: nameOf(ch) } : {}),
-        ...(shots.length > 0 ? { image_path: shots.join("; ") } : {}),
-        ...(atts.length > 0
-          ? { attachment_count: String(atts.length), attachments: atts.join("; ") }
-          : {}),
-        ...(stickers.length > 0 ? { stickers: stickers.join("; ") } : {}),
-        ...(poll
-          ? {
-              poll: poll.question.text!,
-              poll_options: poll.answers.map((a) => a.text).join("; "),
-              ...(poll.allowMultiselect ? { poll_multiple: "true" } : {}),
-            }
-          : {}),
+        ...(ch.isThread() && ch.parent && { channel: ch.parent.name }),
+        ...(tagged && { new_thread: "true" }),
+        ...(opened && forum && { post_title: nameOf(ch) }),
+        ...(shots.length > 0 && { image_path: shots.join("; ") }),
+        ...(atts.length > 0 && {
+          attachment_count: String(atts.length),
+          attachments: atts.join("; "),
+        }),
+        ...(stickers.length > 0 && { stickers: stickers.join("; ") }),
+        ...(poll && {
+          poll: poll.question.text ?? "",
+          poll_options: poll.answers.map((a) => a.text).join("; "),
+          ...(poll.allowMultiselect && { poll_multiple: "true" }),
+        }),
         ...(await replyMeta(msg)),
-        ...(edited ? { edited: "true" } : {}),
-        ...(forwarded ? { forwarded: "true" } : {}),
+        ...(edited && { edited: "true" }),
+        ...(forwarded && { forwarded: "true" }),
       },
     };
 
@@ -1587,14 +1634,12 @@ function serve(token: string) {
     ledger.heard(ch.id, msg.id, message.content, message.meta.reply_to_message_id);
   }
 
-  // Reactions and deletes reach only a thread the hub already serves: in it,
-  // or on the message it hangs off, which shares the thread's id.
   async function servedThread(
     msg: DiscordMessage | PartialMessage,
   ): Promise<Conversation | undefined> {
     const id = msg.channel.isThread() || msg.channel.isDMBased() ? msg.channelId : msg.id;
 
-    return hub.name(id) ? await threadChannel(id) : undefined;
+    return filled(hub.name(id)) ? await threadChannel(id) : undefined;
   }
 
   async function handleReaction(
@@ -1608,7 +1653,7 @@ function serve(token: string) {
 
     const ch = await servedThread(reaction.message);
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
 
@@ -1627,16 +1672,15 @@ function serve(token: string) {
         user_id: who.id,
         ts: new Date().toISOString(),
         reaction: emoji,
-        ...(removed ? { reaction_removed: "true" } : {}),
+        ...(removed && { reaction_removed: "true" }),
         reaction_to_message_id: reaction.message.id,
-        ...(target ? { reaction_to_user: target.author.username } : {}),
-        ...(target?.content ? { reaction_to_text: target.content } : {}),
+        ...(target !== null && { reaction_to_user: target.author.username }),
+        ...(target !== null && filled(target.content) && { reaction_to_text: target.content }),
       },
     });
   }
 
-  // Discord doesn't say who deleted a message, so every delete in a served
-  // thread is reported except the bot's own delete_message calls.
+  // Discord's delete event doesn't say who deleted the message: https://discord.com/developers/docs/events/gateway-events#message-delete
   async function handleDelete(msg: DiscordMessage | PartialMessage): Promise<void> {
     if (deleting.delete(msg.id)) {
       return;
@@ -1644,7 +1688,7 @@ function serve(token: string) {
 
     const ch = await servedThread(msg);
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
 
@@ -1658,7 +1702,7 @@ function serve(token: string) {
         message_id: msg.id,
         ts: new Date().toISOString(),
         deleted: "true",
-        ...(msg.content ? { deleted_text: msg.content } : {}),
+        ...(filled(msg.content) && { deleted_text: msg.content }),
       },
     });
   }
@@ -1674,7 +1718,7 @@ function serve(token: string) {
 
     const ch = await servedThread(answer.poll.message);
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
 
@@ -1682,7 +1726,7 @@ function serve(token: string) {
       ? await answer.poll.message.fetch()
       : answer.poll.message;
 
-    if (msg.author.id !== client.user!.id || !msg.poll) {
+    if (msg.author.id !== bot().id || msg.poll === null) {
       return;
     }
 
@@ -1700,7 +1744,7 @@ function serve(token: string) {
           user_id: who.id,
           ts: new Date().toISOString(),
           vote,
-          ...(removed ? { vote_removed: "true" } : {}),
+          ...(removed && { vote_removed: "true" }),
           poll_message_id: msg.id,
           poll: msg.poll.question.text ?? "",
         },
@@ -1708,7 +1752,7 @@ function serve(token: string) {
       () => {
         if (!removed) {
           ledger.answered(ch.id, msg.id, vote, "discord", true);
-        } else if (ledger.find(ch.id, msg.id)?.answer?.label === vote) {
+        } else if (questionAt(ch.id, msg.id)?.answer?.label === vote) {
           ledger.reopened(ch.id, msg.id);
         }
 
@@ -1717,16 +1761,14 @@ function serve(token: string) {
     );
   }
 
-  // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does,
-  // and its buttons are drawn again from the one that stands.
   async function picked(
     ch: Conversation,
     label: string,
-    at: Date,
+    tappedAt: Date,
     user: { id: string; username: string },
     message: string,
   ) {
-    const question = ledger.find(ch.id, message);
+    const question = questionAt(ch.id, message);
     hub.deliver(
       ch.id,
       nameOf(ch),
@@ -1737,7 +1779,7 @@ function serve(token: string) {
           chat_id: ch.id,
           user: user.username,
           user_id: user.id,
-          ts: at.toISOString(),
+          ts: tappedAt.toISOString(),
           button: "true",
           button_message_id: message,
         },
@@ -1745,37 +1787,43 @@ function serve(token: string) {
       question && (() => ledger.answered(ch.id, message, label, "discord")),
     );
 
-    if (question) {
+    if (question !== undefined) {
       await draw(ch.id, message);
     }
   }
 
-  // Discord wants an answer to a tap within three seconds, so the buttons change before anything is fetched.
+  // Discord wants the first answer to a tap within 3 seconds: https://discord.com/developers/docs/interactions/receiving-and-responding#responding-to-an-interaction
   async function handleTap(tap: ButtonInteraction): Promise<void> {
     if (!allowed(tap.user.id)) {
-      return void (await tap.deferUpdate());
-    }
-
-    const verdict = /^perm:(allow|deny):(\w+)$/.exec(tap.customId);
-
-    if (verdict) {
-      await tap.update({ components: verdicts(verdict[2]!, verdict[1]) });
-      asking.get(tap.channelId)?.delete(tap.message.id);
-
-      hub.answer(tap.channelId, verdict[2]!, verdict[1] as "allow" | "deny");
+      await tap.deferUpdate();
 
       return;
     }
 
-    const labels = (tap.message.components as ActionRow<ButtonComponent>[]).flatMap((row) =>
-      row.components.map((button) => button.label!),
+    const [, behavior, request] = /^perm:(allow|deny):(\w+)$/u.exec(tap.customId) ?? [];
+
+    if (request !== undefined && (behavior === "allow" || behavior === "deny")) {
+      await tap.update({ components: verdicts(request, behavior) });
+      asking.get(tap.channelId)?.delete(tap.message.id);
+
+      hub.answer(tap.channelId, request, behavior);
+
+      return;
+    }
+
+    const labels = tap.message.components.flatMap((row) =>
+      row.type === ComponentType.ActionRow
+        ? row.components.flatMap((each) =>
+            each.type === ComponentType.Button ? [each.label ?? ""] : [],
+          )
+        : [],
     );
 
     const chosen = Number(tap.customId);
     await tap.update({ components: buttons(labels, chosen) });
     await picked(
       await threadChannel(tap.channelId),
-      labels[chosen]!,
+      labels[chosen] ?? "",
       tap.createdAt,
       tap.user,
       tap.message.id,
@@ -1784,14 +1832,13 @@ function serve(token: string) {
 
   async function handleMenu(pick: StringSelectMenuInteraction): Promise<void> {
     if (!allowed(pick.user.id)) {
-      return void (await pick.deferUpdate());
+      await pick.deferUpdate();
+
+      return;
     }
 
-    const labels = (pick.component as StringSelectMenuComponent).options.map(
-      (option) => option.label,
-    );
-
-    const chosen = pick.values.map((value) => labels[Number(value)]!);
+    const labels = pick.component.options.map((option) => option.label);
+    const chosen = pick.values.map((value) => labels[Number(value)] ?? "");
     await pick.update({ components: menu(labels, chosen) });
     await picked(
       await threadChannel(pick.channelId),
@@ -1802,20 +1849,23 @@ function serve(token: string) {
     );
   }
 
-  // A thread's own controls, outside its conversation: its session never sees them.
   async function handleCommand(command: ChatInputCommandInteraction): Promise<void> {
-    const answer = (content: string) => command.reply({ content, flags: MessageFlags.Ephemeral });
+    const answer = async (content: string) => {
+      await command.reply({ content, flags: MessageFlags.Ephemeral });
+    };
 
     if (!allowed(command.user.id)) {
-      return void (await answer("hex only answers its owner."));
+      await answer("hex only answers its owner.");
+
+      return;
     }
 
     const thread = command.channelId;
 
-    if (!hub.name(thread)) {
-      return void (await answer(
-        "This channel has no session: use it in one of hex's threads or the DM.",
-      ));
+    if (!filled(hub.name(thread))) {
+      await answer("This channel has no session: use it in one of hex's threads or the DM.");
+
+      return;
     }
 
     switch (command.commandName) {
@@ -1827,37 +1877,43 @@ function serve(token: string) {
         const name =
           [...MODELS, ...EFFORTS].find((choice) => choice.value === value)?.name ?? value;
 
-        return void (await answer(
+        await answer(
           `${command.commandName === "model" ? "Model" : "Effort"}: ${name}, from this thread's next message.`,
-        ));
+        );
+
+        return;
       }
 
       case "compact": {
-        if (dms.has(thread))
-          return void (await answer(
-            "The DM starts a fresh session whenever its last one is spent, so there's nothing to compact.",
-          ));
+        await answer(compacting(thread));
 
-        if (typing.has(thread))
-          return void (await answer("This thread is working; compact it once it's done."));
-
-        if (!hub.session(thread))
-          return void (await answer("This thread has nothing to compact yet."));
-        void hub.command(thread, "/compact");
-
-        return void (await answer("Compacting this thread."));
+        return;
       }
 
       case "stop": {
         void hub.stop(thread);
-
-        return void (await answer("Stopped. The next message resumes it."));
+        await answer("Stopped. The next message resumes it.");
       }
     }
   }
 
-  const failure = (what: string) => (e: unknown) =>
-    process.stderr.write(`discord hub: ${what} failed: ${e}\n`);
+  function compacting(thread: string): string {
+    if (dms.has(thread)) {
+      return "The DM starts a fresh session whenever its last one is spent, so there's nothing to compact.";
+    }
+
+    if (typing.has(thread)) {
+      return "This thread is working; compact it once it's done.";
+    }
+
+    if (!filled(hub.session(thread))) {
+      return "This thread has nothing to compact yet.";
+    }
+
+    void hub.command(thread, "/compact");
+
+    return "Compacting this thread.";
+  }
 
   client.on("messageReactionAdd", (reaction, user) => {
     handleReaction(reaction, user, false).catch(failure("handleReaction"));
@@ -1895,26 +1951,9 @@ function serve(token: string) {
     }
   });
 
-  // The newest message handled, kept so the bot reads what it missed while it was
-  // down, or while Discord couldn't resume its gateway session.
-  let cursor = (() => {
-    try {
-      return JSON.parse(readFileSync(CURSOR_FILE, "utf-8")).id as string;
-    } catch {
-      return keepCursor(SnowflakeUtil.generate().toString());
-    }
-  })();
+  let cursor = readCursor();
 
-  function keepCursor(id: string) {
-    writeFileSync(`${CURSOR_FILE}.tmp`, `${JSON.stringify({ id })}\n`);
-    renameSync(`${CURSOR_FILE}.tmp`, CURSOR_FILE);
-
-    return id;
-  }
-
-  // Messages are handled one at a time, in order, so a thread's messages reach its
-  // session in order and the cursor never passes one still being handled.
-  let queue: Promise<unknown> = Promise.resolve();
+  let handledInOrder: Promise<unknown> = Promise.resolve();
   let caught = new Set<string>();
 
   async function take(msg: DiscordMessage) {
@@ -1927,57 +1966,13 @@ function serve(token: string) {
     }
   }
 
-  type Listened = TextChannel | NewsChannel | AnyThreadChannel | DMChannel;
-
   const listensIn = (ch: Channel | null | undefined): ch is Listened =>
     ch?.type === ChannelType.DM ||
-    ((isText(ch) || !!ch?.isThread()) && !!ch.permissionsFor(client.user!)?.has(READ));
+    (ch !== null &&
+      ch !== undefined &&
+      (isText(ch) || ch.isThread()) &&
+      ch.permissionsFor(bot())?.has(READ) === true);
 
-  async function after(ch: Listened, from: string): Promise<DiscordMessage[]> {
-    const found: DiscordMessage[] = [];
-
-    for (let since = from; ;) {
-      const page = [...(await ch.messages.fetch({ after: since, limit: 100 })).values()];
-      found.push(...page);
-
-      if (page.length < 100) {
-        return found;
-      }
-
-      since = page.reduce((newest, m) => (BigInt(m.id) > BigInt(newest) ? m.id : newest), since);
-    }
-  }
-
-  // Discord lists archived threads newest-archived first: https://discord.com/developers/docs/resources/channel#list-public-archived-threads
-  async function archivedSince(
-    ch: TextChannel | NewsChannel | ForumChannel,
-    from: string,
-  ): Promise<AnyThreadChannel[]> {
-    const since = SnowflakeUtil.timestampFrom(from);
-    const found: AnyThreadChannel[] = [];
-
-    for (let before: number | undefined; ;) {
-      const page = await ch.threads.fetchArchived({
-        ...(before !== undefined && { before }),
-        limit: 100,
-      });
-
-      const threads = [...page.threads.values()];
-      found.push(...threads);
-      const oldest = Math.min(...threads.map((t) => t.archiveTimestamp ?? 0));
-
-      if (!page.hasMore || threads.length === 0 || oldest < since) {
-        return found;
-      }
-
-      before = oldest;
-    }
-  }
-
-  // Every text channel, thread and DM whose newest message is past the cursor is read
-  // forward from it, and what it missed is handled oldest first, as if live. A thread
-  // can go quiet long enough to archive again while the bot is away, so each channel's
-  // recently archived threads are read too.
   async function catchUp() {
     const from = cursor;
     const g = client.guilds.cache.first();
@@ -1986,37 +1981,47 @@ function serve(token: string) {
       g ? g.channels.fetch().then((found) => [...found.values()]) : [],
       g ? g.channels.fetchActiveThreads().then((found) => [...found.threads.values()]) : [],
       Promise.all(
-        loadAccess().allowFrom.map((id) =>
-          client.users
-            .createDM(id, { force: true })
-            .catch((error: unknown) => void failure(`opening the DM with ${id}`)(error)),
-        ),
+        loadAccess().allowFrom.map(async (id) => {
+          try {
+            return await client.users.createDM(id, { force: true });
+          } catch (error) {
+            failure(`opening the DM with ${id}`)(error);
+          }
+        }),
       ),
     ]);
 
     const parents = channels.flatMap((ch) =>
-      isPostable(ch) && ch.permissionsFor(client.user!)?.has(READ) ? [ch] : [],
+      isPostable(ch) && ch.permissionsFor(bot())?.has(READ) === true ? [ch] : [],
     );
 
     const archived = await Promise.all(
-      parents.map((ch) =>
-        archivedSince(ch, from).catch(
-          (error: unknown) => (failure(`listing ${ch.id}'s archived threads`)(error), []),
-        ),
-      ),
+      parents.map(async (ch) => {
+        try {
+          return await archivedSince(ch, from);
+        } catch (error) {
+          failure(`listing ${ch.id}'s archived threads`)(error);
+
+          return [];
+        }
+      }),
     );
 
     const places = [...channels, ...active, ...archived.flat(), ...dms]
       .filter(listensIn)
-      .filter((ch) => !!ch.lastMessageId && BigInt(ch.lastMessageId) > BigInt(from));
+      .filter((ch) => filled(ch.lastMessageId) && BigInt(ch.lastMessageId) > BigInt(from));
 
     const missed = (
       await Promise.all(
-        places.map((ch) =>
-          after(ch, from).catch(
-            (error: unknown) => (failure(`catching up on ${ch.id}`)(error), []),
-          ),
-        ),
+        places.map(async (ch) => {
+          try {
+            return await after(ch, from);
+          } catch (error) {
+            failure(`catching up on ${ch.id}`)(error);
+
+            return [];
+          }
+        }),
       )
     )
       .flat()
@@ -2036,11 +2041,11 @@ function serve(token: string) {
   }
 
   client.on("shardReady", () => {
-    queue = queue.then(catchUp).catch(failure("catching up"));
+    handledInOrder = handledInOrder.then(catchUp).catch(failure("catching up"));
   });
 
   client.on("messageCreate", (msg) => {
-    queue = queue
+    handledInOrder = handledInOrder
       .then(() => (caught.has(msg.id) ? undefined : take(msg)))
       .catch(failure("handling a message"));
   });
@@ -2058,12 +2063,8 @@ function serve(token: string) {
       hub.rename(after.id, after.name);
     }
 
-    if (before.archived && !after.archived) {
-      ledger
-        .rewrite(after.id, post)
-        .catch((err: unknown) =>
-          process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`),
-        );
+    if (before.archived === true && after.archived !== true) {
+      ledger.rewrite(after.id, post).catch(failed(`couldn't rewrite ${after.id}'s status post`));
     }
   });
 
@@ -2073,38 +2074,56 @@ function serve(token: string) {
     void hub.retire(thread.id);
   });
 
-  client.on("error", (err) => {
-    process.stderr.write(`discord hub: client error: ${err}\n`);
+  client.on("error", (error) => {
+    process.stderr.write(`discord hub: client error: ${String(error)}\n`);
   });
 
   client.once("clientReady", (c) => {
     process.stderr.write(`discord hub: gateway connected as ${c.user.tag}\n`);
     const id = client.guilds.cache.first()?.id;
 
-    if (id) {
-      writeFileSync(GUILD_FILE, JSON.stringify({ id }) + "\n");
+    if (filled(id)) {
+      writeFileSync(GUILD_FILE, `${JSON.stringify({ id })}\n`);
     }
 
     hub.save();
     void c.application?.commands.set(COMMANDS).catch(failure("registering slash commands"));
-    ledger.keep(post, (thread, err) =>
-      process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`),
-    );
+    ledger.keep(post, (thread, error) => {
+      failed(`couldn't rewrite ${thread}'s status post`)(error);
+    });
   });
 
-  // discord.js reconnects a session it has, but not a first login that fails, as when the
-  // network isn't up yet at boot. Only a bad token is final.
   async function login(attempt = 1): Promise<void> {
     try {
       await client.login(token);
     } catch (error) {
-      if ((error as { code?: string }).code === DiscordjsErrorCodes.TokenInvalid)
-        return void process.stderr.write(`discord hub: login failed: ${error}\n`);
+      if (codeOf(error) === DiscordjsErrorCodes.TokenInvalid) {
+        failed("login failed")(error);
+
+        return;
+      }
+
       const delay = Math.min(1000 * 2 ** (attempt - 1), 60_000);
-      process.stderr.write(`discord hub: login failed: ${error}, retrying in ${delay / 1000}s\n`);
-      setTimeout(login, delay, attempt + 1);
+      process.stderr.write(
+        `discord hub: login failed: ${String(error)}, retrying in ${delay / 1000}s\n`,
+      );
+      setTimeout(() => void login(attempt + 1), delay);
     }
   }
 
   void login();
+}
+
+const TOKEN = process.env.DISCORD_BOT_TOKEN;
+
+if (TOKEN !== undefined && TOKEN !== "") {
+  process.on("unhandledRejection", (error) => {
+    process.stderr.write(`discord hub: unhandled rejection: ${String(error)}\n`);
+  });
+  process.on("uncaughtException", (error) => {
+    process.stderr.write(`discord hub: uncaught exception: ${String(error)}\n`);
+  });
+  serve(TOKEN);
+} else {
+  process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
 }
