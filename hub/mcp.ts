@@ -1,24 +1,65 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { z } from "zod";
+
 import { clock } from "./clock.ts";
 import type { Store } from "./store.ts";
 
-// reads: for a tool that reads or writes by its arguments, whether a call only reads. It stays here: a
-// function never reaches the session's tool list.
-export type Tool = {
-  name: string;
+export type Tool<Name extends string = string, Input extends z.ZodObject = z.ZodObject> = {
+  name: Name;
   description: string;
-  inputSchema: object;
+  input: Input;
   annotations?: { readOnlyHint?: boolean };
-  reads?: (args: Record<string, unknown>) => boolean;
+  reads?: (args: z.output<Input>) => boolean;
   _meta?: object;
 };
+
+export function tool<const Name extends string, Input extends z.ZodObject>(
+  definition: Tool<Name, Input>,
+): Tool<Name, Input> {
+  return definition;
+}
+
+export function toolList(tools: readonly Tool[]) {
+  return tools.map(({ input, reads: _reads, ...rest }) => {
+    const { $schema: _schema, ...inputSchema } = z.toJSONSchema(input, { io: "input" });
+    return { ...rest, inputSchema };
+  });
+}
+
+export type Handlers<Tools extends readonly Tool[]> = {
+  [Each in Tools[number] as Each["name"]]: (
+    caller: string,
+    args: z.output<Each["input"]>,
+  ) => Promise<string>;
+};
+
+export function dispatch<const Tools extends readonly Tool[]>(
+  tools: Tools,
+  handlers: Handlers<Tools>,
+): (caller: string, name: string, args: Record<string, unknown>) => Promise<string> {
+  const byName = new Map<string, Tool>(tools.map((each) => [each.name, each]));
+  // SAFETY: Handlers<Tools> has one entry per tool name, each taking that tool's parsed input.
+  const run = handlers as Record<string, (caller: string, args: unknown) => Promise<string>>;
+  return async (caller, name, args) => {
+    const each = byName.get(name);
+    const handler = run[name];
+    if (!each || !handler) {
+      throw new Error(`unknown tool: ${name}`);
+    }
+    const parsed = each.input.safeParse(args);
+    if (!parsed.success) {
+      throw new Error(z.prettifyError(parsed.error));
+    }
+    return await handler(caller, parsed.data);
+  };
+}
 
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = {
   title: string;
   instructions: string;
-  tools: Tool[];
+  tools: readonly Tool[];
   permission?: boolean;
 };
 
@@ -86,10 +127,17 @@ export function endpoint(
   }
 
   const active = new Map<string, Promise<Result>>();
-  const tools = new Map(server.tools.map((tool) => [tool.name, tool]));
+  const tools = new Map<string, Tool>(server.tools.map((each) => [each.name, each]));
+  const list = toolList(server.tools);
 
-  const reads = (tool: string, args: Record<string, unknown>) =>
-    !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args));
+  const reads = (name: string, args: Record<string, unknown>) => {
+    const each = tools.get(name);
+    if (each?.annotations?.readOnlyHint === true) {
+      return true;
+    }
+    const parsed = each?.input.safeParse(args);
+    return parsed?.success === true && each?.reads?.(parsed.data) === true;
+  };
 
   async function once(
     thread: string | undefined,
@@ -333,7 +381,7 @@ export function endpoint(
     if (method === "tools/list") {
       listed(session);
 
-      return result(id, { tools: server.tools });
+      return result(id, { tools: list });
     }
 
     if (method === "tools/call") {

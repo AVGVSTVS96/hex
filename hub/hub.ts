@@ -18,7 +18,7 @@ import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
 import { holding } from "./holds.ts";
 import { STARTUP } from "./loaded.ts";
-import { endpoint } from "./mcp.ts";
+import { endpoint, toolList } from "./mcp.ts";
 import type { ChannelServer, Line } from "./mcp.ts";
 import { queue } from "./observe.ts";
 import { schedule } from "./schedule.ts";
@@ -26,7 +26,8 @@ import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } fr
 import type { Author, MessageId, Row, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
-export type { ChannelServer, Tool } from "./mcp.ts";
+export { dispatch, tool } from "./mcp.ts";
+export type { ChannelServer, Handlers, Tool } from "./mcp.ts";
 
 // key: the app's own id for what the message is, so the app sending it again changes nothing.
 // author: who wrote it, which every message a client delivers says (Store.deliver).
@@ -368,7 +369,13 @@ function capacity(tokens?: string) {
 // thread's session started with.
 export function stamp(args: string[], server?: ChannelServer, startup: string[] = []) {
   return createHash("sha256")
-    .update(JSON.stringify([args, server ?? null, ...(startup.length ? [startup.map(read)] : [])]))
+    .update(
+      JSON.stringify([
+        args,
+        server ? { ...server, tools: toolList(server.tools) } : null,
+        ...(startup.length ? [startup.map(read)] : []),
+      ]),
+    )
     .digest("hex")
     .slice(0, 16);
 }
