@@ -1236,6 +1236,16 @@ export class Store {
     );
   }
 
+  taken(session: string, last: number): Row[] {
+    return MessageRows.parse(
+      this.db
+        .query(
+          "select * from (select * from messages where taken_by = ? order by taken_at desc, n desc limit ?) order by taken_at, n",
+        )
+        .all(session, last),
+    );
+  }
+
   took(session: string): boolean {
     return this.db.query("select 1 from messages where taken_by = ? limit 1").get(session) !== null;
   }
