@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Author } from "../../hub/store.ts";
 import { open } from "../../hub/store.ts";
 
 let home: string;
@@ -50,8 +51,7 @@ afterEach(() => {
   rmSync(bin, { recursive: true, force: true });
 });
 
-// Running Claude Code sessions, as Claude Code records them while their process lives.
-function running(sessions: object[]) {
+function sessionsClaudeCodeRecordsAsLive(sessions: object[]) {
   mkdirSync(join(home, ".claude/sessions"), { recursive: true });
   sessions.forEach((session, n) => {
     writeFileSync(
@@ -82,7 +82,7 @@ test("finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
       treat: { at: ["2020-10-20 16:00", "2999-10-20 16:00"], prompt: "x" },
     }),
   );
-  running([
+  sessionsClaudeCodeRecordsAsLive([
     { kind: "bg", status: "busy", name: "General", cwd: home, startedAt: 2 },
     { kind: "bg", status: "busy", name: "Topic", cwd: join(home, "sub"), startedAt: 3 },
     { kind: "bg", status: "idle", name: "Elsewhere", cwd: `${home}-other`, startedAt: 1 },
@@ -92,9 +92,9 @@ test("finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
   const out = hook();
   expect(out).toContain("- idea (0m ago): Try an idea");
   expect(out).not.toContain("shipped");
-  expect(out).toMatch(/- \w{3} Mar 14 9:30AM: dentist/);
-  expect(out).toMatch(/- \w{3} Oct 20 4:00PM: treat\n/);
-  expect(out.match(/: treat/g)).toHaveLength(1);
+  expect(out).toMatch(/- \w{3} Mar 14 9:30AM: dentist/u);
+  expect(out).toMatch(/- \w{3} Oct 20 4:00PM: treat\n/u);
+  expect(out.match(/: treat/gu)).toHaveLength(1);
   expect(out).not.toContain("heartbeat");
   expect(out).toContain("- busy (2): Topic, General");
   expect(out).not.toContain("Elsewhere");
@@ -110,8 +110,8 @@ test("lists each thread active in the last day with its last message, skipping w
   });
   store.keepThreads("discord", { "3": { name: "Kiln", session: "cccccccc-1" } });
 
-  const said = (key: string, to: string, author: string, body: string, minutesAgo: number) => {
-    store.deliver({ key, to, from: key.split(":")[0]!, author, body }, "x");
+  const said = (key: string, to: string, author: Author, body: string, minutesAgo: number) => {
+    store.deliver({ key, to, from: key.split(":")[0] ?? "", author, body }, "x");
     store.db
       .query("update messages set at = ? where key = ?")
       .run(new Date(Date.now() - minutesAgo * 60_000).toISOString(), key);
@@ -122,7 +122,9 @@ test("lists each thread active in the last day with its last message, skipping w
   said("terminal:1", "1", "hex", "watered", 88);
   said("telegram:3", "2", "owner", "old", 3000);
   said("discord:4", "3", "owner", "fire it\nat noon", 5);
-  running([{ kind: "bg", status: "idle", sessionId: "cccccccc-1", cwd: home }]);
+  sessionsClaudeCodeRecordsAsLive([
+    { kind: "bg", status: "idle", sessionId: "cccccccc-1", cwd: home },
+  ]);
   mkdirSync(join(home, ".claude/jobs/cccccccc"), { recursive: true });
   writeFileSync(
     join(home, ".claude/jobs/cccccccc/state.json"),
@@ -146,7 +148,7 @@ test("drops a section it cannot read, and says none for one that is empty", () =
 test("stays quiet and exits 0 when neither git nor claude can run", () => {
   const only = join(bin, "only");
   mkdirSync(only);
-  symlinkSync(Bun.which("python3")!, join(only, "python3"));
+  symlinkSync(Bun.which("python3") ?? "", join(only, "python3"));
 
   const run = Bun.spawnSync([join(home, ".hex/bin/live-status")], {
     stdin: Buffer.from("{}"),
