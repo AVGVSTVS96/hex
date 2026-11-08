@@ -23,6 +23,7 @@ beforeEach(() => {
   for (const script of ["vault", "settings"]) {
     copyFileSync(join(import.meta.dir, "../../bin", script), join(home, ".hex/bin", script));
   }
+
   writeFileSync(
     join(home, ".env"),
     [

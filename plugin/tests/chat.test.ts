@@ -33,6 +33,7 @@ beforeEach(() => {
   for (const script of ["instructions", "identity"]) {
     copyFileSync(join(HEX, "bin", script), join(home, ".hex/bin", script));
   }
+
   symlinkSync(join(HEX, "hub"), join(home, ".hex/hub"));
   copyFileSync(join(HEX, "chat/prompt.md"), join(home, ".hex/chat/prompt.md"));
   mkdirSync(join(home, ".claude"));
@@ -107,6 +108,7 @@ function run(args: string[], input = "", extra: Record<string, string> = {}) {
   if (result.exitCode !== 0) {
     throw new Error(result.stderr.toString());
   }
+
   return result.stdout.toString();
 }
 
@@ -127,6 +129,7 @@ function simulate(script: string, dir: string) {
       result.stderr.toString() || `the simulation was killed by ${result.signalCode}`,
     );
   }
+
   return result.stdout.toString();
 }
 
@@ -365,7 +368,7 @@ test("pairs merge into their parent, which zoom opens again, down to the message
       .map((line) => JSON.parse(line)),
   );
 
-  expect(tree.map((n) => `${n.l}:${n.i}`).sort()).toEqual([
+  expect(tree.map((n) => `${n.l}:${n.i}`).toSorted()).toEqual([
     "0:0",
     "0:1",
     "0:2",

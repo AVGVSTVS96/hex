@@ -32,6 +32,7 @@ beforeAll(() => {
   for (const file of ["bin/place", "bin/settings"]) {
     cpSync(join(HEX, file), join(home, ".hex", file));
   }
+
   script(join(home, ".hex/bin/room"), `cat "${fake}/${here}"; exit $(cat "${fake}/${here}.code")`);
   script(join(home, ".hex/bin/session"), `echo "session $* $(cat)"`);
   // A machine's away exits as that machine's file says: 76 when the job can't run there.
@@ -165,6 +166,7 @@ test("a stopped job keeps its slot until it has stopped, as systemd's stop reach
   while (!existsSync(join(fake, "started"))) {
     await Bun.sleep(50);
   }
+
   process.kill(-unit.pid, "SIGTERM");
   await Bun.sleep(500);
   expect(Bun.spawnSync(["flock", "-n", join(slots, `${here}.1`), "true"]).exitCode).toBe(1);

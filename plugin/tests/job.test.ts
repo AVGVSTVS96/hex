@@ -50,6 +50,7 @@ beforeAll(() => {
   ]) {
     cpSync(join(HEX, file), join(home, ".hex", file));
   }
+
   for (const [app, threads] of Object.entries({
     t3: { "stray-key": { name: "hex" } },
     telegram: { "-100123:908": { name: "autofork" } },
@@ -357,7 +358,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     "s-1",
   ]);
   expect(args.at(-1)).toContain("carry on");
-  expect(readdirSync(jobs).sort()).toEqual(["deck.json", "live.json"]);
+  expect(readdirSync(jobs).toSorted()).toEqual(["deck.json", "live.json"]);
 
   const told = new Database(join(home, "state/hex.db"))
     .query(
@@ -365,7 +366,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     )
     .values()
     .flat()
-    .sort();
+    .toSorted();
 
   expect(told).toEqual([
     expect.stringContaining("[job] deck stopped when the machine went down, and resumed"),

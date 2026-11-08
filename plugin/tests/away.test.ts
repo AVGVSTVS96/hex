@@ -35,9 +35,11 @@ const server = Bun.serve({
     if (request.method === "GET") {
       return new Response(null, { status: 405 });
     }
+
     if (request.method === "DELETE") {
       return new Response(null, { status: 200 });
     }
+
     const body = (await request.json()) as {
       id?: number;
       method: string;
@@ -48,6 +50,7 @@ const server = Bun.serve({
     if (body.method === "initialize" && request.headers.has("mcp-session-id")) {
       return new Response("already initialized", { status: 400 });
     }
+
     if (body.method === "initialize") {
       return Response.json(
         {
@@ -62,23 +65,29 @@ const server = Bun.serve({
         { headers: { "mcp-session-id": "s1" } },
       );
     }
+
     if (body.method !== "tools/call") {
       return new Response(null, { status: 202 });
     }
+
     calls.push(body.params);
 
     if (body.params.name === "t3_thread_launch" && launchSlow-- > 0) {
       await Bun.sleep(3_000);
     }
+
     if (body.params.name === "t3_thread_launch" && launchDrop-- > 0 && (launched = true)) {
       return new Response("relay timed out", { status: 504 });
     }
+
     if (body.params.name === "t3_thread_wait" && drop-- > 0) {
       return new Response("gone", { status: 502 });
     }
+
     if (body.params.name === "t3_thread_wait" && refused-- > 0) {
       return new Response("expired", { status: 401 });
     }
+
     if (body.params.name === "t3_thread_wait" && flaky-- > 0) {
       return Response.json({
         jsonrpc: "2.0",
@@ -86,6 +95,7 @@ const server = Bun.serve({
         result: { content: [{ type: "text", text: "mac is not answering" }], isError: true },
       });
     }
+
     if (body.params.name === "orchestrator_capabilities" && unlinked) {
       return Response.json({
         jsonrpc: "2.0",
@@ -96,6 +106,7 @@ const server = Bun.serve({
         },
       });
     }
+
     if (body.params.name === refuse) {
       return Response.json({
         jsonrpc: "2.0",
@@ -106,6 +117,7 @@ const server = Bun.serve({
         },
       });
     }
+
     const answers: Record<string, () => unknown> = {
       orchestrator_capabilities: () => ({
         providers: [
@@ -189,7 +201,7 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  server.stop();
+  void server.stop();
   rmSync(home, { recursive: true });
 });
 
@@ -315,6 +327,7 @@ test("stopping the job stops its thread", async () => {
   while (!calls.some(({ name }) => name === "t3_thread_wait")) {
     await Bun.sleep(50);
   }
+
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
   expect(calls.find(({ name }) => name === "t3_thread_interrupt")!.arguments).toMatchObject({
@@ -346,6 +359,7 @@ test("a job stopped while its launch may have reached the other machine finds th
   while (!calls.some(({ name }) => name === "t3_thread_launch")) {
     await Bun.sleep(50);
   }
+
   await Bun.sleep(200);
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
@@ -371,6 +385,7 @@ test("a job stopped while its launch is on its way stops the thread the launch a
   while (!calls.some(({ name }) => name === "t3_thread_launch")) {
     await Bun.sleep(50);
   }
+
   const stopped = Date.now();
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
@@ -412,6 +427,7 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
   while (!calls.some(({ name }) => name === "t3_thread_wait")) {
     await Bun.sleep(50);
   }
+
   refuse = "t3_thread_interrupt";
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);

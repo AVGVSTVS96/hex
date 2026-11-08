@@ -26,6 +26,7 @@ beforeEach(() => {
   for (const script of ["rules", "identity", "instructions"]) {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
   }
+
   symlinkSync(join(BIN, "../hub"), join(home, ".hex/hub"));
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n\n- Keep it short.\n");
   writeFileSync(join(home, ".hex/HEX.md"), "# How you work\n\nAnswer in plain words.\n");
@@ -180,6 +181,7 @@ function updates(started: number, ...changes: [at: number, path: string, text: s
   for (const change of changes) {
     commit(...change);
   }
+
   mkdirSync(join(home, ".claude/sessions"), { recursive: true });
   writeFileSync(
     join(home, ".claude/sessions", `${process.pid}.json`),

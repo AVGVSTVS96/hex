@@ -33,6 +33,7 @@ beforeEach(() => {
   for (const dir of ["bin", "chat", "hub"]) {
     cpSync(join(HEX, dir), join(home, ".hex", dir), { recursive: true });
   }
+
   mkdirSync(join(home, ".claude"));
   mkdirSync(join(home, "state"));
   writeFileSync(
@@ -66,6 +67,7 @@ exit 0
   for (const name of Object.keys(process.env)) {
     if (name.startsWith("HEX_") || name === "MEMORY_DIR") delete process.env[name];
   }
+
   Object.assign(process.env, {
     HOME: home,
     PATH: `${join(home, "fake")}:${process.env.PATH}`,
@@ -82,11 +84,12 @@ exit 0
 
 afterEach(() => {
   hub?.close();
-  listener.stop(true);
+  void listener.stop(true);
 
   for (const name of Object.keys(process.env)) {
     if (!(name in saved)) delete process.env[name];
   }
+
   Object.assign(process.env, saved);
   rmSync(home, { recursive: true, force: true });
 });
@@ -117,9 +120,11 @@ async function launch(
   } else {
     hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
   }
+
   for (let i = 0; i < 200 && !existsSync(join(home, "launched")); i++) {
     await Bun.sleep(25);
   }
+
   const args: string[] = JSON.parse(readFileSync(join(home, "launched"), "utf-8"));
   const file = args[args.indexOf("--settings") + 1]!;
 
@@ -262,6 +267,7 @@ test("every folder a background session starts in is trusted (a -p run never ask
   for (const cwd of [project, home, "/"]) {
     Bun.spawnSync([join(home, ".hex/bin/session"), "--bg", "build it"], { cwd, env: process.env });
   }
+
   expect(JSON.parse(readFileSync(join(home, "config/.claude.json"), "utf-8"))).toEqual({
     numStartups: 3,
     projects: { [project]: { hasTrustDialogAccepted: true } },

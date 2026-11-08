@@ -18,6 +18,7 @@ beforeEach(() => {
   for (const script of ["budget", "identity"]) {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
   }
+
   symlinkSync(join(BIN, "../hub"), join(home, ".hex/hub"));
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n@SOUL.md\n\n- Keep it short.\n");
   writeFileSync(join(home, "SOUL.md"), "# Who you are\n\nA sharp friend.\n");

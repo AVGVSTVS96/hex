@@ -79,6 +79,7 @@ beforeEach(() => {
   for (const script of ["hex", "settings", "update"]) {
     copyFileSync(join(BIN, script), join(hex, "bin", script));
   }
+
   writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nMARK=1\n");
   git("init", "-q", "-b", "main");
 });

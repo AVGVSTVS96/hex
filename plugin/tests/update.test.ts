@@ -27,6 +27,7 @@ test("an update tells each thread that asked for it once what it asked for is li
   for (const file of ["bin/update", "bin/job", "hub"]) {
     cpSync(join(HEX, file), join(hex, file), { recursive: true });
   }
+
   open(state).keepThreads("telegram", { "-100:1": { name: "one" }, "-100:2": { name: "two" } });
   Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", join(home, "origin.git")]);
   git("init", "-q", "-b", "main");

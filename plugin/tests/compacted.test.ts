@@ -3,10 +3,8 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
-  readFileSync,
   rmSync,
   symlinkSync,
-  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +25,7 @@ beforeEach(() => {
   for (const script of ["compacted", "hex"]) {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
   }
+
   symlinkSync(join(import.meta.dir, "../../hub"), join(home, ".hex/hub"));
 });
 
