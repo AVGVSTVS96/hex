@@ -1,3 +1,4 @@
+// oxlint-disable no-comments/no-comments -- the comments here state facts about Claude Code, Bun and the hub's design that the code can't show
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -7,6 +8,10 @@ import { nightly } from "./backup.ts";
 import { clients, free, listen, up } from "./hub.ts";
 import { hexDir } from "./store.ts";
 
+// Before the clients load: Telegram's bot module awaits its polling loop, which never ends.
+// A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign
+// off, a call that came in while they did hangs up too, and it exits for bin/hex to start the next
+// one, so two never run at once. A stop also ends a hub still waiting for the port.
 let stopping: Promise<void> | undefined;
 
 const hangUpSignOffAndExit = () =>
@@ -27,6 +32,9 @@ for (const signal of ["SIGHUP", "SIGTERM", "SIGINT"] as const) {
 
 await listen();
 
+// Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that
+// can't start back to it. General then hears about a rollback that brought this hub up, and this
+// hub backs up hex.db each night (backup.ts).
 const hex = join(import.meta.dir, "..");
 
 const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "HEAD"])

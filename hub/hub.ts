@@ -1,3 +1,4 @@
+// oxlint-disable no-comments/no-comments -- the comments here state facts about Claude Code, Bun and the hub's design that the code can't show
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
@@ -31,6 +32,8 @@ export { dispatch, tool } from "./mcp.ts";
 
 export type { ChannelServer, Handlers, Permission, Tool, ToolArguments } from "./mcp.ts";
 
+// key: the app's own id for what the message is, so the app sending it again changes nothing.
+// author: who wrote it, which every message a client delivers says (Store.deliver).
 export type Message = {
   content: string;
   meta: Record<string, string>;
@@ -40,14 +43,18 @@ export type Message = {
 
 export type Call = (thread: string, tool: string, args: ToolArguments) => Promise<string>;
 
+// background: the session's turn ended with background agents still working.
 export type State = (thread: string, busy: boolean, background: boolean) => void;
 
 export type Failed = (thread: string, reason: string) => void;
 
+// still: the message waits for the thread's session, or else that wait is over.
 export type Waits = (thread: string, message: Message, still: boolean) => void;
 
 export type Settings = { model?: string | undefined; effort?: string | undefined };
 
+// The choices a client offers for a thread's settings. Models are Claude Code's aliases, so a
+// thread runs the newest model of the family it picked.
 export const MODELS = [
   { value: "opus", name: "Opus" },
   { value: "sonnet", name: "Sonnet" },
@@ -63,12 +70,14 @@ export const EFFORTS = [
   { value: "max", name: "Max" },
 ];
 
+// A full model id as its family's alias: claude-opus-5-5 is opus. Anything else stays as it is.
 export function family(model: string) {
   return MODELS.find(({ value }) => model.startsWith(`claude-${value}-`))?.value ?? model;
 }
 
 const PreviewFields = z.record(z.string(), z.json());
 
+// A permission prompt's input as one "key: value" line per field, leaving out what its description already says.
 export function preview({ input_preview, description }: Permission): string {
   try {
     return Object.entries(PreviewFields.parse(JSON.parse(input_preview)))
@@ -80,6 +89,8 @@ export function preview({ input_preview, description }: Permission): string {
   }
 }
 
+// What another process (the voice app, hex's check) can do with a question the client asked
+// with buttons: answer it for the owner, settle it as no longer asked, or take an answer back.
 export type Questions = {
   answer: (thread: string, message: MessageId, label: string, via: string) => void;
   settle: (thread: string, message: MessageId, note: string) => void;
@@ -135,6 +146,15 @@ export type HubLine = z.input<typeof HubRequestLine>;
 
 export type Hub = ReturnType<typeof startHub>;
 
+// idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main
+// thread rests before it compacts, while its cache is still warm. Both sit just inside Claude
+// Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above
+// which a session compacts before it rests. reconnect: how long a running session's channel may be
+// gone before the session restarts to get it back. connect: how long a starting session waits for
+// the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a
+// hub running behind still gets its sessions' channels. Claude Code waits that long for each of a
+// session's MCP servers, but a background session doesn't hold its turn for them. capacity: how much context a fresh thread's
+// session holds before a new one takes over; with 0, every message that finds it done goes to a new one.
 export type Limits = {
   idleStop: number;
   cacheWarm: number;
@@ -144,6 +164,7 @@ export type Limits = {
   capacity: number;
 };
 
+// from: the session the thread continues as a fork with its first message, until it has its own.
 type Saved = Settings & {
   name: string;
   session?: string | undefined;
@@ -167,8 +188,12 @@ type SessionEnv = {
   HEX_HELD?: string;
 };
 
+// Where a thread's session stands. launching: the hub started or restarted it and waits for its
+// channel, so one that ends first failed to start. recovering: it runs without its channel, which
+// Claude Code may still bring back. Either wait ends at its deadline.
 type Phase =
   | { is: "stopped" }
+  // again: the hub started the thread again on its own (retry, revive), not for a message or prompt.
   | {
       is: "launching";
       job?: string;
@@ -180,39 +205,64 @@ type Phase =
   | { is: "recovering"; deadline?: Timer | undefined; again?: boolean | undefined }
   | { is: "live"; line: Line };
 
+// Everything the hub keeps on a thread while it runs; hex.db keeps what outlives the hub.
 type Run = {
   phase: Phase;
   queue: Message[];
+  // The kept messages the hub has passed on since its session's channel last connected.
   handed: Set<string>;
+  // From the session's hooks; background: its turn ended with agents still working.
   turn: "busy" | "background" | "done";
+  // asked: the session asked to start over (a call ended). stale: it started with what the hub no
+  // longer gives a session. underway: it's starting over, and its renewal waits for the new session.
   renew?: "asked" | "stale" | "underway" | undefined;
   rest?: Timer | undefined;
   leaving?: ((session: string) => void) | undefined;
+  // The thread's session was told to stop and hasn't exited yet.
   ending?: Promise<void> | undefined;
+  // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
   interrupting?: Promise<void> | undefined;
+  // A new session whose conversation Claude hasn't saved yet.
   unsaved?: string | undefined;
   held: (() => void)[];
+  // A call waited for the session now connected to start, so it is as new as the call.
   awaited?: boolean | undefined;
+  // When the hub last had the session compact, until its context is back under compactAbove.
   compacting?: number | undefined;
+  // The starts that failed in a row since the thread's session last connected; retried: another
+  // session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean } | undefined;
   opening?: Opening | undefined;
+  // The kept messages the client was told wait for a session, by key, until one takes them.
   waiting: Map<string, Message>;
 };
 
+// What a new session starts with: its first prompt, and the session it continues as a fork. quiet:
+// the prompt is the hub's own (a compaction), so the thread doesn't show as working.
 type Opening = { prompt?: string | undefined; fork?: string | undefined; quiet?: boolean };
 
+// A call on a line a client holds, like a Discord voice channel: the line plays the voice's audio
+// and ends when the call does, and the call engine hears the caller and can be hung up on. Audio is
+// base64 PCM at 24 kHz, mono.
 export type VoiceLine = { play: (audio: string) => void; end: () => void };
 
 export type Held = { hear: (audio: string) => void; hangUp: () => void };
 
+// The voice app's call engine, once it runs in this process, for a client that holds a line.
 export type CallEngine = {
   take?: (from: "discord", greeting: string, line: VoiceLine) => Held;
 };
 
 export const engine: CallEngine = {};
 
+// One message of a thread's chat as its log keeps it: the owner's, or hex's reply, with the photos
+// and clips the owner sent with it from the hex app.
 export type Turn = { from: "me" | "hex"; text: string; media?: { id: string; kind: string }[] };
 
+// Every client running in this process, so a thread can move between them.
+// place() opens a thread on the client, led by its about line if given, for a session working in cwd,
+// and returns its id and a link to it.
+// backfill() posts a thread's chat so far into a thread it placed, in order.
 export type Client = {
   hub: Hub;
   place: (
@@ -222,20 +272,30 @@ export type Client = {
     cwd?: string,
   ) => Promise<{ thread: string; link: string }>;
   backfill?: (thread: string, turns: Turn[]) => Promise<void>;
+  // The client shows only the turns its own messages start, so a session moved there waits for one.
   waits?: boolean;
+  // What the client does as the hub stops, once no call is live.
   close?: () => Promise<void>;
+  // The owner's stop as the client's own Stop does it, when it keeps state of its own about a turn.
   stop?: (thread: string) => void;
 };
 
 export const clients = new Map<string, Client>();
 
+// Each hub's restart of its threads whose session failed to start, run whenever a session this
+// process started connects: a start just went through, so theirs can too.
 const retries = new Set<() => void>();
 
+// Each hub's retry of its compactions that failed (the account pool out of usage, the network
+// down), run whenever a session's turn ends with an answer: requests go through again.
 const answered = new Set<() => void>();
 
+// The hub serving General, which hears of a thread once this many of its starts fail in a row.
 let generalHub: Hub | undefined;
 const TELL_GENERAL_AFTER_FAILED_STARTS = 3;
 
+// Resolves with the hub serving General once General's session first connects to it: from then
+// on, hex works on the code this process runs.
 let reached: (hub: Hub) => void;
 
 export const up = new Promise<Hub>((resolve) => {
@@ -244,6 +304,7 @@ export const up = new Promise<Hub>((resolve) => {
 
 export const PORT = Number(process.env.HEX_PORT ?? 8789);
 
+// Each hub's channel under its plugin's name, behind the one HTTP listener serve.ts opens.
 const channels = new Map<string, (request: Request) => Promise<Response>>();
 
 export function route(request: Request): Promise<Response> {
@@ -253,6 +314,10 @@ export function route(request: Request): Promise<Response> {
   );
 }
 
+// serve.ts's listener. A hub a stop left running holds the port until it has finished its call and
+// exited, so the next one waits for the port instead of failing to start, which bin/hex would count
+// against the commit. It tries each second, since nothing says the port is free: a connection to
+// the old hub that hasn't sent anything is never accepted, so it can stay open after the hub exits.
 export async function listen(port = PORT): Promise<ReturnType<typeof Bun.serve>> {
   for (let held = false; ; held = true) {
     try {
@@ -277,6 +342,7 @@ export async function listen(port = PORT): Promise<ReturnType<typeof Bun.serve>>
   }
 }
 
+// Chat apps only link web addresses, so a buzz:// link goes through a page on hex's site that opens it.
 export function tappable(text: string): string {
   return text.replaceAll(
     /buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/gu,
@@ -284,6 +350,8 @@ export function tappable(text: string): string {
   );
 }
 
+// A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as
+// first sent; with a session, from the first message that session took, the conversation it has.
 export function history(store: Store, thread: string, session?: string): Turn[] {
   const rows = store.said(thread);
   const start = present(session) ? (rows.find((row) => row.taken?.by === session)?.at ?? "9") : "";
@@ -306,6 +374,7 @@ export function history(store: Store, thread: string, session?: string): Turn[] 
   });
 }
 
+// The hex app's photos and clips a message carried, listed in its meta as "<kind> <id>; ...".
 export function carried(meta?: Record<string, string>): Turn["media"] {
   return meta?.media?.split("; ").map((entry) => {
     const [kind = "", id = ""] = entry.split(" ");
@@ -316,6 +385,7 @@ export function carried(meta?: Record<string, string>): Turn["media"] {
 
 const Transcript = z.object({ text: z.string().optional() });
 
+// TRANSCRIBE_URL is any OpenAI-compatible /audio/transcriptions endpoint.
 export async function transcribe(recording: () => Promise<string>): Promise<string | undefined> {
   const { TRANSCRIBE_URL: url, TRANSCRIBE_MODEL: model, TRANSCRIBE_API_KEY: key } = process.env;
 
@@ -344,8 +414,13 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
   return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 }
 
+// Claude Code shows nothing when Esc meets a turn with nothing left to interrupt, so a press gets
+// this long to show in the transcript; a real one shows in under a second.
 const ESC_LANDS_WITHIN = 5000;
 
+// Claude Code keeps a conversation in the prompt cache for an hour after its last request, and
+// compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1,
+// 3, 7 and 15 seconds, then gives up for good.
 const LIMITS: Limits = {
   idleStop: 54 * 60_000,
   cacheWarm: 54 * 60_000,
@@ -367,6 +442,9 @@ function capacityFrom(tokens?: string) {
   return Number(tokens);
 }
 
+// What a session reads only as it starts: its launch arguments, its channel's instructions and
+// tools, and the files and folders its launcher loads that way. hex.db keeps a digest of what each
+// thread's session started with.
 export function stamp(args: string[], server?: ChannelServer, startup: string[] = []) {
   return createHash("sha256")
     .update(
@@ -380,6 +458,7 @@ export function stamp(args: string[], server?: ChannelServer, startup: string[] 
     .slice(0, 16);
 }
 
+// An update rewrites these while the hub runs, so a file gone midway reads as missing.
 type Read = string | [string, Read][] | null;
 
 function contentsOf(path: string): Read {
@@ -396,6 +475,8 @@ function contentsOf(path: string): Read {
   }
 }
 
+// A voice call runs in this process (its call engine holds the caller's audio), so a restart
+// waits for every thread on a call to hang up.
 const onCall = new Set<Run>();
 const hungUp: (() => void)[] = [];
 
@@ -427,6 +508,7 @@ export function title(text: string): string {
   return word;
 }
 
+// A hub's sessions show it this in a header, since any local user can reach its port.
 function tokenOf(stateDir: string) {
   const file = join(stateDir, "token");
 
@@ -451,6 +533,7 @@ function present(text: string | undefined): text is string {
   return text !== undefined && text !== "";
 }
 
+// The key goes first on the channel tag, where the session's hook reads it (state.ts).
 function toMessageWithKeyFirstForTheHook(row: Row): Message {
   return { content: row.body, author: row.author, meta: { key: row.key, ...row.meta } };
 }
@@ -481,10 +564,13 @@ export function startHub({
   stateDir: string;
   storeDir?: string | undefined;
   channel: string;
+  // What the channel serves its sessions over HTTP.
   server: ChannelServer;
+  // Where serve.ts listens for every hub's sessions.
   port?: number | undefined;
   main?: string | undefined;
   mainName?: string | undefined;
+  // The main thread is hex's General: its settings env says HEX_MAIN, and the hub runs schedules.json.
   general?: boolean | undefined;
   call: Call;
   state: State;
@@ -493,11 +579,16 @@ export function startHub({
   permission?: ((thread: string, request: Permission) => void) | undefined;
   questions?: Questions | undefined;
   args?: ((thread: string) => string[]) | undefined;
+  // A fresh thread's session is never compacted: its launcher builds what a new session knows
+  // of the chat, and a new one takes over once the old one's context or cache is spent.
   fresh?: ((thread: string) => boolean) | undefined;
   limits?: Partial<Limits> | undefined;
   hexDir?: string | undefined;
   launcher?: string | undefined;
+  // What the launcher's sessions read only as they start (STARTUP, in the hex folder HEX_STARTUP
+  // names): a change to one renews sessions like a change to the channel does.
   startup?: string[] | undefined;
+  // Where the app opens a thread, which hex.db keeps with it.
   link?: ((thread: string) => string | undefined) | undefined;
 }) {
   const { idleStop, cacheWarm, compactAbove, reconnect, connect, capacity } = {
@@ -505,8 +596,11 @@ export function startHub({
     ...limits,
   };
 
+  // The thread whose session made the tool call in progress.
   const caller = new AsyncLocalStorage<string>();
   const socketPath = join(stateDir, "hub.sock");
+  // Each thread's session reads its settings, binding and token from here, so none of it shows in
+  // a process's arguments, and a respawn reads the thread's current ones.
   const sessionsDir = join(stateDir, "sessions");
   const runs = new Map<string, Run>();
   const plugin = channel.replace(/^plugin:/u, "");
@@ -522,6 +616,8 @@ export function startHub({
   const closing = new AbortController();
   const serving = () => !closed;
 
+  // The app's open threads, from hex.db: the hub starts only once it can read them, so no save
+  // closes threads it never loaded.
   function openThreads(): Map<string, Saved> {
     db ??= open(storeDir);
 
@@ -539,6 +635,7 @@ export function startHub({
     );
   }
 
+  // The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
   function keepIn(store: Store, saved: Map<string, Saved>) {
     store.keepThreads(
       app,
@@ -566,6 +663,7 @@ export function startHub({
     return given === undefined ? {} : { link: given };
   }
 
+  // A link the app can't give now is no reason to lose a save.
   function linkOf(thread: string) {
     try {
       return link?.(thread);
@@ -574,6 +672,7 @@ export function startHub({
     }
   }
 
+  // hex.db keeps a closed thread's row, with its name, for whatever reads one.
   function save() {
     kept((store) => {
       keepIn(store, threads);
@@ -632,6 +731,12 @@ export function startHub({
     letGo(thread);
   }
 
+  // A thread renews at its next rest: the main thread and a fresh thread start over as soon as
+  // the process exits, any other when its next message resumes it. A keep (a call started) cancels
+  // it. When the session asked for it, a rest the Stop hook reported with no agents working is
+  // taken as it is: Claude's own status lags the hook and counts a running shell as busy, so
+  // checking it could put the renew off for good, and a session that asked is done with what its
+  // shells were for.
   async function renew(thread: string, rested = false) {
     const run = runOf(thread);
     const session = current(thread);
@@ -662,10 +767,14 @@ export function startHub({
     letGo(thread);
   }
 
+  // A renew is on its way while the thread's session winds down its turn or restarts, but not
+  // while it waits on background agents, which can take as long as they like.
   function pending(run: Run) {
     return run.renew === "underway" || (!!run.renew && run.turn !== "background");
   }
 
+  // Resolves once the thread's renew is through (its new session connected) or off, right
+  // away when none is on its way, so a voice call can wait for the new session.
   function renewal(thread: string): Promise<void> {
     const run = runOf(thread);
 
@@ -690,6 +799,8 @@ export function startHub({
     }
   }
 
+  // A running session that isn't busy stops after a while; its next message resumes it.
+  // The main thread keeps running, and compacts before its cache goes cold.
   function rest(thread: string, rested = false) {
     const run = runOf(thread);
     clock.clearTimeout(run.rest);
@@ -716,6 +827,13 @@ export function startHub({
     }
   }
 
+  // A fresh thread keeps one session running, which takes its messages while its context has
+  // room and its cache is warm. Once either is spent, a new session built from the chat takes
+  // over at the old one's rest, so the next message finds it running: after the cache expires,
+  // the old session would send its whole context uncached, and a new one costs no more.
+  // warmFor is how long a session stays worth its messages, undefined before its first request.
+  // Its cache lives an hour on a Claude subscription and five minutes by default on an API key;
+  // the transcript records which.
   function warmFor(thread: string) {
     const session = current(thread);
 
@@ -737,10 +855,13 @@ export function startHub({
         );
   }
 
+  // A session on a call takes every message of the call, so a call never changes sessions midway.
   function spent(thread: string) {
     return fresh(thread) && !onCall.has(runOf(thread)) && warmFor(thread) === 0;
   }
 
+  // At a rest the Stop hook reported with no agents working, Claude's own status still says busy
+  // for about a second, so a session that filled up on that turn hands over without asking it.
   async function handOff(thread: string, rested = false) {
     const run = runOf(thread);
     run.rest = undefined;
@@ -751,6 +872,10 @@ export function startHub({
     }
   }
 
+  // The Stop hook ends a turn, but background tasks keep a session busy past it,
+  // so Claude's own status decides; a busy session reports idle again when it's done.
+  // A big conversation compacts first, while its cache is warm: resumed after the cache
+  // expires, it would be written to the cache whole again.
   async function stopIfIdle(thread: string) {
     const run = runOf(thread);
     run.rest = undefined;
@@ -788,6 +913,8 @@ export function startHub({
     void cycle(thread, running, "/compact", true);
   }
 
+  // A compaction that failed since the hub asked for it runs again, in the session still running
+  // or a resumed one, once it can go through.
   async function recompact() {
     for (const [thread, run] of runs) {
       const session = current(thread);
@@ -825,6 +952,10 @@ export function startHub({
     }
   }
 
+  // `claude stop` returns before the process exits, and the session keeps its channel until it
+  // does, so a message meanwhile waits for the exit (forward). Its process is found while Claude
+  // still lists it, before the stop; when Claude can't say, the stop goes ahead without the wait.
+  // The hub stops a session only when it's idle or the owner asks, so what it took is handled.
   function stop(thread: string, running?: claude.Agent) {
     const run = runOf(thread);
     clock.clearTimeout(run.rest);
@@ -857,6 +988,7 @@ export function startHub({
     return (run.ending = ending);
   }
 
+  // Resolves with the thread's session once it has stopped and the thread is forgotten.
   function retire(thread: string): Promise<string> {
     if (thread === main) {
       throw new Error("the main thread stays open");
@@ -876,6 +1008,7 @@ export function startHub({
     });
   }
 
+  // Like retire, for a thread whose session another client resumes.
   function release(thread: string) {
     if (thread === main) {
       throw new Error("the main thread stays here");
@@ -967,6 +1100,9 @@ export function startHub({
     return known;
   }
 
+  // A start's prompt and the session it forks are kept until a session connects, so the next start
+  // after a failed one, a retry or the thread's next message, starts with them; its cwd is kept in
+  // hex.db.
   async function launch(
     thread: string,
     name: string,
@@ -1001,6 +1137,7 @@ export function startHub({
       mark(thread, message);
     }
 
+    // A fork's first start has no session to find; after a failed one, the session it started may run on.
     if (present(fork) && !run.failing) {
       await start(thread, prompt, fork);
 
@@ -1032,6 +1169,8 @@ export function startHub({
     }
   }
 
+  // The running session serving a thread: its current one, or one started for it whose
+  // conversation isn't saved yet.
   async function sessionOf(thread: string) {
     const running = await claude.agents(serving);
 
@@ -1057,6 +1196,10 @@ export function startHub({
     ];
   }
 
+  // A session that started with other arguments or another channel starts over: with its next
+  // message for a changed model or effort, and at its next rest after an update, so a crash or a
+  // plain restart of the hub leaves every session running. A thread with no record started its
+  // session with none of its own arguments, before the hub kept one.
   function stale(thread: string) {
     return (
       (threads.get(thread)?.launched ?? stamp([], server)) !== stamp(extra(thread), server, startup)
@@ -1089,10 +1232,13 @@ export function startHub({
     return join(sessionsDir, `${encodeURIComponent(thread)}.json`);
   }
 
+  // Where the thread's session keeps the copy of its instruction files it loads (bin/instructions hold).
   function heldOf(thread: string) {
     return join(sessionsDir, encodeURIComponent(thread));
   }
 
+  // A respawn reads the same file, so it gets the hub's current token too. It runs without the
+  // launcher, so the file keeps what the launcher added and renews only the hub's keys.
   function writeSettings(thread: string, launched: ReturnType<typeof claude.settingsOf> = {}) {
     const env: SessionEnv = {
       HEX_CHANNEL: channel,
@@ -1132,6 +1278,7 @@ export function startHub({
     const known = savedOf(thread);
     writeSettings(thread);
 
+    // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (present(prompt)) {
       kept(
         (store) =>
@@ -1221,6 +1368,10 @@ export function startHub({
     }
   }
 
+  // A run of failed starts ends when the thread's session connects. Its chat hears of each one a
+  // message or prompt set off, but of one the hub set off on its own only as the run's first, and
+  // General hears once, from the third on. General's own failed starts reach only its chat, which
+  // needs no session to read them.
   function fail(thread: string, reason: string) {
     const run = runOf(thread);
     const { phase } = run;
@@ -1280,6 +1431,9 @@ export function startHub({
     setState(thread, false);
   }
 
+  // Claude Code failed a start for not finding the session it resumed or forked, and no project
+  // folder has its conversation, so the thread lets go of it once a note is kept that tells its
+  // next session why it starts without it. One another folder has fails as any start does.
   function lost(thread: string, reason: string) {
     const known = threads.get(thread);
     const run = runOf(thread);
@@ -1336,6 +1490,8 @@ export function startHub({
     return true;
   }
 
+  // The store while it opens and writes; without it the hub goes on from memory, as it did before
+  // it had one, so a failing disk never leaves hex deaf.
   function kept<T>(use: (store: Store) => T, otherwise: T): T {
     try {
       db ??= open(storeDir);
@@ -1350,6 +1506,12 @@ export function startHub({
     }
   }
 
+  // A message is kept before anything else happens to it, so once this returns the app can be told
+  // it arrived: a crash from then on leaves it with hex, for whichever session serves the thread
+  // next. A key kept already is the app sending it again. along: the change to hex's records the
+  // message tells of, like the answer a tap gives, made in the same write so both land or neither
+  // does; when it changes nothing, or hex.db can't take it, there's nothing to tell. Whether the
+  // thread is told.
   function deliver(thread: string, name: string, message: Message, along?: () => boolean): boolean {
     const { author } = message;
 
@@ -1386,6 +1548,8 @@ export function startHub({
     return true;
   }
 
+  // What hex said in a thread, kept as its session sent it: a reply, a post, a failed send with
+  // meta.failed. The session that wrote it has it already, so it wakes nothing.
   function sent(
     thread: string,
     { key, content, meta = {} }: Partial<Message> & { content: string },
@@ -1468,6 +1632,7 @@ export function startHub({
     waits?.(thread, message, true);
   }
 
+  // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   function waiting(thread: string): Message[] {
     const rows = kept((store) => store.untaken(thread), []);
 
@@ -1477,6 +1642,8 @@ export function startHub({
     ];
   }
 
+  // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any
+  // that no session took before the hub stopped.
   function wake() {
     if (closed) {
       return;
@@ -1510,6 +1677,10 @@ export function startHub({
     }
   }
 
+  // A thread whose session failed to start keeps its prompt and the messages it was handed waiting,
+  // and the main thread is always running, so each starts again once starts go through. Once for
+  // each failed start a message set off: one that fails even then has a problem of its own, and
+  // waits for its next message.
   function retry() {
     for (const [thread, run] of runs) {
       if (
@@ -1526,6 +1697,7 @@ export function startHub({
     }
   }
 
+  // A session that started before hex kept messages can't mark one taken itself, so its hook says so here.
   function took(keys: string[] | undefined, session: string | undefined) {
     if (keys === undefined || session === undefined) {
       return;
@@ -1536,6 +1708,8 @@ export function startHub({
     }
   }
 
+  // Messages that came while the thread's session was stopping resume it once it's gone, unless a
+  // restart already took them.
   function resume(thread: string, name: string) {
     const run = runOf(thread);
 
@@ -1550,6 +1724,9 @@ export function startHub({
     void launch(thread, name);
   }
 
+  // Claude Code runs a slash command like /compact only as a session's first prompt,
+  // and reads its launch arguments only at start, so a running session stops and
+  // resumes for either.
   async function restart(thread: string, prompt?: string) {
     const session = current(thread);
 
@@ -1562,6 +1739,11 @@ export function startHub({
     void cycle(thread, await claude.agent(session, serving), prompt);
   }
 
+  // Delivers a message to a fresh start of the thread's session, so it gets new launch
+  // arguments or, in a fresh thread, a new session; a session still working, on its turn
+  // or on background agents, keeps running and takes it as it is, unless earlier messages
+  // already wait for the new start.
+  // A session that took over while Claude was asked gets the message as any message would.
   async function refresh(thread: string, message: Message) {
     const run = runOf(thread);
     const phase = run.phase;
@@ -1587,6 +1769,8 @@ export function startHub({
     void cycle(thread, running);
   }
 
+  // Resuming before the old process exits starts a copy, so it waits for the exit. The stopped
+  // session's stream can close after that, so it isn't waited for.
   async function cycle(thread: string, running?: claude.Agent, prompt?: string, quiet = false) {
     const run = runOf(thread);
 
@@ -1601,6 +1785,9 @@ export function startHub({
     void launch(thread, savedOf(thread).name, { prompt, quiet });
   }
 
+  // A session's channel connected over HTTP: its session is the one the hub started, or the one
+  // Claude reports running for the thread. One that only reconnects still owes a renew it asked for.
+  // One that reconnects while it's being stopped gets nothing, since what it took would end with it.
   function welcome(thread: string, line: Line) {
     const run = runOf(thread);
 
@@ -1634,6 +1821,7 @@ export function startHub({
 
     const given = waiting(thread);
 
+    // They wait until the session takes them, though an earlier hub may be the one that said so.
     for (const message of given) {
       mark(thread, message);
       line.send({ type: "inbound", ...message });
@@ -1693,6 +1881,13 @@ export function startHub({
     recover(thread);
   }
 
+  // A session without its channel gets Claude Code's reconnect window to come back, and a starting
+  // one, still running each time the hub looks, also the time Claude Code waits for the hub to
+  // answer its channel. After that, one
+  // still running restarts in place (a turn it was on runs again) if it started before the wait
+  // did, or else gets another window; a start that ended is reported, a gone main thread starts
+  // again, and a thread whose messages waited on a session that has since ended resumes.
+  // pid: the starting session's process, which the hub looks at itself until its wait is over.
   function recover(thread: string, since = clock.now(), pid?: number) {
     const run = runOf(thread);
     const phase = run.phase;
@@ -1735,6 +1930,8 @@ export function startHub({
         return;
       }
 
+      // A respawn starts from the flags the session started with, which read the thread's current
+      // settings file only for a session the hub started that way.
       if (claude.settingsOf(running)) {
         await respawn(thread, running);
 
@@ -1765,6 +1962,8 @@ export function startHub({
     }
   }
 
+  // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what
+  // it took without answering waits for the thread's next session. Only for a thread none of whose sessions runs.
   function cut(thread: string) {
     const given = new Set(kept((store) => store.cut(thread, current(thread)), []));
 
@@ -1818,6 +2017,8 @@ export function startHub({
     }
   }
 
+  // A session that dies before Claude saves its conversation can't be resumed, so the
+  // thread keeps its last saved session until the new one has a conversation on disk.
   function claim(thread: string) {
     const run = runOf(thread);
     const known = threads.get(thread);
@@ -1844,6 +2045,12 @@ export function startHub({
     return runs.get(thread)?.unsaved ?? threads.get(thread)?.session;
   }
 
+  // A thread is on a call from its keep until its renew, which starts the next call in a new session.
+  // That session starts when the last call ends and can wait hours for the next, so a call that finds
+  // it still waiting for its first message starts it over, reading memory and live status as they are
+  // now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for
+  // the new session, and the call is on once that session connects, so a restart that never gets
+  // there doesn't hold up the hub's own. Resolves once the session the call runs in is connected.
   function keep(thread: string) {
     const run = runOf(thread);
 
@@ -1890,6 +2097,7 @@ export function startHub({
     token,
     server,
     {
+      // A tool can send into another thread: what it sends there is still its caller's session's words.
       call: (thread, tool, toolArgs) => caller.run(thread, () => call(thread, tool, toolArgs)),
       permission: (thread, request) => permission?.(thread, request),
       open: welcome,
@@ -1901,6 +2109,7 @@ export function startHub({
 
   channels.set(path, serve);
 
+  // Where a session's hooks and hex's own tools reach the hub, one JSON line each.
   rmSync(socketPath, { force: true });
 
   const sock = createServer((socket) => {
@@ -1992,6 +2201,8 @@ export function startHub({
     }
   }
 
+  // A local message reaches a thread this hub already has, named by its key or its <app>:<key> id.
+  // Any other would open a stray thread here that later wakes find first.
   function inbound(id: string, message: Message) {
     const thread = id.startsWith(`${app}:`) ? id.slice(app.length + 1) : id;
 
@@ -2006,6 +2217,10 @@ export function startHub({
     );
   }
 
+  // The owner's Stop ends the turn as Esc does in a terminal: the session and what it started in the
+  // background keep running, and the next message continues the conversation. A turn the hooks
+  // report over is left alone; one they never reported (the hub restarted) is the daemon's to say.
+  // An Esc that doesn't land changes nothing, and the owner can press Stop again.
   function interrupt(thread: string): Promise<void> {
     const run = runOf(thread);
     run.interrupting ??= press(thread).finally(() => (run.interrupting = undefined));
@@ -2058,6 +2273,8 @@ export function startHub({
     }
 
     if (how === "interrupted") {
+      // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it, as of
+      // the press, settling what the session took: a turn begun since then is left running.
       kept((store) => {
         store.handled(session, pressed);
       }, undefined);
@@ -2076,6 +2293,8 @@ export function startHub({
     process.stderr.write(`hub: Esc didn't interrupt ${thread}'s turn\n`);
   }
 
+  // After the owner's stop only the thread's next message starts it again, without the prompt it
+  // was opened with, though a moved copy still starts from the conversation it forks.
   function halt(thread: string) {
     const run = runs.get(thread);
 
@@ -2090,6 +2309,8 @@ export function startHub({
     return stop(thread);
   }
 
+  // The main thread is always running: started with the hub, and started again when its session
+  // is gone.
   function revive() {
     if (!present(main) || closed || runOf(main).phase.is === "live") {
       return;
@@ -2099,6 +2320,8 @@ export function startHub({
     void launch(main, mainName, { again: true });
   }
 
+  // Sessions that outlived the hub (a hub restart) reconnect, or recover. A fresh main thread's
+  // launch never resumes, so one still running waits for its session instead of starting another.
   if (present(main) || threads.size > 0) {
     void (async () => {
       const running = await claude.agents(serving);
@@ -2109,6 +2332,7 @@ export function startHub({
         ),
       );
 
+      // One that was mid-turn when the hub stopped may have died with it (a reboot): it gets the same wait, and if it's gone, its next session gets what it left.
       const cutShort = [...threads.keys()].filter(
         (thread) => !outlived.has(thread) && kept((store) => store.midTurn(thread), false),
       );
@@ -2157,6 +2381,7 @@ export function startHub({
     keep,
     renew: renewAsked,
     session: current,
+    // A turn cut short, which runs no Stop hook, queues its memory pass here.
     turned: (thread: string) => {
       const session = current(thread);
 
@@ -2166,6 +2391,7 @@ export function startHub({
     },
     running: sessionOf,
     threads: () => [...threads.keys()],
+    // Saves the threads again, for an app that learned links it couldn't give before.
     save,
     name: (thread: string) => threads.get(thread)?.name,
     cwd: (thread: string) => threads.get(thread)?.cwd,
@@ -2235,6 +2461,8 @@ function client(app: string) {
   return there;
 }
 
+// Opens a thread on any client and starts its session: on a prompt, its first message as the
+// session starts, or on a message that reaches it the way the app's own messages do.
 export async function begin(
   app: string,
   name: string,
@@ -2255,6 +2483,7 @@ export async function begin(
   return opened;
 }
 
+// Opens the thread on another client and posts its chat so far there; the backfill settles either way.
 async function carry(from: Hub, thread: string, to: string, name: string, where?: string) {
   const target = client(to);
   const session = from.session(thread);
@@ -2277,6 +2506,9 @@ async function carry(from: Hub, thread: string, to: string, name: string, where?
   return { target, session, dest, link, filled, cwd };
 }
 
+// Moves a thread to another client: its session stops here and resumes there, memory intact, once
+// its chat is backfilled. The main thread never leaves, and a thread its app owns (copy) stays, so a
+// copy continues instead.
 export async function move(
   from: Hub,
   thread: string,
@@ -2312,6 +2544,8 @@ export async function move(
   return link;
 }
 
+// Opens a copy of the thread on another client with its chat so far, and leaves it here. The copy
+// continues the thread's session as a fork with its first message, so the two never share a session.
 export async function mirror(from: Hub, thread: string, to: string, where?: string) {
   const name = from.name(thread) ?? thread;
   const { target, session, dest, link, filled, cwd } = await carry(from, thread, to, name, where);

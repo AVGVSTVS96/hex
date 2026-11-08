@@ -1,3 +1,4 @@
+// oxlint-disable no-comments/no-comments -- the comments here state facts about Claude Code, Bun and the hub's design that the code can't show
 import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
@@ -66,6 +67,7 @@ export function dispatch<const Tools extends readonly Tool[]>(
   };
 }
 
+// What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = {
   title: string;
   instructions: string;
@@ -95,10 +97,14 @@ type Hooks = {
   close: (thread: string, line: Line) => void;
 };
 
+// The revisions whose standalone GET stream carries server notifications. Claude Code first probes
+// `server/discover` for 2026-07-28, where it registers no channel ("no unsolicited notification
+// path"), and falls back to `initialize` when that's declined.
 const REVISIONS_WHOSE_GET_STREAM_CARRIES_NOTIFICATIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const encoder = new TextEncoder();
 const NUDGE = 250;
 
+// Bun notices a disconnected request on the next event-loop tick.
 const untilBunNoticesADisconnect = () =>
   new Promise((resolve) => {
     setTimeout(resolve, 0);
@@ -108,6 +114,12 @@ type Result = { content: { type: "text"; text: string }[]; isError?: true | unde
 
 const failure = (text: string): Result => ({ content: [{ type: "text", text }], isError: true });
 
+// How far a session initialized here is from listening. Claude Code drops channel messages that come
+// before it listens and says nothing when it starts, but it registers its channel handler in the same
+// step as its tools/list_changed handler, so once its stream is open and it has listed the tools, it's
+// told they changed, and the list that answers is the sign it listens. A session starting cold
+// registers them a while after it lists the tools and drops what came before, so it's told again
+// until it answers.
 type Handshake =
   | { is: "initialized" }
   | { is: "listed" }
@@ -148,6 +160,9 @@ function result(id: RpcId, value: Answer) {
   return Response.json({ jsonrpc: "2.0", id, result: value });
 }
 
+// A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here
+// with their binding and the hub's token in headers. Every session id is taken as it comes, so a
+// session that connected before the hub restarted carries on where it was without initializing again.
 export function endpoint(
   name: string,
   channel: string,
@@ -280,6 +295,7 @@ export function endpoint(
     }
   }
 
+  // Bun starts a response's body only once it sends it, so writes wait for that.
   function stream(thread: string | undefined, session: string | null) {
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
     let line: Line | undefined;
@@ -378,6 +394,8 @@ export function endpoint(
   }
 
   const handle = async (request: Request): Promise<Response> => {
+    // The token comes as Authorization: Claude Code then takes a refusal as a failed connection,
+    // where with any other header it marks the server as needing a login for 15 minutes.
     if (
       request.headers.has("origin") ||
       !["127.0.0.1", "localhost"].includes(new URL(request.url).hostname) ||
@@ -475,6 +493,7 @@ export function endpoint(
         return result(id, failure(`invalid tools/call: ${z.prettifyError(asked.error)}`));
       }
 
+      // Stock Claude Code sends its tool-use identity outside the model's arguments.
       const toolUse = asked.data._meta?.["claudecode/toolUseId"];
 
       const operation =
@@ -523,6 +542,8 @@ function notification(payload: Payload, zone: string) {
   };
 }
 
+// The apps stamp a message in UTC, and a session that reads 06:31Z writes it down as 6:31am, so the
+// tag carries the owner's clock time with its offset instead.
 export function local(meta: Record<string, string>, zone: string): typeof meta {
   const at = meta.ts === undefined || meta.ts === "" ? Number.NaN : Date.parse(meta.ts);
 

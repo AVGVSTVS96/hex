@@ -1,3 +1,4 @@
+// oxlint-disable no-comments/no-comments -- the comments here state facts about Claude Code, Bun and the hub's design that the code can't show
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -20,10 +21,21 @@ const Notification = z.object({
   params: z.record(z.string(), z.unknown()).optional(),
 });
 
+// Claude Code's side of a session's channel to a hub, for tests: it initializes, opens the stream
+// its messages arrive on, lists the tools, and lists them again when told they changed. deaf: how
+// many tools/list_changed it drops, as a session starting cold does before it listens.
 export type Session = ReturnType<typeof http>;
 
+// A PATH whose claude lists no sessions, for a test whose hub would otherwise ask the real one, which
+// starts a daemon of its own for any CLAUDE_CONFIG_DIR a test left set, and never stops it. It lives
+// in the repo, so a hub still running after its test's folder is gone keeps finding it.
 export const noClaude = () => `${join(import.meta.dir, "no-claude")}:${process.env.PATH}`;
 
+// A fake claude's `attach`: in its terminal, Esc interrupts the session's turn, which its transcript
+// records, and it stays attached until it's hung up on. With a file named gone in Claude's config
+// folder, the session's job is gone and it exits, as Claude's does; with one named idle, the
+// session's turn is over, so Esc changes nothing and the transcript only records a request that
+// repeats an earlier interrupt.
 export const ATTACH = `[ "$1" = attach ] && [ -f "$CLAUDE_CONFIG_DIR/gone" ] && { echo "No job matching $2"; exit 1; }
 [ "$1" = attach ] && [ -f "$CLAUDE_CONFIG_DIR/idle" ] && { stty raw -echo; printf 'Attaching\\r\\nscreen'; dd bs=1 count=1 >/dev/null 2>&1; echo '{"type":"api-request-blob","message":{"content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]}}' >> "$(ls "$CLAUDE_CONFIG_DIR"/projects/*/"$2"*.jsonl | head -1)"; exec sleep 60; }
 [ "$1" = attach ] && { stty raw -echo; printf 'Attaching\\r\\nscreen'; [ "$(dd bs=1 count=1 2>/dev/null)" = "$(printf '\\033')" ] && echo '{"type":"user","message":{"content":"[Request interrupted by user for tool use]"}}' >> "$(ls "$CLAUDE_CONFIG_DIR"/projects/*/"$2"*.jsonl | head -1)"; exec sleep 60; }`;
@@ -32,6 +44,7 @@ let ids = 0;
 const streams: AbortController[] = [];
 let listener: ReturnType<typeof Bun.serve> | undefined;
 
+// The one listener serve.ts opens, for a test's hubs.
 export function port() {
   listener ??= Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 0, fetch: route });
 
@@ -44,6 +57,8 @@ export function hangUpAll() {
   }
 }
 
+// A client's bot.ts run in its own process the way serve.ts runs it, behind a listener on a free
+// port, which the hub reads from HEX_PORT as it loads.
 export async function service(bot: string, env: Record<string, string | undefined>) {
   const hub = JSON.stringify(join(import.meta.dir, "hub.ts"));
 
@@ -78,6 +93,7 @@ await import(${JSON.stringify(bot)})`;
   return { process: child, port: Number(out.split("\n")[0]) };
 }
 
+// at: the port of a hub in another process; this process's own listener by default.
 export function http({
   stateDir,
   path,
@@ -121,6 +137,7 @@ export function http({
       body: JSON.stringify({ jsonrpc: "2.0", ...body }),
     });
 
+  // A list counts once the hub has answered it, so whatever the list set off on its side is done.
   // oxlint-disable-next-line typescript/no-explicit-any -- tests read the hub's replies as raw JSON, and each test's expect() checks them
   const rpc = async (method: string, params: ToolArguments = {}): Promise<any> => {
     const reply: unknown = await (await post({ id: ++ids, method, params })).json();
@@ -190,6 +207,8 @@ export function http({
   };
 }
 
+// A session connected and listening, the way it is once Claude Code has started it. Its tool
+// calls answer with the text, or the error, the tool gave.
 export async function connect(options: Parameters<typeof http>[0]) {
   const line = http(options);
   await line.initialize();

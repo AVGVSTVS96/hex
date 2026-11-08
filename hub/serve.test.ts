@@ -1,3 +1,4 @@
+// oxlint-disable no-comments/no-comments -- the comments here state facts about Claude Code, Bun and the hub's design that the code can't show
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -6,6 +7,8 @@ import { join } from "node:path";
 import { listen } from "./hub.ts";
 import { until } from "./until.ts";
 
+// A hub a stop left running, finishing a call, as KillMode=process left one: it holds the port
+// until it exits.
 const OLD_HUB_FINISHING_A_CALL_HOLDS_THE_PORT = `const listener = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: () => new Response('old hub') })
 console.log(listener.port)
 setInterval(() => {}, 1000)`;
