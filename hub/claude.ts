@@ -49,9 +49,11 @@ export function inherited(): Record<string, string | undefined> {
   );
 }
 
-// systemd 254 began expanding ${VARIABLE} in a scope's command and added --expand-environment to turn that off: https://github.com/systemd/systemd/blob/v254/NEWS
+// systemd 254 added --expand-environment and plans to expand ${VARIABLE}s in a scope's command by default: https://github.com/systemd/systemd/blob/v254/NEWS
 let keepVariablesVerbatim: string[] | undefined;
 
+// Each claude command goes in the sessions slice, since `claude agents` and `claude --bg` start the supervisor that parents every session: https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell
+// There OOMPolicy=continue keeps one session's out-of-memory kill from ending the rest: https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html#OOMPolicy=
 function contained(command: string, args: string[]): [string, string[]] {
   const slice = process.env.HEX_SESSIONS_SLICE;
 
@@ -131,6 +133,9 @@ async function listed(): Promise<Agent[] | undefined> {
 
 const ignore = (): undefined => undefined;
 
+// Sessions stop unless a new supervisor connects within about a minute of the old one ending: https://code.claude.com/docs/en/agent-view#keep-sessions-running-after-the-supervisor-stops
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A supervisor that's down lists no sessions even while some run, so an empty list is trusted only once it answers.
 async function awake(asking: () => boolean) {
   if ((await run(["daemon", "status"])) !== undefined) {
     return true;
@@ -151,6 +156,8 @@ async function awake(asking: () => boolean) {
 
 const neverAnswered = () => new Promise<never>(ignore);
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A caller that stops asking (a closed hub) gets no answer at all, even to a question already asked.
 export async function agents(asking = () => true): Promise<Agent[]> {
   for (let tries = 0; asking(); tries++) {
     const answer = await listed();
@@ -187,7 +194,7 @@ export async function listing(session: string): Promise<Agent | undefined> {
 
 export const stop = (session: string) => run(["stop", short(session)]);
 
-const PAST_ATTACHING_LINE = /Attaching[^\n]*\n[^]/u;
+const KEYS_REACH_SESSION_AFTER_ATTACHING_LINE = /Attaching[^\n]*\n[^]/u;
 const ESC = "\u001B";
 
 export function interrupt(
@@ -242,6 +249,8 @@ export function interrupt(
     let pressed = false;
 
     try {
+      // No shell command interrupts a session's turn (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), so attach presses Esc, which stops the turn: https://code.claude.com/docs/en/interactive-mode#general-controls
+      // The Stop hook doesn't run on an interrupt: https://code.claude.com/docs/en/hooks#stop
       const [command, args] = contained("claude", ["attach", short(session)]);
       attach = Bun.spawn([command, ...args], {
         env: inherited(),
@@ -255,7 +264,7 @@ export function interrupt(
 
             shown += Buffer.from(output).toString("latin1");
 
-            if (!PAST_ATTACHING_LINE.test(shown)) {
+            if (!KEYS_REACH_SESSION_AFTER_ATTACHING_LINE.test(shown)) {
               return;
             }
 
@@ -342,6 +351,8 @@ function entryOf(line: string): z.infer<typeof TranscriptEntry> | undefined {
   }
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A transcript's request records repeat earlier interrupts, so only the session's own user line counts.
 function interruption(line: string) {
   if (!line.includes(INTERRUPTED)) {
     return false;
@@ -376,10 +387,12 @@ export function interrupted(entry: {
   );
 }
 
+// `claude --bg --resume` can start a copy under a new ID, which happens while the old session's job record exists: https://code.claude.com/docs/en/agent-view#dispatch-an-agent-from-your-shell
 export const rm = (session: string) => run(["rm", short(session)]);
 
 export const respawn = (session: Agent) => run(["respawn", job(session)]);
 
+// A supervisor on another version than the claude invoked picks up the new one after `claude daemon stop --any`: https://code.claude.com/docs/en/agent-view#where-state-is-stored
 let staleDaemonCheck: Promise<void> | undefined;
 
 function restartStaleDaemon() {
@@ -433,6 +446,7 @@ export async function start(
   );
 }
 
+// Only a parent can wait on a process (https://man7.org/linux/man-pages/man2/waitpid.2.html) and pidwait isn't on macOS (https://man7.org/linux/man-pages/man1/pidwait.1.html), so this polls.
 export function exited(pid: number): Promise<void> {
   return new Promise((resolve) => {
     const check = () => {

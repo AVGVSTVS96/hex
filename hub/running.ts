@@ -99,6 +99,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
       Object.entries({ state, detail, needs }).filter(([, value]) => nonEmpty(value) !== undefined),
     );
 
+    // A background session runs with the supervisor's environment, not its dispatcher's, so its thread comes from its settings' env: https://code.claude.com/docs/en/agent-view#llm-gateway
     const env = kind === "bg" ? launched(respawnFlags) : environ(pid);
     const helper = nonEmpty(env.HEX_HELPER);
     sessions.set(id, {
@@ -130,6 +131,8 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   return sessions;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A background session's record starts when its job takes a spare process, which is when it loads plugins; a /clear keeps the process and gives the record the new session's id.
 export function own(
   session: string,
   claude = CLAUDE,
@@ -295,6 +298,8 @@ function statAfterName(pid: number): string[] | undefined {
   }
 }
 
+// Sessions are this user's processes, so one the user can't signal (EPERM) is another's: https://man7.org/linux/man-pages/man2/kill.2.html
+// A start time (field 22) other than the record's procStart means a dead session's pid was reused, and state Z is a zombie: https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html
 function alive(pid: number, procStart: string | undefined) {
   try {
     if (!Number.isInteger(pid) || pid <= 0 || !process.kill(pid, 0)) {
