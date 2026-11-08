@@ -126,8 +126,9 @@ test("vault run stops on a .env that doesn't parse", () => {
   expect(out).toBe("");
 });
 
-for (const line of ["exit 0", "false", "X=$(false)", ". ./missing"]) {
-  test(`every vault command stops on a .env line \`${line}\``, () => {
+test.each(["exit 0", "false", "X=$(false)", ". ./missing"])(
+  "every vault command stops on a .env line `%s`",
+  (line) => {
     appendFileSync(join(home, ".env"), `${line}\n`);
 
     for (const args of [
@@ -136,8 +137,8 @@ for (const line of ["exit 0", "false", "X=$(false)", ". ./missing"]) {
     ]) {
       expect(vault(args)).toMatchObject({ code: 1, out: "" });
     }
-  });
-}
+  },
+);
 
 test("every vault command stops on settings it can't read", () => {
   writeFileSync(join(home, ".claude/settings.json"), "{");

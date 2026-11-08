@@ -4,6 +4,8 @@ import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { open } from "../../hub/store.ts";
 
 const HEX = join(import.meta.dir, "../..");
@@ -51,16 +53,12 @@ test("an update tells each thread that asked for it once what it asked for is li
   const done = Bun.spawnSync([join(hex, "bin/update")], { env: { ...env, HEX_STORE: state } });
   expect(done.stdout.toString()).toStartWith("up to date at");
 
-  const told = new Database(join(state, "hex.db"))
-    .query('select "to", body from messages')
-    .all() as { to: string; body: string }[];
+  const told = z
+    .array(z.object({ to: z.string(), body: z.string() }))
+    .parse(new Database(join(state, "hex.db")).query('select "to", body from messages').all());
 
-  expect(told).toEqual([
-    {
-      to: "-100:1",
-      body: expect.stringContaining(`[job] hex-update shipped: hex is live at ${live.slice(0, 7)}`),
-    },
-  ]);
+  expect(told.map(({ to }) => to)).toEqual(["-100:1"]);
+  expect(told[0]?.body).toContain(`[job] hex-update shipped: hex is live at ${live.slice(0, 7)}`);
   expect(readFileSync(join(state, "update-askers"), "utf-8")).toBe(
     `c@3 telegram:-100:2 ${later}\n`,
   );
