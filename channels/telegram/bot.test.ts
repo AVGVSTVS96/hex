@@ -573,7 +573,13 @@ test("new_thread opens a topic with a random icon and only the prompt, forwardin
   await until(() => calls.find((c) => c.method === "sendChatAction"));
   await call("reply", { text: "on it" });
   expect(
-    (await call("new_thread", { title: "Desk", prompt: "research desk anchors" })).text,
+    (
+      await call("new_thread", {
+        title: "Desk",
+        prompt: "research desk anchors",
+        about: "From desk: the anchors",
+      })
+    ).text,
   ).toMatch(/^started thread "Desk" in telegram/);
   expect((await called("createForumTopic")).icon_custom_emoji_id).toMatch(/^(111|222)$/);
   expect(calls.find((c) => c.method === "forwardMessages")).toBeUndefined();
@@ -1234,7 +1240,10 @@ test("set_model sets what the thread's next message starts with, when the user t
   expect(saved()[DESK]).toMatchObject({ model: "opus", effort: "xhigh" });
   await call("set_model", { effort: "low" });
   expect(saved()[DESK]).toMatchObject({ model: "opus", effort: "low" });
-  expect((await call("set_model", { model: "gpt" })).error).toMatch(
+  expect((await call("set_model", {})).error).toMatch(
     /^set_model takes a model \(opus, sonnet, haiku, fable\)/,
+  );
+  expect((await call("set_model", { model: "gpt" })).error).toMatch(
+    /expected one of "opus"\|"sonnet"\|"haiku"\|"fable"/,
   );
 });
