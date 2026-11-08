@@ -87,6 +87,7 @@ export class Links {
     if (!existsSync(database)) {
       return;
     }
+
     this.environment = word(readFile(join(t3, "environment-id"))?.trim());
     this.db = new Database(database, { readonly: true });
     this.watcher = watch(t3, (_, file) => file?.startsWith(DATABASE) && this.schedule());
@@ -129,12 +130,14 @@ export class Links {
     if (app !== "t3" || !this.delegated(app, id)) {
       return;
     }
+
     const shows = (parent?: string) => !!parent && this.shows(parent, new Set([`t3:${id}`]));
     const last = this.starts.get(this.threads.get(id)?.thread ?? "")?.parent;
 
     if (last && this.owners(id).includes(last) && shows(last)) {
       return last;
     }
+
     const handoffs = this.handed.filter(
       (one) => one.hex === id && (!one.relay || one.latest) && shows(one.parent),
     );
@@ -156,6 +159,7 @@ export class Links {
     if (passed.has(thread)) {
       return false;
     }
+
     const owners = thread.startsWith("t3:") ? this.owners(thread.slice(3)) : [];
 
     return (
@@ -181,6 +185,7 @@ export class Links {
       if (one && (!up || one.since >= up.since)) {
         return { thread: one.parent, handed: !seen.size && one.shown };
       }
+
       seen.add(thread);
       thread = up?.parent;
     }
@@ -193,6 +198,7 @@ export class Links {
     if (one) {
       return one.title;
     }
+
     if (!this.titles.has(id)) {
       this.titles.set(
         id,
@@ -205,6 +211,7 @@ export class Links {
         ),
       );
     }
+
     return this.titles.get(id);
   }
 
@@ -239,6 +246,7 @@ export class Links {
     if (this.pending) {
       return;
     }
+
     this.pending = setTimeout(() => {
       this.pending = undefined;
 
@@ -318,6 +326,7 @@ export class Links {
       for (const one of handed) {
         start(one.id, one.parent, one.since, !HANDED[one.status]);
       }
+
       const relayed = open(this.state)
         .relays()
         .flatMap(({ from, thread, run: task, at }): Delegation[] => {
@@ -327,6 +336,7 @@ export class Links {
           if (!ran || from === `t3:${hex}`) {
             return [];
           }
+
           const behind = handed.findLast((one) => one.parent === from && one.id === thread);
           start(thread, from, at, !HANDED[(behind ?? ran).status]);
 
@@ -381,6 +391,7 @@ export class Links {
       ) {
         return false;
       }
+
       this.threads = threads;
       this.handed = handed;
       this.ran = ran;
@@ -421,11 +432,14 @@ export function linkAt(app: string, link: string | undefined, message?: MessageI
   if (!link || message === undefined) {
     return link;
   }
+
   if (app === "discord") {
     return `${link}/${message}`;
   }
+
   if (app === "telegram" && link.startsWith("https://t.me/c/")) {
     return `${link.replace(/\/1$/, "")}/${message}`;
   }
+
   return link;
 }

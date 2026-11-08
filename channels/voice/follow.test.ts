@@ -24,6 +24,7 @@ async function resumed({ live = false } = {}) {
   for (const dir of [calls, project, join(claude, "sessions"), join(state, "telegram")]) {
     mkdirSync(dir, { recursive: true });
   }
+
   open(state).keepThreads("telegram", {
     "-100123": { name: "General", session: SESSION },
     "-100123:7": { name: "Other", session: OTHER },

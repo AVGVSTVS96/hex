@@ -56,6 +56,7 @@ async function appCall({ open = false } = {}) {
           { status: 201 },
         );
       }
+
       if (hold) {
         held = true;
         await new Promise<void>((resolve) => waiting.push(resolve));
@@ -76,14 +77,17 @@ async function appCall({ open = false } = {}) {
         if (event.type === "session.instructions.append") {
           instructed.push(event.content);
         }
+
         if (event.type === "session.thinking.append") {
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
           );
         }
+
         if (event.type !== "session.close") {
           return;
         }
+
         closes.push(`${(socket.data as { id: string }).id} ${event.event_id}`);
 
         if (acking) {
@@ -120,6 +124,7 @@ async function appCall({ open = false } = {}) {
       }),
     );
   }
+
   const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), renewal: async () => {}, session: () => 'brain' }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))

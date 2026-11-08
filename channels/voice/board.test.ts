@@ -639,6 +639,7 @@ test("a T3 Code thread is placed by T3's own title for it, where T3 has one", as
   for (const session of ["d3000001-mapped", "d3000005-unmapped"]) {
     job(session, { state: "done", detail: "ok", updatedAt: ago(1) });
   }
+
   mapped("mapped", "4a1e7c52", { title: "Voice app restyle" });
   await until(() => board.get("t3:mapped")?.place === "Voice app restyle");
   expect(board.get("t3:mapped")).toMatchObject({
@@ -1541,6 +1542,7 @@ function run(
       id,
     ]);
   }
+
   return id;
 }
 
@@ -2020,6 +2022,7 @@ test("a thread that works again shows only this stretch's steps and plan, not th
   ]) {
     mkdirSync(path, { recursive: true });
   }
+
   const session = "abababab-again";
   open(hexState).keepThreads("telegram", { "-100777:5": { name: "Again", session } });
   const transcript = join(dir, `${session}.jsonl`);

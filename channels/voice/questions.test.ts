@@ -33,6 +33,7 @@ function ledger(
     for (const question of kept) {
       store.ask({ app: "telegram", ...question });
     }
+
     for (const [thread, pin] of Object.entries(pins)) {
       store.pinned({ app: "telegram", thread, note: pin.text, ...pin });
     }

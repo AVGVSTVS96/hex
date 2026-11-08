@@ -245,6 +245,7 @@ export class Board extends Changes {
         if (JSON.stringify(this.stored()) !== JSON.stringify(this.threads)) {
           this.mark("threads");
         }
+
         const beaten = open(state).beaten();
         const linked = JSON.stringify(open(state).agentTasks());
         const closed = JSON.stringify(this.closedTasks());
@@ -252,6 +253,7 @@ export class Board extends Changes {
         if (beaten !== this.beaten || linked !== this.linked || closed !== this.closed) {
           this.schedule();
         }
+
         this.beaten = beaten;
         this.linked = linked;
         this.closed = closed;
@@ -281,12 +283,14 @@ export class Board extends Changes {
     if (kept) {
       return kept;
     }
+
     const all = open(this.state).threads();
     const row = all.find(({ app, thread }) => APPS[app] && `${app}:${thread}` === id);
 
     if (!row || this.links.delegated(row.app, row.thread)) {
       return;
     }
+
     const thread = threadOf(row, generalOf(all));
 
     const own =
@@ -351,14 +355,17 @@ export class Board extends Changes {
     if (this.saving) {
       this.saveTracks();
     }
+
     this.links.close();
 
     for (const stop of this.stops) {
       stop();
     }
+
     for (const watcher of this.watchers.values()) {
       watcher.close();
     }
+
     for (const follower of this.followers.values()) {
       follower.stop();
     }
@@ -374,9 +381,11 @@ export class Board extends Changes {
     if (!short || !this.wanted().has(short)) {
       return;
     }
+
     if (folder) {
       this.unwatchJob(short);
     }
+
     this.jobs.delete(short);
     this.watchJob(short);
     this.schedule();
@@ -394,9 +403,11 @@ export class Board extends Changes {
     if (this.stale.threads) {
       this.readThreads();
     }
+
     if (this.stale.sessions) {
       this.readSessions();
     }
+
     this.own();
     this.watchJobs();
     this.stale = { threads: false, sessions: false };
@@ -420,6 +431,7 @@ export class Board extends Changes {
     for (const run of runs) {
       this.keep(run);
     }
+
     runs.push(...this.group(runs));
     runs.sort(
       (a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at),
@@ -432,6 +444,7 @@ export class Board extends Changes {
     ) {
       return;
     }
+
     this.runs = runs;
     this.finished = finished;
     this.changed();
@@ -440,6 +453,7 @@ export class Board extends Changes {
     if (summary.needs === this.summary.needs && summary.working === this.summary.working) {
       return;
     }
+
     this.summary = summary;
     this.counts.changed();
   }
@@ -453,9 +467,11 @@ export class Board extends Changes {
     if (run.state === "working") {
       this.stretches.set(run.id, { steps: run.steps, plan: run.plan, agents: run.agents });
     }
+
     if (run.state === "working" || !stretch) {
       return;
     }
+
     const thread = this.threads.find((thread) => `${thread.app}:${thread.id}` === run.id);
     const handed = this.links.delegations(run.app, run.thread);
     Object.assign(run, {
@@ -527,6 +543,7 @@ export class Board extends Changes {
       if (!owner) {
         continue;
       }
+
       known.set(id, owner.thread);
 
       if (owner.handed && shownAt(owner.thread) === owner.thread) {
@@ -564,6 +581,7 @@ export class Board extends Changes {
       if (!owner || shown.has(owner) || held.has(session.id)) {
         continue;
       }
+
       if (run.id === session.id) {
         this.tops.push(session);
       } else {
@@ -610,9 +628,11 @@ export class Board extends Changes {
     for (const id of this.watchers.keys()) {
       if (!wanted.has(id)) this.unwatchJob(id);
     }
+
     for (const id of this.jobs.keys()) {
       if (!wanted.has(id)) this.jobs.delete(id);
     }
+
     for (const id of wanted) {
       this.watchJob(id);
     }
@@ -622,6 +642,7 @@ export class Board extends Changes {
     if (this.watchers.has(id)) {
       return;
     }
+
     try {
       this.watchers.set(
         id,
@@ -676,6 +697,7 @@ export class Board extends Changes {
     if (beat !== undefined && job?.state !== "blocked") {
       ({ job, timeline } = before(job, timeline, beat, earlier));
     }
+
     const beating = beat !== undefined && !earlier;
 
     const outside = (at: string) =>
@@ -689,6 +711,7 @@ export class Board extends Changes {
     if (!live && ((state === "working" && !session) || job?.detail?.startsWith("(idle"))) {
       state = "idle";
     }
+
     const lately = timeline
       .filter((entry) => entry.text && entry.detail && outside(entry.at))
       .slice(-LATELY)
@@ -820,6 +843,7 @@ export class Board extends Changes {
           return true;
         }
         // An agent kept from a stretch that ended says nothing new of whether it still works.
+
         const settled =
           run.state !== "working" && agent.state === "working"
             ? { ...agent, state: "done" as const }
@@ -856,12 +880,14 @@ export class Board extends Changes {
     for (const run of fresh) {
       this.groups.set(run.id, run);
     }
+
     const since = new Date(Date.now() - KEEP).toISOString();
 
     for (const [id, kept] of this.groups) {
       if (fresh.some((run) => run.id === id)) {
         continue;
       }
+
       if (kept.at < since) {
         this.groups.delete(id);
         continue;
@@ -991,9 +1017,11 @@ export class Board extends Changes {
     if (run.length && !next) {
       return Date.parse(run[0]!.began);
     }
+
     if (session?.status !== "busy") {
       return;
     }
+
     const { began, ended } = open(this.state).turn(session.id);
 
     if ((!began || (!!ended && Date.parse(began) < flipped)) && this.awaited(thread)) {
@@ -1032,6 +1060,7 @@ export class Board extends Changes {
       } else {
         delete this.tracks[id];
       }
+
       this.saving ??= setTimeout(() => {
         this.saveTracks();
       }, SAVE);
@@ -1134,6 +1163,7 @@ export class Board extends Changes {
       if (run.state !== "working") {
         continue;
       }
+
       const thread = threads.find((thread) => `${thread.app}:${thread.id}` === run.id)!;
       const { session } = thread;
       const key = keyOf(thread);
@@ -1145,6 +1175,7 @@ export class Board extends Changes {
       if (session) {
         wanted.set(session, [STEPS, (follow) => follow(join(project, `${session}.jsonl`))]);
       }
+
       for (const agent of run.agents) {
         const started = this.sessions.get(agent.id);
         const hex = handed.find((one) => one.id === agent.id)?.hex;
@@ -1153,6 +1184,7 @@ export class Board extends Changes {
         if (agent.via === "t3" && !child) {
           continue;
         }
+
         wanted.set(`${key} ${agent.id}`, [
           AGENT_STEPS,
           (follow) =>
@@ -1171,6 +1203,7 @@ export class Board extends Changes {
       if (wanted.has(key)) {
         continue;
       }
+
       follower.stop();
       this.followers.delete(key);
     }
@@ -1179,6 +1212,7 @@ export class Board extends Changes {
       if (this.followers.has(key)) {
         continue;
       }
+
       const follower: Follower = {
         stop: () => {},
         keep,
@@ -1209,14 +1243,17 @@ export class Board extends Changes {
     if (entry.timestamp) {
       follower.last = entry.timestamp;
     }
+
     if (entry.type === "assistant" && who(entry.message?.model)) {
       follower.model = entry.message.model;
     }
+
     const told = toldOf(entry);
 
     if (told) {
       follower.told.set(...told);
     }
+
     for (const update of updates) {
       if (update.sessionUpdate === "plan") {
         follower.plan = update.entries.map((entry) => ({
@@ -1235,6 +1272,7 @@ export class Board extends Changes {
       if (step) {
         Object.assign(step, back, { end: at, text: past(step.text) });
       }
+
       const did = stepOf(update, (id) => this.links.name(id));
 
       if (did?.kind === "say" && did.text) {
@@ -1251,6 +1289,7 @@ export class Board extends Changes {
       ) {
         continue;
       }
+
       const next = {
         ...did,
         text: did.kind === "say" ? did.text : oneLine(did.text),
@@ -1278,9 +1317,11 @@ function home(task: { owner: string; project?: string }, runs: Run[]) {
   if (owner && owner.where !== "General" && owner.where !== "DM") {
     return owner.id;
   }
+
   if (!task.project) {
     return owner?.id;
   }
+
   return (
     runs.find((run) => run.name === task.project && run.where !== "General" && run.where !== "DM")
       ?.id ?? `project:${task.project}`
@@ -1334,6 +1375,7 @@ export function opener(run: Run) {
   if (run.app === "hex") {
     return `The task is ${run.name}, work hex's agents do for it, with no thread of its own. ${state}`;
   }
+
   return `The task is the hex thread ${run.name} (${run.where}, thread id ${run.thread}). ${state}`;
 }
 
@@ -1359,9 +1401,11 @@ function where(thread: Thread) {
   if (thread.general) {
     return "General";
   }
+
   if (thread.app === "telegram" && !thread.id.includes(":") && !thread.id.startsWith("-")) {
     return "DM";
   }
+
   return APPS[thread.app];
 }
 
@@ -1372,6 +1416,7 @@ function streak(timeline: Entry[], state?: string) {
   for (let i = timeline.length - 1; i >= 0 && timeline[i].state === state; i--) {
     since = timeline[i].at;
   }
+
   return since;
 }
 
@@ -1435,6 +1480,7 @@ function inRun(runs: string, name: string, follow: (path: string) => () => void)
     if (!path) {
       return;
     }
+
     watcher.close();
     stop = follow(path);
   }
@@ -1456,6 +1502,7 @@ function who(model?: string | null) {
   if (/^gpt-[\d.]+$/.test(id)) {
     return id.toUpperCase();
   }
+
   const [name, ...version] = id.replace(/^gpt-[\d.]+-/, "").split("-");
 
   return /^[a-z]\w*$/.test(name!) && name !== "default"
@@ -1481,9 +1528,11 @@ function toldOf(entry: any): [string, Told] | undefined {
       { state: "done", result: result.content.map((block: any) => block.text ?? "").join("\n") },
     ];
   }
+
   if (entry.origin?.kind !== "task-notification") {
     return;
   }
+
   const content = entry.message?.content;
 
   const text: string =
@@ -1526,6 +1575,7 @@ function before(job: Job | undefined, timeline: Entry[], from: number, working: 
       timeline: kept,
     };
   }
+
   return {
     job: {
       ...job,

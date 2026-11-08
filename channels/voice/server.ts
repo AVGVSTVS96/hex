@@ -182,20 +182,25 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   if (name === "phone") {
     return await dial(args);
   }
+
   if (name === "title") {
     return title(args.call, args);
   }
+
   if (name === "task") {
     return await task(args.id, args.state as Task["state"], args.text, args.call, args.agent);
   }
+
   if (name === "send") {
     return await pass(args.thread, args.about, args.text, args.app, args.channel);
   }
+
   if (name === "answer") {
     return await answerQuestion(args.id, args.label, "call").then(
       (sent) => `sent "${args.label}" to ${sent.topic}${missed(sent)}`,
     );
   }
+
   const ringing =
     name === "note" && !live && [...placed.values()].findLast((call) => !call.session);
 
@@ -214,21 +219,28 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   if (!live) {
     throw new Error("no call is live");
   }
+
   switch (name) {
     case "say": {
       await tell(live, "say", args.text, args.delegation_id);
+
       return "said";
     }
+
     case "note": {
       await tell(live, "note", args.text, args.delegation_id);
+
       return "noted";
     }
+
     case "hang_up": {
       return await hangUpCall(live);
     }
+
     case "ask": {
       return show(live, args.id);
     }
+
     default: {
       throw new Error(`unknown tool ${name}`);
     }
@@ -241,6 +253,7 @@ function send(call: Live, type: string, content: string, delegation?: string) {
       new Error("the connection to the voice is coming back; try again in a few seconds"),
     );
   }
+
   const event_id = `${type.split(".")[1]}_${++seq}`;
   call.socket.send(JSON.stringify({ type, event_id, delegation_id: delegation ?? null, content }));
 
@@ -308,9 +321,11 @@ async function task(
   if (!call) {
     throw new Error("no call yet");
   }
+
   if (agent || state !== "running") {
     stop(call, id);
   }
+
   const following =
     live?.id === call &&
     state === "running" &&
@@ -322,6 +337,7 @@ async function task(
   if (following) {
     follows.set(`${call} ${id}`, following);
   }
+
   const result = await mark(call, {
     ...current(call, id),
     id,
@@ -349,9 +365,11 @@ async function pass(
   if (!app && !known) {
     throw new Error(`no hex thread is named ${name}; pass app to open one`);
   }
+
   if (call && live?.id !== call) {
     past(call);
   }
+
   const id = call && fresh(call, about);
   const meta = { user: "hex voice", ...(id && { voice_task: `${call}:${id}` }) };
   let thread = known;
@@ -386,6 +404,7 @@ async function pass(
   if (call && id) {
     watch(call, id, thread!, !!app);
   }
+
   if (!app) {
     try {
       await relay(HEX_STATE, thread!.app, {
@@ -398,6 +417,7 @@ async function pass(
       if (call && id) {
         see(call, id, { end: "failed" });
       }
+
       throw error;
     }
   }
@@ -407,6 +427,7 @@ async function pass(
   if (!id) {
     return sent;
   }
+
   return (await told)
     ? `${sent}, on the board as ${id}`
     : `${sent}, on the board as ${id}, but the voice may not have heard of it; the work went out, so it needn't be sent again`;
@@ -421,6 +442,7 @@ function resume() {
     if (Date.parse(started) < since) {
       break;
     }
+
     const latest = new Map(past(call).tasks.map((task) => [task.id, task]));
 
     for (const task of latest.values()) {
@@ -502,6 +524,7 @@ function fresh(call: string, about: string) {
   for (let n = 2; current(call, id); n++) {
     id = `${base}-${n}`;
   }
+
   return id;
 }
 
@@ -509,11 +532,13 @@ function current(call: string, id: string): Task | undefined {
   if (live?.id === call) {
     return live.call.task(id);
   }
+
   const moment = calls.get(call)?.tasks.findLast((task) => task.id === id);
 
   if (!moment) {
     return;
   }
+
   const { at, ...task } = moment;
 
   return task;
@@ -545,15 +570,18 @@ function see(call: string, id: string, { line, end }: Step) {
   if (line && live?.id === call && live.call.see(id, line)) {
     activity.changed();
   }
+
   if (!end) {
     return;
   }
+
   stop(call, id);
   const task = current(call, id);
 
   if (task?.state !== "running") {
     return;
   }
+
   try {
     mark(call, { ...task, state: end }).catch((error) => {
       trace(`the voice didn't hear ${id} ${end}: ${error.message}`);
@@ -584,9 +612,11 @@ function title(
   } else {
     calls.save({ ...past(call), ...change });
   }
+
   if (Array.isArray(waiting)) {
     yours.called();
   }
+
   return "saved";
 }
 
@@ -596,6 +626,7 @@ function past(id: string) {
   if (!record) {
     throw new Error(`no call ${id}`);
   }
+
   return record;
 }
 
@@ -609,9 +640,11 @@ async function hangUpCall(call: Live) {
   ) {
     await Bun.sleep(250);
   }
+
   if (live !== call) {
     return "the call had already ended";
   }
+
   close(call, `close_hex_${++seq}`);
 
   return "hanging up";
@@ -628,6 +661,7 @@ function close(call: Live, event: string) {
   if (call.speak && state !== WebSocket.OPEN) {
     return;
   }
+
   call.closing ??= event;
 
   if (state === WebSocket.OPEN) {
@@ -715,6 +749,7 @@ function finish(call: Live, reason: string, by?: string) {
   if (live !== call) {
     return;
   }
+
   live = undefined;
   ended = call.id;
   clearTimeout(call.warning);
@@ -724,12 +759,15 @@ function finish(call: Live, reason: string, by?: string) {
     pending.reject(new Error(`the call ended (${reason})`));
   }
   // A subagent's steps show only on its live call; a thread's work goes on into the call's record.
+
   for (const task of call.call.activity()) {
     if (task.agent && !task.to) stop(call.id, task.id);
   }
+
   for (const pending of call.rings.splice(0)) {
     ring(call, pending);
   }
+
   const rest = call.call.handOff();
   call.record = { ...call.record, ended: new Date().toISOString(), end, reason };
   save(call);
@@ -806,6 +844,7 @@ function follow(
   if (attaching) {
     retire(attaching, "close-you-moved");
   }
+
   const current: Live = {
     id: record.id,
     shown: new Map(),
@@ -843,6 +882,7 @@ function follow(
   for (const text of notes.splice(0)) {
     void tell(current, "note", text).catch(() => {});
   }
+
   return current;
 }
 
@@ -864,6 +904,7 @@ function half({ partly, undoing }: Question) {
   if (undoing) {
     return " [taking back its answer stopped partway: only Undo in the app finishes it]";
   }
+
   return partly
     ? ` ["${partly}" already went out to part of it: only "${partly}" finishes it, or Undo in the app]`
     : "";
@@ -889,6 +930,7 @@ function talkAbout(topic: Topic) {
   if (!live) {
     return new Response("No call is live", { status: 409 });
   }
+
   deliver(`The caller asked for this from the app during the call. ${topic.claude}`, {
     call: live.id,
     task: topic.id,
@@ -907,9 +949,11 @@ async function showMedia(request: Request, id: string) {
   if (!item) {
     return new Response("Name a photo or video sent to /media", { status: 400 });
   }
+
   if (live?.id !== id) {
     return new Response("That call is not live", { status: 409 });
   }
+
   remember(live, item.kind, "", { media: item.id });
   deliver(`The caller sent this from the app: ${line(item)}`, {
     call: live.id,
@@ -932,6 +976,7 @@ async function upload(request: Request) {
       status: 415,
     });
   }
+
   try {
     const { id, kind } = await media.add(type, await request.blob());
 
@@ -954,6 +999,7 @@ function show(call: Live, id: string) {
   if (!question) {
     throw new Error(`no open ask ${id}`);
   }
+
   call.shown.set(id, question);
   remember(call, "ask", question.question, { ask: id });
   activity.changed();
@@ -995,23 +1041,29 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
   } else {
     socket.addEventListener("open", hungUp, { once: true });
   }
+
   socket.onmessage = ({ data }) => {
     const event = JSON.parse(String(data));
 
     switch (event.type) {
       case "session.input_transcript.delta": {
         hear(call, "you", event);
+
         return;
       }
+
       case "session.output_transcript.delta": {
         call.spoke = Date.now();
         hear(call, "voice", event);
+
         return;
       }
+
       case "session.delegation.created": {
         if (event.delegation?.target !== "client") {
           return;
         }
+
         const pending = { delegation: event.delegation.id, offset: event.offset_ms };
         call.rings.push(pending);
         // Words after the handoff are what send it, so the request is all there; when none come,
@@ -1031,8 +1083,10 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
       case "session.thinking.appended":
       case "session.instructions.appended": {
         call.pending.get(event.client_event_id)?.resolve();
+
         return call.pending.delete(event.client_event_id);
       }
+
       case "error": {
         const id = event.client_event_id ?? event.error?.client_event_id ?? event.error?.event_id;
         const failed = call.pending.get(id);
@@ -1040,23 +1094,30 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
 
         if (failed) {
           failed.reject(new Error(event.error?.message ?? JSON.stringify(event)));
+
           return;
         }
+
         trace(JSON.stringify(event));
+
         return;
       }
 
       case "session.output_audio.delta": {
         call.spoke = Date.now();
+
         return call.speak?.(event.delta);
       }
+
       case "session.usage.updated": {
         call.record.usage = usage(
           event.usage.seconds,
           event.context_window?.usage_ratio ?? call.record.usage?.context,
         );
+
         return;
       }
+
       case "session.closed": {
         if (event.usage) call.record.usage = usage(event.usage.seconds, call.record.usage?.context);
         finish(
@@ -1064,6 +1125,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
           event.reason ?? "closed",
           (event.reason === "close_requested" && call.closing) || event.client_event_id,
         );
+
         return;
       }
     }
@@ -1078,6 +1140,7 @@ function reconnect(call: Live, attempt: number) {
   if (live !== call) {
     return;
   }
+
   for (const pending of call.pending.values()) {
     pending.reject(
       new Error(
@@ -1085,6 +1148,7 @@ function reconnect(call: Live, attempt: number) {
       ),
     );
   }
+
   call.pending.clear();
   // A close sent on the dropped connection may never have reached the session, so it goes out again.
   delete call.closed;
@@ -1098,6 +1162,7 @@ function reconnect(call: Live, attempt: number) {
     if (lost) {
       closeSession(call.id, `close_hex_${++seq}`);
     }
+
     return;
   }
 
@@ -1106,13 +1171,16 @@ function reconnect(call: Live, attempt: number) {
     if (live !== call) {
       return;
     }
+
     const socket = sideband(call.id);
     socket.onopen = () => {
       if (live !== call) {
         if (call.closing && !call.closed) {
           sendClose(call, call.closing, socket);
         }
+
         socket.close();
+
         return;
       }
 
@@ -1133,10 +1201,12 @@ function warn(call: Live) {
   if (!(left > WARN_BEFORE)) {
     return;
   }
+
   call.warning = setTimeout(() => {
     if (live !== call) {
       return;
     }
+
     const at = new Date(Date.parse(call.record.expires!)).toLocaleTimeString([], {
       hour: "numeric",
       minute: "2-digit",
@@ -1178,6 +1248,7 @@ function recover() {
     if (!record) {
       continue;
     }
+
     const latest =
       i === 0 &&
       KEY &&
@@ -1231,6 +1302,7 @@ function closeOut(record: CallRecord, by?: string) {
     if (by) {
       ended = record.id;
     }
+
     toHub(hub.renew);
   }
 }
@@ -1259,6 +1331,7 @@ function reattach({ id }: CallRecord) {
     if (attaching === pending) {
       attaching = undefined;
     }
+
     const record = pending.closing ? undefined : calls.get(id);
 
     if (!record || live) {
@@ -1276,6 +1349,7 @@ function reattach({ id }: CallRecord) {
       } else if (!live && !pending.closing) {
         toHub(hub.renew);
       }
+
       return;
     }
 
@@ -1297,13 +1371,17 @@ function reattach({ id }: CallRecord) {
     if (attaching === pending) {
       attaching = undefined;
     }
+
     if (pending.closing) {
       closeSession(id, pending.closing);
+
       return;
     }
+
     if (live?.id === id) {
       return;
     }
+
     const record = calls.get(id);
 
     if (record) {
@@ -1324,13 +1402,16 @@ async function dial({
       `phone calls need TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER and VOICE_PUBLIC_URL in ${join(STATE_DIR, ".env")}`,
     );
   }
+
   if (!to) {
     throw new Error("no number to call: pass to, or set CALLER_NUMBER");
   }
+
   if (move && to !== CALLER_NUMBER) {
     throw new Error("a call moves only to the caller's own phone: leave out to");
   }
   // On a call hex placed to someone else, what was meant for the owner isn't theirs to hear.
+
   if (live?.record.callee) {
     throw new Error(
       move
@@ -1338,11 +1419,13 @@ async function dial({
         : `a call to ${live.record.callee} is live, and another would end it: ring again once it ends, which a message tells you`,
     );
   }
+
   if ((live || attaching) && !move) {
     throw new Error(
       "a call is live, and another would end it: tell the caller on this one with say or note",
     );
   }
+
   const token = crypto.randomUUID();
 
   const greeting = why
@@ -1389,6 +1472,7 @@ async function phoneStatus(request: Request, token: string) {
   if (!form) {
     return new Response("forbidden", { status: 403 });
   }
+
   const call = placed.get(token);
   const state = String(form.get("CallStatus"));
   trace(`Twilio call ${state}${call?.session ? ` (${call.session})` : ""}`);
@@ -1396,12 +1480,14 @@ async function phoneStatus(request: Request, token: string) {
   if (!call || !["completed", "busy", "no-answer", "failed", "canceled"].includes(state)) {
     return new Response(null, { status: 204 });
   }
+
   placed.delete(token);
   dials.delete(token);
 
   if (call.session) {
     return new Response(null, { status: 204 });
   }
+
   const error = form.get("ErrorCode") ? `, Twilio error ${form.get("ErrorCode")}` : "";
   failed(
     {
@@ -1462,6 +1548,7 @@ function passThrough({
     if (up || refusing) {
       return;
     }
+
     refusing = true;
     refused(reason);
   };
@@ -1477,6 +1564,7 @@ function passThrough({
       }),
     );
   };
+
   openai.addEventListener("message", ({ data }) => {
     const event = JSON.parse(String(data));
 
@@ -1486,15 +1574,19 @@ function passThrough({
       );
     }
     // A session that starts once its caller has already hung up is let go, never taken as live.
+
     if (event.type !== "session.started" || openai.readyState !== WebSocket.OPEN) {
       return;
     }
     // A call hex placed that picks up once another is live, as a voicemail can, never takes its place;
     // a move takes the caller's own call, never one hex placed to someone else.
+
     if (from === "phone-out" && (live?.record.callee || ((live || attaching) && !move))) {
       refuse("it picked up while another call was live, so it was let go");
+
       return;
     }
+
     up = true;
     started(event.session.id);
     follow(
@@ -1552,6 +1644,7 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
       if (!phone.unheard) {
         return;
       }
+
       if (who === "voice") {
         phone.since ??= start;
       } else if (phone.since !== undefined && start >= phone.since && !backchannel(text)) {
@@ -1584,6 +1677,7 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
   if (!KEY) {
     throw new Error(`calls need OPENAI_API_KEY in ${join(STATE_DIR, ".env")}`);
   }
+
   let up = false;
   let gone = false;
 
@@ -1598,6 +1692,7 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
       if (!gone) {
         failed({ from, end: "no-connect", reason });
       }
+
       gone = true;
       openai.close();
       line.end();
@@ -1613,6 +1708,7 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
         gone = true;
 
         openai.close();
+
         return;
       }
 
@@ -1662,6 +1758,7 @@ function refuse(twilio: Bun.ServerWebSocket<Phone>, reason: string) {
   if (twilio.data.refused) {
     return;
   }
+
   twilio.data.refused = true;
   const call = placed.get(twilio.data.token);
   placed.delete(twilio.data.token);
@@ -1723,6 +1820,7 @@ async function pickUp(request: Request) {
   if (!form || form.get("From") !== CALLER_NUMBER) {
     return twiml("<Reject />");
   }
+
   const token = crypto.randomUUID();
   dials.set(token, {
     greeting: "They called you. Answer briefly, then listen.",
@@ -1739,9 +1837,11 @@ function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
   if (message.event === "start") {
     twilio.data.stream = message.start.streamSid;
   }
+
   if (message.event === "start" || message.event === "stop") {
     trace(`Twilio stream ${message.event}`);
   }
+
   if (message.event === "mark") {
     twilio.data.unheard = Math.max(0, twilio.data.unheard - 1);
 
@@ -1755,6 +1855,7 @@ function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
       JSON.stringify({ type: "session.input_audio.append", audio: message.media.payload }),
     );
   }
+
   if (message.event === "stop") {
     hangUp(twilio);
   }
@@ -1768,10 +1869,13 @@ function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
   if (!openai) {
     return;
   }
+
   if (twilio.data.started) {
     closeSocket(openai, "close-you-phone");
+
     return;
   }
+
   twilio.data.refused = true;
   openai.close();
 }
@@ -1804,6 +1908,7 @@ async function start(request: Request) {
   if (!KEY) {
     return new Response(`Set OPENAI_API_KEY in ${join(STATE_DIR, ".env")}`, { status: 503 });
   }
+
   const {
     sdp,
     voice = VOICE,
@@ -1814,6 +1919,7 @@ async function start(request: Request) {
   if (!sdp) {
     return new Response("An SDP offer is required", { status: 400 });
   }
+
   const from = origin === "app" ? "app" : "web";
   const topic = topicOf(about);
   let response: Response;
@@ -1885,9 +1991,11 @@ async function interruption(request: Request, id: string) {
   if (kind !== "paused" && kind !== "resumed") {
     return new Response("kind is paused or resumed", { status: 400 });
   }
+
   if (live?.id !== id) {
     return new Response("That call is not live", { status: 409 });
   }
+
   remember(
     live,
     kind,
@@ -1907,11 +2015,13 @@ async function endSession(request: Request) {
   if (typeof sessionId !== "string") {
     return new Response("Name the call to end with sessionId", { status: 400 });
   }
+
   if (live?.id === sessionId) {
     close(live, "close-you-app");
   } else if (attaching?.id === sessionId) {
     retire(attaching, "close-you-app");
   }
+
   return new Response(null, { status: 204 });
 }
 
@@ -1961,6 +2071,7 @@ async function showActivity(url: URL) {
   if (after) {
     await activity.changes(Number(after), 25_000);
   }
+
   return Response.json({
     version: activity.version,
     call: live?.id ?? null,
@@ -2027,6 +2138,7 @@ function topicOf(about?: string): Topic | undefined {
   if (about === "asks") {
     return walkTopic(yours.view.asks);
   }
+
   const run = about ? board.get(about) : undefined;
 
   return run && runTopic(run);
@@ -2038,6 +2150,7 @@ async function showRuns(url: URL, runs: Board) {
   if (after) {
     await runs.changes(Number(after), 25_000);
   }
+
   return Response.json({ version: runs.version, tasks: runs.rows(), finished: runs.finished });
 }
 
@@ -2054,6 +2167,7 @@ async function showSummary(url: URL, runs: Board, questions: Questions) {
       questions.counts.changes(questions.counts.version, 25_000),
     ]);
   }
+
   const asked = new Set(questions.view.asks.map((question) => question.task));
   const unasked = runs.rows().filter((row) => row.state === "needs" && !asked.has(row.id)).length;
 
@@ -2070,6 +2184,7 @@ async function showQuestions(url: URL, questions: Questions) {
   if (after) {
     await questions.changes(Number(after), 25_000);
   }
+
   return Response.json({ version: questions.version, ...questions.view });
 }
 
@@ -2082,6 +2197,7 @@ async function questionRoutes(request: Request, url: URL) {
     if (!url.searchParams.get("after")) {
       questions.opened();
     }
+
     return await showQuestions(url, questions);
   }
 
@@ -2090,6 +2206,7 @@ async function questionRoutes(request: Request, url: URL) {
       ? Response.json(questions.lastCheck)
       : new Response("No check yet", { status: 404 });
   }
+
   const [, asked] = /^\/asks\/([^/]+)\/words$/.exec(url.pathname) ?? [];
 
   if (asked && request.method === "GET") {
@@ -2101,12 +2218,14 @@ async function questionRoutes(request: Request, url: URL) {
   if (url.pathname === "/asks/talk" && request.method === "POST") {
     return talkAbout(walkTopic(questions.view.asks));
   }
+
   const [, kind, id, verb] =
     /^\/(asks|stuck|fresh)\/([^/]+)\/(answer|note|dismiss|undo|act|read)$/.exec(url.pathname) ?? [];
 
   if (!kind || request.method !== "POST") {
     return new Response("404", { status: 404 });
   }
+
   try {
     const key = decodeURIComponent(id!);
 
@@ -2132,6 +2251,7 @@ async function questionRoutes(request: Request, url: URL) {
       if (typeof label !== "string" || !label) {
         return new Response("An answer needs its label", { status: 400 });
       }
+
       const sent = await answerQuestion(key, label, "app");
       const call = onCall();
 
@@ -2141,6 +2261,7 @@ async function questionRoutes(request: Request, url: URL) {
           { call: call.id },
         );
       }
+
       return Response.json(sent);
     }
 
@@ -2151,6 +2272,7 @@ async function questionRoutes(request: Request, url: URL) {
       if (!text) {
         return new Response("A note needs its text", { status: 400 });
       }
+
       const sent = await questions.note(key, text, "app");
       const call = onCall();
 
@@ -2160,6 +2282,7 @@ async function questionRoutes(request: Request, url: URL) {
           { call: call.id },
         );
       }
+
       return Response.json(sent);
     }
 
@@ -2220,9 +2343,11 @@ function runRoutes(request: Request, url: URL) {
   if (url.pathname === "/tasks" && request.method === "GET") {
     return showRuns(url, runs);
   }
+
   if (url.pathname === "/tasks/summary" && request.method === "GET") {
     return showSummary(url, runs, yours);
   }
+
   const [, id, verb] = /^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/.exec(url.pathname) ?? [];
   const key = id && decodeURIComponent(id);
   // A thread off the board is a page to read: its run, asks, pin and chat, and nothing to act on.
@@ -2231,20 +2356,25 @@ function runRoutes(request: Request, url: URL) {
   if (page && verb === "chat") {
     return showChat(url, page, !runs.get(key));
   }
+
   if (page && !verb) {
     return Response.json({ ...page, ...yours.of(page.id) });
   }
+
   const run = key && runs.get(key);
 
   if (!run) {
     return new Response("404", { status: 404 });
   }
+
   if (verb === "talk" && request.method === "POST") {
     return talkAbout(runTopic(run));
   }
+
   if (verb === "chat" && request.method === "POST") {
     return sendChat(request, run);
   }
+
   if (verb === "stop" && request.method === "POST") {
     return done(() => {
       chats.stop(run);
@@ -2280,12 +2410,15 @@ async function sendChat(request: Request, run: Run) {
   if (!items.every((item) => item)) {
     return new Response("Name each photo or video by the id /media gave it", { status: 400 });
   }
+
   if (typeof text !== "string" || (!text.trim() && !items.length)) {
     return new Response("Send some words, or a photo or video", { status: 400 });
   }
+
   if (typeof key !== "string" || !/^app-[\w-]{8,60}$/.test(key)) {
     return new Response("Name the message with a key starting app-", { status: 400 });
   }
+
   return done(() => {
     chats.send(run, text.trim(), key, items as Item[]);
   });
@@ -2310,9 +2443,11 @@ async function showCall(id: string, url: URL) {
   if (after && live?.id === id) {
     await live.changes.changes(Number(after), 25_000);
   }
+
   if (live?.id === id) {
     return Response.json({ ...whole(live), version: live.changes.version });
   }
+
   const record = calls.get(id);
 
   return record ? Response.json(record) : new Response("404", { status: 404 });
@@ -2324,6 +2459,7 @@ async function listCalls(url: URL) {
   if (after) {
     await calls.changes(Number(after), 25_000);
   }
+
   return Response.json({ version: calls.version, live: live?.id, calls: calls.list() });
 }
 
@@ -2333,44 +2469,56 @@ function routes(request: Request) {
   if (pathname === "/session" && request.method === "POST") {
     return start(request);
   }
+
   if (pathname === "/session" && request.method === "DELETE") {
     return endSession(request);
   }
+
   if (pathname === "/calls" && request.method === "GET") {
     return listCalls(new URL(request.url));
   }
+
   if (pathname === "/activity" && request.method === "GET") {
     return showActivity(new URL(request.url));
   }
+
   if (pathname === "/tasks" || pathname.startsWith("/tasks/")) {
     return runRoutes(request, new URL(request.url));
   }
+
   if (/^\/(asks|stuck|fresh)(\/|$)/.test(pathname)) {
     return questionRoutes(request, new URL(request.url));
   }
+
   if (pathname === "/media" && request.method === "POST") {
     return upload(request);
   }
+
   const [, image] = /^\/media\/([\w-]+)$/.exec(pathname) ?? [];
 
   if (image && request.method === "GET") {
     return showImage(image);
   }
+
   const [, callId, verb] = /^\/calls\/([\w-]+)(?:\/(moments|media))?$/.exec(pathname) ?? [];
 
   if (callId && verb === "moments" && request.method === "POST") {
     return interruption(request, callId);
   }
+
   if (callId && verb === "media" && request.method === "POST") {
     return showMedia(request, callId);
   }
+
   if (callId && !verb && request.method === "GET") {
     return showCall(callId, new URL(request.url));
   }
+
   if (callId && !verb && request.method === "DELETE") {
     if (live?.id === callId) {
       return new Response("That call is still going", { status: 409 });
     }
+
     return new Response(null, { status: calls.delete(callId) ? 204 : 404 });
   }
 
@@ -2408,11 +2556,13 @@ export function serve(voiceHub: Hub, state: string) {
       if (pathname === "/twilio/incoming" && request.method === "POST") {
         return pickUp(request);
       }
+
       const [, statusToken] = /^\/twilio\/status\/([\w-]+)$/.exec(pathname) ?? [];
 
       if (statusToken && request.method === "POST") {
         return phoneStatus(request, statusToken);
       }
+
       const [, token, twimlPath] = /^\/twilio\/([\w-]+)(\/twiml)?$/.exec(pathname) ?? [];
       const dialed = dials.get(token);
 
@@ -2421,26 +2571,32 @@ export function serve(voiceHub: Hub, state: string) {
           `Twilio ${request.method} ${twimlPath ? "TwiML" : "stream"}, ${dialed ? "known" : "unknown"} token`,
         );
       }
+
       if (dialed && twimlPath) {
         return stream(token);
       }
+
       if (dialed && dials.delete(token)) {
         return server.upgrade(request, { data: { ...dialed, unheard: 0 } })
           ? undefined
           : new Response("upgrade failed", { status: 400 });
       }
+
       if (foreign(request)) {
         return new Response("Forbidden", { status: 403 });
       }
+
       if (pathname === "/") {
         return home(request);
       }
+
       if (!allowed(request)) {
         return new Response("Unauthorized", {
           status: 401,
           headers: { "www-authenticate": "Bearer" },
         });
       }
+
       return routes(request) ?? new Response("404", { status: 404 });
     },
     websocket: {

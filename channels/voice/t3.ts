@@ -68,6 +68,7 @@ export class T3 {
     if (!existsSync(path)) {
       return;
     }
+
     this.db = new Database(path, { readonly: true });
     this.watcher = watch(
       dirname(path),
@@ -99,6 +100,7 @@ export class T3 {
       ) {
         return;
       }
+
       this.stuck = stuck;
       this.fresh = fresh;
       this.changed();
@@ -169,6 +171,7 @@ export class T3 {
       ) {
         continue;
       }
+
       stuck.push({
         id: `t3-queued-${digest(`${run.thread}:${run.requested}`)}`,
         app: "t3",

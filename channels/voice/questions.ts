@@ -246,6 +246,7 @@ export class Questions extends Changes {
     if (this.view.asks.some((question) => question.id === id)) {
       return;
     }
+
     const copies = new Set([id, ...(this.marks.reopened[id]?.refs ?? []).map(refId)]);
 
     return this.result?.asks.find((question: Written) =>
@@ -281,6 +282,7 @@ export class Questions extends Changes {
     if (!this.find(id) || (!curated && !raw)) {
       return;
     }
+
     for (const source of curated ? (curated.from ?? curated.refs ?? []) : [raw!]) {
       const words = source.call
         ? this.callWords(source.call)
@@ -318,6 +320,7 @@ export class Questions extends Changes {
     if (!text.trim()) {
       return;
     }
+
     return { place: this.thread(app, thread, message).place, at: (said ?? pinned)!.at, text };
   }
 
@@ -365,6 +368,7 @@ export class Questions extends Changes {
     if (finishing) {
       return await this.each(refs, settle);
     }
+
     if (first && this.asked(first)!.options.includes(value)) {
       await this.reach(taken, first, {
         type: "answer",
@@ -381,6 +385,7 @@ export class Questions extends Changes {
         via,
       );
     }
+
     return await this.each(
       refs.filter((ref) => !taken.refs.includes(ref)),
       settle,
@@ -396,9 +401,11 @@ export class Questions extends Changes {
     if (!question) {
       throw new Error("that question is already answered or settled");
     }
+
     if (this.taking.has(id)) {
       throw new Error("an answer to that is on its way; try again in a moment");
     }
+
     await this.tell(
       question.task,
       `(note written ${WHERE[via] ?? via}) ${question.question}: ${text}`,
@@ -430,6 +437,7 @@ export class Questions extends Changes {
       if (told.has(thread)) {
         return;
       }
+
       await this.inform(taken, thread, `(not needed, said ${where}) ${question.question}`, via);
       told.add(thread);
     };
@@ -474,9 +482,11 @@ export class Questions extends Changes {
     if (!this.marks.answers[id] && renamed && this.marks.answers[renamed]) {
       id = renamed;
     }
+
     if (this.taking.has(id)) {
       throw new Error("that answer is still on its way; try again in a moment");
     }
+
     this.taking.add(id);
 
     try {
@@ -493,6 +503,7 @@ export class Questions extends Changes {
       if (!taken && !refs.length) {
         throw new Error("there is no answer here to take back");
       }
+
       const curated = this.result?.asks.find((question) => question.id === id);
       const failed: unknown[] = [];
       const stuck: Ref[] = [];
@@ -516,6 +527,7 @@ export class Questions extends Changes {
           (error) => (failed.push(error), stuck.push(ref)),
         );
       }
+
       if (!curated && reopened.some((ref) => refId(ref) !== id)) {
         const kept = this.marks.reopened[id];
 
@@ -559,6 +571,7 @@ export class Questions extends Changes {
       } else {
         delete this.marks.answers[id];
       }
+
       this.saveMarks();
 
       if (failed.length) {
@@ -566,11 +579,13 @@ export class Questions extends Changes {
           `part of it couldn't be taken back; undo again to finish (${failed[0] instanceof Error ? failed[0].message : failed[0]})`,
         );
       }
+
       if (!did) {
         throw new Error(
           "nothing was left to take back: its copies were answered or closed in their own apps since",
         );
       }
+
       if (!refs.length) {
         this.check("you took back an answer");
       }
@@ -593,11 +608,13 @@ export class Questions extends Changes {
     if (!item) {
       throw new Error("that is no longer stuck");
     }
+
     if (item.request) {
       // A second tap while the first is on its way would ask General twice.
       if (this.taking.has(id)) {
         throw new Error("that request is on its way");
       }
+
       this.taking.add(id);
 
       try {
@@ -610,6 +627,7 @@ export class Questions extends Changes {
     } else {
       this.marks.dismissed[id] = now();
     }
+
     this.saveMarks();
   }
 
@@ -624,9 +642,11 @@ export class Questions extends Changes {
     if (curated) {
       return curated.refs ?? [];
     }
+
     if (this.marks.reopened[id]) {
       return this.marks.reopened[id].refs;
     }
+
     for (const [app, questions] of this.ledgers) {
       const asked = questions.find((question) => refId({ app, ...question }) === id);
 
@@ -648,6 +668,7 @@ export class Questions extends Changes {
     if (this.taking.has(id)) {
       throw new Error("an answer to that is on its way; try again in a moment");
     }
+
     this.taking.add(id);
 
     try {
@@ -658,17 +679,21 @@ export class Questions extends Changes {
       if (!question || standing === "stale") {
         throw new Error("that question is already answered or settled");
       }
+
       if (standing === "undoing") {
         throw new Error("taking back the last answer to this stopped partway; undo it again first");
       }
+
       const finishing = standing === "finishing";
 
       if (finishing && kept!.label !== label) {
         throw new Error(`part of "${kept!.label}" went out; send it again to finish, or undo it`);
       }
+
       if (finishing) {
         dismissed = isDismissal(kept!);
       }
+
       const taken: Taken = {
         label,
         at: now(),
@@ -691,6 +716,7 @@ export class Questions extends Changes {
       if (!taken.told.length && !taken.refs.length) {
         throw failed[0] ?? new Error("that question is already answered or settled");
       }
+
       this.marks.answers[id] = taken;
       this.saveMarks();
       const first = finishing ? round(kept).at(-1)! : taken;
@@ -711,6 +737,7 @@ export class Questions extends Changes {
     for (const each of steps) {
       await step(each).catch((error) => failed.push(error));
     }
+
     return failed;
   }
 
@@ -745,14 +772,17 @@ export class Questions extends Changes {
     if (!kept) {
       return "free";
     }
+
     if (kept.undoing) {
       return "undoing";
     }
+
     const marks = chain(kept);
 
     if (!this.refs(id).length || marks.some((mark) => mark.refs?.some((ref) => this.open(ref)))) {
       return "stale";
     }
+
     const missed = new Set(marks.flatMap((mark) => (mark.missed ?? []).map(refId)));
     const left = this.left(id, kept);
 
@@ -766,9 +796,11 @@ export class Questions extends Changes {
     if (!asked) {
       return false;
     }
+
     if (asked.answer) {
       return !!WHERE[asked.answer.via];
     }
+
     return !asked.settled || /^✓ (Answered|Not needed)/.test(asked.settled.note);
   }
 
@@ -810,6 +842,7 @@ export class Questions extends Changes {
     if (!general) {
       throw new Error("hex has no Telegram General to send this to");
     }
+
     return `${general.app}:${general.thread}`;
   }
 
@@ -837,6 +870,7 @@ export class Questions extends Changes {
     for (const thread of store(this.state).threads()) {
       this.threads.set(`${thread.app}:${thread.thread}`, thread);
     }
+
     this.ledgers = Map.groupBy(
       questions.filter((question) => question.app !== "voice"),
       (question) => question.app,
@@ -845,6 +879,7 @@ export class Questions extends Changes {
     for (const pin of store(this.state).pins()) {
       if (pin.text) this.pins.set(`${pin.app}:${pin.thread}`, pin);
     }
+
     const check = join(this.state, "voice", "check.json");
     const stamp = stampOf(check);
 
@@ -861,6 +896,7 @@ export class Questions extends Changes {
       for (const ref of question.refs ?? []) {
         used.add(refId(ref));
       }
+
       const live = question.refs?.length
         ? question.refs.some((ref) => this.open(ref))
         : !this.marks.answers[question.id];
@@ -874,9 +910,11 @@ export class Questions extends Changes {
       if (!open[0] || refs.some((ref) => used.has(refId(ref)))) {
         return [];
       }
+
       for (const ref of refs) {
         used.add(refId(ref));
       }
+
       const asked = fromLedger(open[0].app, this.asked(open[0])!);
 
       return [this.dress({ ...asked, id, refs, from: refs, ...(question && { question }) })];
@@ -926,6 +964,7 @@ export class Questions extends Changes {
     if (JSON.stringify(view) === JSON.stringify(this.view)) {
       return;
     }
+
     const moved =
       view.asks.length !== this.view.asks.length || view.stuck.length !== this.view.stuck.length;
 
@@ -1011,6 +1050,7 @@ export class Questions extends Changes {
       if (!source.call && !source.thread) {
         continue;
       }
+
       const key = source.call ? `call:${source.call}` : `${source.app}:${source.thread}`;
       const held = best.get(key);
 
@@ -1033,9 +1073,11 @@ export class Questions extends Changes {
     if (call || message === undefined) {
       return 3;
     }
+
     if (this.open({ app, thread: thread!, message })) {
       return 0;
     }
+
     return String(this.pins.get(`${app}:${thread}`)?.message) === String(message) ? 1 : 2;
   }
 
@@ -1092,6 +1134,7 @@ export class Questions extends Changes {
       for (const [id, at] of Object.entries(book))
         if (typeof at === "string" ? at < since : at.at < since && !final(at)) delete book[id];
     }
+
     const file = join(this.state, "voice", "marks.json");
     writeFileSync(`${file}.tmp`, `${JSON.stringify(this.marks, null, 1)}\n`);
     renameSync(`${file}.tmp`, file);
@@ -1149,6 +1192,7 @@ function chain(answer: Answer | undefined) {
   for (let mark = answer; mark; mark = mark.before) {
     marks.push(mark);
   }
+
   return marks;
 }
 
@@ -1182,6 +1226,7 @@ function cut(line: string, max: number): [string, string] {
   if (line.length <= max) {
     return [line, ""];
   }
+
   let depth = 0;
   let end = line.length;
 

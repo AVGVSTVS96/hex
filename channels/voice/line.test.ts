@@ -49,11 +49,13 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
         if (event.type === "session.input_audio.append") {
           heard.push(event.audio);
         }
+
         if (event.type === "session.thinking.append") {
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
           );
         }
+
         if (event.type === "session.close") {
           socket.send(
             JSON.stringify({

@@ -59,12 +59,15 @@ async function phoneCall({ late = false } = {}) {
         if (event.type === "session.start") {
           late ? starts.push(begin) : begin();
         }
+
         if (event.type === "session.close") {
           closes.push(event.event_id);
         }
+
         if (event.type === "session.input_audio.append") {
           audio.push(event.audio);
         }
+
         if (event.type === "session.close") {
           socket.send(
             JSON.stringify({
@@ -244,6 +247,7 @@ async function dialIn(base: string, { start = true } = {}) {
   if (start) {
     phone.send(JSON.stringify({ event: "start", start: { streamSid: "MZ1" } }));
   }
+
   return phone;
 }
 
@@ -264,6 +268,7 @@ async function live(base: string) {
     if (live) {
       return live as string;
     }
+
     await Bun.sleep(50);
   }
 
@@ -278,6 +283,7 @@ async function listen(base: string, id: string, version: number, done: (call: an
     if (done(call)) {
       return call;
     }
+
     version = call.version;
   }
 }
@@ -361,6 +367,7 @@ test("the caller talking over the voice clears what Twilio hasn't played yet, bu
   for (let i = 0; i < 2; i++) {
     phone.send(JSON.stringify({ event: "mark", streamSid: "MZ1", mark: { name: "voice" } }));
   }
+
   await Bun.sleep(100);
   call.say("you", "stop.", 1300);
   await recorded("stop.");
