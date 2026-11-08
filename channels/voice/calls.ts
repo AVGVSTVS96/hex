@@ -80,7 +80,7 @@ const mark: z.ZodType<Mark> = z.object({
   media: z.string().exactOptional(),
 });
 
-const savedCall: z.ZodType<CallRecord> = z.object({
+export const savedCall: z.ZodType<CallRecord> = z.object({
   id: z.string(),
   started: z.string(),
   ended: z.string().exactOptional(),
