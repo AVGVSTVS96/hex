@@ -21,7 +21,7 @@ import type { tools } from "./channel.ts";
 import { Chats } from "./chat.ts";
 import type { Where } from "./chat.ts";
 import { PORT, STATE_DIR, env } from "./env.ts";
-import { line, Media } from "./media.ts";
+import { counted, line, Media } from "./media.ts";
 import type { Item } from "./media.ts";
 import { jobs, overall } from "./overall.ts";
 import page from "./page.html" with { type: "text" };
@@ -103,7 +103,9 @@ Do not guess the result while waiting.
 Say something is done only when the backend says so.
 Say the audio cut, that you lack information, or that you can't see or do something only when the backend says so.`;
 
-const MediaBody = z.object({ media: z.string() });
+const MediaBody = z.object({
+  media: z.union([z.string(), z.array(z.string()).min(1)]).transform((ids) => [ids].flat()),
+});
 
 const StartBody = z.object({
   sdp: z.string().exactOptional(),
@@ -1129,9 +1131,9 @@ function talkAbout(topic: Topic) {
 
 async function showMedia(request: Request, id: string) {
   const sent = await bodyOf(request, MediaBody);
-  const item = sent && media.get(sent.media);
+  const items = sent?.media.map((each) => media.get(each)) ?? [];
 
-  if (!item) {
+  if (!items.length || !items.every((item) => item !== undefined)) {
     return new Response("Name a photo or video sent to /media", { status: 400 });
   }
 
@@ -1139,15 +1141,18 @@ async function showMedia(request: Request, id: string) {
     return new Response("That call is not live", { status: 409 });
   }
 
-  remember(live, item.kind, "", { media: item.id });
-  deliver(`The caller sent this from the app: ${line(item)}`, {
+  for (const item of items) {
+    remember(live, item.kind, "", { media: item.id });
+  }
+
+  deliver(`The caller sent this from the app: ${items.map(line).join(" ")}`, {
     call: live.id,
-    image_path: item.images.join("; "),
+    image_path: items.flatMap((item) => item.images).join("; "),
   });
   void send(
     live,
     "session.instructions.append",
-    `The caller just sent a ${item.kind} in the app. Only Assistant can see it: generate <|SpawnThinking|> now, then tell the caller in a few words that you're having a look.`,
+    `The caller just sent ${counted(items)} in the app. Only Assistant can see it: generate <|SpawnThinking|> now, then tell the caller in a few words that you're having a look.`,
   ).catch(fineIfUnconfirmed);
 
   return new Response(null, { status: 204 });
@@ -1157,9 +1162,12 @@ async function upload(request: Request) {
   const type = request.headers.get("content-type");
 
   if (type === null || type === "" || !Media.takes(type)) {
-    return new Response("Send a JPEG, PNG or HEIC photo, or an MP4 or QuickTime video", {
-      status: 415,
-    });
+    return new Response(
+      "Send a JPEG, PNG, HEIC, GIF, WebP, TIFF or AVIF photo, or an MP4 or QuickTime video",
+      {
+        status: 415,
+      },
+    );
   }
 
   try {

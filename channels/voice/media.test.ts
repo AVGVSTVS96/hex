@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { caption, line, Media, meta, typed } from "./media.ts";
+import { caption, counted, line, Media, meta, typed } from "./media.ts";
 
 const ffmpeg = Bun.which("ffmpeg") !== null;
 let dir: string;
@@ -52,11 +52,45 @@ test("a photo is kept as it came, and found again by its id", async () => {
 
 test("only photos and videos the app sends are taken", () => {
   expect(
-    ["image/jpeg", "image/png", "image/heic", "video/mp4", "video/quicktime; codecs=hvc1"].every(
-      (type) => Media.takes(type),
-    ),
+    [
+      "image/jpeg",
+      "image/png",
+      "image/heic",
+      "image/gif",
+      "image/webp",
+      "image/tiff",
+      "image/avif",
+      "video/mp4",
+      "video/quicktime; codecs=hvc1",
+    ].every((type) => Media.takes(type)),
   ).toBe(true);
-  expect(["image/gif", "application/pdf", null].some((type) => Media.takes(type))).toBe(false);
+  expect(["image/bmp", "application/pdf", null].some((type) => Media.takes(type))).toBe(false);
+});
+
+test.skipIf(!ffmpeg)("a photo Claude can't read, like WebP, becomes a JPEG", async () => {
+  const webp = join(dir, "still.webp");
+  Bun.spawnSync([
+    "ffmpeg",
+    "-v",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=c=red:s=32x32",
+    "-frames:v",
+    "1",
+    webp,
+  ]);
+  const item = await media.add("image/webp", Bun.file(webp));
+  expect(item.images).toEqual([join(dir, "media", `${item.id}.jpg`)]);
+  expect(readdirSync(join(dir, "media")).toSorted()).toEqual([`${item.id}.jpg`, `${item.id}.json`]);
+});
+
+test("what a call was sent is named in a few words", () => {
+  const photo = { id: "p", kind: "photo" as const, images: [] };
+  const video = { id: "v", kind: "video" as const, images: [] };
+  expect(counted([photo])).toBe("a photo");
+  expect(counted([photo, photo, video])).toBe("2 photos and a video");
 });
 
 test.skipIf(!ffmpeg)(
