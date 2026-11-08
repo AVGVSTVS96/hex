@@ -131,6 +131,8 @@ const HubRequestLine = z.discriminatedUnion("type", [
 
 type HubRequest = z.output<typeof HubRequestLine>;
 
+export type HubLine = z.input<typeof HubRequestLine>;
+
 export type Hub = ReturnType<typeof startHub>;
 
 export type Limits = {
