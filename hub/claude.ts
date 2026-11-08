@@ -7,8 +7,9 @@ import { sleep } from './clock.ts'
 // A background session as `claude agents --json` lists it.
 // state: working through a turn, and while the turn waits on background agents.
 export type Agent = { sessionId: string; id?: string; pid: number; status?: string; state?: string; startedAt?: number }
-// The context a session's last request sent and when; short: it wrote the five-minute cache.
-export type Usage = { sent: number; at?: number; short?: boolean }
+// The context a session's last request sent and when; short: it wrote the five-minute cache;
+// failed: when a compaction failed since.
+export type Usage = { sent: number; at?: number; short?: boolean; failed?: number }
 
 const home = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 const short = (session: string) => session.slice(0, 8)
@@ -315,7 +316,10 @@ export function saved(session: string) {
   }
 }
 
-// From the newest usage or compaction in the session's transcript.
+// What Claude Code records when /compact fails.
+const FAILED = 'Error during compaction'
+
+// From the newest usage or compaction in the session's transcript, and a failed compaction after it.
 export function usage(cwd: string, session: string): Usage {
   let file: number
   try {
@@ -327,8 +331,9 @@ export function usage(cwd: string, session: string): Usage {
     const size = fstatSync(file).size
     const tail = Buffer.alloc(Math.min(size, 1 << 20))
     readSync(file, tail, 0, tail.length, size - tail.length)
+    let failed: number | undefined
     for (const line of tail.toString('utf8').split('\n').reverse()) {
-      if (!line.includes('"usage"') && !line.includes('"compact_boundary"')) continue
+      if (!line.includes('"usage"') && !line.includes('"compact_boundary"') && !line.includes(FAILED)) continue
       let entry: any
       try {
         entry = JSON.parse(line)
@@ -337,9 +342,10 @@ export function usage(cwd: string, session: string): Usage {
       }
       const at = entry.timestamp ? Date.parse(entry.timestamp) : undefined
       if (entry.type === 'system' && entry.subtype === 'compact_boundary') return { sent: entry.compactMetadata?.postTokens ?? 0, at }
+      if (entry.type === 'system' && entry.subtype === 'local_command' && String(entry.content).includes(FAILED)) failed ??= at ?? 0
       const usage = entry.type === 'assistant' && !entry.isSidechain ? entry.message?.usage : undefined
       const sent = usage ? (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) : 0
-      if (sent) return { sent, at, short: !!usage.cache_creation?.ephemeral_5m_input_tokens && !usage.cache_creation?.ephemeral_1h_input_tokens }
+      if (sent) return { sent, at, short: !!usage.cache_creation?.ephemeral_5m_input_tokens && !usage.cache_creation?.ephemeral_1h_input_tokens, ...(failed !== undefined && { failed }) }
     }
     return { sent: 0 }
   } finally {
