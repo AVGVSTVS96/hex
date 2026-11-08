@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { caption, line, Media, meta, typed } from "./media.ts";
 
-const ffmpeg = !!Bun.which("ffmpeg");
+const ffmpeg = Bun.which("ffmpeg") !== null;
 let dir: string;
 let heard: string[];
 let media: Media;
@@ -53,10 +53,10 @@ test("a photo is kept as it came, and found again by its id", async () => {
 test("only photos and videos the app sends are taken", () => {
   expect(
     ["image/jpeg", "image/png", "image/heic", "video/mp4", "video/quicktime; codecs=hvc1"].every(
-      Media.takes,
+      (type) => Media.takes(type),
     ),
   ).toBe(true);
-  expect(["image/gif", "application/pdf", null].some(Media.takes)).toBe(false);
+  expect(["image/gif", "application/pdf", null].some((type) => Media.takes(type))).toBe(false);
 });
 
 test.skipIf(!ffmpeg)(
@@ -66,7 +66,7 @@ test.skipIf(!ffmpeg)(
     expect(item).toMatchObject({ kind: "video", seconds: 12, words: "look at the crack here" });
     expect(item.images.map((image) => existsSync(image))).toEqual([true, true]);
     expect(heard).toHaveLength(1);
-    expect(existsSync(heard[0]!)).toBe(false);
+    expect(heard.map((recording) => existsSync(recording))).toEqual([false]);
     expect(line(item)).toBe('(video 0:12, 2 stills; said in it: "look at the crack here")');
   },
   30_000,
@@ -85,7 +85,12 @@ test.skipIf(!ffmpeg)(
 );
 
 test.skipIf(!ffmpeg)("a file that isn't the video it says leaves nothing behind", async () => {
-  await expect(media.add("video/mp4", new Blob(["not a video"]))).rejects.toThrow();
+  const refused = await media.add("video/mp4", new Blob(["not a video"])).then(
+    () => false,
+    () => true,
+  );
+
+  expect(refused).toBe(true);
   expect(readdirSync(join(dir, "media"))).toEqual([]);
 });
 

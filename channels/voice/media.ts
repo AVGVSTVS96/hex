@@ -1,12 +1,12 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { transcribe } from "../../hub/hub.ts";
 
 export type Kind = "photo" | "video";
 
-// What Claude Code can read of a photo or clip: its images (a photo, or stills across a clip), and
-// for a clip its length and what was said in it. mute: the clip has no sound.
 export type Item = {
   id: string;
   kind: Kind;
@@ -16,35 +16,61 @@ export type Item = {
   words?: string;
 };
 
-const TYPES: Record<string, [Kind, string]> = {
-  "image/jpeg": ["photo", "jpg"],
-  "image/png": ["photo", "png"],
-  "image/heic": ["photo", "heic"],
-  "video/mp4": ["video", "mp4"],
-  "video/quicktime": ["video", "mov"],
-};
+const savedItem: z.ZodType<Item> = z.object({
+  id: z.string(),
+  kind: z.enum(["photo", "video"]),
+  images: z.array(z.string()),
+  seconds: z.number().exactOptional(),
+  mute: z.literal(true).exactOptional(),
+  words: z.string().exactOptional(),
+});
+
+const probed = z.object({
+  format: z.object({ duration: z.unknown() }).optional().catch(undefined),
+  streams: z
+    .array(z.object({ codec_type: z.unknown() }))
+    .optional()
+    .catch(undefined),
+});
+
+const TYPES = new Map<string, [Kind, string]>([
+  ["image/jpeg", ["photo", "jpg"]],
+  ["image/png", ["photo", "png"]],
+  ["image/heic", ["photo", "heic"]],
+  ["video/mp4", ["video", "mp4"]],
+  ["video/quicktime", ["video", "mov"]],
+]);
+
+const mime = (type: string) => (type.split(";")[0] ?? "").trim();
 
 const STILL_EVERY = 5;
 const STILLS = 12;
 
-// Photos and clips the app sends, kept as what Claude Code reads: a photo as JPEG or PNG, a clip as
-// stills across it and the words said in it.
 export class Media {
+  private readonly dir: string;
+  private readonly hear: (recording: () => Promise<string>) => Promise<string | undefined>;
+
   constructor(
-    private readonly dir: string,
-    private readonly hear: (
-      recording: () => Promise<string>,
-    ) => Promise<string | undefined> = transcribe,
+    dir: string,
+    hear: (recording: () => Promise<string>) => Promise<string | undefined> = transcribe,
   ) {
+    this.dir = dir;
+    this.hear = hear;
     mkdirSync(dir, { recursive: true });
   }
 
   static takes(type: string | null) {
-    return !!type && type.split(";")[0]!.trim() in TYPES;
+    return type !== null && type !== "" && TYPES.has(mime(type));
   }
 
   async add(type: string, bytes: Blob): Promise<Item> {
-    const [kind, ext] = TYPES[type.split(";")[0]!.trim()]!;
+    const taken = TYPES.get(mime(type));
+
+    if (!taken) {
+      throw new Error(`the app doesn't send ${type}`);
+    }
+
+    const [kind, ext] = taken;
     const id = crypto.randomUUID();
     const file = join(this.dir, `${id}.${ext}`);
     await Bun.write(file, bytes);
@@ -66,7 +92,9 @@ export class Media {
       return item;
     } catch (error) {
       for (const name of readdirSync(this.dir)) {
-        if (name.startsWith(id)) rmSync(join(this.dir, name));
+        if (name.startsWith(id)) {
+          rmSync(join(this.dir, name));
+        }
       }
 
       throw error;
@@ -74,26 +102,30 @@ export class Media {
   }
 
   get(id: string): Item | undefined {
-    if (!/^[\w-]+$/.test(id)) {
-      return;
+    if (!/^[\w-]+$/u.test(id)) {
+      return undefined;
     }
 
     try {
-      return JSON.parse(readFileSync(join(this.dir, `${id}.json`), "utf-8"));
-    } catch {}
+      return savedItem.parse(JSON.parse(readFileSync(join(this.dir, `${id}.json`), "utf-8")));
+    } catch {
+      return undefined;
+    }
   }
 
   private async clip(id: string, file: string): Promise<Item> {
-    const probe = JSON.parse(
-      await run(
-        "ffprobe",
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration:stream=codec_type",
-        "-of",
-        "json",
-        file,
+    const probe = probed.parse(
+      JSON.parse(
+        await run(
+          "ffprobe",
+          "-v",
+          "error",
+          "-show_entries",
+          "format=duration:stream=codec_type",
+          "-of",
+          "json",
+          file,
+        ),
       ),
     );
 
@@ -123,7 +155,7 @@ export class Media {
 
     const item: Item = { id, kind: "video", images, seconds: Math.round(seconds) };
 
-    if (!probe.streams?.some((stream: { codec_type?: string }) => stream.codec_type === "audio")) {
+    if (probe.streams?.some((stream) => stream.codec_type === "audio") !== true) {
       return { ...item, mute: true };
     }
 
@@ -138,7 +170,7 @@ export class Media {
 
       return words === undefined ? item : { ...item, words };
     } catch (error) {
-      process.stderr.write(`voice: ${id}'s sound didn't transcribe: ${error}\n`);
+      process.stderr.write(`voice: ${id}'s sound didn't transcribe: ${String(error)}\n`);
 
       return item;
     } finally {
@@ -147,7 +179,6 @@ export class Media {
   }
 }
 
-// One line saying what an item is, for the session that reads its images.
 export function line({ kind, images, seconds = 0, mute, words }: Item) {
   if (kind === "photo") {
     return "(photo)";
@@ -155,27 +186,24 @@ export function line({ kind, images, seconds = 0, mute, words }: Item) {
 
   const clip = `(video ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}, ${images.length} ${images.length === 1 ? "still" : "stills"}`;
 
-  if (mute) {
+  if (mute === true) {
     return `${clip}, no sound)`;
   }
 
-  return words
-    ? `${clip}; said in it: "${words.replaceAll(/\s+/g, " ")}")`
+  return words !== undefined && words !== ""
+    ? `${clip}; said in it: "${words.replaceAll(/\s+/gu, " ")}")`
     : `${clip}; no words came through from its sound)`;
 }
 
-// The owner's words with a line for each item after them, as a session gets them.
 export function caption(text: string, items: Item[]) {
   return [text, ...items.map(line)].filter(Boolean).join("\n");
 }
 
-// The owner's own words of a caption.
 export function typed(body: string, items: number) {
   return items ? body.split("\n").slice(0, -items).join("\n") : body;
 }
 
-// The meta a message with items carries: every image to read, and each item by kind and id.
-export function meta(items: Item[]): Record<string, string> {
+export function meta(items: Item[]) {
   if (!items.length) {
     return {};
   }
