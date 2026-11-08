@@ -2240,7 +2240,7 @@ export class Store {
       const diedMidTurn = UnfinishedTurnRows.parse(
         this.db
           .query(
-            `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`,
+            `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex'))`,
           )
           .all(thread, session ?? null),
       );
@@ -2264,7 +2264,7 @@ export class Store {
     return (
       this.db
         .query(
-          `select 1 from turns where (began is not null and ended is null or waiting is not null) and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`,
+          `select 1 from turns where (began is not null and ended is null or waiting is not null) and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null and author <> 'hex') limit 1`,
         )
         .get(thread) !== null
     );
