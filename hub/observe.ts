@@ -2,34 +2,32 @@ import { spawn } from "node:child_process";
 import { closeSync, existsSync, openSync } from "node:fs";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from "./notes.ts";
 import { hexDir, open, replied, shown, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
-// The owner's profile, which this agent keeps current after every turn in hex.db; bin/wake puts it in
-// front of the memory every session starts with. It never passes PROFILE.
 export const PROFILE = 6500;
 
-// hex's memory agent, the observer from https://dhravya.dev/writing/memory-on-the-harness-level/:
-// after a session's turn, a model reads the messages it took, with the reply they got, the newest
-// notes and the owner's profile. It writes every note memory gets, the owner's words in their own
-// words and what happened in plain ones, and keeps the profile (hex.db's newest profile) one consolidated,
-// current account of who they are, a changed fact replaced rather than stacked; their rules,
-// wants and history live in AGENTS.md, tasks and memory. Every note and profile line that names a message is checked against the words it quotes.
-
+// hex's memory agent is the observer from https://dhravya.dev/writing/memory-on-the-harness-level/
 const MODEL = "sonnet";
 const BYTES = 280;
-const NEWEST = 40;
-
-// How many of the thread's messages before the turn the pass reads, for what the turn answers.
-const BEFORE = 10;
-const CALL = 5 * 60_000;
+const NEWEST_NOTES = 40;
+const MESSAGES_BEFORE_THE_TURN = 10;
+const PROFILE_TRIES = 3;
+const SUMMARY_TRIES = 3;
+const CALL_TIMEOUT = 5 * 60_000;
+const LEASE_OUTLASTS_EVERY_TRY = (PROFILE_TRIES + 1) * CALL_TIMEOUT;
 const MEMO = join(import.meta.dir, "..", "vendor", "memo");
 
-// An entry in state/observe.log, which a pass's errors go to: stamped with when it was written, its
-// further lines indented under it.
-const log = (entry: string) =>
+const NUMBER_AND_DATE_MEMO_ADDS = /^(#\d+ )?\d{4}-\d\d-\d\d /u;
+const COMPRESSION_ASKED = /^Compress memories #(\d+-\d+)/u;
+
+const given = (value: string | undefined): value is string => value !== undefined && value !== "";
+
+const logIndented = (entry: string) =>
   process.stderr.write(`${new Date().toISOString()} ${entry.replaceAll("\n", "\n  ")}\n`);
 
 const SYSTEM = `You are the memory agent of hex, the owner's personal assistant. A session just finished a turn. You get the owner's profile, the newest memories, and the messages of that turn in order, the owner's, others' (jobs, schedules, other sessions) and what hex replied; an owner's message a memory already names is marked so. You keep two things.
@@ -40,28 +38,42 @@ The profile: a small markdown file every session reads, who the owner is: their 
 
 In both, quote the words that carry what the owner meant; anger and curses stay in the log. What came before the turn in its thread is there for what a message answers: write about the turn's own messages.`;
 
-const SCHEMA = {
-  type: "object",
-  properties: {
-    notes: { type: "array", items: { type: "string" } },
-    profile: { type: ["string", "null"] },
-  },
-  required: ["notes", "profile"],
+const ANSWER = z.object({ notes: z.array(z.string()), profile: z.string().nullable() });
+
+export type Answer = z.infer<typeof ANSWER>;
+
+const PASS = z.object({ session: z.string(), by: z.string(), thread: z.string().optional() });
+
+export type Pass = z.infer<typeof PASS>;
+
+const CLAUDE_RESULT = z.object({
+  is_error: z.boolean().optional(),
+  result: z.string().optional(),
+  structured_output: z.unknown(),
+});
+
+const SUMMARY = z.object({ line: z.string() });
+
+type Look = {
+  ask?: (input: string) => Promise<Answer>;
+  memo?: string;
+  by?: string;
+  thread?: string | undefined;
 };
 
-export type Answer = { notes: string[]; profile: string | null };
-
-export type Pass = { session: string; by: string; thread?: string };
+const whose = (row: Row) =>
+  given(row.meta?.unsent)
+    ? "hex, in its terminal, which the owner does not see,"
+    : replied(row)
+      ? "hex replied,"
+      : row.author === "prompt"
+        ? "hex's words to the session,"
+        : `From ${row.meta?.user ?? row.from}, not the owner,`;
 
 export async function observe(
   state: string,
   session: string,
-  {
-    ask = claude,
-    memo = MEMO,
-    by = new Date().toISOString(),
-    thread = undefined as string | undefined,
-  } = {},
+  { ask = claude, memo = MEMO, by = new Date().toISOString(), thread }: Look = {},
 ) {
   const recall = (pattern: string) =>
     Bun.spawnSync([memo, "recall", pattern], {
@@ -70,12 +82,11 @@ export async function observe(
     }).stdout.toString();
 
   const named = (rows: Row[]) =>
-    rows.length ? recall(rows.map((row) => `\\[${escape(row.key)}\\]`).join("|")) : "";
+    rows.length > 0 ? recall(rows.map((row) => `\\[${escape(row.key)}\\]`).join("|")) : "";
 
   const store = open(state);
-  const taken = store.observe(session, by, thread, 4 * CALL);
+  const taken = store.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
   const rows = owners(taken);
-  const others = taken.filter((row) => !rows.includes(row));
   const written: string[] = [];
 
   try {
@@ -85,42 +96,28 @@ export async function observe(
     let wrong = "";
     let reasons = "";
 
-    if (taken.length) {
+    if (taken.length > 0) {
       const zone = zoneOf(hexDir()) ?? Temporal.Now.timeZoneId();
       const threads = store.names();
       const place = taken[0]?.to ?? thread;
+      const earliest = [by, ...taken.map((row) => row.at)].toSorted()[0] ?? by;
 
-      const whose = (row: Row) =>
-        row.meta?.unsent
-          ? "hex, in its terminal, which the owner does not see,"
-          : replied(row)
-            ? "hex replied,"
-            : row.author === "prompt"
-              ? "hex's words to the session,"
-              : `From ${row.meta?.user ?? row.from}, not the owner,`;
-
-      const before = place
-        ? store
-            .said(
-              place,
-              BEFORE,
-              [...rows, ...others].reduce((first, row) => (row.at < first ? row.at : first), by),
-            )
-            .filter(shown)
+      const before = given(place)
+        ? store.said(place, MESSAGES_BEFORE_THE_TURN, earliest).filter(shown)
         : [];
 
       const turn = [
-        ...(before.length
+        ...(before.length > 0
           ? [
               `<before>\n${before.map((row) => `${row.author === "owner" ? "The owner," : whose(row)} ${clock(row.at, zone)}:\n${cut(row.body, 1000)}`).join("\n\n")}\n</before>`,
             ]
           : []),
-        `<turn thread="${place ? (threads[place] ?? place) : "none"}">`,
+        `<turn thread="${given(place) ? (threads[place] ?? place) : "none"}">`,
         ...taken
           .filter(shown)
           .map((row) =>
             rows.includes(row)
-              ? `${said(row, zone)}${noted.includes(`[${row.key}]`) ? "\n(a note already names this message: write no note for it)" : ""}`
+              ? `${ownerMessage(row, zone)}${noted.includes(`[${row.key}]`) ? "\n(a note already names this message: write no note for it)" : ""}`
               : `${whose(row)} ${clock(row.at, zone)}:\n${cut(row.body, 2000)}`,
           ),
         "</turn>",
@@ -128,28 +125,28 @@ export async function observe(
 
       const ours = new Set(fresh.map((row) => row.key));
 
-      // A profile that misquotes the owner goes back with what's wrong, and another pass may
-      // rewrite the profile while this one thinks: either way it thinks again.
-      for (let tries = 0; tries < 3; tries++) {
-        const before = store.profile();
+      for (let tries = 0; tries < PROFILE_TRIES; tries++) {
+        const profileBefore = store.profile();
 
         const answer = await ask(
-          `<profile>\n${before || "(none yet)"}\n</profile>\n\n<newest memories>\n${newest(recall("."))}\n</newest memories>\n\n${turn}${wrong}`,
+          `<profile>\n${profileBefore || "(none yet)"}\n</profile>\n\n<newest memories>\n${newestNotes(recall("."))}\n</newest memories>\n\n${turn}${wrong}`,
         );
 
         const now = named(fresh);
 
-        for (const note of tries ? [] : answer.notes.map(line).filter(Boolean)) {
+        for (const note of tries > 0 ? [] : answer.notes.map(asMemoTakesIt).filter(Boolean)) {
           const keys = keysOf(note);
 
-          const kept = keys.length
-            ? keys.every((key) => ours.has(key) && !now.includes(`[${key}]`)) &&
-              holds(verdict(note, store))
-            : !quotesOf(note).length;
+          const kept =
+            keys.length > 0
+              ? keys.every((key) => ours.has(key) && !now.includes(`[${key}]`)) &&
+                holds(verdict(note, store))
+              : quotesOf(note).length === 0;
 
           if (Buffer.byteLength(note) > BYTES || !kept) {
             continue;
           }
+
           if (
             Bun.spawnSync([memo, "note", note], { stdout: "ignore", stderr: "ignore" }).exitCode ===
             0
@@ -163,29 +160,31 @@ export async function observe(
         if (answer.profile === null) {
           break;
         }
+
         const bad = misquoted(answer.profile, store);
         reasons = bad.join("\n");
-        wrong = bad.length ? retry(bad, answer.profile) : "";
+        wrong = bad.length > 0 ? retry(bad, answer.profile) : "";
 
-        if (wrong || !store.profiled(before, answer.profile)) {
+        if (wrong !== "" || !store.profiled(profileBefore, answer.profile)) {
           continue;
         }
+
         wanted = false;
         break;
       }
 
       if (wanted) {
-        log(
-          `hex left the profile as it was after 3 tries:${reasons ? `\n${reasons}` : " another pass kept rewriting it"}`,
+        logIndented(
+          `hex left the profile as it was after ${PROFILE_TRIES} tries:${reasons ? `\n${reasons}` : " another pass kept rewriting it"}`,
         );
       }
     }
 
-    // A pass that lost to other passes leaves its turn for the next, unless it wrote notes, which a
-    // second look could write again; one that kept misquoting would again, so its turn is done.
+    const lostOnlyToOtherPasses = wanted && wrong === "" && written.length === 0;
+
     store.observed(
       taken.map((row) => row.key),
-      !wanted || !!wrong || written.length > 0,
+      !lostOnlyToOtherPasses,
     );
 
     return written;
@@ -194,37 +193,39 @@ export async function observe(
       taken.map((row) => row.key),
       written.length > 0,
     );
-    log(`hex couldn't look over this turn for memories: ${error}`);
+    logIndented(`hex couldn't look over this turn for memories: ${String(error)}`);
 
     return written;
   }
 }
 
-// What keeps a profile from being kept: too long, empty, or a line that quotes someone without
-// naming the owner's message it quotes, or misquotes it.
 function misquoted(profile: string | null, store: Store): string[] {
-  if (!profile?.trim()) {
+  if (profile === null || profile.trim() === "") {
     return ["(empty)"];
   }
+
   if (profile.length > PROFILE) {
     return [
       `(${profile.length} characters: cut it by merging and tightening lines, then dropping the facts that matter least)`,
     ];
   }
+
   return profile.split("\n").flatMap((each) => {
-    if (!keysOf(each).length) {
-      return quotesOf(each).length
+    if (keysOf(each).length === 0) {
+      return quotesOf(each).length > 0
         ? [`${each}\n  names no message of the owner's for its quote`]
         : [];
     }
+
     const found = verdict(each, store);
 
     if (!holds(found)) {
       return [`${each}\n  ${problems(found, false).join("\n  ")}`];
     }
-    const foreign = found.keys.filter((row) => !owners([row]).length);
 
-    return foreign.length
+    const foreign = found.keys.filter((row) => owners([row]).length === 0);
+
+    return foreign.length > 0
       ? [`${each}\n  ${foreign.map((row) => `[${row.key}]`).join(", ")} isn't the owner's message`]
       : [];
   });
@@ -233,31 +234,23 @@ function misquoted(profile: string | null, store: Store): string[] {
 const retry = (bad: string[], draft: string) =>
   `\n\nYour last profile wasn't kept. It must stay under ${PROFILE} characters, and a line that quotes the owner must name the message it quotes, quoting it as written:\n${bad.join("\n")}\n\nFix that draft rather than starting over:\n<draft>\n${draft.trim()}\n</draft>`;
 
-// The newest notes, enough to show what memory already says and how its lines read.
-const newest = (recalled: string) =>
+const newestNotes = (recalled: string) =>
   recalled
     .split("\n")
-    .filter((line) => line.startsWith("#"))
-    .slice(-NEWEST)
+    .filter((each) => each.startsWith("#"))
+    .slice(-NEWEST_NOTES)
     .join("\n");
 
-// A note as memo takes it: one line, without the number and date memo puts in front of it itself.
-const line = (note: string) =>
-  note
-    .replaceAll(/\s+/g, " ")
-    .trim()
-    .replace(/^(#\d+ )?\d{4}-\d\d-\d\d /, "");
+const asMemoTakesIt = (note: string) =>
+  note.replaceAll(/\s+/gu, " ").trim().replace(NUMBER_AND_DATE_MEMO_ADDS, "");
 
-// A message as the pass reads it: its key, when it came on the owner's clock, what it answers, and its words.
-function said(row: Row, zone: string) {
-  const replying = row.meta?.reply_to_text
-    ? `, replying to "${row.meta.reply_to_text.slice(0, 300)}"`
-    : "";
+function ownerMessage(row: Row, zone: string) {
+  const replyingTo = row.meta?.reply_to_text;
+  const replying = given(replyingTo) ? `, replying to "${replyingTo.slice(0, 300)}"` : "";
 
   return `[${row.key}] ${clock(row.meta?.ts ?? row.at, zone)}${replying}:\n${row.body}`;
 }
 
-// "Oct 20 12:47am", the way notes write the time.
 export function clock(at: string, zone: string) {
   const time = Temporal.Instant.from(at).toZonedDateTimeISO(zone);
   const hour = time.hour % 12 || 12;
@@ -266,11 +259,14 @@ export function clock(at: string, zone: string) {
   return `${month} ${time.day} ${hour}:${String(time.minute).padStart(2, "0")}${time.hour < 12 ? "am" : "pm"}`;
 }
 
-const escape = (text: string) => text.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const escape = (text: string) => text.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
-// One call with no tools: its only effect is what it returns.
-// Its three tries end inside the pass's lease (4 calls long), so a hung call fails rather than racing the next pass.
-async function call(input: string, system: string, args: string[]) {
+async function callWithNoTools<T>(
+  input: string,
+  system: string,
+  effort: "high" | "low",
+  output: z.ZodType<T>,
+) {
   const env = {
     ...Object.fromEntries(
       Object.entries(process.env).filter(
@@ -288,14 +284,26 @@ async function call(input: string, system: string, args: string[]) {
       "--safe-mode",
       "--model",
       MODEL,
-      ...args,
+      "--effort",
+      effort,
+      "--tools",
+      "",
+      "--json-schema",
+      JSON.stringify(z.toJSONSchema(output, { target: "draft-07" })),
       "--system-prompt",
       system,
       "--output-format",
       "json",
       "--no-session-persistence",
     ],
-    { cwd: hexDir(), env, stdin: new Blob([input]), stdout: "pipe", stderr: "pipe", timeout: CALL },
+    {
+      cwd: hexDir(),
+      env,
+      stdin: new Blob([input]),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: CALL_TIMEOUT,
+    },
   );
 
   const [out, err, code] = await Promise.all([
@@ -304,49 +312,49 @@ async function call(input: string, system: string, args: string[]) {
     run.exited,
   ]);
 
-  const result = JSON.parse(out || "{}");
+  const result = CLAUDE_RESULT.parse(JSON.parse(out || "{}"));
 
-  if (code !== 0 || result.is_error) {
+  if (code !== 0 || result.is_error === true) {
     throw new Error(`claude exited ${code}: ${result.result ?? err.slice(-500)}`);
   }
-  return result;
+
+  return { answer: output.safeParse(result.structured_output).data, result: result.result };
 }
 
 async function claude(input: string): Promise<Answer> {
-  const result = await call(input, SYSTEM, [
-    "--effort",
-    "high",
-    "--tools",
-    "",
-    "--json-schema",
-    JSON.stringify(SCHEMA),
-  ]);
+  const { answer, result } = await callWithNoTools(input, SYSTEM, "high", ANSWER);
 
-  if (!result.structured_output) {
-    throw new Error(`claude answered without the schema: ${result.result}`);
+  if (!answer) {
+    throw new Error(`claude answered without the schema: ${String(result)}`);
   }
-  return result.structured_output;
+
+  return answer;
 }
 
-// OptMem asks whoever writes a note to do the compressions it makes due. The memory agent writes
-// every note, so it does them too, and a session's wake never has to ask for one. Each one starts
-// only while keep() holds the pass's lease.
-export async function nap(memo = MEMO, compress = summarize, keep = () => true) {
-  for (
-    let asked;
-    keep() &&
-    (asked = Bun.spawnSync([memo, "nap"], {
+export async function nap(memo = MEMO, compress = summarize, stillHoldsLease = () => true) {
+  while (stillHoldsLease()) {
+    const asked = Bun.spawnSync([memo, "nap"], {
       stdout: "pipe",
       stderr: "ignore",
-    }).stdout.toString()).startsWith("Compress");
-  ) {
-    const block = /^Compress memories #(\d+-\d+)/.exec(asked)![1]!;
+    }).stdout.toString();
+
+    if (!asked.startsWith("Compress")) {
+      return;
+    }
+
+    const block = COMPRESSION_ASKED.exec(asked)?.[1];
+
+    if (block === undefined) {
+      throw new Error(`memo asked for a compression hex can't read: ${asked}`);
+    }
+
     let why = "";
 
     for (let tries = 0; ; tries++) {
-      const line = await compress(asked.slice(0, asked.lastIndexOf("\nRun:")) + why);
+      const lastTry = tries === SUMMARY_TRIES - 1;
+      const summary = await compress(asked.slice(0, asked.lastIndexOf("\nRun:")) + why);
 
-      const kept = Bun.spawnSync([memo, "nap", block, tries === 2 ? within(line, BYTES) : line], {
+      const kept = Bun.spawnSync([memo, "nap", block, lastTry ? within(summary, BYTES) : summary], {
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -354,45 +362,47 @@ export async function nap(memo = MEMO, compress = summarize, keep = () => true) 
       if (kept.exitCode === 0) {
         break;
       }
-      if (tries === 2) {
-        throw new Error(`memo kept no summary of #${block}: ${kept.stdout}${kept.stderr}`);
+
+      const said = `${kept.stdout.toString()}${kept.stderr.toString()}`;
+
+      if (lastTry) {
+        throw new Error(`memo kept no summary of #${block}: ${said}`);
       }
-      why = `\n\nThat line wasn't kept: ${kept.stdout}${kept.stderr}`;
+
+      why = `\n\nThat line wasn't kept: ${said}`;
     }
   }
 }
 
-// A summary that stayed too long after its tries loses its last words, so one stuck block can't hold
-// back every compression after it.
-export function within(line: string, bytes: number) {
-  const size = (text: string) => Buffer.byteLength(text);
-  const flat = line.replaceAll(/\s+/g, " ").trim();
+export function within(summary: string, bytes: number) {
+  const flat = summary.replaceAll(/\s+/gu, " ").trim();
 
-  if (size(flat) <= bytes) {
+  if (Buffer.byteLength(flat) <= bytes) {
     return flat;
   }
-  let cut = [...flat];
 
-  while (cut.length && size(`${cut.join("")}…`) > bytes) {
-    cut = cut.slice(0, cut.lastIndexOf(" ") > 0 ? cut.lastIndexOf(" ") : cut.length - 1);
+  // oxlint-disable-next-line typescript/no-misused-spread -- a cut by code point never splits a UTF-8 sequence, which is all memo's byte limit needs
+  let codePoints = [...flat];
+
+  while (codePoints.length > 0 && Buffer.byteLength(`${codePoints.join("")}…`) > bytes) {
+    const lastSpace = codePoints.lastIndexOf(" ");
+    codePoints = codePoints.slice(0, lastSpace > 0 ? lastSpace : codePoints.length - 1);
   }
-  return `${cut.join("").trimEnd()}…`;
-}
 
-const LINE = { type: "object", properties: { line: { type: "string" } }, required: ["line"] };
+  return `${codePoints.join("").trimEnd()}…`;
+}
 
 async function summarize(prompt: string) {
-  const { structured_output } = await call(
+  const { answer } = await callWithNoTools(
     prompt,
     "You compress the memories of an AI assistant into one line.",
-    ["--effort", "low", "--tools", "", "--json-schema", JSON.stringify(LINE)],
+    "low",
+    SUMMARY,
   );
 
-  return String(structured_output?.line ?? "").trim();
+  return answer?.line.trim() ?? "";
 }
 
-// A session reloads its memory file after compacting, so each pass leaves it current: the profile
-// and memory as they are now, not as they were when the newest session started.
 export function refresh() {
   Bun.spawnSync([join(import.meta.dir, "..", "bin", "wake")], {
     stdout: "ignore",
@@ -400,39 +410,37 @@ export function refresh() {
   });
 }
 
-// A pass looks over the turn, does the compressions its notes made due, and leaves the memory file current.
-async function pass(state: string, turn: Pass, keep: () => boolean) {
+async function pass(state: string, turn: Pass, stillHoldsLease: () => boolean) {
   await observe(state, turn.session, turn);
 
   try {
-    await nap(MEMO, summarize, keep);
+    await nap(MEMO, summarize, stillHoldsLease);
   } finally {
     refresh();
   }
 }
 
-// Turns wait in hex.db, oldest first, and one process at a time works through them, so each pass
-// reads the notes and profile the last one left: two never write the same note or race for the
-// profile, and a turn outlives a pass that died. A drainer that died holds the lease only until it
-// runs out; each turn renews it, and one whose lease ran out mid-turn stops. One that finds the lease taken leaves its turn to the holder,
-// which looks again after letting go.
 export async function drain(
   state: string,
-  run: (pass: Pass, keep: () => boolean) => Promise<unknown> = (each, keep) =>
-    pass(state, each, keep),
+  run: (turn: Pass, stillHoldsLease: () => boolean) => Promise<void> = (turn, stillHoldsLease) =>
+    pass(state, turn, stillHoldsLease),
 ) {
   const store = open(state);
   const holder = crypto.randomUUID();
+  const holdsLease = () => store.lease("observe", holder, LEASE_OUTLASTS_EVERY_TRY);
 
-  while (store.waiting() && store.lease("observe", holder, 4 * CALL)) {
+  while (store.waiting() && holdsLease()) {
     try {
       for (let next; (next = store.waiting());) {
-        await run(next.pass as Pass, () => store.lease("observe", holder, 4 * CALL)).catch(
-          (error) => log(`hex couldn't look over a turn for memories: ${error}`),
-        );
+        try {
+          await run(PASS.parse(next.pass), holdsLease);
+        } catch (error) {
+          logIndented(`hex couldn't look over a turn for memories: ${String(error)}`);
+        }
+
         store.passed(next.n);
 
-        if (!store.lease("observe", holder, 4 * CALL)) {
+        if (!holdsLease()) {
           return;
         }
       }
@@ -442,49 +450,42 @@ export async function drain(
   }
 }
 
-// Queues a session's turn for the memory agent and hands the queue to a process of its own.
-export function queue(state: string, pass: Pass) {
-  if (!process.env.MEMORY_DIR || !existsSync(MEMO)) {
+export function queue(state: string, turn: Pass) {
+  if (!given(process.env.MEMORY_DIR) || !existsSync(MEMO)) {
     return;
   }
+
   try {
-    open(state).wait(pass);
-    const log = openSync(join(state, "observe.log"), "a");
+    open(state).wait(turn);
+    const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {
       spawn(process.execPath, [import.meta.path], {
         detached: true,
-        stdio: ["ignore", "ignore", log],
+        stdio: ["ignore", "ignore", observeLog],
         env: { ...process.env, HEX_STORE: state, HEX_PASS: "1" },
       })
-        .on("error", (error) =>
-          process.stderr.write(`hex couldn't start the memory agent: ${error}\n`),
-        )
+        .on("error", (error) => {
+          process.stderr.write(`hex couldn't start the memory agent: ${String(error)}\n`);
+        })
         .unref();
     } finally {
-      closeSync(log);
+      closeSync(observeLog);
     }
   } catch (error) {
-    process.stderr.write(`hex couldn't queue a turn for memories: ${error}\n`);
+    process.stderr.write(`hex couldn't queue a turn for memories: ${String(error)}\n`);
   }
 }
 
-// A turn that ended, from the session's Stop hook (state.ts), in this order: its last words are kept,
-// the turn is queued for a pass, and only then does the hub hear the session is idle, so the words
-// land before anything the turn's end lets in, and its pass sees them. A session no app holds answers
-// in the terminal, and an app's session sums up there what its replies may not say. In T3 Code the
-// terminal is the conversation, so there they are hex's reply in T3. The queue goes to a process of
-// its own, since Claude Code ends a hook still running when its session exits, and a hex session
-// often exits right after a turn (a restart, an update, a call that ended). A pass takes only what
-// the session had taken when its turn ended, and what an earlier pass in its thread left unfinished.
 export function ended(state: string, session: string, last?: string) {
   const { HEX_THREAD, HEX_CHANNEL } = process.env;
-  const t3 = HEX_CHANNEL?.startsWith("plugin:t3@");
+  const t3 = HEX_CHANNEL?.startsWith("plugin:t3@") === true;
   const from = t3 ? "t3" : "terminal";
   const answer = last?.trim();
+  const heldByAnotherApp = given(HEX_CHANNEL) && !t3;
 
   try {
-    if (answer) {
+    if (given(answer)) {
       open(state).deliver(
         {
           key: `${from}:${crypto.randomUUID()}`,
@@ -492,19 +493,18 @@ export function ended(state: string, session: string, last?: string) {
           from,
           author: "hex",
           body: answer,
-          meta: { session, ...(HEX_CHANNEL && !t3 && { unsent: "true" }) },
+          meta: { session, ...(heldByAnotherApp && { unsent: "true" }) },
         },
         session,
       );
     }
   } catch (error) {
-    process.stderr.write(`hex couldn't keep this turn's answer: ${error}\n`);
+    process.stderr.write(`hex couldn't keep this turn's answer: ${String(error)}\n`);
   }
 
   queue(state, { session, by: new Date().toISOString(), thread: HEX_THREAD });
 }
 
-// The memory agent, which works through the queued turns. Errors go to state/observe.log.
-if (import.meta.main && process.env.HEX_PASS) {
+if (import.meta.main && given(process.env.HEX_PASS)) {
   await drain(stateDir());
 }
