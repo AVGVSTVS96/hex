@@ -5,11 +5,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, s
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { clock } from './clock.ts'
+import { holding } from './holds.ts'
 import { STARTUP } from './loaded.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { queue } from './observe.ts'
-import { schedule, zoneOf } from './schedule.ts'
+import { schedule } from './schedule.ts'
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf, type Author, type MessageId, type Row, type Store } from './store.ts'
+import { zoneOf } from './zone.ts'
 
 export type { ChannelServer, Tool } from './mcp.ts'
 
@@ -1218,6 +1220,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   }
   const unwatch = kept(store => store.watch(wake), () => {})
   const unschedule = general && main ? schedule(storeDir, hexDir, main) : () => {}
+  const unhold = general && main ? holding(storeDir) : () => {}
 
   const api = {
     deliver,
@@ -1262,6 +1265,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       closed = true
       unwatch()
       unschedule()
+      unhold()
       retries.delete(retry)
       answered.delete(recompact)
       if (generalHub === api) generalHub = undefined

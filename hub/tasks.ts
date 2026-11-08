@@ -1,5 +1,8 @@
+import { dirname } from 'path'
 import { clip, fit, ROOM } from './fit.ts'
+import { line } from './holds.ts'
 import { served } from './running.ts'
+import { zoneOf } from './zone.ts'
 import { open, stateDir, type Question, type Task } from './store.ts'
 
 function facts(task: Task, named: Record<string, string>, said?: string) {
@@ -39,17 +42,26 @@ export function waiting(question: Question, named: Record<string, string> = {}):
   return `- ${question.app} · ${named[question.thread] ?? question.thread} · ${ref} · ${question.at.slice(0, 16).replace('T', ' ')}Z: ${text}`
 }
 
-// What a session should have before it acts: the questions still waiting on the owner, then the open
-// tasks it serves, newest first, each as its clean entry. seen holds every entry by its id, those
-// that didn't fit too, so the next push can say only what changed. Main sees every thread's; a
-// thread sees its own.
+// What a session should have before it acts: the work on hold anywhere, then the questions still
+// waiting on the owner, then the open tasks it serves, newest first, each as its clean entry. seen
+// holds every entry by its id, those that didn't fit too, so the next push can say only what
+// changed. Every session sees every hold, since the owner's word in any thread can lift one; for
+// questions and tasks, main sees every thread's and a thread its own.
 export function pending(state: string, thread?: string, room = ROOM): { text: string; seen: Record<string, string> } {
   const store = open(state)
   const tasks = store.tasks({ owner: thread, status: ['open'] })
   const questions = store.questions({ thread, waiting: true })
+  const zone = zoneOf(dirname(state))
+  const holds = store.holds().map(hold => [hold.id, line(hold, store, zone)] as const)
   const named = store.names()
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
+    {
+      header: "Work on hold, which every session sees: a thread on hold finishes the step it's on and starts nothing new. A hold ends by itself at its time; when my words in any thread lift one, end it with `.hex/bin/hex hold end <hold> [<thread>…] --why '<what lifts it>' --key <my message>`, and hex wakes each thread it frees that worked while held, a couple at a time:",
+      items: holds.map(([, text]) => [text]),
+      gap: '\n',
+      rest: '`.hex/bin/hex holds` lists them all',
+    },
     {
       header: `${whose}'s questions still waiting on me: yours, and mine you answered that I haven't come back to (remind me with reply, reply_to set to its key, from any thread; edit_message with settled: true and the key closes one my words show I've dealt with, or that no longer stands):`,
       items: questions.map(question => [waiting(question, named)]),
@@ -64,6 +76,7 @@ export function pending(state: string, thread?: string, room = ROOM): { text: st
     },
   ]
   const seen = Object.fromEntries([
+    ...holds,
     ...questions.map(question => [`${question.app}:${question.thread}:${question.message}`, waiting(question, named)]),
     ...tasks.map(task => [task.id, entry(task, named)]),
   ])

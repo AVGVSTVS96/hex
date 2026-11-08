@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'fs'
 import { join } from 'path'
-import { zoneOf } from './schedule.ts'
+import { zoneOf } from './zone.ts'
 import { open } from './store.ts'
 
 // Each night at 3:00 on the owner's clock, while hex is quietest.

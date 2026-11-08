@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { zoneOf } from './schedule.ts'
+import { zoneOf } from './zone.ts'
 import { asked, open, type Author, type NewRow, type Store } from './store.ts'
 
 // Before hex.db kept hex's replies, each session's conversation was kept as markdown in log/. This
