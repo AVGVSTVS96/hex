@@ -74,7 +74,7 @@ export const server: ChannelServer = {
             items: { type: 'string' },
             description: 'Absolute file paths that replace the message\'s attachments.',
           },
-          settled: { type: 'boolean', description: 'true when the question this message asked with buttons is settled or no longer stands: its buttons come off and it stops waiting on the user. Without it, an edit keeps a question\'s buttons.' },
+          settled: { type: 'boolean', description: 'true once the user has answered the question this message asked with buttons, or it no longer stands: its buttons come off and it stops waiting on the user. Without it, an edit keeps a question\'s buttons.' },
         },
         required: ['message_id'],
       },

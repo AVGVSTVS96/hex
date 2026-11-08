@@ -90,7 +90,7 @@ export const server: ChannelServer = {
           text: { type: 'string', description: 'New text, or new caption for a file.' },
           file: { type: 'string', description: 'Absolute path of a file to replace the sent one with.' },
           format: formatProperty,
-          settled: { type: 'boolean', description: 'true when the question this message asked, or answered for the user, is settled or no longer stands: it stops waiting on the user, its buttons come off, and a poll nobody has voted in closes. Without it, an edit keeps a question\'s buttons. A poll\'s own text can\'t be edited.' },
+          settled: { type: 'boolean', description: 'true once the user has answered the question this message asked, or this message answered the user\'s own question, or it no longer stands: it stops waiting on the user, its buttons come off, and a poll nobody has voted in closes. Without it, an edit keeps a question\'s buttons. A poll\'s own text can\'t be edited.' },
         },
         required: ['message_id'],
       },
