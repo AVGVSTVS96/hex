@@ -499,8 +499,8 @@ export class Board extends Changes {
   }
 
   // The tasks closed in the last day, each under its home run, or with that run off the board, named
-  // as its project or its thread is. A task General or the DM owns with no project is done where its
-  // proof was posted, when that's a topic of its own.
+  // as its project or its thread is. A task General or the DM owns with no project is done in the
+  // topic its work ran in: where it was closed or its agents were started, else where its proof was posted.
   private finish(runs: Run[]): Finished[] {
     const store = open(this.state)
     const all = store.threads()
@@ -508,8 +508,8 @@ export class Board extends Changes {
     const aside = (row?: Stored) => !row || ['General', 'DM'].includes(where(threadOf(row, general)))
     return this.closedTasks().map(task => {
       const owner = all.find(row => row.thread === task.owner)
-      const posted = !task.project && aside(owner) ? all.find(row => row.thread === store.message(task.proof?.split(/\s/)[0] ?? '')?.to) : undefined
-      const thread = posted && !aside(posted) ? posted : owner
+      const places = !task.project && aside(owner) ? [...store.worked(task.id), store.message(task.proof?.split(/\s/)[0] ?? '')?.to] : []
+      const thread = places.map(place => all.find(row => row.thread === place)).find(row => row && !aside(row)) ?? owner
       const id = home({ ...task, owner: thread?.thread ?? task.owner }, runs)
       const run = runs.find(run => run.id === id)
       const topic = run?.name ?? task.project ?? (thread ? nameOf(thread, general) : 'hex')

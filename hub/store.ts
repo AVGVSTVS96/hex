@@ -23,7 +23,7 @@ export type Status = 'idea' | 'open' | 'done' | 'dropped'
 export type Words = { message: string; text: string; who: Author; at: string }
 export type Task = { id: string; title: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
 export type NewTask = { title: string; message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
-export type TaskChange = { title?: string; status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string }
+export type TaskChange = { title?: string; status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string; doneIn?: string }
 // A call that's the owner's: a question a thread asked with buttons, a poll or in words, in one
 // app's thread, under that app's id for the message. via: where the answer came from (the chat app's
 // own buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
@@ -269,6 +269,11 @@ const migrations: (string | ((store: Store) => void))[] = [
   // When a session's turn ended with background agents still working for it, until it hands what it took over.
   ({ db }: Store) => {
     if (!db.query("select 1 from pragma_table_info('turns') where name = 'waiting'").get()) db.run(`alter table turns add column waiting text check (waiting ${UTC})`)
+  },
+  // The thread a task's work ran in: the one that closed it, and the one that linked each of its agents.
+  ({ db }: Store) => {
+    if (!db.query("select 1 from pragma_table_info('tasks') where name = 'done_in'").get()) db.run('alter table tasks add column done_in text')
+    if (!db.query("select 1 from pragma_table_info('task_agents') where name = 'thread'").get()) db.run('alter table task_agents add column thread text')
   },
 ]
 
@@ -700,20 +705,28 @@ export class Store {
       this.db
         .query('update tasks set title = ?, owner = ?, status = ?, project = ?, done_when = ?, proof = ?, closed = ? where n = ?')
         .run(next.title ?? null, next.owner, next.status, next.project ?? null, next.doneWhen ?? null, next.proof ?? null, closed ?? null, number(id))
+      if (change.doneIn) this.db.query('update tasks set done_in = ? where n = ?').run(change.doneIn, number(id))
       return this.task(id)!
     })
   }
 
   // Agents and sessions started for a task, so what shows them shows them as its work, wherever they started.
-  addAgents(id: string, agents: string[]): Task {
+  addAgents(id: string, agents: string[], thread?: string): Task {
     return this.write(() => {
       const short = agents.find(agent => !/^[\w-]{8,}$/.test(agent))
       if (short) throw new Error(`"${short}" isn't an agent or session id: use the id it was started with, 8 characters or more`)
       const live = this.live(id)
-      const add = this.db.query('insert into task_agents (agent, task, at) values (?, ?, ?) on conflict (agent) do update set task = excluded.task, at = excluded.at')
-      for (const agent of agents) add.run(agent, number(live), now())
+      const add = this.db.query('insert into task_agents (agent, task, at, thread) values (?, ?, ?, ?) on conflict (agent) do update set task = excluded.task, at = excluded.at, thread = excluded.thread')
+      for (const agent of agents) add.run(agent, number(live), now(), thread ?? null)
       return this.task(live)!
     })
+  }
+
+  // The threads a task's work ran in, newest first: the one that closed it, then those that linked its agents.
+  worked(id: string): string[] {
+    const closed = this.db.query('select done_in from tasks where n = ? and done_in is not null').all(number(id)) as { done_in: string }[]
+    const linked = this.db.query('select thread from task_agents where task = ? and thread is not null order by at desc').all(number(id)) as { thread: string }[]
+    return [...closed.map(row => row.done_in), ...linked.map(row => row.thread)]
   }
 
   // The task each linked agent works for, by its id, with whose task it is and its project.
