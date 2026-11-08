@@ -5,8 +5,8 @@ import { open } from './store.ts'
 
 // A job in schedules.json wakes its thread (the main one, unless it names another) with
 // "[name] prompt" at each minute its five-field cron names and at each "YYYY-MM-DD HH:MM" its at
-// lists, on the owner's clock. One that names an idea checks it instead (ideas.ts), and wakes the
-// idea's thread only with news.
+// lists, on the owner's clock. One that names an idea checks it instead (ideas.ts), at most daily,
+// and wakes the idea's thread only with news.
 export type Job = { cron?: string; at?: string | string[]; thread?: string; idea?: string; prompt: string }
 
 const FIELDS = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]] as const
@@ -45,6 +45,7 @@ export function parse(text: string): Record<string, Job> {
     if (![job.at ?? []].flat().every(isAt)) throw new Error(`${name}: at must be "YYYY-MM-DD HH:MM", or a list of them`)
     if (job.thread !== undefined && typeof job.thread !== 'string') throw new Error(`${name}: thread must be a thread's id`)
     if (job.idea !== undefined && !/^t-\d+$/.test(String(job.idea))) throw new Error(`${name}: idea must be an idea's id, like t-12`)
+    if (job.idea !== undefined && job.cron !== undefined && !/^\d+\s+\d+\s/.test(job.cron.trim())) throw new Error(`${name}: an idea's check runs at most daily, so its cron names one minute and one hour`)
   }
   return jobs
 }
@@ -139,7 +140,7 @@ export function check(storeDir: string, hexDir: string, main: string, now = Math
     for (const [name, minute] of slots) if (!jobs[name]!.idea) store.fire(name, minute, jobs[name]!.thread ?? main, `[${name}] ${jobs[name]!.prompt}`, minute < now)
     store.check(now)
   })
-  for (const [name, minute] of slots) if (jobs[name]!.idea) research(storeDir, name, jobs[name]!, main, minute)
+  for (const [name, job] of Object.entries(jobs)) if (job.idea) research(storeDir, name, job, main, slots.get(name))
 }
 
 // The hub's scheduler: a check at its start, then at the top of every minute.

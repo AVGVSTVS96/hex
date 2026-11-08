@@ -2,7 +2,7 @@ import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { checks, research, type Found } from './ideas.ts'
+import { checks, research, study, type Found } from './ideas.ts'
 import { open, Store } from './store.ts'
 
 let dir: string
@@ -51,7 +51,7 @@ test('a check that fails is kept with its error; the second failure in a row tel
   expect(checks(dir, 't-1')[0]!.error).toContain('rate limited')
   await research(dir, 'gpt-live', job, 'general', minute + 1440, fail)
   await research(dir, 'gpt-live', job, 'general', minute + 2 * 1440, fail)
-  expect(sent()).toMatchObject([{ to: '-100:7', body: "[gpt-live] t-1's idea check failed twice in a row, so its research has stopped: Error: rate limited" }])
+  expect(sent()).toMatchObject([{ to: '-100:7', body: "[gpt-live] t-1's idea check failed twice in a row, and tries again at its next slot: Error: rate limited" }])
 })
 
 test("an idea that's done has nothing to look into: its thread hears once to take the job out", async () => {
@@ -61,5 +61,11 @@ test("an idea that's done has nothing to look into: its thread hears once to tak
   await research(dir, 'gpt-live', job, 'general', minute, ask)
   await research(dir, 'gpt-live', job, 'general', minute + 1440, ask)
   expect(sent()).toMatchObject([{ to: '-100:7', body: '[gpt-live] t-1 is done, so its check in schedules.json has nothing left to look into: take the job out.' }])
-  expect(checks(dir, 't-1')).toEqual([])
+  expect(checks(dir, 't-1').map(check => [check.ended, check.input])).toEqual([['done', undefined], ['done', undefined]])
+})
+
+test('each check keeps the input it was given, so a prompt can be replayed against it', async () => {
+  idea()
+  await research(dir, 'gpt-live', job, 'general', minute, async () => ({ news: false, finding: 'nothing yet' }))
+  expect(checks(dir, 't-1')[0]!.input).toContain('What to look into: Is GPT Live 1.1 on the API yet?')
 })
