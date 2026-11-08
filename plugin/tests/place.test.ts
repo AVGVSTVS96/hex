@@ -50,8 +50,8 @@ afterAll(() => {
 
 function machine(name: string, reading: string, code: number, awayExit?: number) {
   writeFileSync(join(fake, name), reading ? `${reading}\n` : "");
-
   writeFileSync(join(fake, `${name}.code`), `${code}`);
+
   if (awayExit === undefined) {
     rmSync(join(fake, `${name}.away`), { force: true });
   } else {
