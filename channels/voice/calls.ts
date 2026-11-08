@@ -59,15 +59,19 @@ export function ending(reason: string, by?: string): Ending {
   if (by?.startsWith("close_hex")) {
     return "hex";
   }
+
   if (by?.startsWith("close-you") || reason === "close_requested" || reason === "remote_hangup") {
     return "you";
   }
+
   if (reason === "expired") {
     return "expired";
   }
+
   if (reason === "content") {
     return "hex";
   }
+
   return "dropped";
 }
 
@@ -94,6 +98,7 @@ export class CallLog extends Changes {
     if (!ID.test(id)) {
       return;
     }
+
     try {
       return JSON.parse(readFileSync(this.file(id), "utf-8"));
     } catch {}
@@ -103,6 +108,7 @@ export class CallLog extends Changes {
     if (!this.get(id)) {
       return false;
     }
+
     rmSync(this.file(id));
     this.summaries.delete(id);
     this.changed();
@@ -118,17 +124,20 @@ export class CallLog extends Changes {
         if (!name.endsWith(".json") || !ID.test(id)) {
           return [];
         }
+
         const now = stamp(this.file(id));
         const known = this.summaries.get(id);
 
         if (now && known?.stamp === now) {
           return [known.summary];
         }
+
         const record = this.get(id);
 
         if (!record || !now) {
           return [];
         }
+
         const listed = summary(record);
         this.summaries.set(id, { stamp: now, summary: listed });
 

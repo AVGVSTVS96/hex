@@ -128,6 +128,7 @@ function hold(lock: string): boolean {
     if (alive(Number(read(lock)))) {
       return false;
     }
+
     rmSync(lock, { force: true });
 
     return hold(lock);
@@ -142,6 +143,7 @@ async function pass(state: string, why: string) {
   if (records.previous?.inputs === inputs) {
     return;
   }
+
   const hexDir = dirname(state);
 
   const verdict = vet(await claude(prompt(records, hexDir), hexDir, state), records.ledgers, {
@@ -159,6 +161,7 @@ async function pass(state: string, why: string) {
       note: ref.note,
     }).catch((error) => process.stderr.write(`voice: check: ${error}\n`));
   }
+
   const result: CheckResult = {
     at: started,
     why,
@@ -192,6 +195,7 @@ function gather(state: string) {
   for (const thread of threads) {
     if (thread.app !== "voice") names[`${thread.app}:${thread.thread}`] = nameOf(thread, general);
   }
+
   const ledgers = Object.groupBy(
     questions.filter((question) => question.app !== "voice" && question.options.length),
     (question) => question.app,
@@ -209,6 +213,7 @@ function gather(state: string) {
         text: clip(pin.note, LONG),
       });
   }
+
   const shown = (app: string, question: Asked) => ({
     ref: { app, thread: question.thread, message: question.message },
     topic: names[`${app}:${question.thread}`] ?? question.thread,
@@ -519,6 +524,7 @@ function claude(input: string, hexDir: string, state: string) {
         if (result.is_error || !result.structured_output) {
           throw new Error(result.result ?? "no result");
         }
+
         resolve(result.structured_output);
       } catch (error) {
         reject(new Error(`the check's claude exited ${code}: ${error} ${err.slice(-500)}`));

@@ -107,6 +107,7 @@ export function stepOf(update: Update, names = nobody): Did | undefined {
         text: (update.content.type === "text" && plain(update.content.text)) || "Thinking",
       };
     }
+
     case "plan": {
       const text = update.entries.find((entry) => entry.status === "in_progress")?.content;
 
@@ -124,6 +125,7 @@ export function backOf(update: Update): Pick<Did, "state" | "result" | "agent"> 
   ) {
     return;
   }
+
   const tool: string = (update._meta as any)?.claudeCode?.toolName ?? "";
   const state = update.status === "failed" ? "failed" : "done";
   const text = said(update.rawOutput);
@@ -164,6 +166,7 @@ export function itemStep(
   if (!did) {
     return;
   }
+
   const tool = !["think", "say", "plan"].includes(did.kind);
 
   const state: State =
@@ -273,6 +276,7 @@ function itemDid(type: string, item: any, names: Names): Did | undefined {
         text: plain((item.text ?? "").replace(/^\*\*(.+?)\*\*\s*/, "$1. ")) || "Thinking",
       };
     }
+
     case "assistant_message": {
       const text = firstParagraph(item.text ?? "");
 
@@ -287,6 +291,7 @@ function itemDid(type: string, item: any, names: Names): Did | undefined {
         ...(item.childThreadId && { agent: item.childThreadId }),
       };
     }
+
     case "error": {
       return {
         kind: "tool",
@@ -314,6 +319,7 @@ function step(
         ...clipped({ detail: input.command }),
       };
     }
+
     case "read": {
       return {
         kind: "read",
@@ -321,6 +327,7 @@ function step(
         ...clipped({ detail: file && tilde(file) }),
       };
     }
+
     case "edit": {
       return {
         kind: "edit",
@@ -328,6 +335,7 @@ function step(
         ...clipped({ detail: file && tilde(file) }),
       };
     }
+
     case "search": {
       return {
         kind: "search",
@@ -337,6 +345,7 @@ function step(
         }),
       };
     }
+
     case "fetch": {
       return {
         kind: "web",
@@ -348,6 +357,7 @@ function step(
         ...clipped({ detail: input.query ?? input.url }),
       };
     }
+
     case "think": {
       return input.description
         ? {
@@ -368,6 +378,7 @@ function step(
   if (mcp) {
     return called(mcp[1], mcp[2], input, names);
   }
+
   if (input.skill) {
     return {
       kind: "tool",
@@ -375,6 +386,7 @@ function step(
       ...clipped({ detail: input.args }),
     };
   }
+
   return title === tool ? undefined : { kind: "tool", text: title };
 }
 
@@ -409,6 +421,7 @@ function called(server: string, tool: string, input: Record<string, any>, names:
         return { kind: "tool", text: `Read ${names(input.threadId) ?? "a thread"}` };
     }
   }
+
   const app = server
     .split("_")
     .at(-1)!
@@ -437,6 +450,7 @@ function commandWords(command: string) {
       ? parts.push([])
       : parts.at(-1)!.push(token.replace(/^(['"])([\s\S]*)\1$/, "$2"));
   }
+
   const silent = (part: string[]) =>
     part.some((token, i) => /^1?>>?$/.test(token) && part[i + 1] === "/dev/null");
 
@@ -446,6 +460,7 @@ function commandWords(command: string) {
   if (!name) {
     return `Running ${firstLine(command)}`;
   }
+
   const redirect = (arg = "") => /^\d*>>?$/.test(arg);
   const out = args.findIndex((arg) => arg === ">" || arg === ">>");
   const into = out !== -1 ? args[out + 1] : undefined;
@@ -458,17 +473,21 @@ function commandWords(command: string) {
   if (into && (READS.has(name) || name === "tee")) {
     return `Writing ${basename(into)}`;
   }
+
   if (READS.has(name) && plain.length) {
     return `Reading ${basename(plain.at(-1)!)}`;
   }
+
   const place = plain.find((arg) => arg !== ".");
 
   if (LISTS.has(name) || args.includes("--files")) {
     return `Listing ${place ? basename(place) : "files"}`;
   }
+
   if (SEARCHES.has(name) && plain.length) {
     return `Searching for ${plain[0]}`;
   }
+
   return `Running ${name}${/^[a-z][a-z-]*$/.test(args[0] ?? "") ? ` ${args[0]}` : ""}`;
 }
 
@@ -488,9 +507,11 @@ function said(output: unknown): string {
   if (typeof output === "string") {
     return output;
   }
+
   if (Array.isArray(output)) {
     return output.flatMap((block) => (block?.type === "text" ? [block.text] : [])).join("\n");
   }
+
   return output && typeof output === "object" ? pairs(output as Record<string, unknown>) : "";
 }
 
@@ -516,6 +537,7 @@ function unwrap(command: string) {
   if (!inner) {
     return command;
   }
+
   return quote === '"' ? inner.replaceAll(/\\(["\\$`])/g, "$1") : inner.replaceAll(`'"'"'`, `'`);
 }
 
@@ -603,11 +625,13 @@ export function followTranscript(
     if (closed) {
       return;
     }
+
     const file = await fs.open(path, "r").catch(() => {});
 
     if (!file) {
       return;
     }
+
     try {
       for (const { size } = await file.stat(); offset < size && !closed;) {
         const chunk = Buffer.alloc(Math.min(size - offset, CHUNK));
@@ -616,6 +640,7 @@ export function followTranscript(
         if (!bytesRead) {
           return;
         }
+
         offset += bytesRead;
         const data = Buffer.concat([rest, chunk.subarray(0, bytesRead)]);
         const last = data.lastIndexOf(10);
@@ -666,6 +691,7 @@ export function followTranscript(
     if (!last) {
       closed = true;
     }
+
     return read().then(() => void (closed = true));
   };
 }
@@ -680,6 +706,7 @@ export function followAgent(
   if (!ID.test(agent)) {
     return;
   }
+
   const patterns = [
     ...(session && ID.test(session) ? [`*/${session}/subagents/agent-${agent}.jsonl`] : []),
     `*/*/subagents/agent-${agent}.jsonl`,
@@ -734,6 +761,7 @@ export function findThread(state: string, wanted: string): Thread | undefined {
       `more than one hex thread goes by ${wanted}, in ${[...new Set(matches.map(({ app }) => app))].join(" and ")}: pass its app:key id, from hex threads --json`,
     );
   }
+
   const found = matches[0];
 
   return (
@@ -793,10 +821,12 @@ export function followThread(
     if (ended || !next || next === session || !ID.test(next)) {
       return;
     }
+
     // hex.db can still name the session before the one that took the message, for a moment.
     if (took && session === took.by && (store.lastTaken(next) ?? took.at) < took.at) {
       return;
     }
+
     const fresh = resumed || session !== undefined;
     const read = stopSession(true);
     session = next;
@@ -808,6 +838,7 @@ export function followThread(
     } else {
       stopSession = stop;
     }
+
     if (!ended && next !== current) {
       locate();
     }
@@ -817,12 +848,15 @@ export function followThread(
     if (ended || seen.has(entry.uuid)) {
       return;
     }
+
     if (entry.uuid) {
       seen.add(entry.uuid);
     }
+
     if (floor && entry.timestamp < floor) {
       return;
     }
+
     if (!picked) {
       const text = channelMessage(entry);
       picked = !!text && text.slice(0, text.indexOf(">") + 1).includes(` voice_task="${tag}"`);
@@ -830,6 +864,7 @@ export function followThread(
       if (picked) {
         floor = entry.timestamp;
       }
+
       return;
     }
 
@@ -847,6 +882,7 @@ export function followThread(
         ),
       );
     }
+
     for (const back of agentsBack(entry)) {
       agents.get(back)?.(true);
       agents.delete(back);
@@ -855,6 +891,7 @@ export function followThread(
     if (entry.type === "assistant") {
       failed = entry.isApiErrorMessage === true;
     }
+
     lines(updates(), onStep);
 
     if (entry.type === "system" && entry.subtype === "turn_duration" && !agents.size) {
@@ -869,21 +906,25 @@ export function followThread(
     if (ended || !picked || !session) {
       return;
     }
+
     const end = store.turn(session).ended;
 
     if (end === turnEnd) {
       return;
     }
+
     turnEnd = end;
 
     if (!end || running(store, claude()).has(session)) {
       return;
     }
+
     const dead = session;
     void stopSession(true).then(() => {
       if (ended || session !== dead) {
         return;
       }
+
       close();
       onStep({ end: "failed" });
     });
@@ -897,6 +938,7 @@ export function followThread(
     for (const stop of agents.values()) {
       stop();
     }
+
     agents.clear();
   }
 
@@ -915,6 +957,7 @@ function agentsBack(entry: any): string[] {
   ) {
     return [];
   }
+
   const notice = JSON.stringify(queued ? queued.prompt : entry.message?.content) ?? "";
 
   return notice.split("<task-notification>").flatMap((block) => {
@@ -940,6 +983,7 @@ function channelMessage(entry: any): string | undefined {
   ) {
     return;
   }
+
   const content = queued ? queued.prompt : entry.message?.content;
 
   return typeof content === "string"

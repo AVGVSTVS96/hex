@@ -60,6 +60,7 @@ export class Media {
       if (ext === "heic") {
         rmSync(file);
       }
+
       writeFileSync(join(this.dir, `${id}.json`), JSON.stringify(item));
 
       return item;
@@ -67,6 +68,7 @@ export class Media {
       for (const name of readdirSync(this.dir)) {
         if (name.startsWith(id)) rmSync(join(this.dir, name));
       }
+
       throw error;
     }
   }
@@ -75,6 +77,7 @@ export class Media {
     if (!/^[\w-]+$/.test(id)) {
       return;
     }
+
     try {
       return JSON.parse(readFileSync(join(this.dir, `${id}.json`), "utf-8"));
     } catch {}
@@ -123,6 +126,7 @@ export class Media {
     if (!probe.streams?.some((stream: { codec_type?: string }) => stream.codec_type === "audio")) {
       return { ...item, mute: true };
     }
+
     const audio = join(this.dir, `${id}.wav`);
 
     try {
@@ -148,11 +152,13 @@ export function line({ kind, images, seconds = 0, mute, words }: Item) {
   if (kind === "photo") {
     return "(photo)";
   }
+
   const clip = `(video ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}, ${images.length} ${images.length === 1 ? "still" : "stills"}`;
 
   if (mute) {
     return `${clip}, no sound)`;
   }
+
   return words
     ? `${clip}; said in it: "${words.replaceAll(/\s+/g, " ")}")`
     : `${clip}; no words came through from its sound)`;
@@ -173,6 +179,7 @@ export function meta(items: Item[]): Record<string, string> {
   if (!items.length) {
     return {};
   }
+
   return {
     image_path: items.flatMap((item) => item.images).join("; "),
     media: items.map((item) => `${item.kind} ${item.id}`).join("; "),
@@ -197,5 +204,6 @@ async function run(...command: string[]) {
   if (code !== 0) {
     throw new Error(`${command[0]} failed: ${error.trim() || `exit ${code}`}`);
   }
+
   return out;
 }

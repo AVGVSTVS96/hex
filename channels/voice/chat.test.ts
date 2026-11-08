@@ -184,6 +184,7 @@ test("a stop goes through the app's own stop when it has one, and only where an 
   clients.get("telegram")!.stop = (thread) => calls.push(["own stop", thread]);
   chats.stop(where);
   clients.get("telegram")!.hub.name = () => {};
+
   expect(() => {
     chats.stop(where);
   }).toThrow();
@@ -195,6 +196,7 @@ test("a stop goes through the app's own stop when it has one, and only where an 
 
 test("an app that shows only turns it starts, doesn't hold the thread, or isn't here can't take words from here", () => {
   clients.get("telegram")!.hub.name = () => {};
+
   expect(chats.of(where).sends).toBe(false);
   clients.get("telegram")!.hub.name = () => "Desk";
   clients.get("telegram")!.waits = true;

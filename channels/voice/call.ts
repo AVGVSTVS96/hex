@@ -70,6 +70,7 @@ export class Call {
     for (const task of tasks) {
       call.track(task, task.at);
     }
+
     call.marks = [...moments];
 
     return call;
@@ -81,6 +82,7 @@ export class Call {
     while (i > 0 && this.fragments[i - 1].start > fragment.start) {
       i--;
     }
+
     this.fragments.splice(i, 0, fragment);
   }
 
@@ -90,6 +92,7 @@ export class Call {
     for (const fragment of due) {
       fragment.sent = true;
     }
+
     return join(due).map(({ who, text, start }) => ({ who, text, start }));
   }
 
@@ -107,6 +110,7 @@ export class Call {
     if (!this.tasks.has(id) || this.lines.get(id) === line) {
       return false;
     }
+
     this.lines.set(id, line);
     this.touch(id);
 
@@ -129,6 +133,7 @@ export class Call {
     if (!this.tasks.size) {
       return "Task board: nothing running or finished yet.";
     }
+
     return ["Task board:", ...[...this.tasks.values()].map(entry)].join("\n");
   }
 

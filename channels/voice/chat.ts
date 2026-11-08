@@ -51,6 +51,7 @@ export class Chats {
     if (seen?.mark === mark) {
       return seen.chat;
     }
+
     const turns = history(kept, where.thread).map((turn) => ({
       ...turn,
       text: typed(turn.text, turn.media?.length ?? 0),
@@ -101,6 +102,7 @@ export class Chats {
     if (!name) {
       throw new Error(`Words typed here can't reach this thread; write to it in its own app.`);
     }
+
     client.hub.deliver(where.thread, name, {
       content: caption(text, media),
       key,
@@ -116,6 +118,7 @@ export class Chats {
     if (!client?.hub.name(where.thread)) {
       throw new Error(`No app here holds this thread, so there's nothing to stop.`);
     }
+
     (client.stop ?? client.hub.stop)(where.thread);
   }
 

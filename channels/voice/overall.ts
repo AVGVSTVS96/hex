@@ -110,6 +110,7 @@ export function overall(
             ? [`This call's agents: ${agents.map((agent) => agent.label).join(", ")}`]
             : [];
         }
+
         const line = agents.find((agent) => agent.line)?.line ?? run.line;
 
         return [
@@ -122,6 +123,7 @@ export function overall(
       if (job.working || shown.has(`${names[key] ?? key}/${job.unit}`)) {
         return [];
       }
+
       return [
         `The job ${job.unit}${names[key] ? ` for ${names[key]}` : ""}, running for ${lasted(job.since, now)}`,
       ];
@@ -140,6 +142,7 @@ export function overall(
   if (!lines.length) {
     return "Nothing is running anywhere in hex right now.";
   }
+
   const working = runs.filter(
     (run) => run.state === "working" && run.app !== "voice" && run.app !== "claude",
   ).length;
@@ -177,6 +180,7 @@ export function lasted(since: number, now = Date.now()) {
   if (!since) {
     return "a while";
   }
+
   const minutes = Math.max(1, Math.round((now - since) / 60_000));
   const hours = Math.round(minutes / 60);
 
