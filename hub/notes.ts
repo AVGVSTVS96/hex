@@ -17,10 +17,10 @@ const asTyped = (text: string) =>
 
 const ELLIPSIS = /\s*(?:\.\.\.|…)\s*/u;
 
-const worded = (words: string) => /[\p{L}\p{N}]/u.test(words);
+const matchesAlmostAnyMessage = (words: string) => !/[\p{L}\p{N}]/u.test(words);
 
 function quotes(body: string, words: string) {
-  if (!worded(words)) {
+  if (matchesAlmostAnyMessage(words)) {
     return false;
   }
 
@@ -64,7 +64,7 @@ export const holds = (v: Verdict) =>
   v.keys.length > 0 && !v.unknown.length && !v.unquoted.length && v.quoted;
 
 export function problems(v: Verdict, withWords = true): string[] {
-  const shown = v.keys.map((row) => `[${row.key}] says:\n${cut(row.body, 1500)}`);
+  const shown = v.keys.map((row) => `[${row.key}] says:\n${cutKeepingEveryLine(row.body, 1500)}`);
 
   return [
     ...v.unknown.map(
@@ -72,9 +72,9 @@ export function problems(v: Verdict, withWords = true): string[] {
         `[${key}] isn't a message hex keeps. A message's key is the \`key\` on its channel tag.`,
     ),
     ...v.unquoted.map((words) =>
-      worded(words)
-        ? `"${words}" isn't in ${v.keys.map((row) => `[${row.key}]`).join(" or ") || "any message the note names"} as written.`
-        : `"${words}" holds no words; a quote is the owner's words.`,
+      matchesAlmostAnyMessage(words)
+        ? `"${words}" holds no words; a quote is the owner's words.`
+        : `"${words}" isn't in ${v.keys.map((row) => `[${row.key}]`).join(" or ") || "any message the note names"} as written.`,
     ),
     ...(v.keys.length && !v.quoted ? ["The note names a message without quoting it."] : []),
     ...(withWords && (v.unquoted.length || !v.quoted) ? shown : []),
@@ -83,5 +83,7 @@ export function problems(v: Verdict, withWords = true): string[] {
 
 export const owners = (rows: Row[]) => rows.filter((row) => spoken(row));
 
-export const cut = (text: string, maxLength: number) =>
+const cutKeepingEveryLine = (text: string, maxLength: number) =>
   text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+
+export { cutKeepingEveryLine as cut };

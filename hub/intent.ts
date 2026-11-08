@@ -13,6 +13,7 @@ const MODEL = "opus";
 const JUDGE_TIMEOUT_MS = 90_000;
 const REWRITE_WINDOW_MS = 15 * 60_000;
 const SENDBACKS_BEFORE_IT_GOES_THROUGH = 2;
+const CHECKER_AUDIT_LOG = "intent.jsonl";
 
 const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task and my newest messages, my rules below, and what hex's memory says was decided.
 
@@ -24,6 +25,7 @@ const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() }
 
 export type Verdict = z.infer<typeof Judged>;
 
+// claude --json-schema rejects the draft 2020-12 $schema zod emits by default: https://github.com/anthropics/claude-code/issues/80402
 const VERDICT_JSON_SCHEMA = z.toJSONSchema(Judged, { target: "draft-07" });
 
 const ClaudeOutput = z.object({
@@ -316,7 +318,7 @@ if (import.meta.main) {
         brief: text.slice(0, 4000),
       };
 
-      appendFileSync(join(stateDir(), "intent.jsonl"), `${JSON.stringify(record)}\n`);
+      appendFileSync(join(stateDir(), CHECKER_AUDIT_LOG), `${JSON.stringify(record)}\n`);
 
       if (verdict !== "failed" && verdict.verdict === "revise" && through !== true) {
         const next =

@@ -199,7 +199,7 @@ test("a question stays open through an edit and leaves the waiting list only whe
   expect(ledger.pin("-100:7")).toBeUndefined();
 });
 
-test("a status post is sent under its note and pinned in place of the last, rewritten from hex.db, and a pin made meanwhile stands", async () => {
+test("a status post is sent under its note and pinned in place of the last, rewritten from hex.db; a pin made meanwhile stands, and one the app will never edit stays pinned in the chat for the session to unpin", async () => {
   const ledger = new Ledger(dir, "telegram");
   const done: unknown[][] = [];
   let next = 20;
