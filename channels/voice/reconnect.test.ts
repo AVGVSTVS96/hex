@@ -3,17 +3,46 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { open as store } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
 
 const ID = "sess_app";
 
-// An app call against a stand-in for OpenAI's live API whose attach the test can hold back, so the
-// engine's connection to the call can be dropped and kept from coming back. open: a record of a
-// call still going when the engine starts, which it attaches back to. The test calls the voice
-// session's tools through lines on the engine's stdin, and their answers come back on its stdout;
-// what the engine relays to the thread General reaches the test as its hub.
-async function appCall({ open = false } = {}) {
+const Relayed = z.looseObject({ type: z.string() });
+
+const ClientEvent = z.object({
+  type: z.string(),
+  content: z.string().optional(),
+  event_id: z.unknown().optional(),
+});
+
+const EngineLine = z.object({
+  port: z.number().optional(),
+  hub: z.string().optional(),
+  content: z.string().optional(),
+  meta: z.record(z.string(), z.string()).optional(),
+  result: z.string().optional(),
+  error: z.string().optional(),
+});
+
+type Line = z.infer<typeof EngineLine>;
+
+const CallRecord = z.looseObject({
+  ended: z.string().optional(),
+  tasks: z.array(z.unknown()).optional(),
+  moments: z.array(z.unknown()).optional(),
+});
+
+const Calls = z.object({ live: z.string().optional() });
+const Media = z.object({ id: z.string(), kind: z.string() });
+
+type AttachData = { id: string | undefined };
+
+const withImage = (told: Line) => told.meta?.image_path !== undefined;
+
+async function appCall({ callStillGoingAtStart = false } = {}) {
   const home = mkdtempSync(join(tmpdir(), "reconnect-"));
   const voiceDir = join(home, ".claude", "channels", "voice");
   const state = join(home, "hex", "state");
@@ -22,33 +51,32 @@ async function appCall({ open = false } = {}) {
   store(state).keepThreads("telegram", {
     "-100123": { name: "General", session: "aaaaaaaa-general" },
   });
-  const relayed: any[] = [];
+  const relayedToGeneral: z.infer<typeof Relayed>[] = [];
 
   const hub = Bun.listen({
     unix: join(state, "telegram", "hub.sock"),
-    socket: { data: (_, data) => void relayed.push(JSON.parse(String(data))) },
+    socket: {
+      data: (_, data) => void relayedToGeneral.push(Relayed.parse(JSON.parse(String(data)))),
+    },
   });
 
-  // Each session.close the stand-in got, as `<session id> <event id>`.
   const closes: string[] = [];
-  // What the engine told the voice with session.instructions.append.
   const instructed: string[] = [];
-  let voice: Bun.ServerWebSocket<unknown> | undefined;
-  let hold = open;
-  // Whether the stand-in answers a session.close with session.closed.
+  let voice: Bun.ServerWebSocket<AttachData> | undefined;
+  let hold = callStillGoingAtStart;
   let acking = true;
   let held = false;
   let made = 0;
   const waiting: (() => void)[] = [];
 
-  const openai = Bun.serve({
+  const openai = Bun.serve<AttachData>({
     port: 0,
     async fetch(request, server) {
       if (request.method === "POST") {
         return Response.json(
           {
             session: {
-              id: made++ || open ? `${ID}-${made}` : ID,
+              id: made++ || callStillGoingAtStart ? `${ID}-${made}` : ID,
               expires_at: Date.now() / 1000 + 3600,
             },
             transport: { sdp: "answer" },
@@ -59,7 +87,9 @@ async function appCall({ open = false } = {}) {
 
       if (hold) {
         held = true;
-        await new Promise<void>((resolve) => waiting.push(resolve));
+        await new Promise<void>((resolve) => {
+          waiting.push(resolve);
+        });
         held = false;
       }
 
@@ -72,9 +102,9 @@ async function appCall({ open = false } = {}) {
     websocket: {
       open: (socket) => void (voice = socket),
       message(socket, raw) {
-        const event = JSON.parse(String(raw));
+        const event = ClientEvent.parse(JSON.parse(String(raw)));
 
-        if (event.type === "session.instructions.append") {
+        if (event.type === "session.instructions.append" && event.content !== undefined) {
           instructed.push(event.content);
         }
 
@@ -88,7 +118,7 @@ async function appCall({ open = false } = {}) {
           return;
         }
 
-        closes.push(`${(socket.data as { id: string }).id} ${event.event_id}`);
+        closes.push(`${String(socket.data.id)} ${String(event.event_id)}`);
 
         if (acking) {
           socket.send(
@@ -112,7 +142,7 @@ async function appCall({ open = false } = {}) {
     ].join("\n"),
   );
 
-  if (open) {
+  if (callStillGoingAtStart) {
     writeFileSync(
       join(voiceDir, "calls", `${ID}.json`),
       JSON.stringify({
@@ -134,7 +164,7 @@ for await (const line of console) {
 }`;
 
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)),
+    Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/u.test(key)),
   );
 
   const plugin = Bun.spawn(["bun", "-e", engine], {
@@ -144,52 +174,63 @@ for await (const line of console) {
     stderr: "ignore",
   });
 
-  const answers: ((line: any) => void)[] = [];
-  // What the engine asked of the hub, in order: each message it delivered, and each renew.
-  const told: { hub: string; content?: string; meta?: Record<string, string> }[] = [];
-  let listening!: (port: number) => void;
-  const port = new Promise<number>((resolve) => (listening = resolve));
+  const answers: ((line: Line) => void)[] = [];
+  const told: Line[] = [];
+  const { promise: port, resolve: listening } = Promise.withResolvers<number>();
   void (async () => {
     let buffer = "";
 
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk);
       const lines = buffer.split("\n");
-      buffer = lines.pop()!;
+      buffer = lines.pop() ?? "";
 
-      for (const line of lines.map((line) => JSON.parse(line))) {
-        line.port ? listening(line.port) : line.hub ? told.push(line) : answers.shift()?.(line);
+      for (const line of lines.map((text) => EngineLine.parse(JSON.parse(text)))) {
+        if (line.port !== undefined) {
+          listening(line.port);
+        } else if (line.hub === undefined) {
+          answers.shift()?.(line);
+        } else {
+          told.push(line);
+        }
       }
     }
   })();
 
   const base = `http://127.0.0.1:${await port}`;
-  const call = () => fetch(`${base}/calls/${ID}`).then((r) => r.json());
+
+  const call = async () =>
+    CallRecord.parse(await fetch(`${base}/calls/${ID}`).then((r) => r.json()));
 
   return {
     base,
     closes,
     instructed,
     told,
-    relayed,
+    relayedToGeneral,
     call,
-    live: async () => (await fetch(`${base}/calls`).then((r) => r.json())).live,
-    tool: (name: string, args: object = {}) => {
-      plugin.stdin.write(`${JSON.stringify({ name, args })}\n`);
-      plugin.stdin.flush();
+    live: async () => Calls.parse(await fetch(`${base}/calls`).then((r) => r.json())).live,
+    tool: async (name: string, args: Record<string, string> = {}) => {
+      const { promise: answer, resolve } = Promise.withResolvers<Line>();
+      answers.push(resolve);
+      await plugin.stdin.write(`${JSON.stringify({ name, args })}\n`);
+      await plugin.stdin.flush();
 
-      return new Promise<{ result?: string; error?: string }>((resolve) => answers.push(resolve));
+      return await answer;
     },
     attached: () => until(() => voice),
-    // The engine's connection to the call drops, and its next attach waits until the test lets it.
     drop: async () => {
       hold = true;
-      voice!.close();
+
+      if (voice === undefined) {
+        throw new Error("there's no connection to the call to drop");
+      }
+
+      voice.close();
       voice = undefined;
       await until(() => held);
     },
     attaching: () => until(() => held),
-    // The engine's next attach waits until the test lets it.
     hold: () => void (hold = true),
     holdAcks: () => void (acking = false),
     acks: () => void (acking = true),
@@ -205,7 +246,7 @@ for await (const line of console) {
     [Symbol.asyncDispose]: async () => {
       plugin.kill();
       await plugin.exited;
-      openai.stop(true);
+      await openai.stop(true);
       hub.stop(true);
       rmSync(home, { recursive: true, force: true });
     },
@@ -228,7 +269,7 @@ async function started(engine: Engine) {
 }
 
 async function ends(engine: Engine) {
-  for (let tries = 0; !(await engine.call()).ended; tries++) {
+  for (let tries = 0; (await engine.call()).ended === undefined; tries++) {
     expect(tries).toBeLessThan(100);
     await Bun.sleep(50);
   }
@@ -285,7 +326,7 @@ test("a call hung up again or replaced before OpenAI says it closed gets a close
   expect(await engine.call()).toMatchObject({ end: "hex", reason: "close_requested" });
   await until(() => engine.closes.length >= 3);
   await Bun.sleep(200);
-  expect(engine.closes.map((close) => close.replace(/_\d+$/, ""))).toEqual([
+  expect(engine.closes.map((close) => close.replace(/_\d+$/u, ""))).toEqual([
     `${ID} close_hex`,
     `${ID} close-you-app`,
     `${ID} close-you-moved`,
@@ -384,7 +425,7 @@ test("hanging up a call the engine is attaching back to after a restart ends it 
   ];
 
   for (const { hangUp, end, close } of ways) {
-    await using engine = await appCall({ open: true });
+    await using engine = await appCall({ callStillGoingAtStart: true });
     await engine.attaching();
     await hangUp(engine);
     expect(await engine.call()).toMatchObject({ end, reason: "close_requested" });
@@ -403,7 +444,7 @@ test("hanging up a call the engine is attaching back to after a restart ends it 
 }, 30_000);
 
 test("a call a new one replaces while the engine attaches back to it after a restart ends then, and is closed once attached", async () => {
-  await using engine = await appCall({ open: true });
+  await using engine = await appCall({ callStillGoingAtStart: true });
   await engine.attaching();
   expect(
     (
@@ -422,7 +463,11 @@ test("a call a new one replaces while the engine attaches back to it after a res
   await until(() => engine.told.length >= 3);
   expect(
     engine.told.map(({ hub, meta }) =>
-      meta?.ended ? `${meta.call} ended` : meta?.call ? `${meta.call} told` : hub,
+      meta?.ended === undefined
+        ? meta?.call === undefined
+          ? hub
+          : `${meta.call} told`
+        : `${String(meta.call)} ended`,
     ),
   ).toEqual([`${ID} ended`, "renew", `${ID}-1 told`]);
 }, 20_000);
@@ -441,7 +486,7 @@ test("work sent while the connection to the call is coming back still goes out a
   expect(result).toBe(
     "sent to General, on the board as look-into-it, but the voice may not have heard of it; the work went out, so it needn't be sent again",
   );
-  expect(engine.relayed).toMatchObject([
+  expect(engine.relayedToGeneral).toMatchObject([
     {
       type: "inbound",
       thread: "-100123",
@@ -474,7 +519,7 @@ test("a photo sent during the call shows in its transcript, reaches hex to look 
   });
 
   expect(png.status).toBe(201);
-  const { id, kind } = await png.json();
+  const { id, kind } = Media.parse(await png.json());
   expect(kind).toBe("photo");
   expect(await fetch(`${engine.base}/media/${id}`).then((r) => r.text())).toBe("png bytes");
   expect(
@@ -511,13 +556,17 @@ test("a photo sent during the call shows in its transcript, reaches hex to look 
       })
     ).status,
   ).toBe(204);
+  const anyTime: unknown = expect.any(Number);
   expect((await engine.call()).moments).toEqual([
-    { at: expect.any(Number), kind: "photo", text: "", media: id },
+    { at: anyTime, kind: "photo", text: "", media: id },
   ]);
-  await until(() => engine.told.find((told) => told.meta?.image_path));
-  expect(engine.told.find((told) => told.meta?.image_path)).toMatchObject({
+
+  await until(() => engine.told.find(withImage));
+
+  const savedAsTheMedia: unknown = expect.stringMatching(new RegExp(`${id}\\.png$`, "u"));
+  expect(engine.told.find(withImage)).toMatchObject({
     content: "The caller sent this from the app: (photo)",
-    meta: { call: ID, image_path: expect.stringMatching(new RegExp(`${id}\\.png$`)) },
+    meta: { call: ID, image_path: savedAsTheMedia },
   });
   await until(() => engine.instructed.length);
   expect(engine.instructed[0]).toContain("<|SpawnThinking|>");
