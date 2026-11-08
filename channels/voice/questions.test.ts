@@ -1989,7 +1989,7 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
   });
 });
 
-test("a poll's screenshots go with its ask, labeled by their options, raw and once a check takes it up", () => {
+test("each option that stands for a poll's option shows its screenshot, raw and once a check takes it up and renames it", () => {
   ledger([
     asked(7, "One call button?", ["One (my pick)", "Both"], {
       poll: "p7",
@@ -2003,9 +2003,12 @@ test("a poll's screenshots go with its ask, labeled by their options, raw and on
     check: () => {},
   });
   const raw = `telegram:${DESK}:7`;
-  expect(questions.find(raw)?.shots).toEqual(["One", "Both"]);
+  expect(questions.find(raw)?.options.map((option) => option.shot)).toEqual([0, 1]);
   expect(questions.shot(raw, 1)).toBe("/s/both.png");
-  expect(questions.find(`telegram:${DESK}:8`)?.shots).toBeUndefined();
+  expect(questions.find(`telegram:${DESK}:8`)?.options.map((option) => option.shot)).toEqual([
+    undefined,
+    undefined,
+  ]);
   questions.close();
 
   writeFileSync(
@@ -2024,7 +2027,11 @@ test("a poll's screenshots go with its ask, labeled by their options, raw and on
           task: `telegram:${DESK}`,
           at: "",
           question: "One call button on the project page?",
-          options: [{ label: "One" }, { label: "Both" }],
+          options: [
+            { label: "Both", value: "Both" },
+            { label: "One button", value: "One (my pick)", pick: true },
+            { label: "Neither", shot: 1 },
+          ],
           refs: [{ app: "telegram", thread: DESK, message: 7 }],
         },
       ],
@@ -2035,7 +2042,11 @@ test("a poll's screenshots go with its ask, labeled by their options, raw and on
     t3Home: "/nonexistent",
     check: () => {},
   });
-  expect(questions.find("check:button")?.shots).toEqual(["One", "Both"]);
+  expect(questions.find("check:button")?.options.map((option) => option.shot)).toEqual([
+    1,
+    0,
+    undefined,
+  ]);
   expect(questions.shot("check:button", 0)).toBe("/s/one.png");
   expect(questions.shot(raw, 0)).toBe("/s/one.png");
   expect(questions.shot("check:button", 2)).toBeUndefined();

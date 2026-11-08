@@ -1001,7 +1001,9 @@ test("a poll's screenshots go above it as one album, each captioned with its opt
   expect(album!.method).toBe("sendMediaGroup");
   expect(album!.payload.media.map((m: any) => m.caption)).toEqual(["One", "Both"]);
   expect(poll!.payload.reply_parameters).toEqual({ message_id: id - 2 });
-  expect(asked(id).shots).toEqual([one, both]);
+  const kept = asked(id).shots!;
+  expect(kept.map((shot) => readFileSync(shot, "utf8"))).toEqual(["png", "png"]);
+  expect(kept.every((shot) => !shot.startsWith(outbox))).toBe(true);
 });
 
 test("edit_message settles a poll even with text, which a poll can't change, and without settled says so", async () => {

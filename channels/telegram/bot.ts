@@ -1,5 +1,13 @@
 #!/usr/bin/env bun
-import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from "fs";
+import {
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  statSync,
+  realpathSync,
+  chmodSync,
+  copyFileSync,
+} from "fs";
 import { homedir } from "os";
 import { basename, join, extname, sep } from "path";
 
@@ -29,6 +37,8 @@ const STATE_DIR =
 const ACCESS_FILE = join(STATE_DIR, "access.json");
 const ENV_FILE = join(STATE_DIR, ".env");
 const INBOX_DIR = join(STATE_DIR, "inbox");
+// Each poll's screenshots, kept as long as its question, whatever happens to the files it was sent from.
+const SHOTS_DIR = join(STATE_DIR, "shots");
 const MAIN = process.env.HEX_MAIN_THREAD;
 
 try {
@@ -708,9 +718,16 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         allows_multiple_answers: !!args.multiple,
       });
       said(thread, sent.message_id, question, { poll: options.join(" / ") });
+      const kept = join(SHOTS_DIR, String(sent.message_id));
+      if (shots.length) mkdirSync(kept, { recursive: true });
+      const keep = shots.map((shot, i) => {
+        const copy = join(kept, `${i}${extname(shot)}`);
+        copyFileSync(shot, copy);
+        return copy;
+      });
       ledger.ask(thread, sent.message_id, question, options, {
         poll: sent.poll.id,
-        ...(shots.length && { shots }),
+        ...(keep.length && { shots: keep }),
       });
       return `sent poll (id: ${sent.message_id})`;
     }
