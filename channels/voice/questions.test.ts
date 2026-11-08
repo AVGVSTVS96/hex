@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import type { Server } from "node:net";
 import { tmpdir, homedir } from "node:os";
@@ -2152,7 +2152,7 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
   });
 });
 
-test("each option that stands for a poll's option shows its screenshot, raw and once a check takes it up and renames it", () => {
+test("each option that stands for a poll's option shows its screenshot at its shape, redrawn too, raw and once a check takes it up and renames it", () => {
   ledger([
     asked(7, "One call button?", ["One (my pick)", "Both"], {
       shots: [png(state, "one", 40, 20), png(state, "both", 10, 20)],
@@ -2171,6 +2171,15 @@ test("each option that stands for a poll's option shows its screenshot, raw and 
     [1, 0.5],
   ]);
   expect(questions.shot(raw, 1)).toBe(join(state, "both.png"));
+  questions.close();
+  png(state, "both", 30, 10);
+  utimesSync(join(state, "both.png"), new Date(), new Date(Date.now() + 1000));
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+  expect(questions.find(raw)?.options[1]?.shape).toBe(3);
   expect(questions.find(`telegram:${DESK}:8`)?.options.map((option) => option.shot)).toEqual([
     undefined,
     undefined,
