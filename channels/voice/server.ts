@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 
+import { z } from "zod";
+
 import { begin, title as oneWord } from "../../hub/hub.ts";
 import type { Held, VoiceLine } from "../../hub/hub.ts";
 import { open } from "../../hub/store.ts";
@@ -15,7 +17,9 @@ import type { Mark, Sent, Speaker, Task } from "./call.ts";
 import { CallLog, ending, usage } from "./calls.ts";
 import type { CallRecord, Ending, Source } from "./calls.ts";
 import { Changes } from "./changes.ts";
+import type { tools } from "./channel.ts";
 import { Chats } from "./chat.ts";
+import type { Where } from "./chat.ts";
 import { PORT, STATE_DIR, env } from "./env.ts";
 import { line, Media } from "./media.ts";
 import type { Item } from "./media.ts";
@@ -24,6 +28,17 @@ import page from "./page.html" with { type: "text" };
 import { clip, Questions } from "./questions.ts";
 import type { Question } from "./questions.ts";
 import { relay } from "./relay.ts";
+
+function filled(value: string | undefined): value is string {
+  return value !== undefined && value !== "";
+}
+
+// SAFETY: Bun's global WebSocket takes Bun.WebSocketOptions, headers among them; with lib "dom" loaded, its type shows only the browser's constructor.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the assertion widens the constructor to the options Bun's WebSocket accepts
+const BunWebSocket = WebSocket as new (
+  url: string,
+  options: Bun.WebSocketOptions | string[],
+) => WebSocket;
 
 const KEY = env.OPENAI_API_KEY;
 const VOICE = env.VOICE;
@@ -34,8 +49,12 @@ const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN;
 const TWILIO_NUMBER = env.TWILIO_NUMBER;
 const TWILIO_API = env.TWILIO_BASE_URL ?? "https://api.twilio.com";
 const CALLER_NUMBER = env.CALLER_NUMBER;
-const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//, "");
-const PUBLIC_HOSTNAME = PUBLIC_HOST ? URL.parse(`https://${PUBLIC_HOST}`)?.hostname : undefined;
+const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//u, "");
+
+const PUBLIC_HOSTNAME = filled(PUBLIC_HOST)
+  ? URL.parse(`https://${PUBLIC_HOST}`)?.hostname
+  : undefined;
+
 const TOKEN = env.VOICE_TOKEN;
 const calls = new CallLog(join(STATE_DIR, "calls"));
 const activity = new Changes();
@@ -84,9 +103,118 @@ Do not guess the result while waiting.
 Say something is done only when the backend says so.
 Say the audio cut, that you lack information, or that you can't see or do something only when the backend says so.`;
 
+const MediaBody = z.object({ media: z.string() });
+
+const StartBody = z.object({
+  sdp: z.string().exactOptional(),
+  voice: z.string().exactOptional(),
+  from: z.string().exactOptional(),
+  about: z.string().exactOptional(),
+});
+
+const InterruptionBody = z.object({
+  kind: z.enum(["paused", "resumed"]),
+  text: z.string().exactOptional(),
+});
+
+const EndBody = z.object({ sessionId: z.string() });
+
+const AnswerBody = z.object({ label: z.string() });
+
+const NoteBody = z.object({ text: z.string() });
+
+const ChatBody = z.object({
+  media: z.array(z.string()).default([]),
+  text: z.string().default(""),
+  key: z.unknown(),
+});
+
+const ChatKey = z.string().regex(/^app-[\w-]{8,60}$/u);
+
+async function bodyOf<Schema extends z.ZodType>(request: Request, schema: Schema) {
+  const parsed = schema.safeParse(await request.json().catch(() => null));
+
+  return parsed.success ? parsed.data : undefined;
+}
+
+const SessionCreated = z.looseObject({
+  session: z.looseObject({ id: z.string(), expires_at: z.number().exactOptional() }),
+});
+
+const ErrorDetail = z.looseObject({
+  message: z.string().exactOptional(),
+  client_event_id: z.string().exactOptional(),
+  event_id: z.string().exactOptional(),
+});
+
+const Transcript = z.object({ delta: z.string(), start_ms: z.number(), end_ms: z.number() });
+
+const SessionUsage = z.object({ seconds: z.number() });
+
+const VoiceEvent = z.discriminatedUnion("type", [
+  Transcript.extend({ type: z.literal("session.input_transcript.delta") }),
+  Transcript.extend({ type: z.literal("session.output_transcript.delta") }),
+  z.object({
+    type: z.literal("session.delegation.created"),
+    delegation: z.object({ target: z.string().exactOptional(), id: z.string() }).exactOptional(),
+    offset_ms: z.number(),
+  }),
+  z.object({
+    type: z.enum([
+      "session.commentary.appended",
+      "session.thinking.appended",
+      "session.instructions.appended",
+    ]),
+    client_event_id: z.string().exactOptional(),
+  }),
+  z.looseObject({
+    type: z.literal("error"),
+    client_event_id: z.string().exactOptional(),
+    error: ErrorDetail.exactOptional(),
+  }),
+  z.object({ type: z.literal("session.output_audio.delta"), delta: z.string() }),
+  z.object({
+    type: z.literal("session.usage.updated"),
+    usage: SessionUsage,
+    context_window: z.object({ usage_ratio: z.number().exactOptional() }).exactOptional(),
+  }),
+  z.object({
+    type: z.literal("session.closed"),
+    usage: SessionUsage.exactOptional(),
+    reason: z.string().exactOptional(),
+    client_event_id: z.string().exactOptional(),
+  }),
+]);
+
+const SessionEvent = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("error"), error: ErrorDetail.exactOptional() }),
+  z.object({
+    type: z.literal("session.started"),
+    session: z.object({ id: z.string(), expires_at: z.number().exactOptional() }),
+  }),
+]);
+
+const TwilioForm = z.record(z.string(), z.string());
+
+const TwilioMessage = z.discriminatedUnion("event", [
+  z.object({ event: z.literal("start"), start: z.object({ streamSid: z.string() }) }),
+  z.object({ event: z.literal("stop") }),
+  z.object({ event: z.literal("mark") }),
+  z.object({ event: z.literal("media"), media: z.object({ payload: z.string() }) }),
+]);
+
+const Problem = z.object({
+  error: z.object({ message: z.string() }).optional().catch(undefined),
+  message: z.string().optional().catch(undefined),
+});
+
+const fineIfUnconfirmed = () => null;
+
 type Pending = { resolve: () => void; reject: (error: Error) => void };
 
 type Ring = { delegation: string; offset: number };
+
+type Heard = (who: Speaker, startOnSessionTimeline: number, text: string) => void;
 
 type Live = {
   id: string;
@@ -99,44 +227,40 @@ type Live = {
   changes: Changes;
   spoke: number;
   warning?: ReturnType<typeof setTimeout>;
-  speak?: (audio: string) => void;
-  // Each transcript fragment's start on the session's timeline, as it comes in, for a line whose
-  // own buffer plays the voice: the caller talking over it cuts off what they haven't heard yet.
-  heard?: (who: Speaker, start: number, text: string) => void;
-  // The first hang-up asked, which the call ends by, and whether it went out.
+  speak?: ((audio: string) => void) | undefined;
+  heard?: Heard | undefined;
   closing?: string;
   closed?: true;
 };
 
 type Attaching = { id: string; closing?: string };
 
-// notes: what the voice should know once this call connects, sent while it rang.
-type Placed = { to: string; why?: string; started: string; session?: string; notes: string[] };
+type Placed = {
+  to: string;
+  why?: string | undefined;
+  started: string;
+  session?: string;
+  notesForWhenItConnects: string[];
+};
 
-// move: the caller's own call going to their phone, which ends the live call once it picks up.
 type Dial = {
   greeting: string;
   from: Source;
   token: string;
-  why?: string;
+  why?: string | undefined;
   callee?: string;
-  move?: boolean;
+  move?: boolean | undefined;
 };
 
-// unheard: the voice's audio sent to Twilio that its marks say hasn't played yet, in chunks, and
-// since: where on the session's timeline the voice began saying it.
 type Phone = Dial & {
   openai?: WebSocket;
   stream?: string;
   started?: true;
   refused?: true;
-  unheard: number;
-  since?: number;
+  unplayedChunks: number;
+  voiceBeganAt?: number | undefined;
 };
 
-// What the call engine asks of the voice thread's hub: hand its session a message, hold the session
-// for a call (keep) or let it start over for the next (renew), wait for a renew on its way, and
-// name the session now serving the thread.
 export type Hub = {
   deliver: (content: string, meta: Record<string, string>) => void;
   keep: () => Promise<void>;
@@ -145,15 +269,16 @@ export type Hub = {
   session: () => string | undefined;
 };
 
+type Args = { [Each in (typeof tools)[number] as Each["name"]]: z.output<Each["input"]> };
+
+type ToolCall = { [Name in keyof Args]: [name: Name, args: Args[Name]] }[keyof Args];
+
 let hub: Hub;
 let HEX_STATE: string;
 
-// Every step to the hub in the order the calls take them; a new call's first step waits out the
-// last call's renew, so the new call's words reach the new session.
-let lane = Promise.resolve();
+let hubStepsInCallOrder = Promise.resolve();
 let live: Live | undefined;
 
-// The call recover() is attaching back to after a restart, until it opens or is hung up.
 let attaching: Attaching | undefined;
 let ended: string | undefined;
 let seq = 0;
@@ -164,8 +289,7 @@ const WARN_BEFORE = 120_000;
 const HANDOFF_WAIT = 3000;
 const ACK_WAIT = 10_000;
 
-// The voice session's tools, which the hub hands here.
-export async function tool(name: string, args: Record<string, any>): Promise<string> {
+export async function tool(...[name, args]: ToolCall): Promise<string> {
   if (name === "running") {
     board.refresh();
 
@@ -188,7 +312,7 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
   }
 
   if (name === "task") {
-    return await task(args.id, args.state as Task["state"], args.text, args.call, args.agent);
+    return await task(args.id, args.state, args.text, args.call, args.agent);
   }
 
   if (name === "send") {
@@ -201,13 +325,14 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
     );
   }
 
-  const ringing =
-    name === "note" && !live && [...placed.values()].findLast((call) => !call.session);
+  if (name === "note" && !live) {
+    const ringing = [...placed.values()].findLast((call) => !filled(call.session));
 
-  if (ringing) {
-    ringing.notes.push(args.text);
+    if (ringing) {
+      ringing.notesForWhenItConnects.push(args.text);
 
-    return "the call is still ringing; the voice gets this when it connects";
+      return "the call is still ringing; the voice gets this when it connects";
+    }
   }
 
   if (name === "hang_up" && !live && attaching) {
@@ -238,11 +363,11 @@ export async function tool(name: string, args: Record<string, any>): Promise<str
     }
 
     case "ask": {
-      return show(live, args.id);
+      return showAsACardInTheTranscript(live, args.id);
     }
 
     default: {
-      throw new Error(`unknown tool ${name}`);
+      throw new Error(`unknown tool ${String(name)}`);
     }
   }
 }
@@ -257,24 +382,22 @@ function send(call: Live, type: string, content: string, delegation?: string) {
   const event_id = `${type.split(".")[1]}_${++seq}`;
   call.socket.send(JSON.stringify({ type, event_id, delegation_id: delegation ?? null, content }));
 
-  // A tool waits on the voice's word that it has the update; one that never comes would hold the
-  // voice session's turn, and every handoff after it, for good.
   return new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => {
+    const unconfirmedWouldHoldTheVoiceSessionsTurn = setTimeout(() => {
       call.pending.delete(event_id);
       reject(
         new Error(`the voice didn't confirm it within ${ACK_WAIT / 1000}s, so it may not have it`),
       );
     }, ACK_WAIT);
 
-    const settle =
+    const settled =
       <T>(then: (value: T) => void) =>
       (value: T) => {
-        clearTimeout(timer);
+        clearTimeout(unconfirmedWouldHoldTheVoiceSessionsTurn);
         then(value);
       };
 
-    call.pending.set(event_id, { resolve: settle(resolve), reject: settle(reject) });
+    call.pending.set(event_id, { resolve: settled(resolve), reject: settled(reject) });
   });
 }
 
@@ -318,24 +441,25 @@ async function task(
   call = live?.id ?? ended,
   agent?: string,
 ) {
-  if (!call) {
+  if (!filled(call)) {
     throw new Error("no call yet");
   }
 
-  if (agent || state !== "running") {
+  if (filled(agent) || state !== "running") {
     stop(call, id);
   }
 
   const following =
-    live?.id === call &&
-    state === "running" &&
-    agent &&
-    followAgent(agent, hub.session(), (step) => {
-      see(call, id, step);
-    });
+    live?.id === call && state === "running" && filled(agent)
+      ? followAgent(agent, hub.session(), (step) => {
+          see(call, id, step);
+        })
+      : undefined;
 
   if (following) {
-    follows.set(`${call} ${id}`, following);
+    follows.set(`${call} ${id}`, () => {
+      void following();
+    });
   }
 
   const result = await mark(call, {
@@ -343,78 +467,79 @@ async function task(
     id,
     state,
     text,
-    ...(agent && { agent }),
+    ...(filled(agent) && { agent }),
   });
 
-  return agent && live?.id === call && !following
+  return filled(agent) && live?.id === call && !following
     ? `${result}, but no transcript of agent ${agent} turned up, so the caller won't see its steps`
     : result;
 }
 
-// app: no thread has the work yet, so one named name opens there with it.
 async function pass(
   name: string,
   about: string,
   text: string,
-  app?: string,
+  newThreadIn?: string,
   where?: string,
   call = live?.id ?? ended,
 ) {
-  const known = app ? undefined : findThread(HEX_STATE, name);
+  const known = filled(newThreadIn) ? undefined : findThread(HEX_STATE, name);
 
-  if (!app && !known) {
+  if (!filled(newThreadIn) && !known) {
     throw new Error(`no hex thread is named ${name}; pass app to open one`);
   }
 
-  if (call && live?.id !== call) {
+  if (filled(call) && live?.id !== call) {
     past(call);
   }
 
-  const id = call && fresh(call, about);
-  const meta = { user: "hex voice", ...(id && { voice_task: `${call}:${id}` }) };
+  const id = filled(call) ? fresh(call, about) : "";
+  const meta = { user: "hex voice", ...(filled(id) && { voice_task: `${call}:${id}` }) };
   let thread = known;
 
-  if (app) {
+  if (filled(newThreadIn)) {
     const opened = await begin(
-      app,
+      newThreadIn,
       oneWord(name),
       { content: text, author: "prompt", meta },
-      { about: `From a call: ${about}`, where },
+      { about: `From a call: ${about}`, ...(where !== undefined && { where }) },
     );
 
-    thread = { app, id: opened.thread, name, state: HEX_STATE };
+    thread = { app: newThreadIn, id: opened.thread, name, state: HEX_STATE };
   }
 
-  // Telling the voice can fail, as while its connection comes back, and that mustn't keep the
-  // message from going out and being followed.
-  const told =
-    call && id
+  if (!thread) {
+    throw new Error(`no hex thread is named ${name}; pass app to open one`);
+  }
+
+  const toldTheVoiceWithoutHoldingUpTheWork =
+    filled(call) && filled(id)
       ? mark(call, {
           id,
           state: "running",
           text: about,
-          to: thread!.name,
-          agent: `${thread!.app}:${thread!.id}`,
+          to: thread.name,
+          agent: `${thread.app}:${thread.id}`,
         }).then(
           () => true,
           () => false,
         )
       : true;
 
-  if (call && id) {
-    watch(call, id, thread!, !!app);
+  if (filled(call) && filled(id)) {
+    watch(call, id, thread, filled(newThreadIn));
   }
 
-  if (!app) {
+  if (!filled(newThreadIn)) {
     try {
-      await relay(HEX_STATE, thread!.app, {
+      await relay(HEX_STATE, thread.app, {
         type: "inbound",
-        thread: thread!.id,
+        thread: thread.id,
         content: text,
         meta,
       });
     } catch (error) {
-      if (call && id) {
+      if (filled(call) && filled(id)) {
         see(call, id, { end: "failed" });
       }
 
@@ -422,53 +547,63 @@ async function pass(
     }
   }
 
-  const sent = app ? `opened ${name} in ${app}` : `sent to ${thread!.name}`;
+  const sent = filled(newThreadIn) ? `opened ${name} in ${newThreadIn}` : `sent to ${thread.name}`;
 
-  if (!id) {
+  if (!filled(id)) {
     return sent;
   }
 
-  return (await told)
+  const told = await toldTheVoiceWithoutHoldingUpTheWork;
+
+  return told
     ? `${sent}, on the board as ${id}`
     : `${sent}, on the board as ${id}, but the voice may not have heard of it; the work went out, so it needn't be sent again`;
 }
 
-// Work a past call sent out is picked back up when the engine starts, read from the start of the
-// session that took it.
-function resume() {
-  const since = Date.now() - 24 * 60 * 60_000;
+function followWorkPastCallsSentOut() {
+  const dayAgo = Date.now() - 24 * 60 * 60_000;
 
   for (const { id: call, started } of calls.list()) {
-    if (Date.parse(started) < since) {
+    if (Date.parse(started) < dayAgo) {
       break;
     }
 
-    const latest = new Map(past(call).tasks.map((task) => [task.id, task]));
+    const latest = new Map(past(call).tasks.map((each) => [each.id, each]));
 
-    for (const task of latest.values()) {
-      let thread;
+    for (const each of latest.values()) {
+      let thread: Thread | undefined;
 
       try {
         thread =
-          task.state === "running" && task.to && task.agent && findThread(HEX_STATE, task.agent);
+          each.state === "running" && filled(each.to) && filled(each.agent)
+            ? findThread(HEX_STATE, each.agent)
+            : undefined;
       } catch (error) {
-        process.stderr.write(`voice: ${call}'s task ${task.id} isn't followed again: ${error}\n`);
+        process.stderr.write(
+          `voice: ${call}'s task ${each.id} isn't followed again: ${String(error)}\n`,
+        );
       }
 
       if (thread) {
-        watch(call, task.id, thread, true);
+        watch(call, each.id, thread, true);
       }
     }
   }
 }
 
-// The task's followers, the thread's and then the board's, are held from the outset, and one that
-// starts after the task stopped stops at once.
-function watch(call: string, id: string, thread: Thread, resumed: boolean) {
+function watch(call: string, id: string, thread: Thread, readFromTheSessionsStart: boolean) {
   stop(call, id);
   const stops: (() => void)[] = [];
   let stopped = false;
-  const hold = (off: () => void) => void (stopped ? off() : stops.push(off));
+
+  const holdOrStopAtOnceIfStopped = (off: () => void) => {
+    if (stopped) {
+      off();
+    } else {
+      stops.push(off);
+    }
+  };
+
   follows.set(`${call} ${id}`, () => {
     stopped = true;
 
@@ -476,17 +611,18 @@ function watch(call: string, id: string, thread: Thread, resumed: boolean) {
       off();
     }
   });
-  hold(
-    followThread(thread, dirname(HEX_STATE), `${call}:${id}`, resumed, (step) => {
-      step.end ? settle(call, id, thread, step.end, hold) : see(call, id, step);
+  holdOrStopAtOnceIfStopped(
+    followThread(thread, dirname(HEX_STATE), `${call}:${id}`, readFromTheSessionsStart, (step) => {
+      if (step.end === undefined) {
+        see(call, id, step);
+      } else {
+        followTheBoardRowUntilItRests(call, id, thread, step.end, holdOrStopAtOnceIfStopped);
+      }
     }),
   );
 }
 
-// The turn that took the message in has ended, but the thread's work may not have: the board keeps
-// a thread working while its background agents, workflows or next turns run, so the task follows
-// the board's row until it rests.
-function settle(
+function followTheBoardRowUntilItRests(
   call: string,
   id: string,
   thread: Thread,
@@ -508,21 +644,23 @@ function settle(
 }
 
 function newest(row: Run) {
-  return row.agents.find((agent) => agent.state === "working" && agent.line)?.line ?? row.line;
+  return (
+    row.agents.find((agent) => agent.state === "working" && filled(agent.line))?.line ?? row.line
+  );
 }
 
 function fresh(call: string, about: string) {
-  const base =
-    about
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, "-")
-      .replaceAll(/^-|-$/g, "")
-      .slice(0, 40) || "sent";
+  const slug = about
+    .toLowerCase()
+    .replaceAll(/[^a-z0-9]+/gu, "-")
+    .replaceAll(/^-|-$/gu, "")
+    .slice(0, 40);
 
-  let id = base;
+  const stem = slug === "" ? "sent" : slug;
+  let id = stem;
 
-  for (let n = 2; current(call, id); n++) {
-    id = `${base}-${n}`;
+  for (let n = 2; current(call, id) !== undefined; n++) {
+    id = `${stem}-${n}`;
   }
 
   return id;
@@ -533,26 +671,24 @@ function current(call: string, id: string): Task | undefined {
     return live.call.task(id);
   }
 
-  const moment = calls.get(call)?.tasks.findLast((task) => task.id === id);
+  const moment = calls.get(call)?.tasks.findLast((each) => each.id === id);
 
   if (!moment) {
     return;
   }
 
-  const { at, ...task } = moment;
+  const { at: _at, ...latest } = moment;
 
-  return task;
+  return latest;
 }
 
-// The change is on the call's record when mark returns, or it throws; what it returns settles once
-// the voice has heard of it, on a live call.
-function mark(call: string, task: Task): Promise<string> {
+function mark(call: string, change: Task): Promise<string> {
   if (live?.id === call) {
-    live.call.track(task, Date.now() - Date.parse(live.record.started));
+    live.call.track(change, Date.now() - Date.parse(live.record.started));
     save(live);
     activity.changed();
 
-    return send(live, "session.thinking.append", live.call.change(task.id)).then(
+    return send(live, "session.thinking.append", live.call.change(change.id)).then(
       () => "board updated",
     );
   }
@@ -560,35 +696,41 @@ function mark(call: string, task: Task): Promise<string> {
   const record = past(call);
   calls.save({
     ...record,
-    tasks: [...record.tasks, { ...task, at: Date.now() - Date.parse(record.started) }],
+    tasks: [...record.tasks, { ...change, at: Date.now() - Date.parse(record.started) }],
   });
 
   return Promise.resolve("that call has ended, so only its record changed");
 }
 
-function see(call: string, id: string, { line, end }: Step) {
-  if (line && live?.id === call && live.call.see(id, line)) {
+function see(call: string, id: string, { line: newLine, end }: Step) {
+  if (filled(newLine) && live?.id === call && live.call.see(id, newLine)) {
     activity.changed();
   }
 
-  if (!end) {
+  if (end === undefined) {
     return;
   }
 
   stop(call, id);
-  const task = current(call, id);
+  const running = current(call, id);
 
-  if (task?.state !== "running") {
+  if (running?.state !== "running") {
     return;
   }
 
+  const unheard = (cause: unknown) => {
+    trace(`the voice didn't hear ${id} ${end}: ${messageOf(cause)}`);
+  };
+
   try {
-    mark(call, { ...task, state: end }).catch((error) => {
-      trace(`the voice didn't hear ${id} ${end}: ${error.message}`);
-    });
+    void mark(call, { ...running, state: end }).catch(unheard);
   } catch (error) {
-    trace(`couldn't mark ${id} ${end}: ${(error as Error).message}`);
+    trace(`couldn't mark ${id} ${end}: ${messageOf(error)}`);
   }
+}
+
+function messageOf(cause: unknown) {
+  return cause instanceof Error ? cause.message : String(cause);
 }
 
 function stop(call: string, id: string) {
@@ -598,13 +740,25 @@ function stop(call: string, id: string) {
 
 function title(
   call: string,
-  { title, summary, waiting }: { title?: string; summary?: string; waiting?: string[] },
+  {
+    title: name,
+    summary,
+    waiting,
+  }: { title?: string | undefined; summary?: string | undefined; waiting?: string[] | undefined },
 ) {
-  const change = {
-    ...(title ? { title } : {}),
-    ...(summary ? { summary } : {}),
-    ...(Array.isArray(waiting) ? { waiting } : {}),
-  };
+  const change: Pick<CallRecord, "title" | "summary" | "waiting"> = {};
+
+  if (filled(name)) {
+    change.title = name;
+  }
+
+  if (filled(summary)) {
+    change.summary = summary;
+  }
+
+  if (Array.isArray(waiting)) {
+    change.waiting = waiting;
+  }
 
   if (live?.id === call) {
     Object.assign(live.record, change);
@@ -632,12 +786,10 @@ function past(id: string) {
 
 async function hangUpCall(call: Live) {
   const asked = Date.now();
+  const stillLive = () => live === call;
+  const voiceSpokeLately = () => Date.now() - Math.max(asked, call.spoke) < 2000;
 
-  while (
-    live === call &&
-    Date.now() - asked < 20_000 &&
-    Date.now() - Math.max(asked, call.spoke) < 2000
-  ) {
+  while (stillLive() && Date.now() - asked < 20_000 && voiceSpokeLately()) {
     await Bun.sleep(250);
   }
 
@@ -650,15 +802,11 @@ async function hangUpCall(call: Live) {
   return "hanging up";
 }
 
-// The caller or hex hangs up, and the first hang-up is the one the call ends by. Each goes out at
-// once over an open connection to the voice, so a later one retries a close the session didn't act
-// on; without one, the first goes out once one opens or, if the call ends first, on a connection
-// opened just for it. A phone or Discord call's socket is its session, so once that socket isn't
-// open there's nothing left to close.
 function close(call: Live, event: string) {
   const state = call.socket.readyState;
+  const socketIsTheSession = call.speak !== undefined;
 
-  if (call.speak && state !== WebSocket.OPEN) {
+  if (socketIsTheSession && state !== WebSocket.OPEN) {
     return;
   }
 
@@ -677,13 +825,17 @@ function sendClose(call: Live, event = call.closing, socket = call.socket) {
 function closeSession(id: string, event: string) {
   const socket = sideband(id);
   let sent = false;
-  socket.onopen = () => {
+  socket.addEventListener("open", () => {
     socket.send(JSON.stringify({ type: "session.close", event_id: event }));
     sent = true;
     socket.close();
-  };
+  });
 
-  socket.onclose = () => sent || trace(`couldn't send ${id} its close (${event})`);
+  socket.addEventListener("close", () => {
+    if (!sent) {
+      trace(`couldn't send ${id} its close (${event})`);
+    }
+  });
 }
 
 function deliver(content: string, meta: Record<string, string>) {
@@ -694,9 +846,17 @@ function deliver(content: string, meta: Record<string, string>) {
 }
 
 function toHub(step: () => void | Promise<void>) {
-  lane = lane.then(step).catch((error) => {
-    trace(`the hub step failed: ${error}`);
-  });
+  const previous = hubStepsInCallOrder;
+
+  hubStepsInCallOrder = (async () => {
+    await previous;
+
+    try {
+      await step();
+    } catch (error) {
+      trace(`the hub step failed: ${String(error)}`);
+    }
+  })();
 }
 
 function clock() {
@@ -716,7 +876,7 @@ function ring(call: Live, { delegation, offset }: Ring) {
     call: call.id,
     delegation_id: delegation,
     at: `${(offset / 1000).toFixed(1)}s`,
-    ...(call.record.callee && { callee: call.record.callee }),
+    ...(filled(call.record.callee) && { callee: call.record.callee }),
   });
   save(call);
 }
@@ -730,8 +890,9 @@ function hear(
   call.heard?.(who, event.start_ms, event.delta);
   call.changes.changed();
 
-  while (call.rings[0] && call.rings[0].offset <= event.start_ms) {
-    ring(call, call.rings.shift()!);
+  for (let due = call.rings[0]; due && due.offset <= event.start_ms; due = call.rings[0]) {
+    call.rings.shift();
+    ring(call, due);
   }
 }
 
@@ -758,10 +919,13 @@ function finish(call: Live, reason: string, by?: string) {
   for (const pending of call.pending.values()) {
     pending.reject(new Error(`the call ended (${reason})`));
   }
-  // A subagent's steps show only on its live call; a thread's work goes on into the call's record.
 
-  for (const task of call.call.activity()) {
-    if (task.agent && !task.to) stop(call.id, task.id);
+  for (const each of call.call.activity()) {
+    const subagentWhoseStepsShowOnlyOnTheLiveCall = filled(each.agent) && !filled(each.to);
+
+    if (subagentWhoseStepsShowOnlyOnTheLiveCall) {
+      stop(call.id, each.id);
+    }
   }
 
   for (const pending of call.rings.splice(0)) {
@@ -781,22 +945,22 @@ function finish(call: Live, reason: string, by?: string) {
       call: call.id,
       ended: end,
       reason,
-      ...(call.record.callee && { callee: call.record.callee }),
+      ...(filled(call.record.callee) && { callee: call.record.callee }),
     },
   );
   toHub(hub.renew);
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- clears the reconnect handler listen() set
   call.socket.onclose = null;
   call.socket.close();
 
-  if (call.closing && !call.closed && !call.speak) {
+  if (filled(call.closing) && call.closed !== true && call.speak === undefined) {
     closeSession(call.id, call.closing);
   }
 }
 
-function failed(
-  record: Pick<CallRecord, "from" | "end" | "reason"> & Partial<CallRecord>,
-  to?: string,
-) {
+type Failure = Required<Pick<CallRecord, "from" | "end" | "reason">> & Partial<CallRecord>;
+
+function failed(record: Failure, to?: string) {
   const now = new Date().toISOString();
   const id = record.id ?? `failed-${Date.now().toString(36)}`;
   calls.save({ id, started: now, turns: [], tasks: [], ...record, ended: now });
@@ -808,10 +972,10 @@ function failed(
 
   deliver(
     [
-      `${where} didn't happen: ${ENDINGS[record.end!]} (${record.reason}).`,
-      ...(record.why ? [`You were calling because: ${record.why}`] : []),
+      `${where} didn't happen: ${ENDINGS[record.end]} (${record.reason}).`,
+      ...(filled(record.why) ? [`You were calling because: ${record.why}`] : []),
     ].join("\n"),
-    { call: id, ended: record.end!, reason: record.reason ?? "" },
+    { call: id, ended: record.end, reason: record.reason },
   );
   trace(`${id} ${record.end}: ${record.reason}`);
 }
@@ -830,22 +994,26 @@ function follow(
     call?: Call;
     speak?: Live["speak"];
     heard?: Live["heard"];
-    notes?: string[];
+    notes?: string[] | undefined;
     hello?: string;
-    about?: Topic;
+    about?: Topic | undefined;
   } = {},
 ) {
   if (live) {
     const by = live.closing;
     close(live, "close-you-moved");
-    finish(live, by ? "close_requested" : "moved to a new call", live.closing ?? "close-you-moved");
+    finish(
+      live,
+      filled(by) ? "close_requested" : "moved to a new call",
+      live.closing ?? "close-you-moved",
+    );
   }
 
   if (attaching) {
     retire(attaching, "close-you-moved");
   }
 
-  const current: Live = {
+  const next: Live = {
     id: record.id,
     shown: new Map(),
     socket,
@@ -859,20 +1027,26 @@ function follow(
     heard,
   };
 
-  live = current;
-  save(current);
+  live = next;
+  save(next);
   activity.changed();
   toHub(async () => {
     await hub.renewal();
     await hub.keep();
-    current.record.claude = hub.session();
+    const claude = hub.session();
+
+    if (claude === undefined) {
+      delete next.record.claude;
+    } else {
+      next.record.claude = claude;
+    }
   });
-  listen(current, socket);
-  warn(current);
+  listen(next, socket);
+  warn(next);
   deliver(
     hello ??
       [
-        `A call started.${record.why ? ` You placed it because: ${record.why}` : ""}`,
+        `A call started.${filled(record.why) ? ` You placed it because: ${record.why}` : ""}`,
         ...(about ? [about.claude] : []),
         "Send the voice what it should know right away, with note.",
       ].join("\n"),
@@ -880,14 +1054,12 @@ function follow(
   );
 
   for (const text of notes.splice(0)) {
-    void tell(current, "note", text).catch(() => {});
+    void tell(next, "note", text).catch(fineIfUnconfirmed);
   }
 
-  return current;
+  return next;
 }
 
-// What a call is about when the app starts it on something: what Claude hears, and what the voice
-// is told to do first.
 type Topic = { id: string; claude: string; voice: string };
 
 function runTopic(run: Run): Topic {
@@ -898,14 +1070,12 @@ function runTopic(run: Run): Topic {
   };
 }
 
-// Go through them with hex: Claude walks the caller's questions in the app's order, one card at a time.
-// What the voice should know about an ask left half done: only one choice, or an undo in the app, finishes it.
-function half({ partly, undoing }: Question) {
-  if (undoing) {
+function halfDone({ partly, undoing }: Question) {
+  if (undoing === true) {
     return " [taking back its answer stopped partway: only Undo in the app finishes it]";
   }
 
-  return partly
+  return filled(partly)
     ? ` ["${partly}" already went out to part of it: only "${partly}" finishes it, or Undo in the app]`
     : "";
 }
@@ -913,7 +1083,7 @@ function half({ partly, undoing }: Question) {
 function walkTopic(questions: Question[]): Topic {
   const list = questions.map(
     (question, i) =>
-      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${question.context ? ` (${clip(question.context.replaceAll(/\s+/g, " ").trim(), 280)})` : ""} Options: ${question.options.map((option) => `${option.label}${option.pick ? " (hex’s pick)" : ""}`).join(" / ")}${question.tag ? ` [${question.tag}]` : ""}${half(question)}`,
+      `${i + 1}. ${question.id} · ${question.topic} · ${question.question}${filled(question.context) ? ` (${clip(question.context.replaceAll(/\s+/gu, " ").trim(), 280)})` : ""} Options: ${question.options.map((option) => `${option.label}${option.pick === true ? " (hex’s pick)" : ""}`).join(" / ")}${filled(question.tag) ? ` [${question.tag}]` : ""}${halfDone(question)}`,
   );
 
   return {
@@ -935,16 +1105,14 @@ function talkAbout(topic: Topic) {
     call: live.id,
     task: topic.id,
   });
-  void send(live, "session.instructions.append", topic.voice).catch(() => {});
+  void send(live, "session.instructions.append", topic.voice).catch(fineIfUnconfirmed);
 
   return new Response(null, { status: 204 });
 }
 
-// A photo or clip the caller sent from the app: it goes in the call's transcript, hex's session
-// reads it, and the voice, which can't see it, hands off so hex can say what's in it.
 async function showMedia(request: Request, id: string) {
-  const { media: name } = ((await request.json().catch(() => null)) ?? {}) as { media?: unknown };
-  const item = typeof name === "string" ? media.get(name) : undefined;
+  const sent = await bodyOf(request, MediaBody);
+  const item = sent && media.get(sent.media);
 
   if (!item) {
     return new Response("Name a photo or video sent to /media", { status: 400 });
@@ -963,7 +1131,7 @@ async function showMedia(request: Request, id: string) {
     live,
     "session.instructions.append",
     `The caller just sent a ${item.kind} in the app. Only Assistant can see it: generate <|SpawnThinking|> now, then tell the caller in a few words that you're having a look.`,
-  ).catch(() => {});
+  ).catch(fineIfUnconfirmed);
 
   return new Response(null, { status: 204 });
 }
@@ -971,7 +1139,7 @@ async function showMedia(request: Request, id: string) {
 async function upload(request: Request) {
   const type = request.headers.get("content-type");
 
-  if (!type || !Media.takes(type)) {
+  if (type === null || type === "" || !Media.takes(type)) {
     return new Response("Send a JPEG, PNG or HEIC photo, or an MP4 or QuickTime video", {
       status: 415,
     });
@@ -982,18 +1150,17 @@ async function upload(request: Request) {
 
     return Response.json({ id, kind }, { status: 201 });
   } catch (error) {
-    return new Response((error as Error).message, { status: 422 });
+    return new Response(messageOf(error), { status: 422 });
   }
 }
 
 function showImage(id: string) {
-  const item = media.get(id);
+  const image = media.get(id)?.images[0];
 
-  return item ? new Response(Bun.file(item.images[0]!)) : new Response("404", { status: 404 });
+  return image === undefined ? new Response("404", { status: 404 }) : new Response(Bun.file(image));
 }
 
-// Puts a question on the caller's screen as a card in the transcript.
-function show(call: Live, id: string) {
+function showAsACardInTheTranscript(call: Live, id: string) {
   const question = yours.find(id);
 
   if (!question) {
@@ -1007,13 +1174,11 @@ function show(call: Live, id: string) {
   return `showing "${question.question}" to the caller`;
 }
 
-// How many copies or threads an answer couldn't reach, for whoever is told it went.
-function missed({ missed }: Sent) {
-  return missed ? `, but ${missed} of its copies or threads couldn't be reached` : "";
+function missed({ missed: unreached }: Sent) {
+  return unreached ? `, but ${unreached} of its copies or threads couldn't be reached` : "";
 }
 
-// A question answered on a call, said aloud (via call) or tapped on its card (via app).
-async function answerQuestion(id: string, label: string, via: string) {
+async function answerQuestion(id: string, label: string, via: "call" | "app") {
   const call = live;
   const question = yours.find(id) ?? call?.shown.get(id);
   const sent = await yours.answer(id, label, via);
@@ -1031,7 +1196,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
   const opened = Date.now();
 
   const hungUp = () => {
-    if (call.closing && !call.closed && live === call) {
+    if (filled(call.closing) && call.closed !== true && live === call) {
       sendClose(call);
     }
   };
@@ -1042,8 +1207,14 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
     socket.addEventListener("open", hungUp, { once: true });
   }
 
-  socket.onmessage = ({ data }) => {
-    const event = JSON.parse(String(data));
+  socket.addEventListener("message", ({ data }) => {
+    const parsed = VoiceEvent.safeParse(JSON.parse(String(data)));
+
+    if (!parsed.success) {
+      return;
+    }
+
+    const event = parsed.data;
 
     switch (event.type) {
       case "session.input_transcript.delta": {
@@ -1066,15 +1237,16 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
 
         const pending = { delegation: event.delegation.id, offset: event.offset_ms };
         call.rings.push(pending);
-        // Words after the handoff are what send it, so the request is all there; when none come,
-        // as when the voice says nothing and the caller waits, it goes anyway after a moment.
-        setTimeout(() => {
+
+        const goesWithoutTheWordsAfterIt = () => {
           const i = live === call ? call.rings.indexOf(pending) : -1;
 
           for (const due of i < 0 ? [] : call.rings.splice(0, i + 1)) {
             ring(call, due);
           }
-        }, HANDOFF_WAIT);
+        };
+
+        setTimeout(goesWithoutTheWordsAfterIt, HANDOFF_WAIT);
 
         return;
       }
@@ -1082,18 +1254,22 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
       case "session.commentary.appended":
       case "session.thinking.appended":
       case "session.instructions.appended": {
-        call.pending.get(event.client_event_id)?.resolve();
+        const confirmed = event.client_event_id ?? "";
+        call.pending.get(confirmed)?.resolve();
+        call.pending.delete(confirmed);
 
-        return call.pending.delete(event.client_event_id);
+        return;
       }
 
       case "error": {
-        const id = event.client_event_id ?? event.error?.client_event_id ?? event.error?.event_id;
-        const failed = call.pending.get(id);
+        const id =
+          event.client_event_id ?? event.error?.client_event_id ?? event.error?.event_id ?? "";
+
+        const refused = call.pending.get(id);
         call.pending.delete(id);
 
-        if (failed) {
-          failed.reject(new Error(event.error?.message ?? JSON.stringify(event)));
+        if (refused) {
+          refused.reject(new Error(event.error?.message ?? JSON.stringify(event)));
 
           return;
         }
@@ -1105,8 +1281,9 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
 
       case "session.output_audio.delta": {
         call.spoke = Date.now();
+        call.speak?.(event.delta);
 
-        return call.speak?.(event.delta);
+        return;
       }
 
       case "session.usage.updated": {
@@ -1119,18 +1296,22 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
       }
 
       case "session.closed": {
-        if (event.usage) call.record.usage = usage(event.usage.seconds, call.record.usage?.context);
+        if (event.usage) {
+          call.record.usage = usage(event.usage.seconds, call.record.usage?.context);
+        }
+
         finish(
           call,
           event.reason ?? "closed",
-          (event.reason === "close_requested" && call.closing) || event.client_event_id,
+          event.reason === "close_requested" && filled(call.closing)
+            ? call.closing
+            : event.client_event_id,
         );
-
-        return;
       }
     }
-  };
+  });
 
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- replaces the close handler a reattach set
   socket.onclose = () => {
     reconnect(call, Date.now() - opened < 5000 ? attempt + 1 : 0);
   };
@@ -1150,16 +1331,16 @@ function reconnect(call: Live, attempt: number) {
   }
 
   call.pending.clear();
-  // A close sent on the dropped connection may never have reached the session, so it goes out again.
   delete call.closed;
 
-  if (call.speak || attempt >= RETRIES.length) {
-    const lost = !call.closing && !call.speak;
-    finish(call, call.closing ? "close_requested" : "connection_lost", call.closing);
+  const socketIsTheSession = call.speak !== undefined;
 
-    // The app's audio goes straight to the voice, so a call let go here would go on with nothing
-    // behind the voice: it's closed too, if a last connection gets through.
-    if (lost) {
+  if (socketIsTheSession || attempt >= RETRIES.length) {
+    const appCallWouldGoOnWithNothingBehindTheVoice = !filled(call.closing) && !socketIsTheSession;
+
+    finish(call, filled(call.closing) ? "close_requested" : "connection_lost", call.closing);
+
+    if (appCallWouldGoOnWithNothingBehindTheVoice) {
       closeSession(call.id, `close_hex_${++seq}`);
     }
 
@@ -1173,9 +1354,9 @@ function reconnect(call: Live, attempt: number) {
     }
 
     const socket = sideband(call.id);
-    socket.onopen = () => {
+    socket.addEventListener("open", () => {
       if (live !== call) {
-        if (call.closing && !call.closed) {
+        if (filled(call.closing) && call.closed !== true) {
           sendClose(call, call.closing, socket);
         }
 
@@ -1187,8 +1368,9 @@ function reconnect(call: Live, attempt: number) {
       trace(`reattached to ${call.id}`);
       call.socket = socket;
       listen(call, socket, attempt);
-    };
+    });
 
+    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- listen() replaces it once the socket opens
     socket.onclose = () => {
       reconnect(call, attempt + 1);
     };
@@ -1196,7 +1378,13 @@ function reconnect(call: Live, attempt: number) {
 }
 
 function warn(call: Live) {
-  const left = call.record.expires ? Date.parse(call.record.expires) - Date.now() : Number.NaN;
+  const { expires } = call.record;
+
+  if (!filled(expires)) {
+    return;
+  }
+
+  const left = Date.parse(expires) - Date.now();
 
   if (!(left > WARN_BEFORE)) {
     return;
@@ -1207,7 +1395,7 @@ function warn(call: Live) {
       return;
     }
 
-    const at = new Date(Date.parse(call.record.expires!)).toLocaleTimeString([], {
+    const at = new Date(Date.parse(expires)).toLocaleTimeString([], {
       hour: "numeric",
       minute: "2-digit",
     });
@@ -1217,22 +1405,26 @@ function warn(call: Live) {
       call,
       "session.instructions.append",
       "This call hits its time limit in about two minutes. Tell the caller now, in a sentence, so they can wrap up or call back.",
-    ).catch(() => {});
+    ).catch(fineIfUnconfirmed);
     deliver(
       `This call hits its time limit at ${at}, about two minutes from now. Wrap up anything the caller needs before it ends.`,
-      { call: call.id, expires: call.record.expires! },
+      { call: call.id, expires },
     );
   }, left - WARN_BEFORE);
 }
 
+function voiceSocket(url: string) {
+  return new BunWebSocket(url, { headers: { Authorization: `Bearer ${KEY}` } });
+}
+
 function sideband(id: string) {
-  return new WebSocket(`${API}/${id}/attach`, {
-    headers: { Authorization: `Bearer ${KEY}` },
-  } as any);
+  return voiceSocket(`${API}/${id}/attach`);
 }
 
 function expiry(seconds?: number) {
-  return seconds ? new Date(seconds * 1000).toISOString() : undefined;
+  return seconds === undefined || seconds === 0
+    ? undefined
+    : new Date(seconds * 1000).toISOString();
 }
 
 function base(id: string, from: Source, extra: Partial<CallRecord> = {}): Live["record"] {
@@ -1240,9 +1432,9 @@ function base(id: string, from: Source, extra: Partial<CallRecord> = {}): Live["
 }
 
 function recover() {
-  const open = calls.list().filter((call) => !call.ended);
+  const unended = calls.list().filter((call) => !filled(call.ended));
 
-  for (const [i, { id }] of open.entries()) {
+  for (const [i, { id }] of unended.entries()) {
     const record = calls.get(id);
 
     if (!record) {
@@ -1251,9 +1443,9 @@ function recover() {
 
     const latest =
       i === 0 &&
-      KEY &&
+      filled(KEY) &&
       (record.from === "app" || record.from === "web") &&
-      !(record.expires && Date.parse(record.expires) < Date.now());
+      !(filled(record.expires) && Date.parse(record.expires) < Date.now());
 
     if (latest) {
       reattach(record);
@@ -1263,34 +1455,35 @@ function recover() {
   }
 }
 
-// A call lost with the engine ends like any other: Claude names it, and the session renews.
-// by: the hang-up that ended it while the engine was attaching back to it, at that moment.
-function closeOut(record: CallRecord, by?: string) {
+function closeOut(record: CallRecord, hungUpWhileAttaching?: string) {
   const heard = Math.max(
     0,
     ...record.turns.map((turn) => turn.at),
-    ...record.tasks.map((task) => task.at),
-    ...(record.moments ?? []).map((mark) => mark.at),
+    ...record.tasks.map((each) => each.at),
+    ...(record.moments ?? []).map((moment) => moment.at),
   );
+
+  const by = filled(hungUpWhileAttaching) ? hungUpWhileAttaching : undefined;
 
   const reason =
     by === "close-you-moved"
       ? "moved to a new call"
-      : by
-        ? "close_requested"
-        : "hex's service restarted and the call was gone";
+      : by === undefined
+        ? "hex's service restarted and the call was gone"
+        : "close_requested";
 
-  const end = ending(reason, by);
+  const end = ending(reason, hungUpWhileAttaching);
   calls.save({
     ...record,
-    ended: by
-      ? new Date().toISOString()
-      : new Date(Date.parse(record.started) + heard).toISOString(),
+    ended:
+      by === undefined
+        ? new Date(Date.parse(record.started) + heard).toISOString()
+        : new Date().toISOString(),
     end,
     reason,
   });
   trace(
-    `closed out ${record.id}: ${by ? "hung up while it was picked back up" : "it never got an end"}`,
+    `closed out ${record.id}: ${by === undefined ? "it never got an end" : "hung up while it was picked back up"}`,
   );
   deliver(`The call ended: ${ENDINGS[end]} (${reason}). Name it with title.`, {
     call: record.id,
@@ -1299,7 +1492,7 @@ function closeOut(record: CallRecord, by?: string) {
   });
 
   if (!live) {
-    if (by) {
+    if (by !== undefined) {
       ended = record.id;
     }
 
@@ -1307,8 +1500,6 @@ function closeOut(record: CallRecord, by?: string) {
   }
 }
 
-// A call hung up or replaced while recover() attaches back to it ends then; its close goes out on the
-// attach once it opens, or on a connection opened for it if the attach fails.
 function retire(pending: Attaching, event: string) {
   attaching = undefined;
   pending.closing = event;
@@ -1321,18 +1512,16 @@ function retire(pending: Attaching, event: string) {
   }
 }
 
-// Tasks the call sent out can end while the connection comes back, so the record is read again then;
-// a call deleted, replaced by a new one or hung up meanwhile is let go.
 function reattach({ id }: CallRecord) {
   const socket = sideband(id);
   const pending: Attaching = { id };
   attaching = pending;
-  socket.onopen = () => {
+  socket.addEventListener("open", () => {
     if (attaching === pending) {
       attaching = undefined;
     }
 
-    const record = pending.closing ? undefined : calls.get(id);
+    const record = filled(pending.closing) ? undefined : calls.get(id);
 
     if (!record || live) {
       socket.send(
@@ -1341,38 +1530,40 @@ function reattach({ id }: CallRecord) {
           event_id: pending.closing ?? `close_hex_${++seq}`,
         }),
       );
+      // oxlint-disable-next-line unicorn/prefer-add-event-listener -- clears the handler below, which would close the call out again
       socket.onclose = null;
       socket.close();
 
       if (record) {
         closeOut(record);
-      } else if (!live && !pending.closing) {
+      } else if (!live && !filled(pending.closing)) {
         toHub(hub.renew);
       }
 
       return;
     }
 
-    const { turns, tasks, moments, ...rest } = record;
+    const { turns, tasks, moments: _moments, ...rest } = record;
     const so = turns.slice(-40).map(({ who, at, text }) => ({ who, text, start: at }));
     trace(`picked ${record.id} back up after a restart`);
     follow(socket, rest, {
       call: Call.resume(record),
       hello: [
         `A call resumed: hex's service restarted during call ${record.id} and picked it back up. The caller is still on it, and the voice kept its own memory of the call.`,
-        ...(record.why ? [`You placed it because: ${record.why}`] : []),
+        ...(filled(record.why) ? [`You placed it because: ${record.why}`] : []),
         ...(so.length ? ["The call so far:", transcript(so)] : []),
         ...(tasks.length ? [Call.resume(record).board()] : []),
       ].join("\n"),
     });
-  };
+  });
 
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- listen() replaces this handler once the call is live
   socket.onclose = () => {
     if (attaching === pending) {
       attaching = undefined;
     }
 
-    if (pending.closing) {
+    if (filled(pending.closing)) {
       closeSession(id, pending.closing);
 
       return;
@@ -1396,23 +1587,28 @@ async function dial({
   to = CALLER_NUMBER,
   why,
   move = false,
-}: { to?: string; why?: string; move?: boolean } = {}) {
-  if (!KEY || !TWILIO_SID || !TWILIO_TOKEN || !TWILIO_NUMBER || !PUBLIC_HOST) {
+}: { to?: string | undefined; why?: string | undefined; move?: boolean | undefined } = {}) {
+  if (
+    !filled(KEY) ||
+    !filled(TWILIO_SID) ||
+    !filled(TWILIO_TOKEN) ||
+    !filled(TWILIO_NUMBER) ||
+    !filled(PUBLIC_HOST)
+  ) {
     throw new Error(
       `phone calls need TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_NUMBER and VOICE_PUBLIC_URL in ${join(STATE_DIR, ".env")}`,
     );
   }
 
-  if (!to) {
+  if (!filled(to)) {
     throw new Error("no number to call: pass to, or set CALLER_NUMBER");
   }
 
   if (move && to !== CALLER_NUMBER) {
     throw new Error("a call moves only to the caller's own phone: leave out to");
   }
-  // On a call hex placed to someone else, what was meant for the owner isn't theirs to hear.
 
-  if (live?.record.callee) {
+  if (live && filled(live.record.callee)) {
     throw new Error(
       move
         ? `hex is on a call to ${live.record.callee}; move once it ends`
@@ -1428,21 +1624,25 @@ async function dial({
 
   const token = crypto.randomUUID();
 
-  const greeting = why
+  const greeting = filled(why)
     ? `You placed this phone call because: ${why}. Greet them briefly and tell them why you're calling, then listen.`
     : "You placed this phone call. Greet them briefly first, then listen.";
 
-  // On a call hex placed to someone else, "you" in the transcript is them, not the owner.
+  const youInTheTranscriptIsThem = to !== CALLER_NUMBER;
   dials.set(token, {
     greeting,
     from: "phone-out",
     token,
     why,
     move,
-    ...(to !== CALLER_NUMBER && { callee: to }),
+    ...(youInTheTranscriptIsThem && { callee: to }),
   });
-  placed.set(token, { to, why, started: new Date().toISOString(), notes: [] });
-  setTimeout(() => placed.get(token)?.session || placed.delete(token), 300_000);
+  placed.set(token, { to, why, started: new Date().toISOString(), notesForWhenItConnects: [] });
+  setTimeout(() => {
+    if (!filled(placed.get(token)?.session)) {
+      placed.delete(token);
+    }
+  }, 300_000);
 
   const response = await fetch(`${TWILIO_API}/2010-04-01/Accounts/${TWILIO_SID}/Calls.json`, {
     method: "POST",
@@ -1459,7 +1659,7 @@ async function dial({
     dials.delete(token);
     placed.delete(token);
     const reason = `Twilio refused the call: ${problem(await response.text())}`;
-    failed({ from: "phone-out", end: "no-connect", reason, why }, to);
+    failed({ from: "phone-out", end: "no-connect", reason, ...(why !== undefined && { why }) }, to);
     throw new Error(reason);
   }
 
@@ -1474,8 +1674,8 @@ async function phoneStatus(request: Request, token: string) {
   }
 
   const call = placed.get(token);
-  const state = String(form.get("CallStatus"));
-  trace(`Twilio call ${state}${call?.session ? ` (${call.session})` : ""}`);
+  const state = form.CallStatus ?? "null";
+  trace(`Twilio call ${state}${filled(call?.session) ? ` (${call.session})` : ""}`);
 
   if (!call || !["completed", "busy", "no-answer", "failed", "canceled"].includes(state)) {
     return new Response(null, { status: 204 });
@@ -1484,21 +1684,21 @@ async function phoneStatus(request: Request, token: string) {
   placed.delete(token);
   dials.delete(token);
 
-  if (call.session) {
+  if (filled(call.session)) {
     return new Response(null, { status: 204 });
   }
 
-  const error = form.get("ErrorCode") ? `, Twilio error ${form.get("ErrorCode")}` : "";
+  const error = filled(form.ErrorCode) ? `, Twilio error ${form.ErrorCode}` : "";
   failed(
     {
-      id: String(form.get("CallSid") ?? "") || undefined,
+      ...(filled(form.CallSid) && { id: form.CallSid }),
       from: "phone-out",
       started: call.started,
-      why: call.why,
+      ...(call.why !== undefined && { why: call.why }),
       end: state === "busy" ? "busy" : state === "no-answer" ? "no-answer" : "no-connect",
       reason:
         state === "completed"
-          ? `the phone picked up for ${form.get("CallDuration") ?? 0}s but the voice never joined${error}`
+          ? `the phone picked up for ${form.CallDuration ?? 0}s but the voice never joined${error}`
           : `Twilio: ${state}${error}`,
     },
     call.to,
@@ -1507,19 +1707,17 @@ async function phoneStatus(request: Request, token: string) {
   return new Response(null, { status: 204 });
 }
 
-// A call whose audio the engine passes through one WebSocket session: a phone call, as μ-law at
-// 8 kHz, or a line another client holds, as PCM at 24 kHz. A session that never starts is refused once.
 type Passed = {
   name: string;
   from: Source;
-  callee?: string;
-  move?: boolean;
+  callee?: string | undefined;
+  move?: boolean | undefined;
   greeting: string;
-  why?: string;
+  why?: string | undefined;
   format: { type: string; rate: number };
   play: (audio: string) => void;
   heard?: Live["heard"];
-  notes?: string[];
+  notes?: string[] | undefined;
   started: (session: string) => void;
   refused: (reason: string) => void;
   closed: () => void;
@@ -1540,11 +1738,11 @@ function passThrough({
   refused,
   closed,
 }: Passed) {
-  const openai = new WebSocket(API, { headers: { Authorization: `Bearer ${KEY}` } } as any);
+  const openai = voiceSocket(API);
   let up = false;
   let refusing = false;
 
-  const refuse = (reason: string) => {
+  const refuseOnce = (reason: string) => {
     if (up || refusing) {
       return;
     }
@@ -1553,57 +1751,70 @@ function passThrough({
     refused(reason);
   };
 
-  openai.onopen = () => {
+  openai.addEventListener("open", () => {
     openai.send(
       JSON.stringify({
         type: "session.start",
         session: session(
-          { audio: { format, ...(VOICE ? { output: { voice: VOICE } } : {}) } },
+          { audio: { format, ...(filled(VOICE) && { output: { voice: VOICE } }) } },
           greeting,
         ),
       }),
     );
-  };
+  });
 
   openai.addEventListener("message", ({ data }) => {
-    const event = JSON.parse(String(data));
+    const parsed = SessionEvent.safeParse(JSON.parse(String(data)));
 
-    if (event.type === "error") {
-      refuse(
-        `OpenAI refused the ${name} session: ${event.error?.message ?? JSON.stringify(event.error)}`,
-      );
-    }
-    // A session that starts once its caller has already hung up is let go, never taken as live.
-
-    if (event.type !== "session.started" || openai.readyState !== WebSocket.OPEN) {
+    if (!parsed.success) {
       return;
     }
-    // A call hex placed that picks up once another is live, as a voicemail can, never takes its place;
-    // a move takes the caller's own call, never one hex placed to someone else.
 
-    if (from === "phone-out" && (live?.record.callee || ((live || attaching) && !move))) {
-      refuse("it picked up while another call was live, so it was let go");
+    const event = parsed.data;
+
+    if (event.type === "error") {
+      refuseOnce(
+        `OpenAI refused the ${name} session: ${event.error?.message ?? JSON.stringify(event.error)}`,
+      );
+
+      return;
+    }
+
+    const callerAlreadyHungUp = openai.readyState !== WebSocket.OPEN;
+
+    if (callerAlreadyHungUp) {
+      return;
+    }
+
+    const placedCallPickedUpWhileAnotherIsLive =
+      from === "phone-out" &&
+      (filled(live?.record.callee) ||
+        ((live !== undefined || attaching !== undefined) && move !== true));
+
+    if (placedCallPickedUpWhileAnotherIsLive) {
+      refuseOnce("it picked up while another call was live, so it was let go");
 
       return;
     }
 
     up = true;
     started(event.session.id);
+    const expires = expiry(event.session.expires_at);
     follow(
       openai,
       base(event.session.id, from, {
-        voice: VOICE,
-        why,
-        callee,
-        expires: expiry(event.session.expires_at),
+        ...(VOICE !== undefined && { voice: VOICE }),
+        ...(why !== undefined && { why }),
+        ...(callee !== undefined && { callee }),
+        ...(expires !== undefined && { expires }),
       }),
       { speak: play, heard, notes },
     );
   });
   openai.addEventListener("close", ({ code, reason }) => {
     trace(`OpenAI closed the ${name} session (${code} ${reason})`);
-    refuse(
-      `OpenAI closed the ${name} session before it started (${code} ${reason || "no reason"})`,
+    refuseOnce(
+      `OpenAI closed the ${name} session before it started (${code} ${reason === "" ? "no reason" : reason})`,
     );
     closed();
   });
@@ -1620,9 +1831,7 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
     greeting: twilio.data.greeting,
     why: twilio.data.why,
     format: { type: "audio/pcmu", rate: 8000 },
-    notes: placed.get(twilio.data.token)?.notes,
-    // Twilio plays what it's sent as it comes, faster than it's said, and echoes each mark once the
-    // audio before it has played or been cleared.
+    notes: placed.get(twilio.data.token)?.notesForWhenItConnects,
     play: (audio) => {
       twilio.send(
         JSON.stringify({
@@ -1634,30 +1843,35 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
       twilio.send(
         JSON.stringify({ event: "mark", streamSid: twilio.data.stream, mark: { name: "voice" } }),
       );
-      twilio.data.unheard++;
+      twilio.data.unplayedChunks++;
     },
-    // Words the caller began before the voice did are what it's answering, however late their
-    // transcript comes in; words begun after it are the caller talking over it.
-    heard: (who, start, text) => {
+    heard: (who, begun, text) => {
       const phone = twilio.data;
 
-      if (!phone.unheard) {
+      if (phone.unplayedChunks === 0) {
         return;
       }
 
       if (who === "voice") {
-        phone.since ??= start;
-      } else if (phone.since !== undefined && start >= phone.since && !backchannel(text)) {
+        phone.voiceBeganAt ??= begun;
+
+        return;
+      }
+
+      const talkingOverTheVoice =
+        phone.voiceBeganAt !== undefined && begun >= phone.voiceBeganAt && !backchannel(text);
+
+      if (talkingOverTheVoice) {
         twilio.send(JSON.stringify({ event: "clear", streamSid: phone.stream }));
-        phone.since = undefined;
+        phone.voiceBeganAt = undefined;
       }
     },
-    started: (session) => {
+    started: (sessionId) => {
       twilio.data.started = true;
       const call = placed.get(twilio.data.token);
 
       if (call) {
-        call.session = session;
+        call.session = sessionId;
       }
     },
     refused: (reason) => {
@@ -1669,12 +1883,8 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
   });
 }
 
-// A call on a line another client holds, like a Discord voice channel: it hands the engine the
-// caller's audio and plays the voice's, both base64 PCM at 24 kHz, mono, and the engine holds the
-// call as it does a phone call. The line ends when the call does, and a session refused or hung up
-// on before it started never becomes a call.
-export function take(from: Source, greeting: string, line: VoiceLine): Held {
-  if (!KEY) {
+export function take(from: Source, greeting: string, voiceLine: VoiceLine): Held {
+  if (!filled(KEY)) {
     throw new Error(`calls need OPENAI_API_KEY in ${join(STATE_DIR, ".env")}`);
   }
 
@@ -1686,8 +1896,10 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
     from,
     greeting,
     format: { type: "audio/pcm", rate: 24_000 },
-    play: line.play,
-    started: () => (up = true),
+    play: voiceLine.play,
+    started: () => {
+      up = true;
+    },
     refused: (reason) => {
       if (!gone) {
         failed({ from, end: "no-connect", reason });
@@ -1695,14 +1907,17 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
 
       gone = true;
       openai.close();
-      line.end();
+      voiceLine.end();
     },
-    closed: line.end,
+    closed: voiceLine.end,
   });
 
   return {
-    hear: (audio) =>
-      void (up && openai.send(JSON.stringify({ type: "session.input_audio.append", audio }))),
+    hear: (audio) => {
+      if (up) {
+        openai.send(JSON.stringify({ type: "session.input_audio.append", audio }));
+      }
+    },
     hangUp: () => {
       if (!up) {
         gone = true;
@@ -1717,8 +1932,6 @@ export function take(from: Source, greeting: string, line: VoiceLine): Held {
   };
 }
 
-// The caller's "mm-hmm" or "yeah" while the voice talks, or a fragment with no words, is them
-// listening, not talking over it: the voice goes on, so what Twilio holds is what they'd miss.
 const LISTENING = new Set([
   "mm",
   "mmm",
@@ -1748,14 +1961,14 @@ const LISTENING = new Set([
 function backchannel(text: string) {
   return text
     .toLowerCase()
-    .replaceAll(/[^a-z\s-]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.replaceAll("-", ""))
+    .replaceAll(/[^a-z\s-]/gu, " ")
+    .split(/\s+/u)
+    .filter((word) => word.replaceAll("-", "") !== "")
     .every((word) => LISTENING.has(word));
 }
 
 function refuse(twilio: Bun.ServerWebSocket<Phone>, reason: string) {
-  if (twilio.data.refused) {
+  if (twilio.data.refused === true) {
     return;
   }
 
@@ -1767,8 +1980,8 @@ function refuse(twilio: Bun.ServerWebSocket<Phone>, reason: string) {
       from: twilio.data.from,
       end: "no-connect",
       reason,
-      why: twilio.data.why,
-      ...(call ? { started: call.started } : {}),
+      ...(twilio.data.why !== undefined && { why: twilio.data.why }),
+      ...(call && { started: call.started }),
     },
     call?.to,
   );
@@ -1777,16 +1990,17 @@ function refuse(twilio: Bun.ServerWebSocket<Phone>, reason: string) {
 
 function problem(text: string) {
   try {
-    const { error, message } = JSON.parse(text);
+    const parsed = Problem.safeParse(JSON.parse(text));
+    const said = parsed.success ? (parsed.data.error?.message ?? parsed.data.message) : undefined;
 
-    return String(error?.message ?? message ?? text).slice(0, 300);
+    return (said ?? text).slice(0, 300);
   } catch {
     return text.slice(0, 300);
   }
 }
 
-function trace(line: string) {
-  process.stderr.write(`voice: ${line}\n`);
+function trace(text: string) {
+  process.stderr.write(`voice: ${text}\n`);
 }
 
 function twiml(body: string) {
@@ -1798,18 +2012,24 @@ function stream(token: string) {
 }
 
 async function signed(request: Request) {
-  const form = await request.formData();
+  const parsed = TwilioForm.safeParse(Object.fromEntries(await request.formData()));
 
-  const params = [...form.keys()]
-    .sort()
-    .map((key) => key + form.get(key))
+  if (!parsed.success) {
+    return;
+  }
+
+  const form = parsed.data;
+
+  const params = Object.keys(form)
+    .toSorted()
+    .map((key) => `${key}${form[key] ?? ""}`)
     .join("");
 
   const signature = createHmac("sha1", TWILIO_TOKEN ?? "")
     .update(`https://${PUBLIC_HOST}${new URL(request.url).pathname}${params}`)
     .digest("base64");
 
-  return TWILIO_TOKEN && same(request.headers.get("x-twilio-signature") ?? "", signature)
+  return filled(TWILIO_TOKEN) && same(request.headers.get("x-twilio-signature") ?? "", signature)
     ? form
     : undefined;
 }
@@ -1817,7 +2037,7 @@ async function signed(request: Request) {
 async function pickUp(request: Request) {
   const form = await signed(request);
 
-  if (!form || form.get("From") !== CALLER_NUMBER) {
+  if (!form || form.From === undefined || form.From !== CALLER_NUMBER) {
     return twiml("<Reject />");
   }
 
@@ -1832,37 +2052,49 @@ async function pickUp(request: Request) {
 }
 
 function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
-  const message = JSON.parse(String(raw));
+  const parsed = TwilioMessage.safeParse(JSON.parse(String(raw)));
 
-  if (message.event === "start") {
-    twilio.data.stream = message.start.streamSid;
+  if (!parsed.success) {
+    return;
   }
 
-  if (message.event === "start" || message.event === "stop") {
-    trace(`Twilio stream ${message.event}`);
-  }
+  const message = parsed.data;
 
-  if (message.event === "mark") {
-    twilio.data.unheard = Math.max(0, twilio.data.unheard - 1);
+  switch (message.event) {
+    case "start": {
+      twilio.data.stream = message.start.streamSid;
+      trace(`Twilio stream ${message.event}`);
 
-    if (!twilio.data.unheard) {
-      delete twilio.data.since;
+      return;
     }
-  }
 
-  if (message.event === "media" && twilio.data.started) {
-    twilio.data.openai?.send(
-      JSON.stringify({ type: "session.input_audio.append", audio: message.media.payload }),
-    );
-  }
+    case "stop": {
+      trace(`Twilio stream ${message.event}`);
+      hangUp(twilio);
 
-  if (message.event === "stop") {
-    hangUp(twilio);
+      return;
+    }
+
+    case "mark": {
+      twilio.data.unplayedChunks = Math.max(0, twilio.data.unplayedChunks - 1);
+
+      if (twilio.data.unplayedChunks === 0) {
+        delete twilio.data.voiceBeganAt;
+      }
+
+      return;
+    }
+
+    case "media": {
+      if (twilio.data.started === true) {
+        twilio.data.openai?.send(
+          JSON.stringify({ type: "session.input_audio.append", audio: message.media.payload }),
+        );
+      }
+    }
   }
 }
 
-// A caller who hangs up before the voice session starts takes the session down with them: it's
-// closed, not left to start into a call nobody is on, and isn't counted as OpenAI refusing it.
 function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
   const openai = twilio.data.openai;
 
@@ -1870,7 +2102,7 @@ function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
     return;
   }
 
-  if (twilio.data.started) {
+  if (twilio.data.started === true) {
     closeSocket(openai, "close-you-phone");
 
     return;
@@ -1880,8 +2112,6 @@ function hangUp(twilio: Bun.ServerWebSocket<Phone>) {
   openai.close();
 }
 
-// A phone or Discord caller hangs up on the session socket itself: through the call once it's live,
-// so the call keeps one close.
 function closeSocket(openai: WebSocket, event: string) {
   if (live?.socket === openai) {
     close(live, event);
@@ -1890,12 +2120,17 @@ function closeSocket(openai: WebSocket, event: string) {
   }
 }
 
-function session(extra: object = {}, opening?: string) {
+type SessionExtra = {
+  audio?: { format?: Passed["format"]; output?: { voice: string } };
+  client?: { data_channel: { allowed_client_events: string[] } };
+};
+
+function session(extra: SessionExtra = {}, opening?: string) {
   return {
     model: MODEL,
     instructions: `${VOICE_PROMPT}\n\nThe call started ${clock()}, the caller's local time.`,
     delegation: { type: "client" },
-    ...(opening && {
+    ...(filled(opening) && {
       input: [
         { type: "message", role: "developer", content: [{ type: "input_text", text: opening }] },
       ],
@@ -1905,18 +2140,14 @@ function session(extra: object = {}, opening?: string) {
 }
 
 async function start(request: Request) {
-  if (!KEY) {
+  if (!filled(KEY)) {
     return new Response(`Set OPENAI_API_KEY in ${join(STATE_DIR, ".env")}`, { status: 503 });
   }
 
-  const {
-    sdp,
-    voice = VOICE,
-    from: origin,
-    about,
-  } = (await request.json()) as { sdp?: string; voice?: string; from?: string; about?: string };
+  const body = StartBody.safeParse(await request.json());
+  const { sdp, voice = VOICE, from: origin, about } = body.success ? body.data : {};
 
-  if (!sdp) {
+  if (!filled(sdp)) {
     return new Response("An SDP offer is required", { status: 400 });
   }
 
@@ -1931,7 +2162,7 @@ async function start(request: Request) {
       body: JSON.stringify({
         session: session(
           {
-            ...(voice ? { audio: { output: { voice } } } : {}),
+            ...(filled(voice) && { audio: { output: { voice } } }),
             client: {
               data_channel: {
                 allowed_client_events: [
@@ -1948,8 +2179,8 @@ async function start(request: Request) {
       }),
     });
   } catch (error) {
-    const reason = `couldn't reach OpenAI: ${error instanceof Error ? error.message : error}`;
-    failed({ from, end: "no-connect", reason, voice });
+    const reason = `couldn't reach OpenAI: ${messageOf(error)}`;
+    failed({ from, end: "no-connect", reason, ...(voice !== undefined && { voice }) });
 
     return new Response(reason, { status: 502 });
   }
@@ -1960,16 +2191,21 @@ async function start(request: Request) {
       from,
       end: "no-connect",
       reason: `OpenAI refused the call (${response.status}): ${problem(text)}`,
-      voice,
+      ...(voice !== undefined && { voice }),
     });
 
     return new Response(text, { status: response.status });
   }
 
-  const result = (await response.json()) as { session: { id: string; expires_at?: number } };
+  const result: unknown = await response.json();
+  const { session: started } = SessionCreated.parse(result);
+  const expires = expiry(started.expires_at);
   follow(
-    sideband(result.session.id),
-    base(result.session.id, from, { voice, expires: expiry(result.session.expires_at) }),
+    sideband(started.id),
+    base(started.id, from, {
+      ...(voice !== undefined && { voice }),
+      ...(expires !== undefined && { expires }),
+    }),
     { about: topic },
   );
 
@@ -1983,14 +2219,13 @@ const RESUMED =
   "The caller is back. If you were in the middle of something, pick it back up in a sentence.";
 
 async function interruption(request: Request, id: string) {
-  const { kind, text } = (await request.json().catch(() => ({}))) as {
-    kind?: string;
-    text?: string;
-  };
+  const body = await bodyOf(request, InterruptionBody);
 
-  if (kind !== "paused" && kind !== "resumed") {
+  if (!body) {
     return new Response("kind is paused or resumed", { status: 400 });
   }
+
+  const { kind, text } = body;
 
   if (live?.id !== id) {
     return new Response("That call is not live", { status: 409 });
@@ -1999,22 +2234,23 @@ async function interruption(request: Request, id: string) {
   remember(
     live,
     kind,
-    text || (kind === "paused" ? "Your phone took over the audio" : "Back on the call"),
+    filled(text) ? text : kind === "paused" ? "Your phone took over the audio" : "Back on the call",
   );
   void send(live, "session.instructions.append", kind === "paused" ? PAUSED : RESUMED).catch(
-    () => {},
+    fineIfUnconfirmed,
   );
 
   return new Response(null, { status: 204 });
 }
 
-// The app ends the call it started, by its id; one that already ended has nothing left to end.
 async function endSession(request: Request) {
-  const { sessionId } = ((await request.json().catch(() => null)) ?? {}) as { sessionId?: unknown };
+  const body = await bodyOf(request, EndBody);
 
-  if (typeof sessionId !== "string") {
+  if (!body) {
     return new Response("Name the call to end with sessionId", { status: 400 });
   }
+
+  const { sessionId } = body;
 
   if (live?.id === sessionId) {
     close(live, "close-you-app");
@@ -2033,34 +2269,35 @@ function same(a: string, b: string) {
 }
 
 function allowed(request: Request) {
-  return !TOKEN || same(request.headers.get("authorization") ?? "", `Bearer ${TOKEN}`);
+  return !filled(TOKEN) || same(request.headers.get("authorization") ?? "", `Bearer ${TOKEN}`);
 }
 
-// A page on another site, open in the owner's browser, can post here, or point its own name at this
-// machine to read and post here as if it were this page, which would hand it the token too.
-function foreign(request: Request) {
+function postedFromAnotherSiteOrRebound(request: Request) {
   const url = new URL(request.url);
   const origin = request.headers.get("origin");
 
   return (
-    !ours(url.hostname) ||
+    !nameNoSiteCanPointHere(url.hostname) ||
     (request.method !== "GET" && origin !== null && URL.parse(origin)?.host !== url.host)
   );
 }
 
-// Names a site can't point here: IPs, short names, localhost, tailnet names, and the public one.
-function ours(host: string) {
+function nameNoSiteCanPointHere(host: string) {
   return (
-    isIP(host.replaceAll(/^\[|\]$/g, "")) > 0 ||
-    /^[^.]+$|(^|\.)localhost$|\.ts\.net$/.test(host) ||
+    isIP(host.replaceAll(/^\[|\]$/gu, "")) > 0 ||
+    /^[^.]+$|(^|\.)localhost$|\.ts\.net$/u.test(host) ||
     host === PUBLIC_HOSTNAME
   );
 }
 
 function home(request: Request) {
-  const local = !request.headers.get("x-forwarded-for");
+  const forwarded = request.headers.get("x-forwarded-for");
+  const local = forwarded === null || forwarded === "";
 
-  return new Response(String(page).replace("__VOICE_TOKEN__", local && TOKEN ? TOKEN : ""), {
+  // oxlint-disable-next-line typescript/no-base-to-string -- imported with type "text", page is the file's text; Bun types every .html import as an HTML bundle
+  const html = String(page);
+
+  return new Response(html.replace("__VOICE_TOKEN__", local && filled(TOKEN) ? TOKEN : ""), {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
@@ -2068,7 +2305,7 @@ function home(request: Request) {
 async function showActivity(url: URL) {
   const after = url.searchParams.get("after");
 
-  if (after) {
+  if (after !== null && after !== "") {
     await activity.changes(Number(after), 25_000);
   }
 
@@ -2080,13 +2317,11 @@ async function showActivity(url: URL) {
   });
 }
 
-// Everything else hex is working on, from the board: every thread and background session at work
-// that the call isn't already following, so a call shows all of it and not only what it sent.
 function elsewhere(call: Live): (Task & { line?: string })[] {
   const following = new Set(
     call.call
       .activity()
-      .flatMap((task) => (task.state === "running" && task.agent ? [task.agent] : [])),
+      .flatMap((each) => (each.state === "running" && filled(each.agent) ? [each.agent] : [])),
   );
 
   return board.runs
@@ -2105,33 +2340,37 @@ function elsewhere(call: Live): (Task & { line?: string })[] {
     }));
 }
 
-// The questions put on screen in this call, in order, each with the answer given after it was shown,
-// until an undo takes that back.
 function cards(call: Live) {
   const marks = call.call.record().moments;
 
-  return marks
-    .filter((mark) => mark.kind === "ask" && call.shown.has(mark.ask!))
-    .map((mark, i, shown) => {
-      const next = shown.slice(i + 1).find((later) => later.ask === mark.ask)?.at ?? Infinity;
+  const shown = marks.flatMap((moment) => {
+    const question =
+      moment.kind === "ask" && moment.ask !== undefined ? call.shown.get(moment.ask) : undefined;
 
-      const answered = marks.findLast(
-        (answer) =>
-          answer.kind === "answered" &&
-          answer.ask === mark.ask &&
-          answer.at >= mark.at &&
-          answer.at < next,
-      );
+    return question ? [{ moment, question }] : [];
+  });
 
-      const undone =
-        marks.findLast((undo) => undo.kind === "undone" && undo.ask === mark.ask)?.at ?? -1;
+  return shown.map(({ moment, question }, i) => {
+    const next =
+      shown.slice(i + 1).find((later) => later.moment.ask === moment.ask)?.moment.at ?? Infinity;
 
-      return {
-        at: mark.at,
-        ask: call.shown.get(mark.ask!)!,
-        ...(answered && answered.at > undone && { answer: answered.text, sent: answered.sent }),
-      };
-    });
+    const answered = marks.findLast(
+      (reply) =>
+        reply.kind === "answered" &&
+        reply.ask === moment.ask &&
+        reply.at >= moment.at &&
+        reply.at < next,
+    );
+
+    const undone =
+      marks.findLast((undo) => undo.kind === "undone" && undo.ask === moment.ask)?.at ?? -1;
+
+    return {
+      at: moment.at,
+      ask: question,
+      ...(answered && answered.at > undone && { answer: answered.text, sent: answered.sent }),
+    };
+  });
 }
 
 function topicOf(about?: string): Topic | undefined {
@@ -2139,7 +2378,7 @@ function topicOf(about?: string): Topic | undefined {
     return walkTopic(yours.view.asks);
   }
 
-  const run = about ? board.get(about) : undefined;
+  const run = filled(about) ? board.get(about) : undefined;
 
   return run && runTopic(run);
 }
@@ -2147,16 +2386,13 @@ function topicOf(about?: string): Topic | undefined {
 async function showRuns(url: URL, runs: Board) {
   const after = url.searchParams.get("after");
 
-  if (after) {
+  if (after !== null && after !== "") {
     await runs.changes(Number(after), 25_000);
   }
 
   return Response.json({ version: runs.version, tasks: runs.rows(), finished: runs.finished });
 }
 
-// The Tasks button's counts: threads that need you and are working, and how many things are yours,
-// as many as Tasks lists under Needs you: every question, everything stuck, and every thread that needs
-// you without a question.
 async function showSummary(url: URL, runs: Board, questions: Questions) {
   const version = () => runs.counts.version + questions.counts.version;
   const after = Number(url.searchParams.get("after"));
@@ -2181,20 +2417,20 @@ async function showSummary(url: URL, runs: Board, questions: Questions) {
 async function showQuestions(url: URL, questions: Questions) {
   const after = url.searchParams.get("after");
 
-  if (after) {
+  if (after !== null && after !== "") {
     await questions.changes(Number(after), 25_000);
   }
 
   return Response.json({ version: questions.version, ...questions.view });
 }
 
-// What the app's tap on a question, a stuck item or a new result does. Each answers once the hub has it;
-// the change itself comes back through the list.
 async function questionRoutes(request: Request, url: URL) {
   const questions = yours;
 
   if (url.pathname === "/asks" && request.method === "GET") {
-    if (!url.searchParams.get("after")) {
+    const after = url.searchParams.get("after");
+
+    if (after === null || after === "") {
       questions.opened();
     }
 
@@ -2207,9 +2443,9 @@ async function questionRoutes(request: Request, url: URL) {
       : new Response("No check yet", { status: 404 });
   }
 
-  const [, asked] = /^\/asks\/([^/]+)\/words$/.exec(url.pathname) ?? [];
+  const [, asked] = /^\/asks\/([^/]+)\/words$/u.exec(url.pathname) ?? [];
 
-  if (asked && request.method === "GET") {
+  if (filled(asked) && request.method === "GET") {
     const words = questions.words(decodeURIComponent(asked));
 
     return words ? Response.json(words) : new Response("Nothing to show", { status: 404 });
@@ -2220,40 +2456,40 @@ async function questionRoutes(request: Request, url: URL) {
   }
 
   const [, kind, id, verb] =
-    /^\/(asks|stuck|fresh)\/([^/]+)\/(answer|note|dismiss|undo|act|read)$/.exec(url.pathname) ?? [];
+    /^\/(asks|stuck|fresh)\/([^/]+)\/(answer|note|dismiss|undo|act|read)$/u.exec(url.pathname) ??
+    [];
 
-  if (!kind || request.method !== "POST") {
+  if (!filled(kind) || id === undefined || request.method !== "POST") {
     return new Response("404", { status: 404 });
   }
 
   try {
-    const key = decodeURIComponent(id!);
+    const key = decodeURIComponent(id);
 
-    // The call the card is on, if it still is once the verb has gone out; heard: the call that had
-    // its answer, from the card or the list.
-    const shown =
-      live?.shown.has(key) &&
-      live.call.record().moments.some((mark) => mark.kind === "ask" && mark.ask === key)
+    const callTheCardIsOn =
+      live?.shown.has(key) === true &&
+      live.call.record().moments.some((moment) => moment.kind === "ask" && moment.ask === key)
         ? live
         : undefined;
 
-    const heard = live?.call
-      .record()
-      .moments.some((mark) => mark.kind === "answered" && mark.ask === key)
-      ? live
-      : undefined;
+    const callThatHadItsAnswer =
+      live?.call
+        .record()
+        .moments.some((moment) => moment.kind === "answered" && moment.ask === key) === true
+        ? live
+        : undefined;
 
-    const onCall = (call = shown) => (call && live === call ? call : undefined);
+    const stillOnTheCall = (call = callTheCardIsOn) => (call && live === call ? call : undefined);
 
     if (kind === "asks" && verb === "answer") {
-      const label = ((await request.json().catch(() => null)) as { label?: unknown } | null)?.label;
+      const label = (await bodyOf(request, AnswerBody))?.label;
 
-      if (typeof label !== "string" || !label) {
+      if (!filled(label)) {
         return new Response("An answer needs its label", { status: 400 });
       }
 
       const sent = await answerQuestion(key, label, "app");
-      const call = onCall();
+      const call = stillOnTheCall();
 
       if (call) {
         deliver(
@@ -2266,15 +2502,14 @@ async function questionRoutes(request: Request, url: URL) {
     }
 
     if (kind === "asks" && verb === "note") {
-      const raw = ((await request.json().catch(() => null)) as { text?: unknown } | null)?.text;
-      const text = typeof raw === "string" ? raw.trim() : "";
+      const text = (await bodyOf(request, NoteBody))?.text.trim() ?? "";
 
-      if (!text) {
+      if (text === "") {
         return new Response("A note needs its text", { status: 400 });
       }
 
       const sent = await questions.note(key, text, "app");
-      const call = onCall();
+      const call = stillOnTheCall();
 
       if (call) {
         deliver(
@@ -2289,10 +2524,13 @@ async function questionRoutes(request: Request, url: URL) {
     if (kind === "asks" && verb === "dismiss") {
       const question = questions.find(key);
       const sent = await questions.dismiss(key, "app");
-      const call = onCall();
+      const call = stillOnTheCall();
 
       if (call) {
-        call.shown.set(key, question!);
+        if (question) {
+          call.shown.set(key, question);
+        }
+
         remember(call, "answered", "Not needed", { ask: key, sent });
         activity.changed();
         deliver(
@@ -2308,7 +2546,7 @@ async function questionRoutes(request: Request, url: URL) {
       try {
         await questions.undo(key, "app");
       } finally {
-        const call = !questions.answered(key) && onCall(heard);
+        const call = questions.answered(key) ? undefined : stillOnTheCall(callThatHadItsAnswer);
 
         if (call) {
           remember(call, "undone", "Taken back", { ask: key });
@@ -2316,7 +2554,7 @@ async function questionRoutes(request: Request, url: URL) {
         }
       }
 
-      const card = onCall();
+      const card = stillOnTheCall();
 
       if (card) {
         deliver(`The caller took back what they gave on the card for ${key}; it's open again.`, {
@@ -2331,7 +2569,7 @@ async function questionRoutes(request: Request, url: URL) {
       return new Response("404", { status: 404 });
     }
   } catch (error) {
-    return new Response(error instanceof Error ? error.message : String(error), { status: 409 });
+    return new Response(messageOf(error), { status: 409 });
   }
 
   return new Response(null, { status: 204 });
@@ -2348,20 +2586,21 @@ function runRoutes(request: Request, url: URL) {
     return showSummary(url, runs, yours);
   }
 
-  const [, id, verb] = /^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/.exec(url.pathname) ?? [];
-  const key = id && decodeURIComponent(id);
-  // A thread off the board is a page to read: its run, asks, pin and chat, and nothing to act on.
-  const page = key && request.method === "GET" && runs.find(key);
+  const [, id, verb] = /^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/u.exec(url.pathname) ?? [];
+  const key = filled(id) ? decodeURIComponent(id) : "";
+  const pageToRead = filled(key) && request.method === "GET" ? runs.find(key) : undefined;
 
-  if (page && verb === "chat") {
-    return showChat(url, page, !runs.get(key));
+  if (pageToRead && verb === "chat") {
+    const offTheBoard = !runs.get(key);
+
+    return showChat(url, pageToRead, offTheBoard);
   }
 
-  if (page && !verb) {
-    return Response.json({ ...page, ...yours.of(page.id) });
+  if (pageToRead && !filled(verb)) {
+    return Response.json({ ...pageToRead, ...yours.of(pageToRead.id) });
   }
 
-  const run = key && runs.get(key);
+  const run = filled(key) ? runs.get(key) : undefined;
 
   if (!run) {
     return new Response("404", { status: 404 });
@@ -2382,65 +2621,83 @@ function runRoutes(request: Request, url: URL) {
   }
 }
 
-// A thread's chat, and with after, the next time it changes. A page's is there to read, so it
-// never offers to send.
-async function showChat(url: URL, run: Run | Page, page = false) {
-  const where = () => ({ ...run, session: board.session(run.id) });
-  const after = url.searchParams.get("after");
-  const chat = after ? await chats.next(where, Number(after), 25_000) : chats.of(where());
+async function showChat(url: URL, run: Run | Page, readOnly = false) {
+  const where = (): Where => {
+    const serving = board.session(run.id);
 
-  return Response.json(page ? { ...chat, sends: false } : chat);
-}
-
-async function sendChat(request: Request, run: Run) {
-  const {
-    text = "",
-    key,
-    media: names = [],
-  } = ((await request.json().catch(() => null)) ?? {}) as {
-    text?: unknown;
-    key?: unknown;
-    media?: unknown;
+    return serving === undefined ? { ...run } : { ...run, session: serving };
   };
 
-  const items = Array.isArray(names)
-    ? names.map((name) => (typeof name === "string" ? media.get(name) : undefined))
-    : [undefined];
+  const after = url.searchParams.get("after");
 
-  if (!items.every((item) => item)) {
-    return new Response("Name each photo or video by the id /media gave it", { status: 400 });
+  const chat =
+    after !== null && after !== ""
+      ? await chats.next(where, Number(after), 25_000)
+      : chats.of(where());
+
+  return Response.json(readOnly ? { ...chat, sends: false } : chat);
+}
+
+const CHAT_FIELD_PROBLEMS = {
+  media: "Name each photo or video by the id /media gave it",
+  text: "Send some words, or a photo or video",
+  key: "Name the message with a key starting app-",
+};
+
+async function sendChat(request: Request, run: Run) {
+  const raw: unknown = await request.json().catch(() => null);
+  const parsed = ChatBody.safeParse(raw ?? {});
+
+  if (!parsed.success) {
+    const field = parsed.error.issues[0]?.path[0];
+
+    return new Response(field === "media" ? CHAT_FIELD_PROBLEMS.media : CHAT_FIELD_PROBLEMS.text, {
+      status: 400,
+    });
   }
 
-  if (typeof text !== "string" || (!text.trim() && !items.length)) {
-    return new Response("Send some words, or a photo or video", { status: 400 });
+  const { media: names, text, key } = parsed.data;
+  const items: Item[] = [];
+
+  for (const name of names) {
+    const item = media.get(name);
+
+    if (!item) {
+      return new Response(CHAT_FIELD_PROBLEMS.media, { status: 400 });
+    }
+
+    items.push(item);
   }
 
-  if (typeof key !== "string" || !/^app-[\w-]{8,60}$/.test(key)) {
-    return new Response("Name the message with a key starting app-", { status: 400 });
+  if (text.trim() === "" && items.length === 0) {
+    return new Response(CHAT_FIELD_PROBLEMS.text, { status: 400 });
+  }
+
+  const named = ChatKey.safeParse(key);
+
+  if (!named.success) {
+    return new Response(CHAT_FIELD_PROBLEMS.key, { status: 400 });
   }
 
   return done(() => {
-    chats.send(run, text.trim(), key, items as Item[]);
+    chats.send(run, text.trim(), named.data, items);
   });
 }
 
-// No content once act is through, or why it couldn't be.
 function done(act: () => void) {
   try {
     act();
 
     return new Response(null, { status: 204 });
   } catch (error) {
-    return new Response((error as Error).message, { status: 409 });
+    return new Response(messageOf(error), { status: 409 });
   }
 }
 
-// A live call's record is read from the call itself, so it has every word heard so far, and a
-// request with after waits until the next word or change; an ended call's comes from disk.
 async function showCall(id: string, url: URL) {
   const after = url.searchParams.get("after");
 
-  if (after && live?.id === id) {
+  if (after !== null && after !== "" && live?.id === id) {
     await live.changes.changes(Number(after), 25_000);
   }
 
@@ -2456,7 +2713,7 @@ async function showCall(id: string, url: URL) {
 async function listCalls(url: URL) {
   const after = url.searchParams.get("after");
 
-  if (after) {
+  if (after !== null && after !== "") {
     await calls.changes(Number(after), 25_000);
   }
 
@@ -2486,7 +2743,7 @@ function routes(request: Request) {
     return runRoutes(request, new URL(request.url));
   }
 
-  if (/^\/(asks|stuck|fresh)(\/|$)/.test(pathname)) {
+  if (/^\/(asks|stuck|fresh)(\/|$)/u.test(pathname)) {
     return questionRoutes(request, new URL(request.url));
   }
 
@@ -2494,44 +2751,47 @@ function routes(request: Request) {
     return upload(request);
   }
 
-  const [, image] = /^\/media\/([\w-]+)$/.exec(pathname) ?? [];
+  const [, image] = /^\/media\/([\w-]+)$/u.exec(pathname) ?? [];
 
-  if (image && request.method === "GET") {
+  if (filled(image) && request.method === "GET") {
     return showImage(image);
   }
 
-  const [, callId, verb] = /^\/calls\/([\w-]+)(?:\/(moments|media))?$/.exec(pathname) ?? [];
+  const [, callId, verb] = /^\/calls\/([\w-]+)(?:\/(moments|media))?$/u.exec(pathname) ?? [];
 
-  if (callId && verb === "moments" && request.method === "POST") {
+  if (!filled(callId)) {
+    return pathname === "/phone" && request.method === "POST" ? moveToPhone() : undefined;
+  }
+
+  if (verb === "moments" && request.method === "POST") {
     return interruption(request, callId);
   }
 
-  if (callId && verb === "media" && request.method === "POST") {
+  if (verb === "media" && request.method === "POST") {
     return showMedia(request, callId);
   }
 
-  if (callId && !verb && request.method === "GET") {
+  if (!filled(verb) && request.method === "GET") {
     return showCall(callId, new URL(request.url));
   }
 
-  if (callId && !verb && request.method === "DELETE") {
+  if (!filled(verb) && request.method === "DELETE") {
     if (live?.id === callId) {
       return new Response("That call is still going", { status: 409 });
     }
 
     return new Response(null, { status: calls.delete(callId) ? 204 : 404 });
   }
+}
 
-  if (pathname === "/phone" && request.method === "POST") {
-    return dial({ move: true }).then(
-      (text) => new Response(text),
-      (error) => new Response(error.message, { status: 502 }),
-    );
+async function moveToPhone() {
+  try {
+    return new Response(await dial({ move: true }));
+  } catch (error) {
+    return new Response(messageOf(error), { status: 502 });
   }
 }
 
-// The call engine: it holds the voice page, the app's routes and the phone line on the voice port,
-// for as long as hex's service runs, and hands what the caller asks to the voice session.
 export function serve(voiceHub: Hub, state: string) {
   hub = voiceHub;
   HEX_STATE = state;
@@ -2544,7 +2804,7 @@ export function serve(voiceHub: Hub, state: string) {
   });
   yours = new Questions(state);
   recover();
-  resume();
+  followWorkPastCallsSentOut();
 
   return Bun.serve<Phone>({
     port: PORT,
@@ -2557,32 +2817,32 @@ export function serve(voiceHub: Hub, state: string) {
         return pickUp(request);
       }
 
-      const [, statusToken] = /^\/twilio\/status\/([\w-]+)$/.exec(pathname) ?? [];
+      const [, statusToken] = /^\/twilio\/status\/([\w-]+)$/u.exec(pathname) ?? [];
 
-      if (statusToken && request.method === "POST") {
+      if (filled(statusToken) && request.method === "POST") {
         return phoneStatus(request, statusToken);
       }
 
-      const [, token, twimlPath] = /^\/twilio\/([\w-]+)(\/twiml)?$/.exec(pathname) ?? [];
+      const [, token = "", twimlPath] = /^\/twilio\/([\w-]+)(\/twiml)?$/u.exec(pathname) ?? [];
       const dialed = dials.get(token);
 
-      if (token) {
+      if (filled(token)) {
         trace(
-          `Twilio ${request.method} ${twimlPath ? "TwiML" : "stream"}, ${dialed ? "known" : "unknown"} token`,
+          `Twilio ${request.method} ${filled(twimlPath) ? "TwiML" : "stream"}, ${dialed ? "known" : "unknown"} token`,
         );
       }
 
-      if (dialed && twimlPath) {
+      if (dialed && filled(twimlPath)) {
         return stream(token);
       }
 
       if (dialed && dials.delete(token)) {
-        return server.upgrade(request, { data: { ...dialed, unheard: 0 } })
+        return server.upgrade(request, { data: { ...dialed, unplayedChunks: 0 } })
           ? undefined
           : new Response("upgrade failed", { status: 400 });
       }
 
-      if (foreign(request)) {
+      if (postedFromAnotherSiteOrRebound(request)) {
         return new Response("Forbidden", { status: 403 });
       }
 
