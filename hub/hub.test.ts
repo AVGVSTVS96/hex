@@ -395,6 +395,24 @@ test('a hub that starts after its sessions died (a reboot) gives what they never
   expect(store.turn(SESSION).ended).toBeDefined()
 })
 
+test("a session that died while its background agents still worked (a reboot) gives what it took to its thread's next session", async () => {
+  const store = open(dir)
+  store.keepThreads('telegram', { 'chat:7': { name: 'Desk anchors', session: SESSION } })
+  store.deliver({ key: 'telegram:1:10', to: 'chat:7', from: 'telegram', author: 'owner', body: 'research it in the background', meta: {} })
+  store.turned(SESSION, true, '2026-01-01T00:00:00.000Z')
+  store.take('telegram:1:10', SESSION)
+  const hook = Bun.spawn(['bun', join(import.meta.dir, 'state.ts'), 'idle'], { env: { ...process.env, HEX_STORE: dir, MEMORY_DIR: '' }, stdin: new Blob([JSON.stringify({ hook_event_name: 'Stop', session_id: SESSION, background_tasks: [{ type: 'subagent', status: 'running' }] })]) })
+  await hook.exited
+  expect(store.midTurn('chat:7')).toBe(true)
+  start({ agents: [], reconnect: 50 })
+  await time.lapse(50)
+  await launched()
+  const next = await session('chat:7')
+  await until(() => next.received.length)
+  expect(next.received[0].content).toBe('research it in the background')
+  expect(store.midTurn('chat:7')).toBe(false)
+})
+
 test('a session the hub stops while idle has handled what it took, even with its turn left open (Esc in an attached terminal runs no Stop hook)', async () => {
   start({ idleStop: 50, reconnect: 50 })
   hub.deliver('chat:7', 'Desk anchors', message)

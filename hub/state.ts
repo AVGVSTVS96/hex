@@ -108,8 +108,10 @@ if (session_id && !recorded) {
     const beat = heartbeat || (busy && heartbeats(store, session_id))
     store.write(() => {
       store.turned(session_id, busy, at, beat)
-      // A turn that failed (StopFailure, an API error) answered nothing.
-      if (hook_event_name === 'Stop') store.handled(session_id, at)
+      // A turn that failed (StopFailure, an API error) answered nothing, and one whose background agents still work
+      // isn't done with what it took.
+      if (hook_event_name === 'Stop' && background) store.waitsOnAgents(session_id, at)
+      else if (hook_event_name === 'Stop') store.handled(session_id, at)
     })
   } catch (error) {
     console.error(`hex couldn't record this turn: ${error}`)
