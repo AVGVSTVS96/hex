@@ -7,6 +7,7 @@ export class Changes {
     if (after !== this.version) {
       return Promise.resolve();
     }
+
     return new Promise<void>((resolve) => {
       const done = () => {
         clearTimeout(timer);

@@ -3,14 +3,11 @@ import type { Turn } from "../../hub/hub.ts";
 import { owners } from "../../hub/notes.ts";
 import { open as store } from "../../hub/store.ts";
 import { Changes } from "./changes.ts";
-import { caption, meta, typed } from "./media.ts";
+import { caption, meta as mediaMeta, typed } from "./media.ts";
 import type { Item } from "./media.ts";
 
 export type Sent = { key: string; text: string; at: string; media?: Turn["media"] };
 
-// turns: the chat's latest turns, out of all it has (total). sends: whether words typed in the app
-// reach this thread. T3 Code shows only turns it starts, and a session no app holds has no chat to
-// send through.
 export type Chat = {
   version: number;
   sends: boolean;
@@ -19,20 +16,18 @@ export type Chat = {
   waiting: Sent[];
 };
 
-// How many of a chat's latest turns the app gets: a long thread's whole history would go to the
-// phone on every change.
-const SHOWN = 100;
+const LATEST_TURNS_SENT_TO_THE_PHONE_ON_EACH_CHANGE = 100;
 
 export type Where = { app: string; thread: string; session?: string };
 
-// A thread's chat as the app shows it: what the owner said and hex replied, from hex.db, and what
-// the owner sent that no session has taken in yet. A wait for it ends when hex.db changes.
 export class Chats {
   private readonly changes = new Changes();
   private readonly seen = new Map<string, { mark: string; said: string; chat: Chat }>();
   private readonly stops: (() => void)[];
+  private readonly state: string;
 
-  constructor(private readonly state: string) {
+  constructor(state: string) {
+    this.state = state;
     this.stops = [
       store(state).watch(() => {
         this.changes.changed();
@@ -40,10 +35,9 @@ export class Chats {
     ];
   }
 
-  // Read again only when the thread's messages, or whether it sends, changed since the last read.
   of(where: Where): Chat {
     const kept = store(this.state);
-    const sends = !!sendsThrough(where);
+    const sends = sendsThrough(where) !== undefined;
     const mark = `${kept.mark(where.thread)}:${sends}`;
     const id = `${where.app}:${where.thread}`;
     const seen = this.seen.get(id);
@@ -51,6 +45,7 @@ export class Chats {
     if (seen?.mark === mark) {
       return seen.chat;
     }
+
     const turns = history(kept, where.thread).map((turn) => ({
       ...turn,
       text: typed(turn.text, turn.media?.length ?? 0),
@@ -62,7 +57,13 @@ export class Chats {
       return { key, text: typed(body, media?.length ?? 0), at, ...(media && { media }) };
     });
 
-    const fresh = { sends, total: turns.length, turns: turns.slice(-SHOWN), waiting };
+    const fresh = {
+      sends,
+      total: turns.length,
+      turns: turns.slice(-LATEST_TURNS_SENT_TO_THE_PHONE_ON_EACH_CHANGE),
+      waiting,
+    };
+
     const said = JSON.stringify(fresh);
 
     const chat =
@@ -91,31 +92,33 @@ export class Chats {
     this.changes.changed();
   }
 
-  // The owner's words, typed in the app, go to the thread's session the way its app's would, with
-  // the photos and clips sent with them as images it reads. The app names each message, so sending
-  // it again after a lost answer delivers it once.
-  send(where: Where, text: string, key: string, media: Item[] = []) {
+  // oxlint-disable-next-line eslint/class-methods-use-this -- the app server sends through its Chats, beside the chat it reads
+  send(where: Where, text: string, keyTheAppNamedSoARetryDeliversOnce: string, media: Item[] = []) {
     const client = sendsThrough(where);
     const name = client?.hub.name(where.thread);
 
-    if (!name) {
+    if (!client || name === undefined || name === "") {
       throw new Error(`Words typed here can't reach this thread; write to it in its own app.`);
     }
+
     client.hub.deliver(where.thread, name, {
       content: caption(text, media),
-      key,
+      key: keyTheAppNamedSoARetryDeliversOnce,
       author: "owner",
-      meta: { user: "hex app", ts: new Date().toISOString(), ...meta(media) },
+      meta: { user: "hex app", ts: new Date().toISOString(), ...mediaMeta(media) },
     });
   }
 
-  // The owner's stop, as the thread's own app does it.
+  // oxlint-disable-next-line eslint/class-methods-use-this -- the app server stops through its Chats, beside the chat it reads
   stop(where: Where) {
     const client = clients.get(where.app);
 
-    if (!client?.hub.name(where.thread)) {
+    const name = client?.hub.name(where.thread);
+
+    if (!client || name === undefined || name === "") {
       throw new Error(`No app here holds this thread, so there's nothing to stop.`);
     }
+
     (client.stop ?? client.hub.stop)(where.thread);
   }
 
@@ -126,9 +129,11 @@ export class Chats {
   }
 }
 
-// The app holding the thread, when words typed in the hex app can reach it through it.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// T3 Code shows only turns it starts (waits), and a session no app holds has no chat to send through.
 const sendsThrough = ({ app, thread }: Where) => {
   const client = clients.get(app);
+  const name = client?.hub.name(thread);
 
-  return client && !client.waits && client.hub.name(thread) ? client : undefined;
+  return client && client.waits !== true && name !== undefined && name !== "" ? client : undefined;
 };

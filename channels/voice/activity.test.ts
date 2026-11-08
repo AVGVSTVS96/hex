@@ -3,9 +3,12 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { open } from "../../hub/store.ts";
 import type { Kept } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
+import type { TranscriptLine } from "./activity.ts";
 
 const home = mkdtempSync(join(tmpdir(), "voice-activity-"));
 
@@ -33,7 +36,7 @@ const hex = "/home/someone/hex";
 const project = join(home, "claude", "projects", "-home-someone-hex");
 const state = join(home, "state");
 
-function tool(name: string, input: object) {
+function tool(name: string, input: Record<string, string>) {
   return {
     type: "assistant",
     message: {
@@ -57,15 +60,28 @@ const asked = (tag: string) => ({
   message: { role: "user", content: `<channel source="buzz" voice_task="${tag}">look</channel>` },
 });
 
+function firstBlockText(entry: TranscriptLine) {
+  return z.array(z.object({ text: z.string() })).parse(entry.message?.content)[0]?.text ?? "";
+}
+
 function write(path: string, ...entries: object[]) {
   appendFileSync(path, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
 }
 
-// What a follow has said, once it has said n things.
 async function heard(steps: unknown[], n: number) {
   await until(() => steps.length >= n);
 
   return steps;
+}
+
+function threadNamed(wanted: string) {
+  const found = findThread(state, wanted);
+
+  if (!found) {
+    throw new Error(`no hex thread goes by ${wanted}`);
+  }
+
+  return found;
 }
 
 function threads(app: string, all: Record<string, Kept>) {
@@ -84,9 +100,9 @@ test("a step reads as a few plain words: a command by its description or first l
     tool("ToolSearch", { query: "select:Monitor" }),
   );
   const lines: (string | undefined)[] = [];
-  await followTranscript(path, 0, (_: unknown, updates: () => any[]) =>
-    lines.push(...updates().map(headline)),
-  )(true);
+  await followTranscript(path, 0, (_entry, updates) => {
+    lines.push(...updates().map(headline));
+  })(true);
   expect(lines).toEqual([
     "Show recent commits",
     "Running uptime",
@@ -105,20 +121,25 @@ test("a step reads as a few plain words: a command by its description or first l
   expect(headline(thought)).toBe("Thinking");
 });
 
-test("a T3 Code hand-off reads by the agent or thread it's about, a Claude agent by its description, and any other MCP tool by its app with what it was given", () => {
-  const call = (name: string, input: object) =>
-    stepOf(
-      {
-        sessionUpdate: "tool_call",
-        toolCallId: "t1",
-        title: name,
-        kind: name === "Agent" ? "think" : "other",
-        rawInput: input,
-        _meta: { claudeCode: { toolName: name } },
-      } as any,
-      (id) => ({ "task-1": "sol: a second opinion", "thread-2": "voice app" })[id],
-    );
+const t3Names = new Map([
+  ["task-1", "sol: a second opinion"],
+  ["thread-2", "voice app"],
+]);
 
+const call = (name: string, input: Record<string, string | boolean>) =>
+  stepOf(
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "t1",
+      title: name,
+      kind: name === "Agent" ? "think" : "other",
+      rawInput: input,
+      _meta: { claudeCode: { toolName: name } },
+    },
+    (id) => t3Names.get(id),
+  );
+
+test("a T3 Code hand-off reads by the agent or thread it's about, a Claude agent by its description, and any other MCP tool by its app with what it was given", () => {
   expect(
     call("mcp__t3-code__delegate_task", {
       title: "sol: a second opinion",
@@ -160,16 +181,20 @@ test("a T3 Code hand-off reads by the agent or thread it's about, a Claude agent
   expect(call("ToolSearch", { query: "select:Monitor" })).toBeUndefined();
 });
 
-test("a tool call that comes back says whether it worked and its first lines, never a file body or a hand-off receipt, and names the agent it started", () => {
-  const update = (toolName: string, rawOutput: unknown, status = "completed") =>
-    backOf({
-      sessionUpdate: "tool_call_update",
-      toolCallId: "t1",
-      status,
-      rawOutput,
-      _meta: { claudeCode: { toolName } },
-    } as any);
+const update = (
+  toolName: string,
+  rawOutput: string | { type: string; text: string }[],
+  status: "completed" | "failed" = "completed",
+) =>
+  backOf({
+    sessionUpdate: "tool_call_update",
+    toolCallId: "t1",
+    status,
+    rawOutput,
+    _meta: { claudeCode: { toolName } },
+  });
 
+test("a tool call that comes back says whether it worked and its first lines, never a file body or a hand-off receipt, and names the agent it started", () => {
   expect(update("Bash", "one\ntwo\nthree\nfour\nfive\nsix\nseven")).toEqual({
     state: "done",
     result: "one\ntwo\nthree\nfour\nfive\nsix",
@@ -215,15 +240,17 @@ test("a tool call that comes back says whether it worked and its first lines, ne
   ]);
 });
 
-test("Codex's turn items read like Claude's steps: a command by what it does, with the command as typed, a search, an edit's size, a tool, its thoughts and words, a hand-off and an error", () => {
-  const item = (type: string, payload: object, status = "completed") =>
-    itemStep({
-      id: `${type}-1`,
-      type,
-      status,
-      payload: { startedAt: "b", completedAt: "e", ...payload },
-    });
+type Field = string | number | null | string[] | { [key: string]: Field };
 
+const item = (type: string, payload: Record<string, Field>, status = "completed") =>
+  itemStep({
+    id: `${type}-1`,
+    type,
+    status,
+    payload: { startedAt: "b", completedAt: "e", ...payload },
+  });
+
+test("Codex's turn items read like Claude's steps: a command by what it does, with the command as typed, a search, an edit's size, a tool, its thoughts and words, a hand-off and an error", () => {
   expect(
     item("command_execution", {
       input: `/usr/bin/bash -lc "pwd; rg -n 'durable|queue' ~/notes"`,
@@ -240,7 +267,7 @@ test("Codex's turn items read like Claude's steps: a command by what it does, wi
     detail: "pwd; rg -n 'durable|queue' ~/notes",
     result: "notes.md:3: durable",
   });
-  const words = (input: string) => item("command_execution", { input, exitCode: 0 })!.text;
+  const words = (input: string) => item("command_execution", { input, exitCode: 0 })?.text;
   expect(
     [
       `bash -lc 'nl -ba hub.ts | sed -n 1,80p'`,
@@ -384,12 +411,22 @@ test("a background subagent's steps come from its transcript as it writes them",
     tool("Read", { file_path: "/x/plan.md" }),
   );
   const lines: string[] = [];
-  const stop = followAgent("a1b2", "brain-session", (step) => step.line && lines.push(step.line))!;
+
+  const stop = followAgent("a1b2", "brain-session", (step) => {
+    if (step.line !== undefined && step.line !== "") {
+      lines.push(step.line);
+    }
+  });
+
+  if (!stop) {
+    throw new Error("the agent's transcript wasn't found");
+  }
+
   expect(await heard(lines, 1)).toEqual(["Reading plan.md"]);
   write(path, said("Read it; checking the hub next."));
   await until(() => lines.length === 2);
   expect(lines[1]).toBe("Read it; checking the hub next.");
-  stop();
+  void stop();
   expect(followAgent("nobody", "brain-session", () => {})).toBeUndefined();
   expect(followAgent("../x", "brain-session", () => {})).toBeUndefined();
 });
@@ -430,7 +467,7 @@ test("General goes by General, found by that name too, and a second Telegram gro
   ];
 
   expect(rows.map((row) => nameOf(row, generalOf(rows)))).toEqual(["old", "General", "Family"]);
-  expect(generalOf([rows[0]!])).toBeUndefined();
+  expect(generalOf(rows.slice(0, 1))).toBeUndefined();
   expect(rows.map((row) => nameOf(row, generalOf(rows, "-300")))).toEqual([
     "old",
     "main",
@@ -464,9 +501,9 @@ test("a message sent to a thread shows that thread's steps once it takes the mes
   write(path, tool("Bash", { command: "ls", description: "Earlier work" }), ended);
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "voiceapp")!, hex, "tag42", false, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("voiceapp"), hex, "tag42", false, (step) => {
+    steps.push(step);
+  });
 
   write(path, tool("Bash", { command: "ls", description: "Work on something else" }));
   write(path, {
@@ -514,26 +551,26 @@ test("a message sent to a thread shows that thread's steps once it takes the mes
   stop();
 });
 
+const sentFromTags = (tag: string, blocks = false) => {
+  const text = `<channel source="telegram" user="hex voice" voice_task="${tag}">look</channel>`;
+
+  return {
+    type: "user",
+    origin: { kind: "channel" },
+    message: { role: "user", content: blocks ? [{ type: "text", text }] : text },
+  };
+};
+
 test("a message is picked by its own tag only, not by a tag it begins, in a string or in blocks", async () => {
   threads("buzz", { b2: { name: "Tags", session: "tags" } });
   const path = join(project, "tags.jsonl");
 
-  const sent = (tag: string, blocks = false) => {
-    const text = `<channel source="telegram" user="hex voice" voice_task="${tag}">look</channel>`;
-
-    return {
-      type: "user",
-      origin: { kind: "channel" },
-      message: { role: "user", content: blocks ? [{ type: "text", text }] : text },
-    };
-  };
-
-  write(path, sent("call:x-2"), said("The other one."), ended);
+  write(path, sentFromTags("call:x-2"), said("The other one."), ended);
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "tags")!, hex, "call:x", true, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("tags"), hex, "call:x", true, (step) => {
+    steps.push(step);
+  });
 
   expect(steps).toEqual([]);
   write(
@@ -549,7 +586,7 @@ test("a message is picked by its own tag only, not by a tag it begins, in a stri
     said("A quote."),
     ended,
   );
-  write(path, sent("call:x", true), said("This one."), ended);
+  write(path, sentFromTags("call:x", true), said("This one."), ended);
   await until(() => steps.length === 2);
   expect(steps).toEqual([{ line: "This one." }, { end: "done" }]);
   stop();
@@ -561,9 +598,9 @@ test("a message the thread took while a turn ran, queued as an attachment, is pi
   write(path, said("Working on something else."));
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "busy")!, hex, "call:queued", true, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("busy"), hex, "call:queued", true, (step) => {
+    steps.push(step);
+  });
 
   write(
     path,
@@ -592,9 +629,9 @@ test("a session that dies mid-turn fails the message's work once hex's record en
   write(path, said("Earlier."), ended);
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "dies")!, hex, "call:dies", false, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("dies"), hex, "call:dies", false, (step) => {
+    steps.push(step);
+  });
 
   write(path, asked("call:dies"), said("Starting on it."));
   await until(() => steps.length === 1);
@@ -611,43 +648,43 @@ test("a session that dies mid-turn fails the message's work once hex's record en
   stop();
 });
 
+const sentToRenewed = (tag: string, by: string) =>
+  open(state).deliver(
+    {
+      key: `buzz:${tag}`,
+      to: "b3",
+      from: "buzz",
+      author: "other",
+      body: "look",
+      meta: { user: "hex voice", voice_task: tag },
+    },
+    by,
+  );
+
 test("following a message sent before a restart starts in the session that took it, though the thread has renewed since, and goes on in the new one", async () => {
   threads("buzz", { b3: { name: "Renewed", session: "renewed-now" } });
 
-  const sent = (tag: string, by: string) =>
-    open(state).deliver(
-      {
-        key: `buzz:${tag}`,
-        to: "b3",
-        from: "buzz",
-        author: "other",
-        body: "look",
-        meta: { user: "hex voice", voice_task: tag },
-      },
-      by,
-    );
-
-  sent("call:finished", "took-it");
+  sentToRenewed("call:finished", "took-it");
   write(
     join(project, "took-it.jsonl"),
     asked("call:finished"),
     said("Done before the renewal."),
     ended,
   );
-  sent("call:cut-off", "cut-off");
+  sentToRenewed("call:cut-off", "cut-off");
   write(join(project, "cut-off.jsonl"), asked("call:cut-off"), said("Starting on it."));
   write(join(project, "renewed-now.jsonl"), said("Picked it up again."), ended);
 
   const finished: object[] = [];
-  followThread(findThread(state, "renewed")!, hex, "call:finished", true, (step) =>
-    finished.push(step),
-  );
+  followThread(threadNamed("renewed"), hex, "call:finished", true, (step) => {
+    finished.push(step);
+  });
   expect(await heard(finished, 2)).toEqual([{ line: "Done before the renewal." }, { end: "done" }]);
   const cut: object[] = [];
 
-  const stop = followThread(findThread(state, "renewed")!, hex, "call:cut-off", true, (step) =>
-    cut.push(step),
-  );
+  const stop = followThread(threadNamed("renewed"), hex, "call:cut-off", true, (step) => {
+    cut.push(step);
+  });
 
   expect(await heard(cut, 3)).toEqual([
     { line: "Starting on it." },
@@ -657,16 +694,23 @@ test("following a message sent before a restart starts in the session that took 
   stop();
 });
 
-// A session resumed from another copies its finished turns, uuids and times and all, then takes the message
-// of the turn that was cut off again and does it over.
+const agoIso = (ago: number) => new Date(Date.now() - ago).toISOString();
+
 function resumedFrom(tag: string) {
-  const at = (ago: number) => new Date(Date.now() - ago).toISOString();
+  const copied = <T extends object>(entry: T, n: number) => ({
+    ...entry,
+    uuid: `${tag}-${n}`,
+    timestamp: agoIso(n < 2 ? 60_000 : 0),
+  });
 
-  const old = [said("An earlier turn."), ended, asked(tag), said("Starting on it.")].map(
-    (entry, n) => ({ ...entry, uuid: `${tag}-${n}`, timestamp: at(n < 2 ? 60_000 : 0) }),
-  );
+  const old = [
+    copied(said("An earlier turn."), 0),
+    copied(ended, 1),
+    copied(asked(tag), 2),
+    copied(said("Starting on it."), 3),
+  ] as const;
 
-  const now = { timestamp: at(0) };
+  const now = { timestamp: agoIso(0) };
 
   return {
     old,
@@ -697,9 +741,9 @@ test("a session resumed from the one that took the message is followed past what
   write(join(project, "copy-old.jsonl"), ...restart.old);
   write(join(project, "copy-now.jsonl"), ...restart.copy);
   const resumed: object[] = [];
-  followThread(findThread(state, "copied")!, hex, "call:copied", true, (step) =>
-    resumed.push(step),
-  );
+  followThread(threadNamed("copied"), hex, "call:copied", true, (step) => {
+    resumed.push(step);
+  });
   expect(await heard(resumed, 3)).toEqual([
     { line: "Starting on it." },
     { line: "Finished it." },
@@ -711,9 +755,9 @@ test("a session resumed from the one that took the message is followed past what
   write(join(project, "live-old.jsonl"), live.old[0], live.old[1]);
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "live copy")!, hex, "call:live", false, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("live copy"), hex, "call:live", false, (step) => {
+    steps.push(step);
+  });
 
   write(join(project, "live-old.jsonl"), live.old[2], live.old[3]);
   await until(() => steps.length === 1);
@@ -727,7 +771,9 @@ test("a session resumed from the one that took the message is followed past what
 test("a thread's new session is followed from its start, and a turn that ends on an API error fails", async () => {
   threads("discord", { d1: { name: "Latest Claude", session: "old" } });
   const steps: object[] = [];
-  followThread(findThread(state, "latest claude")!, hex, "tag7", false, (step) => steps.push(step));
+  followThread(threadNamed("latest claude"), hex, "tag7", false, (step) => {
+    steps.push(step);
+  });
   write(join(project, "new.jsonl"), {
     type: "user",
     origin: { kind: "channel" },
@@ -765,9 +811,9 @@ test("following a message sent before a restart reads its thread from the start,
     ended,
   );
   const steps: object[] = [];
-  followThread(findThread(state, "context check")!, hex, "call:id", true, (step) =>
-    steps.push(step),
-  );
+  followThread(threadNamed("context check"), hex, "call:id", true, (step) => {
+    steps.push(step);
+  });
   expect(await heard(steps, 2)).toEqual([{ line: "All set." }, { end: "done" }]);
   write(join(project, "done-already.jsonl"), said("A later turn."), ended);
   await Bun.sleep(200);
@@ -778,7 +824,11 @@ test("a transcript stopped for the last time reads what it has that the watcher 
   const path = join(project, "last.jsonl");
   write(path, said("Before."));
   const seen: string[] = [];
-  const stop = followTranscript(path, 0, (entry) => seen.push(entry.message.content[0].text));
+
+  const stop = followTranscript(path, 0, (entry) => {
+    seen.push(firstBlockText(entry));
+  });
+
   write(path, said("Just written."));
   await stop(true);
   expect(seen).toEqual(["Before.", "Just written."]);
@@ -789,7 +839,11 @@ test("a long transcript is read a chunk at a time after the follow returns, ever
   const words = Array.from({ length: 3000 }, (_, n) => `${n} ${"word ".repeat(200)}`);
   write(path, ...words.map((text) => said(text)));
   const seen: string[] = [];
-  const stop = followTranscript(path, 0, (entry) => seen.push(entry.message.content[0].text));
+
+  const stop = followTranscript(path, 0, (entry) => {
+    seen.push(firstBlockText(entry));
+  });
+
   expect(seen).toEqual([]);
   await stop(true);
   expect(seen).toEqual(words);
@@ -824,9 +878,9 @@ test("an agent that comes back while another turn runs, queued as an attachment,
     ended,
   );
   const steps: object[] = [];
-  followThread(findThread(state, "agent queued")!, hex, "call:queued-agent", true, (step) =>
-    steps.push(step),
-  );
+  followThread(threadNamed("agent queued"), hex, "call:queued-agent", true, (step) => {
+    steps.push(step);
+  });
   expect(await heard(steps, 3)).toEqual([
     { line: "Another turn." },
     { line: "It is back." },
@@ -857,9 +911,9 @@ test("an agent back in the older queued form, by command mode, is back", async (
     ended,
   );
   const steps: object[] = [];
-  followThread(findThread(state, "agent queued old")!, hex, "call:queued-old", true, (step) =>
-    steps.push(step),
-  );
+  followThread(threadNamed("agent queued old"), hex, "call:queued-old", true, (step) => {
+    steps.push(step);
+  });
   expect(await heard(steps, 3)).toEqual([
     { line: "Another turn." },
     { line: "It is back." },
@@ -871,9 +925,9 @@ test("a session resumed from an earlier one than the last is followed past what 
   threads("buzz", { b9: { name: "Forked", session: "fork-a" } });
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "forked")!, hex, "call:fork", false, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("forked"), hex, "call:fork", false, (step) => {
+    steps.push(step);
+  });
 
   const a = [said("An earlier turn."), ended, asked("call:fork"), said("Starting on it.")].map(
     (entry, n) => ({ ...entry, uuid: `fork-a-${n}` }),
@@ -931,9 +985,9 @@ test("a session hex.db still names that took messages before the task message wa
   write(join(project, "lag-new.jsonl"), asked("call:lag"), said("Working on it."));
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "lagging")!, hex, "call:lag", true, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("lagging"), hex, "call:lag", true, (step) => {
+    steps.push(step);
+  });
 
   expect(await heard(steps, 1)).toEqual([{ line: "Working on it." }]);
   write(join(project, "lag-new.jsonl"), said("Done."), ended);
@@ -942,34 +996,36 @@ test("a session hex.db still names that took messages before the task message wa
   stop();
 });
 
+const restartNotice = (status: string) => ({
+  type: "user",
+  origin: { kind: "task-notification" },
+  message: {
+    role: "user",
+    content: `<task-notification>\n<task-id>agents1</task-id>\n${status}</task-notification>`,
+  },
+});
+
 test("an agent restarted with its session is still out until it's back", async () => {
   threads("buzz", { b14: { name: "Agent restarted", session: "agent-restarted" } });
-
-  const notice = (status: string) => ({
-    type: "user",
-    origin: { kind: "task-notification" },
-    message: {
-      role: "user",
-      content: `<task-notification>\n<task-id>agents1</task-id>\n${status}</task-notification>`,
-    },
-  });
 
   write(
     join(project, "agent-restarted.jsonl"),
     asked("call:restarted"),
     launched("agents1"),
     ended,
-    notice("<summary>Background agent was restarted after the previous session ended</summary>"),
+    restartNotice(
+      "<summary>Background agent was restarted after the previous session ended</summary>",
+    ),
     said("Waiting on it."),
     ended,
-    notice("<status>completed</status>"),
+    restartNotice("<status>completed</status>"),
     said("It is back."),
     ended,
   );
   const steps: object[] = [];
-  followThread(findThread(state, "agent restarted")!, hex, "call:restarted", true, (step) =>
-    steps.push(step),
-  );
+  followThread(threadNamed("agent restarted"), hex, "call:restarted", true, (step) => {
+    steps.push(step);
+  });
   expect(await heard(steps, 3)).toEqual([
     { line: "Waiting on it." },
     { line: "It is back." },
@@ -977,23 +1033,23 @@ test("an agent restarted with its session is still out until it's back", async (
   ]);
 });
 
+const sentToBackOnOld = (key: string, tag: string, by: string) =>
+  open(state).deliver(
+    {
+      key,
+      to: "b15",
+      from: "buzz",
+      author: "other",
+      body: "look",
+      meta: { user: "hex voice", voice_task: tag },
+    },
+    by,
+  );
+
 test("an older session hex.db names is followed again once it takes a message after the task message", async () => {
   threads("buzz", { b15: { name: "Back on old", session: "back-old" } });
 
-  const sent = (key: string, tag: string, by: string) =>
-    open(state).deliver(
-      {
-        key,
-        to: "b15",
-        from: "buzz",
-        author: "other",
-        body: "look",
-        meta: { user: "hex voice", voice_task: tag },
-      },
-      by,
-    );
-
-  sent("buzz:back-before", "call:before", "back-old");
+  sentToBackOnOld("buzz:back-before", "call:before", "back-old");
   const then = { timestamp: new Date(Date.now() - 60_000).toISOString() };
   write(
     join(project, "back-old.jsonl"),
@@ -1002,7 +1058,7 @@ test("an older session hex.db names is followed again once it takes a message af
     { ...ended, ...then },
   );
   await Bun.sleep(5);
-  sent("buzz:back", "call:back", "back-cut");
+  sentToBackOnOld("buzz:back", "call:back", "back-cut");
   write(
     join(project, "back-cut.jsonl"),
     { ...asked("call:back"), timestamp: new Date().toISOString() },
@@ -1010,9 +1066,9 @@ test("an older session hex.db names is followed again once it takes a message af
   );
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "back on old")!, hex, "call:back", true, (step) =>
-    steps.push(step),
-  );
+  const stop = followThread(threadNamed("back on old"), hex, "call:back", true, (step) => {
+    steps.push(step);
+  });
 
   expect(await heard(steps, 1)).toEqual([{ line: "Starting on it." }]);
   await Bun.sleep(5);
@@ -1023,7 +1079,7 @@ test("an older session hex.db names is followed again once it takes a message af
     { ...said("Back on the old session."), ...now },
     { ...ended, ...now },
   );
-  sent("buzz:back-later", "call:later", "back-old");
+  sentToBackOnOld("buzz:back-later", "call:later", "back-old");
   await until(() => steps.length === 3);
   expect(steps).toEqual([
     { line: "Starting on it." },
@@ -1033,27 +1089,31 @@ test("an older session hex.db names is followed again once it takes a message af
   stop();
 });
 
+const stampedAgo = <T extends object>(entry: T, ago = 0) => ({
+  ...entry,
+  timestamp: new Date(Date.now() - ago).toISOString(),
+});
+
 test("a live follow skips history older than itself in a session it switches to, though none of it was seen", async () => {
   threads("buzz", { b16: { name: "Floor", session: "floor-a" } });
   const steps: object[] = [];
 
-  const stop = followThread(findThread(state, "floor")!, hex, "call:floor", false, (step) =>
-    steps.push(step),
-  );
-
-  const at = (entry: object, ago = 0) => ({
-    ...entry,
-    timestamp: new Date(Date.now() - ago).toISOString(),
+  const stop = followThread(threadNamed("floor"), hex, "call:floor", false, (step) => {
+    steps.push(step);
   });
 
-  write(join(project, "floor-a.jsonl"), at(asked("call:floor")), at(said("Starting on it.")));
+  write(
+    join(project, "floor-a.jsonl"),
+    stampedAgo(asked("call:floor")),
+    stampedAgo(said("Starting on it.")),
+  );
   await until(() => steps.length === 1);
   write(
     join(project, "floor-b.jsonl"),
-    at(said("Old history."), 60_000),
-    at(ended, 60_000),
-    at(said("Finished it.")),
-    at(ended),
+    stampedAgo(said("Old history."), 60_000),
+    stampedAgo(ended, 60_000),
+    stampedAgo(said("Finished it.")),
+    stampedAgo(ended),
   );
   threads("buzz", { b16: { name: "Floor", session: "floor-b" } });
   await until(() => steps.length === 3);
@@ -1085,7 +1145,9 @@ test("one notice naming several agents brings them all back", async () => {
     ended,
   );
   const steps: object[] = [];
-  followThread(findThread(state, "both back")!, hex, "call:both", true, (step) => steps.push(step));
+  followThread(threadNamed("both back"), hex, "call:both", true, (step) => {
+    steps.push(step);
+  });
   expect(await heard(steps, 2)).toEqual([{ line: "Both are back." }, { end: "done" }]);
 });
 
@@ -1138,9 +1200,9 @@ test("of several notices in one message, each one with a status brings its agent
     ended,
   );
   const steps: object[] = [];
-  followThread(findThread(state, "notices")!, hex, "call:notices", true, (step) =>
-    steps.push(step),
-  );
+  followThread(threadNamed("notices"), hex, "call:notices", true, (step) => {
+    steps.push(step);
+  });
   expect(await heard(steps, 3)).toEqual([
     { line: "Two are back." },
     { line: "All back." },

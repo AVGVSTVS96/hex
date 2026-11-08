@@ -33,7 +33,14 @@ function run(name: string, more: Partial<Run> = {}): Run {
 }
 
 function agent(label: string, state: Run["agents"][number]["state"] = "working", line?: string) {
-  return { id: label, label, state, via: "claude" as const, steps: [], ...(line && { line }) };
+  return {
+    id: label,
+    label,
+    state,
+    via: "claude" as const,
+    steps: [],
+    ...(line !== undefined && line !== "" && { line }),
+  };
 }
 
 test("jobs are the units whose stop runs this hex’s bin/job --ended, with their thread and start", () => {
@@ -93,7 +100,7 @@ test("everything hex runs, one line each: what waits on the caller first, then t
     },
   ];
 
-  const jobs = [
+  const units = [
     {
       unit: "backup",
       owner: "telegram:-100:42",
@@ -104,7 +111,7 @@ test("everything hex runs, one line each: what waits on the caller first, then t
     { unit: "nightly", owner: "discord:9", since: 0, working: false },
   ];
 
-  expect(overall(runs, strays, jobs, { "-100:42": "hex", "-100:65": "hex" }, now)).toBe(
+  expect(overall(runs, strays, units, { "-100:42": "hex", "-100:65": "hex" }, now)).toBe(
     [
       "Everything hex is running, 2 threads working, 1 waiting on you:",
       "- autofork (Telegram) waits on you: Pick a music style",
@@ -159,13 +166,13 @@ test("a job shows while the session it ran has stopped, even though its thread's
     run("lab", { agents: [agent("lab/check", "done")] }),
   ];
 
-  const jobs = [
+  const units = [
     { unit: "build", owner: "telegram:-100:42", since: now - 20 * 60_000, working: false },
     { unit: "check", owner: "telegram:-100:43", since: now - 5 * 60_000, working: false },
   ];
 
   expect(
-    overall(runs, [], jobs, { "-100:42": "hex", "-100:43": "lab" }, now).split("\n").slice(2),
+    overall(runs, [], units, { "-100:42": "hex", "-100:43": "lab" }, now).split("\n").slice(2),
   ).toEqual([
     "- The job build for hex, running for 20 minutes",
     "- The job check for lab, running for 5 minutes",
@@ -191,7 +198,6 @@ test("a busy session with no name is said by its folder, never its id", () => {
 test("jobs come from systemctl's own output, its start read in any zone the machine keeps", async () => {
   const bin = mkdtempSync(join(tmpdir(), "voice-systemctl-"));
   const job = realpathSync(join(import.meta.dir, "..", "..", "bin", "job"));
-  // Like systemctl, it writes times in the zone TZ names, as that zone's abbreviation.
   writeFileSync(
     join(bin, "systemctl"),
     `#!/bin/sh
@@ -227,7 +233,7 @@ test("a job is on the board only under the name bin/job gave it, never under ano
     run("hex", { agents: [agent("hex/deploy")] }),
   ];
 
-  const jobs = [
+  const units = [
     { unit: "build", owner: "telegram:-100:42", since: now - 20 * 60_000, working: false },
     { unit: "deploy", owner: "telegram:-100:42", since: now - 5 * 60_000, working: false },
     { unit: "sync", owner: "discord:9", since: now - 5 * 60_000, working: false },
@@ -238,24 +244,24 @@ test("a job is on the board only under the name bin/job gave it, never under ano
   ];
 
   expect(
-    overall(runs, strays, jobs, { "-100:42": "hex" }, now)
+    overall(runs, strays, units, { "-100:42": "hex" }, now)
       .split("\n")
       .filter((line) => line.includes("The job")),
   ).toEqual([
     "- The job build for hex, running for 20 minutes",
     "- The job sync, running for 5 minutes",
   ]);
-  expect(overall([run("9/sync")], [], jobs.slice(2), {}, now)).not.toContain("The job");
+  expect(overall([run("9/sync")], [], units.slice(2), {}, now)).not.toContain("The job");
 });
 
 test("a job whose session at work renamed itself shows once, as that session", () => {
   const runs = [run("hex", { agents: [agent("fix the deploy")] })];
 
-  const jobs = [
+  const units = [
     { unit: "deploy", owner: "telegram:-100:42", since: now - 5 * 60_000, working: true },
   ];
 
-  expect(overall(runs, [], jobs, { "-100:42": "hex" }, now)).toBe(
+  expect(overall(runs, [], units, { "-100:42": "hex" }, now)).toBe(
     "Everything hex is running, 1 thread working:\n- hex (Telegram), working for 10 minutes; an agent: fix the deploy",
   );
 });
@@ -306,8 +312,8 @@ test("a job is at work when a busy Claude Code session runs in its unit's cgroup
 
   try {
     expect(
-      (await jobs(join(root, "cg"), join(root, "claude"))).map(({ unit, working }) => [
-        unit,
+      (await jobs(join(root, "cg"), join(root, "claude"))).map(({ unit: name, working }) => [
+        name,
         working,
       ]),
     ).toEqual([
