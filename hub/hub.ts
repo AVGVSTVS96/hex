@@ -3,12 +3,11 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
-} from "fs";
-import type { FSWatcher } from "fs";
+} from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
@@ -75,11 +74,13 @@ export function family(model: string) {
 }
 
 // A permission prompt's input as one "key: value" line per field, leaving out what its description already says.
+const PreviewFields = z.record(z.string(), z.json());
+
 export function preview({ input_preview, description }: Permission): string {
   try {
-    return Object.entries(JSON.parse(input_preview))
+    return Object.entries(PreviewFields.parse(JSON.parse(input_preview)))
       .filter(([, value]) => value !== description)
-      .map(([key, value]) => `${key}: ${typeof value === "string" ? value : JSON.stringify(value)}`)
+      .map(([key, value]) => `${key}: ${z.string().safeParse(value).data ?? JSON.stringify(value)}`)
       .join("\n");
   } catch {
     return input_preview;
@@ -96,7 +97,7 @@ export type Questions = {
 
 const messageId = z.union([z.number(), z.string()]);
 
-const HubRequest = z.discriminatedUnion("type", [
+const HubRequestLine = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("state"),
     thread: z.string(),
@@ -137,7 +138,7 @@ const HubRequest = z.discriminatedUnion("type", [
   }),
 ]);
 
-type HubRequest = z.output<typeof HubRequest>;
+type HubRequest = z.output<typeof HubRequestLine>;
 
 export type Hub = ReturnType<typeof startHub>;
 
@@ -231,7 +232,11 @@ export type VoiceLine = { play: (audio: string) => void; end: () => void };
 export type Held = { hear: (audio: string) => void; hangUp: () => void };
 
 // The voice app's call engine, once it runs in this process, for a client that holds a line.
-export const engine: { take?: (from: "discord", greeting: string, line: VoiceLine) => Held } = {};
+export type CallEngine = {
+  take?: (from: "discord", greeting: string, line: VoiceLine) => Held;
+};
+
+export const engine: CallEngine = {};
 
 // One message of a thread's chat as its log keeps it: the owner's, or hex's reply, with the photos
 // and clips the owner sent with it from the hex app.
@@ -275,7 +280,9 @@ const TELL_AFTER = 3;
 // Resolves with the hub serving General once General's session first connects to it: from then
 // on, hex works on the code this process runs.
 let reached: (hub: Hub) => void;
-export const up = new Promise<Hub>((resolve) => (reached = resolve));
+export const up = new Promise<Hub>((resolve) => {
+  reached = resolve;
+});
 
 export const PORT = Number(process.env.HEX_PORT ?? 8789);
 
@@ -303,7 +310,7 @@ export async function listen(port = PORT): Promise<ReturnType<typeof Bun.serve>>
       }
       return server;
     } catch (error) {
-      if ((error as { code?: string }).code !== "EADDRINUSE") {
+      if (!(error instanceof Error && "code" in error && error.code === "EADDRINUSE")) {
         throw error;
       }
     }
@@ -318,7 +325,7 @@ export async function listen(port = PORT): Promise<ReturnType<typeof Bun.serve>>
 // Chat apps only link web addresses, so a buzz:// link goes through a page on hex's site that opens it.
 export function tappable(text: string): string {
   return text.replaceAll(
-    /buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/g,
+    /buzz:\/\/[^\s)>\]\\]*[^\s)>\]\\.,;:!?'"]/gu,
     (url) => `https://hex-sand.vercel.app/open.html#${encodeURIComponent(url)}`,
   );
 }
@@ -355,6 +362,8 @@ export function carried(meta?: Record<string, string>): Turn["media"] {
 }
 
 // TRANSCRIBE_URL is any OpenAI-compatible /audio/transcriptions endpoint.
+const Transcript = z.object({ text: z.string().optional() });
+
 export async function transcribe(recording: () => Promise<string>): Promise<string | undefined> {
   const { TRANSCRIBE_URL: url, TRANSCRIBE_MODEL: model, TRANSCRIBE_API_KEY: key } = process.env;
 
@@ -375,7 +384,10 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
   if (!res.ok) {
     throw new Error(`transcription failed: HTTP ${res.status}`);
   }
-  return ((await res.json()) as { text?: string }).text?.trim() || undefined;
+  const { text } = Transcript.parse(await res.json());
+  const trimmed = text?.trim();
+
+  return trimmed === undefined || trimmed === "" ? undefined : trimmed;
 }
 
 // Claude Code shows nothing when Esc meets a turn with nothing left to interrupt, so a press gets
@@ -398,7 +410,7 @@ function capacity(tokens?: string) {
   if (!tokens) {
     return 350_000;
   }
-  if (!/^\d+$/.test(tokens)) {
+  if (!/^\d+$/u.test(tokens)) {
     throw new Error(`HEX_CHAT_CAPACITY must be a number of tokens, got "${tokens}"`);
   }
   return Number(tokens);
@@ -426,10 +438,10 @@ type Read = string | [string, Read][] | null;
 function read(path: string): Read {
   try {
     if (!statSync(path).isDirectory()) {
-      return readFileSync(path, "utf8");
+      return readFileSync(path, "utf-8");
     }
     return readdirSync(path)
-      .sort()
+      .toSorted()
       .map((name) => [name, read(join(path, name))]);
   } catch {
     return null;
@@ -442,19 +454,27 @@ const onCall = new Set<Run>();
 const hungUp: (() => void)[] = [];
 
 export function free(): Promise<void> {
-  return new Promise((resolve) => (onCall.size ? hungUp.push(resolve) : resolve()));
+  return new Promise((resolve) => {
+    if (onCall.size > 0) {
+      hungUp.push(resolve);
+    } else {
+      resolve();
+    }
+  });
 }
 
 function hangUp(run: Run) {
   if (onCall.delete(run) && !onCall.size) {
-    for (const resolve of hungUp.splice(0)) resolve();
+    for (const resolve of hungUp.splice(0)) {
+      resolve();
+    }
   }
 }
 
 export function title(text: string): string {
   const title = text.trim();
 
-  if (!/^[^\s_-]+$/.test(title)) {
+  if (!/^[^\s_-]+$/u.test(title)) {
     throw new Error(`title must be one word, got "${title}"`);
   }
   return title;
@@ -468,6 +488,10 @@ function tokenOf(stateDir: string) {
     writeFileSync(file, randomBytes(32).toString("hex"), { mode: 0o600 });
   }
   return readFileSync(file, "utf-8").trim();
+}
+
+function toMessageWithKeyFirstForTheHook(row: Row): Message {
+  return { content: row.body, author: row.author, meta: { key: row.key, ...row.meta } };
 }
 
 export function startHub({
@@ -539,11 +563,11 @@ export function startHub({
   // a process's arguments, and a respawn reads the thread's current ones.
   const sessionsDir = join(stateDir, "sessions");
   const runs = new Map<string, Run>();
-  const plugin = channel.replace(/^plugin:/, "");
+  const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
   let store: Store | undefined;
-  const threads: Record<string, Saved> = read();
+  const threads: Map<string, Saved> = read();
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
   save();
   const token = tokenOf(stateDir);
@@ -554,13 +578,13 @@ export function startHub({
 
   // The app's open threads, from hex.db: the hub starts only once it can read them, so no save
   // closes threads it never loaded.
-  function read(): Record<string, Saved> {
+  function read(): Map<string, Saved> {
     store ??= open(storeDir);
 
-    return Object.fromEntries(
+    return new Map(
       store
         .threads({ app, open: true })
-        .map(({ app: _, open: __, link: ___, thread, fork, model, ...known }) => [
+        .map(({ app: _app, open: _open, link: _link, thread, fork, model, ...known }) => [
           thread,
           { ...known, ...(model && { model: family(model) }), ...(fork && { from: fork }) },
         ]),
@@ -568,11 +592,11 @@ export function startHub({
   }
 
   // The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
-  function keepIn(store: Store, saved: Record<string, Saved>) {
+  function keepIn(store: Store, saved: Map<string, Saved>) {
     store.keepThreads(
       app,
       Object.fromEntries(
-        Object.entries(saved).map(([thread, known]) => [
+        [...saved].map(([thread, known]) => [
           thread,
           {
             name: known.name,
@@ -600,7 +624,7 @@ export function startHub({
     try {
       return link?.(thread);
     } catch (error) {
-      process.stderr.write(`hub: no link for ${app} thread ${thread}: ${error}\n`);
+      process.stderr.write(`hub: no link for ${app} thread ${thread}: ${String(error)}\n`);
     }
   }
 
@@ -706,7 +730,9 @@ export function startHub({
     if (!pending(run)) {
       return Promise.resolve();
     }
-    return new Promise((resolve) => run.held.push(resolve));
+    return new Promise((resolve) => {
+      run.held.push(resolve);
+    });
   }
 
   function letGo(thread: string) {
@@ -912,7 +938,7 @@ export function startHub({
     if (thread === main) {
       throw new Error("the main thread stays here");
     }
-    if (!threads[thread]?.session) {
+    if (!threads.get(thread)?.session) {
       throw new Error("this thread has no session yet");
     }
     return retire(thread);
@@ -920,8 +946,8 @@ export function startHub({
 
   function forget(thread: string) {
     const run = runOf(thread);
-    const session = threads[thread]?.session ?? "";
-    delete threads[thread];
+    const session = threads.get(thread)?.session ?? "";
+    threads.delete(thread);
     save();
     become(run, { is: "stopped" });
     clock.clearTimeout(run.rest);
@@ -932,7 +958,7 @@ export function startHub({
   }
 
   function adopt(thread: string, name: string, session: string, prompt?: string, cwd?: string) {
-    threads[thread] = { name, session, ...(cwd && { cwd }) };
+    threads.set(thread, { name, session, ...(cwd && { cwd }) });
     save();
 
     if (prompt) {
@@ -941,14 +967,14 @@ export function startHub({
   }
 
   function find(nameOrThread: string) {
-    if (threads[nameOrThread]) {
+    if (threads.has(nameOrThread)) {
       return nameOrThread;
     }
     const wanted = nameOrThread.trim().toLowerCase();
 
-    const matches = Object.keys(threads).filter(
-      (thread) => threads[thread]!.name.toLowerCase() === wanted,
-    );
+    const matches = [...threads]
+      .filter(([, known]) => known.name.toLowerCase() === wanted)
+      .map(([thread]) => thread);
 
     if (matches.length !== 1) {
       throw new Error(
@@ -960,8 +986,17 @@ export function startHub({
     return matches[0]!;
   }
 
+  function savedOf(thread: string) {
+    const known = threads.get(thread);
+
+    if (!known) {
+      throw new Error(`${app} thread ${thread} isn't open in this hub`);
+    }
+    return known;
+  }
+
   function rename(thread: string, name: string) {
-    const known = threads[thread];
+    const known = threads.get(thread);
 
     if (!known || known.name === name) {
       return;
@@ -971,12 +1006,15 @@ export function startHub({
   }
 
   function follow(thread: string, name: string, session: string, cwd?: string) {
-    threads[thread] = { name, from: session, ...(cwd && { cwd }) };
+    threads.set(thread, { name, from: session, ...(cwd && { cwd }) });
     save();
   }
 
   function register(thread: string, name: string, cwd?: string) {
-    return (threads[thread] ??= { name, ...(cwd && { cwd }) });
+    const known = threads.get(thread) ?? { name, ...(cwd && { cwd }) };
+    threads.set(thread, known);
+
+    return known;
   }
 
   // A start's prompt and the session it forks are kept until a session connects, so the next start
@@ -1052,7 +1090,7 @@ export function startHub({
   }
 
   function extra(thread: string) {
-    const { model, effort } = threads[thread]!;
+    const { model, effort } = savedOf(thread);
 
     return [
       ...(model ? ["--model", model] : []),
@@ -1067,12 +1105,12 @@ export function startHub({
   // session with none of its own arguments, before the hub kept one.
   function stale(thread: string) {
     return (
-      (threads[thread]?.launched ?? stamp([], server)) !== stamp(extra(thread), server, startup)
+      (threads.get(thread)?.launched ?? stamp([], server)) !== stamp(extra(thread), server, startup)
     );
   }
 
   function configure(thread: string, settings: Settings) {
-    const known = threads[thread]!;
+    const known = savedOf(thread);
 
     for (const [key, value] of Object.entries(settings) as [keyof Settings, string | undefined][]) {
       if (value) {
@@ -1121,7 +1159,7 @@ export function startHub({
   }
 
   async function start(thread: string, prompt?: string, fork?: string) {
-    const known = threads[thread]!;
+    const known = savedOf(thread);
     writeSettings(thread);
 
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
@@ -1223,7 +1261,7 @@ export function startHub({
     become(run, { is: "stopped" });
 
     if (lost(thread, reason)) {
-      return void launch(thread, threads[thread]!.name, { again: phase.again });
+      return void launch(thread, savedOf(thread).name, { again: phase.again });
     }
     if (run.renew === "underway") {
       run.renew = undefined;
@@ -1251,7 +1289,7 @@ export function startHub({
       !(general && thread === main)
     ) {
       failing.told = true;
-      const content = `[hub] hex couldn't start the session of ${app} thread "${threads[thread]?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
+      const content = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
       generalHub.deliver(generalHub.main!, generalHub.name(generalHub.main!) ?? "hex", {
         content,
         author: "prompt",
@@ -1266,7 +1304,7 @@ export function startHub({
   // folder has its conversation, so the thread lets go of it once a note is kept that tells its
   // next session why it starts without it. One another folder has fails as any start does.
   function lost(thread: string, reason: string) {
-    const known = threads[thread];
+    const known = threads.get(thread);
     const run = runOf(thread);
     const session = /source session (\S+) not found/.exec(reason)?.[1];
 
@@ -1325,7 +1363,7 @@ export function startHub({
       return use((store ??= open(storeDir)));
     } catch (error) {
       process.stderr.write(
-        `hub: ${join(storeDir, "hex.db")} failed, so the hub goes on from memory: ${error}\n`,
+        `hub: ${join(storeDir, "hex.db")} failed, so the hub goes on from memory: ${String(error)}\n`,
       );
 
       return otherwise;
@@ -1444,18 +1482,11 @@ export function startHub({
     waits?.(thread, message, true);
   }
 
-  // The key goes first on the channel tag, where the session's hook reads it (state.ts).
-  const toMessage = (row: Row): Message => ({
-    content: row.body,
-    author: row.author,
-    meta: { key: row.key, ...row.meta },
-  });
-
   // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   function waiting(thread: string): Message[] {
     const rows = kept((store) => store.untaken(thread), []);
 
-    return [...rows.map(toMessage), ...runOf(thread).queue.filter((message) => !message.meta.key)];
+    return [...rows.map(toMessageWithKeyFirstForTheHook), ...runOf(thread).queue.filter((message) => !message.meta.key)];
   }
 
   // Messages kept outside this hub reach its threads as the bell rings, and at its start so do any
@@ -1464,13 +1495,17 @@ export function startHub({
     if (closed) {
       return;
     }
-    const rows = kept<Row[] | undefined>((store) => store.untaken(Object.keys(threads)), undefined);
+    const rows = kept<Row[] | undefined>((store) => store.untaken([...threads.keys()]), undefined);
 
     if (!rows) {
       return;
     }
     for (const row of rows) {
-      if (threads[row.to]) pass(row.to, threads[row.to]!.name, toMessage(row));
+      const known = threads.get(row.to);
+
+      if (known) {
+        pass(row.to, known.name, toMessageWithKeyFirstForTheHook(row));
+      }
     }
     const untaken = new Set(rows.map((row) => row.key));
 
@@ -1500,7 +1535,7 @@ export function startHub({
         continue;
       }
       run.failing.retried = true;
-      void launch(thread, threads[thread]?.name ?? thread, { again: true });
+      void launch(thread, threads.get(thread)?.name ?? thread, { again: true });
     }
   }
 
@@ -1535,7 +1570,7 @@ export function startHub({
     const session = current(thread);
 
     if (!session) {
-      return await launch(thread, threads[thread]!.name, { prompt });
+      return await launch(thread, savedOf(thread).name, { prompt });
     }
     void cycle(thread, await claude.agent(session, serving), prompt);
   }
@@ -1551,7 +1586,7 @@ export function startHub({
     const running = await claude.agent(current(thread) ?? "", serving);
 
     if (run.phase !== phase || phase.is !== "live") {
-      route(thread, threads[thread]!.name, message);
+      route(thread, savedOf(thread).name, message);
       return;
     }
     const working = fresh(thread)
@@ -1577,7 +1612,7 @@ export function startHub({
     if (run.phase.is === "live" || run.phase.is === "recovering") {
       become(run, { is: "stopped" });
     }
-    void launch(thread, threads[thread]!.name, { prompt, quiet });
+    void launch(thread, savedOf(thread).name, { prompt, quiet });
   }
 
   // A session's channel connected over HTTP: its session is the one the hub started, or the one
@@ -1600,7 +1635,9 @@ export function startHub({
     if (run.renew !== "asked") {
       run.renew = undefined;
     }
-    threads[thread] ??= { name: thread };
+    if (!threads.has(thread)) {
+      threads.set(thread, { name: thread });
+    }
     const id = job && claude.record(job).sessionId;
 
     if (id) {
@@ -1632,12 +1669,14 @@ export function startHub({
     });
 
     if (was.is === "launching") {
-      for (const each of retries) each();
+      for (const each of retries) {
+        each();
+      }
     }
   }
 
   function note(thread: string, session: string) {
-    runOf(thread).unsaved = threads[thread]?.session === session ? undefined : session;
+    runOf(thread).unsaved = threads.get(thread)?.session === session ? undefined : session;
     claim(thread);
   }
 
@@ -1721,7 +1760,7 @@ export function startHub({
     if (thread === main) {
       revive();
     } else if (!started && waiting(thread).length) {
-      void launch(thread, threads[thread]?.name ?? thread);
+      void launch(thread, threads.get(thread)?.name ?? thread);
     }
   }
 
@@ -1738,7 +1777,9 @@ export function startHub({
     );
 
     for (const message of waiting(thread)) {
-      if (given.has(message.meta.key ?? "")) mark(thread, message);
+      if (given.has(message.meta.key ?? "")) {
+        mark(thread, message);
+      }
     }
   }
 
@@ -1779,7 +1820,7 @@ export function startHub({
   // thread keeps its last saved session until the new one has a conversation on disk.
   function claim(thread: string) {
     const run = runOf(thread);
-    const known = threads[thread];
+    const known = threads.get(thread);
 
     if (!run.unsaved || !known || !existsSync(claude.transcript(cwdOf(thread), run.unsaved))) {
       return;
@@ -1791,11 +1832,11 @@ export function startHub({
   }
 
   function cwdOf(thread: string) {
-    return threads[thread]?.cwd ?? hexDir;
+    return threads.get(thread)?.cwd ?? hexDir;
   }
 
   function current(thread: string) {
-    return runs.get(thread)?.unsaved ?? threads[thread]?.session;
+    return runs.get(thread)?.unsaved ?? threads.get(thread)?.session;
   }
 
   // A thread is on a call from its keep until its renew, which starts the next call in a new session.
@@ -1874,9 +1915,9 @@ export function startHub({
         buffer = buffer.slice(end + 1);
 
         try {
-          handle(HubRequest.parse(JSON.parse(raw)));
+          handle(HubRequestLine.parse(JSON.parse(raw)));
         } catch (error) {
-          process.stderr.write(`hub: dropped a bad line: ${error}\n`);
+          process.stderr.write(`hub: dropped a bad line: ${String(error)}\n`);
         }
       }
     });
@@ -1940,8 +1981,10 @@ export function startHub({
   function inbound(id: string, message: Message) {
     const thread = id.startsWith(`${app}:`) ? id.slice(app.length + 1) : id;
 
-    if (Object.hasOwn(threads, thread)) {
-      return deliver(thread, threads[thread]!.name, message);
+    const known = threads.get(thread);
+
+    if (known) {
+      return deliver(thread, known.name, message);
     }
     process.stderr.write(
       `hub: no open ${app} thread ${thread}, so a message for it from ${message.meta?.user ?? "a local tool"} was dropped\n`,
@@ -2036,16 +2079,16 @@ export function startHub({
 
   // Sessions that outlived the hub (a hub restart) reconnect, or recover. A fresh main thread's
   // launch never resumes, so one still running waits for its session instead of starting another.
-  if (main || Object.keys(threads).length) {
+  if (main || threads.size) {
     void claude.agents(serving).then((running) => {
       const serving = new Set(
-        Object.keys(threads).filter((thread) =>
+        [...threads.keys()].filter((thread) =>
           running.some((agent) => agent.sessionId === current(thread) || boundTo(agent) === thread),
         ),
       );
 
       // One that was mid-turn when the hub stopped may have died with it (a reboot): it gets the same wait, and if it's gone, its next session gets what it left.
-      const cutShort = Object.keys(threads).filter(
+      const cutShort = [...threads.keys()].filter(
         (thread) => !serving.has(thread) && kept((store) => store.midTurn(thread), false),
       );
 
@@ -2081,8 +2124,8 @@ export function startHub({
     command: restart,
     configure,
     settings: (thread: string): Settings => ({
-      model: threads[thread]?.model,
-      effort: threads[thread]?.effort,
+      model: threads.get(thread)?.model,
+      effort: threads.get(thread)?.effort,
     }),
     register: (thread: string, name: string, cwd?: string) => void register(thread, name, cwd),
     open: (thread: string, name: string, prompt?: string, cwd?: string) =>
@@ -2103,11 +2146,11 @@ export function startHub({
       }
     },
     running: sessionOf,
-    threads: () => Object.keys(threads),
+    threads: () => [...threads.keys()],
     // Saves the threads again, for an app that learned links it couldn't give before.
     save,
-    name: (thread: string) => threads[thread]?.name,
-    cwd: (thread: string) => threads[thread]?.cwd,
+    name: (thread: string) => threads.get(thread)?.name,
+    cwd: (thread: string) => threads.get(thread)?.cwd,
     stop: halt,
     interrupt,
     answer: (thread: string, request_id: string, behavior: "allow" | "deny") => {
