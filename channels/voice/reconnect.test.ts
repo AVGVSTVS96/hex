@@ -570,4 +570,31 @@ test("a photo sent during the call shows in its transcript, reaches hex to look 
   });
   await until(() => engine.instructed.length);
   expect(engine.instructed[0]).toContain("<|SpawnThinking|>");
+
+  const second = Media.parse(
+    await fetch(`${engine.base}/media`, {
+      method: "POST",
+      headers: { "content-type": "image/png" },
+      body: "more png bytes",
+    }).then((r) => r.json()),
+  );
+
+  expect(
+    (
+      await fetch(`${engine.base}/calls/${ID}/media`, {
+        method: "POST",
+        body: JSON.stringify({ media: [id, second.id] }),
+      })
+    ).status,
+  ).toBe(204);
+  expect((await engine.call()).moments?.slice(1)).toEqual([
+    { at: anyTime, kind: "photo", text: "", media: id },
+    { at: anyTime, kind: "photo", text: "", media: second.id },
+  ]);
+  await until(() => engine.told.filter(withImage).length === 2);
+  expect(engine.told.filter(withImage)[1]?.content).toBe(
+    "The caller sent this from the app: (photo) (photo)",
+  );
+  await until(() => engine.instructed.length === 2);
+  expect(engine.instructed[1]).toContain("just sent 2 photos");
 }, 20_000);

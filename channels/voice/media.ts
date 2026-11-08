@@ -37,6 +37,10 @@ const TYPES = new Map<string, [Kind, string]>([
   ["image/jpeg", ["photo", "jpg"]],
   ["image/png", ["photo", "png"]],
   ["image/heic", ["photo", "heic"]],
+  ["image/gif", ["photo", "gif"]],
+  ["image/webp", ["photo", "webp"]],
+  ["image/tiff", ["photo", "tiff"]],
+  ["image/avif", ["photo", "avif"]],
   ["video/mp4", ["video", "mp4"]],
   ["video/quicktime", ["video", "mov"]],
 ]);
@@ -75,15 +79,17 @@ export class Media {
     const file = join(this.dir, `${id}.${ext}`);
     await Bun.write(file, bytes);
 
+    const converts = kind === "photo" && ext !== "jpg" && ext !== "png";
+
     try {
       const item =
         kind === "video"
           ? await this.clip(id, file)
-          : ext === "heic"
+          : converts
             ? { id, kind, images: [await jpeg(file, join(this.dir, `${id}.jpg`))] }
             : { id, kind, images: [file] };
 
-      if (ext === "heic") {
+      if (converts) {
         rmSync(file);
       }
 
@@ -193,6 +199,16 @@ export function line({ kind, images, seconds = 0, mute, words }: Item) {
   return words !== undefined && words !== ""
     ? `${clip}; said in it: "${words.replaceAll(/\s+/gu, " ")}")`
     : `${clip}; no words came through from its sound)`;
+}
+
+export function counted(items: Item[]) {
+  return (["photo", "video"] as const)
+    .flatMap((kind) => {
+      const count = items.filter((item) => item.kind === kind).length;
+
+      return count === 0 ? [] : [count === 1 ? `a ${kind}` : `${count} ${kind}s`];
+    })
+    .join(" and ");
 }
 
 export function caption(text: string, items: Item[]) {
