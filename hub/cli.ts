@@ -63,6 +63,8 @@ const { values: flags, positionals } = parseArgs({
     last: { type: "string" },
     taken: { type: "boolean" },
     room: { type: "string" },
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    // recall takes -i and ignores it, since memo recall already ignores case.
     "ignore-case": { type: "boolean", short: "i" },
   },
 });
@@ -110,6 +112,8 @@ if (unquotedValue !== undefined) {
   process.exit(1);
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// hex watch runs before hex.db opens, so a restore can replace hex.db underneath it.
 if (command === "watch") {
   await follow(join(state, "hex.bell"));
 }
@@ -229,6 +233,8 @@ async function recall(pattern: string) {
   process.exitCode = await memo.exited;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// every --json output names a thread one way, as <app>:<key>: a thread's id, and threadId on what belongs to one.
 function withThread<T>(rows: T[], key: (row: T) => string) {
   const ids = store.ids();
 
@@ -304,6 +310,8 @@ function threadsOf(given: string) {
   throw new Error(`no thread named "${given}"`);
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// a delivery goes only to a thread, since only a thread's session takes messages; a closed thread takes it once it opens again.
 function recipient(to: string): string {
   const all = named(to);
   const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all;

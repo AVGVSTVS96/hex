@@ -2101,6 +2101,8 @@ export class Store {
       const { began, ended } = this.turn(session);
       const heartbeatOpensATurn = heartbeat && (began === undefined || ended !== undefined);
 
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // Claude Code can record a turn before hex's hook runs, so the hook's own time can be late.
       const claudeCodeMarkedItBusyFirst =
         heartbeatOpensATurn &&
         flipped !== undefined &&
