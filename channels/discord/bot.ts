@@ -25,6 +25,7 @@ import {
   ButtonStyle,
   StringSelectMenuBuilder,
   ApplicationCommandOptionType,
+  ComponentType,
   ApplicationIntegrationType,
   InteractionContextType,
   DiscordjsErrorCodes,
@@ -45,10 +46,6 @@ import type {
   ChatInputApplicationCommandData,
   PollAnswer,
   PartialPollAnswer,
-  ActionRow,
-  ButtonComponent,
-  StringSelectMenuComponent,
-  RESTGetAPIGuildMessagesSearchResult,
   Attachment,
   Collection,
   Channel,
@@ -58,10 +55,13 @@ import type {
   ThreadChannel,
   AnyThreadChannel,
   DMChannel,
+  PartialDMChannel,
 } from "discord.js";
+import { z } from "zod";
 
 import {
   startHub,
+  dispatch,
   clients,
   begin,
   move,
@@ -72,10 +72,10 @@ import {
   MODELS,
   EFFORTS,
 } from "../../hub/hub.ts";
-import type { Message, Permission, Turn } from "../../hub/hub.ts";
+import type { Handlers, Message, Permission, Turn } from "../../hub/hub.ts";
 import { Ledger, waits } from "../../hub/ledger.ts";
 import type { MessageId, Post, Question } from "../../hub/ledger.ts";
-import { server } from "./channel.ts";
+import { server, tools } from "./channel.ts";
 import { voiceCalls } from "./voice.ts";
 
 const STATE_DIR =
@@ -88,52 +88,50 @@ const ENV_FILE = join(STATE_DIR, ".env");
 const INBOX_DIR = join(STATE_DIR, "inbox");
 const MAX_CHUNK_LIMIT = 2000;
 
-try {
-  chmodSync(ENV_FILE, 0o600);
+function readEnvFile(): string {
+  try {
+    chmodSync(ENV_FILE, 0o600);
 
-  for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
-    const m = /^(\w+)=(.*)$/.exec(line);
-
-    if (m) {
-      process.env[m[1]] = m[2];
-    }
+    return readFileSync(ENV_FILE, "utf-8");
+  } catch {
+    return "";
   }
-} catch {}
-
-const TOKEN = process.env.DISCORD_BOT_TOKEN;
-
-if (TOKEN) {
-  process.on("unhandledRejection", (err) => {
-    process.stderr.write(`discord hub: unhandled rejection: ${err}\n`);
-  });
-  process.on("uncaughtException", (err) => {
-    process.stderr.write(`discord hub: uncaught exception: ${err}\n`);
-  });
-  serve(TOKEN);
-} else {
-  process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
 }
 
-type Access = {
-  allowFrom: string[];
-  /** Emoji to react with on receipt. Empty string disables. Unicode char or custom emoji ID. */
-  ackReaction?: string;
-  /** Which chunks get Discord's reply reference when reply_to is passed. Default: 'first'. 'off' = never thread. */
-  replyToMode?: "off" | "first" | "all";
-  /** Max chars per outbound message before splitting. Default: 2000 (Discord's hard cap). */
-  textChunkLimit?: number;
-  /** Split on paragraph boundaries instead of hard char count. Default: 'newline'. */
-  chunkMode?: "length" | "newline";
-};
+for (const line of readEnvFile().split("\n")) {
+  const [, key, value] = /^(\w+)=(.*)$/u.exec(line) ?? [];
+
+  if (key !== undefined && value !== undefined) {
+    process.env[key] = value;
+  }
+}
+
+const AccessFile = z.object({
+  allowFrom: z.array(z.string()).default([]),
+  ackReaction: z.string().optional(),
+  replyToMode: z.enum(["off", "first", "all"]).optional(),
+  textChunkLimit: z.number().optional(),
+  chunkMode: z.enum(["length", "newline"]).optional(),
+});
+
+type Access = z.output<typeof AccessFile>;
+
+const Coded = z.object({ code: z.union([z.string(), z.number()]) });
+
+const codeOf = (cause: unknown) => Coded.safeParse(cause).data?.code;
+
+const failed = (what: string) => (cause: unknown) =>
+  void process.stderr.write(`discord hub: ${what}: ${String(cause)}\n`);
 
 function loadAccess(): Access {
   try {
-    return { allowFrom: [], ...JSON.parse(readFileSync(ACCESS_FILE, "utf-8")) };
+    return AccessFile.parse(JSON.parse(readFileSync(ACCESS_FILE, "utf-8")));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+    if (codeOf(error) !== "ENOENT") {
       process.stderr.write(
-        `discord hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${error}\n`,
+        `discord hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${String(error)}\n`,
       );
+    }
 
     return { allowFrom: [] };
   }
@@ -142,9 +140,7 @@ function loadAccess(): Access {
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const READ = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory];
 
-// reply's files param takes any path, but channel state and .env files (tokens)
-// are the things Claude has no reason to ever send.
-function assertSendable(f: string): void {
+function refuseChannelStateAndSecrets(f: string): void {
   let real;
   let stateReal: string;
 
@@ -168,7 +164,7 @@ function assertSendable(f: string): void {
 
 function sendable(files: string[]): string[] {
   for (const f of files) {
-    assertSendable(f);
+    refuseChannelStateAndSecrets(f);
     const st = statSync(f);
 
     if (st.size > MAX_ATTACHMENT_BYTES) {
@@ -179,6 +175,7 @@ function sendable(files: string[]): string[] {
   if (files.length > 10) {
     throw new Error("Discord allows max 10 attachments per message");
   }
+
   return files;
 }
 
@@ -192,32 +189,214 @@ const isPostable = (
   ch: Channel | null | undefined,
 ): ch is TextChannel | NewsChannel | ForumChannel => isText(ch) || isForum(ch);
 
-// A tapped set stays on its message, disabled, with the choice highlighted.
+type Conversation = ThreadChannel | DMChannel | PartialDMChannel;
+
+const nameOf = (ch: Conversation) => (ch.isThread() ? ch.name : "DM");
+
+function inThread(ch: Conversation): ThreadChannel {
+  if (!ch.isThread()) {
+    throw new Error("a DM is not a thread");
+  }
+
+  return ch;
+}
+
+async function messageIn(ch: Conversation, id: string): Promise<DiscordMessage> {
+  const msg =
+    ch.isThread() && id === ch.id ? await ch.fetchStarterMessage() : await ch.messages.fetch(id);
+
+  if (!msg) {
+    throw new Error(`no message ${id} in this thread`);
+  }
+
+  return msg;
+}
+
+const filled = (text: string | null | undefined): text is string =>
+  text !== undefined && text !== null && text !== "";
+
+const withoutMentions = (text: string) => text.replaceAll(/<@[!&]?\d+>/gu, "").trim();
+
+const failure = (what: string) => failed(`${what} failed`);
+
+const allowed = (user: string) => loadAccess().allowFrom.includes(user);
+
+async function replyMeta(msg: DiscordMessage): Promise<Record<string, string>> {
+  const repliedTo = msg.reference?.messageId;
+
+  if (msg.type !== MessageType.Reply || !filled(repliedTo)) {
+    return {};
+  }
+
+  const replied = await msg.fetchReference().catch(() => null);
+
+  if (replied === null) {
+    return { reply_to_message_id: repliedTo };
+  }
+
+  const atts = listed(replied.attachments);
+
+  return {
+    reply_to_message_id: replied.id,
+    reply_to_user: replied.author.username,
+    ...(replied.content !== "" && { reply_to_text: replied.content }),
+    ...(atts.length > 0 && { reply_to_attachments: atts.join("; ") }),
+  };
+}
+
+const Cursor = z.object({ id: z.string() });
+
+function keepCursor(id: string) {
+  writeFileSync(`${CURSOR_FILE}.tmp`, `${JSON.stringify({ id })}\n`);
+  renameSync(`${CURSOR_FILE}.tmp`, CURSOR_FILE);
+
+  return id;
+}
+
+function readCursor(): string {
+  try {
+    return Cursor.parse(JSON.parse(readFileSync(CURSOR_FILE, "utf-8"))).id;
+  } catch {
+    return keepCursor(SnowflakeUtil.generate().toString());
+  }
+}
+
+type Listened = TextChannel | NewsChannel | AnyThreadChannel | DMChannel;
+
+async function messagesAfter(ch: Listened, from: string): Promise<DiscordMessage[]> {
+  const found: DiscordMessage[] = [];
+
+  for (let since = from; ;) {
+    const page = [...(await ch.messages.fetch({ after: since, limit: 100 })).values()];
+    found.push(...page);
+
+    if (page.length < 100) {
+      return found;
+    }
+
+    for (const m of page) {
+      if (BigInt(m.id) > BigInt(since)) {
+        since = m.id;
+      }
+    }
+  }
+}
+
+// Discord lists archived threads newest-archived first: https://docs.discord.com/developers/resources/channel#list-public-archived-threads
+async function archivedSince(
+  ch: TextChannel | NewsChannel | ForumChannel,
+  from: string,
+): Promise<AnyThreadChannel[]> {
+  const since = SnowflakeUtil.timestampFrom(from);
+  const found: AnyThreadChannel[] = [];
+
+  for (let before: number | undefined; ;) {
+    const page = await ch.threads.fetchArchived({
+      ...(before !== undefined && { before }),
+      limit: 100,
+    });
+
+    const threads = [...page.threads.values()];
+    found.push(...threads);
+    const oldest = Math.min(...threads.map((t) => t.archiveTimestamp ?? 0));
+
+    if (!page.hasMore || threads.length === 0 || oldest < since) {
+      return found;
+    }
+
+    before = oldest;
+  }
+}
+
+const ANSWERED_IN = new Map([
+  ["app", "in the app"],
+  ["call", "on a call"],
+]);
+
+const answeredIn = (via: string) => ANSWERED_IN.get(via) ?? via;
+
+const answeredText = ({ label, via }: { label: string; via: string }) =>
+  `✓ Answered ${answeredIn(via)}: ${label}`;
+
+function controls({ options, multiple, answer, settled }: Question) {
+  if (settled) {
+    return only(settled.note);
+  }
+
+  if (!answer) {
+    return choices(options, multiple === true);
+  }
+
+  if (answer.via !== "discord") {
+    return only(answeredText(answer));
+  }
+
+  return multiple === true
+    ? menu(options, answer.label.split("; "))
+    : buttons(options, options.indexOf(answer.label));
+}
+
+const oneRow = (content: string) => content.replaceAll(/[\r\n]+/gu, " ⏎ ");
+
+const isPoll = (question: Question) => question.poll !== undefined && question.poll !== "";
+
+const latestActivity = (post: ThreadChannel) =>
+  SnowflakeUtil.timestampFrom(post.lastMessageId ?? post.id);
+
+type ToolInput<Name extends (typeof tools)[number]["name"]> = Parameters<
+  Handlers<typeof tools>[Name]
+>[1];
+
+const SearchResult = z.union([
+  z.object({
+    total_results: z.number(),
+    messages: z.array(
+      z.array(
+        z.object({
+          id: z.string(),
+          channel_id: z.string(),
+          timestamp: z.string(),
+          content: z.string(),
+          author: z.object({ id: z.string(), username: z.string() }),
+          attachments: z.array(z.unknown()),
+        }),
+      ),
+    ),
+    threads: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+  }),
+  z.object({ retry_after: z.number().optional() }),
+]);
+
+const BUTTONS_PER_ROW = 5;
+
 function buttons(labels: string[], chosen?: number): ActionRowBuilder<ButtonBuilder>[] {
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  labels.forEach((label, i) => {
-    if (i % 5 === 0) {
-      rows.push(new ActionRowBuilder<ButtonBuilder>());
-    }
-    rows.at(-1)!.addComponents(
-      new ButtonBuilder()
-        .setCustomId(String(i))
-        .setLabel(label)
-        .setStyle(i === chosen ? ButtonStyle.Primary : ButtonStyle.Secondary)
-        .setDisabled(chosen !== undefined),
+
+  for (let start = 0; start < labels.length; start += BUTTONS_PER_ROW) {
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        labels.slice(start, start + BUTTONS_PER_ROW).map((label, offset) => {
+          const i = start + offset;
+
+          return new ButtonBuilder()
+            .setCustomId(String(i))
+            .setLabel(label)
+            .setStyle(i === chosen ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(chosen !== undefined);
+        }),
+      ),
     );
-  });
+  }
 
   return rows;
 }
 
-// A menu takes any number of picks at once, and stays showing them, disabled, once sent.
 function menu(labels: string[], picked?: string[]): ActionRowBuilder<StringSelectMenuBuilder>[] {
   return [
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId("menu")
-        .setPlaceholder(picked ? picked.join(", ").slice(0, 150) : "Pick any")
+        .setPlaceholder(picked === undefined ? "Pick any" : picked.join(", ").slice(0, 150))
         .setMinValues(1)
         .setMaxValues(labels.length)
         .setDisabled(picked !== undefined)
@@ -225,7 +404,7 @@ function menu(labels: string[], picked?: string[]): ActionRowBuilder<StringSelec
           labels.map((label, i) => ({
             label,
             value: String(i),
-            default: !!picked?.includes(label),
+            default: picked?.includes(label) === true,
           })),
         ),
     ),
@@ -236,7 +415,6 @@ function choices(labels: string[], multiple: boolean) {
   return multiple ? menu(labels) : buttons(labels);
 }
 
-// One disabled button saying what became of a question: answered elsewhere, settled, or moot.
 function only(text: string): ActionRowBuilder<ButtonBuilder>[] {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -261,14 +439,17 @@ function verdicts(request: string, chosen?: string): ActionRowBuilder<ButtonBuil
         new ButtonBuilder()
           .setCustomId(`perm:${verdict}:${request}`)
           .setLabel(label)
-          .setStyle(chosen && chosen !== verdict ? ButtonStyle.Secondary : style)
+          .setStyle(
+            chosen !== undefined && chosen !== "" && chosen !== verdict
+              ? ButtonStyle.Secondary
+              : style,
+          )
           .setDisabled(chosen !== undefined),
       ),
     ),
   ];
 }
 
-// A fence inside the preview would close the block early, so its backticks are split.
 function block(text: string, limit: number): string {
   const body = text.replaceAll("```", "`​``");
 
@@ -314,6 +495,7 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
   if (text.length <= limit) {
     return [text];
   }
+
   const out: string[] = [];
   let rest = text;
 
@@ -328,45 +510,46 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
     }
 
     out.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n+/, "");
+    rest = rest.slice(cut).replace(/^\n+/u, "");
   }
 
-  if (rest) {
+  if (rest !== "") {
     out.push(rest);
   }
+
   return out;
 }
 
-// A code block cut across two messages renders as broken text in both, so
-// each chunk closes the fence it opened and the next one reopens it.
+// A code block cut across two messages renders broken in both, so each chunk closes the fence it opened and the next reopens it: https://support.discord.com/hc/en-us/articles/210298617
 function fenced(text: string, limit: number, mode: "length" | "newline"): string[] {
   const out: string[] = [];
   let open = "";
 
   for (const part of chunk(text, limit - 16, mode)) {
-    let body = open ? `${open}\n${part}` : part;
+    let body = open === "" ? part : `${open}\n${part}`;
 
     for (const line of part.split("\n")) {
-      const fence = /^\s*```(\S*)/.exec(line);
+      const fence = /^\s*```(\S*)/u.exec(line);
 
       if (fence) {
-        open = open ? "" : "```" + fence[1];
+        open = open === "" ? `\`\`\`${fence[1] ?? ""}` : "";
       }
     }
 
-    if (open) {
+    if (open !== "") {
       body += "\n```";
     }
+
     out.push(body);
   }
 
   return out;
 }
 
-// att.name is uploader-controlled. It lands inside the <channel> notification,
-// where delimiter chars would let the uploader break out of the tag.
+const CHANNEL_TAG_DELIMITERS = /[<>[\]\r\n;]/gu;
+
 function safeAttName(att: Attachment): string {
-  return (att.name ?? att.id).replaceAll(/[<>[\]\r\n;]/g, "_");
+  return (att.name ?? att.id).replaceAll(CHANNEL_TAG_DELIMITERS, "_");
 }
 
 function listed(attachments: Collection<string, Attachment>): string[] {
@@ -387,7 +570,7 @@ async function downloadAttachment(att: Attachment): Promise<string> {
   const buf = Buffer.from(await res.arrayBuffer());
   const name = att.name ?? att.id;
   const rawExt = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "bin";
-  const ext = rawExt.replaceAll(/[^a-zA-Z0-9]/g, "") || "bin";
+  const ext = rawExt.replaceAll(/[^a-zA-Z0-9]/gu, "") || "bin";
   const path = join(INBOX_DIR, `${Date.now()}-${att.id}.${ext}`);
   mkdirSync(INBOX_DIR, { recursive: true });
   writeFileSync(path, buf);
@@ -395,33 +578,28 @@ async function downloadAttachment(att: Attachment): Promise<string> {
   return path;
 }
 
-// Transcribed on arrival, so the words are the message itself and land in the conversation's log.
 async function hear(att: Attachment | undefined): Promise<string | undefined> {
   if (!att) {
     return;
   }
+
   try {
     return await transcribe(() => downloadAttachment(att));
   } catch (error) {
-    process.stderr.write(`discord hub: voice transcription failed: ${error}\n`);
+    failed("voice transcription failed")(error);
   }
 }
 
-// Images are fetched on arrival, as Telegram's photos are, so a screenshot is one Read away.
 async function images(attachments: Collection<string, Attachment>): Promise<string[]> {
   const shown = attachments.filter(
-    (att) => att.contentType?.startsWith("image/") && att.size <= MAX_ATTACHMENT_BYTES,
+    (att) => att.contentType?.startsWith("image/") === true && att.size <= MAX_ATTACHMENT_BYTES,
   );
 
   const paths = await Promise.all(
-    shown.map((att) =>
-      downloadAttachment(att).catch(
-        (error) => void process.stderr.write(`discord hub: image download failed: ${error}\n`),
-      ),
-    ),
+    shown.map((att) => downloadAttachment(att).catch(failed("image download failed"))),
   );
 
-  return paths.filter((path): path is string => !!path);
+  return paths.filter((path) => path !== undefined);
 }
 
 function serve(token: string) {
@@ -449,19 +627,28 @@ function serve(token: string) {
 
   const ledger = new Ledger(STATE_DIR, "discord");
 
-  // A session talks in a thread, or in a DM, which is one conversation.
-  async function threadChannel(thread: string): Promise<ThreadChannel | DMChannel> {
-    const ch = await client.channels.fetch(thread);
-
-    if (!ch?.isThread() && !ch?.isDMBased()) {
-      throw new Error(`${thread} is not a Discord thread or DM`);
+  function bot() {
+    if (!client.user) {
+      throw new Error("the bot isn't logged in to Discord yet");
     }
-    return ch as ThreadChannel | DMChannel;
+
+    return client.user;
   }
 
-  const nameOf = (ch: ThreadChannel | DMChannel) => (ch.isThread() ? ch.name : "DM");
+  async function threadChannel(thread: string): Promise<Conversation> {
+    const ch = await client.channels.fetch(thread);
 
-  // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
+    if (ch?.isThread() === true) {
+      return ch;
+    }
+
+    if (ch?.type === ChannelType.DM) {
+      return ch;
+    }
+
+    throw new Error(`${thread} is not a Discord thread or DM`);
+  }
+
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
     send: async (thread, text) => {
@@ -473,68 +660,73 @@ function serve(token: string) {
 
       return sent.id;
     },
-    pin: async (thread, id) => await (await message(await threadChannel(thread), String(id))).pin(),
-    // A message that's gone (10008) is unpinned already.
+    pin: async (thread, id) =>
+      await (await messageIn(await threadChannel(thread), String(id))).pin(),
     unpin: async (thread, id) => {
       try {
-        await (await message(await threadChannel(thread), String(id))).unpin();
+        await (await messageIn(await threadChannel(thread), String(id))).unpin();
       } catch (error) {
-        if ((error as { code?: number }).code !== 10008) throw error;
+        if (codeOf(error) !== RESTJSONErrorCodes.UnknownMessage) {
+          throw error;
+        }
       }
     },
-    // An archived thread's messages can't be edited (50083, or archived as far as the bot knows):
-    // its post catches up when it's back. One that's someone else's (50005) or gone (10008) never will be.
     edit: async (thread, id, text) => {
       const ch = await threadChannel(thread);
 
-      if (ch.isThread() && ch.archived) {
+      if (ch.isThread() && ch.archived === true) {
         return false;
       }
+
       try {
         await (
-          await message(ch, String(id))
+          await messageIn(ch, String(id))
         ).edit({ content: text, flags: MessageFlags.SuppressEmbeds });
       } catch (error) {
-        const { code } = error as { code?: number };
-        if (code === 50083) return false;
-        if (code === 50005 || code === 10008) return null;
+        const code = codeOf(error);
+
+        if (code === RESTJSONErrorCodes.InvalidActionOnArchivedThread) {
+          return false;
+        }
+
+        if (
+          code === RESTJSONErrorCodes.CannotEditMessageAuthoredByAnotherUser ||
+          code === RESTJSONErrorCodes.UnknownMessage
+        ) {
+          return null;
+        }
+
         throw error;
       }
     },
     link: (thread, id) => {
-      const at = shown(thread);
+      const where = shown(thread);
 
-      return at && `${at}/${id}`;
+      return where === undefined ? undefined : `${where}/${id}`;
     },
     ready: threadChannel,
   };
 
-  // Where Discord shows a thread the bot has seen.
   function shown(thread: string) {
     const channel = client.channels.cache.get(thread);
 
-    if (channel?.isDMBased()) {
+    if (channel?.isDMBased() === true) {
       return `https://discord.com/channels/@me/${thread}`;
     }
-    if (channel && "guildId" in channel) {
+
+    if (channel !== undefined && "guildId" in channel) {
       return `https://discord.com/channels/${channel.guildId}/${thread}`;
     }
   }
 
-  function inThread(ch: ThreadChannel | DMChannel): ThreadChannel {
-    if (!ch.isThread()) {
-      throw new Error("a DM is not a thread");
-    }
-    return ch;
-  }
-
   function guild() {
-    const guild = client.guilds.cache.first();
+    const first = client.guilds.cache.first();
 
-    if (!guild) {
+    if (!first) {
       throw new Error("the bot is in no Discord server");
     }
-    return guild;
+
+    return first;
   }
 
   async function textChannel(name?: string): Promise<TextChannel | NewsChannel>;
@@ -548,84 +740,95 @@ function serve(token: string) {
   ): Promise<TextChannel | NewsChannel | ForumChannel> {
     const fits = forums ? isPostable : isText;
     const g = guild();
-    const wanted = name?.replace(/^#/, "").toLowerCase();
+    const wanted = name?.replace(/^#/u, "").toLowerCase();
 
-    const found = wanted
-      ? (await g.channels.fetch()).find(
-          (ch) => fits(ch) && (ch.id === wanted || ch.name.toLowerCase() === wanted),
-        )
-      : g.systemChannel;
+    const found =
+      wanted !== undefined && wanted !== ""
+        ? (await g.channels.fetch()).find(
+            (ch) => fits(ch) && (ch.id === wanted || ch.name.toLowerCase() === wanted),
+          )
+        : g.systemChannel;
 
     if (!fits(found)) {
       throw new Error(
-        wanted
+        wanted !== undefined && wanted !== ""
           ? `no ${forums ? "text or forum" : "text"} channel named #${wanted}`
           : "name a channel to open the thread in",
       );
     }
+
     return found;
   }
 
   async function readable(id: string): Promise<TextChannel | NewsChannel | ThreadChannel> {
     const ch = await client.channels.fetch(id).catch(() => null);
-    const text = isText(ch) || ch?.isThread() ? ch : undefined;
+    const text = ch !== null && (isText(ch) || ch.isThread()) ? ch : undefined;
 
-    if (!text || text.guildId !== guild().id || !text.permissionsFor(client.user!)?.has(READ)) {
+    if (
+      text === undefined ||
+      text.guildId !== guild().id ||
+      text.permissionsFor(bot())?.has(READ) !== true
+    ) {
       throw new Error(`the bot can't read ${id}; list_channels shows the channels it can`);
     }
 
     return text;
   }
 
-  // Results are newline-joined, so multi-line content would forge adjacent rows.
   function row(
-    at: Date,
+    sentAt: Date,
     author: { id: string; username: string },
     content: string,
     details: string,
   ): string {
     const who = author.id === client.user?.id ? "me" : author.username;
 
-    return `[${at.toISOString()}] ${who}: ${content.replaceAll(/[\r\n]+/g, " ⏎ ")}  (${details})`;
+    return `[${sentAt.toISOString()}] ${who}: ${oneRow(content)}  (${details})`;
   }
 
-  async function history(caller: string, args: Record<string, unknown>): Promise<string> {
-    const limit = Math.min((args.limit as number) ?? 20, 100);
-    const named = args.thread as string | undefined;
+  async function history(caller: string, args: ToolInput<"fetch_messages">): Promise<string> {
+    const limit = Math.min(args.limit ?? 20, 100);
+    const named = filled(args.thread) ? args.thread : undefined;
 
     const channel =
-      !named && args.channel ? await textChannel(args.channel as string, true) : undefined;
+      named === undefined && filled(args.channel)
+        ? await textChannel(args.channel, true)
+        : undefined;
 
     if (isForum(channel)) {
       return await posts(channel, limit);
     }
-    const id = named
-      ? /^\d+$/.test(named)
-        ? named
-        : hub.find(named)
-      : channel
-        ? channel.id
-        : caller;
+
+    const id =
+      named === undefined
+        ? (channel?.id ?? caller)
+        : /^\d+$/u.test(named)
+          ? named
+          : hub.find(named);
 
     const ch = id === caller ? await threadChannel(caller) : await readable(id);
 
     const msgs = await ch.messages.fetch({
       limit,
-      ...(args.before ? { before: args.before as string } : {}),
+      ...(filled(args.before) && { before: args.before }),
     });
 
-    const arr = [...msgs.values()].reverse();
+    const arr = [...msgs.values()].toReversed();
 
     if (arr.length === 0) {
       return "(no messages)";
     }
+
     return arr
       .map((m) => {
         const atts = m.attachments.size > 0 ? ` +${m.attachments.size}att` : "";
 
-        const last = m.thread?.lastMessageId
-          ? `, last reply ${new Date(SnowflakeUtil.timestampFrom(m.thread.lastMessageId)).toISOString()}`
-          : "";
+        const lastReply = m.thread?.lastMessageId;
+
+        const last =
+          lastReply === undefined || lastReply === null || lastReply === ""
+            ? ""
+            : `, last reply ${new Date(SnowflakeUtil.timestampFrom(lastReply)).toISOString()}`;
 
         const thread = m.thread ? `, ${m.thread.messageCount ?? 0} replies${last}` : "";
 
@@ -634,58 +837,58 @@ function serve(token: string) {
       .join("\n");
   }
 
-  // A forum's posts are its threads: each one's title, newest activity last, read by its id.
   async function posts(forum: ForumChannel, limit: number): Promise<string> {
-    if (!forum.permissionsFor(client.user!)?.has(READ)) {
+    if (forum.permissionsFor(bot())?.has(READ) !== true) {
       throw new Error(`the bot can't read ${forum.id}; list_channels shows the channels it can`);
     }
+
     const [active, archived] = await Promise.all([
       forum.threads.fetchActive(),
       forum.threads.fetchArchived({ limit }),
     ]);
 
     const all = [...active.threads.values(), ...archived.threads.values()].filter(
-      (post) => post.parentId === forum.id,
+      (each) => each.parentId === forum.id,
     );
 
-    const latest = (post: ThreadChannel) =>
-      SnowflakeUtil.timestampFrom(post.lastMessageId ?? post.id);
-
     const rows = all
-      .sort((a, b) => latest(a) - latest(b))
+      .toSorted((a, b) => latestActivity(a) - latestActivity(b))
       .slice(-limit)
       .map(
-        (post) =>
-          `[${new Date(latest(post)).toISOString()}] ${post.name.replaceAll(/[\r\n]+/g, " ")}  (post ${post.id}, ${post.messageCount ?? 0} replies${post.archived ? ", archived" : ""})`,
+        (each) =>
+          `[${new Date(latestActivity(each)).toISOString()}] ${each.name.replaceAll(/[\r\n]+/gu, " ")}  (post ${each.id}, ${each.messageCount ?? 0} replies${each.archived === true ? ", archived" : ""})`,
       );
 
     return rows.join("\n") || "(no posts)";
   }
 
-  async function search(args: Record<string, unknown>): Promise<string> {
+  async function search(args: ToolInput<"search_messages">): Promise<string> {
     const query = new URLSearchParams({
-      content: args.query as string,
-      limit: String(Math.min((args.limit as number) ?? 25, 25)),
+      content: args.query,
+      limit: String(Math.min(args.limit ?? 25, 25)),
     });
 
-    if (args.channel) {
-      query.set("channel_id", (await textChannel(args.channel as string)).id);
+    if (filled(args.channel)) {
+      query.set("channel_id", (await textChannel(args.channel)).id);
     }
-    if (args.offset) {
+
+    if (args.offset !== undefined && args.offset !== 0) {
       query.set("offset", String(args.offset));
     }
-    const found = (await client.rest.get(Routes.guildMessagesSearch(guild().id), {
-      query,
-    })) as RESTGetAPIGuildMessagesSearchResult;
+
+    const found = SearchResult.parse(
+      await client.rest.get(Routes.guildMessagesSearch(guild().id), { query }),
+    );
 
     if (!("messages" in found)) {
-      return `Discord is still indexing this server's messages; search again ${found.retry_after ? `in ${found.retry_after}s` : "shortly"}`;
+      return `Discord is still indexing this server's messages; search again ${(found.retry_after ?? 0) === 0 ? "shortly" : `in ${found.retry_after}s`}`;
     }
+
     const threads = new Map(found.threads?.map((t) => [t.id, t.name]));
 
     const rows = found.messages.flat().map((m) => {
       const where = threads.has(m.channel_id)
-        ? `thread ${m.channel_id} "${threads.get(m.channel_id)}"`
+        ? `thread ${m.channel_id} "${threads.get(m.channel_id) ?? ""}"`
         : `#${guild().channels.cache.get(m.channel_id)?.name ?? m.channel_id}`;
 
       const atts = m.attachments.length > 0 ? ` +${m.attachments.length}att` : "";
@@ -697,39 +900,37 @@ function serve(token: string) {
   }
 
   async function listChannels(): Promise<string> {
-    const found = (await guild().channels.fetch()).filter(
-      (ch) => isPostable(ch) && !!ch.permissionsFor(client.user!)?.has(READ),
+    const found = [...(await guild().channels.fetch()).values()].flatMap((ch) =>
+      isPostable(ch) && ch.permissionsFor(bot())?.has(READ) === true ? [ch] : [],
     );
 
     return (
-      found
-        .map((ch) => `#${ch!.name}  (id: ${ch!.id}${isForum(ch) ? ", forum" : ""})`)
-        .join("\n") || "(none)"
+      found.map((ch) => `#${ch.name}  (id: ${ch.id}${isForum(ch) ? ", forum" : ""})`).join("\n") ||
+      "(none)"
     );
   }
 
   const link = (thread: string) => `https://discord.com/channels/${guild().id}/${thread}`;
 
-  // What hex posts in a thread is kept in hex.db as its own words, under Discord's id for the message.
   function said(
     thread: string,
     id: string | undefined,
     text: string,
     meta: Record<string, string> = {},
   ) {
-    hub.sent(thread, { key: id, content: text, meta });
+    hub.sent(thread, { ...(id !== undefined && { key: id }), content: text, meta });
   }
 
-  // A forum takes a thread only as a post, which opens with a message: the about line, or its title.
   async function place(name: string, where?: string, about?: string, tags: string[] = []) {
     const parent = await textChannel(where, true);
 
     if (!isForum(parent)) {
       const thread = await parent.threads.create({ name });
 
-      if (about) {
+      if (filled(about)) {
         said(thread.id, (await thread.send(about)).id, about);
       }
+
       return { thread: thread.id, link: link(thread.id) };
     }
 
@@ -741,18 +942,18 @@ function serve(token: string) {
         `#${parent.name} has the tags ${parent.availableTags.map((tag) => tag.name).join(", ") || "(none)"}`,
       );
     }
-    const post = await parent.threads.create({
+
+    const opened = await parent.threads.create({
       name,
       message: { content: about ?? name },
       appliedTags: applied.map((tag) => tag.id),
     });
 
-    said(post.id, post.id, about ?? name);
+    said(opened.id, opened.id, about ?? name);
 
-    return { thread: post.id, link: link(post.id) };
+    return { thread: opened.id, link: link(opened.id) };
   }
 
-  // A webhook posts each line under its speaker's name and avatar: the owner's, or the bot's.
   async function backfill(thread: string, turns: Turn[]) {
     const ch = inThread(await threadChannel(thread));
     const parent = ch.parent;
@@ -760,18 +961,25 @@ function serve(token: string) {
     if (!isPostable(parent)) {
       throw new Error(`${thread} hangs off no text or forum channel`);
     }
+
     const hook =
       (await parent.fetchWebhooks()).find(
-        (hook) => hook.owner?.id === client.user!.id && hook.token,
+        (each) => each.owner?.id === bot().id && each.token !== null && each.token !== "",
       ) ?? (await parent.createWebhook({ name: "hex" }));
 
-    const owner = await client.users.fetch(loadAccess().allowFrom[0]!);
+    const [ownerId] = loadAccess().allowFrom;
+
+    if (ownerId === undefined) {
+      throw new Error("access.json allows no one, so there's no owner to post as");
+    }
+
+    const owner = await client.users.fetch(ownerId);
 
     const as = {
       me: { username: owner.displayName, avatarURL: owner.displayAvatarURL() },
       hex: {
-        username: ch.guild.members.me?.displayName ?? client.user!.displayName,
-        avatarURL: client.user!.displayAvatarURL(),
+        username: ch.guild.members.me?.displayName ?? bot().displayName,
+        avatarURL: bot().displayAvatarURL(),
       },
     };
 
@@ -782,17 +990,6 @@ function serve(token: string) {
     }
   }
 
-  // A thread's starter message lives in the channel it hangs off, under the thread's own id.
-  async function message(ch: ThreadChannel | DMChannel, id: string): Promise<DiscordMessage> {
-    const msg =
-      ch.isThread() && id === ch.id ? await ch.fetchStarterMessage() : await ch.messages.fetch(id);
-
-    if (!msg) {
-      throw new Error(`no message ${id} in this thread`);
-    }
-    return msg;
-  }
-
   const deleting = new Set<string>();
 
   const typing = new Map<string, ReturnType<typeof setInterval>>();
@@ -800,11 +997,10 @@ function serve(token: string) {
   function sendTyping(thread: string): void {
     void threadChannel(thread)
       .then((ch) => ch.sendTyping())
-      .catch(() => {});
+      .catch(() => null);
   }
 
-  // Discord shows "typing…" for about 10 seconds per call, so it is re-sent
-  // for as long as the thread's session is busy.
+  // Discord's typing indicator lasts 10 seconds: https://docs.discord.com/developers/resources/channel#trigger-typing-indicator
   function showTyping(thread: string, busy: boolean): void {
     process.stderr.write(`discord hub: ${thread} ${busy ? "busy" : "idle"}\n`);
     clearInterval(typing.get(thread));
@@ -813,6 +1009,7 @@ function serve(token: string) {
     if (!busy) {
       return;
     }
+
     sendTyping(thread);
     typing.set(
       thread,
@@ -822,16 +1019,14 @@ function serve(token: string) {
     );
   }
 
-  // Claude Code sends no event when a prompt is answered in the session itself, but a
-  // turn can't end while one is open, so whatever is still asking by then is moot.
   const asking = new Map<string, Set<string>>();
 
   async function ask(thread: string, request: Permission): Promise<void> {
     const ch = await threadChannel(thread);
-    const shown = preview(request);
+    const input = preview(request);
 
     const sent = await ch.send({
-      content: `🔐 **${request.tool_name}**: ${request.description.slice(0, 300)}${shown ? `\n${block(shown, 1500)}` : ""}`,
+      content: `🔐 **${request.tool_name}**: ${request.description.slice(0, 300)}${input === "" ? "" : `\n${block(input, 1500)}`}`,
       components: verdicts(request.request_id),
     });
 
@@ -839,101 +1034,90 @@ function serve(token: string) {
     asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.id));
   }
 
-  // A turn that ends with background agents out may still have one of their prompts open.
   function settle(thread: string, busy: boolean, background: boolean): void {
     showTyping(thread, busy);
 
     if (busy || background) {
       return;
     }
+
     for (const id of asking.get(thread) ?? []) {
       void threadChannel(thread)
         .then((ch) => ch.messages.edit(id, { components: only("No longer waiting") }))
-        .catch(() => {});
+        .catch(() => null);
     }
+
     asking.delete(thread);
   }
 
-  // A question answered somewhere else (hex's voice app, a call) reaches the thread as the owner's
-  // own tap would, and its buttons say where it was answered. A poll can't take a vote from the bot,
-  // so one answered elsewhere ends instead.
-  const ANSWERED_IN: Record<string, string> = { app: "in the app", call: "on a call" };
+  // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Ledger.find is not an array method
+  const questionAt = (thread: string, message: MessageId) => ledger.find(thread, message);
 
-  const answeredText = ({ label, via }: { label: string; via: string }) =>
-    `✓ Answered ${ANSWERED_IN[via] ?? via}: ${label}`;
+  async function redraw(thread: string, message: MessageId): Promise<void> {
+    const question = questionAt(thread, message);
 
-  // What a question's controls show: the pick its own tap made, where else it was answered, how it
-  // was settled, or its choices again.
-  function controls({ options, multiple, answer, settled }: Question) {
-    if (settled) {
-      return only(settled.note);
+    if (question === undefined || question.options.length === 0) {
+      return;
     }
-    if (!answer) {
-      return choices(options, !!multiple);
+
+    const ch = await threadChannel(thread);
+
+    if (!isPoll(question)) {
+      await ch.messages.edit(String(message), { components: controls(question) });
+
+      return;
     }
-    if (answer.via !== "discord") {
-      return only(answeredText(answer));
+
+    const answeredElsewhere = question.answer !== undefined && question.answer.via !== "discord";
+
+    // Discord has no endpoint for the bot to vote, so a poll answered elsewhere is ended: https://docs.discord.com/developers/resources/poll#poll-endpoints
+    if (question.settled !== undefined || answeredElsewhere) {
+      const { poll } = await ch.messages.fetch(String(message));
+
+      if (!poll) {
+        throw new Error(`message ${String(message)} has no poll`);
+      }
+
+      await poll.end();
     }
-    return multiple
-      ? menu(options, answer.label.split("; "))
-      : buttons(options, options.indexOf(answer.label));
   }
 
-  // A question's controls show where it stands in hex.db as they're drawn, one draw at a time, so an
-  // answer and a quick take-back can't land out of order. An ended poll stays ended.
   const drawing = new Map<string, Promise<void>>();
 
   function draw(thread: string, message: MessageId): Promise<void> {
-    const at = `${thread}:${message}`;
+    const key = `${thread}:${message}`;
 
-    const drawn = (drawing.get(at) ?? Promise.resolve())
-      .then(async () => {
-        const question = ledger.find(thread, message);
+    const drawn = (drawing.get(key) ?? Promise.resolve())
+      .then(() => redraw(thread, message))
+      .catch(failed(`couldn't draw the buttons on ${thread} ${message}`));
 
-        if (!question?.options.length) {
-          return;
-        }
-        const ch = await threadChannel(thread);
-
-        if (!question.poll) {
-          return void (await ch.messages.edit(String(message), { components: controls(question) }));
-        }
-        if (question.settled || (question.answer && question.answer.via !== "discord")) {
-          await (await ch.messages.fetch(String(message))).poll!.end();
-        }
-      })
-      .catch((error) => {
-        process.stderr.write(
-          `discord hub: couldn't draw the buttons on ${thread} ${message}: ${error}\n`,
-        );
-      });
-
-    drawing.set(at, drawn);
-    void drawn.then(() => drawing.get(at) === drawn && drawing.delete(at));
+    drawing.set(key, drawn);
+    void drawn.then(() => drawing.get(key) === drawn && drawing.delete(key));
 
     return drawn;
   }
 
   async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
-    const question = ledger.find(thread, message);
+    const question = questionAt(thread, message);
 
-    if (!question || question.answer) {
+    if (question === undefined || question.answer !== undefined) {
       return;
     }
+
     const answered = hub.deliver(
       thread,
       hub.name(thread) ?? thread,
       {
         author: "owner",
-        content: question.poll ? `(vote: ${label})` : label,
+        content: isPoll(question) ? `(vote: ${label})` : label,
         meta: {
           chat_id: thread,
           user: `hex ${via}`,
           ts: new Date().toISOString(),
-          ...(question.poll
+          ...(isPoll(question)
             ? { vote: label, poll_message_id: String(message), poll: question.text }
             : { button: "true", button_message_id: String(message) }),
-          answered_in: ANSWERED_IN[via] ?? via,
+          answered_in: answeredIn(via),
         },
       },
       () => ledger.answered(thread, message, label, via),
@@ -945,26 +1129,29 @@ function serve(token: string) {
   }
 
   async function settleQuestion(thread: string, message: MessageId, note: string) {
-    const question = ledger.find(thread, message);
+    const question = questionAt(thread, message);
 
-    if (!question || !waits(question)) {
+    if (question === undefined || !waits(question)) {
       return;
     }
+
     ledger.settled(thread, message, note);
     await draw(thread, message);
   }
 
-  // Takes back an answer given elsewhere, or a settle: the buttons come back, and the thread hears
-  // that the answer it got no longer stands. An ended poll stays ended.
   async function reopenQuestion(thread: string, message: MessageId, via: string) {
-    const question = ledger.find(thread, message);
+    const question = questionAt(thread, message);
 
-    if (!question || !(question.answer || question.settled)) {
+    if (
+      question === undefined ||
+      (question.answer === undefined && question.settled === undefined)
+    ) {
       return;
     }
+
     const taken = question.answer?.label;
 
-    const reopened = taken
+    const reopened = filled(taken)
       ? hub.deliver(
           thread,
           hub.name(thread) ?? thread,
@@ -976,7 +1163,7 @@ function serve(token: string) {
               user: `hex ${via}`,
               ts: new Date().toISOString(),
               took_back: taken,
-              [question.poll ? "poll_message_id" : "button_message_id"]: String(message),
+              [isPoll(question) ? "poll_message_id" : "button_message_id"]: String(message),
             },
           },
           () => ledger.reopened(thread, message),
@@ -988,287 +1175,312 @@ function serve(token: string) {
     }
   }
 
-  async function call(
-    caller: string,
-    tool: string,
-    args: Record<string, unknown>,
-  ): Promise<string> {
-    if (tool === "new_thread") {
-      const name = title(args.title as string);
-      const app = (args.app as string | undefined) ?? "discord";
-      const about = args.about as string | undefined;
-      const where = args.channel as string | undefined;
+  async function conversation(caller: string, named?: string) {
+    const thread = named === undefined || named === "" ? caller : hub.find(named);
+
+    return { thread, ch: await threadChannel(thread) };
+  }
+
+  async function gone(thread: string) {
+    try {
+      await client.channels.fetch(thread);
+
+      return false;
+    } catch (error) {
+      return codeOf(error) === RESTJSONErrorCodes.UnknownChannel;
+    }
+  }
+
+  const handlers: Handlers<typeof tools> = {
+    new_thread: async (caller, args) => {
+      const name = title(args.title);
+      const app = args.app ?? "discord";
+      const { about, channel: where } = args;
 
       if (app !== "discord") {
-        return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt as string, { about, where })).link}`;
+        return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt, { about, ...(where !== undefined && { where }) })).link}`;
       }
+
       const here = await threadChannel(caller);
       const parent = where ?? (here.isThread() ? here.parent?.name : undefined);
-      const { thread, link } = await place(name, parent, about, args.tags as string[] | undefined);
-      hub.open(thread, name, args.prompt as string);
+      const { thread, link: opened } = await place(name, parent, about, args.tags);
+      hub.open(thread, name, args.prompt);
 
-      return `started thread "${name}": ${link}`;
-    }
+      return `started thread "${name}": ${opened}`;
+    },
 
-    if (tool === "fetch_messages") {
-      return await history(caller, args);
-    }
-    if (tool === "list_channels") {
-      return await listChannels();
-    }
-    if (tool === "search_messages") {
-      return await search(args);
-    }
-    if (tool === "forward") {
-      if (!args.thread && !args.channel) {
+    fetch_messages: history,
+
+    list_channels: listChannels,
+
+    search_messages: (_caller, args) => search(args),
+
+    forward: async (caller, args) => {
+      const to = filled(args.channel)
+        ? await textChannel(args.channel)
+        : filled(args.thread)
+          ? await threadChannel(hub.find(args.thread))
+          : undefined;
+
+      if (to === undefined) {
         throw new Error("name a thread or channel to forward to");
       }
-      const to = args.channel
-        ? await textChannel(args.channel as string)
-        : await threadChannel(hub.find(args.thread as string));
 
       const sent = await (
-        await message(await threadChannel(caller), args.message_id as string)
+        await messageIn(await threadChannel(caller), args.message_id)
       ).forward(to.id);
 
       return `forwarded (id: ${sent.id})`;
-    }
+    },
 
-    const thread = args.thread ? hub.find(args.thread as string) : caller;
+    reply: async (caller, args) => {
+      const { thread, ch } = await conversation(caller, args.thread);
+      const access = loadAccess();
+      const text = tappable(args.text);
+      const reply_to = args.reply_to;
+      const files = sendable(args.files ?? []);
+      const labels = args.buttons;
+      const multiple = args.multiple === true;
+      const asks = labels !== undefined && labels.length > 0;
+      const components = asks ? choices(labels, multiple) : undefined;
 
-    if (
-      tool === "close_thread" &&
-      (await client.channels.fetch(thread).then(
-        () => false,
-        (error) => error?.code === RESTJSONErrorCodes.UnknownChannel,
-      ))
-    ) {
-      const name = hub.name(thread) ?? thread;
-      void hub.retire(thread);
-      void ledger.forget(thread);
+      const limit = Math.max(
+        100,
+        Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT),
+      );
 
-      return `forgot "${name}": its Discord thread no longer exists`;
-    }
+      const replyMode = access.replyToMode ?? "first";
+      const chunks = fenced(text, limit, access.chunkMode ?? "newline");
+      const sentIds: string[] = [];
 
-    const ch = await threadChannel(thread);
-    const access = loadAccess();
+      try {
+        for (const [i, content] of chunks.entries()) {
+          const shouldReplyTo =
+            reply_to !== undefined && replyMode !== "off" && (replyMode === "all" || i === 0);
 
-    switch (tool) {
-      case "reply": {
-        const text = tappable(args.text as string);
-        const reply_to = args.reply_to as string | undefined;
-        const files = sendable((args.files as string[] | undefined) ?? []);
-        const labels = args.buttons as string[] | undefined;
-        const multiple = !!args.multiple;
-        const components = labels?.length ? choices(labels, multiple) : undefined;
+          const sent = await ch.send({
+            content,
+            ...(args.silent === true && { flags: MessageFlags.SuppressNotifications }),
+            ...(i === 0 && files.length > 0 && { files }),
+            ...(i === chunks.length - 1 && components && { components }),
+            ...(shouldReplyTo && {
+              reply: { messageReference: reply_to, failIfNotExists: false },
+            }),
+          });
 
-        const limit = Math.max(
-          100,
-          Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT),
+          said(thread, sent.id, content);
+          sentIds.push(sent.id);
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
+        throw new Error(
+          `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
+          { cause: error },
         );
-
-        const replyMode = access.replyToMode ?? "first";
-        const chunks = fenced(text, limit, access.chunkMode ?? "newline");
-        const sentIds: string[] = [];
-
-        try {
-          for (let i = 0; i < chunks.length; i++) {
-            const shouldReplyTo =
-              reply_to != null && replyMode !== "off" && (replyMode === "all" || i === 0);
-
-            const sent = await ch.send({
-              content: chunks[i],
-              ...(args.silent ? { flags: MessageFlags.SuppressNotifications } : {}),
-              ...(i === 0 && files.length > 0 ? { files } : {}),
-              ...(i === chunks.length - 1 && components ? { components } : {}),
-              ...(shouldReplyTo
-                ? { reply: { messageReference: reply_to, failIfNotExists: false } }
-                : {}),
-            });
-
-            said(thread, sent.id, chunks[i]!);
-            sentIds.push(sent.id);
-          }
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
-          throw new Error(
-            `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
-          );
-        }
-
-        if (labels?.length) {
-          ledger.ask(thread, sentIds.at(-1)!, text, labels, undefined, multiple);
-        } else if (text && sentIds.length) {
-          ledger.said(thread, sentIds.at(-1)!, text);
-        }
-
-        return sentIds.length === 1
-          ? `sent (id: ${sentIds[0]})`
-          : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
       }
 
-      case "react": {
-        const msg = await message(ch, args.message_id as string);
+      const last = sentIds.at(-1);
 
-        if (!args.remove) {
-          await msg.react(args.emoji as string);
-
-          return "reacted";
-        }
-
-        const { id, name } = parseEmoji(args.emoji as string) ?? {};
-        const mine = msg.reactions.cache.get((id || name)!);
-
-        if (!mine?.me) {
-          throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
-        }
-        await mine.users.remove();
-
-        return "reaction removed";
+      if (last === undefined) {
+        throw new Error("reply had nothing to send");
       }
 
-      case "edit_message": {
-        const pinned = ledger.pin(thread);
-
-        if (pinned?.message === args.message_id && args.text !== undefined) {
-          if (args.files) {
-            throw new Error("a status post is text: send the file in its own message");
-          }
-          await ledger.rewrite(thread, post, tappable(args.text as string), pinned.message);
-          said(thread, undefined, tappable(args.text as string), {
-            edited: "true",
-            message_id: String(pinned.message),
-          });
-
-          return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`;
-        }
-
-        const msg = await message(ch, args.message_id as string);
-        const files = args.files ? sendable(args.files as string[]) : undefined;
-
-        const edited =
-          args.text !== undefined || files
-            ? await msg.edit({
-                ...(args.text === undefined ? {} : { content: tappable(args.text as string) }),
-                ...(files ? { files, attachments: [] } : {}),
-              })
-            : msg;
-
-        if (args.text !== undefined) {
-          said(thread, undefined, tappable(args.text as string), {
-            edited: "true",
-            message_id: edited.id,
-          });
-          ledger.edited(thread, edited.id, args.text as string);
-        }
-
-        if (args.settled) {
-          await settleQuestion(thread, edited.id, "✓ Settled");
-        }
-        return `edited (id: ${edited.id})`;
+      if (asks) {
+        ledger.ask(thread, last, text, labels, undefined, multiple);
+      } else if (text !== "") {
+        ledger.said(thread, last, text);
       }
 
-      case "delete_message": {
-        const msg = await message(ch, args.message_id as string);
+      return sentIds.length === 1
+        ? `sent (id: ${sentIds[0]})`
+        : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
+    },
 
-        if (msg.author.id !== client.user!.id) {
-          throw new Error("the bot can only delete its own messages");
-        }
-        deleting.add(msg.id);
-        await msg.delete().catch((error) => {
-          deleting.delete(msg.id);
-          throw error;
-        });
-        await ledger.deleted(thread, msg.id);
+    react: async (caller, args) => {
+      const { ch } = await conversation(caller);
+      const msg = await messageIn(ch, args.message_id);
 
-        return "deleted";
+      if (args.remove !== true) {
+        await msg.react(args.emoji);
+
+        return "reacted";
       }
 
-      case "pin": {
-        if (args.unpin) {
-          const was = await ledger.unpin(thread, post, args.message_id as string | undefined);
+      const emoji = parseEmoji(args.emoji);
+      const mine = msg.reactions.cache.get(emoji?.id ?? emoji?.name ?? "");
 
-          return was === undefined
-            ? "this thread has no status post"
-            : `unpinned the status post (id: ${was})`;
-        }
-
-        if (typeof args.note !== "string") {
-          throw new Error("pin takes the status post's note, or unpin: true");
-        }
-        return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`;
+      if (mine?.me !== true) {
+        throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
       }
 
-      case "poll": {
-        const sent = await ch.send({
-          poll: {
-            question: { text: args.question as string },
-            answers: (args.options as string[]).map((text) => ({ text })),
-            allowMultiselect: !!args.multiple,
-            duration: 24,
-          },
+      await mine.users.remove();
+
+      return "reaction removed";
+    },
+
+    edit_message: async (caller, args) => {
+      const { thread, ch } = await conversation(caller);
+      const pinned = ledger.pin(thread);
+
+      if (pinned !== undefined && pinned.message === args.message_id && args.text !== undefined) {
+        if (args.files !== undefined) {
+          throw new Error("a status post is text: send the file in its own message");
+        }
+
+        await ledger.rewrite(thread, post, tappable(args.text), pinned.message);
+        said(thread, undefined, tappable(args.text), {
+          edited: "true",
+          message_id: pinned.message,
         });
 
-        said(thread, sent.id, args.question as string, {
-          poll: (args.options as string[]).join(" / "),
-        });
-        ledger.ask(thread, sent.id, args.question as string, args.options as string[], sent.id);
-
-        return `sent poll (id: ${sent.id})`;
+        return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`;
       }
 
-      case "download_attachment": {
-        const msg = await message(ch, args.message_id as string);
-        const attachments = msg.messageSnapshots.first()?.attachments ?? msg.attachments;
+      const msg = await messageIn(ch, args.message_id);
+      const files = args.files === undefined ? undefined : sendable(args.files);
 
-        if (attachments.size === 0) {
-          return "message has no attachments";
-        }
-        const lines: string[] = [];
+      const edited =
+        args.text !== undefined || files !== undefined
+          ? await msg.edit({
+              ...(args.text !== undefined && { content: tappable(args.text) }),
+              ...(files !== undefined && { files, attachments: [] }),
+            })
+          : msg;
 
-        for (const att of attachments.values()) {
-          const path = await downloadAttachment(att);
-          const kb = (att.size / 1024).toFixed(0);
-          lines.push(`  ${path}  (${safeAttName(att)}, ${att.contentType ?? "unknown"}, ${kb}KB)`);
-        }
-
-        return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
+      if (args.text !== undefined) {
+        said(thread, undefined, tappable(args.text), { edited: "true", message_id: edited.id });
+        ledger.edited(thread, edited.id, args.text);
       }
 
-      case "rename_thread": {
-        const name = title(args.title as string);
-        await inThread(ch).setName(name);
-        hub.rename(thread, name);
-
-        return `renamed to "${name}"`;
+      if (args.settled === true) {
+        await settleQuestion(thread, edited.id, "✓ Settled");
       }
 
-      case "close_thread": {
-        const closing = inThread(ch);
-        hub.retire(thread);
-        await closing.setArchived(true);
+      return `edited (id: ${edited.id})`;
+    },
 
-        return `archived "${closing.name}"; its session stops once it's idle`;
+    delete_message: async (caller, args) => {
+      const { thread, ch } = await conversation(caller);
+      const msg = await messageIn(ch, args.message_id);
+
+      if (msg.author.id !== bot().id) {
+        throw new Error("the bot can only delete its own messages");
       }
 
-      case "handoff": {
-        const to = args.to as string;
-        const name = args.title ? title(args.title as string) : nameOf(ch);
-        const target = await move(hub, thread, to, name, args.channel as string | undefined);
-        await ch.send(`Moved to ${to}: ${target}`);
+      deleting.add(msg.id);
 
-        if (ch.isThread()) {
-          await ch.setArchived(true);
-        }
-        return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
+      try {
+        await msg.delete();
+      } catch (error) {
+        deleting.delete(msg.id);
+        throw error;
       }
 
-      default: {
-        throw new Error(`unknown tool: ${tool}`);
+      await ledger.deleted(thread, msg.id);
+
+      return "deleted";
+    },
+
+    pin: async (caller, args) => {
+      const { thread } = await conversation(caller);
+
+      if (args.unpin === true) {
+        const was = await ledger.unpin(thread, post, args.message_id);
+
+        return was === undefined
+          ? "this thread has no status post"
+          : `unpinned the status post (id: ${was})`;
       }
-    }
-  }
+
+      if (args.note === undefined) {
+        throw new Error("pin takes the status post's note, or unpin: true");
+      }
+
+      return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`;
+    },
+
+    poll: async (caller, args) => {
+      const { thread, ch } = await conversation(caller);
+
+      const sent = await ch.send({
+        poll: {
+          question: { text: args.question },
+          answers: args.options.map((text) => ({ text })),
+          allowMultiselect: args.multiple === true,
+          duration: 24,
+        },
+      });
+
+      said(thread, sent.id, args.question, { poll: args.options.join(" / ") });
+      ledger.ask(thread, sent.id, args.question, args.options, sent.id);
+
+      return `sent poll (id: ${sent.id})`;
+    },
+
+    download_attachment: async (caller, args) => {
+      const { ch } = await conversation(caller);
+      const msg = await messageIn(ch, args.message_id);
+      const attachments = msg.messageSnapshots.first()?.attachments ?? msg.attachments;
+
+      if (attachments.size === 0) {
+        return "message has no attachments";
+      }
+
+      const lines: string[] = [];
+
+      for (const att of attachments.values()) {
+        const path = await downloadAttachment(att);
+        const kb = (att.size / 1024).toFixed(0);
+        lines.push(`  ${path}  (${safeAttName(att)}, ${att.contentType ?? "unknown"}, ${kb}KB)`);
+      }
+
+      return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
+    },
+
+    rename_thread: async (caller, args) => {
+      const { thread, ch } = await conversation(caller);
+      const name = title(args.title);
+      await inThread(ch).setName(name);
+      hub.rename(thread, name);
+
+      return `renamed to "${name}"`;
+    },
+
+    close_thread: async (caller, args) => {
+      const thread = filled(args.thread) ? hub.find(args.thread) : caller;
+
+      if (await gone(thread)) {
+        const name = hub.name(thread) ?? thread;
+        void hub.retire(thread);
+        void ledger.forget(thread);
+
+        return `forgot "${name}": its Discord thread no longer exists`;
+      }
+
+      const closing = inThread(await threadChannel(thread));
+      void hub.retire(thread);
+      await closing.setArchived(true);
+
+      return `archived "${closing.name}"; its session stops once it's idle`;
+    },
+
+    handoff: async (caller, args) => {
+      const { thread, ch } = await conversation(caller);
+      const { to } = args;
+      const name = filled(args.title) ? title(args.title) : nameOf(ch);
+      const target = await move(hub, thread, to, name, args.channel);
+      await ch.send(`Moved to ${to}: ${target}`);
+
+      if (ch.isThread()) {
+        await ch.setArchived(true);
+      }
+
+      return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
+    },
+  };
+
+  const call = dispatch(tools, handlers);
 
   const dms = new Set<string>();
 
@@ -1282,22 +1494,18 @@ function serve(token: string) {
     fresh: (thread) => dms.has(thread),
     failed: (thread, reason) => {
       void threadChannel(thread)
-        .then((ch) => ch.send(`Couldn't start this thread's session: ${reason}`))
-        .catch(() => {});
+        .then(async (ch) => await ch.send(`Couldn't start this thread's session: ${reason}`))
+        .catch(() => null);
     },
     permission: (thread, request) =>
-      void ask(thread, request).catch((error) =>
-        process.stderr.write(
-          `discord hub: couldn't relay a permission prompt to ${thread}: ${error}\n`,
-        ),
-      ),
+      void ask(thread, request).catch(failed(`couldn't relay a permission prompt to ${thread}`)),
     questions: {
       answer: (thread, message, label, via) => void answerQuestion(thread, message, label, via),
       settle: (thread, message, note) => void settleQuestion(thread, message, note),
       reopen: (thread, message, via) => void reopenQuestion(thread, message, via),
     },
-    hexDir: process.env.HEX_DIR,
-    launcher: process.env.HEX_LAUNCHER,
+    ...(process.env.HEX_DIR !== undefined && { hexDir: process.env.HEX_DIR }),
+    ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
   });
 
   clients.set("discord", {
@@ -1306,54 +1514,34 @@ function serve(token: string) {
     backfill,
   });
 
-  const allowed = (user: string) => loadAccess().allowFrom.includes(user);
   voiceCalls(client, allowed);
 
-  // A tag in a channel starts a thread on that message, Claude-tag style; inside a thread
-  // every message reaches its session without one, and so does the message it hangs off
-  // once the hub serves that thread.
-  async function threadOf(msg: DiscordMessage): Promise<ThreadChannel | DMChannel | undefined> {
+  async function threadOf(msg: DiscordMessage): Promise<Conversation | undefined> {
     if (msg.channel.isDMBased()) {
       dms.add(msg.channelId);
     }
-    if (msg.channel.isThread() || msg.channel.isDMBased()) {
-      return msg.channel as ThreadChannel | DMChannel;
+
+    if (msg.channel.isThread() || msg.channel.type === ChannelType.DM) {
+      return msg.channel;
     }
+
     if (!isText(msg.channel)) {
       return;
     }
-    if (msg.thread && hub.name(msg.thread.id)) {
+
+    if (msg.thread !== null && filled(hub.name(msg.thread.id))) {
       return msg.thread;
     }
-    if (!client.user || !msg.mentions.has(client.user)) {
+
+    if (client.user === null || !msg.mentions.has(client.user)) {
       return;
     }
-    const words = msg.content
-      .replaceAll(/<@[!&]?\d+>/g, "")
-      .trim()
-      .split(/\s+/)
-      .filter(Boolean);
 
-    return await (msg.thread ?? msg.startThread({ name: words[0] ?? "Thread" }));
-  }
+    const firstWord = withoutMentions(msg.content)
+      .split(/\s+/u)
+      .find((word) => word !== "");
 
-  async function replyMeta(msg: DiscordMessage): Promise<Record<string, string>> {
-    if (msg.type !== MessageType.Reply || !msg.reference?.messageId) {
-      return {};
-    }
-    const replied = await msg.fetchReference().catch(() => {});
-
-    if (!replied) {
-      return { reply_to_message_id: msg.reference.messageId };
-    }
-    const atts = listed(replied.attachments);
-
-    return {
-      reply_to_message_id: replied.id,
-      reply_to_user: replied.author.username,
-      ...(replied.content ? { reply_to_text: replied.content } : {}),
-      ...(atts.length > 0 ? { reply_to_attachments: atts.join("; ") } : {}),
-    };
+    return await (msg.thread ?? msg.startThread({ name: firstWord ?? "Thread" }));
   }
 
   async function handleInbound(
@@ -1366,33 +1554,33 @@ function serve(token: string) {
     if (!access.allowFrom.includes(msg.author.id)) {
       return;
     }
-    // A thread opened on a message begins with an empty starter pointing at it: that message is what opens the thread.
-    if (msg.type === MessageType.ThreadStarterMessage) {
-      return await handleInbound(await msg.fetchReference(), edited, msg.channel as ThreadChannel);
+
+    if (msg.type === MessageType.ThreadStarterMessage && msg.channel.isThread()) {
+      await handleInbound(await msg.fetchReference(), edited, msg.channel);
+
+      return;
     }
 
     const ch = thread ?? (await threadOf(msg));
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
+
     const opened = !edited && ch.id === msg.id;
-    const tagged = opened && ch.isThread() && ch.ownerId === client.user!.id;
-    const forum = ch.isThread() && !!ch.parent?.isThreadOnly();
+    const tagged = opened && ch.isThread() && ch.ownerId === bot().id;
+    const forum = ch.isThread() && ch.parent?.isThreadOnly() === true;
 
-    if (ch.isThread() && ch.archived) {
-      await ch.setArchived(false).catch(() => {});
+    if (ch.isThread() && ch.archived === true) {
+      await ch.setArchived(false).catch(() => null);
     }
 
-    void ch.sendTyping().catch(() => {});
+    void ch.sendTyping().catch(() => null);
 
-    if (access.ackReaction) {
-      void msg.react(access.ackReaction).catch(() => {});
+    if (filled(access.ackReaction)) {
+      void msg.react(access.ackReaction).catch(() => null);
     }
 
-    // Attachments are listed (name/type/size) and only images are downloaded: the model
-    // calls download_attachment for the rest. The listing goes in meta only, since an
-    // in-content annotation is forgeable by the sender.
     const forwarded = msg.messageSnapshots.first();
     const source = forwarded ?? msg;
     const atts = listed(source.attachments);
@@ -1401,46 +1589,44 @@ function serve(token: string) {
     const voiced = source.flags.has(MessageFlags.IsVoiceMessage);
     const heard = voiced ? await hear(source.attachments.first()) : undefined;
     const shots = edited || voiced ? [] : await images(source.attachments);
+    const typed = withoutMentions(source.content);
+
+    const placeholder =
+      atts.length > 0 ? "(attachment)" : stickers.length > 0 ? "(sticker)" : poll ? "(poll)" : "";
 
     const message: Message = {
       author: "owner",
-      key: edited ? `${msg.id}@${msg.editedTimestamp}` : msg.id,
-      content: heard
+      key: edited ? `${msg.id}@${String(msg.editedTimestamp)}` : msg.id,
+      content: filled(heard)
         ? `(voice message) ${heard}`
         : voiced
           ? "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)"
-          : source.content.replaceAll(/<@[!&]?\d+>/g, "").trim() ||
-            (atts.length > 0
-              ? "(attachment)"
-              : stickers.length > 0
-                ? "(sticker)"
-                : poll
-                  ? "(poll)"
-                  : ""),
+          : typed === ""
+            ? placeholder
+            : typed,
       meta: {
         chat_id: ch.id,
         message_id: msg.id,
         user: msg.author.username,
         user_id: msg.author.id,
         ts: msg.createdAt.toISOString(),
-        ...(ch.isThread() && ch.parent ? { channel: ch.parent.name } : {}),
-        ...(tagged ? { new_thread: "true" } : {}),
-        ...(opened && forum ? { post_title: nameOf(ch) } : {}),
-        ...(shots.length > 0 ? { image_path: shots.join("; ") } : {}),
-        ...(atts.length > 0
-          ? { attachment_count: String(atts.length), attachments: atts.join("; ") }
-          : {}),
-        ...(stickers.length > 0 ? { stickers: stickers.join("; ") } : {}),
-        ...(poll
-          ? {
-              poll: poll.question.text!,
-              poll_options: poll.answers.map((a) => a.text).join("; "),
-              ...(poll.allowMultiselect ? { poll_multiple: "true" } : {}),
-            }
-          : {}),
+        ...(ch.isThread() && ch.parent && { channel: ch.parent.name }),
+        ...(tagged && { new_thread: "true" }),
+        ...(opened && forum && { post_title: nameOf(ch) }),
+        ...(shots.length > 0 && { image_path: shots.join("; ") }),
+        ...(atts.length > 0 && {
+          attachment_count: String(atts.length),
+          attachments: atts.join("; "),
+        }),
+        ...(stickers.length > 0 && { stickers: stickers.join("; ") }),
+        ...(poll && {
+          poll: poll.question.text ?? "",
+          poll_options: poll.answers.map((a) => a.text).join("; "),
+          ...(poll.allowMultiselect && { poll_multiple: "true" }),
+        }),
         ...(await replyMeta(msg)),
-        ...(edited ? { edited: "true" } : {}),
-        ...(forwarded ? { forwarded: "true" } : {}),
+        ...(edited && { edited: "true" }),
+        ...(forwarded && { forwarded: "true" }),
       },
     };
 
@@ -1448,14 +1634,12 @@ function serve(token: string) {
     ledger.heard(ch.id, msg.id, message.content, message.meta.reply_to_message_id);
   }
 
-  // Reactions and deletes reach only a thread the hub already serves: in it,
-  // or on the message it hangs off, which shares the thread's id.
   async function servedThread(
     msg: DiscordMessage | PartialMessage,
-  ): Promise<ThreadChannel | DMChannel | undefined> {
+  ): Promise<Conversation | undefined> {
     const id = msg.channel.isThread() || msg.channel.isDMBased() ? msg.channelId : msg.id;
 
-    return hub.name(id) ? await threadChannel(id) : undefined;
+    return filled(hub.name(id)) ? await threadChannel(id) : undefined;
   }
 
   async function handleReaction(
@@ -1466,13 +1650,15 @@ function serve(token: string) {
     if (!allowed(user.id)) {
       return;
     }
+
     const ch = await servedThread(reaction.message);
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
+
     const target = reaction.message.partial
-      ? await reaction.message.fetch().catch(() => {})
+      ? await reaction.message.fetch().catch(() => null)
       : reaction.message;
 
     const who = user.partial ? await user.fetch() : user;
@@ -1486,25 +1672,26 @@ function serve(token: string) {
         user_id: who.id,
         ts: new Date().toISOString(),
         reaction: emoji,
-        ...(removed ? { reaction_removed: "true" } : {}),
+        ...(removed && { reaction_removed: "true" }),
         reaction_to_message_id: reaction.message.id,
-        ...(target ? { reaction_to_user: target.author.username } : {}),
-        ...(target?.content ? { reaction_to_text: target.content } : {}),
+        ...(target !== null && { reaction_to_user: target.author.username }),
+        ...(target !== null && filled(target.content) && { reaction_to_text: target.content }),
       },
     });
   }
 
-  // Discord doesn't say who deleted a message, so every delete in a served
-  // thread is reported except the bot's own delete_message calls.
+  // Discord's delete event doesn't say who deleted the message: https://docs.discord.com/developers/events/gateway-events#message-delete
   async function handleDelete(msg: DiscordMessage | PartialMessage): Promise<void> {
     if (deleting.delete(msg.id)) {
       return;
     }
+
     const ch = await servedThread(msg);
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
+
     void ledger.deleted(ch.id, msg.id);
     hub.deliver(ch.id, nameOf(ch), {
       author: "other",
@@ -1515,7 +1702,7 @@ function serve(token: string) {
         message_id: msg.id,
         ts: new Date().toISOString(),
         deleted: "true",
-        ...(msg.content ? { deleted_text: msg.content } : {}),
+        ...(filled(msg.content) && { deleted_text: msg.content }),
       },
     });
   }
@@ -1528,18 +1715,21 @@ function serve(token: string) {
     if (!allowed(userId)) {
       return;
     }
+
     const ch = await servedThread(answer.poll.message);
 
-    if (!ch) {
+    if (ch === undefined) {
       return;
     }
+
     const msg = answer.poll.message.partial
       ? await answer.poll.message.fetch()
       : answer.poll.message;
 
-    if (msg.author.id !== client.user!.id || !msg.poll) {
+    if (msg.author.id !== bot().id || msg.poll === null) {
       return;
     }
+
     const vote = msg.poll.answers.get(answer.id)?.text ?? "";
     const who = await client.users.fetch(userId);
     hub.deliver(
@@ -1554,7 +1744,7 @@ function serve(token: string) {
           user_id: who.id,
           ts: new Date().toISOString(),
           vote,
-          ...(removed ? { vote_removed: "true" } : {}),
+          ...(removed && { vote_removed: "true" }),
           poll_message_id: msg.id,
           poll: msg.poll.question.text ?? "",
         },
@@ -1562,24 +1752,23 @@ function serve(token: string) {
       () => {
         if (!removed) {
           ledger.answered(ch.id, msg.id, vote, "discord", true);
-        } else if (ledger.find(ch.id, msg.id)?.answer?.label === vote) {
+        } else if (questionAt(ch.id, msg.id)?.answer?.label === vote) {
           ledger.reopened(ch.id, msg.id);
         }
+
         return true;
       },
     );
   }
 
-  // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does,
-  // and its buttons are drawn again from the one that stands.
   async function picked(
-    ch: ThreadChannel | DMChannel,
+    ch: Conversation,
     label: string,
-    at: Date,
+    tappedAt: Date,
     user: { id: string; username: string },
     message: string,
   ) {
-    const question = ledger.find(ch.id, message);
+    const question = questionAt(ch.id, message);
     hub.deliver(
       ch.id,
       nameOf(ch),
@@ -1590,7 +1779,7 @@ function serve(token: string) {
           chat_id: ch.id,
           user: user.username,
           user_id: user.id,
-          ts: at.toISOString(),
+          ts: tappedAt.toISOString(),
           button: "true",
           button_message_id: message,
         },
@@ -1598,35 +1787,43 @@ function serve(token: string) {
       question && (() => ledger.answered(ch.id, message, label, "discord")),
     );
 
-    if (question) {
+    if (question !== undefined) {
       await draw(ch.id, message);
     }
   }
 
-  // Discord wants an answer to a tap within three seconds, so the buttons change before anything is fetched.
+  // Discord wants the first answer to a tap within 3 seconds: https://docs.discord.com/developers/interactions/receiving-and-responding#responding-to-an-interaction
   async function handleTap(tap: ButtonInteraction): Promise<void> {
     if (!allowed(tap.user.id)) {
-      return void (await tap.deferUpdate());
-    }
-    const verdict = /^perm:(allow|deny):(\w+)$/.exec(tap.customId);
+      await tap.deferUpdate();
 
-    if (verdict) {
-      await tap.update({ components: verdicts(verdict[2]!, verdict[1]) });
-      asking.get(tap.channelId)?.delete(tap.message.id);
-
-      hub.answer(tap.channelId, verdict[2]!, verdict[1] as "allow" | "deny");
       return;
     }
 
-    const labels = (tap.message.components as ActionRow<ButtonComponent>[]).flatMap((row) =>
-      row.components.map((button) => button.label!),
+    const [, behavior, request] = /^perm:(allow|deny):(\w+)$/u.exec(tap.customId) ?? [];
+
+    if (request !== undefined && (behavior === "allow" || behavior === "deny")) {
+      await tap.update({ components: verdicts(request, behavior) });
+      asking.get(tap.channelId)?.delete(tap.message.id);
+
+      hub.answer(tap.channelId, request, behavior);
+
+      return;
+    }
+
+    const labels = tap.message.components.flatMap((actionRow) =>
+      actionRow.type === ComponentType.ActionRow
+        ? actionRow.components.flatMap((each) =>
+            each.type === ComponentType.Button ? [each.label ?? ""] : [],
+          )
+        : [],
     );
 
     const chosen = Number(tap.customId);
     await tap.update({ components: buttons(labels, chosen) });
     await picked(
       await threadChannel(tap.channelId),
-      labels[chosen]!,
+      labels[chosen] ?? "",
       tap.createdAt,
       tap.user,
       tap.message.id,
@@ -1635,13 +1832,13 @@ function serve(token: string) {
 
   async function handleMenu(pick: StringSelectMenuInteraction): Promise<void> {
     if (!allowed(pick.user.id)) {
-      return void (await pick.deferUpdate());
-    }
-    const labels = (pick.component as StringSelectMenuComponent).options.map(
-      (option) => option.label,
-    );
+      await pick.deferUpdate();
 
-    const chosen = pick.values.map((value) => labels[Number(value)]!);
+      return;
+    }
+
+    const labels = pick.component.options.map((option) => option.label);
+    const chosen = pick.values.map((value) => labels[Number(value)] ?? "");
     await pick.update({ components: menu(labels, chosen) });
     await picked(
       await threadChannel(pick.channelId),
@@ -1652,20 +1849,25 @@ function serve(token: string) {
     );
   }
 
-  // A thread's own controls, outside its conversation: its session never sees them.
   async function handleCommand(command: ChatInputCommandInteraction): Promise<void> {
-    const answer = (content: string) => command.reply({ content, flags: MessageFlags.Ephemeral });
+    const answer = async (content: string) => {
+      await command.reply({ content, flags: MessageFlags.Ephemeral });
+    };
 
     if (!allowed(command.user.id)) {
-      return void (await answer("hex only answers its owner."));
+      await answer("hex only answers its owner.");
+
+      return;
     }
+
     const thread = command.channelId;
 
-    if (!hub.name(thread)) {
-      return void (await answer(
-        "This channel has no session: use it in one of hex's threads or the DM.",
-      ));
+    if (!filled(hub.name(thread))) {
+      await answer("This channel has no session: use it in one of hex's threads or the DM.");
+
+      return;
     }
+
     switch (command.commandName) {
       case "model":
       case "effort": {
@@ -1675,32 +1877,43 @@ function serve(token: string) {
         const name =
           [...MODELS, ...EFFORTS].find((choice) => choice.value === value)?.name ?? value;
 
-        return void (await answer(
+        await answer(
           `${command.commandName === "model" ? "Model" : "Effort"}: ${name}, from this thread's next message.`,
-        ));
+        );
+
+        return;
       }
 
       case "compact": {
-        if (dms.has(thread))
-          return void (await answer(
-            "The DM starts a fresh session whenever its last one is spent, so there's nothing to compact.",
-          ));
-        if (typing.has(thread))
-          return void (await answer("This thread is working; compact it once it's done."));
-        if (!hub.session(thread))
-          return void (await answer("This thread has nothing to compact yet."));
-        void hub.command(thread, "/compact");
-        return void (await answer("Compacting this thread."));
+        await answer(compacting(thread));
+
+        return;
       }
+
       case "stop": {
-        hub.stop(thread);
-        return void (await answer("Stopped. The next message resumes it."));
+        void hub.stop(thread);
+        await answer("Stopped. The next message resumes it.");
       }
     }
   }
 
-  const failure = (what: string) => (e: unknown) =>
-    process.stderr.write(`discord hub: ${what} failed: ${e}\n`);
+  function compacting(thread: string): string {
+    if (dms.has(thread)) {
+      return "The DM starts a fresh session whenever its last one is spent, so there's nothing to compact.";
+    }
+
+    if (typing.has(thread)) {
+      return "This thread is working; compact it once it's done.";
+    }
+
+    if (!filled(hub.session(thread))) {
+      return "This thread has nothing to compact yet.";
+    }
+
+    void hub.command(thread, "/compact");
+
+    return "Compacting this thread.";
+  }
 
   client.on("messageReactionAdd", (reaction, user) => {
     handleReaction(reaction, user, false).catch(failure("handleReaction"));
@@ -1738,130 +1951,88 @@ function serve(token: string) {
     }
   });
 
-  // The newest message handled, kept so the bot reads what it missed while it was
-  // down, or while Discord couldn't resume its gateway session.
-  let cursor = (() => {
-    try {
-      return JSON.parse(readFileSync(CURSOR_FILE, "utf-8")).id as string;
-    } catch {
-      return keepCursor(SnowflakeUtil.generate().toString());
-    }
-  })();
+  let cursor = readCursor();
 
-  function keepCursor(id: string) {
-    writeFileSync(`${CURSOR_FILE}.tmp`, `${JSON.stringify({ id })}\n`);
-    renameSync(`${CURSOR_FILE}.tmp`, CURSOR_FILE);
-
-    return id;
-  }
-
-  // Messages are handled one at a time, in order, so a thread's messages reach its
-  // session in order and the cursor never passes one still being handled.
-  let queue: Promise<unknown> = Promise.resolve();
+  let oneAtATimeBehindTheCursor: Promise<unknown> = Promise.resolve();
   let caught = new Set<string>();
 
   async function take(msg: DiscordMessage) {
     if (!msg.author.bot) {
       await handleInbound(msg).catch(failure("handleInbound"));
     }
+
     if (BigInt(msg.id) > BigInt(cursor)) {
       cursor = keepCursor(msg.id);
     }
   }
 
-  type Listened = TextChannel | NewsChannel | AnyThreadChannel | DMChannel;
-
   const listensIn = (ch: Channel | null | undefined): ch is Listened =>
     ch?.type === ChannelType.DM ||
-    ((isText(ch) || !!ch?.isThread()) && !!ch.permissionsFor(client.user!)?.has(READ));
+    (ch !== null &&
+      ch !== undefined &&
+      (isText(ch) || ch.isThread()) &&
+      ch.permissionsFor(bot())?.has(READ) === true);
 
-  async function after(ch: Listened, from: string): Promise<DiscordMessage[]> {
-    const found: DiscordMessage[] = [];
-
-    for (let since = from; ;) {
-      const page = [...(await ch.messages.fetch({ after: since, limit: 100 })).values()];
-      found.push(...page);
-
-      if (page.length < 100) {
-        return found;
-      }
-      since = page.reduce((newest, m) => (BigInt(m.id) > BigInt(newest) ? m.id : newest), since);
-    }
-  }
-
-  // Discord lists archived threads newest-archived first, and a thread that got a message
-  // after the cursor was archived after it, so paging stops at the first older archive.
-  async function archivedSince(
-    ch: TextChannel | NewsChannel | ForumChannel,
-    from: string,
-  ): Promise<AnyThreadChannel[]> {
-    const since = SnowflakeUtil.timestampFrom(from);
-    const found: AnyThreadChannel[] = [];
-
-    for (let before: number | undefined; ;) {
-      const page = await ch.threads.fetchArchived({ before, limit: 100 });
-      const threads = [...page.threads.values()];
-      found.push(...threads);
-      const oldest = Math.min(...threads.map((t) => t.archiveTimestamp ?? 0));
-
-      if (!page.hasMore || threads.length === 0 || oldest < since) {
-        return found;
-      }
-      before = oldest;
-    }
-  }
-
-  // Every text channel, thread and DM whose newest message is past the cursor is read
-  // forward from it, and what it missed is handled oldest first, as if live. A thread
-  // can go quiet long enough to archive again while the bot is away, so each channel's
-  // recently archived threads are read too.
   async function catchUp() {
     const from = cursor;
     const g = client.guilds.cache.first();
 
-    const [channels, active, dms] = await Promise.all([
+    const [channels, active, ownerDms] = await Promise.all([
       g ? g.channels.fetch().then((found) => [...found.values()]) : [],
       g ? g.channels.fetchActiveThreads().then((found) => [...found.threads.values()]) : [],
       Promise.all(
-        loadAccess().allowFrom.map((id) =>
-          client.users
-            .createDM(id, { force: true })
-            .catch((error) => void failure(`opening the DM with ${id}`)(error)),
-        ),
+        loadAccess().allowFrom.map(async (id) => {
+          try {
+            return await client.users.createDM(id, { force: true });
+          } catch (error) {
+            failure(`opening the DM with ${id}`)(error);
+          }
+        }),
       ),
     ]);
 
     const parents = channels.flatMap((ch) =>
-      isPostable(ch) && ch.permissionsFor(client.user!)?.has(READ) ? [ch] : [],
+      isPostable(ch) && ch.permissionsFor(bot())?.has(READ) === true ? [ch] : [],
     );
 
     const archived = await Promise.all(
-      parents.map((ch) =>
-        archivedSince(ch, from).catch(
-          (error) => (failure(`listing ${ch.id}'s archived threads`)(error), []),
-        ),
-      ),
+      parents.map(async (ch) => {
+        try {
+          return await archivedSince(ch, from);
+        } catch (error) {
+          failure(`listing ${ch.id}'s archived threads`)(error);
+
+          return [];
+        }
+      }),
     );
 
-    const places = [...channels, ...active, ...archived.flat(), ...dms]
+    const places = [...channels, ...active, ...archived.flat(), ...ownerDms]
       .filter(listensIn)
-      .filter((ch) => !!ch.lastMessageId && BigInt(ch.lastMessageId) > BigInt(from));
+      .filter((ch) => filled(ch.lastMessageId) && BigInt(ch.lastMessageId) > BigInt(from));
 
     const missed = (
       await Promise.all(
-        places.map((ch) =>
-          after(ch, from).catch((error) => (failure(`catching up on ${ch.id}`)(error), [])),
-        ),
+        places.map(async (ch) => {
+          try {
+            return await messagesAfter(ch, from);
+          } catch (error) {
+            failure(`catching up on ${ch.id}`)(error);
+
+            return [];
+          }
+        }),
       )
     )
       .flat()
-      .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
+      .toSorted((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
 
     if (missed.length > 0) {
       process.stderr.write(
         `discord hub: catching up on ${missed.length} message(s) since ${new Date(SnowflakeUtil.timestampFrom(from)).toISOString()}\n`,
       );
     }
+
     caught = new Set(missed.map((m) => m.id));
 
     for (const msg of missed) {
@@ -1870,11 +2041,13 @@ function serve(token: string) {
   }
 
   client.on("shardReady", () => {
-    queue = queue.then(catchUp).catch(failure("catching up"));
+    oneAtATimeBehindTheCursor = oneAtATimeBehindTheCursor
+      .then(catchUp)
+      .catch(failure("catching up"));
   });
 
   client.on("messageCreate", (msg) => {
-    queue = queue
+    oneAtATimeBehindTheCursor = oneAtATimeBehindTheCursor
       .then(() => (caught.has(msg.id) ? undefined : take(msg)))
       .catch(failure("handling a message"));
   });
@@ -1883,6 +2056,7 @@ function serve(token: string) {
     if (before.partial || before.content === after.content || after.author.bot) {
       return;
     }
+
     handleInbound(after, true).catch(failure("handleInbound"));
   });
 
@@ -1890,12 +2064,9 @@ function serve(token: string) {
     if (before.name !== after.name) {
       hub.rename(after.id, after.name);
     }
-    if (before.archived && !after.archived) {
-      ledger
-        .rewrite(after.id, post)
-        .catch((err) =>
-          process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`),
-        );
+
+    if (before.archived === true && after.archived !== true) {
+      ledger.rewrite(after.id, post).catch(failed(`couldn't rewrite ${after.id}'s status post`));
     }
   });
 
@@ -1905,37 +2076,56 @@ function serve(token: string) {
     void hub.retire(thread.id);
   });
 
-  client.on("error", (err) => {
-    process.stderr.write(`discord hub: client error: ${err}\n`);
+  client.on("error", (error) => {
+    process.stderr.write(`discord hub: client error: ${String(error)}\n`);
   });
 
   client.once("clientReady", (c) => {
     process.stderr.write(`discord hub: gateway connected as ${c.user.tag}\n`);
     const id = client.guilds.cache.first()?.id;
 
-    if (id) {
-      writeFileSync(GUILD_FILE, JSON.stringify({ id }) + "\n");
+    if (filled(id)) {
+      writeFileSync(GUILD_FILE, `${JSON.stringify({ id })}\n`);
     }
+
     hub.save();
     void c.application?.commands.set(COMMANDS).catch(failure("registering slash commands"));
-    ledger.keep(post, (thread, err) =>
-      process.stderr.write(`discord hub: couldn't rewrite ${thread}'s status post: ${err}\n`),
-    );
+    ledger.keep(post, (thread, error) => {
+      failed(`couldn't rewrite ${thread}'s status post`)(error);
+    });
   });
 
-  // discord.js reconnects a session it has, but not a first login that fails, as when the
-  // network isn't up yet at boot. Only a bad token is final.
   async function login(attempt = 1): Promise<void> {
     try {
       await client.login(token);
     } catch (error) {
-      if ((error as { code?: string }).code === DiscordjsErrorCodes.TokenInvalid)
-        return void process.stderr.write(`discord hub: login failed: ${error}\n`);
+      if (codeOf(error) === DiscordjsErrorCodes.TokenInvalid) {
+        failed("login failed")(error);
+
+        return;
+      }
+
       const delay = Math.min(1000 * 2 ** (attempt - 1), 60_000);
-      process.stderr.write(`discord hub: login failed: ${error}, retrying in ${delay / 1000}s\n`);
-      setTimeout(login, delay, attempt + 1);
+      process.stderr.write(
+        `discord hub: login failed: ${String(error)}, retrying in ${delay / 1000}s\n`,
+      );
+      setTimeout(() => void login(attempt + 1), delay);
     }
   }
 
   void login();
+}
+
+const TOKEN = process.env.DISCORD_BOT_TOKEN;
+
+if (TOKEN !== undefined && TOKEN !== "") {
+  process.on("unhandledRejection", (error) => {
+    process.stderr.write(`discord hub: unhandled rejection: ${String(error)}\n`);
+  });
+  process.on("uncaughtException", (error) => {
+    process.stderr.write(`discord hub: uncaught exception: ${String(error)}\n`);
+  });
+  serve(TOKEN);
+} else {
+  process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
 }
