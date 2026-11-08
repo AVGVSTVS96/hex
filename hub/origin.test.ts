@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { open } from "./store.ts";
 
 let dir: string;
@@ -60,17 +62,22 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
+const HookOutput = z.object({
+  hookSpecificOutput: z.object({ hookEventName: z.string(), additionalContext: z.string() }),
+});
+
 async function hook(event: string, env: Record<string, string>) {
   const run = Bun.spawn(["bun", join(import.meta.dir, "origin.ts")], {
     stdin: new Blob([JSON.stringify({ hook_event_name: event, session_id: "s" })]),
     stdout: "pipe",
-    env: { PATH: process.env.PATH!, HEX_STORE: dir, ...env },
+    env: { PATH: process.env.PATH ?? "", HEX_STORE: dir, ...env },
   });
 
   expect(await run.exited).toBe(0);
+
   const out = await new Response(run.stdout).text();
 
-  return out && JSON.parse(out).hookSpecificOutput;
+  return out === "" ? undefined : HookOutput.parse(JSON.parse(out)).hookSpecificOutput;
 }
 
 test("a subagent of a thread's session is told the conversation it works for and the owner's newest message its session took, past reactions", async () => {
@@ -79,10 +86,10 @@ test("a subagent of a thread's session is told the conversation it works for and
     HEX_THREAD: "-100:7",
   });
 
-  expect(told.hookEventName).toBe("SubagentStart");
-  expect(told.additionalContext).toContain("in Website: `");
-  expect(told.additionalContext).toContain("/bin/hex log --last 100 -- '-100:7'`");
-  expect(told.additionalContext).toContain("/bin/hex message telegram:-100:50`");
+  expect(told?.hookEventName).toBe("SubagentStart");
+  expect(told?.additionalContext).toContain("in Website: `");
+  expect(told?.additionalContext).toContain("/bin/hex log --last 100 -- '-100:7'`");
+  expect(told?.additionalContext).toContain("/bin/hex message telegram:-100:50`");
 });
 
 test("a job's session is told where its work came from, and the thread's own session isn't told its own thread", async () => {
@@ -91,12 +98,12 @@ test("a job's session is told where its work came from, and the thread's own ses
     HEX_FROM: "telegram:-100:7",
   });
 
-  expect(job.hookEventName).toBe("SessionStart");
-  expect(job.additionalContext).toContain("/bin/hex message telegram:-100:50`");
+  expect(job?.hookEventName).toBe("SessionStart");
+  expect(job?.additionalContext).toContain("/bin/hex message telegram:-100:50`");
   expect(
     await hook("SessionStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }),
-  ).toBe("");
-  expect(await hook("SubagentStart", {})).toBe("");
+  ).toBeUndefined();
+  expect(await hook("SubagentStart", {})).toBeUndefined();
 });
 
 test("a job started for another thread is told the conversation that started it", async () => {
@@ -105,14 +112,14 @@ test("a job started for another thread is told the conversation that started it"
     HEX_FROM: "telegram:-100:7",
   });
 
-  expect(job.additionalContext).toContain("in Website: `");
-  expect(job.additionalContext).toContain("/bin/hex message telegram:-100:50`");
+  expect(job?.additionalContext).toContain("in Website: `");
+  expect(job?.additionalContext).toContain("/bin/hex message telegram:-100:50`");
 });
 
 test("what the owner said on a call counts as their words, and a thread with none still gets its conversation", async () => {
   expect(
     (await hook("SubagentStart", { HEX_CHANNEL: "plugin:voice@hex", HEX_THREAD: "voice" }))
-      .additionalContext,
+      ?.additionalContext,
   ).toContain("/bin/hex message voice:c1:1`");
 
   const told = await hook("SubagentStart", {
@@ -120,7 +127,7 @@ test("what the owner said on a call counts as their words, and a thread with non
     HEX_THREAD: "-100:8",
   });
 
-  expect(told.additionalContext).toEndWith(
+  expect(told?.additionalContext).toEndWith(
     "/bin/hex log --last 100 -- '-100:8'` prints its newest 100 messages (without --last, all of it).",
   );
 });
@@ -133,7 +140,7 @@ test("a thread's own session goes by its thread over job variables it inherited,
       HEX_OWNER: "telegram:-100:7",
       HEX_FROM: "telegram:-100:7",
     }),
-  ).toBe("");
+  ).toBeUndefined();
   expect(
     (
       await hook("SubagentStart", {
@@ -141,9 +148,9 @@ test("a thread's own session goes by its thread over job variables it inherited,
         HEX_THREAD: "-100:8",
         HEX_FROM: "telegram:-100:7",
       })
-    ).additionalContext,
+    )?.additionalContext,
   ).toContain("in Shop: `");
-  expect(await hook("SubagentStart", { HEX_OWNER: "telegram:-100:99" })).toBe("");
+  expect(await hook("SubagentStart", { HEX_OWNER: "telegram:-100:99" })).toBeUndefined();
 });
 
 test("a job is told the owner's words as they were when it started, a job no conversation started gets nothing, and a vote taken off isn't the owner's words", async () => {
@@ -171,7 +178,7 @@ test("a job is told the owner's words as they were when it started, a job no con
   store.take("telegram:-100:53", "s");
   expect(
     (await hook("SubagentStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }))
-      .additionalContext,
+      ?.additionalContext,
   ).toContain("/bin/hex message telegram:-100:52b`");
   store.deliver({
     key: "telegram:-100:54",
@@ -184,7 +191,7 @@ test("a job is told the owner's words as they were when it started, a job no con
   store.take("telegram:-100:54", "s");
   expect(
     (await hook("SubagentStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }))
-      .additionalContext,
+      ?.additionalContext,
   ).toContain("/bin/hex message telegram:-100:54`");
   expect(
     (
@@ -193,9 +200,9 @@ test("a job is told the owner's words as they were when it started, a job no con
         HEX_FROM: "telegram:-100:7",
         HEX_FROM_AT: started,
       })
-    ).additionalContext,
+    )?.additionalContext,
   ).toContain("/bin/hex message telegram:-100:50`");
-  expect(await hook("SessionStart", { HEX_OWNER: "telegram:-100:7" })).toBe("");
+  expect(await hook("SessionStart", { HEX_OWNER: "telegram:-100:7" })).toBeUndefined();
 });
 
 test("an edit is named by the message it edits, so the line reads as the owner's newest words however often they edit", async () => {
@@ -212,7 +219,7 @@ test("an edit is named by the message it edits, so the line reads as the owner's
   store.take("telegram:-100:52@1", "s");
   expect(
     (await hook("SubagentStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }))
-      .additionalContext,
+      ?.additionalContext,
   ).toContain("/bin/hex message telegram:-100:52`");
   store.deliver({
     key: "telegram:-100:52@2",
