@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { tool, type ChannelServer } from "../../hub/hub.ts";
+import { tool } from "../../hub/hub.ts";
+import type { ChannelServer } from "../../hub/hub.ts";
 
 const title = z.string().describe('One word, like a chat name ("Anchors", "Frontier").');
 const limit = z.number().describe("Max messages (default 20, max 100).");
