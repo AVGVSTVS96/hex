@@ -1,0 +1,13 @@
+{
+  "name": "@hex/hub",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.ts",
+    "./testing": "./testing.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "catalog:",
+    "zod": "catalog:"
+  }
+}

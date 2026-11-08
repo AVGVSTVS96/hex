@@ -5,10 +5,8 @@ import { basename, dirname, join } from "node:path";
 
 import { toAcpNotifications } from "@agentclientprotocol/claude-agent-acp";
 import type { SessionNotification, ToolCall } from "@agentclientprotocol/sdk";
+import { running, open } from "@hex/hub";
 import { z } from "zod";
-
-import { running } from "../../hub/running.ts";
-import { open } from "../../hub/store.ts";
 
 export type Update = SessionNotification["update"];
 

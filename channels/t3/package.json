@@ -6,6 +6,7 @@
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "catalog:",
     "@agentclientprotocol/sdk": "catalog:",
+    "@hex/hub": "workspace:*",
     "zod": "catalog:"
   }
 }

@@ -11,11 +11,6 @@ import {
 import { homedir } from "node:os";
 import { basename, join, extname, sep } from "node:path";
 
-import { Bot, GrammyError, InputFile } from "grammy";
-import type { Context } from "grammy";
-import type { Chat, MessageEntity, MessageOrigin, ReactionTypeEmoji } from "grammy/types";
-import { z } from "zod";
-
 import {
   startHub,
   clients,
@@ -28,10 +23,15 @@ import {
   transcribe,
   EFFORTS,
   MODELS,
-} from "../../hub/hub.ts";
-import type { Call, Handlers, Message, Permission, Turn } from "../../hub/hub.ts";
-import { Ledger, waits } from "../../hub/ledger.ts";
-import type { Post } from "../../hub/ledger.ts";
+  Ledger,
+  waits,
+} from "@hex/hub";
+import type { Call, Handlers, Message, Permission, Turn, Post } from "@hex/hub";
+import { Bot, GrammyError, InputFile } from "grammy";
+import type { Context } from "grammy";
+import type { Chat, MessageEntity, MessageOrigin, ReactionTypeEmoji } from "grammy/types";
+import { z } from "zod";
+
 import { server, tools } from "./channel.ts";
 
 const STATE_DIR =

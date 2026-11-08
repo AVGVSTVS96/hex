@@ -7,12 +7,11 @@ import {
   stripLocalCommandMetadata,
   toAcpNotifications,
 } from "@agentclientprotocol/claude-agent-acp";
+import { interrupted, loaded } from "@hex/hub";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import type { Event } from "nostr-tools/pure";
 import { z } from "zod";
 
-import { interrupted } from "../../hub/claude.ts";
-import { loaded } from "../../hub/loaded.ts";
 import type { Relay } from "./relay.ts";
 
 type Frame = {

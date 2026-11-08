@@ -3,11 +3,11 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { open } from "@hex/hub";
+import type { Kept } from "@hex/hub";
+import { until } from "@hex/hub/testing";
 import { z } from "zod";
 
-import { open } from "../../hub/store.ts";
-import type { Kept } from "../../hub/store.ts";
-import { until } from "../../hub/until.ts";
 import type { TranscriptLine } from "./activity.ts";
 
 const home = mkdtempSync(join(tmpdir(), "voice-activity-"));

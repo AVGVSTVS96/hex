@@ -1,7 +1,7 @@
+import { tool } from "@hex/hub";
+import type { ChannelServer } from "@hex/hub";
 import { z } from "zod";
 
-import { tool } from "../../hub/hub.ts";
-import type { ChannelServer } from "../../hub/hub.ts";
 import { PORT } from "./env.ts";
 
 export const tools = [

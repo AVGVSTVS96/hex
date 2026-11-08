@@ -5,14 +5,11 @@ import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { clients, open } from "@hex/hub";
+import type { Hub } from "@hex/hub";
+import { connect, noClaude, until } from "@hex/hub/testing";
 import * as discord from "discord.js";
 import { z } from "zod";
-
-import { clients } from "../../hub/hub.ts";
-import type { Hub } from "../../hub/hub.ts";
-import { open } from "../../hub/store.ts";
-import { connect, noClaude } from "../../hub/testing.ts";
-import { until } from "../../hub/until.ts";
 
 const {
   ButtonStyle,

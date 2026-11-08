@@ -3,11 +3,10 @@ import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 
+import { begin, title as oneWord, open } from "@hex/hub";
+import type { Held, VoiceLine } from "@hex/hub";
 import { z } from "zod";
 
-import { begin, title as oneWord } from "../../hub/hub.ts";
-import type { Held, VoiceLine } from "../../hub/hub.ts";
-import { open } from "../../hub/store.ts";
 import { findThread, followAgent, followThread } from "./activity.ts";
 import type { Step, Thread } from "./activity.ts";
 import { Board, opener } from "./board.ts";

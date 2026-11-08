@@ -12,6 +12,22 @@ import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 
 import {
+  startHub,
+  dispatch,
+  clients,
+  begin,
+  move,
+  preview,
+  tappable,
+  title,
+  transcribe,
+  MODELS,
+  EFFORTS,
+  Ledger,
+  waits,
+} from "@hex/hub";
+import type { Handlers, Message, Permission, Turn, MessageId, Post, Question } from "@hex/hub";
+import {
   Client,
   GatewayIntentBits,
   Partials,
@@ -59,22 +75,6 @@ import type {
 } from "discord.js";
 import { z } from "zod";
 
-import {
-  startHub,
-  dispatch,
-  clients,
-  begin,
-  move,
-  preview,
-  tappable,
-  title,
-  transcribe,
-  MODELS,
-  EFFORTS,
-} from "../../hub/hub.ts";
-import type { Handlers, Message, Permission, Turn } from "../../hub/hub.ts";
-import { Ledger, waits } from "../../hub/ledger.ts";
-import type { MessageId, Post, Question } from "../../hub/ledger.ts";
 import { server, tools } from "./channel.ts";
 import { voiceCalls } from "./voice.ts";
 

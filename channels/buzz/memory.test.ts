@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { until } from "@hex/hub/testing";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { matchFilters } from "nostr-tools/filter";
 import type { Filter } from "nostr-tools/filter";
@@ -13,7 +14,6 @@ import { finalizeEvent, getEventHash, getPublicKey } from "nostr-tools/pure";
 import type { Event } from "nostr-tools/pure";
 import { z } from "zod";
 
-import { until } from "../../hub/until.ts";
 import { startMemory } from "./memory.ts";
 
 const AGENT_KEY = Buffer.from(

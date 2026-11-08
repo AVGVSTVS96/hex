@@ -1,7 +1,6 @@
-import { carried, clients, history } from "../../hub/hub.ts";
-import type { Turn } from "../../hub/hub.ts";
-import { owners } from "../../hub/notes.ts";
-import { open as store } from "../../hub/store.ts";
+import { carried, clients, history, owners, open as store } from "@hex/hub";
+import type { Turn } from "@hex/hub";
+
 import { Changes } from "./changes.ts";
 import { caption, meta as mediaMeta, typed } from "./media.ts";
 import type { Item } from "./media.ts";

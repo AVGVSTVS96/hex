@@ -7,10 +7,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { Readable } from "node:stream";
 
+import { until } from "@hex/hub/testing";
 import type { Subprocess } from "bun";
 import { z } from "zod";
-
-import { until } from "../../hub/until.ts";
 
 let dir: string;
 let path: string;

@@ -3,8 +3,9 @@ import { existsSync, readFileSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import type { MessageId } from "../../hub/ledger.ts";
-import { open } from "../../hub/store.ts";
+import { open } from "@hex/hub";
+import type { MessageId } from "@hex/hub";
+
 import type { Item } from "./activity.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

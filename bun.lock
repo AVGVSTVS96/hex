@@ -4,7 +4,7 @@
   "workspaces": {
     "": {
       "dependencies": {
-        "@modelcontextprotocol/sdk": "1.32.2",
+        "@modelcontextprotocol/sdk": "catalog:",
         "zod": "catalog:",
       },
       "devDependencies": {
@@ -22,6 +22,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@agentclientprotocol/claude-agent-acp": "catalog:",
+        "@hex/hub": "workspace:*",
         "@noble/curves": "2.0.1",
         "nostr-tools": "2.25.2",
         "zod": "catalog:",
@@ -32,6 +33,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@discordjs/voice": "0.19.2",
+        "@hex/hub": "workspace:*",
         "discord.js": "14.27.0",
         "opusscript": "0.1.1",
         "zod": "catalog:",
@@ -43,6 +45,7 @@
       "dependencies": {
         "@agentclientprotocol/claude-agent-acp": "catalog:",
         "@agentclientprotocol/sdk": "catalog:",
+        "@hex/hub": "workspace:*",
         "zod": "catalog:",
       },
     },
@@ -50,6 +53,7 @@
       "name": "claude-channel-telegram",
       "version": "0.1.0",
       "dependencies": {
+        "@hex/hub": "workspace:*",
         "grammy": "1.46.0",
         "zod": "catalog:",
       },
@@ -60,6 +64,14 @@
       "dependencies": {
         "@agentclientprotocol/claude-agent-acp": "catalog:",
         "@agentclientprotocol/sdk": "catalog:",
+        "@hex/hub": "workspace:*",
+        "zod": "catalog:",
+      },
+    },
+    "hub": {
+      "name": "@hex/hub",
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "catalog:",
         "zod": "catalog:",
       },
     },
@@ -84,6 +96,7 @@
   "catalog": {
     "@agentclientprotocol/claude-agent-acp": "0.93.0",
     "@agentclientprotocol/sdk": "1.9.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "zod": "4.6.7",
   },
   "packages": {
@@ -146,6 +159,8 @@
     "@emnapi/wasi-threads": ["@emnapi/wasi-threads@1.2.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-ELEBe8PsLvvJ6QMr0zLt8ffvOHW/dc1m3CEzNMg7aJUv3bMaoDtw2TXyDAwkYBuroxxuHEwhRTLJSe5sya547g=="],
 
     "@grammyjs/types": ["@grammyjs/types@5.0.0", "", {}, "sha512-iq1Qrq1iPKkB8yAa0qSuIURMZOCuqTY5pWy5gHpCeL1oQ+GPadGhw/cDTVE8waJwuCzacUzuIjRv1sESvk7u7A=="],
+
+    "@hex/hub": ["@hex/hub@workspace:hub"],
 
     "@hono/node-server": ["@hono/node-server@2.1.6", "", { "peerDependencies": { "hono": "^4 || ^5.0.0-0" } }, "sha512-p/KH9MnfNcsm3sR6x4lNgm5j+QN4Et8srKredl9DZfXiyZ1UQ3aQ2YVpFLbqktYN5JI+DB+VZFKM2PqE5hLKjQ=="],
 
