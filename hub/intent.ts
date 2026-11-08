@@ -15,7 +15,7 @@ const REWRITE_WINDOW_MS = 15 * 60_000;
 const SENDBACKS_BEFORE_IT_GOES_THROUGH = 2;
 const CHECKER_AUDIT_LOG = "intent.jsonl";
 
-const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task and my newest messages, my rules below, and what hex's memory says was decided.
+const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task and the newest of mine this session got, my rules below, and what hex's memory says was decided.
 
 The agent that gets it is as capable as you, loads my rules itself, and gets a link to my conversation. Every wall a brief puts up costs it performance: a plan for how to do the work, a guess or lead handed over as where to look, a limit or caution I didn't give for this ask. Those steer a smarter agent away from solving what I asked, even when worded as something to check. So the brief that works carries every part of what I asked, my words where the wording matters, the facts it has checked, and where the result goes, and leaves the how to the agent.
 
@@ -102,10 +102,13 @@ function promptFilesNow(command: string, cwd: string): [string, string][] {
 const quote = (rows: Row[]) =>
   rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${spoken(row)}`).join("\n\n");
 
-export function asked(store: Store, thread: string | undefined, text: string): string {
-  const tasks = named(text)
-    .map((id) => store.task(id))
-    .filter((task) => task !== null);
+const newest = (rows: Row[], shown: Row[]) =>
+  rows.filter((row) => spoken(row) !== "" && !shown.some(({ key }) => key === row.key)).slice(-4);
+
+export function asked(store: Store, session: string, text: string): string {
+  const tasks = [...new Set([...named(text), store.agentTasks()[session]?.id ?? ""])].flatMap(
+    (id) => store.task(id) ?? [],
+  );
 
   const cited = [...new Set(text.match(/\b(?:telegram|discord|buzz|t3|voice):[\w@.:-]*\w/gu))]
     .flatMap((key) => {
@@ -115,25 +118,18 @@ export function asked(store: Store, thread: string | undefined, text: string): s
     })
     .slice(0, 12);
 
-  const newest = (where: string) =>
-    store
-      .said(where, 40)
-      .filter((row) => spoken(row) !== "" && !cited.some(({ key }) => key === row.key))
-      .slice(-4);
-
-  const from = thread === undefined || thread === "" ? undefined : store.key(thread);
+  const got = newest(store.taken(session, 40), cited);
   const to = deliveredTo(store, text);
-  const fromNewest = from === undefined || from === "" ? [] : newest(from);
-  const toNewest = to === undefined || to === "" || to === from ? [] : newest(to);
+
+  const toNewest =
+    to === undefined || to === "" ? [] : newest(store.said(to, 40), [...cited, ...got]);
 
   return [
     tasks.length > 0
-      ? `The tasks it names, with his words:\n\n${tasks.map((task) => render(task, store.names())).join("\n\n")}`
+      ? `The tasks it names or this session works on, with his words:\n\n${tasks.map((task) => render(task, store.names())).join("\n\n")}`
       : "",
     cited.length > 0 ? `His messages it cites:\n\n${quote(cited)}` : "",
-    fromNewest.length > 0
-      ? `His newest messages in the thread it comes from:\n\n${quote(fromNewest)}`
-      : "",
+    got.length > 0 ? `His newest messages this session got:\n\n${quote(got)}` : "",
     toNewest.length > 0
       ? `His newest messages in the thread it goes to:\n\n${quote(toNewest)}`
       : "",
@@ -232,7 +228,6 @@ export type Checked = {
 export async function check(
   hook: Hook,
   store: Store,
-  thread: string | undefined,
   decide = judge,
 ): Promise<Checked | undefined> {
   const text = brief(hook);
@@ -256,7 +251,7 @@ export async function check(
     `This session's last brief, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That brief:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
 
   const words =
-    asked(store, thread, text) ||
+    asked(store, session, text) ||
     "No task or message of his was found for this brief; judge it by his rules and memory.";
 
   try {
@@ -299,7 +294,7 @@ if (import.meta.main) {
       process.env.HEX_OWNER;
 
     const began = Date.now();
-    const result = await check(hook, open(stateDir()), thread);
+    const result = await check(hook, open(stateDir()));
 
     if (result) {
       const { verdict, text, round, through, error } = result;

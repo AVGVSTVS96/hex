@@ -26,6 +26,7 @@ beforeEach(() => {
     author: "owner",
     meta: { user: "owner" },
   });
+  store.take("telegram:-100:50", "main");
   store.deliver({
     key: "telegram:-100:51",
     to: "-100:7",
@@ -100,17 +101,40 @@ test("a brief is what hands work to another agent", () => {
   ).toContain("Fix it.");
 });
 
-test("the words a brief is checked against: its tasks and the newest of the owner", () => {
+test("the words a brief is checked against: its tasks and the newest this session got", () => {
   const task = store.createTask({
     title: "Fast login",
     message: "telegram:-100:50",
     owner: "-100:7",
   });
 
-  const words = asked(store, "telegram:-100:7", `Task ${task.id}: make login fast.`);
+  const words = asked(store, "main", `Task ${task.id}: make login fast.`);
   expect(words).toContain(`${task.id} (open`);
-  expect(words).toContain("Make the login page load fast.");
+  expect(words).toContain("His newest messages this session got:\n\n[telegram:-100:50");
   expect(words).not.toContain("On it.");
+});
+
+test("a job is held to its own task, not to what the owner said to its thread since", () => {
+  const task = store.createTask({
+    title: "Fast login",
+    message: "telegram:-100:50",
+    owner: "-100:7",
+  });
+
+  store.addAgents(task.id, ["job-session"]);
+  store.deliver({
+    key: "telegram:-100:52",
+    to: "-100:7",
+    from: "telegram",
+    body: "New project: a fan controller, in its own topic.",
+    author: "owner",
+    meta: { user: "owner" },
+  });
+  store.take("telegram:-100:52", "main");
+
+  const words = asked(store, "job-session", "SendMessage to its builder: inline the login CSS.");
+  expect(words).toContain(`${task.id} (open`);
+  expect(words).not.toContain("fan controller");
 });
 
 test("a delivery is checked against the words it cites and the thread it goes to", () => {
@@ -126,13 +150,13 @@ test("a delivery is checked against the words it cites and the thread it goes to
 
   const words = asked(
     store,
-    "telegram:-100:9",
+    "general",
     ".hex/bin/hex deliver hex --to=Website 'Add dark mode (telegram:-100:90).'",
   );
 
   expect(words).toContain("His messages it cites:\n\n[telegram:-100:90");
   expect(words).toContain("the thread it goes to:\n\n[telegram:-100:50");
-  expect(words).not.toContain("the thread it comes from");
+  expect(words).not.toContain("this session got");
 });
 
 test("a rewrite is checked next to the notes it answers, and goes through after two sendbacks", async () => {
@@ -150,27 +174,27 @@ test("a rewrite is checked next to the notes it answers, and goes through after 
     return Promise.resolve({ verdict: "revise", notes: "He asked for the login page only." });
   };
 
-  expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({
+  expect(await check(hook, store, revise)).toMatchObject({
     round: 1,
     verdict: { verdict: "revise" },
   });
   expect(seen[0]).not.toContain("went back with your notes");
-  expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({
+  expect(await check(hook, store, revise)).toMatchObject({
     round: 2,
     verdict: { verdict: "revise" },
   });
   expect(seen[1]).toContain("went back with your notes");
   expect(seen[1]).toContain("He asked for the login page only.");
-  expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({
+  expect(await check(hook, store, revise)).toMatchObject({
     round: 3,
     through: true,
   });
-  expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({ round: 1 });
-  expect(await check(hook, store, "telegram:-100:7", ok)).toMatchObject({
+  expect(await check(hook, store, revise)).toMatchObject({ round: 1 });
+  expect(await check(hook, store, ok)).toMatchObject({
     round: 2,
     verdict: { verdict: "ok" },
   });
-  expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({ round: 1 });
+  expect(await check(hook, store, revise)).toMatchObject({ round: 1 });
 });
 
 test("a check that fails lets the work start", async () => {
@@ -180,9 +204,7 @@ test("a check that fails lets the work start", async () => {
     tool_input: { prompt: "Task t-1: fix login." },
   };
 
-  const result = await check(hook, store, undefined, () =>
-    Promise.reject(new Error("out of usage")),
-  );
+  const result = await check(hook, store, () => Promise.reject(new Error("out of usage")));
 
   expect(result?.verdict).toBe("failed");
 });
