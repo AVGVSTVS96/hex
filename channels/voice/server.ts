@@ -2484,7 +2484,7 @@ async function questionRoutes(request: Request, url: URL) {
     const file = questions.shot(decodeURIComponent(shown), Number(n));
 
     return file !== undefined && (await Bun.file(file).exists())
-      ? new Response(Bun.file(file))
+      ? new Response(Bun.file(file), { headers: { "Cache-Control": "no-cache" } })
       : new Response("No such screenshot", { status: 404 });
   }
 

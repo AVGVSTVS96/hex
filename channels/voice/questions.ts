@@ -1255,18 +1255,20 @@ function withItsShot(option: CuratedOption, shown: Asked | undefined): Option {
     : option;
 }
 
-const widthOverHeightOfEachFile = new Map<string, number | undefined>();
+const widthOverHeightOfEachFileVersion = new Map<string, number | undefined>();
 
 function widthOverHeightOf(file: string | undefined) {
   if (file === undefined) {
     return;
   }
 
-  if (!widthOverHeightOfEachFile.has(file)) {
-    widthOverHeightOfEachFile.set(file, readWidthOverHeight(file));
+  const version = `${file}@${statSync(file, { throwIfNoEntry: false })?.mtimeMs}`;
+
+  if (!widthOverHeightOfEachFileVersion.has(version)) {
+    widthOverHeightOfEachFileVersion.set(version, readWidthOverHeight(file));
   }
 
-  return widthOverHeightOfEachFile.get(file);
+  return widthOverHeightOfEachFileVersion.get(version);
 }
 
 const PNG_SIGNATURE = 0x89_50_4e_47;
