@@ -82,7 +82,7 @@ const deployment = z.object({
 type Deployment = z.output<typeof deployment>;
 
 export function respond(input: string, ssh = "/usr/bin/ssh") {
-  const request = z.looseObject({ op: z.unknown() }).parse(JSON.parse(input));
+  const request = z.looseObject({ op: z.unknown().exactOptional() }).parse(JSON.parse(input));
 
   if (request.op === "info") {
     return info;

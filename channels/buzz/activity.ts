@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 
@@ -9,6 +9,7 @@ import {
 } from "@agentclientprotocol/claude-agent-acp";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import type { Event } from "nostr-tools/pure";
+import { z } from "zod";
 
 import { interrupted } from "../../hub/claude.ts";
 import { loaded } from "../../hub/loaded.ts";
@@ -23,16 +24,22 @@ type Frame = {
   sessionId: string | null;
   turnId: string | null;
   startedAt?: string;
-  payload: unknown;
+  payload: Json;
 };
+
+type Json = z.core.util.JSONType;
+
+type Branch = Json[] | { [key: string]: Json };
+
+type Leaf = { text: string; replace: (text: string) => void };
 
 type Transcript = {
   path: string;
   offset: number;
   rest: Buffer;
   since: number;
-  tools: Record<string, any>;
-  tasks: Map<any, any>;
+  tools: Parameters<typeof toAcpNotifications>[3];
+  tasks: NonNullable<NonNullable<Parameters<typeof toAcpNotifications>[6]>["taskState"]>;
   stopped: boolean;
 };
 
@@ -60,17 +67,57 @@ const LOG_LINES = 1000;
 const LOG_LINE_BYTES = 4096;
 const LOG_LEASE = 60_000;
 
-const client = { sessionUpdate: async () => {} } as unknown as Parameters<
-  typeof toAcpNotifications
->[4];
+const calledOnlyByHooks = () =>
+  Promise.reject(new Error("a replayed transcript registers no hooks to call the client"));
 
-const logger = {
-  log: () => {},
-  error: (...args: unknown[]) => process.stderr.write(`buzz hub: activity: ${args.join(" ")}\n`),
+const client: Parameters<typeof toAcpNotifications>[4] = {
+  sessionUpdate: calledOnlyByHooks,
+  requestPermission: calledOnlyByHooks,
+  readTextFile: calledOnlyByHooks,
+  writeTextFile: calledOnlyByHooks,
+  createElicitation: calledOnlyByHooks,
+  completeElicitation: calledOnlyByHooks,
+  extNotification: calledOnlyByHooks,
 };
 
-// NIP-AO telemetry for Buzz Desktop's activity panel: each turn's Claude Code
-// transcript as ACP session/update frames, at most one relay event a second.
+const logger = {
+  // oxlint-disable-next-line eslint/no-empty-function -- the ACP converter's info lines stay out of the hub log
+  log: () => {},
+  error: (...args: unknown[]) => {
+    process.stderr.write(`buzz hub: activity: ${args.join(" ")}\n`);
+  },
+};
+
+const transcriptEntry = z.looseObject({
+  timestamp: z.string(),
+  type: z.string(),
+  subtype: z.string().exactOptional(),
+  isSidechain: z.boolean().exactOptional(),
+  isMeta: z.boolean().exactOptional(),
+  origin: z.looseObject({}).exactOptional(),
+  uuid: z.string().exactOptional(),
+  toolUseResult: z.unknown().exactOptional(),
+  message: z
+    .looseObject({ id: z.string().exactOptional(), content: z.unknown().exactOptional() })
+    .exactOptional(),
+});
+
+const acpContent = z.union([
+  z.string(),
+  z.custom<Exclude<Parameters<typeof toAcpNotifications>[0], string>>(Array.isArray),
+]);
+
+const json = z.json();
+
+const controlRequest = z.union([
+  z.looseObject({
+    type: z.literal("cancel_turn"),
+    channelId: z.string(),
+    requestId: json.exactOptional(),
+  }),
+  z.looseObject({ type: z.literal("log_follow"), tail: z.unknown().exactOptional() }),
+]);
+
 export function startActivity({
   relay,
   secretKey,
@@ -89,7 +136,7 @@ export function startActivity({
   const projects = join(
     process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
     "projects",
-    hexDir.replaceAll(/[^a-zA-Z0-9]/g, "-"),
+    hexDir.replaceAll(/[^a-zA-Z0-9]/gu, "-"),
   );
 
   const turns = new Map<string, Turn>();
@@ -103,7 +150,7 @@ export function startActivity({
   let backlog = 0;
   let sending = false;
 
-  function push(kind: string, payload: unknown, turn?: Turn, channel = turn?.channel ?? null) {
+  function push(kind: string, payload: Json, turn?: Turn, channel = turn?.channel ?? null) {
     const frame: Frame = {
       seq: seq++,
       timestamp: new Date().toISOString(),
@@ -112,17 +159,20 @@ export function startActivity({
       channelId: channel,
       sessionId: turn?.session ?? null,
       turnId: turn?.id ?? null,
-      ...(turn && { startedAt: turn.startedAt }),
       payload,
     };
 
-    fit(frame);
+    if (turn) {
+      frame.startedAt = turn.startedAt;
+    }
+
+    cutMiddleOfLongestStringUntilItFits(frame);
     const bytes = size(frame);
     queue.push({ frame, bytes });
     backlog += bytes;
 
     while (backlog > BACKLOG) {
-      backlog -= queue.shift()!.bytes;
+      backlog -= queue.shift()?.bytes ?? 0;
     }
   }
 
@@ -139,12 +189,13 @@ export function startActivity({
   }) {
     const turn = turns.get(thread);
 
-    if (turn?.ending) {
+    if (turn?.ending === true) {
       finish(turn);
     } else if (turn) {
-      if (session && !turn.transcript) {
+      if (session !== undefined && session !== "" && !turn.transcript) {
         follow(turn, session, false);
       }
+
       return;
     }
 
@@ -164,19 +215,17 @@ export function startActivity({
       opened,
     );
 
-    if (session) {
+    if (session !== undefined && session !== "") {
       follow(opened, session, true);
     }
   }
 
-  // Lines already in the transcript belong to earlier turns, unless the session
-  // was only learned mid-turn: then the turn's lines are those written since it began.
-  function follow(turn: Turn, session: string, fresh: boolean) {
+  function follow(turn: Turn, session: string, startedWithTurn: boolean) {
     turn.session = session;
     const path = join(projects, `${session}.jsonl`);
     turn.transcript = {
       path,
-      offset: fresh ? sizeOf(path) : 0,
+      offset: startedWithTurn ? sizeOf(path) : 0,
       rest: Buffer.alloc(0),
       since: Date.parse(turn.startedAt),
       tools: {},
@@ -187,6 +236,7 @@ export function startActivity({
     if (announced.has(session)) {
       return;
     }
+
     announced.add(session);
     push(
       "acp_write",
@@ -206,6 +256,7 @@ export function startActivity({
     if (!transcript) {
       return;
     }
+
     let fd;
 
     try {
@@ -220,6 +271,7 @@ export function startActivity({
       if (end <= transcript.offset) {
         return;
       }
+
       const chunk = Buffer.alloc(end - transcript.offset);
       readSync(fd, chunk, 0, chunk.length, transcript.offset);
       transcript.offset = end;
@@ -228,88 +280,108 @@ export function startActivity({
       transcript.rest = data.subarray(last + 1);
 
       if (last !== -1) {
-        for (const line of data.subarray(0, last).toString("utf8").split("\n")) convert(turn, line);
+        for (const line of data.subarray(0, last).toString("utf-8").split("\n")) {convert(turn, line);}
       }
     } finally {
       closeSync(fd);
     }
   }
 
-  // Prompts injected by channels or plugins are skipped: the panel links the
-  // Buzz message that started the turn instead.
   function convert(turn: Turn, line: string) {
-    let entry;
+    const { transcript, session } = turn;
+    let raw: unknown;
 
     try {
-      entry = JSON.parse(line);
+      raw = JSON.parse(line);
     } catch {
       return;
     }
 
-    if (!(Date.parse(entry.timestamp) >= turn.transcript!.since)) {
+    const parsed = transcriptEntry.safeParse(raw);
+
+    if (!transcript || session === undefined || !parsed.success) {
       return;
     }
+
+    const entry = parsed.data;
+
+    if (!(Date.parse(entry.timestamp) >= transcript.since)) {
+      return;
+    }
+
     if (entry.type === "system" && entry.subtype === "stop_hook_summary") {
-      turn.transcript!.stopped = true;
+      transcript.stopped = true;
     }
+
     if (interrupted(entry)) {
-      turn.transcript!.stopped = true;
-    } else if (entry.type === "assistant" && !entry.isSidechain) {
-      turn.transcript!.stopped = false;
+      transcript.stopped = true;
+    } else if (entry.type === "assistant" && entry.isSidechain !== true) {
+      transcript.stopped = false;
     }
-    if ((entry.type !== "assistant" && entry.type !== "user") || entry.isSidechain) {
+
+    if ((entry.type !== "assistant" && entry.type !== "user") || entry.isSidechain === true) {
       return;
     }
-    if (entry.type === "user" && (entry.isMeta || entry.origin)) {
+
+    const promptInjectedByChannelOrPluginThatThePanelLinksInstead =
+      entry.type === "user" && (entry.isMeta === true || entry.origin !== undefined);
+
+    if (promptInjectedByChannelOrPluginThatThePanelLinksInstead) {
       return;
     }
-    const content =
+
+    const content = acpContent.safeParse(
       entry.type === "user"
         ? stripLocalCommandMetadata(entry.message?.content)
-        : entry.message?.content;
+        : entry.message?.content,
+    );
 
-    if (content == null) {
+    if (!content.success) {
       return;
     }
-    const { tools, tasks } = turn.transcript!;
+
+    const options: NonNullable<Parameters<typeof toAcpNotifications>[6]> = {
+      registerHooks: false,
+      replay: true,
+      cwd: hexDir,
+      taskState: transcript.tasks,
+      toolUseResult: entry.toolUseResult,
+    };
+
+    const messageId = entry.type === "assistant" ? entry.message?.id : entry.uuid;
+
+    if (messageId !== undefined) {
+      options.messageId = messageId;
+    }
 
     const notifications = toAcpNotifications(
-      content,
+      content.data,
       entry.type,
-      turn.session!,
-      tools,
+      session,
+      transcript.tools,
       client,
       logger,
-      {
-        registerHooks: false,
-        replay: true,
-        cwd: hexDir,
-        taskState: tasks,
-        messageId: entry.type === "assistant" ? entry.message.id : entry.uuid,
-        toolUseResult: entry.toolUseResult,
-      },
+      options,
     );
 
     for (const notification of notifications) {
-      push("acp_read", { jsonrpc: "2.0", method: "session/update", params: notification }, turn);
+      const serialized = JSON.stringify(notification);
+      const params = json.parse(JSON.parse(serialized));
+      push("acp_read", { jsonrpc: "2.0", method: "session/update", params }, turn);
     }
   }
 
-  // The Stop hook reports a turn over before Claude Code has written its last
-  // steps, and Claude Code writes stop_hook_summary once the hooks are done, so
-  // the turn completes when that line is read. An interrupted turn runs no Stop
-  // hooks and completes at its interrupt line; so does a session stopped from
-  // here, with whatever it wrote.
   function idle(thread: string) {
     const turn = turns.get(thread);
 
     if (!turn) {
       return;
     }
+
     turn.ending = true;
     read(turn);
 
-    if (turn.cut || !turn.transcript || turn.transcript.stopped) {
+    if (turn.cut === true || !turn.transcript || turn.transcript.stopped) {
       finish(turn);
     }
   }
@@ -320,9 +392,10 @@ export function startActivity({
     if (!turn) {
       return;
     }
+
     turn.cut = true;
 
-    if (turn.ending) {
+    if (turn.ending === true) {
       finish(turn);
     }
   }
@@ -350,29 +423,37 @@ export function startActivity({
     ) {
       return;
     }
+
     if (Math.abs(event.created_at - Date.now() / 1000) > FRESH) {
       return;
     }
-    let request;
+
+    let raw: unknown;
 
     try {
-      request = JSON.parse(decrypt(event.content, key));
+      raw = JSON.parse(decrypt(event.content, key));
     } catch (error) {
-      return process.stderr.write(
-        `buzz hub: dropped an unreadable activity control frame: ${error}\n`,
+      process.stderr.write(
+        `buzz hub: dropped an unreadable activity control frame: ${String(error)}\n`,
       );
+
+      return;
     }
 
-    if (request?.type === "cancel_turn" && typeof request.channelId === "string") {
-      const status = cancel(target(request.channelId));
-      push(
-        "control_result",
-        { type: "cancel_turn", status, requestId: request.requestId },
-        undefined,
-        request.channelId,
-      );
-    } else if (request?.type === "log_follow") {
-      const tail = Math.max(0, Math.min(LOG_LINES, Number(request.tail) || 0));
+    const request = controlRequest.safeParse(raw);
+
+    if (request.data?.type === "cancel_turn") {
+      const { channelId, requestId } = request.data;
+      const status = cancel(onlyTurnIn(channelId));
+      const result: Json = { type: "cancel_turn", status };
+
+      if (requestId !== undefined) {
+        result.requestId = requestId;
+      }
+
+      push("control_result", result, undefined, channelId);
+    } else if (request.data?.type === "log_follow") {
+      const tail = Math.max(0, Math.min(LOG_LINES, Number(request.data.tail) || 0));
       following = Date.now() + LOG_LEASE;
       streamed = [];
       dropped = 0;
@@ -380,30 +461,34 @@ export function startActivity({
     }
   }
 
-  // Desktop names only the channel; the open turn there, if it is the only one, says more.
-  function target(channel: string): Target {
-    const open = [...turns.values()].filter((turn) => turn.channel === channel);
+  function onlyTurnIn(channel: string): Target {
+    const [only, ...others] = [...turns.values()].filter((turn) => turn.channel === channel);
 
-    if (open.length !== 1) {
+    if (!only || others.length > 0) {
       return { channel };
     }
-    return {
-      channel,
-      thread: open[0]!.thread,
-      ...(open[0]!.session && { session: open[0]!.session }),
-    };
+
+    const found: Target = { channel, thread: only.thread };
+
+    if (only.session !== undefined && only.session !== "") {
+      found.session = only.session;
+    }
+
+    return found;
   }
 
-  function log(line: string) {
-    line = clip(line, LOG_LINE_BYTES);
+  function log(text: string) {
+    const line = clip(text, LOG_LINE_BYTES);
     logs.push(line);
 
     if (logs.length > LOG_LINES) {
       logs.shift();
     }
+
     if (Date.now() > following) {
       return;
     }
+
     streamed.push(line);
 
     if (streamed.length > LOG_LINES) {
@@ -412,7 +497,6 @@ export function startActivity({
     }
   }
 
-  // Drops the oldest lines until the frame fits, counting them as skipped.
   function bounded(lines: string[], skipped: number) {
     const base = size({
       seq,
@@ -431,8 +515,9 @@ export function startActivity({
     let first = 0;
 
     for (; total > LIMIT; first++) {
-      total -= Buffer.byteLength(JSON.stringify(lines[first])) + 1;
+      total -= Buffer.byteLength(JSON.stringify(lines[first] ?? "")) + 1;
     }
+
     return { lines: lines.slice(first), dropped: skipped + first };
   }
 
@@ -440,7 +525,7 @@ export function startActivity({
     for (const turn of turns.values()) {
       read(turn);
 
-      if (turn.ending && turn.transcript!.stopped) {
+      if (turn.ending === true && turn.transcript?.stopped === true) {
         finish(turn);
         continue;
       }
@@ -448,27 +533,31 @@ export function startActivity({
       if (Date.now() - turn.beat < LIVENESS) {
         continue;
       }
+
       turn.beat = Date.now();
       push("turn_liveness", root(turn), turn);
     }
 
-    if (streamed.length || dropped) {
+    if (streamed.length > 0 || dropped > 0) {
       push("log", bounded(streamed, dropped));
     }
+
     streamed = [];
     dropped = 0;
 
-    if (sending || !queue.length) {
+    const front = queue[0];
+
+    if (sending || !front) {
       return;
     }
+
     sending = true;
-    send(take()).finally(() => (sending = false));
+    void send(sameChannelBatchFrom(front.frame.channelId)).finally(() => {
+      sending = false;
+    });
   }
 
-  // One relay event per tick: the front frame and every later one from its
-  // channel that still fits (a frame never mixes channels; Desktop files it by channelId).
-  function take(): Frame {
-    const channel = queue[0]!.frame.channelId;
+  function sameChannelBatchFrom(channel: string | null): Frame {
     const picked: Frame[] = [];
     let total = 0;
     let full = false;
@@ -477,9 +566,13 @@ export function startActivity({
       if (full || frame.channelId !== channel) {
         return true;
       }
-      if (picked.length && size(batch([frame])) + total + picked.length > LIMIT) {
-        return (full = true);
+
+      if (picked.length > 0 && size(batch([frame])) + total + picked.length > LIMIT) {
+        full = true;
+
+        return true;
       }
+
       picked.push(frame);
       total += bytes;
 
@@ -489,7 +582,9 @@ export function startActivity({
     queue.splice(0, queue.length, ...kept);
     backlog -= total;
 
-    return picked.length === 1 ? picked[0]! : batch(picked);
+    const [only] = picked;
+
+    return picked.length === 1 && only ? only : batch(picked);
   }
 
   async function send(frame: Frame) {
@@ -505,7 +600,7 @@ export function startActivity({
       });
     } catch (error) {
       process.stderr.write(
-        `buzz hub: dropped an activity frame: ${error instanceof Error ? error.message : error}\n`,
+        `buzz hub: dropped an activity frame: ${error instanceof Error ? error.message : String(error)}\n`,
       );
     }
   }
@@ -538,16 +633,22 @@ export function startActivity({
 }
 
 function root(turn: Turn) {
-  return /^[0-9a-f]{64}$/.test(turn.thread) ? { threadRootEventId: turn.thread } : {};
+  return /^[0-9a-f]{64}$/u.test(turn.thread) ? { threadRootEventId: turn.thread } : {};
 }
 
 function batch(events: Frame[]): Frame {
-  const { payload, ...last } = events.at(-1)!;
+  const last = events.at(-1);
 
-  return { ...last, kind: "batch", payload: { events } };
+  if (!last) {
+    throw new Error("a batch takes at least one frame");
+  }
+
+  const { payload: _payload, ...rest } = last;
+
+  return { ...rest, kind: "batch", payload: { events } };
 }
 
-function size(value: unknown) {
+function size(value: Frame) {
   return Buffer.byteLength(JSON.stringify(value));
 }
 
@@ -563,19 +664,21 @@ function clip(text: string, bytes: number) {
   if (Buffer.byteLength(text) <= bytes) {
     return text;
   }
+
   let clipped = Buffer.from(text).subarray(0, bytes).toString("utf-8");
 
   while (Buffer.byteLength(clipped) > bytes) {
     clipped = clipped.slice(0, -1);
   }
+
   return clipped;
 }
 
-// Cuts the middle out of the longest string until the frame fits, keeping the
-// start and end of what was cut (a tool output's tail, a prompt's closing tag).
-function fit(frame: Frame) {
+function cutMiddleOfLongestStringUntilItFits(frame: Frame) {
   for (let over = size(frame) - LIMIT; over > 0; over = size(frame) - LIMIT) {
-    const leaf = longest(frame, "payload");
+    const leaf = longest(frame.payload, (text) => {
+      frame.payload = text;
+    });
 
     if (!leaf || leaf.text.length <= 64) {
       frame.payload = { elided: `${frame.kind} payload too large` };
@@ -584,30 +687,42 @@ function fit(frame: Frame) {
     }
 
     const cut = Math.min(leaf.text.length, over + 64);
-    const keep = leaf.text.length - cut;
-    const tail = Math.min(1000, Math.floor(keep / 4));
-    leaf.holder[leaf.key] =
-      `${leaf.text.slice(0, keep - tail)}\n[… ${cut} characters cut …]\n${leaf.text.slice(leaf.text.length - tail)}`;
+    const kept = leaf.text.length - cut;
+    const keptTail = Math.min(1000, Math.floor(kept / 4));
+    leaf.replace(
+      `${leaf.text.slice(0, kept - keptTail)}\n[… ${cut} characters cut …]\n${leaf.text.slice(leaf.text.length - keptTail)}`,
+    );
   }
 }
 
-function longest(
-  holder: any,
-  key: string | number,
-): { holder: any; key: string | number; text: string } | undefined {
-  const value = holder[key];
+const isText = (value: Json): value is string => typeof value === "string";
 
-  if (typeof value === "string") {
-    return { holder, key, text: value };
+const isBranch = (value: Json): value is Branch => typeof value === "object" && value !== null;
+
+function longest(value: Json, replace: (text: string) => void): Leaf | undefined {
+  if (isText(value)) {
+    return { text: value, replace };
   }
-  if (!value || typeof value !== "object") {
-    return;
+
+  if (!isBranch(value)) {
+    return undefined;
   }
-  let best: ReturnType<typeof longest>;
 
-  for (const inner of Object.keys(value)) {
-    const found = longest(value, inner);
+  const leaves = Array.isArray(value)
+    ? value.map((inner, index) =>
+        longest(inner, (text) => {
+          value[index] = text;
+        }),
+      )
+    : Object.entries(value).map(([key, inner]) =>
+        longest(inner, (text) => {
+          value[key] = text;
+        }),
+      );
 
+  let best: Leaf | undefined;
+
+  for (const found of leaves) {
     if (found && (!best || found.text.length > best.text.length)) {
       best = found;
     }
