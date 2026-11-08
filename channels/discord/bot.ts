@@ -228,6 +228,8 @@ async function messageIn(ch: Conversation, id: string): Promise<DiscordMessage> 
   return msg;
 }
 
+const filled = (text: string | undefined): text is string => text !== undefined && text !== "";
+
 const ANSWERED_IN = new Map([
   ["app", "in the app"],
   ["call", "on a call"],
@@ -686,10 +688,10 @@ function serve(token: string) {
 
   async function history(caller: string, args: ToolInput<"fetch_messages">): Promise<string> {
     const limit = Math.min(args.limit ?? 20, 100);
-    const named = args.thread === "" ? undefined : args.thread;
+    const named = filled(args.thread) ? args.thread : undefined;
 
     const channel =
-      named === undefined && args.channel !== undefined && args.channel !== ""
+      named === undefined && filled(args.channel)
         ? await textChannel(args.channel, true)
         : undefined;
 
@@ -708,7 +710,7 @@ function serve(token: string) {
 
     const msgs = await ch.messages.fetch({
       limit,
-      ...(args.before !== undefined && args.before !== "" && { before: args.before }),
+      ...(filled(args.before) && { before: args.before }),
     });
 
     const arr = [...msgs.values()].toReversed();
@@ -766,7 +768,7 @@ function serve(token: string) {
       limit: String(Math.min(args.limit ?? 25, 25)),
     });
 
-    if (args.channel !== undefined && args.channel !== "") {
+    if (filled(args.channel)) {
       query.set("channel_id", (await textChannel(args.channel)).id);
     }
 
@@ -825,7 +827,7 @@ function serve(token: string) {
     if (!isForum(parent)) {
       const thread = await parent.threads.create({ name });
 
-      if (about !== undefined && about !== "") {
+      if (filled(about)) {
         said(thread.id, (await thread.send(about)).id, about);
       }
 
@@ -1069,25 +1071,24 @@ function serve(token: string) {
 
     const taken = question.answer?.label;
 
-    const reopened =
-      taken !== undefined && taken !== ""
-        ? hub.deliver(
-            thread,
-            hub.name(thread) ?? thread,
-            {
-              author: "owner",
-              content: `(took back: ${taken})`,
-              meta: {
-                chat_id: thread,
-                user: `hex ${via}`,
-                ts: new Date().toISOString(),
-                took_back: taken,
-                [isPoll(question) ? "poll_message_id" : "button_message_id"]: String(message),
-              },
+    const reopened = filled(taken)
+      ? hub.deliver(
+          thread,
+          hub.name(thread) ?? thread,
+          {
+            author: "owner",
+            content: `(took back: ${taken})`,
+            meta: {
+              chat_id: thread,
+              user: `hex ${via}`,
+              ts: new Date().toISOString(),
+              took_back: taken,
+              [isPoll(question) ? "poll_message_id" : "button_message_id"]: String(message),
             },
-            () => ledger.reopened(thread, message),
-          )
-        : ledger.reopened(thread, message);
+          },
+          () => ledger.reopened(thread, message),
+        )
+      : ledger.reopened(thread, message);
 
     if (reopened) {
       await draw(thread, message);
@@ -1135,13 +1136,15 @@ function serve(token: string) {
     search_messages: (_caller, args) => search(args),
 
     forward: async (caller, args) => {
-      if (!args.thread && !args.channel) {
+      const to = filled(args.channel)
+        ? await textChannel(args.channel)
+        : filled(args.thread)
+          ? await threadChannel(hub.find(args.thread))
+          : undefined;
+
+      if (to === undefined) {
         throw new Error("name a thread or channel to forward to");
       }
-
-      const to = args.channel
-        ? await textChannel(args.channel)
-        : await threadChannel(hub.find(args.thread!));
 
       const sent = await (
         await messageIn(await threadChannel(caller), args.message_id)
@@ -1157,8 +1160,9 @@ function serve(token: string) {
       const reply_to = args.reply_to;
       const files = sendable(args.files ?? []);
       const labels = args.buttons;
-      const multiple = !!args.multiple;
-      const components = labels?.length ? choices(labels, multiple) : undefined;
+      const multiple = args.multiple === true;
+      const asks = labels !== undefined && labels.length > 0;
+      const components = asks ? choices(labels, multiple) : undefined;
 
       const limit = Math.max(
         100,
@@ -1172,16 +1176,16 @@ function serve(token: string) {
       try {
         for (const [i, content] of chunks.entries()) {
           const shouldReplyTo =
-            reply_to != null && replyMode !== "off" && (replyMode === "all" || i === 0);
+            reply_to !== undefined && replyMode !== "off" && (replyMode === "all" || i === 0);
 
           const sent = await ch.send({
             content,
-            ...(args.silent ? { flags: MessageFlags.SuppressNotifications } : {}),
-            ...(i === 0 && files.length > 0 ? { files } : {}),
-            ...(i === chunks.length - 1 && components ? { components } : {}),
-            ...(shouldReplyTo
-              ? { reply: { messageReference: reply_to, failIfNotExists: false } }
-              : {}),
+            ...(args.silent === true && { flags: MessageFlags.SuppressNotifications }),
+            ...(i === 0 && files.length > 0 && { files }),
+            ...(i === chunks.length - 1 && components && { components }),
+            ...(shouldReplyTo && {
+              reply: { messageReference: reply_to, failIfNotExists: false },
+            }),
           });
 
           said(thread, sent.id, content);
@@ -1198,9 +1202,13 @@ function serve(token: string) {
 
       const last = sentIds.at(-1);
 
-      if (labels?.length) {
-        ledger.ask(thread, last!, text, labels, undefined, multiple);
-      } else if (text && last !== undefined) {
+      if (last === undefined) {
+        throw new Error("reply had nothing to send");
+      }
+
+      if (asks) {
+        ledger.ask(thread, last, text, labels, undefined, multiple);
+      } else if (text !== "") {
         ledger.said(thread, last, text);
       }
 
@@ -1213,16 +1221,16 @@ function serve(token: string) {
       const { ch } = await conversation(caller);
       const msg = await messageIn(ch, args.message_id);
 
-      if (!args.remove) {
+      if (args.remove !== true) {
         await msg.react(args.emoji);
 
         return "reacted";
       }
 
-      const { id, name } = parseEmoji(args.emoji) ?? {};
-      const mine = msg.reactions.cache.get((id ?? name)!);
+      const emoji = parseEmoji(args.emoji);
+      const mine = msg.reactions.cache.get(emoji?.id ?? emoji?.name ?? "");
 
-      if (!mine?.me) {
+      if (mine?.me !== true) {
         throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
       }
 
@@ -1236,7 +1244,7 @@ function serve(token: string) {
       const pinned = ledger.pin(thread);
 
       if (pinned !== undefined && pinned.message === args.message_id && args.text !== undefined) {
-        if (args.files) {
+        if (args.files !== undefined) {
           throw new Error("a status post is text: send the file in its own message");
         }
 
@@ -1250,13 +1258,13 @@ function serve(token: string) {
       }
 
       const msg = await messageIn(ch, args.message_id);
-      const files = args.files ? sendable(args.files) : undefined;
+      const files = args.files === undefined ? undefined : sendable(args.files);
 
       const edited =
-        args.text !== undefined || files
+        args.text !== undefined || files !== undefined
           ? await msg.edit({
-              ...(args.text === undefined ? {} : { content: tappable(args.text) }),
-              ...(files ? { files, attachments: [] } : {}),
+              ...(args.text !== undefined && { content: tappable(args.text) }),
+              ...(files !== undefined && { files, attachments: [] }),
             })
           : msg;
 
@@ -1265,7 +1273,7 @@ function serve(token: string) {
         ledger.edited(thread, edited.id, args.text);
       }
 
-      if (args.settled) {
+      if (args.settled === true) {
         await settleQuestion(thread, edited.id, "✓ Settled");
       }
 
@@ -1276,15 +1284,19 @@ function serve(token: string) {
       const { thread, ch } = await conversation(caller);
       const msg = await messageIn(ch, args.message_id);
 
-      if (msg.author.id !== client.user!.id) {
+      if (msg.author.id !== bot().id) {
         throw new Error("the bot can only delete its own messages");
       }
 
       deleting.add(msg.id);
-      await msg.delete().catch((error: unknown) => {
+
+      try {
+        await msg.delete();
+      } catch (error) {
         deleting.delete(msg.id);
         throw error;
-      });
+      }
+
       await ledger.deleted(thread, msg.id);
 
       return "deleted";
@@ -1293,7 +1305,7 @@ function serve(token: string) {
     pin: async (caller, args) => {
       const { thread } = await conversation(caller);
 
-      if (args.unpin) {
+      if (args.unpin === true) {
         const was = await ledger.unpin(thread, post, args.message_id);
 
         return was === undefined
@@ -1315,7 +1327,7 @@ function serve(token: string) {
         poll: {
           question: { text: args.question },
           answers: args.options.map((text) => ({ text })),
-          allowMultiselect: !!args.multiple,
+          allowMultiselect: args.multiple === true,
           duration: 24,
         },
       });
@@ -1356,7 +1368,7 @@ function serve(token: string) {
     },
 
     close_thread: async (caller, args) => {
-      const thread = args.thread ? hub.find(args.thread) : caller;
+      const thread = filled(args.thread) ? hub.find(args.thread) : caller;
 
       if (await gone(thread)) {
         const name = hub.name(thread) ?? thread;
@@ -1376,7 +1388,7 @@ function serve(token: string) {
     handoff: async (caller, args) => {
       const { thread, ch } = await conversation(caller);
       const { to } = args;
-      const name = args.title ? title(args.title) : nameOf(ch);
+      const name = filled(args.title) ? title(args.title) : nameOf(ch);
       const target = await move(hub, thread, to, name, args.channel);
       await ch.send(`Moved to ${to}: ${target}`);
 
