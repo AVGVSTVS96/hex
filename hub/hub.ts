@@ -416,10 +416,10 @@ const LIMITS: Limits = {
   compactAbove: 150_000,
   reconnect: 20_000,
   connect: 300_000,
-  capacity: capacity(process.env.HEX_CHAT_CAPACITY),
+  capacity: capacityFrom(process.env.HEX_CHAT_CAPACITY),
 };
 
-function capacity(tokens?: string) {
+function capacityFrom(tokens?: string) {
   if (!tokens) {
     return 350_000;
   }
@@ -438,7 +438,7 @@ export function stamp(args: string[], server?: ChannelServer, startup: string[] 
       JSON.stringify([
         args,
         server ? { ...server, tools: toolList(server.tools) } : null,
-        ...(startup.length ? [startup.map(read)] : []),
+        ...(startup.length ? [startup.map(contentsOf)] : []),
       ]),
     )
     .digest("hex")
@@ -448,14 +448,14 @@ export function stamp(args: string[], server?: ChannelServer, startup: string[] 
 // An update rewrites these while the hub runs, so a file gone midway reads as missing.
 type Read = string | [string, Read][] | null;
 
-function read(path: string): Read {
+function contentsOf(path: string): Read {
   try {
     if (!statSync(path).isDirectory()) {
       return readFileSync(path, "utf-8");
     }
     return readdirSync(path)
       .toSorted()
-      .map((name) => [name, read(join(path, name))]);
+      .map((name) => [name, contentsOf(join(path, name))]);
   } catch {
     return null;
   }
@@ -485,12 +485,12 @@ function hangUp(run: Run) {
 }
 
 export function title(text: string): string {
-  const title = text.trim();
+  const word = text.trim();
 
-  if (!/^[^\s_-]+$/u.test(title)) {
-    throw new Error(`title must be one word, got "${title}"`);
+  if (!/^[^\s_-]+$/u.test(word)) {
+    throw new Error(`title must be one word, got "${word}"`);
   }
-  return title;
+  return word;
 }
 
 // A hub's sessions show it this in a header, since any local user can reach its port.
@@ -585,8 +585,8 @@ export function startHub({
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
-  let store: Store | undefined;
-  const threads: Map<string, Saved> = read();
+  let db: Store | undefined;
+  const threads: Map<string, Saved> = openThreads();
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
   save();
   const token = tokenOf(stateDir);
@@ -597,11 +597,11 @@ export function startHub({
 
   // The app's open threads, from hex.db: the hub starts only once it can read them, so no save
   // closes threads it never loaded.
-  function read(): Map<string, Saved> {
-    store ??= open(storeDir);
+  function openThreads(): Map<string, Saved> {
+    db ??= open(storeDir);
 
     return new Map(
-      store
+      db
         .threads({ app, open: true })
         .map(({ app: _app, open: _open, link: _link, thread, fork, model, ...known }) => [
           thread,
@@ -633,9 +633,9 @@ export function startHub({
   }
 
   function withLink(thread: string) {
-    const link = linkOf(thread);
+    const given = linkOf(thread);
 
-    return link === undefined ? {} : { link };
+    return given === undefined ? {} : { link: given };
   }
 
   // A link the app can't give now is no reason to lose a save.
@@ -801,12 +801,16 @@ export function startHub({
   // the transcript records which.
   function warmFor(thread: string) {
     const session = current(thread);
-    const { sent, at, short } = session ? claude.usage(cwdOf(thread), session) : { sent: 0 };
+    const {
+      sent: context,
+      at,
+      short,
+    } = session ? claude.usage(cwdOf(thread), session) : { sent: 0 };
 
-    if (!sent) {
+    if (!context) {
       return;
     }
-    return sent >= capacity
+    return context >= capacity
       ? 0
       : Math.max(0, (at ?? clock.now()) + (short ? cacheWarm / 12 : cacheWarm) - clock.now());
   }
@@ -845,14 +849,14 @@ export function startHub({
     if (run.turn === "busy" || running?.status === "busy") {
       return;
     }
-    const { sent, failed } = claude.usage(cwdOf(thread), session);
+    const { sent: context, failed: failedAt } = claude.usage(cwdOf(thread), session);
 
-    if (running && !run.leaving && !fresh(thread) && !onCall.has(run) && sent > compactAbove) {
-      if (failed === undefined) {
+    if (running && !run.leaving && !fresh(thread) && !onCall.has(run) && context > compactAbove) {
+      if (failedAt === undefined) {
         compact(thread, running);
         return;
       }
-      run.compacting ??= failed;
+      run.compacting ??= failedAt;
     }
 
     if (thread !== main) {
@@ -874,9 +878,9 @@ export function startHub({
       if (run.compacting === undefined || !session) {
         continue;
       }
-      const { sent, failed } = claude.usage(cwdOf(thread), session);
+      const { sent: context, failed: failedAt } = claude.usage(cwdOf(thread), session);
 
-      if (sent <= compactAbove) {
+      if (context <= compactAbove) {
         run.compacting = undefined;
         continue;
       }
@@ -884,8 +888,8 @@ export function startHub({
       const resting = run.phase.is === "live" || run.phase.is === "stopped";
 
       if (
-        failed === undefined ||
-        failed < run.compacting ||
+        failedAt === undefined ||
+        failedAt < run.compacting ||
         !resting ||
         run.turn === "busy" ||
         run.ending ||
@@ -1230,7 +1234,7 @@ export function startHub({
 
     const source = fork ?? (known.session ? undefined : known.from);
 
-    const resume = source
+    const resumeArgs = source
       ? ["--resume", source, "--fork-session"]
       : known.session && !fresh(thread)
         ? ["--resume", known.session]
@@ -1246,7 +1250,7 @@ export function startHub({
             channel,
             "--name",
             known.name,
-            ...resume,
+            ...resumeArgs,
             ...launchArgs,
             "--settings",
             settingsOf(thread),
@@ -1405,7 +1409,9 @@ export function startHub({
   // it had one, so a failing disk never leaves hex deaf.
   function kept<T>(use: (store: Store) => T, otherwise: T): T {
     try {
-      return use((store ??= open(storeDir)));
+      db ??= open(storeDir);
+
+      return use(db);
     } catch (error) {
       process.stderr.write(
         `hub: ${join(storeDir, "hex.db")} failed, so the hub goes on from memory: ${String(error)}\n`,
@@ -1483,10 +1489,10 @@ export function startHub({
     if (key) {
       handed.add(key);
     }
-    route(thread, name, message);
+    forward(thread, name, message);
   }
 
-  function route(thread: string, name: string, message: Message) {
+  function forward(thread: string, name: string, message: Message) {
     const run = runOf(thread);
 
     const { ending } = run;
@@ -1642,7 +1648,7 @@ export function startHub({
     const running = await claude.agent(current(thread) ?? "", serving);
 
     if (run.phase !== phase || phase.is !== "live") {
-      route(thread, savedOf(thread).name, message);
+      forward(thread, savedOf(thread).name, message);
       return;
     }
     const working = fresh(thread)
@@ -1953,12 +1959,12 @@ export function startHub({
     server,
     {
       // A tool can send into another thread: what it sends there is still its caller's session's words.
-      call: (thread, tool, args) => caller.run(thread, () => call(thread, tool, args)),
+      call: (thread, tool, toolArgs) => caller.run(thread, () => call(thread, tool, toolArgs)),
       permission: (thread, request) => permission?.(thread, request),
       open: welcome,
       close: drop,
     },
-    (store ??= open(storeDir)),
+    (db ??= open(storeDir)),
     () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId(),
   );
 
@@ -2032,8 +2038,8 @@ export function startHub({
 
         void (async () => {
           try {
-            const link = await mirror(api, thread, request.to, request.where);
-            process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`);
+            const mirrored = await mirror(api, thread, request.to, request.where);
+            process.stderr.write(`hub: mirrored ${request.thread} to ${mirrored}\n`);
           } catch (error) {
             process.stderr.write(
               `hub: couldn't mirror ${request.thread} to ${request.to}: ${String(error)}\n`,
