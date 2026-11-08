@@ -9,6 +9,8 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import type { Mark, Moment, Speaker } from "./call.ts";
 import { Changes } from "./changes.ts";
 
@@ -45,22 +47,86 @@ export type CallSummary = Omit<CallRecord, "turns" | "tasks" | "moments"> & {
 
 export type Usage = { seconds: number; dollars: number; context?: number };
 
+const speaker = z.enum(["you", "voice"]);
+
+const moment: z.ZodType<Moment> = z.object({
+  id: z.string(),
+  state: z.enum(["running", "done", "failed"]),
+  text: z.string(),
+  to: z.string().exactOptional(),
+  agent: z.string().exactOptional(),
+  at: z.number(),
+});
+
+const mark: z.ZodType<Mark> = z.object({
+  at: z.number(),
+  kind: z.enum([
+    "say",
+    "note",
+    "paused",
+    "resumed",
+    "warned",
+    "ask",
+    "answered",
+    "undone",
+    "photo",
+    "video",
+  ]),
+  text: z.string(),
+  ask: z.string().exactOptional(),
+  sent: z
+    .object({ thread: z.string(), topic: z.string(), settled: z.number(), missed: z.number() })
+    .exactOptional(),
+  media: z.string().exactOptional(),
+});
+
+const savedCall: z.ZodType<CallRecord> = z.object({
+  id: z.string(),
+  started: z.string(),
+  ended: z.string().exactOptional(),
+  end: z
+    .enum(["you", "hex", "dropped", "expired", "no-connect", "no-answer", "busy"])
+    .exactOptional(),
+  reason: z.string().exactOptional(),
+  from: z.enum(["app", "web", "phone-in", "phone-out", "discord"]),
+  callee: z.string().exactOptional(),
+  voice: z.string().exactOptional(),
+  title: z.string().exactOptional(),
+  claude: z.string().exactOptional(),
+  why: z.string().exactOptional(),
+  summary: z.string().exactOptional(),
+  waiting: z.array(z.string()).exactOptional(),
+  expires: z.string().exactOptional(),
+  usage: z
+    .object({ seconds: z.number(), dollars: z.number(), context: z.number().exactOptional() })
+    .exactOptional(),
+  turns: z.array(z.object({ who: speaker, at: z.number(), text: z.string() })),
+  tasks: z.array(moment),
+  moments: z.array(mark).exactOptional(),
+});
+
 export function usage(seconds: number, context?: number): Usage {
-  return {
-    seconds,
-    dollars: Math.round((seconds * 5) / 60) / 100,
-    ...(context === undefined ? {} : { context }),
-  };
+  const used: Usage = { seconds, dollars: Math.round((seconds * 5) / 60) / 100 };
+
+  if (context !== undefined) {
+    used.context = context;
+  }
+
+  return used;
 }
 
-const ID = /^[\w-]+$/;
+const ID = /^[\w-]+$/u;
 
 export function ending(reason: string, by?: string): Ending {
-  if (by?.startsWith("close_hex")) {
+  if (by?.startsWith("close_hex") === true) {
     return "hex";
   }
 
-  if (by?.startsWith("close-you") || reason === "close_requested" || reason === "remote_hangup") {
+  if (
+    by?.startsWith("close-you") === true ||
+    reason === "close_requested" ||
+    reason === "remote_hangup"
+  ) {
     return "you";
   }
 
@@ -76,13 +142,15 @@ export function ending(reason: string, by?: string): Ending {
 }
 
 export class CallLog extends Changes {
-  // Each file's summary by when it last changed: the list is read on every change to a live call
-  // while the app waits on it, and parsing every past call's whole record each time stalls the
-  // engine, phone audio and all.
-  private readonly summaries = new Map<string, { stamp: string; summary: CallSummary }>();
+  private readonly summaryUntilItsFileChanges = new Map<
+    string,
+    { stamp: string; summary: CallSummary }
+  >();
+  private readonly dir: string;
 
-  constructor(private readonly dir: string) {
+  constructor(dir: string) {
     super();
+    this.dir = dir;
     mkdirSync(dir, { recursive: true });
   }
 
@@ -90,7 +158,12 @@ export class CallLog extends Changes {
     const file = this.file(record.id);
     writeFileSync(`${file}.tmp`, JSON.stringify(record));
     renameSync(`${file}.tmp`, file);
-    this.summaries.set(record.id, { stamp: stamp(file)!, summary: summary(record) });
+    const saved = stamp(file);
+
+    if (saved !== undefined) {
+      this.summaryUntilItsFileChanges.set(record.id, { stamp: saved, summary: summary(record) });
+    }
+
     this.changed();
   }
 
@@ -100,8 +173,10 @@ export class CallLog extends Changes {
     }
 
     try {
-      return JSON.parse(readFileSync(this.file(id), "utf-8"));
-    } catch {}
+      return savedCall.parse(JSON.parse(readFileSync(this.file(id), "utf-8")));
+    } catch {
+      return undefined;
+    }
   }
 
   delete(id: string) {
@@ -110,7 +185,7 @@ export class CallLog extends Changes {
     }
 
     rmSync(this.file(id));
-    this.summaries.delete(id);
+    this.summaryUntilItsFileChanges.delete(id);
     this.changed();
 
     return true;
@@ -126,24 +201,24 @@ export class CallLog extends Changes {
         }
 
         const now = stamp(this.file(id));
-        const known = this.summaries.get(id);
+        const known = this.summaryUntilItsFileChanges.get(id);
 
-        if (now && known?.stamp === now) {
+        if (now !== undefined && known?.stamp === now) {
           return [known.summary];
         }
 
         const record = this.get(id);
 
-        if (!record || !now) {
+        if (!record || now === undefined) {
           return [];
         }
 
         const listed = summary(record);
-        this.summaries.set(id, { stamp: now, summary: listed });
+        this.summaryUntilItsFileChanges.set(id, { stamp: now, summary: listed });
 
         return [listed];
       })
-      .sort((a, b) => b.started.localeCompare(a.started));
+      .toSorted((a, b) => b.started.localeCompare(a.started));
   }
 
   private file(id: string) {
@@ -151,17 +226,23 @@ export class CallLog extends Changes {
   }
 }
 
-function stamp(file: string) {
+function stamp(file: string): string | undefined {
   try {
     const { mtimeMs, size } = statSync(file);
 
     return `${mtimeMs} ${size}`;
-  } catch {}
+  } catch {
+    return undefined;
+  }
 }
 
-export function summary({ turns, tasks, moments, ...call }: CallRecord): CallSummary {
+export function summary({ turns, tasks, moments: _moments, ...call }: CallRecord): CallSummary {
   const heard = Math.max(0, ...turns.map((turn) => turn.at), ...tasks.map((task) => task.at));
-  const ms = call.ended ? Date.parse(call.ended) - Date.parse(call.started) : heard;
+
+  const ms =
+    call.ended !== undefined && call.ended !== ""
+      ? Date.parse(call.ended) - Date.parse(call.started)
+      : heard;
 
   return {
     ...call,
