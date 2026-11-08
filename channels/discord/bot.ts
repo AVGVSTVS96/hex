@@ -228,6 +228,15 @@ async function messageIn(ch: Conversation, id: string): Promise<DiscordMessage> 
   return msg;
 }
 
+const ANSWERED_IN = new Map([
+  ["app", "in the app"],
+  ["call", "on a call"],
+]);
+
+const answeredIn = (via: string) => ANSWERED_IN.get(via) ?? via;
+
+const isPoll = (question: Question) => question.poll !== undefined && question.poll !== "";
+
 const latestActivity = (post: ThreadChannel) =>
   SnowflakeUtil.timestampFrom(post.lastMessageId ?? post.id);
 
@@ -801,7 +810,6 @@ function serve(token: string) {
 
   const link = (thread: string) => `https://discord.com/channels/${guild().id}/${thread}`;
 
-  // What hex posts in a thread is kept in hex.db as its own words, under Discord's id for the message.
   function said(
     thread: string,
     id: string | undefined,
@@ -811,14 +819,13 @@ function serve(token: string) {
     hub.sent(thread, { ...(id !== undefined && { key: id }), content: text, meta });
   }
 
-  // A forum takes a thread only as a post, which opens with a message: the about line, or its title.
   async function place(name: string, where?: string, about?: string, tags: string[] = []) {
     const parent = await textChannel(where, true);
 
     if (!isForum(parent)) {
       const thread = await parent.threads.create({ name });
 
-      if (about) {
+      if (about !== undefined && about !== "") {
         said(thread.id, (await thread.send(about)).id, about);
       }
 
@@ -834,18 +841,17 @@ function serve(token: string) {
       );
     }
 
-    const post = await parent.threads.create({
+    const opened = await parent.threads.create({
       name,
       message: { content: about ?? name },
       appliedTags: applied.map((tag) => tag.id),
     });
 
-    said(post.id, post.id, about ?? name);
+    said(opened.id, opened.id, about ?? name);
 
-    return { thread: post.id, link: link(post.id) };
+    return { thread: opened.id, link: link(opened.id) };
   }
 
-  // A webhook posts each line under its speaker's name and avatar: the owner's, or the bot's.
   async function backfill(thread: string, turns: Turn[]) {
     const ch = inThread(await threadChannel(thread));
     const parent = ch.parent;
@@ -856,16 +862,22 @@ function serve(token: string) {
 
     const hook =
       (await parent.fetchWebhooks()).find(
-        (hook) => hook.owner?.id === client.user!.id && hook.token,
+        (each) => each.owner?.id === bot().id && each.token !== null && each.token !== "",
       ) ?? (await parent.createWebhook({ name: "hex" }));
 
-    const owner = await client.users.fetch(loadAccess().allowFrom[0]!);
+    const [ownerId] = loadAccess().allowFrom;
+
+    if (ownerId === undefined) {
+      throw new Error("access.json allows no one, so there's no owner to post as");
+    }
+
+    const owner = await client.users.fetch(ownerId);
 
     const as = {
       me: { username: owner.displayName, avatarURL: owner.displayAvatarURL() },
       hex: {
-        username: ch.guild.members.me?.displayName ?? client.user!.displayName,
-        avatarURL: client.user!.displayAvatarURL(),
+        username: ch.guild.members.me?.displayName ?? bot().displayName,
+        avatarURL: bot().displayAvatarURL(),
       },
     };
 
@@ -886,8 +898,7 @@ function serve(token: string) {
       .catch(() => null);
   }
 
-  // Discord shows "typing…" for about 10 seconds per call, so it is re-sent
-  // for as long as the thread's session is busy.
+  // Discord's typing indicator lasts 10 seconds: https://discord.com/developers/docs/resources/channel#trigger-typing-indicator
   function showTyping(thread: string, busy: boolean): void {
     process.stderr.write(`discord hub: ${thread} ${busy ? "busy" : "idle"}\n`);
     clearInterval(typing.get(thread));
@@ -906,16 +917,14 @@ function serve(token: string) {
     );
   }
 
-  // Claude Code sends no event when a prompt is answered in the session itself, but a
-  // turn can't end while one is open, so whatever is still asking by then is moot.
   const asking = new Map<string, Set<string>>();
 
   async function ask(thread: string, request: Permission): Promise<void> {
     const ch = await threadChannel(thread);
-    const shown = preview(request);
+    const input = preview(request);
 
     const sent = await ch.send({
-      content: `🔐 **${request.tool_name}**: ${request.description.slice(0, 300)}${shown ? `\n${block(shown, 1500)}` : ""}`,
+      content: `🔐 **${request.tool_name}**: ${request.description.slice(0, 300)}${input === "" ? "" : `\n${block(input, 1500)}`}`,
       components: verdicts(request.request_id),
     });
 
@@ -923,7 +932,6 @@ function serve(token: string) {
     asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.id));
   }
 
-  // A turn that ends with background agents out may still have one of their prompts open.
   function settle(thread: string, busy: boolean, background: boolean): void {
     showTyping(thread, busy);
 
@@ -940,75 +948,77 @@ function serve(token: string) {
     asking.delete(thread);
   }
 
-  // A question answered somewhere else (hex's voice app, a call) reaches the thread as the owner's
-  // own tap would, and its buttons say where it was answered. A poll can't take a vote from the bot,
-  // so one answered elsewhere ends instead.
-  const ANSWERED_IN: Record<string, string> = { app: "in the app", call: "on a call" };
-
   const answeredText = ({ label, via }: { label: string; via: string }) =>
-    `✓ Answered ${ANSWERED_IN[via] ?? via}: ${label}`;
+    `✓ Answered ${answeredIn(via)}: ${label}`;
 
-  // What a question's controls show: the pick its own tap made, where else it was answered, how it
-  // was settled, or its choices again.
   function controls({ options, multiple, answer, settled }: Question) {
     if (settled) {
       return only(settled.note);
     }
 
     if (!answer) {
-      return choices(options, !!multiple);
+      return choices(options, multiple === true);
     }
 
     if (answer.via !== "discord") {
       return only(answeredText(answer));
     }
 
-    return multiple
+    return multiple === true
       ? menu(options, answer.label.split("; "))
       : buttons(options, options.indexOf(answer.label));
   }
 
-  // A question's controls show where it stands in hex.db as they're drawn, one draw at a time, so an
-  // answer and a quick take-back can't land out of order. An ended poll stays ended.
+  // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Ledger.find is not an array method
+  const questionAt = (thread: string, message: MessageId) => ledger.find(thread, message);
+
+  async function redraw(thread: string, message: MessageId): Promise<void> {
+    const question = questionAt(thread, message);
+
+    if (question === undefined || question.options.length === 0) {
+      return;
+    }
+
+    const ch = await threadChannel(thread);
+
+    if (!isPoll(question)) {
+      await ch.messages.edit(String(message), { components: controls(question) });
+
+      return;
+    }
+
+    const answeredElsewhere = question.answer !== undefined && question.answer.via !== "discord";
+
+    if (question.settled !== undefined || answeredElsewhere) {
+      const { poll } = await ch.messages.fetch(String(message));
+
+      if (!poll) {
+        throw new Error(`message ${String(message)} has no poll`);
+      }
+
+      await poll.end();
+    }
+  }
+
   const drawing = new Map<string, Promise<void>>();
 
   function draw(thread: string, message: MessageId): Promise<void> {
-    const at = `${thread}:${message}`;
+    const key = `${thread}:${message}`;
 
-    const drawn = (drawing.get(at) ?? Promise.resolve())
-      .then(async () => {
-        const question = ledger.find(thread, message);
+    const drawn = (drawing.get(key) ?? Promise.resolve())
+      .then(() => redraw(thread, message))
+      .catch(failed(`couldn't draw the buttons on ${thread} ${message}`));
 
-        if (!question?.options.length) {
-          return;
-        }
-
-        const ch = await threadChannel(thread);
-
-        if (!question.poll) {
-          return void (await ch.messages.edit(String(message), { components: controls(question) }));
-        }
-
-        if (question.settled || (question.answer && question.answer.via !== "discord")) {
-          await (await ch.messages.fetch(String(message))).poll!.end();
-        }
-      })
-      .catch((error: unknown) => {
-        process.stderr.write(
-          `discord hub: couldn't draw the buttons on ${thread} ${message}: ${error}\n`,
-        );
-      });
-
-    drawing.set(at, drawn);
-    void drawn.then(() => drawing.get(at) === drawn && drawing.delete(at));
+    drawing.set(key, drawn);
+    void drawn.then(() => drawing.get(key) === drawn && drawing.delete(key));
 
     return drawn;
   }
 
   async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
-    const question = ledger.find(thread, message);
+    const question = questionAt(thread, message);
 
-    if (!question || question.answer) {
+    if (question === undefined || question.answer !== undefined) {
       return;
     }
 
@@ -1017,15 +1027,15 @@ function serve(token: string) {
       hub.name(thread) ?? thread,
       {
         author: "owner",
-        content: question.poll ? `(vote: ${label})` : label,
+        content: isPoll(question) ? `(vote: ${label})` : label,
         meta: {
           chat_id: thread,
           user: `hex ${via}`,
           ts: new Date().toISOString(),
-          ...(question.poll
+          ...(isPoll(question)
             ? { vote: label, poll_message_id: String(message), poll: question.text }
             : { button: "true", button_message_id: String(message) }),
-          answered_in: ANSWERED_IN[via] ?? via,
+          answered_in: answeredIn(via),
         },
       },
       () => ledger.answered(thread, message, label, via),
@@ -1037,9 +1047,9 @@ function serve(token: string) {
   }
 
   async function settleQuestion(thread: string, message: MessageId, note: string) {
-    const question = ledger.find(thread, message);
+    const question = questionAt(thread, message);
 
-    if (!question || !waits(question)) {
+    if (question === undefined || !waits(question)) {
       return;
     }
 
@@ -1047,53 +1057,58 @@ function serve(token: string) {
     await draw(thread, message);
   }
 
-  // Takes back an answer given elsewhere, or a settle: the buttons come back, and the thread hears
-  // that the answer it got no longer stands. An ended poll stays ended.
   async function reopenQuestion(thread: string, message: MessageId, via: string) {
-    const question = ledger.find(thread, message);
+    const question = questionAt(thread, message);
 
-    if (!question || !(question.answer || question.settled)) {
+    if (
+      question === undefined ||
+      (question.answer === undefined && question.settled === undefined)
+    ) {
       return;
     }
 
     const taken = question.answer?.label;
 
-    const reopened = taken
-      ? hub.deliver(
-          thread,
-          hub.name(thread) ?? thread,
-          {
-            author: "owner",
-            content: `(took back: ${taken})`,
-            meta: {
-              chat_id: thread,
-              user: `hex ${via}`,
-              ts: new Date().toISOString(),
-              took_back: taken,
-              [question.poll ? "poll_message_id" : "button_message_id"]: String(message),
+    const reopened =
+      taken !== undefined && taken !== ""
+        ? hub.deliver(
+            thread,
+            hub.name(thread) ?? thread,
+            {
+              author: "owner",
+              content: `(took back: ${taken})`,
+              meta: {
+                chat_id: thread,
+                user: `hex ${via}`,
+                ts: new Date().toISOString(),
+                took_back: taken,
+                [isPoll(question) ? "poll_message_id" : "button_message_id"]: String(message),
+              },
             },
-          },
-          () => ledger.reopened(thread, message),
-        )
-      : ledger.reopened(thread, message);
+            () => ledger.reopened(thread, message),
+          )
+        : ledger.reopened(thread, message);
 
     if (reopened) {
       await draw(thread, message);
     }
   }
 
-  async function at(caller: string, named?: string) {
+  async function conversation(caller: string, named?: string) {
     const thread = named === undefined || named === "" ? caller : hub.find(named);
 
     return { thread, ch: await threadChannel(thread) };
   }
 
-  const gone = (thread: string) =>
-    client.channels.fetch(thread).then(
-      () => false,
-      (error: unknown) =>
-        (error as { code?: unknown } | undefined)?.code === RESTJSONErrorCodes.UnknownChannel,
-    );
+  async function gone(thread: string) {
+    try {
+      await client.channels.fetch(thread);
+
+      return false;
+    } catch (error) {
+      return codeOf(error) === RESTJSONErrorCodes.UnknownChannel;
+    }
+  }
 
   const handlers: Handlers<typeof tools> = {
     new_thread: async (caller, args) => {
@@ -1102,7 +1117,7 @@ function serve(token: string) {
       const { about, channel: where } = args;
 
       if (app !== "discord") {
-        return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt, { about, ...(where === undefined ? {} : { where }) })).link}`;
+        return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt, { about, ...(where !== undefined && { where }) })).link}`;
       }
 
       const here = await threadChannel(caller);
@@ -1136,7 +1151,7 @@ function serve(token: string) {
     },
 
     reply: async (caller, args) => {
-      const { thread, ch } = await at(caller, args.thread);
+      const { thread, ch } = await conversation(caller, args.thread);
       const access = loadAccess();
       const text = tappable(args.text);
       const reply_to = args.reply_to;
@@ -1195,7 +1210,7 @@ function serve(token: string) {
     },
 
     react: async (caller, args) => {
-      const { ch } = await at(caller);
+      const { ch } = await conversation(caller);
       const msg = await messageIn(ch, args.message_id);
 
       if (!args.remove) {
@@ -1217,7 +1232,7 @@ function serve(token: string) {
     },
 
     edit_message: async (caller, args) => {
-      const { thread, ch } = await at(caller);
+      const { thread, ch } = await conversation(caller);
       const pinned = ledger.pin(thread);
 
       if (pinned !== undefined && pinned.message === args.message_id && args.text !== undefined) {
@@ -1258,7 +1273,7 @@ function serve(token: string) {
     },
 
     delete_message: async (caller, args) => {
-      const { thread, ch } = await at(caller);
+      const { thread, ch } = await conversation(caller);
       const msg = await messageIn(ch, args.message_id);
 
       if (msg.author.id !== client.user!.id) {
@@ -1276,7 +1291,7 @@ function serve(token: string) {
     },
 
     pin: async (caller, args) => {
-      const { thread } = await at(caller);
+      const { thread } = await conversation(caller);
 
       if (args.unpin) {
         const was = await ledger.unpin(thread, post, args.message_id);
@@ -1294,7 +1309,7 @@ function serve(token: string) {
     },
 
     poll: async (caller, args) => {
-      const { thread, ch } = await at(caller);
+      const { thread, ch } = await conversation(caller);
 
       const sent = await ch.send({
         poll: {
@@ -1312,7 +1327,7 @@ function serve(token: string) {
     },
 
     download_attachment: async (caller, args) => {
-      const { ch } = await at(caller);
+      const { ch } = await conversation(caller);
       const msg = await messageIn(ch, args.message_id);
       const attachments = msg.messageSnapshots.first()?.attachments ?? msg.attachments;
 
@@ -1332,7 +1347,7 @@ function serve(token: string) {
     },
 
     rename_thread: async (caller, args) => {
-      const { thread, ch } = await at(caller);
+      const { thread, ch } = await conversation(caller);
       const name = title(args.title);
       await inThread(ch).setName(name);
       hub.rename(thread, name);
@@ -1359,7 +1374,7 @@ function serve(token: string) {
     },
 
     handoff: async (caller, args) => {
-      const { thread, ch } = await at(caller);
+      const { thread, ch } = await conversation(caller);
       const { to } = args;
       const name = args.title ? title(args.title) : nameOf(ch);
       const target = await move(hub, thread, to, name, args.channel);
