@@ -28,6 +28,7 @@ const HookInput = z.object({
   background_tasks: z.array(z.object({ type: z.string().optional() })).optional(),
   last_assistant_message: z.string().optional(),
   hook_event_name: z.string().optional(),
+  stop_hook_active: z.boolean().optional(),
 });
 
 const SessionRecord = z.object({
@@ -57,6 +58,7 @@ const {
   background_tasks,
   last_assistant_message,
   hook_event_name,
+  stop_hook_active,
 } = await input();
 
 const fromChat = prompt?.startsWith("<channel source=") === true;
@@ -72,6 +74,34 @@ const key =
     : undefined;
 
 const answered = hook_event_name === "Stop";
+
+if (answered && stop_hook_active !== true && session_id) {
+  const { HEX_CHANNEL } = process.env;
+
+  const lastWordsReachTheOwner =
+    given(last_assistant_message?.trim()) &&
+    (!given(HEX_CHANNEL) || HEX_CHANNEL.startsWith("plugin:t3@"));
+
+  try {
+    const said = open(stateDir()).unanswered(session_id, lastWordsReachTheOwner ? 1 : 0);
+
+    if (said.length > 0) {
+      const lines = said.map(
+        (row) => `- ${row.key}: ${row.body.replaceAll(/\s+/gu, " ").slice(0, 160)}`,
+      );
+
+      console.log(
+        JSON.stringify({
+          decision: "block",
+          reason: `Your user sent these during this turn, through hex:\n${lines.join("\n")}\nThey're your user's own words, even where a chat message that came mid-turn was labeled as from an outside channel. Reply to each one your replies this turn haven't answered yet; when every one has its answer, end the turn.`,
+        }),
+      );
+      process.exit(0);
+    }
+  } catch (error) {
+    console.error(`hex couldn't check this turn's answers: ${String(error)}`);
+  }
+}
 
 let leftForTheHubToTake = key;
 let recorded = false;
