@@ -1,4 +1,3 @@
-// oxlint-disable no-comments/no-comments -- the comments here state facts about Claude Code, Bun and the hub's design that the code can't show
 import { afterEach, beforeEach, expect, test } from "bun:test";
 import {
   appendFileSync,
@@ -110,6 +109,7 @@ const SERVER: ChannelServer = {
   permission: true,
 };
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Above Linux's highest pid, so a session's process is always already gone.
 const EXITED = 4_194_305;
 
@@ -129,6 +129,7 @@ beforeEach(() => {
   mkdirSync(join(dir, "hex"), { recursive: true });
   mkdirSync(join(dir, "jobs", "job12345"), { recursive: true });
   const fake = join(dir, "claude");
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Each call is logged once it has done what it does.
   writeFileSync(
     fake,
@@ -171,7 +172,6 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-// What a session's channel gets: the message, under the key hex keeps it by.
 function inbound(sent: Message) {
   return {
     type: "inbound",
@@ -180,6 +180,7 @@ function inbound(sent: Message) {
   };
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The session's hook taking each message it was given, as Claude Code adds it to the conversation.
 function fold(received: unknown[]) {
   for (const payload of Keyed.array().parse(received)) {
@@ -187,6 +188,7 @@ function fold(received: unknown[]) {
   }
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
 function start(
   options: {
@@ -280,7 +282,6 @@ function start(
   });
 }
 
-// Each thread as an older hub recorded starting its session.
 function before(registered: Record<string, Registered>) {
   return Object.fromEntries(
     Object.entries(registered).map(([thread, known]) => [
@@ -338,6 +339,7 @@ function calls(): string[][] {
     .map((each) => Args.parse(JSON.parse(each)));
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Once the hub knows the job its session runs as.
 async function launched() {
   const started = await until(() => calls().find((each) => each[0] === "--bg"));
@@ -346,9 +348,8 @@ async function launched() {
   return started;
 }
 
-// A session connecting the way Claude Code does over HTTP: it initializes, opens the stream its
-// messages arrive on, lists the tools, and lists them again when told they changed. Claude's job
-// record has its id from the start.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session connecting the way Claude Code does over HTTP: it initializes, opens the stream its messages arrive on, lists the tools, and lists them again when told they changed. Claude's job record has its id from the start.
 async function session(thread: string, id = SESSION) {
   writeFileSync(
     join(dir, "jobs", "job12345", "state.json"),
@@ -364,8 +365,6 @@ async function session(thread: string, id = SESSION) {
   return line;
 }
 
-// Claude Code's side of one connection to the hub over HTTP, a step at a time, with the session's
-// hooks on hub.sock.
 function http(thread?: string, extra: Record<string, string> = {}, deaf = 0) {
   return {
     ...channelLine({ stateDir: dir, path: "/telegram", channel: CHANNEL, thread, extra, deaf }),
@@ -373,8 +372,8 @@ function http(thread?: string, extra: Record<string, string> = {}, deaf = 0) {
   };
 }
 
-// A line to hub.sock, the way a session's hooks and hex's own tools reach the hub. Resolves once
-// the hub has read it and closed its end.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A line to hub.sock, the way a session's hooks and hex's own tools reach the hub. Resolves once the hub has read it and closed its end.
 function sendToHub(payload: HubLine) {
   const socket = connect(join(dir, "hub.sock"));
   sockets.push(socket);
@@ -389,9 +388,8 @@ function sendToHub(payload: HubLine) {
   });
 }
 
-// Claude's record of a background job, with the flags it restarts with: they read the thread's
-// settings file, which binds the session to it. The job defaults to the session's short id, as
-// Claude lists a job without one.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Claude's record of a background job, with the flags it restarts with: they read the thread's settings file, which binds the session to it. The job defaults to the session's short id, as Claude lists a job without one.
 function bound(thread: string, id = SESSION, jobId = id.slice(0, 8), channel = CHANNEL) {
   mkdirSync(join(dir, "jobs", jobId), { recursive: true });
   mkdirSync(join(dir, "sessions"), { recursive: true });
@@ -410,6 +408,7 @@ function bound(thread: string, id = SESSION, jobId = id.slice(0, 8), channel = C
   );
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Rewrites a job's record, resolving once a watch of the test's own has seen it, as the hub's watch would.
 function job(id: string, record: JobRecord) {
   const folder = join(dir, "jobs", id);
@@ -432,6 +431,7 @@ function saved(id = SESSION, folder = join(dir, "hex")) {
   writeFileSync(join(project, `${id}.jsonl`), "{}\n");
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A line of the session's transcript: a request that sent this much context, or a compaction down to it.
 function said(tokens: number, compacted = false, id = SESSION, at = clock.now()) {
   const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/gu, "-"));
@@ -466,6 +466,7 @@ function settingsOf(args: string[]) {
   return SettingsFile.parse(JSON.parse(readFileSync(file, "utf-8")));
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Without the digest of what each session started with, which only the renew tests look at.
 function registry(): Record<string, Registered> {
   return Object.fromEntries(
@@ -1392,6 +1393,7 @@ test("the main thread compacts a big conversation before its cache goes cold, an
   expect(states.filter(([, busy]) => busy)).toEqual([]);
 });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The line Claude Code writes when /compact fails, like with every account of the pool out of usage.
 function failedCompaction(at = clock.now()) {
   const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/gu, "-"));
@@ -1646,6 +1648,7 @@ test("a session that fails to start is reported with its reason, and the next me
   await until(() => calls().filter((each) => each[0] === "--bg").length === 2);
 });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A launcher whose resumes fail as Claude Code fails one of a session no project folder has.
 function forgetting() {
   const launcher = join(dir, "launch");
@@ -2052,6 +2055,7 @@ test("stopping a thread ends its session now, and its next message resumes it", 
   expect(registry()["chat:7"]).toEqual({ name: "Desk anchors", session: SESSION });
 });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The session's conversation as Claude Code keeps it, for a thread working in hex's folder.
 function conversation() {
   const file = join(
@@ -2067,6 +2071,7 @@ function conversation() {
   return () => readFileSync(file, "utf-8");
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A session Claude's daemon lists as working, as it does through a turn and while background agents run.
 function working() {
   const process = Bun.spawn(["sleep", "60"]);
@@ -3565,6 +3570,7 @@ test("a move that copies forks the session there and leaves the thread here", as
   }
 });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A thread's messages as hex.db keeps them, each taken by the session it reached or wrote it.
 function stored(
   rows: { author: Author; body: string; from?: string; meta?: Record<string, string> }[],

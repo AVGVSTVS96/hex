@@ -1,4 +1,3 @@
-// oxlint-disable no-comments/no-comments -- the comments here state facts about Claude Code, Bun and the hub's design that the code can't show
 import { expect, test } from "bun:test";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,8 +69,8 @@ const Listing = z.object({ result: z.object({ tools: z.array(z.unknown()) }) });
 
 const nothing = (): void => undefined;
 
-// A channel whose reply tool answers when the test says, counting how often it ran. A call made with
-// gaveUp is one the session stops waiting on, as Claude Code does at its timeout.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A channel whose reply tool answers when the test says, counting how often it ran. A call made with gaveUp is one the session stops waiting on, as Claude Code does at its timeout.
 function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operations-")))) {
   let ran = 0;
   const waiting: (() => void)[] = [];
@@ -141,9 +140,9 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
     return AnswerReply.parse(await response.json());
   }
 
-  // Resolves once n calls are waiting in the tool.
   const reached = (n = 1) => until(() => waiting.length >= n);
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Answers every call underway, once at least one has reached the tool.
   async function answer() {
     await reached();
@@ -154,6 +153,7 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
     }
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Answers every call waiting in the tool right away, without letting anything else run first.
   const answerNow = () => {
     for (const resolve of waiting.splice(0)) {
