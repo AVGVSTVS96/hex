@@ -390,9 +390,15 @@ export function interrupted(entry: {
 // `claude --bg --resume` can start a copy under a new ID, which happens while the old session's job record exists: https://code.claude.com/docs/en/agent-view#dispatch-an-agent-from-your-shell
 export const rm = (session: string) => run(["rm", short(session)]);
 
-export const respawn = (session: Agent) => run(["respawn", job(session)]);
+export const respawn = async (session: Agent) => {
+  await restartStaleDaemon();
+
+  return await run(["respawn", job(session)]);
+};
 
 // A supervisor on another version than the claude invoked picks up the new one after `claude daemon stop --any`: https://code.claude.com/docs/en/agent-view#where-state-is-stored
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session the supervisor restarts gets the supervisor's PATH, not the hub's, so one started on an older PATH is stale too.
 let staleDaemonCheck: Promise<void> | undefined;
 
 function restartStaleDaemon() {
@@ -400,18 +406,42 @@ function restartStaleDaemon() {
     const [status, version] = await Promise.all([run(["daemon", "status"]), run(["--version"])]);
     const daemon = status?.match(/^version:\s*(\S+)/mu)?.[1];
     const installed = version?.match(/^\S+/u)?.[0];
+    const pid = status?.match(/^pid:\s*(\d+)/mu)?.[1];
+    const missing = pid === undefined ? [] : await missingFromPath(pid);
 
-    if (daemon === undefined || installed === undefined || daemon === installed) {
+    if (daemon === undefined || installed === undefined) {
       return;
     }
 
-    process.stderr.write(
-      `hub: Claude's daemon runs ${daemon} while claude is ${installed}, so the hub restarts it\n`,
-    );
+    const why =
+      daemon === installed
+        ? missing.length > 0
+          ? `runs without ${missing.join(":")} on its PATH`
+          : undefined
+        : `runs ${daemon} while claude is ${installed}`;
+
+    if (why === undefined) {
+      return;
+    }
+
+    process.stderr.write(`hub: Claude's daemon ${why}, so the hub restarts it\n`);
     await run(["daemon", "stop", "--any", "--keep-workers"]);
   })().finally(() => {
     staleDaemonCheck = undefined;
   }));
+}
+
+// `ps e` prints a process's environment after its command on Linux and macOS: https://man7.org/linux/man-pages/man1/ps.1.html
+function missingFromPath(pid: string): Promise<string[]> {
+  return tracked(
+    new Promise((resolve) => {
+      execFile("ps", ["eww", "-o", "command=", "-p", pid], (error, stdout) => {
+        const theirs = error ? undefined : / PATH=(\S*)/u.exec(stdout)?.[1];
+        const ours = (process.env.PATH ?? "").split(":").filter(Boolean);
+        resolve(theirs === undefined ? [] : ours.filter((dir) => !theirs.split(":").includes(dir)));
+      });
+    }),
+  );
 }
 
 export async function start(
