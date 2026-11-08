@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
 import {
   lstatSync,
   readFileSync,
@@ -6,16 +8,15 @@ import {
   statSync,
   watch,
   writeFileSync,
-} from "fs";
-import type { FSWatcher } from "fs";
-import { execFile } from "node:child_process";
-import { createHash, createHmac } from "node:crypto";
+} from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { join, posix } from "node:path";
 import { promisify } from "node:util";
 
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import { verifyEvent } from "nostr-tools/pure";
 import type { Event } from "nostr-tools/pure";
+import { z } from "zod";
 
 import type { Relay } from "./relay.ts";
 
@@ -28,19 +29,48 @@ const SHARE = ["AGENTS.md", "SOUL.md", "schedules.json"];
 const NOTES = "memory/LOG.txt";
 const SETTLE = 500;
 const RESYNC = 10 * 60_000;
-const HEX64 = /^[0-9a-f]{64}$/;
+const HEX64 = /^[0-9a-f]{64}$/u;
 
+// oxlint-disable-next-line typescript/strict-void-return -- promisify takes execFile's callback form, which the rule misreads
 const exec = promisify(execFile);
 const now = () => Math.floor(Date.now() / 1000);
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
-const tag = (event: Event, name: string) => event.tags.find((tag) => tag[0] === name)?.[1];
-const log = (line: string) => process.stderr.write(`buzz hub: ${line}\n`);
+const tag = (event: Event, name: string) => event.tags.find(([key]) => key === name)?.[1];
 
-// Readers check content against sha256, and a default TextDecoder drops a leading BOM.
-const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+function log(line: string) {
+  process.stderr.write(`buzz hub: ${line}\n`);
+}
 
-// The memory panel (NIP-AE) shows SOUL.md as the core record and each day of OptMem's
-// notes as a memory. Agent Files shows the shared files and takes the owner's edits.
+const keepingLeadingBomForSha256 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+
+const sharedPath = z.string().refine(valid);
+
+const engram = z.looseObject({ slug: z.string() });
+
+const fileRecord = z.union([
+  z.looseObject({ path: sharedPath, removed: z.literal(true) }),
+  z
+    .looseObject({
+      path: sharedPath,
+      removed: z.never().optional(),
+      sha256: z.string().regex(HEX64),
+      size: z.int().min(0),
+      content: z.string().optional(),
+    })
+    .refine(
+      (body) =>
+        body.content === undefined ||
+        (Buffer.byteLength(body.content) === body.size &&
+          sha256(Buffer.from(body.content)) === body.sha256),
+    ),
+]);
+
+const editRequest = z.looseObject({
+  path: sharedPath,
+  base_sha256: z.string().regex(HEX64),
+  content: z.string(),
+});
+
 export function startMemory({
   relay,
   secretKey,
@@ -55,18 +85,22 @@ export function startMemory({
   share?: string[] | undefined;
 }) {
   const key = getConversationKey(secretKey, owner);
-  const engrams = book(ENGRAM, "agent-memory/v1/d-tag", (body) => body?.slug);
-  const records = book(FILE, "agent-files/v1/d-tag", recordPath);
+  const engrams = book(ENGRAM, "agent-memory/v1/d-tag", engram, (body) => body.slug);
+  const records = book(FILE, "agent-files/v1/d-tag", fileRecord, (body) => body.path);
 
   const shared = share
-    .map((entry) => posix.normalize(entry).replace(/\/$/, ""))
-    .filter(
-      (entry) => valid(entry) || void log(`can't share ${entry}, paths stay inside the hex folder`),
-    );
+    .map((entry) => posix.normalize(entry).replace(/\/$/u, ""))
+    .filter((entry) => {
+      if (!valid(entry)) {
+        log(`can't share ${entry}, paths stay inside the hex folder`);
+      }
+
+      return valid(entry);
+    });
 
   const answered = new Set<string>();
   const watchers: FSWatcher[] = [];
-  let queue: Promise<unknown> = Promise.resolve();
+  let queue = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let sharing = true;
   let edits: (() => void) | undefined;
@@ -76,19 +110,32 @@ export function startMemory({
     return createHmac("sha256", key).update(`${domain}\0${name}`).digest("hex");
   }
 
-  function open(event: Event): { text: string; body: any } | undefined {
+  function open<Body>(event: Event, schema: z.ZodType<Body>) {
+    let text: string;
+    let raw: unknown;
+
     try {
       if (!verifyEvent(event)) {
         return;
       }
-      const text = decrypt(event.content, key);
 
-      return { text, body: JSON.parse(text) };
-    } catch {}
+      text = decrypt(event.content, key);
+      raw = JSON.parse(text);
+    } catch {
+      return;
+    }
+
+    const parsed = schema.safeParse(raw);
+
+    return parsed.success ? { text, body: parsed.data } : undefined;
   }
 
-  // Own addressable records, newest per name, so only what changed is published again.
-  function book(kind: number, domain: string, nameOf: (body: any) => unknown) {
+  function book<Body>(
+    kind: number,
+    domain: string,
+    schema: z.ZodType<Body>,
+    nameOf: (body: Body) => string,
+  ) {
     const heads = new Map<string, { text: string; at: number; id: string }>();
     let loaded: Promise<void> | undefined;
 
@@ -96,12 +143,18 @@ export function startMemory({
       for (const event of await relay.query([
         { kinds: [kind], authors: [relay.pubkey], "#p": [owner] },
       ])) {
-        const opened = open(event);
-        const name = opened && nameOf(opened.body);
+        const opened = open(event, schema);
 
-        if (typeof name !== "string" || address(domain, name) !== tag(event, "d")) {
+        if (!opened) {
           continue;
         }
+
+        const name = nameOf(opened.body);
+
+        if (address(domain, name) !== tag(event, "d")) {
+          continue;
+        }
+
         const head = heads.get(name);
 
         if (
@@ -110,20 +163,25 @@ export function startMemory({
         ) {
           continue;
         }
-        heads.set(name, { text: opened!.text, at: event.created_at, id: event.id });
+
+        heads.set(name, { text: opened.text, at: event.created_at, id: event.id });
       }
     }
 
-    async function put(name: string, body: object) {
+    async function put(name: string, body: Body) {
       const text = JSON.stringify(body);
       const head = heads.get(name);
 
       if (head?.text === text) {
         return;
       }
+
       if (Buffer.byteLength(text) > LIMIT) {
-        return log(`${name} is over 64 KB, so the Buzz panel doesn't get it`);
+        log(`${name} is over 64 KB, so the Buzz panel doesn't get it`);
+
+        return;
       }
+
       const event = await relay.publish({
         kind,
         content: encrypt(text, key),
@@ -138,19 +196,24 @@ export function startMemory({
     }
 
     return {
-      async sync(wanted: Map<string, object>, gone: (name: string) => object | undefined) {
-        await (loaded ??= load().catch((error) => {
+      async sync(wanted: Map<string, Body>, gone: (name: string) => Body | undefined) {
+        loaded ??= load();
+
+        try {
+          await loaded;
+        } catch (error) {
           loaded = undefined;
           throw error;
-        }));
+        }
 
         for (const [name, body] of wanted) {
           await put(name, body);
         }
+
         for (const name of heads.keys()) {
           const body = wanted.has(name) ? undefined : gone(name);
 
-          if (body) {
+          if (body !== undefined) {
             await put(name, body);
           }
         }
@@ -158,22 +221,25 @@ export function startMemory({
     };
   }
 
-  function read(path: string) {
+  function read(path: string): string | undefined {
     try {
       return readFileSync(join(hexDir, path), "utf-8");
-    } catch {}
+    } catch {
+      return undefined;
+    }
   }
 
   function memories() {
-    const wanted = new Map<string, object>();
+    const wanted = new Map<string, z.output<typeof engram>>();
     const soul = read("SOUL.md");
 
     if (soul !== undefined) {
       wanted.set("core", { slug: "core", profile: soul });
     }
-    const notes = (read(NOTES) ?? "").matchAll(/^#\d+ (\d{4}-\d\d-\d\d) (.+?)\s*$/gm);
 
-    for (const [day, lines] of Map.groupBy(notes, (note) => note[1]!)) {
+    const notes = (read(NOTES) ?? "").matchAll(/^#\d+ (\d{4}-\d\d-\d\d) (.+?)\s*$/gmu);
+
+    for (const [day, lines] of Map.groupBy(notes, ([, noteDay]) => noteDay ?? "")) {
       const slug = `mem/notes/${day}`;
       wanted.set(slug, { slug, value: lines.map((note) => `- ${note[2]}`).join("\n") });
     }
@@ -181,13 +247,14 @@ export function startMemory({
     return wanted;
   }
 
-  function files() {
+  function sharedFilesOnDisk() {
     const found = new Map<string, Buffer>();
 
     function visit(path: string) {
       if (!valid(path)) {
         return;
       }
+
       const full = join(hexDir, path);
 
       try {
@@ -196,22 +263,41 @@ export function startMemory({
         if (stat.isFile()) {
           found.set(path, readFileSync(full));
         }
+
         if (stat.isDirectory()) {
-          for (const name of readdirSync(full)) if (!name.startsWith(".")) visit(`${path}/${name}`);
+          for (const name of readdirSync(full)) {
+            if (!name.startsWith(".")) {
+              visit(`${path}/${name}`);
+            }
+          }
         }
+        // oxlint-disable-next-line eslint/no-empty -- a path that is gone or unreadable is left out of the share
       } catch {}
     }
 
     for (const entry of shared) {
       visit(entry);
     }
+
     return new Map([...found].map(([path, bytes]) => [path, record(path, bytes)]));
   }
 
-  function run(task: () => Promise<unknown>) {
-    queue = queue
-      .then(() => (closed ? undefined : task()))
-      .catch((error) => log(`memory: ${error instanceof Error ? error.message : error}`));
+  function run(task: () => Promise<void>) {
+    const previous = queue;
+
+    queue = (async () => {
+      await previous;
+
+      if (closed) {
+        return;
+      }
+
+      try {
+        await task();
+      } catch (error) {
+        log(`memory: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    })();
   }
 
   function later() {
@@ -231,17 +317,21 @@ export function startMemory({
     if (!sharing) {
       return;
     }
+
     try {
-      await records.sync(files(), (path) => ({ path, removed: true }));
+      await records.sync(sharedFilesOnDisk(), (path) => ({ path, removed: true }));
     } catch (error) {
       if (!String(error).includes("unknown event kind")) {
         throw error;
       }
+
       sharing = false;
 
-      return log(
-        `this relay doesn't take Agent Files yet (${error instanceof Error ? error.message : error}), so shared files stay off`,
+      log(
+        `this relay doesn't take Agent Files yet (${error instanceof Error ? error.message : String(error)}), so shared files stay off`,
       );
+
+      return;
     }
 
     edits ??= await listen();
@@ -253,28 +343,34 @@ export function startMemory({
     ])) {
       answered.add(tag(event, "e") ?? "");
     }
+
     if (closed) {
       return;
     }
+
     return relay.subscribe([{ kinds: [EDIT], authors: [owner], "#p": [relay.pubkey] }], (event) => {
       run(() => answer(event));
     });
   }
 
-  // A request that can't be read or names an invalid path gets no answer, as NIP-AF says.
   async function answer(event: Event) {
     if (answered.has(event.id) || event.pubkey !== owner) {
       return;
     }
-    const addressed = event.tags.filter((tag) => tag[0] === "p");
+
+    const addressed = event.tags.filter(([name]) => name === "p");
 
     const request =
-      addressed.length === 1 && addressed[0]![1] === relay.pubkey ? open(event)?.body : undefined;
+      addressed.length === 1 && addressed[0]?.[1] === relay.pubkey
+        ? open(event, editRequest)?.body
+        : undefined;
 
-    if (!editRequest(request)) {
+    if (!request) {
       answered.add(event.id);
 
-      return log(`ignored an unreadable edit request ${event.id}`);
+      log(`ignored an unreadable edit request ${event.id}`);
+
+      return;
     }
 
     const result = await edit(request);
@@ -289,28 +385,21 @@ export function startMemory({
     answered.add(event.id);
   }
 
-  // The file on disk decides, as found by the same scan that shares it, so a
-  // symlink or a path outside the share list is never written.
-  async function edit({
-    path,
-    base_sha256: base,
-    content,
-  }: {
-    path: string;
-    base_sha256: string;
-    content: string;
-  }) {
-    const current = files().get(path);
+  async function edit({ path, base_sha256: base, content }: z.output<typeof editRequest>) {
+    const current = sharedFilesOnDisk().get(path);
 
     if (!current) {
       return { status: "declined", path, reason: "file is not shared" };
     }
+
     if (!("content" in current)) {
       return { status: "declined", path, reason: "file is too large or not text" };
     }
+
     if (current.sha256 !== base) {
       return { status: "conflict", path, sha256: current.sha256 };
     }
+
     const full = join(hexDir, path);
     const bytes = Buffer.from(content);
     const sha = sha256(bytes);
@@ -342,7 +431,9 @@ export function startMemory({
         path,
       ]);
     } catch (error) {
-      log(`couldn't commit ${path}: ${error instanceof Error ? error.message.trim() : error}`);
+      log(
+        `couldn't commit ${path}: ${error instanceof Error ? error.message.trim() : String(error)}`,
+      );
     }
   }
 
@@ -350,9 +441,11 @@ export function startMemory({
     for (const watcher of watchers.splice(0)) {
       watcher.close();
     }
+
     if (closed) {
       return;
     }
+
     const top = new Set(["SOUL.md", ...shared.map((entry) => entry.split("/")[0])]);
     follow("", false, (name) => top.has(name));
     follow(posix.dirname(NOTES), false, (name) => name === posix.basename(NOTES));
@@ -369,12 +462,17 @@ export function startMemory({
       if (dir && !statSync(full).isDirectory()) {
         return;
       }
-      watchers.push(
-        watch(full, { recursive }, (_, name) => wanted(String(name)) && later()).on(
-          "error",
-          () => {},
-        ),
-      );
+
+      const watcher = watch(full, { recursive }, (_, name) => {
+        if (wanted(String(name))) {
+          later();
+        }
+      });
+
+      // oxlint-disable-next-line eslint/no-empty-function -- an FSWatcher error with no listener throws; the next resync watches again
+      watcher.on("error", () => {});
+      watchers.push(watcher);
+      // oxlint-disable-next-line eslint/no-empty -- a folder that doesn't exist yet is watched on the next resync
     } catch {}
   }
 
@@ -390,66 +488,31 @@ export function startMemory({
       for (const watcher of watchers.splice(0)) {
         watcher.close();
       }
+
       edits?.();
     },
   };
 }
 
-function record(
-  path: string,
-  bytes: Buffer,
-): { path: string; sha256: string; size: number; content?: string } {
+function record(path: string, bytes: Buffer) {
   const listed = { path, sha256: sha256(bytes), size: bytes.length };
+  let content: string;
 
   try {
-    const inlined = { ...listed, content: utf8.decode(bytes) };
-
-    if (Buffer.byteLength(JSON.stringify(inlined)) <= LIMIT) {
-      return inlined;
-    }
-  } catch {}
-
-  return listed;
-}
-
-// A file record body as NIP-AF defines it; anything else never counts as a head.
-function recordPath(body: any) {
-  if (typeof body?.path !== "string" || !valid(body.path)) {
-    return;
+    content = keepingLeadingBomForSha256.decode(bytes);
+  } catch {
+    return listed;
   }
-  if ("removed" in body) {
-    return body.removed === true ? body.path : undefined;
-  }
-  const { sha256: sha, size, content } = body;
 
-  if (typeof sha !== "string" || !HEX64.test(sha) || !Number.isSafeInteger(size) || size < 0) {
-    return;
-  }
-  if (
-    content !== undefined &&
-    (typeof content !== "string" ||
-      Buffer.byteLength(content) !== size ||
-      sha256(Buffer.from(content)) !== sha)
-  ) {
-    return;
-  }
-  return body.path;
-}
+  const inlined = { ...listed, content };
 
-function editRequest(body: any): body is { path: string; base_sha256: string; content: string } {
-  return (
-    typeof body?.path === "string" &&
-    valid(body.path) &&
-    typeof body.base_sha256 === "string" &&
-    HEX64.test(body.base_sha256) &&
-    typeof body.content === "string"
-  );
+  return Buffer.byteLength(JSON.stringify(inlined)) <= LIMIT ? inlined : listed;
 }
 
 function valid(path: string) {
   return (
     Buffer.byteLength(path) <= 255 &&
     !/[\\\p{Cc}]/u.test(path) &&
-    path.split("/").every((part) => part && part !== "." && part !== "..")
+    path.split("/").every((part) => part !== "" && part !== "." && part !== "..")
   );
 }
