@@ -13,12 +13,18 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { startHub } from "../../hub/hub.ts";
 
-// The hub starts every session through bin/session, so this runs the hub's real launch
-// against the real launcher, with a fake claude at the end that records what it was given.
-// Each hub gets state of its own: a later hub on the same state starts again every thread whose
-// message the fake never took, and those launches race the one a test is checking.
+const Args = z.array(z.string());
+
+const Settings = z.looseObject({
+  claudeMdExcludes: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()),
+});
+
+const ClaudeJson = z.looseObject({ projects: z.record(z.string(), z.unknown()) });
 
 const HEX = join(import.meta.dir, "../..");
 const saved = { ...process.env };
@@ -65,7 +71,9 @@ exit 0
   chmodSync(join(home, "fake/claude"), 0o755);
 
   for (const name of Object.keys(process.env)) {
-    if (name.startsWith("HEX_") || name === "MEMORY_DIR") delete process.env[name];
+    if (name.startsWith("HEX_") || name === "MEMORY_DIR") {
+      Reflect.deleteProperty(process.env, name);
+    }
   }
 
   Object.assign(process.env, {
@@ -87,12 +95,16 @@ afterEach(() => {
   void listener.stop(true);
 
   for (const name of Object.keys(process.env)) {
-    if (!(name in saved)) delete process.env[name];
+    if (!(name in saved)) {
+      Reflect.deleteProperty(process.env, name);
+    }
   }
 
   Object.assign(process.env, saved);
   rmSync(home, { recursive: true, force: true });
 });
+
+const flagValue = (args: string[], flag: string) => args[args.indexOf(flag) + 1] ?? "";
 
 async function launch(
   channel: string,
@@ -100,14 +112,16 @@ async function launch(
   options: Partial<Parameters<typeof startHub>[0]> = {},
   cwd?: string,
 ) {
+  const stateOfItsOwnSoNoEarlierHubsThreadsRelaunchAndRace = mkdtempSync(join(home, "state/hub-"));
+
   hub = startHub({
-    stateDir: mkdtempSync(join(home, "state/hub-")),
+    stateDir: stateOfItsOwnSoNoEarlierHubsThreadsRelaunchAndRace,
     channel,
     server: { title: "Test", instructions: "Messages arrive as <channel>.", tools: [] },
-    port: listener.port,
+    port: listener.port ?? 0,
     hexDir: home,
     launcher: join(home, ".hex/bin/session"),
-    call: async () => "sent",
+    call: () => Promise.resolve("sent"),
     state: () => {},
     failed: (_, reason) => {
       throw new Error(reason);
@@ -115,7 +129,7 @@ async function launch(
     ...options,
   });
 
-  if (cwd) {
+  if (cwd !== undefined && cwd !== "") {
     hub.open(thread, thread, "hi", cwd);
   } else {
     hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
@@ -125,24 +139,23 @@ async function launch(
     await Bun.sleep(25);
   }
 
-  const args: string[] = JSON.parse(readFileSync(join(home, "launched"), "utf-8"));
-  const file = args[args.indexOf("--settings") + 1]!;
+  const args = Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")));
+  const file = flagValue(args, "--settings");
 
-  return { args, file, settings: JSON.parse(readFileSync(file, "utf-8")) };
+  return { args, file, settings: Settings.parse(JSON.parse(readFileSync(file, "utf-8"))) };
 }
 
-test("a DM session the hub starts gets the chat prompt, its view's tail and wake through its settings, and its settings, token included, stay in an owner-only file", async () => {
+test("a DM session the hub starts gets the chat prompt, its view's tail and wake through its settings, since Claude's daemon starts a --bg session with the daemon's environment rather than the launcher's, and its settings, token included, stay in an owner-only file", async () => {
   const { args, file, settings } = await launch("plugin:telegram@hex", "6296842341", {
     fresh: () => true,
   });
 
-  const system = readFileSync(args[args.indexOf("--system-prompt-file") + 1]!, "utf-8");
+  const system = readFileSync(flagValue(args, "--system-prompt-file"), "utf-8");
   expect(system).toStartWith("You are hex");
   expect(system).not.toContain("#0 a memory");
   expect(settings.claudeMdExcludes).toContain(join(home, "AGENTS.md"));
   expect(settings.claudeMdExcludes).not.toContain(join(home, "state/wake/CLAUDE.md"));
   expect(args[args.indexOf("--add-dir") + 1]).toBe(join(home, "state/wake"));
-  // Claude's daemon starts a --bg session in a spare process with the daemon's environment, not the launcher's.
   expect(settings.env).toMatchObject({
     HEX_FRESH: "1",
     HEX_THREAD: "6296842341",
@@ -150,7 +163,7 @@ test("a DM session the hub starts gets the chat prompt, its view's tail and wake
   });
   expect(settings.env.HEX_TOKEN).toBeString();
   expect(args.join(" ")).not.toContain(settings.env.HEX_TOKEN);
-  expect(statSync(file).mode & 0o777).toBe(0o600);
+  expect(statSync(file).mode.toString(8)).toEndWith("600");
 });
 
 test("a launch writes the wake only when there is none, and removes it once memory is off, not when settings do not parse", async () => {
@@ -162,7 +175,6 @@ test("a launch writes the wake only when there is none, and removes it once memo
   hub.close();
   await launch("plugin:telegram@hex", "-100:6");
   expect(readFileSync(wake, "utf-8")).toBe("kept\n");
-  // Settings that don't parse say nothing about memory, so the wake stays.
   writeFileSync(join(home, ".claude/settings.json"), '{ "env": ');
   rmSync(join(home, "launched"));
   hub.close();
@@ -204,7 +216,7 @@ test("a topic session, started by the hub, gets none of the chat or main additio
 test("a topic session loads its rules and wake from its own copy, which a resume keeps and a new session takes again", async () => {
   const wake = join(home, "state/wake/CLAUDE.md");
   const { args, file, settings } = await launch("plugin:telegram@hex", "-100:5");
-  const held = settings.env.HEX_HELD;
+  const held = z.string().parse(settings.env.HEX_HELD);
   expect(args[args.indexOf("--add-dir") + 1]).toBe(held);
   expect(settings.claudeMdExcludes).toEqual([
     join(home, ".claude/CLAUDE.md"),
@@ -218,8 +230,8 @@ test("a topic session loads its rules and wake from its own copy, which a resume
   writeFileSync(wake, "a newer wake\n");
   writeFileSync(join(home, "AGENTS.md"), "- Keep it shorter.\n\n@state/wake/CLAUDE.md\n");
 
-  const again = (...args: string[]) =>
-    Bun.spawnSync([join(home, ".hex/bin/session"), "--bg", ...args, "--settings", file], {
+  const again = (...flags: string[]) =>
+    Bun.spawnSync([join(home, ".hex/bin/session"), "--bg", ...flags, "--settings", file], {
       cwd: home,
       env: process.env,
     });
@@ -279,15 +291,17 @@ test("every folder a background session starts in is trusted (a -p run never ask
     env: process.env,
   });
   expect(
-    JSON.parse(readFileSync(join(home, "config/.claude.json"), "utf-8")).projects[other],
+    ClaudeJson.parse(JSON.parse(readFileSync(join(home, "config/.claude.json"), "utf-8"))).projects[
+      other
+    ],
   ).toBeUndefined();
-  expect(statSync(join(home, "config/.claude.json")).mode & 0o777).toBe(0o600);
+  expect(statSync(join(home, "config/.claude.json")).mode.toString(8)).toEndWith("600");
   Bun.spawnSync([join(home, ".hex/bin/session"), "-p", "build it"], {
     cwd: project,
     env: process.env,
   });
-  const args: string[] = JSON.parse(readFileSync(join(home, "launched"), "utf-8"));
-  expect(JSON.parse(args[args.indexOf("--settings") + 1]!)).toMatchObject({
+  const args = Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")));
+  expect(JSON.parse(flagValue(args, "--settings"))).toMatchObject({
     model: "opus",
     permissions: { deny: [`Read(/${home}/.env)`] },
   });
