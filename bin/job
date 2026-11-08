@@ -13,7 +13,7 @@
 // that never ended and whose unit is gone (a reboot or crash took it), and resumes a claude job's own
 // conversation here; any other job's owner hears it stopped.
 import { $ } from "bun"
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import { saved } from "../hub/claude.ts"
 import { served } from "../hub/running.ts"
@@ -39,8 +39,9 @@ function tell(unit: string, owner: string, said: string, at: string) {
 
 if (mode === "--ended") {
   const [unit, owner] = rest as [string, string]
-  // A shutdown stops every job: the job keeps its record, and resumes once the machine is back.
-  if ((await $`systemctl is-system-running`.nothrow().text()).trim() === "stopping") process.exit(0)
+  // A shutdown stops every job, and so does hex moving to another machine (state/moving): the job keeps its record,
+  // and resumes wherever hex starts next.
+  if (existsSync(join(stateDir(), "moving")) || (await $`systemctl is-system-running`.nothrow().text()).trim() === "stopping") process.exit(0)
   rmSync(join(records, `${unit}.json`), { force: true })
   const key = owner.slice(owner.indexOf(":") + 1)
   if (!store.threads().some(({ thread }) => thread === key)) console.error(`job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`)
