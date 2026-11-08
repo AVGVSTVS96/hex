@@ -112,7 +112,7 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
         method: "POST",
         headers,
         body,
-        signal: gaveUp?.signal,
+        signal: gaveUp?.signal ?? null,
       }),
     ).then((response) => response.json() as Promise<Answer>);
   }

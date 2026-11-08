@@ -539,8 +539,8 @@ test("a session that dies mid-turn has its turn ended in hex's record once its c
   await time.armed(50);
   expect(open(dir).turn(SESSION).ended).toBeUndefined();
   await time.lapse(50);
-  const { ended } = await until(() => open(dir).turn(SESSION).ended && open(dir).turn(SESSION));
-  expect(ended! > "2026-01-01T00:00:00.000Z").toBe(true);
+  const ended = await until(() => open(dir).turn(SESSION).ended);
+  expect(ended > "2026-01-01T00:00:00.000Z").toBe(true);
 
   writeFileSync(join(dir, "agents"), JSON.stringify([{ sessionId: SESSION, pid: 42 }]));
   hub.deliver("chat:7", "Desk anchors", message);
@@ -1100,10 +1100,12 @@ test("busy and idle from session hooks reach the client, and a dropped session i
   start();
   const { close } = await session("chat:9");
 
-  const hook = (busy: boolean) =>
-    connect(join(dir, "hub.sock")).on("connect", function hook() {
-      this.end(`${JSON.stringify({ type: "state", thread: "chat:9", busy })}\n`);
+  const hook = (busy: boolean) => {
+    const socket = connect(join(dir, "hub.sock"));
+    socket.on("connect", () => {
+      socket.end(`${JSON.stringify({ type: "state", thread: "chat:9", busy })}\n`);
     });
+  };
 
   hook(true);
   await until(() => states.length === 1);
@@ -1400,8 +1402,9 @@ test("a launcher that can't run fails the start instead of leaving it hanging", 
 
 test("a local open request starts a session for an existing topic with its prompt", async () => {
   start();
-  connect(join(dir, "hub.sock")).on("connect", function () {
-    this.end(
+  const socket = connect(join(dir, "hub.sock"));
+  socket.on("connect", () => {
+    socket.end(
       `${JSON.stringify({
         type: "open",
         thread: "chat:5",
@@ -1422,8 +1425,9 @@ test("a local inbound request reaches the thread like a message from the app, by
     agents: [{ sessionId: SESSION, pid: 42 }],
   });
   const { received } = await session("chat:7");
-  connect(join(dir, "hub.sock")).on("connect", function () {
-    this.end(`${JSON.stringify({ type: "inbound", thread: "telegram:chat:7", ...message })}\n`);
+  const socket = connect(join(dir, "hub.sock"));
+  socket.on("connect", () => {
+    socket.end(`${JSON.stringify({ type: "inbound", thread: "telegram:chat:7", ...message })}\n`);
   });
   await until(() => received.length);
   expect(received).toEqual([inbound(message)]);
@@ -1431,8 +1435,9 @@ test("a local inbound request reaches the thread like a message from the app, by
 
 test("a local inbound request for a thread this hub doesn't have opens nothing", async () => {
   start();
-  connect(join(dir, "hub.sock")).on("connect", function () {
-    this.end(
+  const socket = connect(join(dir, "hub.sock"));
+  socket.on("connect", () => {
+    socket.end(
       [
         { type: "inbound", thread: "other-app-key", ...message },
         { type: "inbound", thread: "constructor", ...message },
@@ -1864,10 +1869,12 @@ test("a thread whose session runs without its channel is retried once, not each 
   await time.lapse(50);
   expect(states.filter(([thread, busy]) => thread === "chat:10" && !busy)).toHaveLength(2);
 
-  for (const [thread, id] of [
+  const resumed: [string, string][] = [
     ["chat:9", "3d4e5f60-0000-4000-8000-000000000000"],
     ["chat:11", "4e5f6071-0000-4000-8000-000000000000"],
-  ]) {
+  ];
+
+  for (const [thread, id] of resumed) {
     hub.open(thread, thread);
     await until(() =>
       calls().some(
@@ -3429,7 +3436,7 @@ test("a move that copies forks the session there and leaves the thread here", as
 
 // A thread's messages as hex.db keeps them, each taken by the session it reached or wrote it.
 function stored(
-  rows: { author: string; body: string; from?: string; meta?: Record<string, string> }[],
+  rows: { author: Author; body: string; from?: string; meta?: Record<string, string> }[],
   thread = "chat:7",
   session: string | undefined = SESSION,
 ) {
@@ -3786,22 +3793,35 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
 
   await beat("2026-11-03T12:45Z");
   const [first] = store.beats(SESSION);
+
+  if (first === undefined) {
+    throw new Error("the heartbeat began no beat");
+  }
   expect(first).toEqual({ began: expect.any(String) });
   await beat("2026-11-03T12:46Z");
   expect(store.beats(SESSION)).toEqual([first]);
   store.turned(SESSION, false);
-  expect(store.beats(SESSION)).toEqual([{ began: first!.began, until: store.turn(SESSION).ended }]);
+  expect(store.beats(SESSION)).toEqual([{ began: first.began, until: expect.any(String) }]);
+  expect(store.beats(SESSION)[0]?.until).toBe(store.turn(SESSION).ended);
   await beat("2026-11-03T13:45Z");
   const [, second] = store.beats(SESSION);
+
+  if (second === undefined) {
+    throw new Error("the next heartbeat began no beat");
+  }
   expect(second).toEqual({ began: expect.any(String) });
-  store.turned(SESSION, false, first!.began);
+  store.turned(SESSION, false, first.began);
   expect(store.beats(SESSION)[1]).toEqual(second);
   await Bun.sleep(5);
   await prompt("telegram:1:50", "telegram", "ship it");
   const after = store.turn(SESSION).began;
+
+  if (after === undefined) {
+    throw new Error("the prompt began no turn");
+  }
   expect(store.beats(SESSION)).toEqual([
-    { began: first!.began, until: expect.any(String), after },
-    { began: second!.began, until: after, after },
+    { began: first.began, until: expect.any(String), after },
+    { began: second.began, until: after, after },
   ]);
   await beat("2026-11-03T14:45Z");
   expect(store.beats(SESSION)).toHaveLength(2);

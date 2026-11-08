@@ -83,10 +83,10 @@ export function http({
   stateDir: string;
   path: string;
   channel: string;
-  thread?: string;
-  extra?: Record<string, string>;
-  deaf?: number;
-  at?: number;
+  thread?: string | undefined;
+  extra?: Record<string, string> | undefined;
+  deaf?: number | undefined;
+  at?: number | undefined;
 }) {
   const url = `http://127.0.0.1:${at}${path}`;
 
@@ -154,7 +154,7 @@ export function http({
     close: () => {
       stream.abort();
     },
-    call: async (tool: string, args: object = {}, toolUseId = crypto.randomUUID()) =>
+    call: async (tool: string, args: object = {}, toolUseId: string = crypto.randomUUID()) =>
       (
         await rpc("tools/call", {
           name: tool,

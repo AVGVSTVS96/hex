@@ -505,34 +505,34 @@ export function startHub({
   link,
 }: {
   stateDir: string;
-  storeDir?: string;
+  storeDir?: string | undefined;
   channel: string;
   // What the channel serves its sessions over HTTP.
   server: ChannelServer;
   // Where serve.ts listens for every hub's sessions.
-  port?: number;
-  main?: string;
-  mainName?: string;
+  port?: number | undefined;
+  main?: string | undefined;
+  mainName?: string | undefined;
   // The main thread is hex's General: its settings env says HEX_MAIN, and the hub runs schedules.json.
-  general?: boolean;
+  general?: boolean | undefined;
   call: Call;
   state: State;
   failed: Failed;
-  waits?: Waits;
-  permission?: (thread: string, request: Permission) => void;
-  questions?: Questions;
-  args?: (thread: string) => string[];
+  waits?: Waits | undefined;
+  permission?: ((thread: string, request: Permission) => void) | undefined;
+  questions?: Questions | undefined;
+  args?: ((thread: string) => string[]) | undefined;
   // A fresh thread's session is never compacted: its launcher builds what a new session knows
   // of the chat, and a new one takes over once the old one's context or cache is spent.
-  fresh?: (thread: string) => boolean;
-  limits?: Partial<Limits>;
-  hexDir?: string;
-  launcher?: string;
+  fresh?: ((thread: string) => boolean) | undefined;
+  limits?: Partial<Limits> | undefined;
+  hexDir?: string | undefined;
+  launcher?: string | undefined;
   // What the launcher's sessions read only as they start (STARTUP, in the hex folder HEX_STARTUP
   // names): a change to one renews sessions like a change to the channel does.
-  startup?: string[];
+  startup?: string[] | undefined;
   // Where the app opens a thread, which hex.db keeps with it.
-  link?: (thread: string) => string | undefined;
+  link?: ((thread: string) => string | undefined) | undefined;
 }) {
   const { idleStop, cacheWarm, compactAbove, reconnect, connect, capacity } = {
     ...LIMITS,
