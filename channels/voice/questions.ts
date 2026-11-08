@@ -14,7 +14,8 @@ import { T3, type Fresh, type Stuck } from './t3.ts'
 
 export type Kind = 'pick' | 'yesno' | 'do' | 'look'
 // value: the button's own label, when the option stands for one.
-export type Option = { label: string; value?: string; pick?: boolean }
+// detail: what answering with it does for them, costs and gives up, in a plain sentence.
+export type Option = { label: string; value?: string; pick?: boolean; detail?: string }
 // A page a question points to; opening it answers nothing.
 export type Link = { label: string; url: string }
 // An answer or a not needed given here, kept so undo can take it back whatever the check or the
@@ -42,6 +43,8 @@ export type Question = {
   at: string
   question: string
   context?: string
+  // Why hex picks the option it marks, so its pick can be weighed and not just taken.
+  why?: string
   options: Option[]
   links?: Link[]
   tag?: string

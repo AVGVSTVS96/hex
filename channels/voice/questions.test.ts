@@ -925,3 +925,14 @@ test('an ask stays only while a place still asks it: an open question, an open t
   )
   expect(verdict.asks.map(question => question.id)).toEqual(['check:question', 'check:pin', 'check:call', 'check:recent'])
 })
+
+
+test("a check's ask keeps why hex picks and what each option does, for the app's page of picks", () => {
+  const options = [{ label: 'AWS twin', pick: true, detail: 'A full copy of the server, about $25 a month after credit.' }, { label: 'Sprite', detail: 'Free, at half the speed.' }]
+  const verdict = vet(
+    { asks: [{ id: 'standby', kind: 'pick', task: `telegram:${DESK}`, at: new Date().toISOString(), question: 'Which standby box?', why: 'It is the only one as fast as the server.', options, from: [] }], settle: [], fixed: [], flagged: [], stuck: [] },
+    {},
+    { threads: {}, calls: [] },
+  )
+  expect(verdict.asks[0]).toMatchObject({ why: 'It is the only one as fast as the server.', options })
+})
