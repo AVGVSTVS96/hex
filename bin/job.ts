@@ -1,0 +1,152 @@
+#!/usr/bin/env bun
+// job <unit> [<thread>] [<task>] <command...>: run a long job as its own systemd unit in hex-jobs.slice, apart
+// from the hub, so hex restarts don't stop it, and wake the thread that owns it when it ends. The owner
+// is the hex session that runs it, or <thread>: an open thread's key or <app>:<key> id (hex threads).
+// A job for <task>, a task id like t-12, starts its claude session under an id hex links to that task
+// (hex task agent), so the voice app's Tasks shows it with the task's work.
+// The job's Claude Code sessions carry their owner in HEX_OWNER, so the voice app's Tasks shows them
+// under it, and are named <owner>/<unit> unless they name themselves. A job whose command is claude goes
+// to the first machine with room, or waits for one (bin/place): here it runs as a hex session in the folder
+// it was started from, through the launcher the hub starts sessions with, so it has hex's rules, memory and
+// hooks; on another machine it runs as a T3 Code thread (bin/away).
+// A job outlives the machine going down: `job --resume`, which the hub runs as it starts, finds each job
+// that never ended and whose unit is gone (a reboot or crash took it), and resumes a claude job's own
+// conversation here; any other job's owner hears it stopped.
+import { $ } from "bun"
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { basename, join } from "node:path"
+import { saved } from "../hub/claude.ts"
+import { served } from "../hub/running.ts"
+import { open, stateDir } from "../hub/store.ts"
+
+const [mode, ...rest] = process.argv.slice(2)
+const store = open(stateDir())
+const records = join(stateDir(), "jobs")
+
+// What a job needs to run again: its unit's properties, and what it runs.
+type Kept = { owner: string; cwd: string; properties: string[]; command: string[]; session?: string }
+
+// The open thread a word names, by its key or id, as its id.
+function named(word: string): string | undefined {
+  const key = store.key(word)
+  const thread = store.threads({ open: true }).find(({ thread }) => thread === key)
+  return thread && `${thread.app}:${key}`
+}
+
+function tell(unit: string, owner: string, said: string, at: string) {
+  store.deliver({ key: `job:${unit}@${at}`, to: owner.slice(owner.indexOf(":") + 1), from: "job", author: "prompt", body: `[job] ${unit} ${said}`, meta: { user: "job" } })
+}
+
+if (mode === "--ended") {
+  const [unit, owner] = rest as [string, string]
+  // A shutdown stops every job, and so does hex moving to another machine (state/moving): the job keeps its record,
+  // and resumes wherever hex starts next.
+  if (existsSync(join(stateDir(), "moving")) || (await $`systemctl is-system-running`.nothrow().text()).trim() === "stopping") process.exit(0)
+  rmSync(join(records, `${unit}.json`), { force: true })
+  const key = owner.slice(owner.indexOf(":") + 1)
+  if (!store.threads().some(({ thread }) => thread === key)) console.error(`job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`)
+  const result = process.env.SERVICE_RESULT ?? "unknown"
+  const status = process.env.EXIT_STATUS ?? "?"
+  tell(unit, owner, `ended: ${result} (exit ${status}). Check its output and report it.`, process.env.INVOCATION_ID ?? `${Date.now()}`)
+} else if (mode === "--waiting") {
+  const [unit, owner, readings] = rest as [string, string, string]
+  tell(unit, owner, `waits for room: no machine has a free slot and room right now. It starts by itself once one does.${readings}`, `${process.env.INVOCATION_ID ?? Date.now()}:waiting`)
+} else if (mode === "--tell") {
+  const [unit, owner, said] = rest as [string, string, string]
+  tell(unit, owner, said, `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`)
+} else if (mode === "--resume") {
+  const booted = (await $`uptime -s`.nothrow().text()).trim()
+  for (const file of readdir(records)) {
+    const unit = file.slice(0, -".json".length)
+    if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) continue
+    const kept: Kept = JSON.parse(readFileSync(join(records, file), "utf8"))
+    rmSync(join(records, file))
+    if (kept.session && saved(kept.session)) {
+      const prompt = `The machine this job runs on went down (it came back up at ${booted}) and stopped you in the middle of your work. This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.`
+      await launch(unit, kept, [...flags(kept.command.slice(1)), "--resume", kept.session, prompt])
+      tell(unit, kept.owner, `stopped when the machine went down, and resumed its own conversation as it came back up (${booted}).`, `${booted}:resumed`)
+    } else {
+      tell(unit, kept.owner, `stopped when the machine went down, and hasn't run since (it came back up at ${booted}). Start it again if its work still needs doing: ${kept.command.join(" ")}`, `${booted}:stopped`)
+    }
+  }
+} else {
+  const given = rest.length > 1 ? named(rest[0]!) : undefined
+  const owner = given ?? served()
+  const after = given ? rest.slice(1) : rest
+  const task = after.length > 1 && /^t-\d+$/.test(after[0]!) ? after[0] : undefined
+  const command = task ? after.slice(1) : after
+  if (!mode || !command.length) {
+    console.error("usage: job <unit> [<thread>] [<task>] <command...>")
+    process.exit(2)
+  }
+  if (!owner) {
+    console.error("job: run it from a hex session, or name the thread that owns it")
+    process.exit(2)
+  }
+  const agent = basename(command[0]!) === "claude"
+  if (!agent && /(^|[\s;&|(/])claude(\s|$)/.test(command.join(" "))) console.error(`job: to run Claude as a hex session, start it from its folder as: job ${mode} claude -p "<prompt>"`)
+  // A claude job's session has an id of its own, so it can be resumed.
+  const chosen = command.includes("--session-id") ? command[command.indexOf("--session-id") + 1] : undefined
+  const session = agent && !command.some((arg) => /^(--resume|-r|--continue|-c)$/.test(arg)) ? (chosen ?? crypto.randomUUID()) : undefined
+  if (session && task) store.addAgents(task, [session])
+  else if (task) console.error(`job: only a claude job's session can be linked to ${task}`)
+  // Like claude -p, the job reads what comes on stdin after its prompt.
+  const piped = agent && !process.stdin.isTTY ? await Bun.stdin.text() : ""
+  const input = piped ? ["-p", `StandardInputData=${Buffer.from(piped).toString("base64")}`] : []
+  // The conversation that started the job, and when: a thread's session's own, or the one a job it runs in came from.
+  const thread = served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD })
+  const from = thread ? { HEX_FROM: thread, HEX_FROM_AT: new Date().toISOString() } : { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT }
+  const env = ["PATH", "CLAUDE_CONFIG_DIR"].filter((name) => process.env[name]).flatMap((name) => ["-E", `${name}=${process.env[name]}`]).concat(Object.entries(from).flatMap(([name, value]) => (value ? ["-E", `${name}=${value}`] : [])))
+  const kept: Kept = { owner, cwd: process.cwd(), properties: env, command, session }
+  await launch(mode, kept, [...(session ? ["--session-id", session] : []), ...command.slice(1).filter((arg, at, args) => arg !== "--session-id" && args[at - 1] !== "--session-id")], input)
+}
+
+function readdir(dir: string) {
+  try {
+    return readdirSync(dir).filter((file) => file.endsWith(".json"))
+  } catch {
+    return []
+  }
+}
+
+// A claude job's flags without its prompt, which a resumed one replaces. Every flag a job passes takes
+// a value, but these.
+function flags(args: string[]) {
+  const alone = /^(-p|--print|--verbose|--dangerously-skip-permissions|--fork-session)$/
+  const kept: string[] = []
+  for (let at = 0; at < args.length; at++) {
+    const arg = args[at]!
+    if (!arg.startsWith("-")) continue
+    if (arg === "--session-id") at++
+    else if (alone.test(arg) || arg.includes("=")) kept.push(arg)
+    else kept.push(arg, args[++at]!)
+  }
+  return kept
+}
+
+// Keeps what it takes to start the job again until it ends, from before its unit starts, since a short job can end
+// before systemd-run returns.
+async function launch(unit: string, kept: Kept, args: string[], input: string[] = []) {
+  if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) {
+    console.error(`job: ${unit} already runs`)
+    process.exit(1)
+  }
+  mkdirSync(records, { recursive: true })
+  const record = join(records, `${unit}.json`)
+  writeFileSync(record, JSON.stringify(kept))
+  const agent = basename(kept.command[0]!) === "claude"
+  const name = `${store.names()[store.key(kept.owner)] ?? store.key(kept.owner)}/${unit}`
+  const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command
+  // An agent job stopping stops its thread on another machine first (bin/away), in at most 70 s.
+  const stopping = agent ? ["-p", "TimeoutStopSec=90s"] : []
+  const started = await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${stopping} --collect ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatim(`ExecStopPost=${process.execPath} ${import.meta.path} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatim)}`.nothrow()
+  if (started.exitCode === 0) return
+  rmSync(record, { force: true })
+  process.exit(started.exitCode)
+}
+
+// systemd expands $VARIABLE in a unit's command lines, which would rewrite a thread's name or prompt;
+// $$ is a plain $ on every version.
+function verbatim(arg: string) {
+  return arg.replaceAll("$", () => "$$")
+}
