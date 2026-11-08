@@ -226,7 +226,7 @@ test("a deliberate identical send uses a new operation id, while a reused id can
 
 test("an unfinished persisted operation is uncertain and is never sent again", async () => {
   const { store, call, ran } = channel();
-  store.operation(
+  store.operations.begin(
     "chat:-100:7",
     JSON.stringify(["tool", "report"]),
     JSON.stringify(["reply", { text: "report" }]),

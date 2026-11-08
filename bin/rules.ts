@@ -44,8 +44,8 @@ try {
   const store = open(stateDir());
 
   if (hook_event_name === "SessionEnd") {
-    store.unshow(session_id, "rules");
-    store.unshow(session_id, "hex");
+    store.seen.unshow(session_id, "rules");
+    store.seen.unshow(session_id, "hex");
     process.exit(0);
   }
 
@@ -61,7 +61,7 @@ try {
 
   const kept =
     held === undefined
-      ? store.seen(session_id, "rules")
+      ? store.seen.get(session_id, "rules")
       : readFileSync(join(held, "rules.json"), "utf-8");
 
   let out = "";
@@ -121,7 +121,7 @@ try {
     }
 
     if (held === undefined) {
-      store.show(session_id, "rules", JSON.stringify(now));
+      store.seen.show(session_id, "rules", JSON.stringify(now));
     } else if (hook_event_name !== "SessionStart") {
       writeFileSync(join(held, "rules.json"), JSON.stringify(now));
     }
@@ -134,7 +134,7 @@ try {
   if (hook_event_name === "UserPromptSubmit") {
     try {
       const updates = history(hex);
-      const told = store.seen(session_id, "hex");
+      const told = store.seen.get(session_id, "hex");
       const self = own(session_id);
       const processStartSinceReloadPluginsFiresNoHook = self?.started;
 
@@ -147,12 +147,14 @@ try {
       const changedAgainSinceItWasTold = told === "" || updates.changed(told).length > 0;
 
       if (from !== undefined && changed.length > 0 && changedAgainSinceItWasTold) {
-        store.show(session_id, "hex", updates.head);
+        store.seen.show(session_id, "hex", updates.head);
 
         const names = (keys: Startup[]) =>
           new Intl.ListFormat("en").format(keys.map((key) => WHAT[key]));
 
-        const hub = store.threads({ open: true }).some((thread) => thread.session === session_id);
+        const hub = store.threads
+          .list({ open: true })
+          .some((thread) => thread.session === session_id);
 
         const after = hub
           ? "hex resumes it on the new hex at its next rest, once its work here is done"

@@ -50,13 +50,13 @@ function checkEachMinuteAndListFired(from: number, to: number) {
 
 function fired() {
   return open(dir)
-    .untaken()
+    .messages.untaken()
     .map((row) => row.key);
 }
 
 function takeAll() {
-  for (const row of open(dir).untaken()) {
-    open(dir).take(row.key, "session");
+  for (const row of open(dir).messages.untaken()) {
+    open(dir).messages.take(row.key, "session");
   }
 }
 
@@ -65,12 +65,14 @@ test("a job fires at its minute on the owner's clock, once, to the main thread",
   expect(checkEachMinuteAndListFired(at(18, 14, 40), at(18, 14, 50))).toEqual([
     "schedule:heartbeat@2026-10-18T21:45Z",
   ]);
-  expect(open(dir).message("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
+  expect(open(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
     to: "general",
     from: "schedule",
     body: "[heartbeat] Hourly check",
   });
-  expect(open(dir).message("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late).toBeUndefined();
+  expect(
+    open(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late,
+  ).toBeUndefined();
 });
 
 test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
@@ -111,7 +113,7 @@ test("an at fires once at each time it lists, and never again after", () => {
   }
 
   expect(keys).toEqual(["schedule:treat@2026-10-20T23:00Z", "schedule:treat@2026-10-21T01:00Z"]);
-  expect(open(dir).message(keys[0] ?? "")?.to).toBe("topic");
+  expect(open(dir).messages.get(keys[0] ?? "")?.to).toBe("topic");
 });
 
 test("an at fires once when clocks go back, and as far past the jump as it was set when they skip it", () => {
@@ -143,7 +145,7 @@ test("after the hub was down, each job fires its newest missed slot once, marked
   check(dir, hexDir, "general", at(18, 9));
   check(dir, hexDir, "general", at(18, 14, 50));
   expect(fired()).toEqual(["schedule:heartbeat@2026-10-18T21:45Z"]);
-  expect(open(dir).message("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late).toBe("true");
+  expect(open(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.meta?.late).toBe("true");
 });
 
 test("the first check ever fires nothing from before it", () => {
@@ -169,14 +171,14 @@ test("a broken schedules.json fires nothing, says why once, and its jobs catch u
   check(dir, hexDir, "general", at(18, 9));
   schedulesJson('{ "heartbeat": { "cron": "hourly", "prompt": "x" } }');
   checkEachMinuteAndListFired(at(18, 9, 40), at(18, 9, 50));
-  const [broken, ...rest] = open(dir).untaken();
+  const [broken, ...rest] = open(dir).messages.untaken();
   expect(rest).toEqual([]);
   expect(broken?.body).toContain('"hourly" is not a five-field cron expression');
   takeAll();
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
   check(dir, hexDir, "general", at(18, 9, 51));
   expect(fired()).toEqual(["schedule:heartbeat@2026-10-18T16:45Z"]);
-  expect(open(dir).message("schedule:heartbeat@2026-10-18T16:45Z")?.meta?.late).toBe("true");
+  expect(open(dir).messages.get("schedule:heartbeat@2026-10-18T16:45Z")?.meta?.late).toBe("true");
 });
 
 test("a schedules.json gone for a while leaves its jobs to catch up once it is back", () => {

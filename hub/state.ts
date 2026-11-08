@@ -83,7 +83,7 @@ if (answered && stop_hook_active !== true && session_id) {
     (!given(HEX_CHANNEL) || HEX_CHANNEL.startsWith("plugin:t3@"));
 
   try {
-    const said = open(stateDir()).unanswered(session_id, lastWordsReachTheOwner ? 1 : 0);
+    const said = open(stateDir()).turns.unanswered(session_id, lastWordsReachTheOwner ? 1 : 0);
 
     if (said.length > 0) {
       const lines = said.map(
@@ -110,25 +110,25 @@ let heartbeat = false;
 if (key !== undefined) {
   try {
     const store = open(stateDir());
-    heartbeat = store.message(key)?.meta?.schedule === "heartbeat";
+    heartbeat = store.messages.get(key)?.meta?.schedule === "heartbeat";
     const flipped = heartbeat ? busySince(session_id) : undefined;
     let took: boolean;
 
     try {
       const takenAsOneTurn = () =>
-        store.take(key, session_id) &&
-        (!session_id || (store.turned(session_id, busy, at, heartbeat, flipped), true));
+        store.messages.take(key, session_id) &&
+        (!session_id || (store.turns.turned(session_id, busy, at, heartbeat, flipped), true));
 
       took = store.write(takenAsOneTurn);
       recorded = took && !!session_id;
     } catch (error) {
       console.error(`hex couldn't record this turn: ${String(error)}`);
-      const mine = store.message(key)?.taken?.by === session_id;
-      took = mine || store.take(key, session_id);
+      const mine = store.messages.get(key)?.taken?.by === session_id;
+      took = mine || store.messages.take(key, session_id);
       recorded = mine;
     }
 
-    const secondCopyTheHubResent = !took && store.message(key) !== null;
+    const secondCopyTheHubResent = !took && store.messages.get(key) !== null;
 
     if (took) {
       leftForTheHubToTake = undefined;
@@ -147,7 +147,7 @@ function wokenByHeartbeatTask(store: Store, session: string) {
       ? /<task-id>([\w-]+)<\/task-id>/u.exec(prompt)?.[1]
       : undefined;
 
-  const beats = task === undefined ? [] : store.beats(session);
+  const beats = task === undefined ? [] : store.turns.beats(session);
   const first = beats.slice(beats.findLastIndex((beat) => beat.after !== undefined) + 1)[0];
 
   if (!first) {
@@ -215,12 +215,12 @@ if (session_id && !recorded) {
     store.write(() => {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
-      store.turned(session_id, busy, at, beat);
+      store.turns.turned(session_id, busy, at, beat);
 
       if (answered && background) {
-        store.waitsOnAgents(session_id, at);
+        store.turns.waitsOnAgents(session_id, at);
       } else if (answered) {
-        store.handled(session_id, at);
+        store.turns.handled(session_id, at);
       }
     });
   } catch (error) {
@@ -242,17 +242,20 @@ if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id)
   try {
     const store = open(stateDir());
     const to = HEX_THREAD ?? session_id;
-    const opensAJob = given(HEX_OWNER) && !given(HEX_THREAD) && store.said(to, 1).length === 0;
+
+    const opensAJob =
+      given(HEX_OWNER) && !given(HEX_THREAD) && store.messages.said(to, 1).length === 0;
+
     const author = opensAJob ? "prompt" : "owner";
 
     const theHubStartedTheSessionWithIt =
       author === "owner" &&
-      store
+      store.messages
         .said(to, 20)
         .some((row) => row.from === "hub" && row.body.trim() === typedInTheTerminal.trim());
 
     if (!theHubStartedTheSessionWithIt) {
-      store.deliver(
+      store.messages.deliver(
         {
           key: `terminal:${crypto.randomUUID()}`,
           to,

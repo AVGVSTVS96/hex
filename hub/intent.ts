@@ -106,27 +106,27 @@ const newest = (rows: Row[], shown: Row[]) =>
   rows.filter((row) => spoken(row) !== "" && !shown.some(({ key }) => key === row.key)).slice(-4);
 
 export function asked(store: Store, session: string, text: string): string {
-  const tasks = [...new Set([...named(text), store.agentTasks()[session]?.id ?? ""])].flatMap(
-    (id) => store.task(id) ?? [],
+  const tasks = [...new Set([...named(text), store.tasks.agentTasks()[session]?.id ?? ""])].flatMap(
+    (id) => store.tasks.get(id) ?? [],
   );
 
   const cited = [...new Set(text.match(/\b(?:telegram|discord|buzz|t3|voice):[\w@.:-]*\w/gu))]
     .flatMap((key) => {
-      const row = store.message(key);
+      const row = store.messages.get(key);
 
       return row !== null && spoken(row) !== "" ? [row] : [];
     })
     .slice(0, 12);
 
-  const got = newest(store.taken(session, 40), cited);
+  const got = newest(store.messages.taken(session, 40), cited);
   const to = deliveredTo(store, text);
 
   const toNewest =
-    to === undefined || to === "" ? [] : newest(store.said(to, 40), [...cited, ...got]);
+    to === undefined || to === "" ? [] : newest(store.messages.said(to, 40), [...cited, ...got]);
 
   return [
     tasks.length > 0
-      ? `The tasks it names or this session works on, with his words:\n\n${tasks.map((task) => render(task, store.names())).join("\n\n")}`
+      ? `The tasks it names or this session works on, with his words:\n\n${tasks.map((task) => render(task, store.threads.names())).join("\n\n")}`
       : "",
     cited.length > 0 ? `His messages it cites:\n\n${quote(cited)}` : "",
     got.length > 0 ? `His newest messages this session got:\n\n${quote(got)}` : "",
@@ -145,10 +145,10 @@ function deliveredTo(store: Store, text: string): string | undefined {
     return;
   }
 
-  const threads = store.threads();
+  const threads = store.threads.list();
 
   return (
-    threads.find(({ thread }) => thread === store.key(to)) ??
+    threads.find(({ thread }) => thread === store.threads.key(to)) ??
     threads.find(({ name }) => name === to)
   )?.thread;
 }
@@ -237,7 +237,7 @@ export async function check(
   }
 
   const session = hook.session_id ?? "";
-  const sent = SentBack.safeParse(JSON.parse(store.seen(session, "intent") || "null")).data;
+  const sent = SentBack.safeParse(JSON.parse(store.seen.get(session, "intent") || "null")).data;
 
   const last =
     sent !== undefined && sent.rounds > 0 && Date.now() - sent.at < REWRITE_WINDOW_MS
@@ -264,7 +264,7 @@ export async function check(
     const through = verdict.verdict === "revise" && round > SENDBACKS_BEFORE_IT_GOES_THROUGH;
 
     if (verdict.verdict === "revise" && !through) {
-      store.show(
+      store.seen.show(
         session,
         "intent",
         JSON.stringify({
@@ -275,7 +275,7 @@ export async function check(
         } satisfies Sent),
       );
     } else {
-      store.unshow(session, "intent");
+      store.seen.unshow(session, "intent");
     }
 
     return { verdict, text, round, ...(through && { through }) };

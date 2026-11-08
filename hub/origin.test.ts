@@ -13,17 +13,17 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "origin-"));
   mkdirSync(join(dir, "telegram"));
   const store = open(dir);
-  store.keepThreads("telegram", { "-100:7": { name: "Website" }, "-100:8": { name: "Shop" } });
-  store.keepThreads("voice", { voice: { name: "voice" } });
-  store.deliver({
+  store.threads.keep("telegram", { "-100:7": { name: "Website" }, "-100:8": { name: "Shop" } });
+  store.threads.keep("voice", { voice: { name: "voice" } });
+  store.messages.deliver({
     key: "voice:c1:1",
     to: "voice",
     from: "voice",
     body: "[1.2s] you: Check the build.\n[2.0s] voice: On it.",
     author: "call",
   });
-  store.take("voice:c1:1", "v");
-  store.deliver({
+  store.messages.take("voice:c1:1", "v");
+  store.messages.deliver({
     key: "telegram:-100:50",
     to: "-100:7",
     from: "telegram",
@@ -31,15 +31,15 @@ beforeEach(() => {
     author: "owner",
     meta: { user: "bassim" },
   });
-  store.take("telegram:-100:50", "s");
-  store.deliver({
+  store.messages.take("telegram:-100:50", "s");
+  store.messages.deliver({
     key: "telegram:-100:51",
     to: "-100:7",
     from: "telegram",
     body: "On it.",
     author: "hex",
   });
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:51+👍",
     to: "-100:7",
     from: "telegram",
@@ -47,8 +47,8 @@ beforeEach(() => {
     author: "owner",
     meta: { user: "bassim", reaction: "👍" },
   });
-  store.take("telegram:-100:51+👍", "s");
-  store.deliver({
+  store.messages.take("telegram:-100:51+👍", "s");
+  store.messages.deliver({
     key: "telegram:-100:52",
     to: "-100:7",
     from: "telegram",
@@ -155,7 +155,7 @@ test("a thread's own session goes by its thread over job variables it inherited,
 
 test("a job is told the owner's words as they were when it started, a job no conversation started gets nothing, and a vote taken off isn't the owner's words", async () => {
   const store = open(dir);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:52b",
     to: "-100:7",
     from: "telegram",
@@ -166,8 +166,8 @@ test("a job is told the owner's words as they were when it started, a job no con
   await Bun.sleep(5);
   const started = new Date().toISOString();
   await Bun.sleep(5);
-  store.take("telegram:-100:52b", "s");
-  store.deliver({
+  store.messages.take("telegram:-100:52b", "s");
+  store.messages.deliver({
     key: "telegram:-100:53",
     to: "-100:7",
     from: "telegram",
@@ -175,12 +175,12 @@ test("a job is told the owner's words as they were when it started, a job no con
     author: "owner",
     meta: { vote_removed: "true" },
   });
-  store.take("telegram:-100:53", "s");
+  store.messages.take("telegram:-100:53", "s");
   expect(
     (await hook("SubagentStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }))
       ?.additionalContext,
   ).toContain("/bin/hex message telegram:-100:52b`");
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:54",
     to: "-100:7",
     from: "telegram",
@@ -188,7 +188,7 @@ test("a job is told the owner's words as they were when it started, a job no con
     author: "owner",
     meta: { user: "bassim" },
   });
-  store.take("telegram:-100:54", "s");
+  store.messages.take("telegram:-100:54", "s");
   expect(
     (await hook("SubagentStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }))
       ?.additionalContext,
@@ -207,8 +207,8 @@ test("a job is told the owner's words as they were when it started, a job no con
 
 test("an edit is named by the message it edits, so the line reads as the owner's newest words however often they edit", async () => {
   const store = open(dir);
-  store.take("telegram:-100:52", "s");
-  store.deliver({
+  store.messages.take("telegram:-100:52", "s");
+  store.messages.deliver({
     key: "telegram:-100:52@1",
     to: "-100:7",
     from: "telegram",
@@ -216,12 +216,12 @@ test("an edit is named by the message it edits, so the line reads as the owner's
     author: "owner",
     meta: { user: "bassim", edited: "true", message_id: "52" },
   });
-  store.take("telegram:-100:52@1", "s");
+  store.messages.take("telegram:-100:52@1", "s");
   expect(
     (await hook("SubagentStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }))
       ?.additionalContext,
   ).toContain("/bin/hex message telegram:-100:52`");
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:52@2",
     to: "-100:7",
     from: "telegram",

@@ -39,16 +39,16 @@ export function when(at: string, zone?: string) {
 
 export function place(
   store: Store,
-  hold: Parameters<Store["hold"]>[0],
+  hold: Parameters<Store["holds"]["create"]>[0],
   { zone, working }: { zone?: string; working: Set<string> },
 ): Hold {
   return store.write(() => {
-    const placed = store.hold(hold);
-    const by = store.names()[placed.by] ?? placed.by;
+    const placed = store.holds.create(hold);
+    const by = store.threads.names()[placed.by] ?? placed.by;
     const ends = `${placed.until !== undefined && placed.until !== "" ? `at ${when(placed.until, zone)}, or ` : ""}when my word lifts it`;
 
     for (const { thread } of placed.threads.filter((held) => working.has(held.thread))) {
-      store.deliver({
+      store.messages.deliver({
         key: `hold:${placed.id}@${thread}`,
         to: thread,
         from: "hold",
@@ -64,11 +64,11 @@ export function place(
 
 export function wake(store: Store, at = new Date(clock.now()).toISOString()): string | undefined {
   return store.write(() => {
-    const waking = store.waking(PATIENCE_FOR_A_WOKEN_TURN_TO_END, at);
+    const waking = store.holds.waking(PATIENCE_FOR_A_WOKEN_TURN_TO_END, at);
     let room = FREED_THREADS_WOKEN_AT_ONCE - waking.count;
     const woken = new Set<string>();
 
-    for (const { id, thread, why, ending } of store.freed()) {
+    for (const { id, thread, why, ending } of store.holds.freed()) {
       if (woken.has(thread)) {
         continue;
       }
@@ -80,7 +80,7 @@ export function wake(store: Store, at = new Date(clock.now()).toISOString()): st
       woken.add(thread);
 
       const key = `hold:${id}@${thread}:ended`;
-      store.deliver({
+      store.messages.deliver({
         key,
         to: thread,
         from: "hold",
@@ -88,7 +88,7 @@ export function wake(store: Store, at = new Date(clock.now()).toISOString()): st
         body: `[hold ${id} ended] ${ending}. The hold on this thread (${why}) is over: pick up where you stopped.`,
         meta: { user: "hold" },
       });
-      store.woke(thread, key);
+      store.holds.woke(thread, key);
     }
 
     return woken.size > 0
@@ -116,13 +116,13 @@ export function holding(storeDir: string): () => void {
 
     try {
       const at = new Date(clock.now()).toISOString();
-      store.due(at);
+      store.holds.due(at);
       const patience = wake(store, at);
 
       next = Math.min(
         patience !== undefined && patience !== "" ? Date.parse(patience) : Infinity,
-        ...store
-          .holds()
+        ...store.holds
+          .list()
           .flatMap((hold) =>
             hold.until !== undefined && hold.until !== "" ? [Date.parse(hold.until)] : [],
           ),
@@ -154,13 +154,13 @@ function ended(held: Held) {
 }
 
 export function line(hold: Hold, store: Store, zone?: string): string {
-  const names = store.names();
+  const names = store.threads.names();
   const name = (thread: string) => names[thread] ?? thread;
   const stillHeld = hold.threads.filter((held) => !ended(held)).map((held) => name(held.thread));
   const freed = hold.threads.filter((held) => ended(held)).map((held) => name(held.thread));
 
   const said =
-    hold.message !== undefined && hold.message !== "" ? store.message(hold.message) : null;
+    hold.message !== undefined && hold.message !== "" ? store.messages.get(hold.message) : null;
 
   return [
     stillHeld.length > 0

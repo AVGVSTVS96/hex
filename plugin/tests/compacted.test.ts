@@ -32,7 +32,10 @@ function kept(thread: string, turns: [Author, string][]) {
   const store = open(join(home, "state"));
 
   for (const [i, [author, body]] of turns.entries()) {
-    store.deliver({ key: `telegram:${i}`, to: thread, from: "telegram", author, body }, SESSION);
+    store.messages.deliver(
+      { key: `telegram:${i}`, to: thread, from: "telegram", author, body },
+      SESSION,
+    );
     store.db
       .query("update messages set at = ? where key = ?")
       .run(new Date(Date.UTC(2026, 9, 6, 16, i)).toISOString(), `telegram:${i}`);

@@ -26,14 +26,14 @@ type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 const isSet = (value?: string): value is string => value !== undefined && value !== "";
 
 function openThreadIdByKeyOrId(word: string): string | undefined {
-  const key = store.key(word);
-  const found = store.threads({ open: true }).find(({ thread }) => thread === key);
+  const key = store.threads.key(word);
+  const found = store.threads.list({ open: true }).find(({ thread }) => thread === key);
 
   return found && `${found.app}:${key}`;
 }
 
 function tell(unit: string, owner: string, said: string, at: string) {
-  store.deliver({
+  store.messages.deliver({
     key: `job:${unit}@${at}`,
     to: owner.slice(owner.indexOf(":") + 1),
     from: "job",
@@ -59,7 +59,7 @@ if (mode === "--ended") {
 
   const key = owner.slice(owner.indexOf(":") + 1);
 
-  if (!store.threads().some(({ thread }) => thread === key)) {
+  if (!store.threads.list().some(({ thread }) => thread === key)) {
     console.error(
       `job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`,
     );
@@ -164,7 +164,7 @@ if (mode === "--ended") {
       : undefined;
 
   if (isSet(ownIdToResumeBy) && task !== undefined) {
-    store.addAgents(task, [ownIdToResumeBy]);
+    store.tasks.addAgents(task, [ownIdToResumeBy]);
   } else if (task !== undefined) {
     console.error(`job: only a claude job's session can be linked to ${task}`);
   }
@@ -271,7 +271,7 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
   writeFileSync(record, JSON.stringify(kept));
 
   const agent = basename(kept.command[0] ?? "") === "claude";
-  const name = `${store.names()[store.key(kept.owner)] ?? store.key(kept.owner)}/${unit}`;
+  const name = `${store.threads.names()[store.threads.key(kept.owner)] ?? store.threads.key(kept.owner)}/${unit}`;
   const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command;
   const roomToStopItsThreadOnAnotherMachineFirst = agent ? ["-p", "TimeoutStopSec=90s"] : [];
 

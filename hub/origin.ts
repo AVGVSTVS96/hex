@@ -32,14 +32,14 @@ export function origin(
     return;
   }
 
-  const thread = store.key(owner);
-  const names = store.names();
+  const thread = store.threads.key(owner);
+  const names = store.threads.names();
 
   if (!(thread in names)) {
     return;
   }
 
-  const newestWords = store
+  const newestWords = store.messages
     .said(thread, -1, takenBefore)
     .findLast(
       (row) =>

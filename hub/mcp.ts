@@ -207,7 +207,7 @@ export function endpoint(
     const scope = `${channel}:${thread}`;
     const key = JSON.stringify([scope, id]);
     const value = [toolName, args];
-    const kept = store.operation(scope, id, JSON.stringify(value));
+    const kept = store.operations.begin(scope, id, JSON.stringify(value));
 
     if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
       return failure(`${toolName} didn't run: identity ${id} already identifies a different call`);
@@ -226,7 +226,7 @@ export function endpoint(
 
     const answer = call(thread, toolName, args)
       .then((answered) => {
-        store.finishOperation(scope, id, JSON.stringify(answered));
+        store.operations.finish(scope, id, JSON.stringify(answered));
 
         return answered;
       })

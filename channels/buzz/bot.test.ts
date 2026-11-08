@@ -846,7 +846,7 @@ test("after a restart Hex picks up what was sent while it was down, in order, an
     };
 
     root = at(0, "@Hex desk anchors are loose", [["p", me]]);
-    open(join(dirname(state), "hex", "state")).keepThreads("buzz", {
+    open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
       [root.id]: { name: "Anchors" },
     });
     writeFileSync(join(state, "cursor.json"), JSON.stringify({ at: t, ids: [root.id] }));
@@ -997,7 +997,7 @@ test("a mirror backfills the new thread with the chat, the owner's lines quoted 
   const bot = await startBot();
   const { root, session } = await threadStarted(bot);
   const store = open(join(bot.state, "..", "hex", "state"));
-  store.deliver(
+  store.messages.deliver(
     {
       key: "telegram:1",
       to: root.id,
@@ -1007,7 +1007,7 @@ test("a mirror backfills the new thread with the chat, the owner's lines quoted 
     },
     SESSION,
   );
-  store.deliver(
+  store.messages.deliver(
     { key: "telegram:2", to: root.id, from: "telegram", author: "hex", body: "Roomy." },
     SESSION,
   );
@@ -1111,7 +1111,7 @@ test("a tap on buttons sent before a restart still arrives as a button", async (
       relay.inject(event);
     }
 
-    open(join(dirname(state), "hex", "state")).keepThreads("buzz", {
+    open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
       [root.id]: { name: "Ship it" },
     });
     writeFileSync(
@@ -1460,7 +1460,7 @@ test("the channel of every thread is kept in channels.json for the voice app: th
       Math.floor(Date.now() / 1000) - 3600,
     );
     relay.inject(known);
-    open(join(dirname(state), "hex", "state")).keepThreads("buzz", {
+    open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
       [known.id]: { name: "Old" },
       [crypto.randomUUID()]: { name: "bassim" },
     });

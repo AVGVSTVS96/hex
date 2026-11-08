@@ -239,7 +239,7 @@ const SLOW_SETUP = 30_000;
 const saved = () =>
   Object.fromEntries(
     open(state)
-      .threads({ open: true })
+      .threads.list({ open: true })
       .map((thread) => [thread.thread, thread]),
   );
 
@@ -296,7 +296,7 @@ async function update(fields: Omit<Update, "update_id">) {
 
 beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [String(OWNER)] }));
-  open(state).keepThreads("telegram", {
+  open(state).threads.keep("telegram", {
     [DESK]: { name: "desk" },
     [String(OWNER)]: { name: "Bassim" },
     [`${FORUM}:6`]: { name: "notes" },
@@ -848,7 +848,7 @@ test("a message no session has read shows it waits, until a session takes it", a
     () => notes.received,
   );
 
-  open(state).take(handed.meta.key ?? "", "notes-session");
+  open(state).messages.take(handed.meta.key ?? "", "notes-session");
   expect(
     await called(
       "setMessageReaction",
@@ -913,8 +913,8 @@ test("a session's own reaction stays once the message it took stops waiting, and
   );
 
   await topic.call("react", { message_id: String(reacted.message_id), emoji: "🔥" });
-  open(state).take(first.meta.key ?? "", "topic-session");
-  open(state).take(second.meta.key ?? "", "topic-session");
+  open(state).messages.take(first.meta.key ?? "", "topic-session");
+  open(state).messages.take(second.meta.key ?? "", "topic-session");
   await until(
     () =>
       reactionsOn(plain.message_id).at(-1) === "👀" && reactionsOn(plain.message_id).length === 3,
@@ -963,13 +963,13 @@ test("a DM is its own thread: it reaches the DM session, not the group, and repl
 const ledger = () => ({
   pins: Object.fromEntries(
     open(state)
-      .pins({ app: "telegram" })
+      .pins.list({ app: "telegram" })
       .map((pin) => [pin.thread, pin]),
   ),
 });
 
 const asked = (id: number) => {
-  const question = open(state).question("telegram", DESK, id);
+  const question = open(state).questions.get("telegram", DESK, id);
 
   if (!question) {
     throw new Error(`no question at ${id}`);
@@ -1205,7 +1205,7 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
     chat_id: String(OWNER),
     reply_parameters: { message_id: id, chat_id: String(FORUM) },
   });
-  expect(open(state).question("telegram", String(OWNER), reminder)).toBeNull();
+  expect(open(state).questions.get("telegram", String(OWNER), reminder)).toBeNull();
   await general.call("reply", { text: "Ship the site, in Desk", reply_to: String(id) });
   expect(
     (await called("sendMessage", (p) => p.text === "Ship the site, in Desk")).reply_parameters,
@@ -1307,7 +1307,7 @@ test("a message edited before it is forwarded goes with its new text", async () 
 
   const forwarded = idIn(await call("forward", { message_id: String(id), thread: "notes" }));
 
-  expect(open(state).message(`telegram:${FORUM}:${forwarded}`)?.body).toBe("Status: live");
+  expect(open(state).messages.get(`telegram:${FORUM}:${forwarded}`)?.body).toBe("Status: live");
 });
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {

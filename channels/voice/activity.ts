@@ -981,9 +981,9 @@ export function nameOf({ app, thread, name }: Named, general?: Named) {
 
 export function findThread(state: string, wanted: string): Thread | undefined {
   const store = open(state);
-  const key = store.key(wanted);
-  const general = generalOf(store.threads());
-  const all = store.threads({ open: true }).filter(({ app }) => app !== "voice");
+  const key = store.threads.key(wanted);
+  const general = generalOf(store.threads.list());
+  const all = store.threads.list({ open: true }).filter(({ app }) => app !== "voice");
   const is = (name: string) => name.toLowerCase() === wanted.toLowerCase();
 
   const ways = [
@@ -1034,7 +1034,7 @@ export function followThread(
   const project = join(projects(), (thread.cwd ?? hexDir).replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   const transcript = (id: string) => join(project, `${id}.jsonl`);
   const store = open(thread.state);
-  const taken = resumed ? store.taker(thread.id, "voice_task", tag) : undefined;
+  const taken = resumed ? store.messages.taker(thread.id, "voice_task", tag) : undefined;
 
   const took =
     taken !== undefined && ID.test(taken.by) && existsSync(transcript(taken.by))
@@ -1049,8 +1049,8 @@ export function followThread(
   locate();
 
   function locate() {
-    const current = store
-      .threads({ app: thread.app, open: true })
+    const current = store.threads
+      .list({ app: thread.app, open: true })
       .find(({ thread: id }) => id === thread.id)?.session;
 
     const next = session === undefined && took ? took.by : current;
@@ -1060,7 +1060,9 @@ export function followThread(
     }
 
     const hexDbStillNamesTheSessionBeforeTheOneThatTookIt =
-      took !== undefined && session === took.by && (store.lastTaken(next) ?? took.at) < took.at;
+      took !== undefined &&
+      session === took.by &&
+      (store.messages.lastTaken(next) ?? took.at) < took.at;
 
     if (hexDbStillNamesTheSessionBeforeTheOneThatTookIt) {
       return;
@@ -1155,7 +1157,7 @@ export function followThread(
       return;
     }
 
-    const end = store.turn(session).ended;
+    const end = store.turns.get(session).ended;
 
     if (end === turnEndAtTheLastLook) {
       return;

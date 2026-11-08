@@ -37,7 +37,7 @@ export class Chats {
   of(where: Where): Chat {
     const kept = store(this.state);
     const sends = sendsThrough(where) !== undefined;
-    const mark = `${kept.mark(where.thread)}:${sends}`;
+    const mark = `${kept.messages.mark(where.thread)}:${sends}`;
     const id = `${where.app}:${where.thread}`;
     const seen = this.seen.get(id);
 
@@ -50,7 +50,7 @@ export class Chats {
       text: typed(turn.text, turn.media?.length ?? 0),
     }));
 
-    const waiting = owners(kept.untaken(where.thread)).map(({ key, body, at, meta }) => {
+    const waiting = owners(kept.messages.untaken(where.thread)).map(({ key, body, at, meta }) => {
       const media = carried(meta);
 
       return { key, text: typed(body, media?.length ?? 0), at, ...(media && { media }) };

@@ -21,7 +21,7 @@ const minute = Date.UTC(2026, 10, 9, 17) / 60_000;
 
 const sent = () =>
   open(dir)
-    .untaken()
+    .messages.untaken()
     .filter((row) => row.from === "schedule");
 
 const fail = () => Promise.reject(new Error("rate limited"));
@@ -32,7 +32,7 @@ const job = { cron: "0 9 * * 1", idea: "t-1", prompt: "Is GPT Live 1.1 on the AP
 function idea() {
   const store = new Store(dir);
 
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:5",
     to: "-100:7",
     from: "telegram",
@@ -41,7 +41,7 @@ function idea() {
     meta: { user: "owner" },
   });
 
-  return store.createTask({
+  return store.tasks.create({
     title: "Swap in GPT Live 1.1",
     message: "telegram:-100:5",
     owner: "-100:7",
@@ -115,7 +115,7 @@ test("a check that fails is kept with its error; the second failure in a row tel
 
 test("an idea that's done has nothing to look into: its thread hears once to take the job out", async () => {
   const { id } = idea();
-  open(dir).editTask(id, { status: "done", proof: "shipped" });
+  open(dir).tasks.edit(id, { status: "done", proof: "shipped" });
   await research(dir, "gpt-live", job, "general", minute, neverAsked);
   await research(dir, "gpt-live", job, "general", minute + 1440, neverAsked);
   expect(sent()).toMatchObject([

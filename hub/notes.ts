@@ -49,7 +49,7 @@ export type Verdict = { keys: Row[]; unknown: string[]; unquoted: string[]; quot
 
 export function verdict(note: string, store: Store): Verdict {
   const keys = keysOf(note);
-  const found = keys.map((key) => store.message(key)).filter((row): row is Row => !!row);
+  const found = keys.map((key) => store.messages.get(key)).filter((row): row is Row => !!row);
   const words = quotesOf(note);
 
   return {

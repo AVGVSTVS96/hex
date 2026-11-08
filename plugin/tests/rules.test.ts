@@ -134,9 +134,9 @@ test("a change too long to show points to the files instead", () => {
 
 test("a session's end forgets what it loaded", () => {
   hook("SessionStart");
-  expect(open(join(home, "state")).seen(SESSION, "rules")).toContain("Answer in plain words.");
+  expect(open(join(home, "state")).seen.get(SESSION, "rules")).toContain("Answer in plain words.");
   hook("SessionEnd");
-  expect(open(join(home, "state")).seen(SESSION, "rules")).toBe("");
+  expect(open(join(home, "state")).seen.get(SESSION, "rules")).toBe("");
 });
 
 test("a memory pass rewriting the wake HEX.md imports is no change to the rules", () => {
@@ -223,7 +223,7 @@ test("a hub thread's session hears its hub renews it, and nothing goes on its sc
     [1000, "plugin/skills/echo/SKILL.md", "Restate the ask."],
     [3000, "bin/session", "exec claude"],
   );
-  open(join(home, "state")).keepThreads("telegram", {
+  open(join(home, "state")).threads.keep("telegram", {
     "-100:7": { name: "Desk", session: SESSION },
   });
   const out = hook("UserPromptSubmit");
@@ -283,7 +283,7 @@ test("a session told two days ago still hears nothing more of the same update", 
     [3000, "plugin/hooks/hooks.json", '{"hooks":{"Stop":[]}}'],
   );
   hook("UserPromptSubmit");
-  open(join(home, "state")).show(
+  open(join(home, "state")).seen.show(
     "another",
     "tasks",
     "x",

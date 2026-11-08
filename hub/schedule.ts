@@ -202,7 +202,7 @@ export function check(
   } catch (error) {
     const body = `[schedules] schedules.json no longer loads, so no job runs until it's fixed: ${error instanceof Error ? error.message : String(error)}`;
 
-    store.deliver({
+    store.messages.deliver({
       key: `schedule:broken@${Bun.hash(text).toString(36)}`,
       to: main,
       from: "schedule",
@@ -215,7 +215,7 @@ export function check(
   }
 
   const zone = zoneOf(hexDir);
-  const since = store.checked() ?? now;
+  const since = store.scheduler.checked() ?? now;
   const slots = new Map<string, number>();
 
   const found = (name: string, minute: number) => {
@@ -254,11 +254,17 @@ export function check(
       const job = jobs[name];
 
       if (job !== undefined && (job.idea ?? "") === "") {
-        store.fire(name, minute, job.thread ?? main, `[${name}] ${job.prompt}`, minute < now);
+        store.scheduler.fire(
+          name,
+          minute,
+          job.thread ?? main,
+          `[${name}] ${job.prompt}`,
+          minute < now,
+        );
       }
     }
 
-    store.check(now);
+    store.scheduler.check(now);
   });
 
   for (const [name, job] of Object.entries(jobs)) {

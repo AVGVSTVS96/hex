@@ -105,14 +105,14 @@ test("finds its hex folder from .hex/bin and lists unmerged branches, one-off jo
 
 test("lists each thread active in the last day with its last message, skipping what only the terminal saw", () => {
   const store = open(join(home, "state"));
-  store.keepThreads("telegram", {
+  store.threads.keep("telegram", {
     "1": { name: "Garden", session: "aaaaaaaa-1" },
     "2": { name: "Stale", session: "bbbbbbbb-1" },
   });
-  store.keepThreads("discord", { "3": { name: "Kiln", session: "cccccccc-1" } });
+  store.threads.keep("discord", { "3": { name: "Kiln", session: "cccccccc-1" } });
 
   const said = (key: string, to: string, author: Author, body: string, minutesAgo: number) => {
-    store.deliver({ key, to, from: key.split(":")[0] ?? "", author, body }, "x");
+    store.messages.deliver({ key, to, from: key.split(":")[0] ?? "", author, body }, "x");
     store.db
       .query("update messages set at = ? where key = ?")
       .run(new Date(Date.now() - minutesAgo * 60_000).toISOString(), key);

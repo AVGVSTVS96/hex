@@ -115,7 +115,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
       ...(updated !== undefined && { updated }),
       thread: served(env),
       ...(helper !== undefined && { helper }),
-      ...store.turn(id),
+      ...store.turns.get(id),
     });
   }
 

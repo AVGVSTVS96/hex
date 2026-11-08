@@ -124,7 +124,7 @@ for (const flag of ["owner", "thread"] as const) {
   const given = flags[flag];
 
   if (filled(given)) {
-    flags[flag] = store.key(given);
+    flags[flag] = store.threads.key(given);
   }
 }
 
@@ -169,7 +169,7 @@ function show(tasks: Task[], full = true) {
     return;
   }
 
-  const names = store.names();
+  const names = store.threads.names();
 
   console.log(
     tasks
@@ -236,7 +236,7 @@ async function recall(pattern: string) {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // every --json output names a thread one way, as <app>:<key>: a thread's id, and threadId on what belongs to one.
 function withThread<T>(rows: T[], key: (row: T) => string) {
-  const ids = store.ids();
+  const ids = store.threads.ids();
 
   return rows.map((row) => {
     const threadId = ids[key(row)];
@@ -282,8 +282,8 @@ function stray(word: string) {
 }
 
 function named(given: string) {
-  const key = store.key(given);
-  const threads = store.threads();
+  const key = store.threads.key(given);
+  const threads = store.threads.list();
   const keyed = threads.find(({ thread }) => thread === key);
 
   if (keyed) {
@@ -303,7 +303,7 @@ function threadsOf(given: string) {
     return threads;
   }
 
-  if (store.said(given, 1).length > 0) {
+  if (store.messages.said(given, 1).length > 0) {
     return [given];
   }
 
@@ -337,7 +337,7 @@ function workingFor(given: string) {
   }
 
   const to = given.toLowerCase();
-  const threads = store.threads();
+  const threads = store.threads.list();
 
   const held = new Map(
     threads
@@ -436,7 +436,7 @@ function log(said: Row[]) {
   }
 
   const zone = zoneOf(dirname(state)) ?? Temporal.Now.timeZoneId();
-  const names = store.names();
+  const names = store.threads.names();
 
   const entries = rows.map((row) => {
     const at = Temporal.Instant.from(row.at)
@@ -495,7 +495,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
 
   switch (verb) {
     case "new": {
-      const said = filled(id) ? store.message(id) : null;
+      const said = filled(id) ? store.messages.get(id) : null;
 
       if (!filled(id) || !said) {
         throw new Error(
@@ -504,7 +504,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
       }
 
       show([
-        store.createTask({
+        store.tasks.create({
           title: flags.title ?? "",
           message: id,
           owner: flags.owner ?? thread ?? said.to,
@@ -523,7 +523,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.addWords(id, key, flags.quote)]);
+      show([store.tasks.addWords(id, key, flags.quote)]);
 
       return;
     }
@@ -533,7 +533,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.requote(id, key, flags.quote)]);
+      show([store.tasks.requote(id, key, flags.quote)]);
 
       return;
     }
@@ -544,7 +544,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
       }
 
       show([
-        store.editTask(id, {
+        store.tasks.edit(id, {
           status: "done",
           proof: flags.proof,
           doneIn: thread,
@@ -561,8 +561,8 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
 
       show([
         filled(flags.into)
-          ? store.mergeTasks(flags.into, id)
-          : store.editTask(id, { status: "dropped" }),
+          ? store.tasks.merge(flags.into, id)
+          : store.tasks.edit(id, { status: "dropped" }),
       ]);
 
       return;
@@ -573,7 +573,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.editTask(id, { status: "open" })]);
+      show([store.tasks.edit(id, { status: "open" })]);
 
       return;
     }
@@ -584,7 +584,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
       }
 
       show([
-        store.editTask(id, {
+        store.tasks.edit(id, {
           title: flags.title,
           owner: flags.owner,
           project: flags.project,
@@ -600,13 +600,13 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         usage();
       }
 
-      show([store.addAgents(id, more, thread)]);
+      show([store.tasks.addAgents(id, more, thread)]);
 
       return;
     }
 
     default: {
-      const found = filled(verb) ? store.task(verb) : null;
+      const found = filled(verb) ? store.tasks.get(verb) : null;
 
       if (!found) {
         throw new Error(filled(verb) ? `no task ${verb}` : USAGE);
@@ -656,7 +656,7 @@ function heldBySession(threads: Thread[]) {
 }
 
 function working() {
-  const threads = store.threads({ open: true });
+  const threads = store.threads.list({ open: true });
   const held = heldBySession(threads);
 
   const sessions = running(store);
@@ -666,9 +666,9 @@ function working() {
     .flatMap((session) => serving(session, held, sessions) ?? []);
 
   return new Set([
-    ...busyNow.map((thread) => store.key(thread)),
+    ...busyNow.map((thread) => store.threads.key(thread)),
     ...threads
-      .filter(({ session }) => filled(session) && store.atWork(session))
+      .filter(({ session }) => filled(session) && store.turns.atWork(session))
       .map(({ thread }) => thread),
   ]);
 }
@@ -676,7 +676,7 @@ function working() {
 function hold(words: string[]) {
   const zone = zoneOf(dirname(state));
 
-  if (filled(flags.key) && !store.message(flags.key)) {
+  if (filled(flags.key) && !store.messages.get(flags.key)) {
     throw new Error(`no message ${flags.key}`);
   }
 
@@ -687,13 +687,13 @@ function hold(words: string[]) {
       usage();
     }
 
-    const existing = store.holdOf(id);
+    const existing = store.holds.get(id);
 
     if (!existing) {
       throw new Error(`no hold ${id}`);
     }
 
-    const freed = store.unhold(
+    const freed = store.holds.unhold(
       id,
       `${flags.why}${filled(flags.key) ? ` [${flags.key}]` : ""}`,
       threads.length > 0
@@ -704,7 +704,7 @@ function hold(words: string[]) {
         : undefined,
     );
 
-    const names = store.names();
+    const names = store.threads.names();
     console.log(
       freed.length > 0
         ? `${id} freed ${freed.map((thread) => names[thread] ?? thread).join(", ")}; hex wakes each that worked while held, a couple at a time`
@@ -718,7 +718,7 @@ function hold(words: string[]) {
     usage();
   }
 
-  const by = store.key([process.env.HEX_THREAD, served()].find(filled) ?? "terminal");
+  const by = store.threads.key([process.env.HEX_THREAD, served()].find(filled) ?? "terminal");
 
   const placed = place(
     store,
@@ -743,7 +743,7 @@ try {
     }
 
     case "holds": {
-      const listed = store.holds({ all: flags.all === true });
+      const listed = store.holds.list({ all: flags.all === true });
 
       if (flags.json === true) {
         console.log(JSON.stringify(listed, null, 1));
@@ -766,7 +766,7 @@ try {
       }
 
       const key = from === given ? `${from}:${crypto.randomUUID()}` : given;
-      store.deliver({
+      store.messages.deliver({
         key,
         to: recipient(flags.to),
         from,
@@ -786,7 +786,7 @@ try {
       const owner = flags.owner ?? ownThread;
 
       show(
-        store.tasks({
+        store.tasks.list({
           status: flags.status?.split(",").filter(isStatus) ?? ["open"],
           owner,
         }),
@@ -798,7 +798,7 @@ try {
     case "questions": {
       const thread = flags.thread ?? ownThread;
 
-      const questions = store.questions({
+      const questions = store.questions.list({
         waiting: true,
         thread,
       });
@@ -816,7 +816,7 @@ try {
         );
       } else {
         console.log(
-          questions.map((question) => waiting(question, store.names())).join("\n") ||
+          questions.map((question) => waiting(question, store.threads.names())).join("\n") ||
             "no questions waiting",
         );
       }
@@ -826,8 +826,8 @@ try {
 
     case "pins": {
       const thread = flags.thread ?? ownThread;
-      const pins = store.pins({ thread });
-      const names = store.names();
+      const pins = store.pins.list({ thread });
+      const names = store.threads.names();
 
       if (flags.json === true) {
         console.log(
@@ -852,7 +852,7 @@ try {
     }
 
     case "threads": {
-      const threads = store.threads();
+      const threads = store.threads.list();
 
       if (flags.json === true) {
         console.log(
@@ -877,7 +877,7 @@ try {
 
     case "profile": {
       const everyVersion = flags.all === true;
-      const versions = everyVersion ? store.profiles() : store.profiles().slice(0, 1);
+      const versions = everyVersion ? store.profiles.list() : store.profiles.list().slice(0, 1);
 
       if (flags.json === true) {
         console.log(JSON.stringify(everyVersion ? versions : (versions[0] ?? null), null, 1));
@@ -893,7 +893,7 @@ try {
     }
 
     case "running": {
-      const threads = store.threads({ open: true });
+      const threads = store.threads.list({ open: true });
       const held = heldBySession(threads);
       const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]));
       const home = realpathSync(dirname(state));
@@ -938,7 +938,7 @@ try {
 
     case "message": {
       const [key] = args;
-      const said = filled(key) ? store.latest(key) : null;
+      const said = filled(key) ? store.messages.latest(key) : null;
 
       if (!said) {
         throw new Error(`no message ${key ?? ""}`);
@@ -982,10 +982,10 @@ try {
       const rows =
         threads.length > 0
           ? threads
-              .flatMap((thread) => store.said(thread, last))
+              .flatMap((thread) => store.messages.said(thread, last))
               .toSorted((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
               .slice(last < 0 ? 0 : -last)
-          : store.since(since);
+          : store.messages.since(since);
 
       log(
         rows.filter((row) => row.at > since && (flags.taken !== true || row.taken !== undefined)),

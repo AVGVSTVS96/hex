@@ -128,10 +128,10 @@ export function failed(state: string, error: string) {
   const file = join(state, "voice", "check", "error");
   const first = !existsSync(file);
   writeFileSync(file, `${error}\n`);
-  const general = first ? generalOf(openStore(state).threads()) : undefined;
+  const general = first ? generalOf(openStore(state).threads.list()) : undefined;
 
   if (general) {
-    openStore(state).deliver({
+    openStore(state).messages.deliver({
       key: `check:failed:${createHash("sha256").update(error).digest("hex").slice(0, 12)}`,
       to: general.thread,
       from: "check",
@@ -215,8 +215,8 @@ function gather(state: string) {
   const recent = new Date(now - RECENT).toISOString();
   const names: Record<string, string> = {};
   const pins: { pin: Ref; topic: string; text: string }[] = [];
-  const questions = openStore(state).questions({ asker: "hex" });
-  const threads = openStore(state).threads();
+  const questions = openStore(state).questions.list({ asker: "hex" });
+  const threads = openStore(state).threads.list();
   const general = generalOf(threads);
 
   for (const thread of threads) {
@@ -237,7 +237,7 @@ function gather(state: string) {
     threads.filter((thread) => thread.open).map((thread) => `${thread.app}:${thread.thread}`),
   );
 
-  for (const pin of openStore(state).pins()) {
+  for (const pin of openStore(state).pins.list()) {
     if (pin.note !== "" && openThreads.has(`${pin.app}:${pin.thread}`)) {
       pins.push({
         pin: { app: pin.app, thread: pin.thread, message: pin.message },
@@ -327,7 +327,7 @@ function gather(state: string) {
 }
 
 export function before(store: Store, app: string, question: Asked, max = 700) {
-  const rows = store.said(
+  const rows = store.messages.said(
     question.thread,
     -1,
     question.at,
@@ -339,7 +339,7 @@ export function before(store: Store, app: string, question: Asked, max = 700) {
   );
 
   const questions = new Set(
-    store.questions({ app, thread: question.thread }).map((other) => String(other.message)),
+    store.questions.list({ app, thread: question.thread }).map((other) => String(other.message)),
   );
 
   const part = (row: Row) =>
@@ -495,7 +495,10 @@ function claude(input: string, hexDir: string, state: string) {
 
   const cwd = mkdtempSync(join(tmpdir(), "hex-check-"));
   writeFileSync(join(cwd, "messages.md"), messages(hexDir));
-  writeFileSync(join(cwd, "threads.json"), JSON.stringify(openStore(state).threads(), null, 1));
+  writeFileSync(
+    join(cwd, "threads.json"),
+    JSON.stringify(openStore(state).threads.list(), null, 1),
+  );
 
   return new Promise<Verdict>((resolve, reject) => {
     const env = {

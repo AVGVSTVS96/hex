@@ -50,11 +50,12 @@ beforeAll(() => {
     "hub/schedule.ts",
     "hub/clock.ts",
     "hub/store.ts",
+    "hub/store",
     "hub/running.ts",
     "hub/claude.ts",
     "hub/until.ts",
   ]) {
-    cpSync(join(HEX, file), join(home, ".hex", file), { dereference: true });
+    cpSync(join(HEX, file), join(home, ".hex", file), { dereference: true, recursive: true });
   }
 
   for (const [app, threads] of Object.entries({
@@ -62,7 +63,7 @@ beforeAll(() => {
     telegram: { "-100123:908": { name: "autofork" } },
     discord: { "555": { name: "fix hex NOW" } },
   })) {
-    open(join(home, "state")).keepThreads(app, threads);
+    open(join(home, "state")).threads.keep(app, threads);
   }
 
   mkdirSync(join(home, "fake"));
@@ -216,7 +217,7 @@ test("a job session's prompt is hex's words in hex.db, its answer too, what the 
   );
 
   const rows = open(state)
-    .since()
+    .messages.since()
     .map(({ to, from, author, body, taken }) => ({ to, from, author, body, by: taken?.by }));
 
   expect(rows).toEqual([
@@ -226,7 +227,10 @@ test("a job session's prompt is hex's words in hex.db, its answer too, what the 
     { to: "mine-1", from: "terminal", author: "owner", body: "what is up", by: "mine-1" },
     { to: "-100:1", from: "terminal", author: "hex", body: "narration", by: "chat-1" },
   ]);
-  expect(open(state).said("-100:1")[0]?.meta).toEqual({ session: "chat-1", unsent: "true" });
+  expect(open(state).messages.said("-100:1")[0]?.meta).toEqual({
+    session: "chat-1",
+    unsent: "true",
+  });
 });
 
 test("a named owner is an open thread's key or its <app>:<key> id", () => {

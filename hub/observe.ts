@@ -85,7 +85,7 @@ export async function observe(
     rows.length > 0 ? recall(rows.map((row) => `\\[${escape(row.key)}\\]`).join("|")) : "";
 
   const store = open(state);
-  const taken = store.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
+  const taken = store.messages.observe(session, by, thread, LEASE_OUTLASTS_EVERY_TRY);
   const rows = owners(taken);
   const written: string[] = [];
 
@@ -98,12 +98,12 @@ export async function observe(
 
     if (taken.length > 0) {
       const zone = zoneOf(hexDir()) ?? Temporal.Now.timeZoneId();
-      const threads = store.names();
+      const threads = store.threads.names();
       const place = taken[0]?.to ?? thread;
       const earliest = [by, ...taken.map((row) => row.at)].toSorted()[0] ?? by;
 
       const before = given(place)
-        ? store.said(place, MESSAGES_BEFORE_THE_TURN, earliest).filter(shown)
+        ? store.messages.said(place, MESSAGES_BEFORE_THE_TURN, earliest).filter(shown)
         : [];
 
       const turn = [
@@ -126,7 +126,7 @@ export async function observe(
       const ours = new Set(fresh.map((row) => row.key));
 
       for (let tries = 0; tries < PROFILE_TRIES; tries++) {
-        const profileBefore = store.profile();
+        const profileBefore = store.profiles.current();
 
         const answer = await ask(
           `<profile>\n${profileBefore || "(none yet)"}\n</profile>\n\n<newest memories>\n${newestNotes(recall("."))}\n</newest memories>\n\n${turn}${wrong}`,
@@ -165,7 +165,7 @@ export async function observe(
         reasons = bad.join("\n");
         wrong = bad.length > 0 ? retry(bad, answer.profile) : "";
 
-        if (wrong !== "" || !store.profiled(profileBefore, answer.profile)) {
+        if (wrong !== "" || !store.profiles.profiled(profileBefore, answer.profile)) {
           continue;
         }
 
@@ -182,14 +182,14 @@ export async function observe(
 
     const lostOnlyToOtherPasses = wanted && wrong === "" && written.length === 0;
 
-    store.observed(
+    store.messages.observed(
       taken.map((row) => row.key),
       !lostOnlyToOtherPasses,
     );
 
     return written;
   } catch (error) {
-    store.observed(
+    store.messages.observed(
       taken.map((row) => row.key),
       written.length > 0,
     );
@@ -429,25 +429,25 @@ export async function drain(
 ) {
   const store = open(state);
   const holder = crypto.randomUUID();
-  const holdsLease = () => store.lease("observe", holder, LEASE_OUTLASTS_EVERY_TRY);
+  const holdsLease = () => store.leases.take("observe", holder, LEASE_OUTLASTS_EVERY_TRY);
 
-  while (store.waiting() && holdsLease()) {
+  while (store.passes.waiting() && holdsLease()) {
     try {
-      for (let next; (next = store.waiting());) {
+      for (let next; (next = store.passes.waiting());) {
         try {
           await run(PASS.parse(next.pass), holdsLease);
         } catch (error) {
           logIndented(`hex couldn't look over a turn for memories: ${String(error)}`);
         }
 
-        store.passed(next.n);
+        store.passes.passed(next.n);
 
         if (!holdsLease()) {
           return;
         }
       }
     } finally {
-      store.release("observe", holder);
+      store.leases.release("observe", holder);
     }
   }
 }
@@ -458,7 +458,7 @@ export function queue(state: string, turn: Pass) {
   }
 
   try {
-    open(state).wait(turn);
+    open(state).passes.wait(turn);
     const observeLog = openSync(join(state, "observe.log"), "a");
 
     try {
@@ -489,7 +489,7 @@ export function ended(state: string, session: string, last?: string) {
 
   try {
     if (given(answer)) {
-      open(state).deliver(
+      open(state).messages.deliver(
         {
           key: `${from}:${crypto.randomUUID()}`,
           to: HEX_THREAD ?? session,

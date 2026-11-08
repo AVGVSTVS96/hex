@@ -184,7 +184,7 @@ function inbound(sent: Message) {
 // The session's hook taking each message it was given, as Claude Code adds it to the conversation.
 function fold(received: unknown[]) {
   for (const payload of Keyed.array().parse(received)) {
-    open(dir).take(payload.meta.key, SESSION);
+    open(dir).messages.take(payload.meta.key, SESSION);
   }
 }
 
@@ -219,7 +219,7 @@ function start(
   } = options;
 
   if (options.registry) {
-    open(dir).keepThreads(
+    open(dir).threads.keep(
       "telegram",
       Object.fromEntries(
         Object.entries(options.stale === true ? before(options.registry) : options.registry).map(
@@ -471,7 +471,7 @@ function settingsOf(args: string[]) {
 function registry(): Record<string, Registered> {
   return Object.fromEntries(
     open(dir)
-      .threads({ open: true })
+      .threads.list({ open: true })
       .map(({ app: _app, thread, open: _open, launched: _launched, fork, ...known }) => [
         thread,
         { ...known, ...(fork !== undefined && fork !== "" && { from: fork }) },
@@ -672,24 +672,24 @@ test("a session that dies mid-turn has its turn ended in hex's record once its c
     reconnect: 50,
   });
   const { close } = await session("chat:7");
-  open(dir).turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   writeFileSync(join(dir, "agents"), "[]");
   close();
   await time.armed(50);
-  expect(open(dir).turn(SESSION).ended).toBeUndefined();
+  expect(open(dir).turns.get(SESSION).ended).toBeUndefined();
   await time.lapse(50);
-  const ended = await until(() => open(dir).turn(SESSION).ended);
+  const ended = await until(() => open(dir).turns.get(SESSION).ended);
   expect(ended > "2026-01-01T00:00:00.000Z").toBe(true);
 
   writeFileSync(join(dir, "agents"), JSON.stringify([{ sessionId: SESSION, pid: 42 }]));
   hub.deliver("chat:7", "Desk anchors", message);
   const again = await session("chat:7");
-  open(dir).turned(SESSION, false, "2027-01-01T00:00:00.000Z");
+  open(dir).turns.turned(SESSION, false, "2027-01-01T00:00:00.000Z");
   writeFileSync(join(dir, "agents"), "[]");
   again.close();
   await time.lapse(50);
   await settled();
-  expect(open(dir).turn(SESSION).ended).toBe("2027-01-01T00:00:00.000Z");
+  expect(open(dir).turns.get(SESSION).ended).toBe("2027-01-01T00:00:00.000Z");
 });
 
 test("what a session took and never answered goes to the thread's next session once it dies; what it answered stays answered", async () => {
@@ -701,13 +701,13 @@ test("what a session took and never answered goes to the thread's next session o
   hub.deliver("chat:7", "Desk anchors", { ...message, content: "answered" });
   const first = await session("chat:7");
   await until(() => first.received.length);
-  open(dir).turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   fold(first.received);
-  open(dir).turned(SESSION, false);
-  open(dir).handled(SESSION);
+  open(dir).turns.turned(SESSION, false);
+  open(dir).turns.handled(SESSION);
   hub.deliver("chat:7", "Desk anchors", { ...message, content: "hanging" });
   await until(() => first.received.length === 2);
-  open(dir).turned(SESSION, true);
+  open(dir).turns.turned(SESSION, true);
   fold(first.received.slice(1));
   writeFileSync(join(dir, "agents"), "[]");
   first.close();
@@ -721,8 +721,8 @@ test("what a session took and never answered goes to the thread's next session o
 
 test("a hub that starts after its sessions died (a reboot) gives what they never answered to their threads' next sessions", async () => {
   const store = open(dir);
-  store.keepThreads("telegram", { "chat:7": { name: "Desk anchors", session: SESSION } });
-  store.deliver({
+  store.threads.keep("telegram", { "chat:7": { name: "Desk anchors", session: SESSION } });
+  store.messages.deliver({
     key: "telegram:1:9",
     to: "chat:7",
     from: "telegram",
@@ -730,21 +730,21 @@ test("a hub that starts after its sessions died (a reboot) gives what they never
     body: "mid-turn",
     meta: {},
   });
-  store.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
-  store.take("telegram:1:9", SESSION);
+  store.turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  store.messages.take("telegram:1:9", SESSION);
   start({ agents: [], reconnect: 50 });
   await time.lapse(50);
   await launched();
   const next = await session("chat:7");
   await until(() => next.received.length);
   expect(heard(next.received)[0]?.content).toBe("mid-turn");
-  expect(store.turn(SESSION).ended).toBeDefined();
+  expect(store.turns.get(SESSION).ended).toBeDefined();
 });
 
 test("a session that died while its background agents still worked (a reboot) gives what it took to its thread's next session", async () => {
   const store = open(dir);
-  store.keepThreads("telegram", { "chat:7": { name: "Desk anchors", session: SESSION } });
-  store.deliver({
+  store.threads.keep("telegram", { "chat:7": { name: "Desk anchors", session: SESSION } });
+  store.messages.deliver({
     key: "telegram:1:10",
     to: "chat:7",
     from: "telegram",
@@ -752,8 +752,8 @@ test("a session that died while its background agents still worked (a reboot) gi
     body: "research it in the background",
     meta: {},
   });
-  store.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
-  store.take("telegram:1:10", SESSION);
+  store.turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  store.messages.take("telegram:1:10", SESSION);
 
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "idle"], {
     env: { ...process.env, HEX_STORE: dir, MEMORY_DIR: "" },
@@ -767,14 +767,14 @@ test("a session that died while its background agents still worked (a reboot) gi
   });
 
   await hook.exited;
-  expect(store.midTurn("chat:7")).toBe(true);
+  expect(store.turns.midTurn("chat:7")).toBe(true);
   start({ agents: [], reconnect: 50 });
   await time.lapse(50);
   await launched();
   const next = await session("chat:7");
   await until(() => next.received.length);
   expect(heard(next.received)[0]?.content).toBe("research it in the background");
-  expect(store.midTurn("chat:7")).toBe(false);
+  expect(store.turns.midTurn("chat:7")).toBe(false);
 });
 
 test("a session the hub stops while idle has handled what it took, even with its turn left open (Esc in an attached terminal runs no Stop hook)", async () => {
@@ -783,7 +783,7 @@ test("a session the hub stops while idle has handled what it took, even with its
   await launched();
   const line = await session("chat:7");
   await until(() => line.received.length);
-  open(dir).turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   fold(line.received);
   await line.send({ type: "state", thread: "chat:7", busy: false });
   await time.lapse(50);
@@ -792,8 +792,8 @@ test("a session the hub stops while idle has handled what it took, even with its
   line.close();
   await time.lapse(50);
   await settled();
-  expect(open(dir).untaken("chat:7")).toEqual([]);
-  expect(open(dir).turn(SESSION).handled).toBeDefined();
+  expect(open(dir).messages.untaken("chat:7")).toEqual([]);
+  expect(open(dir).turns.get(SESSION).handled).toBeDefined();
   expect(calls().filter((each) => each[0] === "--bg").length).toBe(starts);
 });
 
@@ -806,14 +806,14 @@ test("a session whose turn failed (StopFailure) keeps what it took when it stops
   hub.deliver("chat:7", "Desk anchors", message);
   const line = await session("chat:7");
   await until(() => line.received.length);
-  open(dir).turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   fold(line.received);
-  open(dir).turned(SESSION, false);
+  open(dir).turns.turned(SESSION, false);
   writeFileSync(join(dir, "agents"), "[]");
   line.close();
   await time.lapse(50);
   await settled();
-  expect(open(dir).untaken("chat:7")).toEqual([]);
+  expect(open(dir).messages.untaken("chat:7")).toEqual([]);
   expect(calls().some((each) => each[0] === "--bg")).toBe(false);
 });
 
@@ -1610,7 +1610,7 @@ test("a message a live session was handed shows it waits once its line drops, un
 });
 
 test("a message that waited from before this hub started stops showing it waits once a session has it", async () => {
-  open(dir).deliver({
+  open(dir).messages.deliver({
     key: "telegram:1:9",
     to: "chat:7",
     from: "telegram",
@@ -1809,10 +1809,10 @@ test("General hears of a thread that keeps failing once its hub is there, even w
   try {
     hub.deliver("chat:7", "Desk anchors", { ...message, content: "try 4" });
     await until(() => restsOf("chat:7") === 4);
-    await until(() => open(dir).untaken("general").length);
+    await until(() => open(dir).messages.untaken("general").length);
     expect(
       open(dir)
-        .untaken("general")
+        .messages.untaken("general")
         .map((row) => row.body),
     ).toEqual([
       '[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 4 times in a row: exit 1 before init. Its next message starts it again.',
@@ -1842,7 +1842,7 @@ test("General whose start failed starts again with each next message, as its hea
   expect(failures).toEqual(Array.from({ length: 3 }, () => ["general", "exit 1 before init"]));
   expect(
     open(dir)
-      .untaken("general")
+      .messages.untaken("general")
       .map((row) => row.body),
   ).toEqual(["try 2", "try 3"]);
 });
@@ -2086,11 +2086,11 @@ test("the owner's interrupt presses Esc in a busy session, which keeps running, 
   const { send } = await session("chat:7");
   await send({ type: "state", thread: "chat:7", busy: true });
   await until(() => states.length);
-  open(dir).turned(SESSION, true);
+  open(dir).turns.turned(SESSION, true);
   await hub.interrupt("chat:7");
   expect(transcript()).toContain("[Request interrupted by user");
   expect(states.at(-1)).toEqual(["chat:7", false]);
-  expect(open(dir).turn(SESSION).ended).toBeDefined();
+  expect(open(dir).turns.get(SESSION).ended).toBeDefined();
   expect(calls().some((each) => each[0] === "stop")).toBe(false);
 });
 
@@ -3188,7 +3188,7 @@ test("threads are found by name or id, and renames are kept, in hex.db too", () 
   expect(hub.name("chat:8")).toBe("Theo clips");
   expect(hub.name("chat:9")).toBeUndefined();
   expect(registry()["chat:8"]?.name).toBe("Theo clips");
-  expect(open(dir).threads()).toEqual([
+  expect(open(dir).threads.list()).toEqual([
     { app: "telegram", thread: "chat:7", name: "Desk anchors", session: SESSION, open: true },
     { app: "telegram", thread: "chat:8", name: "Theo clips", open: true },
   ]);
@@ -3203,7 +3203,7 @@ test("a thread hex.db keeps comes back with its folder and settings, and a close
   expect(hub.threads()).toEqual(["chat:7"]);
   expect(hub.cwd("chat:7")).toBe("/work");
   await hub.retire("chat:7");
-  expect(open(dir).threads()).toEqual([
+  expect(open(dir).threads.list()).toEqual([
     {
       app: "telegram",
       thread: "chat:7",
@@ -3580,7 +3580,7 @@ function stored(
   const store = open(dir);
 
   for (const [i, { from = "buzz", ...row }] of rows.entries()) {
-    store.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, takenBy);
+    store.messages.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, takenBy);
   }
 }
 
@@ -3796,7 +3796,7 @@ test("a message is in hex.db once deliver returns, its key first on the tag, and
   });
   const { received } = await session("chat:7");
   hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:42" });
-  expect(open(dir).message("telegram:1:42")).toMatchObject({
+  expect(open(dir).messages.get("telegram:1:42")).toMatchObject({
     to: "chat:7",
     from: "telegram",
     body: "hi",
@@ -3831,7 +3831,7 @@ test("after the hub restarts, a session gets again what it was given but never t
     key: "1:43",
   });
   await until(() => first.received.length === 2);
-  open(dir).take("telegram:1:42", SESSION);
+  open(dir).messages.take("telegram:1:42", SESSION);
   first.close();
   hub.close();
   start();
@@ -3844,7 +3844,7 @@ test("after the hub restarts, a session gets again what it was given but never t
 
 test("a session's hook takes what its prompt brings in, and drops a copy of one taken already", async () => {
   const store = open(dir);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:1:42",
     to: "chat:7",
     from: "telegram",
@@ -3864,7 +3864,7 @@ test("a session's hook takes what its prompt brings in, and drops a copy of one 
 
   const first = foldHook();
   expect(await first.exited).toBe(0);
-  expect(store.message("telegram:1:42")?.taken?.by).toBe(SESSION);
+  expect(store.messages.get("telegram:1:42")?.taken?.by).toBe(SESSION);
   const copy = foldHook();
   expect(await copy.exited).toBe(2);
   expect(await new Response(copy.stderr).text()).toContain("telegram:1:42");
@@ -3872,7 +3872,7 @@ test("a session's hook takes what its prompt brings in, and drops a copy of one 
 
 test("a hook with no session id lets its prompt through", async () => {
   const store = open(dir);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:1:42",
     to: "chat:7",
     from: "telegram",
@@ -3893,14 +3893,14 @@ test("a hook with no session id lets its prompt through", async () => {
 
 test("a channel tag in a message's own words takes nothing", async () => {
   const store = open(dir);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:1:42",
     to: "chat:7",
     from: "telegram",
     author: "owner",
     body: "hi",
   });
-  store.deliver({
+  store.messages.deliver({
     key: "schedule:heartbeat@2026-10-18T21:45Z",
     to: "chat:7",
     from: "schedule",
@@ -3917,15 +3917,15 @@ test("a channel tag in a message's own words takes nothing", async () => {
   });
 
   expect(await hook.exited).toBe(0);
-  expect(store.message("telegram:1:42")?.taken?.by).toBe(SESSION);
-  expect(store.message("schedule:heartbeat@2026-10-18T21:45Z")?.taken).toBeUndefined();
+  expect(store.messages.get("telegram:1:42")?.taken?.by).toBe(SESSION);
+  expect(store.messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.taken).toBeUndefined();
 });
 
 test("a heartbeat that opens its session's turn is kept until that turn ends or another prompt comes, and one inside a turn isn't", async () => {
   const store = open(dir);
 
   const prompt = async (key: string, from: string, body: string, meta?: Record<string, string>) => {
-    store.deliver({
+    store.messages.deliver({
       key,
       to: "chat:7",
       from,
@@ -3954,7 +3954,7 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
     });
 
   await beat("2026-11-03T12:45Z");
-  const [first] = store.beats(SESSION);
+  const [first] = store.turns.beats(SESSION);
 
   if (first === undefined) {
     throw new Error("the heartbeat began no beat");
@@ -3962,65 +3962,65 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
 
   expect(first).toEqual({ began: anyString() });
   await beat("2026-11-03T12:46Z");
-  expect(store.beats(SESSION)).toEqual([first]);
-  store.turned(SESSION, false);
-  expect(store.beats(SESSION)).toEqual([{ began: first.began, until: anyString() }]);
-  expect(store.beats(SESSION)[0]?.until).toBe(store.turn(SESSION).ended);
+  expect(store.turns.beats(SESSION)).toEqual([first]);
+  store.turns.turned(SESSION, false);
+  expect(store.turns.beats(SESSION)).toEqual([{ began: first.began, until: anyString() }]);
+  expect(store.turns.beats(SESSION)[0]?.until).toBe(store.turns.get(SESSION).ended);
   await beat("2026-11-03T13:45Z");
-  const [, second] = store.beats(SESSION);
+  const [, second] = store.turns.beats(SESSION);
 
   if (second === undefined) {
     throw new Error("the next heartbeat began no beat");
   }
 
   expect(second).toEqual({ began: anyString() });
-  store.turned(SESSION, false, first.began);
-  expect(store.beats(SESSION)[1]).toEqual(second);
+  store.turns.turned(SESSION, false, first.began);
+  expect(store.turns.beats(SESSION)[1]).toEqual(second);
   await Bun.sleep(5);
   await prompt("telegram:1:50", "telegram", "ship it");
-  const after = store.turn(SESSION).began;
+  const after = store.turns.get(SESSION).began;
 
   if (after === undefined) {
     throw new Error("the prompt began no turn");
   }
 
-  expect(store.beats(SESSION)).toEqual([
+  expect(store.turns.beats(SESSION)).toEqual([
     { began: first.began, until: anyString(), after },
     { began: second.began, until: after, after },
   ]);
   await beat("2026-11-03T14:45Z");
-  expect(store.beats(SESSION)).toHaveLength(2);
+  expect(store.turns.beats(SESSION)).toHaveLength(2);
 });
 
 test("hex.db counts a heartbeat from the busy flip after its turn's end, keeps a run's first beat a week on, and drops one a real prompt began before", () => {
   const store = open(dir);
 
-  store.turned("beat-a", true, minutesIntoNovember(0));
-  store.turned("beat-a", false, minutesIntoNovember(1));
-  store.turned(
+  store.turns.turned("beat-a", true, minutesIntoNovember(0));
+  store.turns.turned("beat-a", false, minutesIntoNovember(1));
+  store.turns.turned(
     "beat-a",
     true,
     minutesIntoNovember(60),
     true,
     Date.parse(minutesIntoNovember(59.9)),
   );
-  expect(store.beats("beat-a")).toEqual([{ began: minutesIntoNovember(59.9) }]);
-  store.turned("beat-a", false, minutesIntoNovember(61));
-  store.turned(
+  expect(store.turns.beats("beat-a")).toEqual([{ began: minutesIntoNovember(59.9) }]);
+  store.turns.turned("beat-a", false, minutesIntoNovember(61));
+  store.turns.turned(
     "beat-a",
     true,
     minutesIntoNovember(8 * 24 * 60),
     true,
     Date.parse(minutesIntoNovember(8 * 24 * 60 - 0.1)),
   );
-  expect(store.beats("beat-a").map((beat) => beat.began)).toEqual([
+  expect(store.turns.beats("beat-a").map((beat) => beat.began)).toEqual([
     minutesIntoNovember(59.9),
     minutesIntoNovember(8 * 24 * 60 - 0.1),
   ]);
-  store.turned("beat-b", false, minutesIntoNovember(0));
-  store.turned("beat-b", true, minutesIntoNovember(2), true);
-  store.turned("beat-b", true, minutesIntoNovember(1.5));
-  expect(store.beats("beat-b")).toEqual([]);
+  store.turns.turned("beat-b", false, minutesIntoNovember(0));
+  store.turns.turned("beat-b", true, minutesIntoNovember(2), true);
+  store.turns.turned("beat-b", true, minutesIntoNovember(1.5));
+  expect(store.turns.beats("beat-b")).toEqual([]);
 });
 
 test("a task the heartbeat started reports back inside the heartbeat, and one started before it ends the run", async () => {
@@ -4043,7 +4043,7 @@ test("a task the heartbeat started reports back inside the heartbeat, and one st
       `<task-notification>\n<task-id>${task}</task-id>\n<status>completed</status>\n</task-notification>`,
     );
 
-  store.deliver({
+  store.messages.deliver({
     key: "schedule:heartbeat@2026-11-03T12:45Z",
     to: "chat:7",
     from: "schedule",
@@ -4054,7 +4054,7 @@ test("a task the heartbeat started reports back inside the heartbeat, and one st
   await hook(
     '<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-11-03T12:45Z">\n[heartbeat] Hourly check\n</channel>',
   );
-  const [beat] = store.beats(SESSION);
+  const [beat] = store.turns.beats(SESSION);
 
   if (beat === undefined) {
     throw new Error("the heartbeat began no beat");
@@ -4070,13 +4070,13 @@ test("a task the heartbeat started reports back inside the heartbeat, and one st
       ],
     }),
   );
-  store.turned(SESSION, false);
+  store.turns.turned(SESSION, false);
   await Bun.sleep(5);
   await told("own");
-  expect(store.beats(SESSION).map((one) => one.after)).toEqual([undefined, undefined]);
-  store.turned(SESSION, false);
+  expect(store.turns.beats(SESSION).map((one) => one.after)).toEqual([undefined, undefined]);
+  store.turns.turned(SESSION, false);
   await Bun.sleep(5);
-  store.deliver({
+  store.messages.deliver({
     key: "schedule:heartbeat@2026-11-03T13:45Z",
     to: "chat:7",
     from: "schedule",
@@ -4087,27 +4087,27 @@ test("a task the heartbeat started reports back inside the heartbeat, and one st
   await hook(
     '<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-11-03T13:45Z">\n[heartbeat] Hourly check\n</channel>',
   );
-  store.turned(SESSION, false);
+  store.turns.turned(SESSION, false);
   await Bun.sleep(5);
   await told("own");
-  expect(store.beats(SESSION).map((one) => one.after)).toEqual([
+  expect(store.turns.beats(SESSION).map((one) => one.after)).toEqual([
     undefined,
     undefined,
     undefined,
     undefined,
   ]);
-  store.turned(SESSION, false);
+  store.turns.turned(SESSION, false);
   await Bun.sleep(5);
   await told("early");
-  expect(store.beats(SESSION).every((one) => one.after !== undefined && one.after !== "")).toBe(
-    true,
-  );
+  expect(
+    store.turns.beats(SESSION).every((one) => one.after !== undefined && one.after !== ""),
+  ).toBe(true);
   rmSync(claude, { recursive: true });
 });
 
 test("a session started before hex kept messages has the hub take them for it", async () => {
   start();
-  open(dir).deliver({
+  open(dir).messages.deliver({
     key: "telegram:1:42",
     to: "chat:7",
     from: "telegram",
@@ -4126,7 +4126,7 @@ test("a session started before hex kept messages has the hub take them for it", 
   });
 
   expect(await hook.exited).toBe(0);
-  expect((await until(() => open(dir).message("telegram:1:42")?.taken)).by).toBe(SESSION);
+  expect((await until(() => open(dir).messages.get("telegram:1:42")?.taken)).by).toBe(SESSION);
   expect(states).toEqual([["chat:7", true]]);
 });
 
@@ -4136,7 +4136,7 @@ test("a message another process keeps, like a job ending, reaches its thread as 
     agents: [{ sessionId: SESSION, pid: 42 }],
   });
   const { received } = await session("chat:7");
-  open(dir).deliver({
+  open(dir).messages.deliver({
     key: "job:other:1",
     to: "chat:99",
     from: "job",
@@ -4168,17 +4168,17 @@ test("a message another process keeps, like a job ending, reaches its thread as 
 test("only General's hub runs schedules.json", () => {
   writeFileSync(join(dir, "hex", "schedules.json"), "{}");
   start();
-  expect(open(dir).checked()).toBeUndefined();
+  expect(open(dir).scheduler.checked()).toBeUndefined();
   hub.close();
   start({ main: "general", general: true });
-  expect(open(dir).checked()).toBe(Math.floor(Date.now() / 60_000));
+  expect(open(dir).scheduler.checked()).toBe(Math.floor(Date.now() / 60_000));
 });
 
 test("hex's own words are kept as its session's, already taken, so they wake nothing, and a failed send is kept marked failed", () => {
   start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
   hub.sent("chat:7", { key: "9", content: "Done." });
   hub.sent("chat:7", { content: "never arrived", meta: { failed: "network" } });
-  const rows = open(dir).said("chat:7");
+  const rows = open(dir).messages.said("chat:7");
   expect(
     rows.map(({ key, from, author, body, taken, meta }) => ({
       key: key === "telegram:9" ? key : "random",
@@ -4206,7 +4206,7 @@ test("hex's own words are kept as its session's, already taken, so they wake not
       failed: "network",
     },
   ]);
-  expect(open(dir).untaken("chat:7")).toEqual([]);
+  expect(open(dir).messages.untaken("chat:7")).toEqual([]);
   expect(hub.said("9")?.body).toBe("Done.");
 });
 
@@ -4227,7 +4227,7 @@ test("what a session sends into another thread is kept as its own words, not tha
   await line.call("reply", { text: "done" });
   expect(
     open(dir)
-      .said("chat:8")
+      .messages.said("chat:8")
       .map(({ body, taken }) => ({ body, by: taken?.by })),
   ).toEqual([{ body: "From Desk anchors: done.", by: SESSION }]);
 });
