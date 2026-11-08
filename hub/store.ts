@@ -1,7 +1,18 @@
-import { Database } from 'bun:sqlite'
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, watch, type FSWatcher } from 'fs'
-import { basename, join } from 'path'
-import { above } from './fit.ts'
+import { Database } from "bun:sqlite";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  watch,
+  type FSWatcher,
+} from "fs";
+import { basename, join } from "path";
+
+import { above } from "./fit.ts";
 
 // One message as hex keeps it: anything said in a thread, word for word, under the app's own id for
 // it. from: the app it was said in. author: who said it, set once by whatever kept it: the owner,
@@ -10,26 +21,81 @@ import { above } from './fit.ts'
 // person in a shared app, T3 Code itself); meta.user names the sender. taken: the session that has
 // it in its conversation, which for hex's own words is the one that wrote them, so nothing wakes on
 // them. A message no session has taken is what wakes a thread.
-export type Author = 'owner' | 'hex' | 'prompt' | 'call' | 'other'
-export type Row = { key: string; to: string; from: string; author: Author; body: string; at: string; meta?: Record<string, string>; taken?: { by: string; at: string } }
-export type NewRow = Omit<Row, 'at' | 'taken'>
-type Stored = { key: string; to: string; from: string; author: Author; body: string; at: string; meta: string | null; taken_by: string | null; taken_at: string | null }
+export type Author = "owner" | "hex" | "prompt" | "call" | "other";
+export type Row = {
+  key: string;
+  to: string;
+  from: string;
+  author: Author;
+  body: string;
+  at: string;
+  meta?: Record<string, string>;
+  taken?: { by: string; at: string };
+};
+export type NewRow = Omit<Row, "at" | "taken">;
+type Stored = {
+  key: string;
+  to: string;
+  from: string;
+  author: Author;
+  body: string;
+  at: string;
+  meta: string | null;
+  taken_by: string | null;
+  taken_at: string | null;
+};
 
 // One thing the owner wants done: a short title in plain words that keeps their intent, and their
 // own words, each quoted from a message they sent, under its key, with who sent it and when. Words
 // are only ever added. A task merged into another
 // is dropped, and its words live on in the one it went into.
-export type Status = 'idea' | 'open' | 'done' | 'dropped'
-export type Words = { message: string; text: string; who: Author; at: string }
-export type Task = { id: string; title: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
-export type NewTask = { title: string; message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
-export type TaskChange = { title?: string; status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string; doneIn?: string }
+export type Status = "idea" | "open" | "done" | "dropped";
+export type Words = { message: string; text: string; who: Author; at: string };
+export type Task = {
+  id: string;
+  title: string;
+  owner: string;
+  status: Status;
+  words: Words[];
+  at: string;
+  project?: string;
+  doneWhen?: string;
+  proof?: string;
+  mergedInto?: string;
+  closed?: string;
+};
+export type NewTask = {
+  title: string;
+  message: string;
+  quote?: string;
+  owner: string;
+  status?: "idea" | "open";
+  project?: string;
+  doneWhen?: string;
+};
+export type TaskChange = {
+  title?: string;
+  status?: Status;
+  proof?: string;
+  doneWhen?: string;
+  project?: string;
+  owner?: string;
+  doneIn?: string;
+};
 // Work one session put on hold, in hex.db so every session sees it: the threads it holds, the thread
 // that held them, why, the owner's message it came from, and when it ends by itself. Its hold on a
 // thread ends at until, or once the owner's word lifts it (ending says which), and then hex wakes
 // that thread (woke: the message it sent).
-export type Held = { thread: string; ended?: string; ending?: string; woke?: string }
-export type Hold = { id: string; by: string; why: string; message?: string; until?: string; at: string; threads: Held[] }
+export type Held = { thread: string; ended?: string; ending?: string; woke?: string };
+export type Hold = {
+  id: string;
+  by: string;
+  why: string;
+  message?: string;
+  until?: string;
+  at: string;
+  threads: Held[];
+};
 // A call that's the owner's: a question a thread asked with buttons, a poll or in words, in one
 // app's thread, under that app's id for the message. via: where the answer came from (the chat app's
 // own buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
@@ -37,40 +103,83 @@ export type Hold = { id: string; by: string; why: string; message?: string; unti
 // quoted it, or else hex's latest reply after it until the owner next wrote there (kept: it stops
 // moving then), and it waits on them from that answer until they quote-reply to either or a
 // session settles it.
-export type MessageId = number | string
-export type Answer = { label: string; at: string; via: string; message?: MessageId; kept?: true }
+export type MessageId = number | string;
+export type Answer = { label: string; at: string; via: string; message?: MessageId; kept?: true };
 export type Question = {
-  asker?: 'owner'
-  app: string
-  thread: string
-  message: MessageId
-  text: string
-  options: string[]
-  at: string
-  poll?: string
+  asker?: "owner";
+  app: string;
+  thread: string;
+  message: MessageId;
+  text: string;
+  options: string[];
+  at: string;
+  poll?: string;
   // Asked with a menu where any number of options can be picked, so a reopen puts the menu back.
-  multiple?: boolean
-  answer?: Answer
-  settled?: { note: string; at: string }
-}
+  multiple?: boolean;
+  answer?: Answer;
+  settled?: { note: string; at: string };
+};
 // A thread of one app, by that app's id for it: its name, the Claude Code session that serves it and
 // the folder it runs in, its settings, the hash of what its session started with (hub.ts stamp()),
 // the session a new thread forks from at its first start, and where its app opens it.
-export type Thread = { app: string; thread: string; name: string; open: boolean; session?: string; cwd?: string; model?: string; effort?: string; launched?: string; fork?: string; link?: string }
-export type Kept = Omit<Thread, 'app' | 'thread' | 'open'>
+export type Thread = {
+  app: string;
+  thread: string;
+  name: string;
+  open: boolean;
+  session?: string;
+  cwd?: string;
+  model?: string;
+  effort?: string;
+  launched?: string;
+  fork?: string;
+  link?: string;
+};
+export type Kept = Omit<Thread, "app" | "thread" | "open">;
 // A thread's pinned post in its app, as last written: its status post, which hex writes as the
 // session's note over the thread's questions and tasks (status.ts).
-export type Pin = { app: string; thread: string; message: MessageId; text: string; at: string; note: string }
-export type NewQuestion = Omit<Question, 'at'> & { at?: string }
+export type Pin = {
+  app: string;
+  thread: string;
+  message: MessageId;
+  text: string;
+  at: string;
+  note: string;
+};
+export type NewQuestion = Omit<Question, "at"> & { at?: string };
 // Whether a question waits on the owner, as questions({ waiting: true }) tells.
-export const waits = (question: Question) => !question.settled && (question.asker === 'owner') === !!question.answer
-type StoredQuestion = { asker: 'hex' | 'owner'; app: string; thread: string; message: MessageId; text: string; options: string; at: string; poll: string | null; multiple: number; answer: string | null; settled: string | null }
-type StoredTask = { n: number; title: string; owner: string; status: Status; project: string | null; done_when: string | null; proof: string | null; merged_into: number | null; at: string; closed: string | null }
+export const waits = (question: Question) =>
+  !question.settled && (question.asker === "owner") === !!question.answer;
+type StoredQuestion = {
+  asker: "hex" | "owner";
+  app: string;
+  thread: string;
+  message: MessageId;
+  text: string;
+  options: string;
+  at: string;
+  poll: string | null;
+  multiple: number;
+  answer: string | null;
+  settled: string | null;
+};
+type StoredTask = {
+  n: number;
+  title: string;
+  owner: string;
+  status: Status;
+  project: string | null;
+  done_when: string | null;
+  proof: string | null;
+  merged_into: number | null;
+  at: string;
+  closed: string | null;
+};
 
 // Migration n takes the database from user_version n to n + 1: SQL, or a step that needs more than
 // SQL can do, run in the same transaction. Append; never edit one that has shipped. Times are UTC the way toISOString() writes them, so they sort as text. A key starts with
 // its sender, so a key hex makes for a schedule's slot or a job's end can't be one an app sent.
-const UTC = "glob '????-??-??T??:??:??.???Z'"
+const UTC = "glob '????-??-??T??:??:??.???Z'";
 // Who wrote each message kept before hex kept authors: one with a chat app's user_id is the owner's
 // (Telegram and Discord let only them in), and so is what they typed or tapped in the hex app; in Buzz,
 // which is shared, it's the sender's key; a call's transcript is a call; what hex itself sent a session
@@ -82,10 +191,10 @@ const AUTHOR = `case
     when json_extract(meta, '$.user') = 'hex' then 'prompt'
     when "from" = 'voice' and json_extract(meta, '$.callee') is null and (json_extract(meta, '$.delegation_id') is not null or json_extract(meta, '$.ended') is not null) then 'call'
     when "from" = 't3' and json_extract(meta, '$.user') is null then 'owner'
-    else coalesce(json_extract(meta, '$.user'), "from") end`
-const authors = new Set<string>(['owner', 'hex', 'prompt', 'call', 'other'] satisfies Author[])
-export const isAuthor = (value: unknown): value is Author => authors.has(value as string)
-const AUTHORS = `(${[...authors].map(author => `'${author}'`).join(', ')})`
+    else coalesce(json_extract(meta, '$.user'), "from") end`;
+const authors = new Set<string>(["owner", "hex", "prompt", "call", "other"] satisfies Author[]);
+export const isAuthor = (value: unknown): value is Author => authors.has(value as string);
+const AUTHORS = `(${[...authors].map((author) => `'${author}'`).join(", ")})`;
 const migrations: (string | ((store: Store) => void))[] = [
   `create table messages (
     n integer primary key,
@@ -195,20 +304,31 @@ const migrations: (string | ((store: Store) => void))[] = [
     const keep = db.query(
       `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
       on conflict (app, thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model, effort = excluded.effort, launched = excluded.launched, fork = excluded.fork`,
-    )
-    const text = (value: unknown) => (typeof value === 'string' ? value : null)
+    );
+    const text = (value: unknown) => (typeof value === "string" ? value : null);
     for (const [app, folder] of apps(dir)) {
-      const file = join(folder, 'threads.json')
-      if (!existsSync(file)) continue
-      let saved: Record<string, any>
+      const file = join(folder, "threads.json");
+      if (!existsSync(file)) continue;
+      let saved: Record<string, any>;
       try {
-        saved = JSON.parse(readFileSync(file, 'utf8')) ?? {}
+        saved = JSON.parse(readFileSync(file, "utf8")) ?? {};
       } catch (error) {
-        process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`)
-        continue
+        process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`);
+        continue;
       }
       for (const [thread, known] of Object.entries(saved))
-        if (typeof known?.name === 'string') keep.run(app, thread, known.name, text(known.session), text(known.cwd), text(known.model), text(known.effort), text(known.launched), text(known.from))
+        if (typeof known?.name === "string")
+          keep.run(
+            app,
+            thread,
+            known.name,
+            text(known.session),
+            text(known.cwd),
+            text(known.model),
+            text(known.effort),
+            text(known.launched),
+            text(known.from),
+          );
     }
   },
   `create table pins (
@@ -238,25 +358,34 @@ const migrations: (string | ((store: Store) => void))[] = [
   // two apps had anyway keeps its open, then newest, row.
   `delete from threads where exists (select 1 from threads other where other.thread = threads.thread and (other.open, other.rowid) > (threads.open, threads.rowid));
   create unique index if not exists threads_key on threads (thread);`,
-  ({ dir }: Store) => apps(dir).forEach(([app, folder]) => app === 'telegram' && rename(join(folder, 'bot.json'))),
+  ({ dir }: Store) =>
+    apps(dir).forEach(([app, folder]) => app === "telegram" && rename(join(folder, "bot.json"))),
   // Every pin is its thread's status post. One written by hand keeps its words above its own
   // 🔴 🟡 🟢 lines as the note, under which hex writes its own. One hex can't rewrite is left
   // out: its words unknown, a question, or a message hex.db says someone else wrote (Telegram keys
   // a message by chat and id, Discord by id); one it can't tell drops out at its first refused edit.
   (store: Store) => {
-    const pins = store.db.query('select app, thread, message, text from pins where note is null').all() as { app: string; thread: string; message: MessageId; text: string }[]
+    const pins = store.db
+      .query("select app, thread, message, text from pins where note is null")
+      .all() as { app: string; thread: string; message: MessageId; text: string }[];
     for (const { app, thread, message, text } of pins) {
-      const key = `${app}:${app === 'telegram' ? `${thread.split(':')[0]}:` : ''}${message}`
-      const author = store.message(key)?.author
-      const kept = text !== '' && !store.question(app, thread, message) && (author === undefined || author === 'hex')
-      if (kept) store.db.query('update pins set note = ? where app = ? and thread = ?').run(above(text), app, thread)
-      else store.db.query('delete from pins where app = ? and thread = ?').run(app, thread)
+      const key = `${app}:${app === "telegram" ? `${thread.split(":")[0]}:` : ""}${message}`;
+      const author = store.message(key)?.author;
+      const kept =
+        text !== "" &&
+        !store.question(app, thread, message) &&
+        (author === undefined || author === "hex");
+      if (kept)
+        store.db
+          .query("update pins set note = ? where app = ? and thread = ?")
+          .run(above(text), app, thread);
+      else store.db.query("delete from pins where app = ? and thread = ?").run(app, thread);
     }
   },
   `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}), after text check (after ${UTC}));
   create index if not exists beats_session on beats (session, began);`,
   // A thread's tasks, which its status post reads at each change to hex.db, by state and when each closed.
-  'create index if not exists owned on tasks (owner, status, closed);',
+  "create index if not exists owned on tasks (owner, status, closed);",
   // A thread's messages in the order they were kept, whose last says whether any came.
   'create index if not exists thread on messages ("to", n);',
   `create table if not exists operations (scope text not null, id text not null, input text not null, result text, primary key (scope, id));`,
@@ -264,37 +393,51 @@ const migrations: (string | ((store: Store) => void))[] = [
   `create table if not exists task_agents (agent text primary key, task integer not null references tasks (n), at text not null check (at ${UTC}));`,
   // When a session last finished a turn: what it took before then is handled. Turns kept so far count as handled now.
   ({ db }: Store) => {
-    if (db.query("select 1 from pragma_table_info('turns') where name = 'handled'").get()) return
-    db.run(`alter table turns add column handled text check (handled ${UTC})`)
-    db.run("update turns set handled = strftime('%Y-%m-%dT%H:%M:%fZ')")
+    if (db.query("select 1 from pragma_table_info('turns') where name = 'handled'").get()) return;
+    db.run(`alter table turns add column handled text check (handled ${UTC})`);
+    db.run("update turns set handled = strftime('%Y-%m-%dT%H:%M:%fZ')");
   },
   // Who asked: hex, which waits on the owner's answer, or the owner, who's waited on once hex answered.
   ({ db }: Store) => {
-    if (!db.query("select 1 from pragma_table_info('questions') where name = 'asker'").get()) db.run(`alter table questions add column asker text not null default 'hex' check (asker in ('hex', 'owner'))`)
+    if (!db.query("select 1 from pragma_table_info('questions') where name = 'asker'").get())
+      db.run(
+        `alter table questions add column asker text not null default 'hex' check (asker in ('hex', 'owner'))`,
+      );
   },
   // When a session's turn ended with background agents still working for it, until it hands what it took over.
   ({ db }: Store) => {
-    if (!db.query("select 1 from pragma_table_info('turns') where name = 'waiting'").get()) db.run(`alter table turns add column waiting text check (waiting ${UTC})`)
+    if (!db.query("select 1 from pragma_table_info('turns') where name = 'waiting'").get())
+      db.run(`alter table turns add column waiting text check (waiting ${UTC})`);
   },
   // The thread a task's work ran in: the one that closed it, and the one that linked each of its agents.
   ({ db }: Store) => {
-    if (!db.query("select 1 from pragma_table_info('tasks') where name = 'done_in'").get()) db.run('alter table tasks add column done_in text')
-    if (!db.query("select 1 from pragma_table_info('task_agents') where name = 'thread'").get()) db.run('alter table task_agents add column thread text')
+    if (!db.query("select 1 from pragma_table_info('tasks') where name = 'done_in'").get())
+      db.run("alter table tasks add column done_in text");
+    if (!db.query("select 1 from pragma_table_info('task_agents') where name = 'thread'").get())
+      db.run("alter table task_agents add column thread text");
   },
   // Work on hold, and each thread it holds: when its hold on that thread ended and why, the message that woke it, and when that wake settled.
   `create table if not exists holds (n integer primary key, by text not null, why text not null, message text, until text check (until ${UTC}), at text not null check (at ${UTC}));
   create table if not exists held (hold integer not null references holds (n), thread text not null, ended text check (ended ${UTC}), ending text, woke text, settled text check (settled ${UTC}), primary key (hold, thread));`,
-]
+];
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
-const apps = (dir: string) => [[basename(dir), dir], ...readdirSync(dir).flatMap(app => (statSync(join(dir, app), { throwIfNoEntry: false })?.isDirectory() ? [[app, join(dir, app)]] : []))] as [string, string][]
+const apps = (dir: string) =>
+  [
+    [basename(dir), dir],
+    ...readdirSync(dir).flatMap((app) =>
+      statSync(join(dir, app), { throwIfNoEntry: false })?.isDirectory()
+        ? [[app, join(dir, app)]]
+        : [],
+    ),
+  ] as [string, string][];
 
 // A file hex kept something in before hex.db moves in once, by a step below, and is renamed, so
 // whatever still reads it fails loudly instead of reading something stale. A rollback brings back
 // code, not data. A step that failed after renaming reads the renamed file when it runs again.
-const moved = (path: string) => `${path}.moved-to-hex.db`
-const either = (path: string) => [path, moved(path)].find(each => existsSync(each))
-const rename = (path: string) => existsSync(path) && renameSync(path, moved(path))
+const moved = (path: string) => `${path}.moved-to-hex.db`;
+const either = (path: string) => [path, moved(path)].find((each) => existsSync(each));
+const rename = (path: string) => existsSync(path) && renameSync(path, moved(path));
 
 // Each app's pins and questions moved from its ledger.json: what it says beyond what hex.db last took
 // from it (the files table, while hex re-read it at each start): each pin it took away or moved to
@@ -302,70 +445,90 @@ const rename = (path: string) => existsSync(path) && renameSync(path, moved(path
 // taken in by an earlier step, so it's only renamed.
 function carryLedgers(store: Store) {
   for (const [app, folder] of apps(store.dir)) {
-    rename(join(folder, 'threads.json'))
-    const file = either(join(folder, 'ledger.json'))
-    if (!file) continue
-    const before = (store.db.query('select body from files where name = ?').get(`${app}/ledger.json`) as { body: string } | null)?.body ?? '{}'
-    const [book, was] = [() => readFileSync(file, 'utf8'), () => before].map(text => bookOf(text, file))
+    rename(join(folder, "threads.json"));
+    const file = either(join(folder, "ledger.json"));
+    if (!file) continue;
+    const before =
+      (
+        store.db.query("select body from files where name = ?").get(`${app}/ledger.json`) as {
+          body: string;
+        } | null
+      )?.body ?? "{}";
+    const [book, was] = [() => readFileSync(file, "utf8"), () => before].map((text) =>
+      bookOf(text, file),
+    );
     // One that can't be read stays where it is, for whoever looks into why.
-    if (!book) continue
+    if (!book) continue;
     const keep = (take: () => unknown, kept: unknown) => {
       try {
-        take()
+        take();
       } catch (error) {
-        process.stderr.write(`hex.db left out ${JSON.stringify(kept)} from ${file}, which it refuses: ${error}\n`)
+        process.stderr.write(
+          `hex.db left out ${JSON.stringify(kept)} from ${file}, which it refuses: ${error}\n`,
+        );
       }
-    }
+    };
     for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
-      const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)]
-      if (JSON.stringify(pin) === JSON.stringify(old)) continue
-      if (!pin) keep(() => store.unpinned(app, thread, old?.message), old)
-      else if (pin.message !== old?.message || store.pin(app, thread)?.message === old?.message) keep(() => store.pinned({ ...pin, app, thread }), pin)
+      const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)];
+      if (JSON.stringify(pin) === JSON.stringify(old)) continue;
+      if (!pin) keep(() => store.unpinned(app, thread, old?.message), old);
+      else if (pin.message !== old?.message || store.pin(app, thread)?.message === old?.message)
+        keep(() => store.pinned({ ...pin, app, thread }), pin);
     }
-    const asked = new Set((was?.asks ?? []).map(question => JSON.stringify(question)))
-    for (const question of book.asks) if (!asked.has(JSON.stringify(question))) keep(() => store.ask({ app, ...question }), question)
-    rename(join(folder, 'ledger.json'))
+    const asked = new Set((was?.asks ?? []).map((question) => JSON.stringify(question)));
+    for (const question of book.asks)
+      if (!asked.has(JSON.stringify(question)))
+        keep(() => store.ask({ app, ...question }), question);
+    rename(join(folder, "ledger.json"));
   }
 }
 
 // Each app's relays.jsonl, a line per message one of its threads sent a T3 Code thread, newest last.
 function carryRelays(store: Store) {
   for (const [app, folder] of apps(store.dir)) {
-    const file = either(join(folder, 'relays.jsonl'))
-    if (!file) continue
-    for (const line of readFileSync(file, 'utf8').split('\n')) {
+    const file = either(join(folder, "relays.jsonl"));
+    if (!file) continue;
+    for (const line of readFileSync(file, "utf8").split("\n")) {
       try {
-        const { at, from, thread, run } = JSON.parse(line)
-        if ([at, from, thread, run].every(word => typeof word === 'string' && word)) store.relayed(`${app}:${from}`, thread, run, at)
+        const { at, from, thread, run } = JSON.parse(line);
+        if ([at, from, thread, run].every((word) => typeof word === "string" && word))
+          store.relayed(`${app}:${from}`, thread, run, at);
       } catch {}
     }
-    rename(join(folder, 'relays.jsonl'))
+    rename(join(folder, "relays.jsonl"));
   }
 }
 
-type Book = { pins: Map<string, Omit<Pin, 'app' | 'thread'>>; asks: Omit<Question, 'app'>[] }
+type Book = { pins: Map<string, Omit<Pin, "app" | "thread">>; asks: Omit<Question, "app">[] };
 
 function bookOf(text: () => string, file: string): Book | undefined {
   try {
-    const book = JSON.parse(text()) ?? {}
-    const pinned = ([, pin]: [string, any]) => ['number', 'string'].includes(typeof pin?.message)
-    return { pins: new Map(book.pins && typeof book.pins === 'object' ? Object.entries<any>(book.pins).filter(pinned) : []), asks: Array.isArray(book.asks) ? book.asks : [] }
+    const book = JSON.parse(text()) ?? {};
+    const pinned = ([, pin]: [string, any]) => ["number", "string"].includes(typeof pin?.message);
+    return {
+      pins: new Map(
+        book.pins && typeof book.pins === "object"
+          ? Object.entries<any>(book.pins).filter(pinned)
+          : [],
+      ),
+      asks: Array.isArray(book.asks) ? book.asks : [],
+    };
   } catch (error) {
-    process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`)
+    process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`);
   }
 }
 
-const now = () => new Date().toISOString()
+const now = () => new Date().toISOString();
 
 function holdNumber(id: string) {
-  const n = /^h-(\d+)$/.exec(id)?.[1]
-  if (!n) throw new Error(`${id} isn't a hold's id, like h-3`)
-  return Number(n)
+  const n = /^h-(\d+)$/.exec(id)?.[1];
+  if (!n) throw new Error(`${id} isn't a hold's id, like h-3`);
+  return Number(n);
 }
 
-const SEEN = 2 * 24 * 60 * 60 * 1000
-const TURNS = 30 * 24 * 60 * 60 * 1000
-const BEATS = 7 * 24 * 60 * 60 * 1000
+const SEEN = 2 * 24 * 60 * 60 * 1000;
+const TURNS = 30 * 24 * 60 * 60 * 1000;
+const BEATS = 7 * 24 * 60 * 60 * 1000;
 
 // The profile and its history moved into hex.db from state/profile.md and profile.md.history, where
 // each version it replaced is a JSON line with when it was replaced: when the next was put in place.
@@ -373,25 +536,33 @@ const BEATS = 7 * 24 * 60 * 60 * 1000
 // writing to them mistakes them for the profile; a carry that failed after renaming them reads the
 // renamed ones when it runs again.
 function carryProfile(store: Store) {
-  const [file, history] = ['profile.md', 'profile.md.history'].map(name => join(store.dir, name))
-  const current = either(file!)
-  if (!current || !readFileSync(current, 'utf8').trim()) return
-  const before = either(history!)
-  const when = (at: unknown) => (typeof at === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at) ? at : statSync(before!).mtime.toISOString())
-  const replaced = (before ? readFileSync(before, 'utf8').split('\n').filter(Boolean) : []).map(line => {
-    try {
-      const { at, profile } = JSON.parse(line)
-      return { at: when(at), body: typeof profile === 'string' ? profile.trim() : '' }
-    } catch {
-      return { at: when(undefined), body: '' }
-    }
-  })
-  const latest = [replaced.at(-1)?.at ?? '', statSync(current).mtime.toISOString()].sort().at(-1)!
-  const versions = [...replaced.map(({ body }, n) => ({ at: replaced[n - 1]?.at ?? replaced[0]!.at, body })), { at: latest, body: readFileSync(current, 'utf8').trim() }]
-  const keep = store.db.query('insert into profiles (at, body) values (?, ?)')
-  let last = ''
-  for (const { at, body } of versions) if (body && body !== last) keep.run(at, (last = body))
-  for (const each of [file!, history!]) rename(each)
+  const [file, history] = ["profile.md", "profile.md.history"].map((name) => join(store.dir, name));
+  const current = either(file!);
+  if (!current || !readFileSync(current, "utf8").trim()) return;
+  const before = either(history!);
+  const when = (at: unknown) =>
+    typeof at === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at)
+      ? at
+      : statSync(before!).mtime.toISOString();
+  const replaced = (before ? readFileSync(before, "utf8").split("\n").filter(Boolean) : []).map(
+    (line) => {
+      try {
+        const { at, profile } = JSON.parse(line);
+        return { at: when(at), body: typeof profile === "string" ? profile.trim() : "" };
+      } catch {
+        return { at: when(undefined), body: "" };
+      }
+    },
+  );
+  const latest = [replaced.at(-1)?.at ?? "", statSync(current).mtime.toISOString()].sort().at(-1)!;
+  const versions = [
+    ...replaced.map(({ body }, n) => ({ at: replaced[n - 1]?.at ?? replaced[0]!.at, body })),
+    { at: latest, body: readFileSync(current, "utf8").trim() },
+  ];
+  const keep = store.db.query("insert into profiles (at, body) values (?, ?)");
+  let last = "";
+  for (const { at, body } of versions) if (body && body !== last) keep.run(at, (last = body));
+  for (const each of [file!, history!]) rename(each);
 }
 
 // state/hex.db, the records every hex process shares: the hub, each session's hooks, the hex
@@ -399,31 +570,31 @@ function carryProfile(store: Store) {
 // cut, and each one lands whole or not at all. Every commit that changed something adds a byte to
 // hex.bell, so a process watching it hears of the change as it happens.
 export class Store {
-  readonly db: Database
-  private readonly bell: string
-  private writing = false
-  private readonly listeners = new Set<() => void>()
-  private watcher?: FSWatcher
-  private heard = ''
+  readonly db: Database;
+  private readonly bell: string;
+  private writing = false;
+  private readonly listeners = new Set<() => void>();
+  private watcher?: FSWatcher;
+  private heard = "";
 
   constructor(readonly dir: string) {
-    mkdirSync(dir, { recursive: true })
-    this.bell = join(dir, 'hex.bell')
-    appendFileSync(this.bell, '')
-    this.db = new Database(join(dir, 'hex.db'), { create: true, strict: true })
-    this.db.run('pragma busy_timeout = 30000')
-    retry(() => this.db.run('pragma journal_mode = wal'))
-    this.db.run('pragma synchronous = full')
-    this.db.run('pragma foreign_keys = on')
+    mkdirSync(dir, { recursive: true });
+    this.bell = join(dir, "hex.bell");
+    appendFileSync(this.bell, "");
+    this.db = new Database(join(dir, "hex.db"), { create: true, strict: true });
+    this.db.run("pragma busy_timeout = 30000");
+    retry(() => this.db.run("pragma journal_mode = wal"));
+    this.db.run("pragma synchronous = full");
+    this.db.run("pragma foreign_keys = on");
     while (this.version() < migrations.length) {
       this.write(() => {
-        const version = this.version()
-        if (version === migrations.length) return
-        const step = migrations[version]!
-        if (typeof step === 'string') this.db.run(step)
-        else step(this)
-        this.db.run(`pragma user_version = ${version + 1}`)
-      })
+        const version = this.version();
+        if (version === migrations.length) return;
+        const step = migrations[version]!;
+        if (typeof step === "string") this.db.run(step);
+        else step(this);
+        this.db.run(`pragma user_version = ${version + 1}`);
+      });
     }
   }
 
@@ -431,75 +602,105 @@ export class Store {
   // IMMEDIATE), so what fn reads can't change before it commits; a write() inside it joins it.
   // Keep fn short and local: every other process's writes wait for it.
   write<T>(fn: () => T): T {
-    if (this.writing) return fn()
-    const before = this.changes()
+    if (this.writing) return fn();
+    const before = this.changes();
     const result = retry(() => {
-      this.writing = true
+      this.writing = true;
       try {
-        return this.db.transaction(fn).immediate()
+        return this.db.transaction(fn).immediate();
       } finally {
-        this.writing = false
+        this.writing = false;
       }
-    })
-    if (this.changes() !== before) appendFileSync(this.bell, '.')
-    return result
+    });
+    if (this.changes() !== before) appendFileSync(this.bell, ".");
+    return result;
   }
 
   // Calls back after each change any process commits, until the stop it returns is called.
   watch(listener: () => void): () => void {
-    this.listeners.add(listener)
-    this.watcher ??= watch(this.bell, () => this.rang())
+    this.listeners.add(listener);
+    this.watcher ??= watch(this.bell, () => this.rang());
     return () => {
-      this.listeners.delete(listener)
-      if (this.listeners.size) return
-      this.watcher?.close()
-      this.watcher = undefined
-    }
+      this.listeners.delete(listener);
+      if (this.listeners.size) return;
+      this.watcher?.close();
+      this.watcher = undefined;
+    };
   }
 
   // Bun's fs.watch on Linux drops a change that lands within about a millisecond of the one it just
   // reported (https://github.com/oven-sh/bun/issues/45954), so each ring is heard again once that has
   // passed. Listeners run once for each time hex.db moved, however many rings that took.
   private rang(again = false) {
-    const moved = this.moved()
+    const moved = this.moved();
     if (moved !== this.heard) {
-      this.heard = moved
+      this.heard = moved;
       for (const each of this.listeners)
         try {
-          each()
+          each();
         } catch (error) {
           queueMicrotask(() => {
-            throw error
-          })
+            throw error;
+          });
         }
-    } else if (again) return
-    setTimeout(() => this.watcher && this.rang(true), 5)
+    } else if (again) return;
+    setTimeout(() => this.watcher && this.rang(true), 5);
   }
 
   // Keeps a new message. A key that's kept already is its sender sending it again: false. by: the
   // session that wrote it, which has it in its conversation already.
   deliver({ key, to, from, author, body, meta }: NewRow, by?: string): boolean {
-    if (!isAuthor(author)) throw new Error(`${key}'s author is ${author || 'missing'}: a message's author is owner, hex, prompt, call or other`)
-    const at = now()
+    if (!isAuthor(author))
+      throw new Error(
+        `${key}'s author is ${author || "missing"}: a message's author is owner, hex, prompt, call or other`,
+      );
+    const at = now();
     return this.write(
       () =>
         this.db
-          .query('insert into messages (key, "to", "from", author, body, meta, at, taken_by, taken_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (key) do nothing')
-          .run(key, to, from, author, body, meta ? JSON.stringify(meta) : null, at, by ?? null, by ? at : null).changes > 0,
-    )
+          .query(
+            'insert into messages (key, "to", "from", author, body, meta, at, taken_by, taken_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict (key) do nothing',
+          )
+          .run(
+            key,
+            to,
+            from,
+            author,
+            body,
+            meta ? JSON.stringify(meta) : null,
+            at,
+            by ?? null,
+            by ? at : null,
+          ).changes > 0,
+    );
   }
 
   // Claim before an external effect. An unfinished claim after a restart is uncertain, never retried.
-  operation(scope: string, id: string, input: string): { fresh: boolean; input: string; result: string | null } {
+  operation(
+    scope: string,
+    id: string,
+    input: string,
+  ): { fresh: boolean; input: string; result: string | null } {
     return this.write(() => {
-      const fresh = this.db.query('insert into operations (scope, id, input) values (?, ?, ?) on conflict do nothing').run(scope, id, input).changes > 0
-      const kept = this.db.query('select input, result from operations where scope = ? and id = ?').get(scope, id) as { input: string; result: string | null }
-      return { fresh, ...kept }
-    })
+      const fresh =
+        this.db
+          .query(
+            "insert into operations (scope, id, input) values (?, ?, ?) on conflict do nothing",
+          )
+          .run(scope, id, input).changes > 0;
+      const kept = this.db
+        .query("select input, result from operations where scope = ? and id = ?")
+        .get(scope, id) as { input: string; result: string | null };
+      return { fresh, ...kept };
+    });
   }
 
   finishOperation(scope: string, id: string, result: string) {
-    this.write(() => this.db.query('update operations set result = ? where scope = ? and id = ?').run(result, scope, id))
+    this.write(() =>
+      this.db
+        .query("update operations set result = ? where scope = ? and id = ?")
+        .run(result, scope, id),
+    );
   }
 
   // Messages brought in from log/ (hub/past.ts), kept at the time it gave them, taken by its session and
@@ -507,24 +708,37 @@ export class Store {
   // mark moves with each one.
   past(rows: [NewRow, string][], by: string): string[] {
     return this.write(() => {
-      const at = this.db.query('update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1')
-      return rows.filter(([row, when]) => this.deliver(row, by) && at.run(row.key, when)).map(([row]) => row.key)
-    })
+      const at = this.db.query(
+        "update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1",
+      );
+      return rows
+        .filter(([row, when]) => this.deliver(row, by) && at.run(row.key, when))
+        .map(([row]) => row.key);
+    });
   }
 
   // A session took the message into its conversation. False when one already had, or it isn't kept.
   take(key: string, by: string): boolean {
-    return this.write(() => this.db.query('update messages set taken_by = ?, taken_at = ? where key = ? and taken_at is null').run(by, now(), key).changes === 1)
+    return this.write(
+      () =>
+        this.db
+          .query(
+            "update messages set taken_by = ?, taken_at = ? where key = ? and taken_at is null",
+          )
+          .run(by, now(), key).changes === 1,
+    );
   }
 
   message(key: string): Row | null {
-    const row = this.db.query('select * from messages where key = ?').get(key) as Stored | null
-    return row && toRow(row)
+    const row = this.db.query("select * from messages where key = ?").get(key) as Stored | null;
+    return row && toRow(row);
   }
 
   // Every message kept after a time, oldest first.
-  since(after = ''): Row[] {
-    return (this.db.query('select * from messages where at > ? order by at, n').all(after) as Stored[]).map(toRow)
+  since(after = ""): Row[] {
+    return (
+      this.db.query("select * from messages where at > ? order by at, n").all(after) as Stored[]
+    ).map(toRow);
   }
 
   // A message as it reads now, from its key or an edit's: the message, with its newest edit's words
@@ -533,43 +747,65 @@ export class Store {
   // last part of its key; a Telegram id is only unique in its chat, the part before it, so its edits
   // are the ones kept in that chat.
   latest(key: string): Row | null {
-    const app = key.slice(0, key.indexOf(':'))
-    const named = this.message(key)
-    const of = named?.meta?.edited === 'true' ? named.meta.message_id : undefined
-    const id = of ?? key.slice(key.lastIndexOf(':') + 1)
-    const prefix = key.slice(app.length + 1, Math.max(app.length + 1, key.lastIndexOf(':')))
-    const chat = prefix || (of ? named!.to.split(':')[0] : '')
-    const original = of ? this.message(`${app}:${prefix && `${prefix}:`}${id}`) : named
+    const app = key.slice(0, key.indexOf(":"));
+    const named = this.message(key);
+    const of = named?.meta?.edited === "true" ? named.meta.message_id : undefined;
+    const id = of ?? key.slice(key.lastIndexOf(":") + 1);
+    const prefix = key.slice(app.length + 1, Math.max(app.length + 1, key.lastIndexOf(":")));
+    const chat = prefix || (of ? named!.to.split(":")[0] : "");
+    const original = of ? this.message(`${app}:${prefix && `${prefix}:`}${id}`) : named;
     const edit = this.db
       .query(
         `select * from messages where "from" = ?1 and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ?2
            and (?3 = '' or "to" = ?3 or "to" like ?3 || ':%') order by at desc, n desc limit 1`,
       )
-      .get(app, id, chat) as Stored | null
-    if (!edit) return original ?? named
-    return original ? { ...original, body: edit.body, meta: { ...original.meta, edit: edit.key } } : toRow(edit)
+      .get(app, id, chat) as Stored | null;
+    if (!edit) return original ?? named;
+    return original
+      ? { ...original, body: edit.body, meta: { ...original.meta, edit: edit.key } }
+      : toRow(edit);
   }
 
   // A thread's messages, oldest first: all of them, or its last few, or its last few before a time, or those between two times.
-  said(thread: string, last = -1, before = '9', after = ''): Row[] {
-    return (this.db.query('select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n').all(thread, before, after, last) as Stored[]).map(toRow)
+  said(thread: string, last = -1, before = "9", after = ""): Row[] {
+    return (
+      this.db
+        .query(
+          'select * from (select * from messages where "to" = ? and at < ? and at > ? order by at desc, n desc limit ?) order by at, n',
+        )
+        .all(thread, before, after, last) as Stored[]
+    ).map(toRow);
   }
 
   // A thread's message by the id its app gave it, the last part of its key.
   find(thread: string, message: MessageId): Row | null {
-    const row = this.db.query(`select * from messages where "to" = ?1 and substr(key, -length(?2) - 1) = ':' || ?2 order by at desc, n desc limit 1`).get(thread, String(message)) as Stored | null
-    return row && toRow(row)
+    const row = this.db
+      .query(
+        `select * from messages where "to" = ?1 and substr(key, -length(?2) - 1) = ':' || ?2 order by at desc, n desc limit 1`,
+      )
+      .get(thread, String(message)) as Stored | null;
+    return row && toRow(row);
   }
 
   // When a session last took a message it was sent, rather than one it sent.
   lastTaken(session: string): string | undefined {
-    return (this.db.query(`select max(taken_at) as at from messages where taken_by = ? and author <> 'hex'`).get(session) as { at: string | null }).at ?? undefined
+    return (
+      (
+        this.db
+          .query(`select max(taken_at) as at from messages where taken_by = ? and author <> 'hex'`)
+          .get(session) as { at: string | null }
+      ).at ?? undefined
+    );
   }
 
   // The session that took the thread's newest message whose meta has this value under key, and when.
   taker(thread: string, key: string, value: string): { by: string; at: string } | undefined {
-    const row = this.db.query(`select taken_by, taken_at from messages where "to" = ? and json_extract(meta, '$.' || ?) = ? and taken_by is not null order by n desc limit 1`).get(thread, key, value) as { taken_by: string; taken_at: string } | null
-    return row ? { by: row.taken_by, at: row.taken_at } : undefined
+    const row = this.db
+      .query(
+        `select taken_by, taken_at from messages where "to" = ? and json_extract(meta, '$.' || ?) = ? and taken_by is not null order by n desc limit 1`,
+      )
+      .get(thread, key, value) as { taken_by: string; taken_at: string } | null;
+    return row ? { by: row.taken_by, at: row.taken_at } : undefined;
   }
 
   // What a session, or another in its thread, took by a time that no pass has looked over for
@@ -578,133 +814,222 @@ export class Store {
   observe(session: string, by: string, thread?: string, lease = 10 * 60_000): Row[] {
     return this.write(() => {
       const rows = this.db
-        .query('select * from messages where (taken_by = ? or "to" = ?) and taken_at <= ? and observed_at is null and (observing_at is null or observing_at < ?) order by taken_at')
-        .all(session, thread ?? null, by, new Date(Date.now() - lease).toISOString()) as Stored[]
-      this.db.query('update messages set observing_at = ? where key in (select value from json_each(?))').run(now(), JSON.stringify(rows.map(row => row.key)))
-      return rows.map(toRow)
-    })
+        .query(
+          'select * from messages where (taken_by = ? or "to" = ?) and taken_at <= ? and observed_at is null and (observing_at is null or observing_at < ?) order by taken_at',
+        )
+        .all(session, thread ?? null, by, new Date(Date.now() - lease).toISOString()) as Stored[];
+      this.db
+        .query("update messages set observing_at = ? where key in (select value from json_each(?))")
+        .run(now(), JSON.stringify(rows.map((row) => row.key)));
+      return rows.map(toRow);
+    });
   }
 
   // A pass is over: its messages are looked over, or, when it failed, free for the next pass.
   observed(keys: string[], done = true) {
-    const set = done ? `observed_at = '${now()}'` : 'observing_at = null'
-    this.write(() => this.db.query(`update messages set ${set} where key in (select value from json_each(?))`).run(JSON.stringify(keys)))
+    const set = done ? `observed_at = '${now()}'` : "observing_at = null";
+    this.write(() =>
+      this.db
+        .query(`update messages set ${set} where key in (select value from json_each(?))`)
+        .run(JSON.stringify(keys)),
+    );
   }
 
   // Whether the session has taken any message.
   took(session: string): boolean {
-    return this.db.query('select 1 from messages where taken_by = ? limit 1').get(session) !== null
+    return this.db.query("select 1 from messages where taken_by = ? limit 1").get(session) !== null;
   }
 
   // What no session has taken yet, oldest first: every thread's, or one thread's, or some threads'.
   untaken(thread?: string | string[]): Row[] {
     const rows =
       thread === undefined
-        ? this.db.query('select * from messages where taken_at is null order by n').all()
-        : this.db.query('select * from messages where taken_at is null and "to" in (select value from json_each(?)) order by n').all(JSON.stringify([thread].flat()))
-    return (rows as Stored[]).map(toRow)
+        ? this.db.query("select * from messages where taken_at is null order by n").all()
+        : this.db
+            .query(
+              'select * from messages where taken_at is null and "to" in (select value from json_each(?)) order by n',
+            )
+            .all(JSON.stringify([thread].flat()));
+    return (rows as Stored[]).map(toRow);
   }
 
   // Changes whenever the thread's messages do: one is kept (its n is the highest yet, whatever its
   // time), or a session takes one (one fewer waits). It reads two index entries, so a reader can tell
   // cheaply whether to read the messages again.
   mark(thread: string): string {
-    const { last } = this.db.query('select max(n) as last from messages where "to" = ?').get(thread) as { last: number | null }
-    const { untaken } = this.db.query('select count(*) as untaken from messages indexed by untaken where taken_at is null and "to" = ?').get(thread) as { untaken: number }
-    return `${last}:${untaken}`
+    const { last } = this.db
+      .query('select max(n) as last from messages where "to" = ?')
+      .get(thread) as { last: number | null };
+    const { untaken } = this.db
+      .query(
+        'select count(*) as untaken from messages indexed by untaken where taken_at is null and "to" = ?',
+      )
+      .get(thread) as { untaken: number };
+    return `${last}:${untaken}`;
   }
 
   // Holds name for holder until it's released or ms pass, whichever comes first; false while another holds it.
   lease(name: string, holder: string, ms: number): boolean {
     return this.write(() => {
-      this.db.query('delete from leases where name = ? and until < ?').run(name, now())
-      const until = new Date(Date.now() + ms).toISOString()
-      this.db.query('insert into leases (name, holder, until) values (?, ?, ?) on conflict (name) do update set until = excluded.until where holder = excluded.holder').run(name, holder, until)
-      return (this.db.query('select holder from leases where name = ?').get(name) as { holder: string }).holder === holder
-    })
+      this.db.query("delete from leases where name = ? and until < ?").run(name, now());
+      const until = new Date(Date.now() + ms).toISOString();
+      this.db
+        .query(
+          "insert into leases (name, holder, until) values (?, ?, ?) on conflict (name) do update set until = excluded.until where holder = excluded.holder",
+        )
+        .run(name, holder, until);
+      return (
+        (this.db.query("select holder from leases where name = ?").get(name) as { holder: string })
+          .holder === holder
+      );
+    });
   }
 
   release(name: string, holder: string) {
-    this.write(() => this.db.query('delete from leases where name = ? and holder = ?').run(name, holder))
+    this.write(() =>
+      this.db.query("delete from leases where name = ? and holder = ?").run(name, holder),
+    );
   }
 
   // A finished turn waiting for the memory agent, oldest first.
   wait(pass: object) {
-    this.write(() => this.db.query('insert into passes (pass) values (?)').run(JSON.stringify(pass)))
+    this.write(() =>
+      this.db.query("insert into passes (pass) values (?)").run(JSON.stringify(pass)),
+    );
   }
 
   waiting(): { n: number; pass: unknown } | undefined {
-    const row = this.db.query('select n, pass from passes order by n limit 1').get() as { n: number; pass: string } | null
-    return row ? { n: row.n, pass: JSON.parse(row.pass) } : undefined
+    const row = this.db.query("select n, pass from passes order by n limit 1").get() as {
+      n: number;
+      pass: string;
+    } | null;
+    return row ? { n: row.n, pass: JSON.parse(row.pass) } : undefined;
   }
 
   passed(n: number) {
-    this.write(() => this.db.query('delete from passes where n = ?').run(n))
+    this.write(() => this.db.query("delete from passes where n = ?").run(n));
   }
 
   // The last minute since the epoch the scheduler checked, none before its first check.
   checked(): number | undefined {
-    return (this.db.query('select checked from scheduler').get() as { checked: number } | null)?.checked
+    return (this.db.query("select checked from scheduler").get() as { checked: number } | null)
+      ?.checked;
   }
 
   check(minute: number) {
-    this.write(() => this.db.query('insert into scheduler (one, checked) values (1, ?) on conflict (one) do update set checked = excluded.checked').run(minute))
+    this.write(() =>
+      this.db
+        .query(
+          "insert into scheduler (one, checked) values (1, ?) on conflict (one) do update set checked = excluded.checked",
+        )
+        .run(minute),
+    );
   }
 
   // A schedule's slot becomes a message to its thread once, whether or not its last one was taken
   // yet: a job runs each time it comes due until the owner stops it.
   fire(schedule: string, minute: number, to: string, body: string, late = false): boolean {
-    const slot = new Date(minute * 60_000).toISOString().slice(0, 16)
-    return this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', author: 'prompt', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
+    const slot = new Date(minute * 60_000).toISOString().slice(0, 16);
+    return this.deliver({
+      key: `schedule:${schedule}@${slot}Z`,
+      to,
+      from: "schedule",
+      author: "prompt",
+      body,
+      meta: { user: "schedule", schedule, ...(late && { late: "true" }) },
+    });
   }
 
-  hold({ threads, by, why, message, until }: Omit<Hold, 'id' | 'at' | 'threads'> & { threads: string[] }): Hold {
-    why = why.trim()
-    threads = [...new Set(threads)].filter(thread => thread !== by)
-    if (!threads.length) throw new Error('a hold names the threads it holds, other than the one holding them')
-    if (!why) throw new Error('a hold says why')
-    if (message && !this.message(message)) throw new Error(`no message ${message}`)
-    if (until !== undefined && !(Date.parse(until) > Date.now())) throw new Error(`${until} has passed, so that hold would end as it starts`)
+  hold({
+    threads,
+    by,
+    why,
+    message,
+    until,
+  }: Omit<Hold, "id" | "at" | "threads"> & { threads: string[] }): Hold {
+    why = why.trim();
+    threads = [...new Set(threads)].filter((thread) => thread !== by);
+    if (!threads.length)
+      throw new Error("a hold names the threads it holds, other than the one holding them");
+    if (!why) throw new Error("a hold says why");
+    if (message && !this.message(message)) throw new Error(`no message ${message}`);
+    if (until !== undefined && !(Date.parse(until) > Date.now()))
+      throw new Error(`${until} has passed, so that hold would end as it starts`);
     return this.write(() => {
-      const { lastInsertRowid } = this.db.query('insert into holds (by, why, message, until, at) values (?, ?, ?, ?, ?)').run(by, why, message ?? null, until ?? null, now())
-      for (const thread of threads) this.db.query('insert into held (hold, thread) values (?, ?)').run(lastInsertRowid, thread)
-      return this.holdOf(`h-${lastInsertRowid}`)!
-    })
+      const { lastInsertRowid } = this.db
+        .query("insert into holds (by, why, message, until, at) values (?, ?, ?, ?, ?)")
+        .run(by, why, message ?? null, until ?? null, now());
+      for (const thread of threads)
+        this.db.query("insert into held (hold, thread) values (?, ?)").run(lastInsertRowid, thread);
+      return this.holdOf(`h-${lastInsertRowid}`)!;
+    });
   }
 
   holdOf(id: string): Hold | null {
-    return this.holds({ id, all: true }).at(0) ?? null
+    return this.holds({ id, all: true }).at(0) ?? null;
   }
 
   // Holds newest first: only those still holding a thread, unless all.
   holds({ id, all = false }: { id?: string; all?: boolean } = {}): Hold[] {
     const rows = this.db
-      .query('select * from holds where (?1 is null or n = ?1) and (?2 or exists (select 1 from held where hold = n and ended is null)) order by n desc')
-      .all(id === undefined ? null : holdNumber(id), all) as { n: number; by: string; why: string; message: string | null; until: string | null; at: string }[]
+      .query(
+        "select * from holds where (?1 is null or n = ?1) and (?2 or exists (select 1 from held where hold = n and ended is null)) order by n desc",
+      )
+      .all(id === undefined ? null : holdNumber(id), all) as {
+      n: number;
+      by: string;
+      why: string;
+      message: string | null;
+      until: string | null;
+      at: string;
+    }[];
     return rows.map(({ n, message, until, ...hold }) => ({
       id: `h-${n}`,
       ...hold,
       ...(message && { message }),
       ...(until && { until }),
-      threads: (this.db.query('select thread, ended, ending, woke from held where hold = ? order by rowid').all(n) as Record<string, string | null>[]).map(row => Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Held),
-    }))
+      threads: (
+        this.db
+          .query("select thread, ended, ending, woke from held where hold = ? order by rowid")
+          .all(n) as Record<string, string | null>[]
+      ).map(
+        (row) =>
+          Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Held,
+      ),
+    }));
   }
 
   // Ends a hold on the threads named, or all it still holds, saying why; returns the threads it freed.
   unhold(id: string, ending: string, threads?: string[], at = now()): string[] {
-    const hold = this.holdOf(id)
-    if (!hold) throw new Error(`no hold ${id}`)
-    if (!ending.trim()) throw new Error('say why the hold ends')
-    const stray = threads?.filter(thread => !hold.threads.some(held => held.thread === thread))
-    if (stray?.length) throw new Error(`${id} doesn't hold ${stray.join(', ')}`)
+    const hold = this.holdOf(id);
+    if (!hold) throw new Error(`no hold ${id}`);
+    if (!ending.trim()) throw new Error("say why the hold ends");
+    const stray = threads?.filter((thread) => !hold.threads.some((held) => held.thread === thread));
+    if (stray?.length) throw new Error(`${id} doesn't hold ${stray.join(", ")}`);
     return this.write(() =>
-      (this.db.query('update held set ended = ?, ending = ? where hold = ? and ended is null and (?4 is null or thread in (select value from json_each(?4))) returning thread').values(at, ending.trim(), holdNumber(id), threads ? JSON.stringify(threads) : null) as [string][]).map(([thread]) => thread),
-    )
+      (
+        this.db
+          .query(
+            "update held set ended = ?, ending = ? where hold = ? and ended is null and (?4 is null or thread in (select value from json_each(?4))) returning thread",
+          )
+          .values(at, ending.trim(), holdNumber(id), threads ? JSON.stringify(threads) : null) as [
+          string,
+        ][]
+      ).map(([thread]) => thread),
+    );
   }
 
   // Every hold whose time has come ends.
   due(at = now()): string[] {
-    return this.write(() => (this.db.query('select n from holds where until <= ? and exists (select 1 from held where hold = n and ended is null)').values(at) as [number][]).flatMap(([n]) => this.unhold(`h-${n}`, 'its time came', undefined, at)))
+    return this.write(() =>
+      (
+        this.db
+          .query(
+            "select n from holds where until <= ? and exists (select 1 from held where hold = n and ended is null)",
+          )
+          .values(at) as [number][]
+      ).flatMap(([n]) => this.unhold(`h-${n}`, "its time came", undefined, at)),
+    );
   }
 
   // Threads holds freed that hex hasn't woken yet, unless another hold still holds them, in the order
@@ -716,12 +1041,16 @@ export class Store {
         where ended is not null and woke is null and not exists (select 1 from held other where other.thread = held.thread and other.ended is null)
           and (exists (select 1 from messages where key = 'hold:h-' || hold || '@' || thread) or exists (select 1 from messages where "to" = held.thread and taken_at >= holds.at and taken_at <= held.ended))
         order by (select max(ended) from held other where other.thread = held.thread), (select min(rowid) from held other where other.thread = held.thread), ended desc`)
-      .all() as { id: string; thread: string; why: string; ending: string }[]
+      .all() as { id: string; thread: string; why: string; ending: string }[];
   }
 
   // The thread's freed holds woke it with the message under key.
   woke(thread: string, key: string) {
-    this.write(() => this.db.query('update held set woke = ? where thread = ? and ended is not null and woke is null').run(key, thread))
+    this.write(() =>
+      this.db
+        .query("update held set woke = ? where thread = ? and ended is not null and woke is null")
+        .run(key, thread),
+    );
   }
 
   // How many threads hex woke from a hold are still on it. A wake settles once the turn that took its
@@ -735,146 +1064,241 @@ export class Store {
           not exists (select 1 from threads where thread = held.thread and open = 1)
           or exists (select 1 from messages m join turns t on t.session = m.taken_by where m.key = held.woke and t.ended >= m.taken_at)
           or exists (select 1 from messages m where m.key = held.woke and m.at < ?2))`)
-        .run(at, new Date(Date.parse(at) - patience).toISOString())
-      const { count, oldest } = this.db.query('select count(distinct thread) as count, min(m.at) as oldest from held join messages m on m.key = held.woke where settled is null').get() as { count: number; oldest: string | null }
-      return { count, ...(oldest && { until: new Date(Date.parse(oldest) + patience).toISOString() }) }
-    })
+        .run(at, new Date(Date.parse(at) - patience).toISOString());
+      const { count, oldest } = this.db
+        .query(
+          "select count(distinct thread) as count, min(m.at) as oldest from held join messages m on m.key = held.woke where settled is null",
+        )
+        .get() as { count: number; oldest: string | null };
+      return {
+        count,
+        ...(oldest && { until: new Date(Date.parse(oldest) + patience).toISOString() }),
+      };
+    });
   }
 
   // A task from the owner's message under key: all of it, or the part quote names, which has to be
   // in the message as written. A session points at what was said; it can't retype it.
-  createTask({ title, message, quote, owner, status = 'open', project, doneWhen }: NewTask): Task {
-    title = oneLine(title ?? '')
-    if (!title) throw new Error('a task needs a title: what the owner wants done, in a few plain words')
+  createTask({ title, message, quote, owner, status = "open", project, doneWhen }: NewTask): Task {
+    title = oneLine(title ?? "");
+    if (!title)
+      throw new Error("a task needs a title: what the owner wants done, in a few plain words");
     return this.write(() => {
       const { lastInsertRowid } = this.db
-        .query('insert into tasks (title, owner, status, project, done_when, at) values (?, ?, ?, ?, ?, ?)')
-        .run(title, owner, status, project ?? null, doneWhen ?? null, now())
-      const id = `t-${lastInsertRowid}`
-      this.quote(id, message, quote)
-      return this.task(id)!
-    })
+        .query(
+          "insert into tasks (title, owner, status, project, done_when, at) values (?, ?, ?, ?, ?, ?)",
+        )
+        .run(title, owner, status, project ?? null, doneWhen ?? null, now());
+      const id = `t-${lastInsertRowid}`;
+      this.quote(id, message, quote);
+      return this.task(id)!;
+    });
   }
 
   // More of the owner's words for a task, as they come: a task merged away passes them on to the
   // one it went into.
   addWords(id: string, message: string, quote?: string): Task {
     return this.write(() => {
-      const live = this.live(id)
-      this.quote(live, message, quote)
-      return this.task(live)!
-    })
+      const live = this.live(id);
+      this.quote(live, message, quote);
+      return this.task(live)!;
+    });
   }
 
   // The whole message a task holds, or the whole of what a T3 prompt asked, cut down in place to
   // the part that asks. Quotes picked on purpose are left as they are.
   requote(id: string, message: string, quote: string): Task {
     return this.write(() => {
-      const live = this.live(id)
-      const said = this.message(message)
-      if (!said) throw new Error(`no message ${message}`)
-      const rows = this.db.query('select rowid, text from words where task = ? and message = ? order by rowid').all(number(live), message) as { rowid: number; text: string }[]
-      const pieces = said.from === 't3' ? sent(said.body) : []
-      const whole = rows.find(row => row.text === said.body) ?? rows.find(row => pieces.includes(row.text) && row.text.includes(quote))
-      const held = rows.find(row => row.text === quote)
+      const live = this.live(id);
+      const said = this.message(message);
+      if (!said) throw new Error(`no message ${message}`);
+      const rows = this.db
+        .query("select rowid, text from words where task = ? and message = ? order by rowid")
+        .all(number(live), message) as { rowid: number; text: string }[];
+      const pieces = said.from === "t3" ? sent(said.body) : [];
+      const whole =
+        rows.find((row) => row.text === said.body) ??
+        rows.find((row) => pieces.includes(row.text) && row.text.includes(quote));
+      const held = rows.find((row) => row.text === quote);
       if (!whole) {
-        if (held) return this.task(live)!
-        throw new Error(`${live} holds no whole message ${message} to cut "${quote}" from`)
+        if (held) return this.task(live)!;
+        throw new Error(`${live} holds no whole message ${message} to cut "${quote}" from`);
       }
-      if (whole === held) return this.task(live)!
-      if (!whole.text.includes(quote) || (said.from === 't3' && !pieces.some(piece => piece.includes(quote)))) throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`)
-      if (held && whole.text !== said.body) return this.task(live)!
-      const others = whole.text === said.body ? rows.filter(row => row === held || (pieces.includes(row.text) && row.text.includes(quote))) : []
-      for (const row of others.filter(row => row !== whole)) this.db.query('delete from words where rowid = ?').run(row.rowid)
-      this.db.query('update words set text = ? where rowid = ?').run(quote, whole.rowid)
-      return this.task(live)!
-    })
+      if (whole === held) return this.task(live)!;
+      if (
+        !whole.text.includes(quote) ||
+        (said.from === "t3" && !pieces.some((piece) => piece.includes(quote)))
+      )
+        throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`);
+      if (held && whole.text !== said.body) return this.task(live)!;
+      const others =
+        whole.text === said.body
+          ? rows.filter(
+              (row) => row === held || (pieces.includes(row.text) && row.text.includes(quote)),
+            )
+          : [];
+      for (const row of others.filter((row) => row !== whole))
+        this.db.query("delete from words where rowid = ?").run(row.rowid);
+      this.db.query("update words set text = ? where rowid = ?").run(quote, whole.rowid);
+      return this.task(live)!;
+    });
   }
 
   editTask(id: string, change: TaskChange): Task {
-    const title = change.title === undefined ? undefined : oneLine(change.title)
-    if (title === '') throw new Error("a task's title can't be empty")
+    const title = change.title === undefined ? undefined : oneLine(change.title);
+    if (title === "") throw new Error("a task's title can't be empty");
     return this.write(() => {
-      const task = this.task(id)
-      if (!task) throw new Error(`no task ${id}`)
-      const next = { ...task, ...Object.fromEntries(Object.entries({ ...change, title }).filter(([, value]) => value !== undefined)) }
+      const task = this.task(id);
+      if (!task) throw new Error(`no task ${id}`);
+      const next = {
+        ...task,
+        ...Object.fromEntries(
+          Object.entries({ ...change, title }).filter(([, value]) => value !== undefined),
+        ),
+      };
       // A task that's live again isn't done, so the proof it was closed with goes.
-      if ((next.status === 'open' || next.status === 'idea') && change.proof === undefined) delete next.proof
-      const closed = next.status === 'done' || next.status === 'dropped' ? (next.status === task.status ? task.closed : now()) : undefined
+      if ((next.status === "open" || next.status === "idea") && change.proof === undefined)
+        delete next.proof;
+      const closed =
+        next.status === "done" || next.status === "dropped"
+          ? next.status === task.status
+            ? task.closed
+            : now()
+          : undefined;
       this.db
-        .query('update tasks set title = ?, owner = ?, status = ?, project = ?, done_when = ?, proof = ?, closed = ? where n = ?')
-        .run(next.title ?? null, next.owner, next.status, next.project ?? null, next.doneWhen ?? null, next.proof ?? null, closed ?? null, number(id))
-      if (change.doneIn) this.db.query('update tasks set done_in = ? where n = ?').run(change.doneIn, number(id))
-      return this.task(id)!
-    })
+        .query(
+          "update tasks set title = ?, owner = ?, status = ?, project = ?, done_when = ?, proof = ?, closed = ? where n = ?",
+        )
+        .run(
+          next.title ?? null,
+          next.owner,
+          next.status,
+          next.project ?? null,
+          next.doneWhen ?? null,
+          next.proof ?? null,
+          closed ?? null,
+          number(id),
+        );
+      if (change.doneIn)
+        this.db.query("update tasks set done_in = ? where n = ?").run(change.doneIn, number(id));
+      return this.task(id)!;
+    });
   }
 
   // Agents and sessions started for a task, so what shows them shows them as its work, wherever they started.
   addAgents(id: string, agents: string[], thread?: string): Task {
     return this.write(() => {
-      const short = agents.find(agent => !/^[\w-]{8,}$/.test(agent))
-      if (short) throw new Error(`"${short}" isn't an agent or session id: use the id it was started with, 8 characters or more`)
-      const live = this.live(id)
-      const add = this.db.query('insert into task_agents (agent, task, at, thread) values (?, ?, ?, ?) on conflict (agent) do update set task = excluded.task, at = excluded.at, thread = excluded.thread')
-      for (const agent of agents) add.run(agent, number(live), now(), thread ?? null)
-      return this.task(live)!
-    })
+      const short = agents.find((agent) => !/^[\w-]{8,}$/.test(agent));
+      if (short)
+        throw new Error(
+          `"${short}" isn't an agent or session id: use the id it was started with, 8 characters or more`,
+        );
+      const live = this.live(id);
+      const add = this.db.query(
+        "insert into task_agents (agent, task, at, thread) values (?, ?, ?, ?) on conflict (agent) do update set task = excluded.task, at = excluded.at, thread = excluded.thread",
+      );
+      for (const agent of agents) add.run(agent, number(live), now(), thread ?? null);
+      return this.task(live)!;
+    });
   }
 
   // The threads a task's work ran in, newest first: the one that closed it, then those that linked its agents.
   worked(id: string): string[] {
-    const closed = this.db.query('select done_in from tasks where n = ? and done_in is not null').all(number(id)) as { done_in: string }[]
-    const linked = this.db.query('select thread from task_agents where task = ? and thread is not null order by at desc').all(number(id)) as { thread: string }[]
-    return [...closed.map(row => row.done_in), ...linked.map(row => row.thread)]
+    const closed = this.db
+      .query("select done_in from tasks where n = ? and done_in is not null")
+      .all(number(id)) as { done_in: string }[];
+    const linked = this.db
+      .query(
+        "select thread from task_agents where task = ? and thread is not null order by at desc",
+      )
+      .all(number(id)) as { thread: string }[];
+    return [...closed.map((row) => row.done_in), ...linked.map((row) => row.thread)];
   }
 
   // The task each linked agent works for, by its id, with whose task it is and its project.
-  agentTasks(): Record<string, Pick<Task, 'id' | 'owner' | 'project'>> {
-    const rows = this.db.query('select a.agent, t.n, t.owner, t.project from task_agents a join tasks t on t.n = a.task').all() as { agent: string; n: number; owner: string; project: string | null }[]
-    return Object.fromEntries(rows.map(row => [row.agent, { id: `t-${row.n}`, owner: row.owner, ...(row.project && { project: row.project }) }]))
+  agentTasks(): Record<string, Pick<Task, "id" | "owner" | "project">> {
+    const rows = this.db
+      .query(
+        "select a.agent, t.n, t.owner, t.project from task_agents a join tasks t on t.n = a.task",
+      )
+      .all() as { agent: string; n: number; owner: string; project: string | null }[];
+    return Object.fromEntries(
+      rows.map((row) => [
+        row.agent,
+        { id: `t-${row.n}`, owner: row.owner, ...(row.project && { project: row.project }) },
+      ]),
+    );
   }
 
   // Folds a duplicate into the task it repeats: its words follow into's, and it's dropped.
   mergeTasks(into: string, from: string): Task {
     return this.write(() => {
-      if (number(into) === number(from)) throw new Error(`${into} can't be merged into itself`)
+      if (number(into) === number(from)) throw new Error(`${into} can't be merged into itself`);
       for (const id of [into, from]) {
-        const status = this.task(id)?.status
-        if (!status) throw new Error(`no task ${id}`)
-        if (status !== 'idea' && status !== 'open') throw new Error(`${id} is ${status}; only idea and open tasks merge`)
+        const status = this.task(id)?.status;
+        if (!status) throw new Error(`no task ${id}`);
+        if (status !== "idea" && status !== "open")
+          throw new Error(`${id} is ${status}; only idea and open tasks merge`);
       }
-      this.db.query('insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid').run(number(into), number(from))
-      this.db.query("update tasks set status = 'dropped', merged_into = ?, closed = ? where n = ?").run(number(into), now(), number(from))
-      this.db.query('update task_agents set task = ? where task = ?').run(number(into), number(from))
-      return this.task(into)!
-    })
+      this.db
+        .query(
+          "insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid",
+        )
+        .run(number(into), number(from));
+      this.db
+        .query("update tasks set status = 'dropped', merged_into = ?, closed = ? where n = ?")
+        .run(number(into), now(), number(from));
+      this.db
+        .query("update task_agents set task = ? where task = ?")
+        .run(number(into), number(from));
+      return this.task(into)!;
+    });
   }
 
   task(id: string): Task | null {
-    const row = this.db.query('select * from tasks where n = ?').get(number(id)) as StoredTask | null
-    return row && this.toTask(row)
+    const row = this.db
+      .query("select * from tasks where n = ?")
+      .get(number(id)) as StoredTask | null;
+    return row && this.toTask(row);
   }
 
   // Newest first: every task, or one owner's, or those in some states; without the owner's words,
   // for a reader that shows only titles.
-  tasks(filter?: { owner?: string; status?: Status[]; words?: true }): Task[]
-  tasks(filter: { owner?: string; status?: Status[]; words: false }): Omit<Task, 'words'>[]
-  tasks({ owner, status, words = true }: { owner?: string; status?: Status[]; words?: boolean } = {}): Omit<Task, 'words'>[] {
-    const [where, params] = clause([owner !== undefined && ['owner = ?', owner], status && ['status in (select value from json_each(?))', JSON.stringify(status)]])
-    const rows = this.db.query(`select * from tasks ${where} order by at desc, n desc`).all(...params) as StoredTask[]
-    return rows.map(row => (words ? this.toTask(row) : toLine(row)))
+  tasks(filter?: { owner?: string; status?: Status[]; words?: true }): Task[];
+  tasks(filter: { owner?: string; status?: Status[]; words: false }): Omit<Task, "words">[];
+  tasks({
+    owner,
+    status,
+    words = true,
+  }: { owner?: string; status?: Status[]; words?: boolean } = {}): Omit<Task, "words">[] {
+    const [where, params] = clause([
+      owner !== undefined && ["owner = ?", owner],
+      status && ["status in (select value from json_each(?))", JSON.stringify(status)],
+    ]);
+    const rows = this.db
+      .query(`select * from tasks ${where} order by at desc, n desc`)
+      .all(...params) as StoredTask[];
+    return rows.map((row) => (words ? this.toTask(row) : toLine(row)));
   }
 
   // The owner's last finished tasks, newest first, without their words.
-  lastDone(owner: string, count: number): Omit<Task, 'words'>[] {
-    const rows = this.db.query("select * from tasks where owner = ? and status = 'done' order by closed desc, n desc limit ?").all(owner, count) as StoredTask[]
-    return rows.map(toLine)
+  lastDone(owner: string, count: number): Omit<Task, "words">[] {
+    const rows = this.db
+      .query(
+        "select * from tasks where owner = ? and status = 'done' order by closed desc, n desc limit ?",
+      )
+      .all(owner, count) as StoredTask[];
+    return rows.map(toLine);
   }
 
   // Every owner's tasks finished since a moment, newest first, without their words.
-  finished(since: string): Omit<Task, 'words'>[] {
-    const rows = this.db.query("select * from tasks where status = 'done' and closed >= ? order by closed desc, n desc").all(since) as StoredTask[]
-    return rows.map(toLine)
+  finished(since: string): Omit<Task, "words">[] {
+    const rows = this.db
+      .query(
+        "select * from tasks where status = 'done' and closed >= ? order by closed desc, n desc",
+      )
+      .all(since) as StoredTask[];
+    return rows.map(toLine);
   }
 
   // An app's open threads as its hub keeps them. A thread left out has closed: it keeps its row, with
@@ -882,111 +1306,224 @@ export class Store {
   // last has it.
   keepThreads(app: string, open: Record<string, Kept>) {
     this.write(() => {
-      this.db.query('update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))').run(app, JSON.stringify(Object.keys(open)))
+      this.db
+        .query(
+          "update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))",
+        )
+        .run(app, JSON.stringify(Object.keys(open)));
       const keep = this.db.query(
         `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork, link) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
         on conflict (thread) do update set app = excluded.app, name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
           effort = excluded.effort, launched = excluded.launched, fork = excluded.fork, link = coalesce(excluded.link, link)
         where (app, name, open, session, cwd, model, effort, launched, fork) is not (excluded.app, excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
           or coalesce(excluded.link, link) is not link`,
-      )
-      for (const [thread, { name, session, cwd, model, effort, launched, fork, link }] of Object.entries(open))
-        keep.run(app, thread, name, session ?? null, cwd ?? null, model ?? null, effort ?? null, launched ?? null, fork ?? null, link ?? null)
-    })
+      );
+      for (const [
+        thread,
+        { name, session, cwd, model, effort, launched, fork, link },
+      ] of Object.entries(open))
+        keep.run(
+          app,
+          thread,
+          name,
+          session ?? null,
+          cwd ?? null,
+          model ?? null,
+          effort ?? null,
+          launched ?? null,
+          fork ?? null,
+          link ?? null,
+        );
+    });
   }
 
   // Every thread hex has had, or one app's, or only those open now.
   threads({ app, open }: { app?: string; open?: boolean } = {}): Thread[] {
     const rows = this.db
-      .query('select * from threads where (?1 is null or app = ?1) and (?2 is null or open = ?2) order by app, thread')
-      .all(app ?? null, open === undefined ? null : Number(open)) as (Record<string, string | null> & { open: number })[]
-    return rows.map(({ open, ...row }) => ({ ...(Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Omit<Thread, 'open'>), open: !!open }))
+      .query(
+        "select * from threads where (?1 is null or app = ?1) and (?2 is null or open = ?2) order by app, thread",
+      )
+      .all(app ?? null, open === undefined ? null : Number(open)) as (Record<
+      string,
+      string | null
+    > & { open: number })[];
+    return rows.map(({ open, ...row }) => ({
+      ...(Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Omit<
+        Thread,
+        "open"
+      >),
+      open: !!open,
+    }));
   }
 
   // Each thread's name by its key.
   names(): Record<string, string> {
-    return Object.assign(Object.create(null), Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name])))
+    return Object.assign(
+      Object.create(null),
+      Object.fromEntries(this.threads().map(({ thread, name }) => [thread, name])),
+    );
   }
 
   // Each thread's id, <app>:<key>, the way every --json output names it, by its key.
   ids(): Record<string, string> {
-    return Object.assign(Object.create(null), Object.fromEntries(this.threads().map(({ app, thread }) => [thread, `${app}:${thread}`])))
+    return Object.assign(
+      Object.create(null),
+      Object.fromEntries(this.threads().map(({ app, thread }) => [thread, `${app}:${thread}`])),
+    );
   }
 
   // A thread's key from its id, <app>:<key>, or from the key itself.
   key(id: string): string {
-    const split = id.indexOf(':')
-    return split > 0 && this.db.query('select 1 from threads where app = ? limit 1').get(id.slice(0, split)) ? id.slice(split + 1) : id
+    const split = id.indexOf(":");
+    return split > 0 &&
+      this.db.query("select 1 from threads where app = ? limit 1").get(id.slice(0, split))
+      ? id.slice(split + 1)
+      : id;
   }
 
   // A new question; at, answer and settled come only with one an older hex kept elsewhere.
-  ask({ asker, app, thread, message, text, options, poll, multiple, at = now(), answer, settled }: NewQuestion) {
+  ask({
+    asker,
+    app,
+    thread,
+    message,
+    text,
+    options,
+    poll,
+    multiple,
+    at = now(),
+    answer,
+    settled,
+  }: NewQuestion) {
     this.write(() =>
       this.db
         // An older hex's questions, which a step before the asker column brings in, are hex's.
-        .query(`insert into questions (${asker ? 'asker, ' : ''}app, thread, message, text, options, poll, multiple, answer, settled, at) values (${asker ? '?, ' : ''}?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing`)
-        .run(...(asker ? [asker] : []), app, thread, message, text, JSON.stringify(options), poll ?? null, multiple ? 1 : 0, answer ? JSON.stringify(answer) : null, settled ? JSON.stringify(settled) : null, at),
-    )
+        .query(
+          `insert into questions (${asker ? "asker, " : ""}app, thread, message, text, options, poll, multiple, answer, settled, at) values (${asker ? "?, " : ""}?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing`,
+        )
+        .run(
+          ...(asker ? [asker] : []),
+          app,
+          thread,
+          message,
+          text,
+          JSON.stringify(options),
+          poll ?? null,
+          multiple ? 1 : 0,
+          answer ? JSON.stringify(answer) : null,
+          settled ? JSON.stringify(settled) : null,
+          at,
+        ),
+    );
   }
 
   question(app: string, thread: string, message: MessageId): Question | null {
-    const row = this.db.query('select * from questions where app = ? and thread = ? and message = ?').get(app, thread, message) as StoredQuestion | null
-    return row && toQuestion(row)
+    const row = this.db
+      .query("select * from questions where app = ? and thread = ? and message = ?")
+      .get(app, thread, message) as StoredQuestion | null;
+    return row && toQuestion(row);
   }
 
   poll(app: string, poll: string): Question | null {
-    const row = this.db.query('select * from questions where app = ? and poll = ?').get(app, poll) as StoredQuestion | null
-    return row && toQuestion(row)
+    const row = this.db
+      .query("select * from questions where app = ? and poll = ?")
+      .get(app, poll) as StoredQuestion | null;
+    return row && toQuestion(row);
   }
 
   // Oldest first: every app's, or one app's or thread's, one asker's, and only those still waiting
   // on the owner: hex's they haven't answered, and theirs hex answered that they haven't come back to.
-  questions({ app, thread, asker, waiting }: { app?: string; thread?: string; asker?: 'hex' | 'owner'; waiting?: boolean } = {}): Question[] {
+  questions({
+    app,
+    thread,
+    asker,
+    waiting,
+  }: {
+    app?: string;
+    thread?: string;
+    asker?: "hex" | "owner";
+    waiting?: boolean;
+  } = {}): Question[] {
     const [where, params] = clause([
-      app !== undefined && ['app = ?', app],
-      thread !== undefined && ['thread = ?', thread],
-      asker !== undefined && ['asker = ?', asker],
-      waiting && [`settled is null and (asker = 'hex' and answer is null or asker = 'owner' and answer is not null)`],
-    ])
-    return (this.db.query(`select * from questions ${where} order by n`).all(...params) as StoredQuestion[]).map(toQuestion)
+      app !== undefined && ["app = ?", app],
+      thread !== undefined && ["thread = ?", thread],
+      asker !== undefined && ["asker = ?", asker],
+      waiting && [
+        `settled is null and (asker = 'hex' and answer is null or asker = 'owner' and answer is not null)`,
+      ],
+    ]);
+    return (
+      this.db
+        .query(`select * from questions ${where} order by n`)
+        .all(...params) as StoredQuestion[]
+    ).map(toQuestion);
   }
 
   // hex said something in a thread: the answer to one of the owner's questions there it quoted, or
   // else to each whose answer still moves.
   replied(app: string, thread: string, answer: Answer, to?: MessageId) {
-    const which = to === undefined ? `json_extract(answer, '$.kept') is null` : 'message = ?'
+    const which = to === undefined ? `json_extract(answer, '$.kept') is null` : "message = ?";
     this.write(() =>
       this.db
-        .query(`update questions set answer = ? where asker = 'owner' and app = ? and thread = ? and settled is null and ${which}`)
-        .run(JSON.stringify(to === undefined ? answer : { ...answer, kept: true }), app, thread, ...(to === undefined ? [] : [to])),
-    )
+        .query(
+          `update questions set answer = ? where asker = 'owner' and app = ? and thread = ? and settled is null and ${which}`,
+        )
+        .run(
+          JSON.stringify(to === undefined ? answer : { ...answer, kept: true }),
+          app,
+          thread,
+          ...(to === undefined ? [] : [to]),
+        ),
+    );
   }
 
   // The owner wrote in a thread again: what hex answered their questions there stops moving.
   returned(app: string, thread: string) {
     this.write(() =>
-      this.db.query(`update questions set answer = json_set(answer, '$.kept', json('true')) where asker = 'owner' and app = ? and thread = ? and answer is not null and settled is null`).run(app, thread),
-    )
+      this.db
+        .query(
+          `update questions set answer = json_set(answer, '$.kept', json('true')) where asker = 'owner' and app = ? and thread = ? and answer is not null and settled is null`,
+        )
+        .run(app, thread),
+    );
   }
 
   // The owner's answer, unless one stands already: the first tap wins, and a later one changes
   // nothing. again: a poll vote, which replaces the one before it. Whether this answer stands now.
-  answered(app: string, thread: string, message: MessageId, label: string, via: string, again = false): boolean {
+  answered(
+    app: string,
+    thread: string,
+    message: MessageId,
+    label: string,
+    via: string,
+    again = false,
+  ): boolean {
     return this.write(
       () =>
         this.db
-          .query('update questions set answer = ?, settled = null where app = ? and thread = ? and message = ? and (? or answer is null)')
-          .run(JSON.stringify({ label, at: now(), via }), app, thread, message, again).changes === 1,
-    )
+          .query(
+            "update questions set answer = ?, settled = null where app = ? and thread = ? and message = ? and (? or answer is null)",
+          )
+          .run(JSON.stringify({ label, at: now(), via }), app, thread, message, again).changes ===
+        1,
+    );
   }
 
   // The message asking it was edited: the question is what it says now.
   reworded(app: string, thread: string, message: MessageId, text: string) {
-    this.write(() => this.db.query('update questions set text = ? where app = ? and thread = ? and message = ?').run(text, app, thread, message))
+    this.write(() =>
+      this.db
+        .query("update questions set text = ? where app = ? and thread = ? and message = ?")
+        .run(text, app, thread, message),
+    );
   }
 
   settled(app: string, thread: string, message: MessageId, note: string) {
-    this.write(() => this.db.query('update questions set settled = ? where app = ? and thread = ? and message = ?').run(JSON.stringify({ note, at: now() }), app, thread, message))
+    this.write(() =>
+      this.db
+        .query("update questions set settled = ? where app = ? and thread = ? and message = ?")
+        .run(JSON.stringify({ note, at: now() }), app, thread, message),
+    );
   }
 
   // Whether the question had an answer or a settle to take back.
@@ -994,77 +1531,122 @@ export class Store {
     return this.write(
       () =>
         this.db
-          .query('update questions set answer = null, settled = null where app = ? and thread = ? and message = ? and (answer is not null or settled is not null)')
+          .query(
+            "update questions set answer = null, settled = null where app = ? and thread = ? and message = ? and (answer is not null or settled is not null)",
+          )
           .run(app, thread, message).changes === 1,
-    )
+    );
   }
 
   // The message that asked it is gone: one message's question, or a whole thread's.
   unask(app: string, thread: string, message?: MessageId) {
-    this.write(() => this.db.query('delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)').run(app, thread, message ?? null))
+    this.write(() =>
+      this.db
+        .query(
+          "delete from questions where app = ? and thread = ? and (?3 is null or message = ?3)",
+        )
+        .run(app, thread, message ?? null),
+    );
   }
 
   // The owner's profile, which the memory agent keeps: its newest version, '' when there's none yet.
   profile(): string {
-    return (this.db.query('select body from profiles order by n desc limit 1').get() as { body: string } | null)?.body ?? ''
+    return (
+      (
+        this.db.query("select body from profiles order by n desc limit 1").get() as {
+          body: string;
+        } | null
+      )?.body ?? ""
+    );
   }
 
   // Every version of the profile, newest first, each with when it was put in place.
   profiles(): { at: string; body: string }[] {
-    return this.db.query('select at, body from profiles order by n desc').all() as { at: string; body: string }[]
+    return this.db.query("select at, body from profiles order by n desc").all() as {
+      at: string;
+      body: string;
+    }[];
   }
 
   // Puts body in place as the profile if the newest is still before, so two passes never both write
   // over the one they read. The one it replaced stays, as history.
   profiled(before: string, body: string, at = now()): boolean {
     return this.write(() => {
-      if (this.profile() !== before.trim()) return false
-      if (body.trim() === before.trim()) return true
-      this.db.query('insert into profiles (at, body) values (?, ?)').run(at, body.trim())
-      return true
-    })
+      if (this.profile() !== before.trim()) return false;
+      if (body.trim() === before.trim()) return true;
+      this.db.query("insert into profiles (at, body) values (?, ?)").run(at, body.trim());
+      return true;
+    });
   }
 
   pin(app: string, thread: string): Pin | null {
-    return this.db.query('select * from pins where app = ? and thread = ?').get(app, thread) as Pin | null
+    return this.db
+      .query("select * from pins where app = ? and thread = ?")
+      .get(app, thread) as Pin | null;
   }
 
   // Every thread's pin, or one app's or one thread's.
   pins({ app, thread }: { app?: string; thread?: string } = {}): Pin[] {
-    return this.db.query('select * from pins where (?1 is null or app = ?1) and (?2 is null or thread = ?2) order by app, thread').all(app ?? null, thread ?? null) as Pin[]
+    return this.db
+      .query(
+        "select * from pins where (?1 is null or app = ?1) and (?2 is null or thread = ?2) order by app, thread",
+      )
+      .all(app ?? null, thread ?? null) as Pin[];
   }
 
   // The thread's pin is now this message; at comes only with one an older hex kept elsewhere.
-  pinned({ app, thread, message, text, note, at = now() }: Omit<Pin, 'at'> & { at?: string }) {
+  pinned({ app, thread, message, text, note, at = now() }: Omit<Pin, "at"> & { at?: string }) {
     this.write(() =>
       this.db
-        .query('insert into pins (app, thread, message, text, note, at) values (?, ?, ?, ?, ?, ?) on conflict (app, thread) do update set message = excluded.message, text = excluded.text, note = excluded.note, at = excluded.at')
+        .query(
+          "insert into pins (app, thread, message, text, note, at) values (?, ?, ?, ?, ?, ?) on conflict (app, thread) do update set message = excluded.message, text = excluded.text, note = excluded.note, at = excluded.at",
+        )
         .run(app, thread, message, text, note ?? null, at),
-    )
+    );
   }
 
   // The thread has no pin now, or none if its pin was this message; with no thread, no thread of the app has one.
   unpinned(app: string, thread?: string, message?: MessageId) {
-    this.write(() => this.db.query('delete from pins where app = ?1 and (?2 is null or thread = ?2) and (?3 is null or message = ?3)').run(app, thread ?? null, message ?? null))
+    this.write(() =>
+      this.db
+        .query(
+          "delete from pins where app = ?1 and (?2 is null or thread = ?2) and (?3 is null or message = ?3)",
+        )
+        .run(app, thread ?? null, message ?? null),
+    );
   }
 
   // What a session was last shown of one kind, like its rules or its tasks: '' when nothing yet.
   seen(session: string, kind: string): string {
-    return (this.db.query('select record from seen where session = ? and kind = ?').get(session, kind) as { record: string } | null)?.record ?? ''
+    return (
+      (
+        this.db
+          .query("select record from seen where session = ? and kind = ?")
+          .get(session, kind) as { record: string } | null
+      )?.record ?? ""
+    );
   }
 
   // A tasks record nobody changed for SEEN goes, since a session's end leaves it (a resume still has
   // the list): a session that's still there gets its whole list again. Rules and hex records go at the end.
   show(session: string, kind: string, record: string, at = now()) {
     this.write(() => {
-      this.db.query('insert into seen (session, kind, record, at) values (?, ?, ?, ?) on conflict (session, kind) do update set record = excluded.record, at = excluded.at').run(session, kind, record, at)
-      this.db.query("delete from seen where kind not in ('rules', 'hex') and at < ?").run(new Date(Date.parse(at) - SEEN).toISOString())
-    })
+      this.db
+        .query(
+          "insert into seen (session, kind, record, at) values (?, ?, ?, ?) on conflict (session, kind) do update set record = excluded.record, at = excluded.at",
+        )
+        .run(session, kind, record, at);
+      this.db
+        .query("delete from seen where kind not in ('rules', 'hex') and at < ?")
+        .run(new Date(Date.parse(at) - SEEN).toISOString());
+    });
   }
 
   // The session's context lost what it was shown of a kind: a compaction, a clear, or for its rules, its end.
   unshow(session: string, kind: string) {
-    this.write(() => this.db.query('delete from seen where session = ? and kind = ?').run(session, kind))
+    this.write(() =>
+      this.db.query("delete from seen where session = ? and kind = ?").run(session, kind),
+    );
   }
 
   // hex's own record of a session's turn: it began (busy) or ended at the time its hook started. An
@@ -1078,54 +1660,98 @@ export class Store {
   // after the last turn ended, since Claude Code's records of the turn can come before the hook.
   turned(session: string, busy: boolean, at = now(), heartbeat = false, flipped?: number) {
     this.write(() => {
-      const { began, ended } = this.turn(session)
-      const opens = heartbeat && (!began || !!ended)
-      const from = opens && flipped !== undefined && flipped <= Date.parse(at) && (!ended || flipped > Date.parse(ended)) ? new Date(flipped).toISOString() : at
-      if (busy && !heartbeat) this.db.query('delete from beats where session = ? and began > ?').run(session, at)
-      if ((!heartbeat && (busy || !began || at >= began)) || opens) this.db.query('update beats set until = ? where session = ? and until is null and began <= ?').run(at, session, at)
-      if (busy && !heartbeat) this.db.query('update beats set after = ? where session = ? and after is null').run(at, session)
-      if (opens) this.db.query('insert into beats (session, began) values (?, ?)').run(session, from)
-      this.db.query('delete from beats where coalesce(after, until, began) < ? and (after is not null or rowid > (select min(rowid) from beats run where run.session = beats.session and run.after is null))').run(new Date(Date.parse(at) - BEATS).toISOString())
-      if (busy) this.db.query('insert into turns (session, began, handled) values (?1, ?2, ?2) on conflict (session) do update set began = excluded.began, ended = null, handled = coalesce(handled, excluded.began)').run(session, at)
-      else this.db.query('insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)').run(session, at)
-      this.db.query('delete from turns where coalesce(ended, began) < ?').run(new Date(Date.parse(at) - TURNS).toISOString())
-    })
+      const { began, ended } = this.turn(session);
+      const opens = heartbeat && (!began || !!ended);
+      const from =
+        opens &&
+        flipped !== undefined &&
+        flipped <= Date.parse(at) &&
+        (!ended || flipped > Date.parse(ended))
+          ? new Date(flipped).toISOString()
+          : at;
+      if (busy && !heartbeat)
+        this.db.query("delete from beats where session = ? and began > ?").run(session, at);
+      if ((!heartbeat && (busy || !began || at >= began)) || opens)
+        this.db
+          .query("update beats set until = ? where session = ? and until is null and began <= ?")
+          .run(at, session, at);
+      if (busy && !heartbeat)
+        this.db
+          .query("update beats set after = ? where session = ? and after is null")
+          .run(at, session);
+      if (opens)
+        this.db.query("insert into beats (session, began) values (?, ?)").run(session, from);
+      this.db
+        .query(
+          "delete from beats where coalesce(after, until, began) < ? and (after is not null or rowid > (select min(rowid) from beats run where run.session = beats.session and run.after is null))",
+        )
+        .run(new Date(Date.parse(at) - BEATS).toISOString());
+      if (busy)
+        this.db
+          .query(
+            "insert into turns (session, began, handled) values (?1, ?2, ?2) on conflict (session) do update set began = excluded.began, ended = null, handled = coalesce(handled, excluded.began)",
+          )
+          .run(session, at);
+      else
+        this.db
+          .query(
+            "insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)",
+          )
+          .run(session, at);
+      this.db
+        .query("delete from turns where coalesce(ended, began) < ?")
+        .run(new Date(Date.parse(at) - TURNS).toISOString());
+    });
   }
 
   beats(session: string): { began: string; until?: string; after?: string }[] {
-    return this.everyBeat().get(session) ?? []
+    return this.everyBeat().get(session) ?? [];
   }
 
   // Each session's heartbeats, oldest first.
   everyBeat(): Map<string, { began: string; until?: string; after?: string }[]> {
-    const beats = new Map<string, { began: string; until?: string; after?: string }[]>()
-    for (const { session, ...row } of this.db.query('select session, began, until, after from beats order by began').all() as Record<string, string | null>[]) {
-      const beat = Object.fromEntries(Object.entries(row).filter(([, value]) => value)) as { began: string; until?: string; after?: string }
-      beats.set(session!, [...(beats.get(session!) ?? []), beat])
+    const beats = new Map<string, { began: string; until?: string; after?: string }[]>();
+    for (const { session, ...row } of this.db
+      .query("select session, began, until, after from beats order by began")
+      .all() as Record<string, string | null>[]) {
+      const beat = Object.fromEntries(Object.entries(row).filter(([, value]) => value)) as {
+        began: string;
+        until?: string;
+        after?: string;
+      };
+      beats.set(session!, [...(beats.get(session!) ?? []), beat]);
     }
-    return beats
+    return beats;
   }
 
   // Changes whenever a heartbeat begins, ends or is followed, or a turn of a session that has had one.
   beaten(): string {
     return JSON.stringify(
-      this.db.query('select max(rowid), count(*), count(until), count(after), (select max(coalesce(ended, began)) from turns where session in (select session from beats)) from beats').values(),
-    )
+      this.db
+        .query(
+          "select max(rowid), count(*), count(until), count(after), (select max(coalesce(ended, began)) from turns where session in (select session from beats)) from beats",
+        )
+        .values(),
+    );
   }
 
   // The session's turn ended with its answer (its Stop hook), or the hub or the owner ended it: what it took by then is handled.
   handled(session: string, at = now()) {
     this.write(() => {
-      const { began, ended } = this.turn(session)
-      if (began && !ended) this.turned(session, false, at)
-      this.db.query('insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2), waiting = null').run(session, at)
-    })
+      const { began, ended } = this.turn(session);
+      if (began && !ended) this.turned(session, false, at);
+      this.db
+        .query(
+          "insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2), waiting = null",
+        )
+        .run(session, at);
+    });
   }
 
   // The session's turn ended with background agents still working for it: what it took isn't handled until they report
   // and a later turn ends, so a session that dies first (a reboot) died in the middle of its work.
   waitsOnAgents(session: string, at = now()) {
-    this.db.query('update turns set waiting = ? where session = ?').run(at, session)
+    this.db.query("update turns set waiting = ? where session = ?").run(at, session);
   }
 
   // The thread's sessions are gone, and any whose turn never ended, or ended with its background agents still working,
@@ -1137,59 +1763,112 @@ export class Store {
   cut(thread: string, session?: string, at = now()): string[] {
     return this.write(() => {
       const open = this.db
-        .query(`select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`)
-        .all(thread, session ?? null) as { session: string; handled: string | null }[]
+        .query(
+          `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`,
+        )
+        .all(thread, session ?? null) as { session: string; handled: string | null }[];
       return open.flatMap(({ session, handled }) => {
-        this.turned(session, false, at)
-        this.db.query('update turns set waiting = null where session = ?').run(session)
+        this.turned(session, false, at);
+        this.db.query("update turns set waiting = null where session = ?").run(session);
         const given = this.db
-          .query(`update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`)
-          .values(session, handled) as [string][]
-        return given.map(([key]) => key)
-      })
-    })
+          .query(
+            `update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`,
+          )
+          .values(session, handled) as [string][];
+        return given.map(([key]) => key);
+      });
+    });
   }
 
   // Whether a session of the thread is in the middle of a turn, or of its background agents' work, in hex's record of it.
   midTurn(thread: string): boolean {
-    return !!this.db.query(`select 1 from turns where (began is not null and ended is null or waiting is not null) and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`).get(thread)
+    return !!this.db
+      .query(
+        `select 1 from turns where (began is not null and ended is null or waiting is not null) and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`,
+      )
+      .get(thread);
   }
 
   // The session is mid-turn, or its turn ended with background agents still working for it.
   atWork(session: string): boolean {
-    return !!this.db.query('select 1 from turns where session = ? and (began is not null and ended is null or waiting is not null)').get(session)
+    return !!this.db
+      .query(
+        "select 1 from turns where session = ? and (began is not null and ended is null or waiting is not null)",
+      )
+      .get(session);
   }
 
   turn(session: string): { began?: string; ended?: string; handled?: string } {
-    const row = this.db.query('select began, ended, handled from turns where session = ?').get(session) as Record<string, string | null> | null
-    return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value))
+    const row = this.db
+      .query("select began, ended, handled from turns where session = ?")
+      .get(session) as Record<string, string | null> | null;
+    return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value));
   }
 
   // A thread (<app>:<key>) sent a T3 Code thread a message at a time, which started or steered its run: the newest per pair is kept.
   relayed(from: string, thread: string, run: string, at = now()) {
-    this.write(() => this.db.query('insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at where excluded.at >= relays.at').run(from, thread, run, at))
+    this.write(() =>
+      this.db
+        .query(
+          'insert into relays ("from", thread, run, at) values (?, ?, ?, ?) on conflict ("from", thread) do update set run = excluded.run, at = excluded.at where excluded.at >= relays.at',
+        )
+        .run(from, thread, run, at),
+    );
   }
 
   relays() {
-    return this.db.query('select "from", thread, run, at from relays order by at').all() as { from: string; thread: string; run: string; at: string }[]
+    return this.db.query('select "from", thread, run, at from relays order by at').all() as {
+      from: string;
+      thread: string;
+      run: string;
+      at: string;
+    }[];
   }
 
   private quote(task: string, message: string, quote?: string) {
-    const said = this.message(message)
-    if (!said) throw new Error(`no message ${message}`)
-    const pieces = quote === undefined && said.from === 't3' ? sent(said.body) : []
-    if (quote === undefined && this.db.query('select 1 from words where task = ? and message = ?').get(number(task), message)) return
-    const texts = quote !== undefined ? [quote] : said.from === 't3' ? pieces : said.author === 'call' ? spoken(said).split('\n') : [said.body]
-    if (!texts.length) throw new Error(`${message} has no words to quote`)
-    if (!spoken(said)) throw new Error(`${message} is ${said.author}'s, not the owner's; a task holds the owner's words`)
+    const said = this.message(message);
+    if (!said) throw new Error(`no message ${message}`);
+    const pieces = quote === undefined && said.from === "t3" ? sent(said.body) : [];
+    if (
+      quote === undefined &&
+      this.db.query("select 1 from words where task = ? and message = ?").get(number(task), message)
+    )
+      return;
+    const texts =
+      quote !== undefined
+        ? [quote]
+        : said.from === "t3"
+          ? pieces
+          : said.author === "call"
+            ? spoken(said).split("\n")
+            : [said.body];
+    if (!texts.length) throw new Error(`${message} has no words to quote`);
+    if (!spoken(said))
+      throw new Error(
+        `${message} is ${said.author}'s, not the owner's; a task holds the owner's words`,
+      );
     for (const text of texts) {
-      if (!text) throw new Error(quote === undefined ? `${message} has no words to quote` : 'a quote needs words from the message')
+      if (!text)
+        throw new Error(
+          quote === undefined
+            ? `${message} has no words to quote`
+            : "a quote needs words from the message",
+        );
       if (!spoken(said).includes(text)) {
-        const now = this.latest(message)
-        if (now?.meta?.edit && spoken(now).includes(text)) throw new Error(`"${text}" is in ${now.meta.edit}, the owner's edit of ${message}: quote it under that key`)
-        throw new Error(`"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`)
+        const now = this.latest(message);
+        if (now?.meta?.edit && spoken(now).includes(text))
+          throw new Error(
+            `"${text}" is in ${now.meta.edit}, the owner's edit of ${message}: quote it under that key`,
+          );
+        throw new Error(
+          `"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`,
+        );
       }
-      this.db.query('insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing').run(number(task), message, text)
+      this.db
+        .query(
+          "insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing",
+        )
+        .run(number(task), message, text);
     }
   }
 
@@ -1203,9 +1882,9 @@ export class Store {
          )
          select n from chain where next is null`,
       )
-      .get(number(id)) as { n: number } | null
-    if (!row) throw new Error(`no task ${id}`)
-    return `t-${row.n}`
+      .get(number(id)) as { n: number } | null;
+    if (!row) throw new Error(`no task ${id}`);
+    return `t-${row.n}`;
   }
 
   private toTask(row: StoredTask): Task {
@@ -1214,50 +1893,50 @@ export class Store {
         `select words.message, words.text, messages.author as who, messages.at
          from words join messages on messages.key = words.message where words.task = ? order by words.rowid`,
       )
-      .all(row.n) as Words[]
-    return { ...toLine(row), words }
+      .all(row.n) as Words[];
+    return { ...toLine(row), words };
   }
 
   private version() {
-    return (this.db.query('pragma user_version').get() as { user_version: number }).user_version
+    return (this.db.query("pragma user_version").get() as { user_version: number }).user_version;
   }
 
   // Changes since this connection opened: its own, and other processes' commits.
   private moved() {
-    return `${(this.db.query('pragma data_version').get() as { data_version: number }).data_version}:${this.changes()}`
+    return `${(this.db.query("pragma data_version").get() as { data_version: number }).data_version}:${this.changes()}`;
   }
 
   private changes() {
-    return (this.db.query('select total_changes() as n').get() as { n: number }).n
+    return (this.db.query("select total_changes() as n").get() as { n: number }).n;
   }
 }
 
-const stores = new Map<string, Store>()
+const stores = new Map<string, Store>();
 
 // hex's folder, and the state folder hex.db is in. A hub's (own: its app's folder) is its hex's, or
 // outside a hex its own; it names it in HEX_STORE for its sessions, whose hooks and commands read it.
-export const hexDir = () => process.env.HEX_DIR || join(import.meta.dir, '..', '..')
+export const hexDir = () => process.env.HEX_DIR || join(import.meta.dir, "..", "..");
 export function stateDir(own?: string) {
-  if (own) return process.env.HEX_DIR ? join(process.env.HEX_DIR, 'state') : own
-  return process.env.HEX_STORE || join(hexDir(), 'state')
+  if (own) return process.env.HEX_DIR ? join(process.env.HEX_DIR, "state") : own;
+  return process.env.HEX_STORE || join(hexDir(), "state");
 }
 
 // The store in dir (a hex's state/), one per process.
 export function open(dir: string): Store {
-  let store = stores.get(dir)
-  if (!store) stores.set(dir, (store = new Store(dir)))
-  return store
+  let store = stores.get(dir);
+  if (!store) stores.set(dir, (store = new Store(dir)));
+  return store;
 }
 
-const oneLine = (text: string) => text.replace(/\s+/g, ' ').trim()
+const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
 
 function number(id: string): number {
-  const n = Number(id.replace(/^t-/, ''))
-  if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`)
-  return n
+  const n = Number(id.replace(/^t-/, ""));
+  if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`);
+  return n;
 }
 
-function toLine(row: StoredTask): Omit<Task, 'words'> {
+function toLine(row: StoredTask): Omit<Task, "words"> {
   return {
     id: `t-${row.n}`,
     title: row.title,
@@ -1269,18 +1948,21 @@ function toLine(row: StoredTask): Omit<Task, 'words'> {
     ...(row.proof && { proof: row.proof }),
     ...(row.merged_into && { mergedInto: `t-${row.merged_into}` }),
     ...(row.closed && { closed: row.closed }),
-  }
+  };
 }
 
 // A where clause from the terms that apply, each with the value it binds, if any.
 function clause(terms: (false | undefined | [string, ...string[]])[]): [string, string[]] {
-  const kept = terms.filter(term => !!term)
-  return [kept.length ? `where ${kept.map(([sql]) => sql).join(' and ')}` : '', kept.flatMap(([, ...values]) => values)]
+  const kept = terms.filter((term) => !!term);
+  return [
+    kept.length ? `where ${kept.map(([sql]) => sql).join(" and ")}` : "",
+    kept.flatMap(([, ...values]) => values),
+  ];
 }
 
 function toQuestion(row: StoredQuestion): Question {
   return {
-    ...(row.asker === 'owner' && { asker: 'owner' as const }),
+    ...(row.asker === "owner" && { asker: "owner" as const }),
     app: row.app,
     thread: row.thread,
     message: row.message,
@@ -1291,36 +1973,55 @@ function toQuestion(row: StoredQuestion): Question {
     ...(row.multiple && { multiple: true }),
     ...(row.answer && { answer: JSON.parse(row.answer) }),
     ...(row.settled && { settled: JSON.parse(row.settled) }),
-  }
+  };
 }
 
 // T3 Code sends a message with its own context around it: the owner's words are its user_request,
 // or what's left without T3's blocks.
 export function asked(text: string) {
-  return (text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ?? text.replace(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, '')).trim()
+  return (
+    text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ??
+    text.replace(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, "")
+  ).trim();
 }
 
 // What the owner sent in a T3 prompt, piece by piece: the prompt without T3's own blocks, with the
 // request unwrapped, and anything sent with it, like an attachment, as a piece of its own.
 export function sent(body: string) {
-  const request = body.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)
-  const around = (text: string) => text.split(/^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/m).filter((_, i) => i % 2 === 0)
-  const pieces = request ? [...around(body.slice(0, request.index)), request[1]!, ...around(body.slice(request.index! + request[0].length))] : around(body)
-  return pieces.map(piece => piece.trim()).filter(Boolean)
+  const request = body.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/);
+  const around = (text: string) =>
+    text
+      .split(/^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/m)
+      .filter((_, i) => i % 2 === 0);
+  const pieces = request
+    ? [
+        ...around(body.slice(0, request.index)),
+        request[1]!,
+        ...around(body.slice(request.index! + request[0].length)),
+      ]
+    : around(body);
+  return pieces.map((piece) => piece.trim()).filter(Boolean);
 }
 
 // The owner's own words in a message: all of it when they wrote it, less the context T3 Code sends
 // around a prompt; their lines of a call's transcript; and nothing of anyone else's.
 export function spoken(row: Row): string {
-  if (row.author === 'owner') return row.from === 't3' ? row.body.replace(/^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/gm, '') : row.body
-  if (row.author !== 'call') return ''
-  return [...row.body.matchAll(/^\[[\d.]+s\] you: (.*)$/gm)].map(([, line]) => line).join('\n')
+  if (row.author === "owner")
+    return row.from === "t3"
+      ? row.body.replace(
+          /^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/gm,
+          "",
+        )
+      : row.body;
+  if (row.author !== "call") return "";
+  return [...row.body.matchAll(/^\[[\d.]+s\] you: (.*)$/gm)].map(([, line]) => line).join("\n");
 }
 
 // hex's own words, as it sent them: a reply, a post, a terminal's answer. What hex tells a session is a prompt.
-export const replied = (row: Row) => row.author === 'hex'
+export const replied = (row: Row) => row.author === "hex";
 // A row of the conversation: not a reply of hex's that failed, was an edit, or asked a permission.
-export const shown = (row: Row) => !replied(row) || !(row.meta?.failed || row.meta?.edited || row.meta?.permission)
+export const shown = (row: Row) =>
+  !replied(row) || !(row.meta?.failed || row.meta?.edited || row.meta?.permission);
 
 function toRow(row: Stored): Row {
   return {
@@ -1332,7 +2033,7 @@ function toRow(row: Stored): Row {
     at: row.at,
     ...(row.meta && { meta: JSON.parse(row.meta) }),
     ...(row.taken_by && { taken: { by: row.taken_by, at: row.taken_at! } }),
-  }
+  };
 }
 
 // SQLITE_BUSY can still surface past busy_timeout when writers never pause; a write is safe to run
@@ -1340,10 +2041,11 @@ function toRow(row: Stored): Row {
 function retry<T>(fn: () => T): T {
   for (let attempt = 1; ; attempt++) {
     try {
-      return fn()
+      return fn();
     } catch (error: any) {
-      if (!String(error?.code ?? error?.message).includes('SQLITE_BUSY') || attempt === 5) throw error
-      Bun.sleepSync(20 * attempt)
+      if (!String(error?.code ?? error?.message).includes("SQLITE_BUSY") || attempt === 5)
+        throw error;
+      Bun.sleepSync(20 * attempt);
     }
   }
 }
