@@ -4,8 +4,6 @@ import { existsSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-// app: where it's stuck, t3 or hex itself. request: what hex's General is asked to do about it; without one,
-// the action just puts it away.
 export type Stuck = {
   id: string;
   app: string;
@@ -17,9 +15,6 @@ export type Stuck = {
   request?: string;
 };
 
-// topic: the T3 project it finished in, or the thread's own title. Projects T3 Code makes for a thread with
-// none, rooted at the home folder or in its own scratch, are no project. where says the same as one line, for apps
-// that still read it.
 export type Fresh = {
   id: string;
   app: string;
@@ -29,6 +24,8 @@ export type Fresh = {
   line: string;
   at: string;
 };
+
+export type Records = { stuck: Stuck[]; fresh: Fresh[] };
 
 type Thread = {
   id: string;
@@ -51,29 +48,29 @@ const DATABASE = join(homedir(), ".t3", "userdata", "statev2.sqlite");
 const RECENT = 2 * 24 * 60 * 60_000;
 const QUEUED = 30 * 60_000;
 
-// T3 Code's own records, read only: which threads wait on a usage limit, have a run queued that
-// never started, or ended in an error you haven't seen; and which of your threads finished since
-// you last opened them. It reads again whenever T3 Code writes its database.
 export class T3 {
   stuck: Stuck[] = [];
   fresh: Fresh[] = [];
+  private readonly changed: () => void;
+  private readonly path: string;
   private readonly db?: Database;
-  private pending?: ReturnType<typeof setTimeout>;
+  private pending: ReturnType<typeof setTimeout> | undefined;
   private readonly watcher?: ReturnType<typeof watch>;
 
-  constructor(
-    private readonly changed: () => void,
-    private readonly path = DATABASE,
-  ) {
+  constructor(changed: () => void, path = DATABASE) {
+    this.changed = changed;
+    this.path = path;
+
     if (!existsSync(path)) {
       return;
     }
 
     this.db = new Database(path, { readonly: true });
-    this.watcher = watch(
-      dirname(path),
-      (_, file) => file?.startsWith(basename(path)) && this.schedule(),
-    );
+    this.watcher = watch(dirname(path), (_, file) => {
+      if (file?.startsWith(basename(path)) === true) {
+        this.schedule();
+      }
+    });
     this.read();
   }
 
@@ -105,12 +102,16 @@ export class T3 {
       this.fresh = fresh;
       this.changed();
     } catch (error) {
-      process.stderr.write(`voice: t3: couldn't read ${this.path}: ${error}\n`);
+      process.stderr.write(`voice: t3: couldn't read ${this.path}: ${String(error)}\n`);
     }
   }
 
-  query(now: number) {
-    const db = this.db!;
+  query(now: number): Records {
+    const db = this.db;
+
+    if (db === undefined) {
+      return { stuck: [], fresh: [] };
+    }
 
     const threads = new Map(
       db
@@ -144,11 +145,11 @@ export class T3 {
     const iso = new Date(now).toISOString();
     const recent = new Date(now - RECENT).toISOString();
     const stuck: Stuck[] = [];
+    const limited = (thread: Thread) => thread.limit !== null && thread.limit > iso;
+    const parked = [...threads.values()].filter(limited);
+    const until = parked.flatMap((thread) => thread.limit ?? []).toSorted()[0];
 
-    const parked = [...threads.values()].filter((thread) => thread.limit && thread.limit > iso);
-
-    if (parked.length) {
-      const until = parked.map((thread) => thread.limit!).sort()[0]!;
+    if (until !== undefined) {
       stuck.push({
         id: `t3-limit-${until}`,
         app: "t3",
@@ -164,11 +165,7 @@ export class T3 {
     for (const run of queued) {
       const thread = threads.get(run.thread);
 
-      if (
-        !thread ||
-        (thread.limit && thread.limit > iso) ||
-        Date.parse(run.requested) > now - QUEUED
-      ) {
+      if (thread === undefined || limited(thread) || Date.parse(run.requested) > now - QUEUED) {
         continue;
       }
 
@@ -184,25 +181,34 @@ export class T3 {
       });
     }
 
-    const failed = latest.filter((run) => {
-      const thread = threads.get(run.thread);
+    const finished = (status: string) =>
+      latest.flatMap((run) => {
+        const thread = threads.get(run.thread);
+        const completed = run.completed;
 
-      return (
-        thread &&
-        run.status === "failed" &&
-        !(thread.limit && thread.limit > iso) &&
-        run.completed! > recent &&
-        run.completed! > (thread.visited ?? "")
-      );
-    });
+        return thread !== undefined &&
+          run.status === status &&
+          completed !== null &&
+          completed > recent &&
+          completed > (thread.visited ?? "")
+          ? [{ run, thread, completed }]
+          : [];
+      });
 
-    if (failed.length) {
-      const titles = failed.map((run) => threads.get(run.thread)!.title);
+    const failed = finished("failed").filter(({ thread }) => !limited(thread));
+
+    const lastFailed = failed
+      .map(({ completed }) => completed)
+      .toSorted()
+      .at(-1);
+
+    if (lastFailed !== undefined) {
+      const titles = failed.map(({ thread }) => thread.title);
       stuck.push({
         id: `t3-failed-${digest(
           failed
-            .map((run) => `${run.thread}:${run.ordinal}`)
-            .sort()
+            .map(({ run }) => `${run.thread}:${run.ordinal}`)
+            .toSorted()
             .join(","),
         )}`,
         app: "t3",
@@ -213,62 +219,47 @@ export class T3 {
         why: failed.length === 1 ? "You haven’t opened it since." : `${titles.join(", ")}.`,
         action: "Look",
         mark: "failed",
-        at: failed
-          .map((run) => run.completed!)
-          .sort()
-          .at(-1)!,
-        request: `These T3 Code runs ended in an error and nobody has looked since: ${failed.map((run) => `"${threads.get(run.thread)!.title}" (${run.thread})`).join(", ")}. See whether their work landed anyway; settle the ones that did and get the rest going again.`,
+        at: lastFailed,
+        request: `These T3 Code runs ended in an error and nobody has looked since: ${failed.map(({ run, thread }) => `"${thread.title}" (${run.thread})`).join(", ")}. See whether their work landed anyway; settle the ones that did and get the rest going again.`,
       });
     }
 
-    const fresh = latest
-      .filter((run) => {
-        const thread = threads.get(run.thread);
-
-        return (
-          thread?.mine &&
-          run.status === "completed" &&
-          run.completed! > recent &&
-          run.completed! > (thread.visited ?? "")
-        );
-      })
-      .sort((a, b) => b.completed!.localeCompare(a.completed!))
-      .map((run): Fresh => {
-        const thread = threads.get(run.thread)!;
-
-        return {
-          id: `t3-done-${digest(`${run.thread}:${run.ordinal}`)}`,
-          app: "t3",
-          topic: thread.project ?? thread.title,
-          title: thread.title,
-          where: thread.project ? `T3 · ${thread.project}` : "T3",
-          line: this.lastWords(run.thread),
-          at: run.completed!,
-        };
-      });
+    const fresh = finished("completed")
+      .filter(({ thread }) => thread.mine)
+      .toSorted((a, b) => b.completed.localeCompare(a.completed))
+      .map(({ run, thread, completed }): Fresh => ({
+        id: `t3-done-${digest(`${run.thread}:${run.ordinal}`)}`,
+        app: "t3",
+        topic: thread.project ?? thread.title,
+        title: thread.title,
+        where: thread.project !== null && thread.project !== "" ? `T3 · ${thread.project}` : "T3",
+        line: lastWords(db, run.thread),
+        at: completed,
+      }));
 
     return { stuck, fresh };
   }
+}
 
-  // The thread's last answer, its first plain line.
-  private lastWords(thread: string) {
-    const row = this.db!.query<{ text: string | null }, [string]>(
+function lastWords(db: Database, thread: string) {
+  const row = db
+    .query<{ text: string | null }, [string]>(
       `select json_extract(payload_json, '$.text') text from orchestration_v2_projection_messages
          where thread_id = ? and role = 'assistant' order by created_at desc limit 1`,
-    ).get(thread);
+    )
+    .get(thread);
 
-    const line = (row?.text ?? "")
-      .split("\n")
-      .map((line) =>
-        line
-          .replace(/^(#+|[-*>]|\d+\.)\s+/, "")
-          .replaceAll(/\*\*|__|`/g, "")
-          .trim(),
-      )
-      .find(Boolean);
+  const first = (row?.text ?? "")
+    .split("\n")
+    .map((line) =>
+      line
+        .replace(/^(#+|[-*>]|\d+\.)\s+/u, "")
+        .replaceAll(/\*\*|__|`/gu, "")
+        .trim(),
+    )
+    .find(Boolean);
 
-    return line ? (line.length > 200 ? `${line.slice(0, 199)}…` : line) : "";
-  }
+  return first === undefined ? "" : first.length > 200 ? `${first.slice(0, 199)}…` : first;
 }
 
 function digest(text: string) {
