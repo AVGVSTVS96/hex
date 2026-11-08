@@ -266,6 +266,10 @@ const migrations: (string | ((store: Store) => void))[] = [
   ({ db }: Store) => {
     if (!db.query("select 1 from pragma_table_info('questions') where name = 'asker'").get()) db.run(`alter table questions add column asker text not null default 'hex' check (asker in ('hex', 'owner'))`)
   },
+  // When a session's turn ended with background agents still working for it, until it hands what it took over.
+  ({ db }: Store) => {
+    if (!db.query("select 1 from pragma_table_info('turns') where name = 'waiting'").get()) db.run(`alter table turns add column waiting text check (waiting ${UTC})`)
+  },
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -1002,11 +1006,18 @@ export class Store {
     this.write(() => {
       const { began, ended } = this.turn(session)
       if (began && !ended) this.turned(session, false, at)
-      this.db.query('insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2)').run(session, at)
+      this.db.query('insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2), waiting = null').run(session, at)
     })
   }
 
-  // The thread's sessions are gone, and any whose turn never ended died in the middle of it: the turn ends,
+  // The session's turn ended with background agents still working for it: what it took isn't handled until they report
+  // and a later turn ends, so a session that dies first (a reboot) died in the middle of its work.
+  waitsOnAgents(session: string, at = now()) {
+    this.db.query('update turns set waiting = ? where session = ?').run(at, session)
+  }
+
+  // The thread's sessions are gone, and any whose turn never ended, or ended with its background agents still working,
+  // died in the middle of it: the turn ends,
   // and what that session took since it was last handled goes back to the thread untaken, so the next session
   // there takes it as it would a new message. A turn that had ended (an answer, or a failure whose messages
   // stay in the conversation) gives nothing back. session: the one hex knows the thread by, which may have taken
@@ -1014,10 +1025,11 @@ export class Store {
   cut(thread: string, session?: string, at = now()): string[] {
     return this.write(() => {
       const open = this.db
-        .query(`select session, handled from turns where began is not null and ended is null and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`)
+        .query(`select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`)
         .all(thread, session ?? null) as { session: string; handled: string | null }[]
       return open.flatMap(({ session, handled }) => {
         this.turned(session, false, at)
+        this.db.query('update turns set waiting = null where session = ?').run(session)
         const given = this.db
           .query(`update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`)
           .values(session, handled) as [string][]
@@ -1026,9 +1038,9 @@ export class Store {
     })
   }
 
-  // Whether a session of the thread is in the middle of a turn, in hex's record of it.
+  // Whether a session of the thread is in the middle of a turn, or of its background agents' work, in hex's record of it.
   midTurn(thread: string): boolean {
-    return !!this.db.query(`select 1 from turns where began is not null and ended is null and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`).get(thread)
+    return !!this.db.query(`select 1 from turns where (began is not null and ended is null or waiting is not null) and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`).get(thread)
   }
 
   turn(session: string): { began?: string; ended?: string; handled?: string } {
