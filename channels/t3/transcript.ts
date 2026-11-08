@@ -7,33 +7,59 @@ import {
   toAcpNotifications,
 } from "@agentclientprotocol/claude-agent-acp";
 import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { z } from "zod";
 
 const PROJECTS = join(process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"), "projects");
 
-const client = { sessionUpdate: async () => {} } as unknown as Parameters<
-  typeof toAcpNotifications
->[4];
+const askedNothingOnReplay = () =>
+  Promise.reject(new Error("a replayed transcript asks nothing of the client"));
 
-const logger = {
-  log: () => {},
-  error: (...args: unknown[]) => process.stderr.write(`t3 hub: transcript: ${args.join(" ")}\n`),
+const client: Parameters<typeof toAcpNotifications>[4] = {
+  sessionUpdate: () => Promise.resolve(),
+  requestPermission: askedNothingOnReplay,
+  readTextFile: askedNothingOnReplay,
+  writeTextFile: askedNothingOnReplay,
+  createElicitation: askedNothingOnReplay,
+  completeElicitation: askedNothingOnReplay,
+  extNotification: askedNothingOnReplay,
 };
 
+const logger = {
+  // oxlint-disable-next-line eslint/no-empty-function -- a replay's progress lines are noise in the hub's log
+  log: () => {},
+  error: (...args: unknown[]) => {
+    process.stderr.write(`t3 hub: transcript: ${args.join(" ")}\n`);
+  },
+};
+
+const origin = z.looseObject({ kind: z.string().optional() }).nullish();
+
+const entrySchema = z.looseObject({
+  type: z.string().optional(),
+  subtype: z.string().optional(),
+  timestamp: z.string().optional(),
+  uuid: z.string().optional(),
+  origin,
+  attachment: z.looseObject({ origin }).nullish(),
+  compactMetadata: z.looseObject({ trigger: z.string().optional() }).nullish(),
+  content: z.string().optional(),
+  isMeta: z.boolean().optional(),
+  isSidechain: z.boolean().optional(),
+  message: z.looseObject({ id: z.string().optional(), content: z.unknown().optional() }).nullish(),
+  toolUseResult: z.unknown().optional(),
+});
+
+const contentSchema = z.union([
+  z.string(),
+  z.custom<Exclude<Parameters<typeof toAcpNotifications>[0], string>>((value) =>
+    Array.isArray(value),
+  ),
+]);
+
 export function transcriptPath(cwd: string, session: string) {
-  return join(PROJECTS, cwd.replaceAll(/[^a-zA-Z0-9]/g, "-"), `${session}.jsonl`);
+  return join(PROJECTS, cwd.replaceAll(/[^a-zA-Z0-9]/gu, "-"), `${session}.jsonl`);
 }
 
-// Streams one turn of a session's transcript as ACP session/update notifications,
-// from where it ends now, or, when the session is new, from its start without what
-// was written before since: a fork's copy of the conversation it continues. Channel
-// prompts and slash commands are skipped: the client already shows what it sent.
-// The turn ends when the session's work does: its Stop hook says no background
-// agent is still working (done), and the transcript has caught up to that stop,
-// a turn_duration after the prompt with no turn after it. Claude Code writes the
-// transcript in batches, so the Stop hook can run before the last reply is on disk,
-// and a background agent's result comes back as a turn of its own, streamed here
-// too. A message that reaches the session mid-turn is a queued_command attachment, not a turn of
-// its own. A /compact turn ends at its compaction, or with its error.
 export function follow({
   path,
   sessionId,
@@ -46,27 +72,34 @@ export function follow({
   path: string;
   sessionId: string;
   cwd: string;
-  since?: number;
+  since?: number | undefined;
   done: () => boolean;
   emit: (notification: SessionNotification) => void;
   end: (error?: string) => void;
 }) {
   const tools = {};
   const tasks = new Map();
-  let offset = since == null ? sizeOf(path) : 0;
+  let offset = since === undefined ? sizeOf(path) : 0;
   let rest = Buffer.alloc(0);
   let asked = false;
   let open = false;
   let ended = false;
 
   mkdirSync(dirname(path), { recursive: true });
-  const watcher = watch(dirname(path), (_, file) => file === basename(path) && read());
-  read();
 
-  function read() {
+  const watcher = watch(dirname(path), (_, file) => {
+    if (file === basename(path)) {
+      catchUp();
+    }
+  });
+
+  catchUp();
+
+  function catchUp() {
     if (ended) {
       return;
     }
+
     let fd;
 
     try {
@@ -81,6 +114,7 @@ export function follow({
       if (size <= offset) {
         return;
       }
+
       const chunk = Buffer.alloc(size - offset);
       readSync(fd, chunk, 0, chunk.length, offset);
       offset = size;
@@ -89,8 +123,11 @@ export function follow({
       rest = data.subarray(last + 1);
 
       if (last !== -1) {
-        for (const line of data.subarray(0, last).toString("utf8").split("\n"))
-          if (!ended) convert(line);
+        for (const line of data.subarray(0, last).toString("utf-8").split("\n")) {
+          if (!ended) {
+            convert(line);
+          }
+        }
       }
     } finally {
       closeSync(fd);
@@ -101,24 +138,27 @@ export function follow({
     let entry;
 
     try {
-      entry = JSON.parse(line);
+      entry = entrySchema.parse(JSON.parse(line));
     } catch {
       return;
     }
 
-    if (Date.parse(entry.timestamp) < since!) {
+    if (since !== undefined && Date.parse(entry.timestamp ?? "") < since) {
       return;
     }
+
     if (
       (entry.type === "user" && entry.origin?.kind === "channel") ||
       entry.attachment?.origin?.kind === "channel"
     ) {
       asked = true;
     }
+
     if (entry.type === "system" && entry.subtype === "turn_duration") {
       open = false;
 
       settle();
+
       return;
     }
 
@@ -128,38 +168,47 @@ export function follow({
       entry.compactMetadata?.trigger === "manual"
     ) {
       stop();
-      return;
-    }
-    const failed =
-      entry.type === "system" &&
-      entry.subtype === "local_command" &&
-      entry.content?.match(/<local-command-stderr>([\s\S]*)<\/local-command-stderr>/)?.[1];
 
-    if (failed) {
+      return;
+    }
+
+    const failed =
+      entry.type === "system" && entry.subtype === "local_command"
+        ? /<local-command-stderr>([\s\S]*)<\/local-command-stderr>/u.exec(entry.content ?? "")?.[1]
+        : undefined;
+
+    if (failed !== undefined && failed !== "") {
       stop(failed);
+
       return;
     }
-    if ((entry.type !== "assistant" && entry.type !== "user") || entry.isSidechain) {
+
+    if ((entry.type !== "assistant" && entry.type !== "user") || entry.isSidechain === true) {
       return;
     }
+
     open = true;
+    const raw = entry.message?.content;
 
     if (
       entry.type === "user" &&
-      (entry.isMeta || entry.origin || /^\/\S/.test(entry.message?.content))
+      (entry.isMeta === true || entry.origin || /^\/\S/u.test(String(raw)))
     ) {
       return;
     }
-    const content =
-      entry.type === "user"
-        ? stripLocalCommandMetadata(entry.message?.content)
-        : entry.message?.content;
 
-    if (content == null) {
+    const content = contentSchema.safeParse(
+      entry.type === "user" ? stripLocalCommandMetadata(raw) : raw,
+    );
+
+    if (!content.success) {
       return;
     }
+
+    const messageId = entry.type === "assistant" ? entry.message?.id : entry.uuid;
+
     const notifications = toAcpNotifications(
-      content,
+      content.data,
       entry.type,
       sessionId,
       tools,
@@ -170,7 +219,7 @@ export function follow({
         replay: true,
         cwd,
         taskState: tasks,
-        messageId: entry.type === "assistant" ? entry.message.id : entry.uuid,
+        ...(messageId !== undefined && { messageId }),
         toolUseResult: entry.toolUseResult,
       },
     );
@@ -193,9 +242,8 @@ export function follow({
   }
 
   return {
-    // The Stop hook can arrive before the watch has seen what the transcript already holds.
     settle() {
-      read();
+      catchUp();
       settle();
     },
     asked: () => asked,

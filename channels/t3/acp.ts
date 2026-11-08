@@ -1,32 +1,47 @@
 #!/usr/bin/env bun
-import { connect } from "net";
-import type { Socket } from "net";
 import { randomUUID } from "node:crypto";
+import { connect } from "node:net";
+import type { Socket } from "node:net";
 import { createInterface } from "node:readline";
 
-// T3 Code starts this as its ACP agent; the agent itself runs in the hub service. A hub restart
-// closes the socket, which T3 would take as its agent dying, so this connects again and opens the
-// new hub the way T3 opened the old one: initialize, then each session T3 started or resumed, with
-// what T3 picked for it. Every request T3 still waits on is asked again; a prompt asks its thread to
-// rejoin the turn (bot.ts), which streams it again from when T3 sent it, and the updates T3 already
-// has are dropped.
-const path = process.argv[2];
+import { z } from "zod";
 
-if (!path) {
+const given = process.argv[2];
+
+if (given === undefined || given === "") {
   process.stderr.write("usage: acp.ts <path to the t3 hub acp.sock>\n");
   process.exit(2);
 }
 
-// Longer than any hub restart, which reinstalls the channels' packages before it starts again.
-const DOWN = 120_000;
+const path = given;
 
-// Ids of the requests this sends itself, whose answers T3 never asked for.
-const OWN = "hex-acp:";
+const LONGER_THAN_A_HUB_RESTART = 120_000;
 
-// Each prompt's own id, which hex keeps it under, so asking again after a restart never makes a second copy.
-const KEY = "hex/key";
+const OWN_REQUEST_ID_T3_NEVER_ASKED_FOR = "hex-acp:";
 
-type Request = { jsonrpc: "2.0"; id: string | number; method: string; params: any };
+const PROMPT_KEY = "hex/key";
+
+const params = z.looseObject({
+  sessionId: z.string().optional(),
+  cwd: z.string().nullish(),
+  mcpServers: z.array(z.unknown()).optional(),
+  configId: z.string().optional(),
+  value: z.unknown().optional(),
+  _meta: z.looseObject({}).nullish(),
+});
+
+const messageSchema = z.looseObject({
+  id: z.union([z.string(), z.number()]).nullish(),
+  method: z.string().optional(),
+  params: params.optional(),
+  result: z.unknown().optional(),
+});
+
+type Message = z.infer<typeof messageSchema>;
+
+type Params = z.infer<typeof params>;
+
+type Request = { id: string | number; method: string; params: Params };
 
 type Waiting = { line: string; request: Request; at: number };
 
@@ -35,18 +50,17 @@ type Counts = Map<number | bigint, number>;
 let socket: Socket | undefined;
 let ending = false;
 let downSince = 0;
-let initialize: unknown;
+let initialize: Params | undefined;
 const held: string[] = [];
-const sessions = new Map<string, { cwd: string; mcpServers: unknown[] }>();
 
-// What T3 picked in each session: a thread hex hasn't kept yet loses it with the old hub.
+const sessions = new Map<
+  string,
+  { cwd: string | null | undefined; mcpServers: unknown[] | undefined }
+>();
+
 const picked = new Map<string, Map<string, unknown>>();
 const waiting = new Map<string | number, Waiting>();
-
-// The requests whose updates stream until they're answered: a turn, and a thread's history.
-const STREAMS = new Set(["session/prompt", "session/load"]);
-
-// Each update T3 has been shown of one it waits on, and what it still has to skip when asked again.
+const STREAMING_UNTIL_ANSWERED = new Set(["session/prompt", "session/load"]);
 const shown = new Map<string, Counts>();
 const skip = new Map<string, Counts>();
 
@@ -70,11 +84,13 @@ function reach(again = false) {
     socket = next;
     createInterface({ input: next, crlfDelay: Infinity })
       .on("line", fromHex)
+      // oxlint-disable-next-line eslint/no-empty-function -- the socket's own close listener reconnects
       .on("error", () => {});
 
     if (again) {
       reopen(next);
     }
+
     for (const line of held.splice(0)) {
       fromT3(line);
     }
@@ -83,6 +99,7 @@ function reach(again = false) {
     if (again || socket === next) {
       return;
     }
+
     process.stderr.write(
       `hex acp: can't reach hex at ${path} (${error.message}). Is hex running?\n`,
     );
@@ -92,93 +109,137 @@ function reach(again = false) {
     if (ending) {
       process.exit(0);
     }
+
     if (socket === next) {
       socket = undefined;
       downSince = Date.now();
     } else if (!again) {
       return;
     }
-    if (Date.now() - downSince > DOWN) {
-      process.stderr.write(`hex acp: hex at ${path} has been gone for ${DOWN / 1000}s\n`);
+
+    if (Date.now() - downSince > LONGER_THAN_A_HUB_RESTART) {
+      process.stderr.write(
+        `hex acp: hex at ${path} has been gone for ${LONGER_THAN_A_HUB_RESTART / 1000}s\n`,
+      );
       process.exit(1);
     }
 
-    setTimeout(reach, 250, true);
+    setTimeout(() => {
+      reach(true);
+    }, 250);
   });
 }
 
-function fromT3(line: string) {
+function fromT3(received: string) {
   if (!socket) {
-    return void held.push(line);
-  }
-  const message = parse(line);
+    held.push(received);
 
-  if (message?.method === "session/prompt") {
-    message.params._meta = { ...message.params._meta, [KEY]: randomUUID() };
+    return;
+  }
+
+  const message = parse(received);
+  let line = received;
+
+  if (message?.method === "session/prompt" && message.params) {
+    message.params._meta = { ...message.params._meta, [PROMPT_KEY]: randomUUID() };
     line = JSON.stringify(message);
   }
 
-  if (message?.method && message.id != null) {
-    const { method, params } = message;
-    waiting.set(message.id, { line, request: message, at: Date.now() });
+  const request = requestOf(message);
+
+  if (request) {
+    const { method, params: asked } = request;
+    waiting.set(request.id, { line, request, at: Date.now() });
 
     if (method === "initialize") {
-      initialize = params;
+      initialize = asked;
     }
-    if (method === "session/resume" || method === "session/load") {
-      sessions.set(params.sessionId, { cwd: params.cwd, mcpServers: params.mcpServers });
+
+    if (
+      (method === "session/resume" || method === "session/load") &&
+      asked.sessionId !== undefined
+    ) {
+      sessions.set(asked.sessionId, { cwd: asked.cwd, mcpServers: asked.mcpServers });
     }
-    if (STREAMS.has(method)) {
-      shown.set(params.sessionId, new Map());
+
+    if (STREAMING_UNTIL_ANSWERED.has(method) && asked.sessionId !== undefined) {
+      shown.set(asked.sessionId, new Map());
     }
   }
 
   socket.write(`${line}\n`);
 }
 
+function requestOf(message: Message | undefined): Request | undefined {
+  if (
+    message?.method === undefined ||
+    message.method === "" ||
+    message.id === undefined ||
+    message.id === null
+  ) {
+    return undefined;
+  }
+
+  return { id: message.id, method: message.method, params: message.params ?? {} };
+}
+
 function fromHex(line: string) {
   const message = parse(line);
+  const id = message?.id;
 
-  if (typeof message?.id === "string" && message.id.startsWith(OWN)) {
+  if (z.string().safeParse(id).data?.startsWith(OWN_REQUEST_ID_T3_NEVER_ASKED_FOR) === true) {
     return;
   }
-  if (message?.id != null && !message.method) {
-    answered(message);
+
+  if (id !== undefined && id !== null && (message?.method ?? "") === "") {
+    answered(id, message);
   }
-  if (message?.method === "session/update" && !fresh(message.params.sessionId, Bun.hash(line))) {
+
+  if (
+    message?.method === "session/update" &&
+    !fresh(message.params?.sessionId ?? "", Bun.hash(line))
+  ) {
     return;
   }
+
   process.stdout.write(`${line}\n`);
 }
 
-function answered(response: { id: string | number; result?: any }) {
-  const asked = waiting.get(response.id)?.request;
-  waiting.delete(response.id);
+const createdSession = z.looseObject({ sessionId: z.string() });
 
-  if (asked?.method === "session/new" && response.result?.sessionId) {
-    sessions.set(response.result.sessionId, {
-      cwd: asked.params.cwd,
-      mcpServers: asked.params.mcpServers,
-    });
+function answered(id: string | number, response: Message | undefined) {
+  const result = response?.result;
+  const asked = waiting.get(id)?.request;
+  waiting.delete(id);
+  const created = createdSession.safeParse(result).data?.sessionId ?? "";
+
+  if (asked?.method === "session/new" && created !== "") {
+    sessions.set(created, { cwd: asked.params.cwd, mcpServers: asked.params.mcpServers });
   }
-  if (asked?.method === "session/set_config_option" && response.result) {
+
+  if (asked?.method === "session/set_config_option" && result !== undefined && result !== null) {
     const { sessionId, configId, value } = asked.params;
-    picked.set(sessionId, (picked.get(sessionId) ?? new Map()).set(configId, value));
+
+    if (sessionId !== undefined && configId !== undefined) {
+      picked.set(
+        sessionId,
+        (picked.get(sessionId) ?? new Map<string, unknown>()).set(configId, value),
+      );
+    }
   }
 
-  if (asked && STREAMS.has(asked.method)) {
+  if (asked && STREAMING_UNTIL_ANSWERED.has(asked.method) && asked.params.sessionId !== undefined) {
     shown.delete(asked.params.sessionId);
     skip.delete(asked.params.sessionId);
   }
 }
 
-// An update T3 hasn't been shown yet, counted as shown.
 function fresh(sessionId: string, hash: number | bigint) {
   const skipping = skip.get(sessionId);
-  const left = skipping?.get(hash);
+  const left = skipping?.get(hash) ?? 0;
 
-  if (left) {
-    skipping!.set(hash, left - 1);
+  if (skipping && left !== 0) {
+    skipping.set(hash, left - 1);
 
     return false;
   }
@@ -189,23 +250,31 @@ function fresh(sessionId: string, hash: number | bigint) {
   return true;
 }
 
+type Outgoing = { id: string | number; method: string; params: Params };
+
 function reopen(next: Socket) {
-  const send = (message: object) =>
+  const send = (message: Outgoing) => {
     next.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+  };
 
   if (initialize) {
-    send({ id: `${OWN}initialize`, method: "initialize", params: initialize });
+    send({
+      id: `${OWN_REQUEST_ID_T3_NEVER_ASKED_FOR}initialize`,
+      method: "initialize",
+      params: initialize,
+    });
   }
+
   for (const [sessionId, { cwd, mcpServers }] of sessions) {
     send({
-      id: `${OWN}${sessionId}`,
+      id: `${OWN_REQUEST_ID_T3_NEVER_ASKED_FOR}${sessionId}`,
       method: "session/resume",
       params: { sessionId, cwd, mcpServers },
     });
 
     for (const [configId, value] of picked.get(sessionId) ?? []) {
       send({
-        id: `${OWN}${sessionId}:${configId}`,
+        id: `${OWN_REQUEST_ID_T3_NEVER_ASKED_FOR}${sessionId}:${configId}`,
         method: "session/set_config_option",
         params: { sessionId, configId, value },
       });
@@ -213,9 +282,12 @@ function reopen(next: Socket) {
   }
 
   for (const [id, { line, request, at }] of waiting) {
-    if (STREAMS.has(request.method)) {
-      skip.set(request.params.sessionId, new Map(shown.get(request.params.sessionId)));
+    const { sessionId } = request.params;
+
+    if (STREAMING_UNTIL_ANSWERED.has(request.method) && sessionId !== undefined) {
+      skip.set(sessionId, new Map(shown.get(sessionId)));
     }
+
     if (request.method === "session/prompt") {
       send({ id, method: "_hex/rejoin", params: { ...request.params, since: at } });
     } else {
@@ -224,9 +296,9 @@ function reopen(next: Socket) {
   }
 }
 
-function parse(line: string): Request | undefined {
+function parse(line: string): Message | undefined {
   try {
-    return JSON.parse(line);
+    return messageSchema.parse(JSON.parse(line));
   } catch {
     return undefined;
   }
