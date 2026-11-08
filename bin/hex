@@ -8,6 +8,15 @@ running() {
   [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
 
+# A service manager starts hex with a bare PATH, so hex takes the one the user's own shell builds,
+# rc files included, and sessions and jobs find what a terminal finds. A shell that hangs or fails leaves PATH as it is.
+shell_path() {
+  limit=
+  ! command -v timeout >/dev/null || limit="timeout 10"
+  found=$($limit "${SHELL:-/bin/sh}" -ilc 'echo; echo hex-path; env' </dev/null 2>/dev/null | sed -n '/^hex-path$/,$s/^PATH=//p' | tail -n 1) || :
+  [ -z "$found" ] || PATH=$(printf '%s:%s' "$found" "$PATH" | tr : '\n' | awk 'NF && !seen[$0]++' | paste -sd: -)
+}
+
 # A hub that exits three times within a minute can't start. If hex changed since General last
 # connected (the hub writes that commit to state/good), hex goes back to it, bin/update won't take
 # the commit that failed (state/bad) again, and General hears why once it's back.
@@ -49,6 +58,7 @@ case "${1:-}" in
     echo "hex is set up in $home"
     ;;
   run)
+    shell_path
     (. "$hex/bin/settings"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]) || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
