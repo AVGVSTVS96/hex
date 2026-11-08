@@ -124,8 +124,29 @@ test('a voice session, started by the hub, runs the fast model on the 1-hour cac
 test('a topic session, started by the hub, gets none of the chat or main additions', async () => {
   const { args, settings } = await launch('plugin:telegram@hex', '-100:5', { fresh: () => false })
   expect(args).not.toContain('--system-prompt-file')
-  expect(settings.claudeMdExcludes).toBeUndefined()
   expect(settings.env.HEX_THREAD).toBe('-100:5')
+})
+
+test("a topic session loads its rules and wake from its own copy, which a resume keeps and a new session takes again", async () => {
+  const wake = join(home, 'state/wake/CLAUDE.md')
+  const { args, file, settings } = await launch('plugin:telegram@hex', '-100:5')
+  const held = settings.env.HEX_HELD
+  expect(args[args.indexOf('--add-dir') + 1]).toBe(held)
+  expect(settings.claudeMdExcludes).toEqual([join(home, '.claude/CLAUDE.md'), join(home, 'AGENTS.md'), wake])
+  const copy = readFileSync(join(held, 'CLAUDE.md'), 'utf8')
+  expect(copy).toContain(`Contents of ${join(home, 'AGENTS.md')}`)
+  expect(copy).toContain('- Keep it short.')
+  expect(copy).toContain('#0 a memory')
+  writeFileSync(wake, 'a newer wake\n')
+  writeFileSync(join(home, 'AGENTS.md'), '- Keep it shorter.\n\n@state/wake/CLAUDE.md\n')
+  const again = (...args: string[]) => Bun.spawnSync([join(home, '.hex/bin/session'), '--bg', ...args, '--settings', file], { cwd: home, env: process.env })
+  writeFileSync(file, JSON.stringify({ env: settings.env }))
+  again('--resume', 'abc')
+  expect(readFileSync(join(held, 'CLAUDE.md'), 'utf8')).toBe(copy)
+  writeFileSync(file, JSON.stringify({ env: settings.env }))
+  again()
+  expect(readFileSync(join(held, 'CLAUDE.md'), 'utf8')).toContain('a newer wake')
+  expect(readFileSync(join(held, 'CLAUDE.md'), 'utf8')).toContain('- Keep it shorter.')
 })
 
 test('a session started in another project gets the hex folder\'s settings under the hub\'s, in its file', async () => {

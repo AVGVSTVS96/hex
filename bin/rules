@@ -1,25 +1,28 @@
 #!/usr/bin/env bun
 import { spawnSync } from 'bun'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
 import { history, type Startup } from '../hub/loaded.ts'
 import { own } from '../hub/running.ts'
 import { open, stateDir } from '../hub/store.ts'
-import { files } from './instructions'
+import { hold, rules } from './instructions'
 
 // Claude Code reads its instruction files only when a session starts, resumes or
 // compacts, so a session that runs for days keeps the rules it started with.
 // SessionStart records in hex.db what the session loaded, and each prompt after that
 // gets a diff of whatever changed since. Every start records it again, so it goes
-// when the session ends. hex's own hooks, skills and launch flags load only at start too, and
+// when the session ends. A hub thread's session loads its files from a copy instead (bin/instructions
+// hold), taken again only as it compacts or clears, so a resume still has the rules it last saw.
+// hex's own hooks, skills and launch flags load only at start too, and
 // can't be shown as a diff, so a prompt after an update changed them says so once per update.
 
 const hex = resolve(import.meta.dir, '..')
 const home = resolve(hex, '..')
 const WHAT: Record<Startup, string> = { hooks: 'hooks', skills: 'skills', launcher: 'launch flags' }
-const { session_id, hook_event_name } = JSON.parse(await Bun.stdin.text())
+const { session_id, hook_event_name, source } = JSON.parse(await Bun.stdin.text())
+const held = process.env.HEX_HELD && existsSync(join(process.env.HEX_HELD, 'CLAUDE.md')) ? process.env.HEX_HELD : undefined
 const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`
 
 try {
@@ -29,8 +32,9 @@ try {
     store.unshow(session_id, 'hex')
     process.exit(0)
   }
-  const now: Record<string, string> = Object.fromEntries(files().map(file => [file.path, file.text]))
-  const kept = store.seen(session_id, 'rules')
+  if (held && hook_event_name === 'SessionStart' && (source === 'compact' || source === 'clear')) hold(held)
+  const now = rules()
+  const kept = held ? readFileSync(join(held, 'rules.json'), 'utf8') : store.seen(session_id, 'rules')
   let out = ''
   if (hook_event_name !== 'SessionStart' && kept) {
     const before: Record<string, string> = JSON.parse(kept)
@@ -54,7 +58,10 @@ try {
     }
   }
   // Kept before it's said, so a record that can't be kept doesn't show the same change on every prompt.
-  if (JSON.stringify(now) !== kept) store.show(session_id, 'rules', JSON.stringify(now))
+  if (JSON.stringify(now) !== kept) {
+    if (!held) store.show(session_id, 'rules', JSON.stringify(now))
+    else if (hook_event_name !== 'SessionStart') writeFileSync(join(held, 'rules.json'), JSON.stringify(now))
+  }
   let shown = ''
   // Measured from the process's start, since a /reload-plugins fires no hook. A session hears again
   // only once a later update changes them again.

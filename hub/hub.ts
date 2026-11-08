@@ -113,6 +113,8 @@ type Run = {
   held: (() => void)[]
   // A call waited for the session now connected to start, so it is as new as the call.
   awaited?: boolean
+  // When the hub last had the session compact, until its context is back under compactAbove.
+  compacting?: number
   // The starts that failed in a row since the thread's session last connected; retried: another
   // session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean }
@@ -158,6 +160,10 @@ export const clients = new Map<string, Client>()
 // Each hub's restart of its threads whose session failed to start, run whenever a session this
 // process started connects: a start just went through, so theirs can too.
 const retries = new Set<() => void>()
+
+// Each hub's retry of its compactions that failed (the account pool out of usage, the network
+// down), run whenever a session's turn ends with an answer: requests go through again.
+const answered = new Set<() => void>()
 
 // The hub serving General, which hears of a thread once this many of its starts fail in a row.
 let generalHub: Hub | undefined
@@ -491,8 +497,35 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (!session) return
     const running = await claude.agent(session, serving)
     if (run.turn === 'busy' || running?.status === 'busy') return
-    if (running && !run.leaving && !fresh(thread) && !onCall.has(run) && claude.usage(cwdOf(thread), session).sent > compactAbove) void cycle(thread, running, '/compact', true)
-    else if (thread !== main) stop(thread)
+    const { sent, failed } = claude.usage(cwdOf(thread), session)
+    if (running && !run.leaving && !fresh(thread) && !onCall.has(run) && sent > compactAbove) {
+      if (failed === undefined) return compact(thread, running)
+      run.compacting ??= failed
+    }
+    if (thread !== main) stop(thread)
+  }
+
+  function compact(thread: string, running?: claude.Agent) {
+    runOf(thread).compacting = clock.now()
+    void cycle(thread, running, '/compact', true)
+  }
+
+  // A compaction that failed since the hub asked for it runs again, in the session still running
+  // or a resumed one, once it can go through.
+  async function recompact() {
+    for (const [thread, run] of runs) {
+      const session = current(thread)
+      if (run.compacting === undefined || !session) continue
+      const { sent, failed } = claude.usage(cwdOf(thread), session)
+      if (sent <= compactAbove) {
+        run.compacting = undefined
+        continue
+      }
+      const resting = run.phase.is === 'live' || run.phase.is === 'stopped'
+      if (failed === undefined || failed < run.compacting || !resting || run.turn === 'busy' || run.ending || run.leaving || onCall.has(run)) continue
+      const running = await claude.agent(session, serving)
+      if (running?.status !== 'busy') compact(thread, running)
+    }
   }
 
   // `claude stop` returns before the process exits, and the session keeps its channel until it
@@ -544,6 +577,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     clock.clearTimeout(run.rest)
     runs.delete(thread)
     rmSync(settingsOf(thread), { force: true })
+    rmSync(heldOf(thread), { recursive: true, force: true })
     run.leaving!(session)
   }
 
@@ -642,6 +676,11 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     return join(sessionsDir, `${encodeURIComponent(thread)}.json`)
   }
 
+  // Where the thread's session keeps the copy of its instruction files it loads (bin/instructions hold).
+  function heldOf(thread: string) {
+    return join(sessionsDir, encodeURIComponent(thread))
+  }
+
   // A respawn reads the same file, so it gets the hub's current token too. It runs without the
   // launcher, so the file keeps what the launcher added and renews only the hub's keys.
   function writeSettings(thread: string, launched: ReturnType<typeof claude.settingsOf> = {}) {
@@ -654,7 +693,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       HEX_STORE: storeDir,
       ...(connect ? { MCP_TIMEOUT: String(connect) } : {}),
       ...(general && thread === main ? { HEX_MAIN: '1' } : {}),
-      ...(fresh(thread) ? { HEX_FRESH: '1' } : {}),
+      ...(fresh(thread) ? { HEX_FRESH: '1' } : { HEX_HELD: heldOf(thread) }),
     }
     writeFileSync(settingsOf(thread), JSON.stringify({ ...launched, enabledPlugins: { ...launched?.enabledPlugins, [plugin]: true }, env: { ...launched?.env, ...env } }), { mode: 0o600 })
   }
@@ -1087,6 +1126,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     if (request.type === 'state') {
       took(request.taken, request.session)
       setState(request.thread, request.busy, request.background === true)
+      if (!request.busy && !request.failed) for (const each of answered) each()
     }
     if (request.type === 'open') void launch(request.thread, request.name, { prompt: request.prompt })
     if (request.type === 'answer') questions?.answer(request.thread, request.message, request.label, request.via)
@@ -1223,6 +1263,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       unwatch()
       unschedule()
       retries.delete(retry)
+      answered.delete(recompact)
       if (generalHub === api) generalHub = undefined
       sock.close()
       if (channels.get(path) === serve) channels.delete(path)
@@ -1235,6 +1276,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     },
   }
   retries.add(retry)
+  answered.add(recompact)
   if (general && main) generalHub = api
   return api
 }

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { dirname, join } from 'path'
 import { open } from '../../hub/store.ts'
@@ -22,10 +22,10 @@ beforeEach(() => {
 
 afterEach(() => rmSync(home, { recursive: true, force: true }))
 
-function hook(event: 'SessionStart' | 'UserPromptSubmit' | 'SessionEnd') {
+function hook(event: 'SessionStart' | 'UserPromptSubmit' | 'SessionEnd', source?: string, env: Record<string, string> = {}) {
   const run = Bun.spawnSync([join(home, '.hex/bin/rules')], {
-    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, hook_event_name: event })),
-    env: { ...process.env, HOME: home, TMPDIR: home, HEX_STORE: join(home, 'state'), CLAUDE_CONFIG_DIR: undefined },
+    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, hook_event_name: event, source })),
+    env: { ...process.env, HOME: home, TMPDIR: home, HEX_STORE: join(home, 'state'), CLAUDE_CONFIG_DIR: undefined, ...env },
   })
   expect(run.exitCode).toBe(0)
   return run.stdout.toString()
@@ -57,6 +57,26 @@ test('a session that loads the rules again starts from them', () => {
   writeFileSync(join(home, 'AGENTS.md'), '@.hex/HEX.md\n\n- Keep it shorter.\n')
   hook('SessionStart')
   expect(hook('UserPromptSubmit')).toBe('')
+})
+
+test("a hub thread's session keeps its copy of the rules through a resume, hears what changed as a diff, and takes them again as it compacts", () => {
+  const held = join(home, 'held')
+  const env = { HEX_HELD: held }
+  Bun.spawnSync([join(home, '.hex/bin/instructions'), 'hold', held], { env: { ...process.env, HOME: home } })
+  const copy = readFileSync(join(held, 'CLAUDE.md'), 'utf8')
+  expect(copy).toContain('Answer in plain words.')
+  hook('SessionStart', 'startup', env)
+  writeFileSync(join(home, '.hex/HEX.md'), '# How you work\n\nAnswer in plain words, with a link.\n')
+  expect(hook('SessionStart', 'resume', env)).toBe('')
+  expect(readFileSync(join(held, 'CLAUDE.md'), 'utf8')).toBe(copy)
+  expect(hook('UserPromptSubmit', undefined, env)).toContain('+Answer in plain words, with a link.')
+  expect(hook('UserPromptSubmit', undefined, env)).toBe('')
+  hook('SessionEnd', undefined, env)
+  expect(hook('SessionStart', 'resume', env) + hook('UserPromptSubmit', undefined, env)).toBe('')
+  writeFileSync(join(home, 'AGENTS.md'), '@.hex/HEX.md\n\n- Keep it shorter.\n')
+  hook('SessionStart', 'compact', env)
+  expect(readFileSync(join(held, 'CLAUDE.md'), 'utf8')).toContain('- Keep it shorter.')
+  expect(hook('UserPromptSubmit', undefined, env)).toBe('')
 })
 
 test('a change too long to show points to the files instead', () => {
