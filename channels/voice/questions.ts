@@ -16,7 +16,14 @@ import { T3, type Fresh, type Stuck } from "./t3.ts";
 export type Kind = "pick" | "yesno" | "do" | "look";
 // value: the button's own label, when the option stands for one.
 // detail: what answering with it does for them, costs and gives up, in a plain sentence.
-export type Option = { label: string; value?: string; pick?: boolean; detail?: string };
+// shot: its screenshot, /asks/<id>/shots/<shot>, when the question it answers was asked with them.
+export type Option = {
+  label: string;
+  value?: string;
+  pick?: boolean;
+  detail?: string;
+  shot?: number;
+};
 // A page a question points to; opening it answers nothing.
 export type Link = { label: string; url: string };
 // An answer or a not needed given here, kept so undo can take it back whatever the check or the
@@ -60,8 +67,6 @@ export type Question = {
   why?: string;
   options: Option[];
   links?: Link[];
-  // The labels of the options its screenshots show, one each, in order: /asks/<id>/shots/<n> is one.
-  shots?: string[];
   tag?: string;
   places: Place[];
   // The ids it was listed under before hex's check took it up, so what the app holds under one,
@@ -76,7 +81,7 @@ export type Question = {
 // hex's check rewrites the raw questions into these: one per decision, however many places asked
 // it (from; refs are the open questions with buttons among them, which an answer goes back to), in
 // the order that unblocks the most, with its pick and what it costs.
-export type Curated = Omit<Question, "app" | "topic" | "places" | "shots"> & {
+export type Curated = Omit<Question, "app" | "topic" | "places"> & {
   from?: Source[];
   refs?: Ref[];
 };
@@ -786,7 +791,8 @@ export class Questions extends Changes {
         : {};
   }
 
-  private dress({ refs, from, ...question }: Curated): Question {
+  // Each option that stands for one of a poll's options shows that option's screenshot.
+  private dress({ refs, from, options, ...question }: Curated): Question {
     const [app, ...thread] = question.task.split(":");
     const was = (refs ?? []).map(refId).filter((id) => id !== question.id);
     const shown = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.shots);
@@ -795,8 +801,9 @@ export class Questions extends Changes {
       ...question,
       app: app!,
       topic: this.topic(question.task),
-      ...(shown && {
-        shots: shown.options.map((value) => value.replace(PICK, "").trim() || value),
+      options: options.map(({ shot: _, ...option }) => {
+        const shot = shown && option.value ? shown.options.indexOf(option.value) : -1;
+        return shot < 0 ? option : { ...option, shot };
       }),
       places: this.places(from ?? [...(refs ?? []), { app: app!, thread: thread.join(":") }]),
       ...(was.length && { was }),
