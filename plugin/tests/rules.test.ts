@@ -11,10 +11,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { z } from "zod";
+
 import { open } from "../../hub/store.ts";
 
 const BIN = join(import.meta.dir, "../../bin");
 const SESSION = "addfa113-0000-4000-8000-000000000000";
+
+const Told = z.object({
+  systemMessage: z.string(),
+  hookSpecificOutput: z.object({ additionalContext: z.string() }).optional(),
+});
 
 let home: string;
 
@@ -141,9 +148,7 @@ test("a memory pass rewriting the wake HEX.md imports is no change to the rules"
   expect(hook("UserPromptSubmit")).toBe("");
 });
 
-// hex as git records it: each update a commit at its own time (seconds), and the session's process
-// started at `started`, as Claude Code's record of it says.
-function commit(at: number, path: string, text: string) {
+function commit(atSeconds: number, path: string, text: string) {
   const git = (...args: string[]) =>
     Bun.spawnSync(
       [
@@ -161,8 +166,8 @@ function commit(at: number, path: string, text: string) {
       {
         env: {
           ...process.env,
-          GIT_COMMITTER_DATE: `@${at} +0000`,
-          GIT_AUTHOR_DATE: `@${at} +0000`,
+          GIT_COMMITTER_DATE: `@${atSeconds} +0000`,
+          GIT_AUTHOR_DATE: `@${atSeconds} +0000`,
           GIT_CONFIG_GLOBAL: "/dev/null",
           GIT_CONFIG_SYSTEM: "/dev/null",
         },
@@ -175,7 +180,10 @@ function commit(at: number, path: string, text: string) {
   git("commit", "-qm", path);
 }
 
-function updates(started: number, ...changes: [at: number, path: string, text: string][]) {
+function updates(
+  sessionStartedAtSeconds: number,
+  ...changes: [atSeconds: number, path: string, text: string][]
+) {
   Bun.spawnSync(["git", "init", "-q", join(home, ".hex")]);
 
   for (const change of changes) {
@@ -185,7 +193,12 @@ function updates(started: number, ...changes: [at: number, path: string, text: s
   mkdirSync(join(home, ".claude/sessions"), { recursive: true });
   writeFileSync(
     join(home, ".claude/sessions", `${process.pid}.json`),
-    JSON.stringify({ pid: process.pid, sessionId: SESSION, startedAt: started * 1000, cwd: home }),
+    JSON.stringify({
+      pid: process.pid,
+      sessionId: SESSION,
+      startedAt: sessionStartedAtSeconds * 1000,
+      cwd: home,
+    }),
   );
 }
 
@@ -196,9 +209,9 @@ test("a session started before an update to its hooks hears so once, and its own
     [3000, "plugin/hooks/hooks.json", '{"hooks":{"Stop":[]}}'],
   );
   hook("SessionStart");
-  const out = JSON.parse(hook("UserPromptSubmit"));
+  const out = Told.parse(JSON.parse(hook("UserPromptSubmit")));
   expect(out.systemMessage).toContain("/reload-plugins for its new hooks");
-  expect(out.hookSpecificOutput.additionalContext).toContain(
+  expect(out.hookSpecificOutput?.additionalContext).toContain(
     "Claude Code reads hex's hooks only at start",
   );
   expect(hook("UserPromptSubmit")).toBe("");
@@ -228,7 +241,7 @@ test("after hearing once, a session hears again only of a later update to what i
   commit(4000, "README.md", "hex");
   expect(hook("UserPromptSubmit")).toBe("");
   commit(5000, "plugin/skills/echo/SKILL.md", "Restate the ask.");
-  const out = JSON.parse(hook("UserPromptSubmit"));
+  const out = Told.parse(JSON.parse(hook("UserPromptSubmit")));
   expect(out.systemMessage).toContain("/reload-plugins for its new hooks and skills.");
 });
 
@@ -257,7 +270,7 @@ test("a session started after the update says nothing", () => {
 
 test("a launcher change tells the owner to quit and resume through bin/session, in the folder the session started in", () => {
   updates(2000, [1000, "bin/session", "exec claude"], [3000, "bin/session", 'exec claude "$@"']);
-  const out = JSON.parse(hook("UserPromptSubmit"));
+  const out = Told.parse(JSON.parse(hook("UserPromptSubmit")));
   expect(out.systemMessage).toContain(
     `quit it and run cd '${home}' && '${home}/.hex/bin/session' --resume ${SESSION} for its new launch flags`,
   );
