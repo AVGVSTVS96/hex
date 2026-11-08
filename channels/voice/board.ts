@@ -8,9 +8,11 @@ import {
   renameSync,
   watch,
   writeFileSync,
-} from "fs";
-import type { FSWatcher } from "fs";
+} from "node:fs";
+import type { FSWatcher } from "node:fs";
 import { join } from "node:path";
+
+import { z } from "zod";
 
 import { busy, CLAUDE, running, ownership } from "../../hub/running.ts";
 import type { Session } from "../../hub/running.ts";
@@ -63,8 +65,6 @@ export type Row = Omit<Run, "needs" | "lately" | "steps" | "plan" | "agents"> & 
 
 export type Summary = { needs: number; working: number };
 
-// A task hex closed in the last day, under the run it was done for (see home) and named as that run
-// is, with what showed it done. app and link are where its thread lives.
 export type Finished = {
   id: string;
   title: string;
@@ -76,7 +76,6 @@ export type Finished = {
   link?: string;
 };
 
-// A thread off the board, as its page shows it: what hex.db and its own last job records say.
 export type Page = Pick<Run, "id" | "app" | "thread" | "name" | "where" | "place"> &
   Partial<Pick<Run, "at" | "line" | "link">>;
 
@@ -105,50 +104,107 @@ type Thread = {
   app: string;
   id: string;
   name: string;
-  session?: string;
-  cwd?: string;
+  session?: string | undefined;
+  cwd?: string | undefined;
   link?: string;
   general?: true;
 };
 
-type Job = {
-  state?: string;
-  detail?: string;
-  needs?: string;
-  cwd?: string;
-  updatedAt?: string;
-  fan?: Fan[];
-};
+const fanSchema = z.object({
+  id: z.string(),
+  kind: z.string(),
+  label: z.string(),
+  startedAt: z.number().optional(),
+  doneAt: z.number().optional(),
+});
 
-type Fan = { id: string; kind: string; label: string; startedAt?: number; doneAt?: number };
+type Fan = z.infer<typeof fanSchema>;
 
-type Entry = { at: string; state: string; detail?: string; text?: string };
+const jobSchema = z.object({
+  state: z.string().optional(),
+  detail: z.string().optional(),
+  needs: z.string().optional(),
+  cwd: z.string().optional(),
+  updatedAt: z.string().optional(),
+  fan: z.array(fanSchema).optional(),
+});
+
+type Job = z.infer<typeof jobSchema>;
+
+const entrySchema = z.object({
+  at: z.string(),
+  state: z.string(),
+  detail: z.string().optional(),
+  text: z.string().optional(),
+});
+
+type Entry = z.infer<typeof entrySchema>;
+
+const tracksSchema = z.record(
+  z.string(),
+  z.array(
+    z.object({ at: z.string(), state: z.enum(["working", "needs", "done", "failed", "idle"]) }),
+  ),
+);
+
+const agentMetaSchema = z.object({ agentType: z.string().optional() });
+
+const blocksSchema = z.array(z.object({ text: z.string().optional().catch(undefined) }).catch({}));
+
+const transcriptLineSchema = z
+  .object({
+    timestamp: z.string().optional().catch(undefined),
+    type: z.string().optional().catch(undefined),
+    message: z
+      .object({
+        model: z.string().nullish().catch(undefined),
+        content: z.union([z.string(), blocksSchema]).optional().catch(undefined),
+      })
+      .optional()
+      .catch(undefined),
+    toolUseResult: z
+      .object({
+        agentId: z.string().optional().catch(undefined),
+        status: z.string().optional().catch(undefined),
+        content: blocksSchema.optional().catch(undefined),
+      })
+      .optional()
+      .catch(undefined),
+    origin: z
+      .object({ kind: z.string().optional().catch(undefined) })
+      .optional()
+      .catch(undefined),
+  })
+  .catch({});
+
+type TranscriptLine = z.infer<typeof transcriptLineSchema>;
 
 type Told = { state: Agent["state"]; result?: string };
 
 type Stretch = Pick<Run, "steps" | "plan" | "agents">;
 
+type Stop = () => void;
+
+type Loose<T> = { [K in keyof T]: T[K] | (undefined extends T[K] ? undefined : never) };
+
 type Follower = {
-  stop: () => void;
+  stop: Stop;
   keep: number;
   steps: Step[];
   plan: Planned[];
   planned?: string;
   model?: string;
-  type?: string;
+  type?: string | undefined;
   told: Map<string, Told>;
   last?: string;
   said: Step[];
 };
 
-// A heartbeat's turn, as hex.db keeps it.
-type Beat = { began: string; until?: string; after?: string };
+type HeartbeatTurn = { began: string; until?: string; after?: string };
 
 const TAIL = 256 * 1024;
 
-// When a step's transcript line was written, as hex's hook stamps a heartbeat: a tool call shows
-// from the line before it, which can be the prompt that came ahead of the hook.
-const written = new WeakMap<Step, string>();
+const lineWrittenAt = new WeakMap<Step, string>();
 const LATELY = 5;
 const STEPS = 24;
 const AGENT_STEPS = 12;
@@ -161,44 +217,42 @@ const GRAIN = 50;
 const SAVE = 2000;
 const ORDER: State[] = ["needs", "working", "done", "failed", "idle"];
 
-const STATES: Record<string, State> = {
-  working: "working",
-  blocked: "needs",
-  done: "done",
-  failed: "failed",
-};
+const STATES = new Map<string, State>([
+  ["working", "working"],
+  ["blocked", "needs"],
+  ["done", "done"],
+  ["failed", "failed"],
+]);
 
-const PLANNED: Record<string, Planned["state"]> = {
-  completed: "done",
-  in_progress: "running",
-  pending: "pending",
-};
+const PLANNED = new Map<string, Planned["state"]>([
+  ["completed", "done"],
+  ["in_progress", "running"],
+  ["pending", "pending"],
+]);
 
-const APPS: Record<string, string> = {
-  telegram: "Telegram",
-  discord: "Discord",
-  buzz: "Buzz",
-  t3: "T3 Code",
-  voice: "Voice",
-  claude: "Claude Code",
-};
+const APPS = new Map([
+  ["telegram", "Telegram"],
+  ["discord", "Discord"],
+  ["buzz", "Buzz"],
+  ["t3", "T3 Code"],
+  ["voice", "Voice"],
+  ["claude", "Claude Code"],
+]);
 
 const WORK = new Set(["agent", "workflow"]);
 const RUNS = new Set([...WORK, "shell", "monitor"]);
-const TOLD: Record<string, Agent["state"]> = { completed: "done", failed: "failed" };
 
-// Every hex thread as a run, from the records Claude Code already keeps (the same ones
-// `claude agents --json` prints): each session's job state and timeline, which sessions are
-// running, hex.db's open threads for their names and where their apps open them, and `links.ts` for T3 Code's side.
-// A session a thread's session started (a topic's `claude -p` build, found by its environment or
-// its process tree), a job a thread owns (bin/job), or a T3 Code thread's session below one the
-// thread handed off, counts toward it as one of its agents. So does each T3 Code thread a hex T3
-// thread handed work to, which shows only under it. A running session that works for no thread
-// (hex's own check, its memory agent, a terminal) isn't on the board; one whose thread is gone is
-// a run of its own while it works. It wakes when hex.db's threads or one of those files
-// (or T3 Code's database) changes, follows a working thread's transcript for its newest steps, and
-// bumps a version on any change.
-// The counts behind the app's Tasks button keep their own version, so it hears only when one moves.
+const TOLD = new Map<string, Agent["state"]>([
+  ["completed", "done"],
+  ["failed", "failed"],
+]);
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* Every hex thread as a run, from the records Claude Code already keeps (the same ones `claude
+   agents --json` prints). A session a thread's session started (a topic's `claude -p` build), a
+   job a thread owns (bin/job), or a T3 Code thread's session below one the thread handed off
+   counts toward it as one of its agents. A running session that works for no thread (hex's own
+   check, its memory agent, a terminal) isn't on the board. */
 export class Board extends Changes {
   runs: Run[] = [];
   finished: Finished[] = [];
@@ -206,7 +260,8 @@ export class Board extends Changes {
   counts = new Changes();
   private threads: Thread[] = [];
   private readonly links: Links;
-  private readonly jobs = new Map<string, { job?: Job; timeline: Entry[] }>();
+  private readonly jobs = new Map<string, { job: Job | undefined; timeline: Entry[] }>();
+
   private sessions = new Map<string, Session>();
   private readonly watchers = new Map<string, FSWatcher>();
   private readonly followers = new Map<string, Follower>();
@@ -216,23 +271,25 @@ export class Board extends Changes {
   private owners = new Map<string, string>();
   private handed = new Set<string>();
   private tops: Session[] = [];
-  private readonly stops: (() => void)[] = [];
+  private readonly stops: Stop[] = [];
   private tracks: Record<string, Turn[]>;
-  private saving?: ReturnType<typeof setTimeout>;
+  private saving: ReturnType<typeof setTimeout> | undefined;
   private beaten = "";
   private linked = "";
   private closed = "";
   private readonly groups = new Map<string, Run>();
-  private beats = new Map<string, Beat[]>();
+  private beats = new Map<string, HeartbeatTurn[]>();
 
-  constructor(
-    private readonly state: string,
-    private readonly hexDir: string,
-    private readonly claude = CLAUDE,
-    t3?: string,
-  ) {
+  private readonly state: string;
+  private readonly hexDir: string;
+  private readonly claude: string;
+
+  constructor(state: string, hexDir: string, claude = CLAUDE, t3?: string) {
     super();
-    this.tracks = readJson(join(state, "voice", "tracks.json")) ?? {};
+    this.state = state;
+    this.hexDir = hexDir;
+    this.claude = claude;
+    this.tracks = readJson(tracksSchema, join(state, "voice", "tracks.json")) ?? {};
     this.links = new Links(
       state,
       () => {
@@ -245,6 +302,7 @@ export class Board extends Changes {
         if (JSON.stringify(this.stored()) !== JSON.stringify(this.threads)) {
           this.mark("threads");
         }
+
         const beaten = open(state).beaten();
         const linked = JSON.stringify(open(state).agentTasks());
         const closed = JSON.stringify(this.closedTasks());
@@ -252,6 +310,7 @@ export class Board extends Changes {
         if (beaten !== this.beaten || linked !== this.linked || closed !== this.closed) {
           this.schedule();
         }
+
         this.beaten = beaten;
         this.linked = linked;
         this.closed = closed;
@@ -259,8 +318,6 @@ export class Board extends Changes {
       watchDir(join(claude, "sessions"), () => {
         this.mark("sessions");
       }),
-    );
-    this.stops.push(
       watchDir(join(claude, "jobs"), (file) => {
         this.jobChanged(file, true);
       }),
@@ -272,35 +329,40 @@ export class Board extends Changes {
     return this.runs.find((run) => run.id === id);
   }
 
-  // Any thread hex.db has had: its run while it's on the board, else a read-only page from what was
-  // last kept for it, read fresh. A session another open thread holds now says nothing of this one,
-  // a question it was blocked on is no line, and a thread that shows only under another has no page.
   find(id: string): Run | Page | undefined {
     const kept = this.get(id);
 
-    if (kept) {
+    if (kept !== undefined) {
       return kept;
     }
-    const all = open(this.state).threads();
-    const row = all.find(({ app, thread }) => APPS[app] && `${app}:${thread}` === id);
 
-    if (!row || this.links.delegated(row.app, row.thread)) {
+    const all = open(this.state).threads();
+    const row = all.find(({ app, thread }) => APPS.has(app) && `${app}:${thread}` === id);
+
+    if (row === undefined || this.links.delegated(row.app, row.thread)) {
       return;
     }
+
     const thread = threadOf(row, generalOf(all));
 
-    const own =
-      row.session && !all.some((one) => one !== row && one.open && one.session === row.session)
+    const sessionNoOtherOpenThreadHolds =
+      hasText(row.session) &&
+      !all.some((one) => one !== row && one.open && one.session === row.session)
         ? row.session
         : undefined;
 
-    const job: Job | undefined =
-      own && readJson(join(this.claude, "jobs", short(own), "state.json"));
+    const job =
+      sessionNoOtherOpenThreadHolds === undefined
+        ? undefined
+        : readJson(
+            jobSchema,
+            join(this.claude, "jobs", short(sessionNoOtherOpenThreadHolds), "state.json"),
+          );
 
     const at = job?.updatedAt ?? this.tracks[id]?.at(-1)?.at;
 
     const line =
-      job?.detail && job.state !== "stopped" && job.state !== "blocked"
+      hasText(job?.detail) && job.state !== "stopped" && job.state !== "blocked"
         ? oneLine(plain(job.detail))
         : undefined;
 
@@ -311,54 +373,61 @@ export class Board extends Changes {
       name: thread.name,
       where: where(thread),
       place: this.place(thread),
-      ...(at && { at }),
-      ...(line && { line }),
-      ...(thread.link && { link: thread.link }),
+      ...(hasText(at) && { at }),
+      ...(hasText(line) && { line }),
+      ...(hasText(thread.link) && { link: thread.link }),
     };
   }
 
-  // The Claude Code session a run's thread runs in, whose log holds its chat.
   session(id: string) {
     return [...this.threads, ...this.loose()].find((thread) => `${thread.app}:${thread.id}` === id)
       ?.session;
   }
 
-  // Read every thread and session again now, for an answer that has to be live: a session whose
-  // process died (killed, crashed) leaves its record behind, so no change says it's gone.
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* A session whose process died (killed, crashed) leaves its record behind, so no file change
+     says it's gone. */
   refresh() {
     clearTimeout(this.pending);
     this.stale = { threads: true, sessions: true };
     this.build();
   }
 
-  // The busy sessions no run counts, other than hex's own helpers: a terminal's, or one started outside hex.
   strays(): Session[] {
     return [...this.sessions.values()].filter(
-      (session) => busy(session) && !session.helper && !this.owners.has(session.id),
+      (session) =>
+        busy(session) &&
+        (session.helper === undefined || session.helper === "") &&
+        !this.owners.has(session.id),
     );
   }
 
   rows(): Row[] {
-    return this.runs.map(({ needs, lately, steps, plan, agents, ...row }) => ({
-      ...row,
-      agents: agents.map(({ steps, result, ...agent }) => agent),
-    }));
+    return this.runs.map(
+      ({ needs: _needs, lately: _lately, steps: _steps, plan: _plan, agents, ...row }) => ({
+        ...row,
+        agents: agents.map(({ steps: _agentSteps, result: _result, ...agent }) => agent),
+      }),
+    );
   }
 
   close() {
     clearTimeout(this.pending);
 
-    if (this.saving) {
+    if (this.saving !== undefined) {
       this.saveTracks();
     }
+
     this.links.close();
 
     for (const stop of this.stops) {
       stop();
     }
+
     for (const watcher of this.watchers.values()) {
       watcher.close();
     }
+
     for (const follower of this.followers.values()) {
       follower.stop();
     }
@@ -369,20 +438,20 @@ export class Board extends Changes {
     this.schedule();
   }
 
-  // A renewed session gets a new job folder, and a watch on the old one hears nothing more.
-  private jobChanged(short: string | null, folder = false) {
-    if (!short || !this.wanted().has(short)) {
+  private jobChanged(id: string | null, renewedSessionGotANewFolder = false) {
+    if (id === null || id === "" || !this.wanted().has(id)) {
       return;
     }
-    if (folder) {
-      this.unwatchJob(short);
+
+    if (renewedSessionGotANewFolder) {
+      this.unwatchJob(id);
     }
-    this.jobs.delete(short);
-    this.watchJob(short);
+
+    this.jobs.delete(id);
+    this.watchJob(id);
     this.schedule();
   }
 
-  // A burst of writes (a state, its timeline, a session file) lands as one rebuild.
   private schedule() {
     clearTimeout(this.pending);
     this.pending = setTimeout(() => {
@@ -394,9 +463,11 @@ export class Board extends Changes {
     if (this.stale.threads) {
       this.readThreads();
     }
+
     if (this.stale.sessions) {
       this.readSessions();
     }
+
     this.own();
     this.watchJobs();
     this.stale = { threads: false, sessions: false };
@@ -418,8 +489,9 @@ export class Board extends Changes {
     this.follow(runs);
 
     for (const run of runs) {
-      this.keep(run);
+      this.keepLastStretchUntilItWorksAgain(run);
     }
+
     runs.push(...this.group(runs));
     runs.sort(
       (a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at),
@@ -432,6 +504,7 @@ export class Board extends Changes {
     ) {
       return;
     }
+
     this.runs = runs;
     this.finished = finished;
     this.changed();
@@ -440,32 +513,33 @@ export class Board extends Changes {
     if (summary.needs === this.summary.needs && summary.working === this.summary.working) {
       return;
     }
+
     this.summary = summary;
     this.counts.changed();
   }
 
-  // A working thread's stretch of work is kept, so once it stops it still shows its last steps,
-  // plan and agents, until it works again: a step still running then just loses its state, and an
-  // agent still working says what T3 Code says of it now.
-  private keep(run: Run) {
+  private keepLastStretchUntilItWorksAgain(run: Run) {
     const stretch = this.stretches.get(run.id);
 
     if (run.state === "working") {
       this.stretches.set(run.id, { steps: run.steps, plan: run.plan, agents: run.agents });
     }
+
     if (run.state === "working" || !stretch) {
       return;
     }
-    const thread = this.threads.find((thread) => `${thread.app}:${thread.id}` === run.id);
+
+    const thread = this.threads.find((one) => `${one.app}:${one.id}` === run.id);
     const handed = this.links.delegations(run.app, run.thread);
     Object.assign(run, {
       steps: settled(stretch.steps),
       plan: stretch.plan,
       agents: stretch.agents.map((agent) => {
-        const one = agent.state === "working" && handed.find((one) => one.id === agent.id);
+        const stillHanded =
+          agent.state === "working" ? handed.find((one) => one.id === agent.id) : undefined;
 
-        return one && thread
-          ? this.delegation(keyOf(thread), one, settled(agent.steps))
+        return stillHanded && thread
+          ? this.delegation(keyOf(thread), stillHanded, settled(agent.steps))
           : { ...agent, steps: settled(agent.steps) };
       }),
     });
@@ -479,10 +553,9 @@ export class Board extends Changes {
     const all = open(this.state).threads();
     const general = generalOf(all);
 
-    return all.filter(({ app, open }) => open && APPS[app]).map((row) => threadOf(row, general));
+    return all.filter((row) => row.open && APPS.has(row.app)).map((row) => threadOf(row, general));
   }
 
-  // What a thread's app calls it: General or the DM, T3 Code's own title, else its name.
   private place(thread: Thread) {
     const app = where(thread);
 
@@ -491,42 +564,35 @@ export class Board extends Changes {
       : (this.links.title(thread.app, thread.id) ?? thread.name);
   }
 
-  // Each thread's session, as the <app>:<key> of the thread it serves.
-  private held() {
+  private threadBySession() {
     return new Map(
-      this.threads.flatMap((thread) =>
-        thread.session ? [[thread.session, `${thread.app}:${thread.id}`] as [string, string]] : [],
+      this.threads.flatMap((thread): [string, string][] =>
+        hasText(thread.session) ? [[thread.session, `${thread.app}:${thread.id}`]] : [],
       ),
     );
   }
 
-  // The run each running session's work counts toward: the thread it works for (serving), with a T3
-  // Code thread's session counted toward the hex thread that last handed work to it, or to one above
-  // it; the sessions of T3 Code threads handed off themselves, which show as those delegations; and
-  // a run of its own (tops) for each session that works for a thread that isn't on the board
-  // (closed, or shown under another thread), which no thread holds and no such session launched;
-  // what it launched counts toward it.
   private own() {
-    // What a hex T3 thread shown under another launched counts toward that one.
     const shownAt = (thread: string, seen = new Set<string>()): string => {
       const under = this.links.under(
         thread.slice(0, thread.indexOf(":")),
         thread.slice(thread.indexOf(":") + 1),
       );
 
-      return under && !seen.has(under) ? shownAt(under, seen.add(thread)) : thread;
+      return hasText(under) && !seen.has(under) ? shownAt(under, seen.add(thread)) : thread;
     };
 
-    const held = this.held();
+    const held = this.threadBySession();
     const known = new Map(held);
     this.handed = new Set();
 
     for (const id of this.sessions.keys()) {
-      const owner = !known.has(id) && this.links.owner(id);
+      const owner = known.has(id) ? undefined : this.links.owner(id);
 
       if (!owner) {
         continue;
       }
+
       known.set(id, owner.thread);
 
       if (owner.handed && shownAt(owner.thread) === owner.thread) {
@@ -534,16 +600,14 @@ export class Board extends Changes {
       }
     }
 
-    const resolved = new Map(
-      [...this.sessions.values()].map((session) => [
-        session.id,
-        ownership(session, held, this.sessions, {
-          owners: known,
-          boundary: (id) => this.links.runs(id),
-          display: shownAt,
-        }),
-      ]),
-    );
+    const resolved = [...this.sessions.values()].map((session) => ({
+      session,
+      ...ownership(session, held, this.sessions, {
+        owners: known,
+        boundary: t3Boundary((id) => this.links.runs(id)),
+        display: shownAt,
+      }),
+    }));
 
     const shown = new Set(
       this.threads
@@ -552,18 +616,17 @@ export class Board extends Changes {
     );
 
     this.owners = new Map(
-      [...resolved].flatMap(([id, result]) =>
-        result.thread ? [[id, result.thread] as [string, string]] : [],
+      resolved.flatMap(({ session, thread }): [string, string][] =>
+        hasText(thread) ? [[session.id, thread]] : [],
       ),
     );
     this.tops = [];
 
-    for (const session of this.sessions.values()) {
-      const { thread: owner, top: run } = resolved.get(session.id)!;
-
-      if (!owner || shown.has(owner) || held.has(session.id)) {
+    for (const { session, thread: owner, top: run } of resolved) {
+      if (!hasText(owner) || shown.has(owner) || held.has(session.id)) {
         continue;
       }
+
       if (run.id === session.id) {
         this.tops.push(session);
       } else {
@@ -572,7 +635,6 @@ export class Board extends Changes {
     }
   }
 
-  // The runs of their own, each named as Claude Code named its session.
   private loose(): Thread[] {
     return this.tops.map((session) => ({
       app: "claude",
@@ -583,7 +645,6 @@ export class Board extends Changes {
     }));
   }
 
-  // The busy sessions whose work counts toward a run, other than its own and a T3 Code delegation's.
   private started(thread: Thread) {
     const key = `${thread.app}:${thread.id}`;
 
@@ -599,7 +660,7 @@ export class Board extends Changes {
   private wanted() {
     return new Set(
       [...this.threads, ...this.loose()].flatMap((thread) =>
-        thread.session ? [short(thread.session)] : [],
+        hasText(thread.session) ? [short(thread.session)] : [],
       ),
     );
   }
@@ -608,11 +669,17 @@ export class Board extends Changes {
     const wanted = this.wanted();
 
     for (const id of this.watchers.keys()) {
-      if (!wanted.has(id)) this.unwatchJob(id);
+      if (!wanted.has(id)) {
+        this.unwatchJob(id);
+      }
     }
+
     for (const id of this.jobs.keys()) {
-      if (!wanted.has(id)) this.jobs.delete(id);
+      if (!wanted.has(id)) {
+        this.jobs.delete(id);
+      }
     }
+
     for (const id of wanted) {
       this.watchJob(id);
     }
@@ -622,14 +689,14 @@ export class Board extends Changes {
     if (this.watchers.has(id)) {
       return;
     }
-    try {
-      this.watchers.set(
-        id,
-        watch(join(this.claude, "jobs", id), () => {
-          this.jobChanged(id);
-        }),
-      );
-    } catch {}
+
+    const watcher = tryWatch(join(this.claude, "jobs", id), () => {
+      this.jobChanged(id);
+    });
+
+    if (watcher !== undefined) {
+      this.watchers.set(id, watcher);
+    }
   }
 
   private unwatchJob(id: string) {
@@ -648,7 +715,7 @@ export class Board extends Changes {
     if (!cached) {
       const dir = join(this.claude, "jobs", id);
       cached = {
-        job: readJson(join(dir, "state.json")),
+        job: readJson(jobSchema, join(dir, "state.json")),
         timeline: tail(join(dir, "timeline.jsonl")),
       };
       this.jobs.set(id, cached);
@@ -658,96 +725,112 @@ export class Board extends Changes {
   }
 
   private run(thread: Thread): Run {
-    let { job, timeline } = thread.session
+    const { job: current, timeline: currentTimeline } = hasText(thread.session)
       ? this.job(thread.session)
       : { job: undefined, timeline: [] };
 
-    const session = thread.session ? this.sessions.get(thread.session) : undefined;
+    let job = current;
+    let timeline = currentTimeline;
+    const session = hasText(thread.session) ? this.sessions.get(thread.session) : undefined;
     const started = this.started(thread);
     const handed = this.links.delegations(thread.app, thread.id);
     const out = handed.filter((one) => !HANDED[one.status]);
-    const beats = (thread.session && this.beats.get(thread.session)) || [];
-    const beat = this.beat(thread, beats, session);
+    const beats = hasText(thread.session) ? (this.beats.get(thread.session) ?? []) : [];
+    const beat = this.heartbeatsBegan(thread, beats, session);
 
     const earlier =
       beat !== undefined &&
-      !!job?.fan?.some((fan) => RUNS.has(fan.kind) && !fan.doneAt && (fan.startedAt ?? 0) < beat);
+      job?.fan?.some(
+        (fan) => RUNS.has(fan.kind) && !hasTime(fan.doneAt) && (fan.startedAt ?? 0) < beat,
+      ) === true;
 
     if (beat !== undefined && job?.state !== "blocked") {
-      ({ job, timeline } = before(job, timeline, beat, earlier));
+      ({ job, timeline } = asHeartbeatFound(job, timeline, beat, earlier));
     }
+
     const beating = beat !== undefined && !earlier;
 
     const outside = (at: string) =>
-      !beats.some((beat) => at >= beat.began && (!beat.until || at < beat.until));
+      !beats.some((one) => at >= one.began && (!hasText(one.until) || at < one.until));
 
-    const ours = (step: Step) => outside(written.get(step) ?? step.at);
-    const known = job?.state ? STATES[job.state] : undefined;
+    const ours = (step: Step) => outside(lineWrittenAt.get(step) ?? step.at);
+    const known = STATES.get(job?.state ?? "");
     const live = (busy(session) && !beating) || started.length > 0 || out.length > 0;
     let state: State = live ? "working" : (known ?? "idle");
 
-    if (!live && ((state === "working" && !session) || job?.detail?.startsWith("(idle"))) {
+    if (!live && ((state === "working" && !session) || job?.detail?.startsWith("(idle") === true)) {
       state = "idle";
     }
+
     const lately = timeline
-      .filter((entry) => entry.text && entry.detail && outside(entry.at))
+      .filter(
+        (entry): entry is Entry & { detail: string } =>
+          hasText(entry.text) && hasText(entry.detail) && outside(entry.at),
+      )
       .slice(-LATELY)
-      .reverse()
+      .toReversed()
       .map((entry) => ({
         at: entry.at,
-        state: STATES[entry.state] ?? "idle",
-        text: plain(entry.detail!),
+        state: STATES.get(entry.state) ?? "idle",
+        text: plain(entry.detail),
       }));
 
     const last = Math.max(
       session ? (session.updated ?? session.started) : 0,
       ...started.map((one) => one.updated ?? one.started),
-      ...out.map((one) => (one.since ? Date.parse(one.since) : 0)),
+      ...out.map((one) => (hasText(one.since) ? Date.parse(one.since) : 0)),
     );
 
     const at = job?.updatedAt ?? timeline.at(-1)?.at ?? new Date(live ? last : 0).toISOString();
-
-    const needs =
-      state === "needs" ? plain(job?.needs ?? job?.detail ?? "") || undefined : undefined;
+    const asked = state === "needs" ? plain(job?.needs ?? job?.detail ?? "") : "";
+    const needs = asked === "" ? undefined : asked;
 
     const began = Math.min(
       ...started.map((one) => one.updated ?? one.started),
-      ...out.map((one) => (one.since ? Date.parse(one.since) : Date.now())),
-      busy(session) ? (session!.updated ?? session!.started) : Infinity,
+      ...out.map((one) => (hasText(one.since) ? Date.parse(one.since) : Date.now())),
+      session && busy(session) ? (session.updated ?? session.started) : Infinity,
     );
 
     const since =
       state === "working" && known !== "working"
         ? new Date(began).toISOString()
         : state === "working" || state === "needs"
-          ? (streak(timeline, job?.state) ?? at)
+          ? (currentStateBegan(timeline, job?.state) ?? at)
           : at;
 
     const { link } = thread;
     const key = keyOf(thread);
-    // A follower that starts as the thread works again reads back over its last stretch, whose steps
-    // and plan are done with: only what began or ended in this stretch is shown, with a little room
-    // for a status that turned busy after the turn's first line.
     const follower = this.followers.get(key);
-    const from = new Date(Date.parse(since) - 30_000).toISOString();
+
+    const thisStretchWithRoomForALateBusyStatus = new Date(
+      Date.parse(since) - 30_000,
+    ).toISOString();
 
     const steps =
       state === "working"
-        ? this.steps(key).filter((step) => ours(step) && (step.end ?? step.at) >= from)
+        ? this.newestStepsFirst(key).filter(
+            (step) => ours(step) && (step.end ?? step.at) >= thisStretchWithRoomForALateBusyStatus,
+          )
         : [];
 
     const plan =
-      state === "working" && follower?.planned && follower.planned >= from ? follower.plan : [];
+      state === "working" &&
+      hasText(follower?.planned) &&
+      follower.planned >= thisStretchWithRoomForALateBusyStatus
+        ? follower.plan
+        : [];
 
     const said =
       state === "working"
         ? this.followers.get(key)?.said.findLast((step) => step.at >= since && ours(step))
         : undefined;
 
-    const detail = job?.state === "stopped" ? undefined : job?.detail && plain(job.detail);
+    const detail = job?.state !== "stopped" && hasText(job?.detail) ? plain(job.detail) : undefined;
 
     const line =
-      needs || said?.text || (state === "working" ? "" : detail || lately[0]?.text) || "";
+      [needs, said?.text, state === "working" ? "" : [detail, lately[0]?.text].find(hasText)].find(
+        hasText,
+      ) ?? "";
 
     const agents = (
       state === "working"
@@ -756,7 +839,7 @@ export class Board extends Changes {
               .filter(
                 (fan) =>
                   WORK.has(fan.kind) &&
-                  (!fan.doneAt || fan.doneAt >= Date.parse(since)) &&
+                  (!hasTime(fan.doneAt) || fan.doneAt >= Date.parse(since)) &&
                   !(beat !== undefined && (fan.startedAt ?? 0) >= beat),
               )
               .map((fan) => this.subagent(key, fan)),
@@ -770,11 +853,13 @@ export class Board extends Changes {
               }),
             ),
             ...handed
-              .filter((one) => !HANDED[one.status] || one.latest || !one.end || one.end >= since)
+              .filter(
+                (one) => !HANDED[one.status] || one.latest || !hasText(one.end) || one.end >= since,
+              )
               .map((one) => this.delegation(key, one)),
           ]
         : []
-    ).sort(newest);
+    ).toSorted(newest);
 
     return {
       id: `${thread.app}:${thread.id}`,
@@ -786,7 +871,7 @@ export class Board extends Changes {
       state,
       running: session?.status === "busy" && !beating,
       line: oneLine(line),
-      ...(needs && { needs }),
+      ...(needs !== undefined && { needs }),
       since,
       at,
       agents,
@@ -794,14 +879,13 @@ export class Board extends Changes {
       plan,
       lately: state === "idle" ? [] : lately,
       track: this.track(`${thread.app}:${thread.id}`, timeline),
-      ...(link && { link }),
+      ...(hasText(link) && { link }),
     };
   }
 
-  // Agents started for a task (hex task agent) show with its work: under the topic that owns it, or
-  // for a task General or the DM owns, under a run named for its project (a thread's of that name, or
-  // a run of the project's own), wherever they started. A run of a project's own has no thread: it
-  // works while its agents do, and stays on the board until hex restarts, at most a week.
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* A run of a project's own has no thread: it works while its agents do, and stays on the board
+     until hex restarts, at most a week. */
   private group(runs: Run[]): Run[] {
     const links = Object.entries(open(this.state).agentTasks());
 
@@ -816,16 +900,13 @@ export class Board extends Changes {
         const task = taskOf(agent);
         const to = task && destination(task);
 
-        if (!to || to === run.id) {
+        if (!hasText(to) || to === run.id) {
           return true;
         }
-        // An agent kept from a stretch that ended says nothing new of whether it still works.
-        const settled =
-          run.state !== "working" && agent.state === "working"
-            ? { ...agent, state: "done" as const }
-            : agent;
 
-        moved.set(to, [...(moved.get(to) ?? []), settled]);
+        const keptFromAnEndedStretch = run.state !== "working" && agent.state === "working";
+        const moving = keptFromAnEndedStretch ? { ...agent, state: "done" as const } : agent;
+        moved.set(to, [...(moved.get(to) ?? []), moving]);
 
         return false;
       });
@@ -842,13 +923,13 @@ export class Board extends Changes {
         continue;
       }
 
-      run.agents = [...run.agents, ...agents].sort(newest);
+      run.agents = [...run.agents, ...agents].toSorted(newest);
       const working = agents.filter((agent) => agent.state === "working");
 
-      if (working.length && run.state !== "working" && run.state !== "needs") {
+      if (working.length > 0 && run.state !== "working" && run.state !== "needs") {
         Object.assign(run, {
           state: "working",
-          since: working.map((agent) => agent.since ?? run.at).sort()[0],
+          since: earliest(working.map((agent) => agent.since ?? run.at)),
         });
       }
     }
@@ -856,63 +937,72 @@ export class Board extends Changes {
     for (const run of fresh) {
       this.groups.set(run.id, run);
     }
+
     const since = new Date(Date.now() - KEEP).toISOString();
 
     for (const [id, kept] of this.groups) {
       if (fresh.some((run) => run.id === id)) {
         continue;
       }
+
       if (kept.at < since) {
         this.groups.delete(id);
         continue;
       }
 
-      // Its agents left the board: what still worked has ended by now.
-      if (kept.state === "working") {
-        const ended = {
-          ...kept,
-          state: "done" as const,
-          at: now,
-          agents: kept.agents.map((agent) =>
-            agent.state === "working" ? { ...agent, state: "done" as const, end: now } : agent,
-          ),
-        };
-
-        this.groups.set(id, { ...ended, track: this.track(id, busyness(ended.agents)) });
+      if (kept.state !== "working") {
+        fresh.push(kept);
+        continue;
       }
 
-      fresh.push(this.groups.get(id)!);
+      const agentsLeftTheBoard = {
+        ...kept,
+        state: "done" as const,
+        at: now,
+        agents: kept.agents.map((agent) =>
+          agent.state === "working" ? { ...agent, state: "done" as const, end: now } : agent,
+        ),
+      };
+
+      const ended = {
+        ...agentsLeftTheBoard,
+        track: this.track(id, busyness(agentsLeftTheBoard.agents)),
+      };
+
+      this.groups.set(id, ended);
+      fresh.push(ended);
     }
 
     return fresh;
   }
 
-  // The tasks closed in the last day, each under its home run, or with that run off the board, named
-  // as its project or its thread is. A task General or the DM owns with no project is done in the
-  // topic its work ran in: where it was closed or its agents were started, else where its proof was posted.
   private finish(runs: Run[]): Finished[] {
     const store = open(this.state);
     const all = store.threads();
     const general = generalOf(all);
 
-    const aside = (row?: Stored) =>
+    const generalOrDM = (row?: Stored) =>
       !row || ["General", "DM"].includes(where(threadOf(row, general)));
 
-    return this.closedTasks().map((task) => {
+    return this.closedTasks().flatMap((task) => {
+      if (task.closed === undefined) {
+        return [];
+      }
+
       const owner = all.find((row) => row.thread === task.owner);
 
-      const places =
-        !task.project && aside(owner)
-          ? [...store.worked(task.id), store.message(task.proof?.split(/\s/)[0] ?? "")?.to]
+      const whereItWasClosedOrItsAgentsStartedElseItsProof =
+        !hasText(task.project) && generalOrDM(owner)
+          ? [...store.worked(task.id), store.message(task.proof?.split(/\s/u)[0] ?? "")?.to]
           : [];
 
       const thread =
-        places
+        whereItWasClosedOrItsAgentsStartedElseItsProof
           .map((place) => all.find((row) => row.thread === place))
-          .find((row) => row && !aside(row)) ?? owner;
+          .find((row) => row !== undefined && !generalOrDM(row)) ?? owner;
 
       const id = home({ ...task, owner: thread?.thread ?? task.owner }, runs);
-      const run = runs.find((run) => run.id === id);
+      const run = runs.find((one) => one.id === id);
       const topic = run?.name ?? task.project ?? (thread ? nameOf(thread, general) : "hex");
 
       return {
@@ -921,9 +1011,9 @@ export class Board extends Changes {
         topic,
         app: thread?.app ?? "hex",
         proof: oneLine(plain(task.proof ?? "")),
-        at: task.closed!,
+        at: task.closed,
         ...(run && { run: run.id }),
-        ...(thread?.link && { link: thread.link }),
+        ...(hasText(thread?.link) && { link: thread.link }),
       };
     });
   }
@@ -932,26 +1022,26 @@ export class Board extends Changes {
     return open(this.state).finished(new Date(Date.now() - DAY).toISOString());
   }
 
-  // A project's own run, from its agents: working while any is, its lane from when they worked.
   private projectRun(id: string, agents: Agent[]): Run {
     const name = id.slice("project:".length);
     const working = agents.filter((agent) => agent.state === "working");
 
-    const state: State = working.length
-      ? "working"
-      : agents.some((agent) => agent.state === "failed")
-        ? "failed"
-        : "done";
+    const state: State =
+      working.length > 0
+        ? "working"
+        : agents.some((agent) => agent.state === "failed")
+          ? "failed"
+          : "done";
 
     const at =
       agents
-        .flatMap((agent) => [agent.since, agent.end].filter((at): at is string => !!at))
-        .sort()
+        .flatMap((agent) => [agent.since, agent.end].filter(hasText))
+        .toSorted()
         .at(-1) ??
       this.groups.get(id)?.at ??
       new Date().toISOString();
 
-    const since = working.length ? working.map((agent) => agent.since ?? at).sort()[0]! : at;
+    const since = earliest(working.map((agent) => agent.since ?? at)) ?? at;
     const line = working[0]?.line ?? agents[0]?.line ?? "";
 
     return {
@@ -966,7 +1056,7 @@ export class Board extends Changes {
       line: oneLine(line),
       since,
       at,
-      agents: agents.sort(newest),
+      agents: agents.toSorted(newest),
       steps: [],
       plan: [],
       lately: [],
@@ -974,29 +1064,39 @@ export class Board extends Changes {
     };
   }
 
-  // When the heartbeats began, while the session's latest turns are heartbeats': from the moment
-  // Claude Code marks the session busy while a heartbeat waits for it as its only message, until a
-  // prompt that isn't one comes, or Claude Code marks it busy again for a message that isn't one.
-  private beat(thread: Thread, beats: Beat[], session?: Session) {
-    const run = beats.slice(beats.findLastIndex((beat) => beat.after) + 1);
-    const flipped = session ? (session.updated ?? session.started) : 0;
-    const last = run.at(-1);
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* Heartbeats begin when Claude Code marks the session busy while a heartbeat waits as its only
+     message, and last until a prompt that isn't one comes, or Claude Code marks it busy again for
+     a message that isn't one. */
+  private heartbeatsBegan(thread: Thread, beats: HeartbeatTurn[], session?: Session) {
+    const heartbeatsSinceLastPrompt = beats.slice(
+      beats.findLastIndex((beat) => hasText(beat.after)) + 1,
+    );
 
-    const next =
-      !!last?.until &&
+    const flipped = session ? (session.updated ?? session.started) : 0;
+    const first = heartbeatsSinceLastPrompt[0];
+    const last = heartbeatsSinceLastPrompt.at(-1);
+
+    const busyAgainForAnotherMessage =
+      hasText(last?.until) &&
       session?.status === "busy" &&
       flipped > Date.parse(last.until) &&
       this.untaken(thread).some((row) => row.meta?.schedule !== "heartbeat");
 
-    if (run.length && !next) {
-      return Date.parse(run[0]!.began);
+    if (first !== undefined && !busyAgainForAnotherMessage) {
+      return Date.parse(first.began);
     }
+
     if (session?.status !== "busy") {
       return;
     }
+
     const { began, ended } = open(this.state).turn(session.id);
 
-    if ((!began || (!!ended && Date.parse(began) < flipped)) && this.awaited(thread)) {
+    if (
+      (!hasText(began) || (hasText(ended) && Date.parse(began) < flipped)) &&
+      this.onlyAHeartbeatWaits(thread)
+    ) {
       return flipped;
     }
   }
@@ -1005,33 +1105,34 @@ export class Board extends Changes {
     return open(this.state).untaken(thread.id);
   }
 
-  // A heartbeat is the only message waiting for the thread.
-  private awaited(thread: Thread) {
+  private onlyAHeartbeatWaits(thread: Thread) {
     const waiting = this.untaken(thread);
 
     return waiting.length > 0 && waiting.every((row) => row.meta?.schedule === "heartbeat");
   }
 
-  // Claude Code starts a job's timeline over whenever its session respawns or renews, so each
-  // thread's lane is kept here too, for a week, and survives both.
-  private track(id: string, timeline: Entry[]) {
+  private track(id: string, timelineClaudeCodeStartsOverOnRenew: Entry[]) {
     const kept = this.tracks[id] ?? [];
     const now = Date.now();
 
     const next = track(
       [
         ...kept,
-        ...timeline.map((entry) => ({ at: entry.at, state: STATES[entry.state] ?? "idle" })),
+        ...timelineClaudeCodeStartsOverOnRenew.map((entry) => ({
+          at: entry.at,
+          state: STATES.get(entry.state) ?? "idle",
+        })),
       ],
       now,
     );
 
     if (JSON.stringify(next) !== JSON.stringify(kept)) {
-      if (next.length) {
+      if (next.length > 0) {
         this.tracks[id] = next;
       } else {
-        delete this.tracks[id];
+        this.tracks = Object.fromEntries(Object.entries(this.tracks).filter(([one]) => one !== id));
       }
+
       this.saving ??= setTimeout(() => {
         this.saveTracks();
       }, SAVE);
@@ -1045,6 +1146,7 @@ export class Board extends Changes {
   private saveTracks() {
     clearTimeout(this.saving);
     this.saving = undefined;
+
     const file = join(this.state, "voice", "tracks.json");
 
     try {
@@ -1052,14 +1154,13 @@ export class Board extends Changes {
       writeFileSync(`${file}.tmp`, JSON.stringify(this.tracks));
       renameSync(`${file}.tmp`, file);
     } catch (error) {
-      process.stderr.write(`voice: tasks: couldn't keep the lanes: ${error}\n`);
+      process.stderr.write(`voice: tasks: couldn't keep the lanes: ${String(error)}\n`);
     }
   }
 
-  // A Claude Code subagent or workflow agent, with what it handed back when its session heard it stop.
   private subagent(session: string, { id, label, startedAt, doneAt }: Fan): Agent {
     const told = this.followers.get(session)?.told.get(id);
-    const state = doneAt ? (told?.state ?? "done") : "working";
+    const state = hasTime(doneAt) ? (told?.state ?? "done") : "working";
 
     return this.agent(`${session} ${id}`, {
       id,
@@ -1067,20 +1168,18 @@ export class Board extends Changes {
       state,
       via: "claude",
       since: iso(startedAt),
-      ...(doneAt && { end: iso(doneAt), result: told?.result }),
+      ...(hasTime(doneAt) && { end: iso(doneAt), result: told?.result }),
     });
   }
 
-  // A T3 Code delegation, followed in its own hex thread's transcript when it runs on hex, else in
-  // the turn items T3 Code keeps for it.
   private delegation(session: string, one: Delegation, kept?: Step[]): Agent {
-    const state = HANDED[one.status] ?? "working";
+    const state: Agent["state"] = HANDED[one.status] ?? "working";
     const ended = state !== "working";
 
     const steps =
       kept ??
-      (one.hex
-        ? this.steps(`${session} ${one.id}`)
+      (hasText(one.hex)
+        ? this.newestStepsFirst(`${session} ${one.id}`)
         : this.links
             .turns(one.id)
             .flatMap((item) => itemStep(item, (id) => this.links.name(id)) ?? [])
@@ -1100,68 +1199,102 @@ export class Board extends Changes {
     return this.agent(`${session} ${one.id}`, agent, steps);
   }
 
-  // An agent with its newest steps, its model in words, and a line: its newest step while it works,
-  // what it handed back once it's done.
-  private agent(key: string, agent: Omit<Agent, "steps">, steps = this.steps(key)): Agent {
+  private agent(
+    key: string,
+    agent: Loose<Omit<Agent, "steps">>,
+    steps = this.newestStepsFirst(key),
+  ): Agent {
     const follower = this.followers.get(key);
-    const result = agent.result && cut(unmark(agent.result.trim()), RESULT);
+
+    const result = hasText(agent.result) ? cut(unmark(agent.result.trim()), RESULT) : undefined;
 
     const line =
-      agent.state === "working" ? steps[0]?.text : (result && firstLine(result)) || steps[0]?.text;
+      agent.state === "working"
+        ? steps[0]?.text
+        : ([hasText(result) ? firstLine(result) : undefined, steps[0]?.text].find(hasText) ??
+          steps[0]?.text);
 
-    const kind = follower?.type && follower.type !== "general-purpose" ? follower.type : undefined;
-    const model = agent.who ?? [kind, who(follower?.model)].filter(Boolean).join(" · ");
+    const kind =
+      hasText(follower?.type) && follower.type !== "general-purpose" ? follower.type : undefined;
 
-    return clean({ ...agent, who: model || undefined, line: line && oneLine(line), result, steps });
+    const model = agent.who ?? [kind, who(follower?.model)].filter(hasText).join(" · ");
+
+    const { id, label, state, via, since, end, link } = agent;
+
+    return {
+      id,
+      label,
+      state,
+      via,
+      ...(hasText(model) && { who: model }),
+      ...(hasText(since) && { since }),
+      ...(hasText(end) && { end }),
+      ...(hasText(line) && { line: oneLine(line) }),
+      ...(hasText(result) && { result }),
+      ...(hasText(link) && { link }),
+      steps,
+    };
   }
 
   private project(cwd = this.hexDir) {
-    return join(this.claude, "projects", cwd.replaceAll(/[^a-zA-Z0-9]/g, "-"));
+    return join(this.claude, "projects", cwd.replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   }
 
-  // A followed transcript's newest steps, newest first.
-  private steps(key: string) {
-    return [...(this.followers.get(key)?.steps ?? [])].reverse();
+  private newestStepsFirst(key: string) {
+    return (this.followers.get(key)?.steps ?? []).toReversed();
   }
 
-  // A working thread's transcript, and those of its subagents, workflow agents and the sessions it
-  // started from this stretch of work, give its steps.
   private follow(runs: Run[]) {
-    const wanted = new Map<string, [number, (path: (found: string) => () => void) => () => void]>();
+    const wanted = new Map<string, [number, (path: (found: string) => Stop) => Stop]>();
     const threads = [...this.threads, ...this.loose()];
 
     for (const run of runs) {
       if (run.state !== "working") {
         continue;
       }
-      const thread = threads.find((thread) => `${thread.app}:${thread.id}` === run.id)!;
+
+      const thread = threads.find((one) => `${one.app}:${one.id}` === run.id);
+
+      if (thread === undefined) {
+        continue;
+      }
+
       const { session } = thread;
       const key = keyOf(thread);
-      const job = session ? this.job(session).job : undefined;
+      const job = hasText(session) ? this.job(session).job : undefined;
       const project = this.project(job?.cwd ?? thread.cwd);
       const subagents = join(project, key, "subagents");
       const handed = this.links.delegations(thread.app, thread.id);
 
-      if (session) {
+      if (hasText(session)) {
         wanted.set(session, [STEPS, (follow) => follow(join(project, `${session}.jsonl`))]);
       }
+
       for (const agent of run.agents) {
         const started = this.sessions.get(agent.id);
         const hex = handed.find((one) => one.id === agent.id)?.hex;
-        const child = hex && threads.find((one) => one.app === "t3" && one.id === hex)?.session;
 
-        if (agent.via === "t3" && !child) {
+        const child = hasText(hex)
+          ? threads.find((one) => one.app === "t3" && one.id === hex)?.session
+          : undefined;
+
+        if (agent.via === "t3" && !hasText(child)) {
           continue;
         }
+
         wanted.set(`${key} ${agent.id}`, [
           AGENT_STEPS,
           (follow) =>
-            child
+            hasText(child)
               ? follow(join(this.project(this.job(child).job?.cwd), `${child}.jsonl`))
               : started
                 ? follow(join(this.project(started.cwd), `${agent.id}.jsonl`))
                 : job?.fan?.find((one) => one.id === agent.id)?.kind === "workflow"
-                  ? inRun(join(subagents, "workflows"), `agent-${agent.id}.jsonl`, follow)
+                  ? followOnceWrittenInItsRunFolder(
+                      join(subagents, "workflows"),
+                      `agent-${agent.id}.jsonl`,
+                      follow,
+                    )
                   : follow(join(subagents, `agent-${agent.id}.jsonl`)),
         ]);
       }
@@ -1171,6 +1304,7 @@ export class Board extends Changes {
       if (wanted.has(key)) {
         continue;
       }
+
       follower.stop();
       this.followers.delete(key);
     }
@@ -1179,8 +1313,9 @@ export class Board extends Changes {
       if (this.followers.has(key)) {
         continue;
       }
+
       const follower: Follower = {
-        stop: () => {},
+        stop: nothingToStop,
         keep,
         steps: [],
         plan: [],
@@ -1190,75 +1325,88 @@ export class Board extends Changes {
 
       this.followers.set(key, follower);
       follower.stop = start((path) => {
-        follower.type = readJson(path.replace(/\.jsonl$/, ".meta.json"))?.agentType;
+        follower.type = readJson(
+          agentMetaSchema,
+          path.replace(/\.jsonl$/u, ".meta.json"),
+        )?.agentType;
 
-        return followTranscript(path, Math.max(0, sizeOf(path) - TAIL), (entry, updates) => {
-          this.take(follower, entry, updates());
+        const stop = followTranscript(path, Math.max(0, sizeOf(path) - TAIL), (entry, updates) => {
+          this.take(follower, transcriptLineSchema.parse(entry), updates());
         });
+
+        return () => {
+          void stop();
+        };
       });
     }
   }
 
-  // One transcript line: its model, an agent it heard back from, its plan, its new steps, and the
-  // results of steps it started earlier. A tool call is written once its input is whole, so it began
-  // when the line before it was written.
-  private take(follower: Follower, entry: any, updates: Update[]) {
+  private take(follower: Follower, entry: TranscriptLine, updates: Update[]) {
     const at = entry.timestamp ?? new Date().toISOString();
-    const began = follower.last ?? at;
+    const toolCallBeganWhenTheLineBeforeWasWritten = follower.last ?? at;
 
-    if (entry.timestamp) {
+    if (hasText(entry.timestamp)) {
       follower.last = entry.timestamp;
     }
-    if (entry.type === "assistant" && who(entry.message?.model)) {
-      follower.model = entry.message.model;
+
+    const model = entry.message?.model;
+
+    if (entry.type === "assistant" && hasText(model) && hasText(who(model))) {
+      follower.model = model;
     }
+
     const told = toldOf(entry);
 
     if (told) {
       follower.told.set(...told);
     }
+
     for (const update of updates) {
       if (update.sessionUpdate === "plan") {
-        follower.plan = update.entries.map((entry) => ({
-          text: oneLine(entry.content),
-          state: PLANNED[entry.status] ?? "pending",
+        follower.plan = update.entries.map((planned) => ({
+          text: oneLine(planned.content),
+          state: PLANNED.get(planned.status) ?? "pending",
         }));
         follower.planned = at;
       }
 
       const back = backOf(update);
 
-      const step =
-        back &&
-        follower.steps.find((step) => step.id === (update as { toolCallId: string }).toolCallId);
+      const ended =
+        back && update.sessionUpdate === "tool_call_update"
+          ? follower.steps.find((one) => one.id === update.toolCallId)
+          : undefined;
 
-      if (step) {
-        Object.assign(step, back, { end: at, text: past(step.text) });
+      if (ended) {
+        Object.assign(ended, back, { end: at, text: past(ended.text) });
       }
+
       const did = stepOf(update, (id) => this.links.name(id));
 
-      if (did?.kind === "say" && did.text) {
+      if (did?.kind === "say" && hasText(did.text)) {
         const say = { ...did, at };
-        written.set(say, at);
+        lineWrittenAt.set(say, at);
         follower.said = [...follower.said, say].slice(-follower.keep);
       }
 
       if (
-        !did?.text ||
-        (did.id
-          ? follower.steps.some((step) => step.id === did.id)
+        did === undefined ||
+        !hasText(did.text) ||
+        (hasText(did.id)
+          ? follower.steps.some((one) => one.id === did.id)
           : did.text === follower.steps.at(-1)?.text)
       ) {
         continue;
       }
+
       const next = {
         ...did,
         text: did.kind === "say" ? did.text : oneLine(did.text),
-        at: did.id ? began : at,
-        ...(did.id && { state: "running" as const }),
+        at: hasText(did.id) ? toolCallBeganWhenTheLineBeforeWasWritten : at,
+        ...(hasText(did.id) && { state: "running" as const }),
       };
 
-      written.set(next, at);
+      lineWrittenAt.set(next, at);
       follower.steps.push(next);
 
       if (follower.steps.length > follower.keep) {
@@ -1270,24 +1418,23 @@ export class Board extends Changes {
   }
 }
 
-// The run a task's work shows under: the topic that owns it, or for a task General or the DM owns,
-// a run named for its project (a thread's of that name, or a run of the project's own).
 function home(task: { owner: string; project?: string }, runs: Run[]) {
   const owner = runs.find((run) => run.thread === task.owner);
 
   if (owner && owner.where !== "General" && owner.where !== "DM") {
     return owner.id;
   }
-  if (!task.project) {
+
+  if (!hasText(task.project)) {
     return owner?.id;
   }
+
   return (
     runs.find((run) => run.name === task.project && run.where !== "General" && run.where !== "DM")
       ?.id ?? `project:${task.project}`
   );
 }
 
-// Agents at work first, newest first, then the rest by when they ended, newest first.
 function newest(a: Agent, b: Agent) {
   return (
     Number(a.state !== "working") - Number(b.state !== "working") ||
@@ -1297,43 +1444,41 @@ function newest(a: Agent, b: Agent) {
   );
 }
 
-// When a set of agents worked, as a timeline: working from when the first of them started until
-// the last one at work ended, failed if one that ended then had.
 function busyness(agents: Agent[]): Entry[] {
   const marks = agents.flatMap((agent) => [
-    ...(agent.since ? [{ at: agent.since, step: 1, state: "working" }] : []),
-    ...(agent.since && agent.end
+    ...(hasText(agent.since) ? [{ at: agent.since, step: 1, state: "working" }] : []),
+    ...(hasText(agent.since) && hasText(agent.end)
       ? [{ at: agent.end, step: -1, state: agent.state === "failed" ? "failed" : "done" }]
       : []),
   ]);
 
-  let at = 0;
+  let atWork = 0;
 
   return marks
-    .sort((a, b) => a.at.localeCompare(b.at) || a.step - b.step)
+    .toSorted((a, b) => a.at.localeCompare(b.at) || a.step - b.step)
     .flatMap((mark) => {
-      const was = at;
-      at += mark.step;
+      const was = atWork;
+      atWork += mark.step;
 
-      return (was === 0 && at > 0) || (was > 0 && at === 0)
+      return (was === 0 && atWork > 0) || (was > 0 && atWork === 0)
         ? [{ at: mark.at, state: mark.state }]
         : [];
     });
 }
 
-// What the voice and Claude hear about a run when the caller wants to talk it through.
 export function opener(run: Run) {
   const state = {
     needs: `It's waiting on the caller: ${run.needs ?? run.line}`,
     working: `It's working: ${run.line}`,
     done: `It finished: ${run.line}`,
     failed: `It failed: ${run.line}`,
-    idle: `It's idle${run.line ? `; last: ${run.line}` : ""}`,
+    idle: `It's idle${run.line === "" ? "" : `; last: ${run.line}`}`,
   }[run.state];
 
   if (run.app === "hex") {
     return `The task is ${run.name}, work hex's agents do for it, with no thread of its own. ${state}`;
   }
+
   return `The task is the hex thread ${run.name} (${run.where}, thread id ${run.thread}). ${state}`;
 }
 
@@ -1346,7 +1491,7 @@ function threadOf(row: Stored, general?: Stored): Thread {
     name: nameOf(row, general),
     session,
     cwd,
-    ...(link && { link }),
+    ...(hasText(link) && { link }),
     ...(row === general && { general: true as const }),
   };
 }
@@ -1359,35 +1504,41 @@ function where(thread: Thread) {
   if (thread.general) {
     return "General";
   }
+
   if (thread.app === "telegram" && !thread.id.includes(":") && !thread.id.startsWith("-")) {
     return "DM";
   }
-  return APPS[thread.app];
+
+  return APPS.get(thread.app) ?? thread.app;
 }
 
-// When the job's current state began: the oldest of the newest run of timeline entries in it.
-function streak(timeline: Entry[], state?: string) {
+function currentStateBegan(timeline: Entry[], state?: string) {
   let since: string | undefined;
 
-  for (let i = timeline.length - 1; i >= 0 && timeline[i].state === state; i--) {
-    since = timeline[i].at;
+  for (const entry of timeline.toReversed()) {
+    if (entry.state !== state) {
+      break;
+    }
+
+    since = entry.at;
   }
+
   return since;
 }
 
-// A thread's last week for its lane, drawn on a log scale: what it was doing a week ago (the
-// change before it), then each change. Steps within a state are kept for the last hour only, and two working runs whose gap
-// (only finished or idle in it) is under a fiftieth of its age are one, since neither shows apart.
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A thread's last week for its lane, drawn on a log scale. Two working runs whose gap (only
+   finished or idle in it) is under a fiftieth of its age are one, since neither shows apart. */
 export function track(turns: Turn[], now: number): Turn[] {
   const from = now - TRACK;
 
-  const sorted = [...new Map(turns.map((turn) => [turn.at, turn])).values()].sort((a, b) =>
+  const sorted = [...new Map(turns.map((turn) => [turn.at, turn])).values()].toSorted((a, b) =>
     a.at.localeCompare(b.at),
   );
 
-  const before = sorted.findLast((turn) => Date.parse(turn.at) < from);
+  const aWeekAgo = sorted.findLast((turn) => Date.parse(turn.at) < from);
   const recent = sorted.filter((turn) => Date.parse(turn.at) >= from);
-  const all = before ? [before, ...recent] : recent;
+  const all = aWeekAgo ? [aWeekAgo, ...recent] : recent;
   const merged: Turn[] = [];
 
   for (const turn of all) {
@@ -1395,14 +1546,16 @@ export function track(turns: Turn[], now: number): Turn[] {
       const gap = merged.findLastIndex((one) => one.state === "working");
       const between = merged.slice(gap + 1);
 
+      const quietSince = between[0];
+
       const quiet =
         gap !== -1 &&
-        between.length > 0 &&
+        quietSince !== undefined &&
         between.every((one) => one.state === "done" || one.state === "idle");
 
       if (
         quiet &&
-        Date.parse(turn.at) - Date.parse(between[0]!.at) < (now - Date.parse(turn.at)) / GRAIN
+        Date.parse(turn.at) - Date.parse(quietSince.at) < (now - Date.parse(turn.at)) / GRAIN
       ) {
         merged.splice(gap + 1);
       }
@@ -1412,15 +1565,24 @@ export function track(turns: Turn[], now: number): Turn[] {
   }
 
   return merged.filter(
-    (turn, i) => i === 0 || turn.state !== merged[i - 1]!.state || now - Date.parse(turn.at) < FINE,
+    (turn, i) => i === 0 || turn.state !== merged[i - 1]?.state || now - Date.parse(turn.at) < FINE,
   );
 }
 
-// A workflow agent's transcript lands in its run's own folder, so it's followed once it's written there.
-function inRun(runs: string, name: string, follow: (path: string) => () => void) {
-  let stop: (() => void) | undefined;
+function followOnceWrittenInItsRunFolder(
+  runs: string,
+  name: string,
+  follow: (path: string) => Stop,
+) {
+  let stop: Stop | undefined;
   mkdirSync(runs, { recursive: true });
-  const watcher = watch(runs, { recursive: true }, (_, file) => file?.endsWith(name) && find());
+
+  const watcher = watch(runs, { recursive: true }, (_, file) => {
+    if (file?.endsWith(name) === true) {
+      find();
+    }
+  });
+
   find();
 
   return () => {
@@ -1429,96 +1591,90 @@ function inRun(runs: string, name: string, follow: (path: string) => () => void)
   };
 
   function find() {
-    const path =
-      !stop && new Bun.Glob(`*/${name}`).scanSync({ cwd: runs, absolute: true }).next().value;
-
-    if (!path) {
+    if (stop) {
       return;
     }
+
+    const [path] = new Bun.Glob(`*/${name}`).scanSync({ cwd: runs, absolute: true });
+
+    if (!hasText(path)) {
+      return;
+    }
+
     watcher.close();
     stop = follow(path);
   }
 }
 
-// Where a thread's steps and its agents' are kept: under its session, or while it has none (a job
-// it owns can run without one), under the thread itself.
 function keyOf(thread: Thread) {
   return thread.session ?? `${thread.app}:${thread.id}`;
 }
 
-// A model's name in words: claude-opus-5-5 is Opus 5.5, gpt-6.1-sol is Sol.
 function who(model?: string | null) {
   const id = (model ?? "")
-    .replace(/\[\w+\]$/, "")
-    .replace(/-\d{8}$/, "")
-    .replace(/^claude-/, "");
+    .replace(/\[\w+\]$/u, "")
+    .replace(/-\d{8}$/u, "")
+    .replace(/^claude-/u, "");
 
-  if (/^gpt-[\d.]+$/.test(id)) {
+  if (/^gpt-[\d.]+$/u.test(id)) {
     return id.toUpperCase();
   }
-  const [name, ...version] = id.replace(/^gpt-[\d.]+-/, "").split("-");
 
-  return /^[a-z]\w*$/.test(name!) && name !== "default"
-    ? [name!.replace(/^./, (letter) => letter.toUpperCase()), version.join(".")]
-        .filter(Boolean)
+  const [name = "", ...version] = id.replace(/^gpt-[\d.]+-/u, "").split("-");
+
+  return /^[a-z]\w*$/u.test(name) && name !== "default"
+    ? [name.replace(/^./u, (letter) => letter.toUpperCase()), version.join(".")]
+        .filter(hasText)
         .join(" ")
     : undefined;
 }
 
-// What a background agent handed back, from the notification its session got when it stopped, or
-// a foreground agent from its Agent call's result.
-function toldOf(entry: any): [string, Told] | undefined {
+function joinedText(blocks: z.infer<typeof blocksSchema>) {
+  return blocks.map((block) => block.text ?? "").join("\n");
+}
+
+function toldOf(entry: TranscriptLine): [string, Told] | undefined {
   const result = entry.toolUseResult;
 
   if (
     entry.type === "user" &&
-    result?.agentId &&
+    hasText(result?.agentId) &&
     result.status === "completed" &&
-    Array.isArray(result.content)
+    result.content !== undefined
   ) {
-    return [
-      result.agentId,
-      { state: "done", result: result.content.map((block: any) => block.text ?? "").join("\n") },
-    ];
+    return [result.agentId, { state: "done", result: joinedText(result.content) }];
   }
+
   if (entry.origin?.kind !== "task-notification") {
     return;
   }
-  const content = entry.message?.content;
 
-  const text: string =
-    typeof content === "string"
-      ? content
-      : (content ?? []).map((block: any) => block.text ?? "").join("\n");
+  const content = entry.message?.content ?? [];
+  const text = Array.isArray(content) ? joinedText(content) : content;
+  const id = /<task-id>([\w-]+)<\/task-id>/u.exec(text)?.[1];
 
-  const id = /<task-id>([\w-]+)<\/task-id>/.exec(text)?.[1];
-
-  const said = /<result>([\s\S]*?)(?:<\/result>|$)/
+  const said = /<result>([\s\S]*?)(?:<\/result>|$)/u
     .exec(text)?.[1]
-    ?.replace(/^\[harness:[^\]]*\]\s*/, "")
+    ?.replace(/^\[harness:[^\]]*\]\s*/u, "")
     .trim();
 
-  return id
+  return hasText(id)
     ? [
         id,
         {
-          state: TOLD[/<status>(\w+)<\/status>/.exec(text)?.[1] ?? ""] ?? "stopped",
-          ...(said && { result: said }),
+          state: TOLD.get(/<status>(\w+)<\/status>/u.exec(text)?.[1] ?? "") ?? "stopped",
+          ...(hasText(said) && { result: said }),
         },
       ]
     : undefined;
 }
 
-// A session's records as they stood when its heartbeat began: at rest (a turn's end, which has its
-// reply, even while what it handed off works on), or while work from before it still runs, as that
-// work last said. With none from before it (Claude Code starts a job's
-// timeline over when its session renews), it's idle. Either way it stays listed by its own time.
-function before(job: Job | undefined, timeline: Entry[], from: number, working: boolean) {
+function asHeartbeatFound(job: Job | undefined, timeline: Entry[], from: number, working: boolean) {
   const kept = timeline.filter((entry) => Date.parse(entry.at) < from);
 
   const last = working
     ? kept.at(-1)
-    : kept.findLast((entry) => entry.state !== "working" || entry.text);
+    : kept.findLast((entry) => entry.state !== "working" || hasText(entry.text));
 
   if (!job || !last) {
     return {
@@ -1526,6 +1682,7 @@ function before(job: Job | undefined, timeline: Entry[], from: number, working: 
       timeline: kept,
     };
   }
+
   return {
     job: {
       ...job,
@@ -1537,25 +1694,18 @@ function before(job: Job | undefined, timeline: Entry[], from: number, working: 
   };
 }
 
-// Steps of a stretch that ended: one still running then never said how it went.
 function settled(steps: Step[]) {
   return steps.map(({ state, ...step }) =>
-    state === "running" ? step : { ...step, ...(state && { state }) },
+    state === "running" ? step : { ...step, ...(state !== undefined && { state }) },
   );
 }
 
 function iso(ms?: number) {
-  return ms ? new Date(ms).toISOString() : undefined;
+  return hasTime(ms) ? new Date(ms).toISOString() : undefined;
 }
 
 function cut(text: string, size: number) {
   return text.length > size ? `${text.slice(0, size - 1)}…` : text;
-}
-
-function clean<T extends object>(record: T) {
-  return Object.fromEntries(
-    Object.entries(record).filter(([, value]) => value !== undefined && value !== ""),
-  ) as T;
 }
 
 function short(session: string) {
@@ -1564,8 +1714,8 @@ function short(session: string) {
 
 function plain(text: string) {
   return text
-    .replaceAll(/\*\*|__|`/g, "")
-    .replaceAll(/\s+/g, " ")
+    .replaceAll(/\*\*|__|`/gu, "")
+    .replaceAll(/\s+/gu, " ")
     .trim();
 }
 
@@ -1574,7 +1724,7 @@ function oneLine(text: string) {
 }
 
 function tail(path: string): Entry[] {
-  let fd;
+  let fd: number;
 
   try {
     fd = openSync(path, "r");
@@ -1589,19 +1739,17 @@ function tail(path: string): Entry[] {
     readSync(fd, chunk, 0, chunk.length, start);
     const lines = chunk.toString("utf-8").split("\n");
 
-    return (start ? lines.slice(1) : lines).flatMap((line) => {
-      try {
-        return [JSON.parse(line)];
-      } catch {
-        return [];
-      }
+    return (start > 0 ? lines.slice(1) : lines).flatMap((line) => {
+      const entry = parseJson(entrySchema, line);
+
+      return entry === undefined ? [] : [entry];
     });
   } finally {
     closeSync(fd);
   }
 }
 
-export function watchDir(dir: string, changed: (file: string | null) => void) {
+export function watchDir(dir: string, changed: (file: string | null) => void): Stop {
   try {
     const watcher = watch(dir, (_, file) => {
       changed(file);
@@ -1611,12 +1759,54 @@ export function watchDir(dir: string, changed: (file: string | null) => void) {
       watcher.close();
     };
   } catch {
-    return () => {};
+    return nothingToStop;
   }
 }
 
-function readJson(path: string) {
+function nothingToStop(): void {
+  return undefined;
+}
+
+function tryWatch(path: string, changed: () => void): FSWatcher | undefined {
   try {
-    return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {}
+    return watch(path, changed);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseJson<T>(schema: z.ZodType<T>, text: string): T | undefined {
+  try {
+    const parsed = schema.safeParse(JSON.parse(text));
+
+    return parsed.success ? parsed.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function readJson<T>(schema: z.ZodType<T>, path: string): T | undefined {
+  try {
+    return parseJson(schema, readFileSync(path, "utf-8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function hasText(text: string | null | undefined): text is string {
+  return text !== undefined && text !== null && text !== "";
+}
+
+function hasTime(ms: number | undefined): ms is number {
+  return ms !== undefined && ms !== 0;
+}
+
+function earliest(times: string[]) {
+  return times.toSorted()[0];
+}
+
+function t3Boundary(runsOnT3: (id: string) => boolean) {
+  // SAFETY: ownership only tests boundary's result for truth; hub/running.ts infers `false` from its default.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- until hub/running.ts types boundary as returning boolean
+  return runsOnT3 as (id: string) => false;
 }

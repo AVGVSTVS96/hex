@@ -4,20 +4,52 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { open } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
 
-// A call on a line another client holds (a Discord voice channel), end to end against a stand-in
-// for OpenAI's live API: the engine runs on its own with a hub that takes everything, and the test
-// plays the client holding the line, through lines on the engine's stdin and stdout.
-// hold: OpenAI never starts the session; refuse: it answers the start with an error; before readies
-// hex's state before the engine starts.
-async function lineCall({ hold = false, refuse = false, before = (_hex: string) => {} } = {}) {
+const ClientEvent = z.object({
+  type: z.string(),
+  session: z.unknown().optional(),
+  audio: z.string().optional(),
+  event_id: z.unknown().optional(),
+});
+
+const Session = z.object({
+  audio: z.object({ format: z.unknown() }),
+  input: z.array(z.object({ content: z.array(z.object({ text: z.string() })) })),
+});
+
+const Step = z.looseObject({
+  step: z.string(),
+  port: z.number().optional(),
+  content: z.string().optional(),
+  text: z.string().optional(),
+});
+
+const Relayed = z.looseObject({ type: z.string() });
+
+const Calls = z.object({ live: z.string().optional(), calls: z.array(z.unknown()) });
+
+const Asks = z.object({ asks: z.array(z.looseObject({ id: z.string() })) });
+
+const Cards = z.object({
+  asks: z.array(
+    z.looseObject({ ask: z.looseObject({ id: z.string() }), answer: z.unknown().optional() }),
+  ),
+});
+
+async function lineCall({
+  openaiNeverStarts = false,
+  openaiRefuses = false,
+  readyHexStateBeforeTheEngine = (_hex: string) => {},
+} = {}) {
   const home = mkdtempSync(join(tmpdir(), "line-"));
   const state = join(home, ".claude", "channels", "voice");
   mkdirSync(state, { recursive: true });
   const heard: string[] = [];
-  const started: any[] = [];
+  const started: unknown[] = [];
   let voice: Bun.ServerWebSocket<unknown> | undefined;
 
   const openai = Bun.serve({
@@ -29,14 +61,14 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
         voice = socket;
       },
       message(socket, raw) {
-        const event = JSON.parse(String(raw));
+        const event = ClientEvent.parse(JSON.parse(String(raw)));
 
         if (event.type === "session.start") {
           started.push(event.session);
 
-          if (refuse) {
+          if (openaiRefuses) {
             socket.send(JSON.stringify({ type: "error", error: { message: "no capacity" } }));
-          } else if (!hold) {
+          } else if (!openaiNeverStarts) {
             socket.send(
               JSON.stringify({
                 type: "session.started",
@@ -46,14 +78,16 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
           }
         }
 
-        if (event.type === "session.input_audio.append") {
+        if (event.type === "session.input_audio.append" && event.audio !== undefined) {
           heard.push(event.audio);
         }
+
         if (event.type === "session.thinking.append") {
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
           );
         }
+
         if (event.type === "session.close") {
           socket.send(
             JSON.stringify({
@@ -78,15 +112,15 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
 
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
-      ([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_|^CLAUDE_CONFIG_DIR$/.test(key),
+      ([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_|^CLAUDE_CONFIG_DIR$/u.test(key),
     ),
   );
 
   const hex = join(home, "hex", "state");
   mkdirSync(join(hex, "discord"), { recursive: true });
-  before(hex);
+  readyHexStateBeforeTheEngine(hex);
 
-  const engine = `import { serve, take, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+  const engineWithAHubThatTakesEverything = `import { serve, take, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 import { clients } from ${JSON.stringify(join(import.meta.dir, "..", "..", "hub", "hub.ts"))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 clients.set('discord', {
@@ -110,26 +144,25 @@ for await (const line of console) {
   if (verb === 'tool') tool(audio, JSON.parse(line.split(' ').slice(2).join(' '))).then(text => step('tool', { text }), error => step('tool', { error: error.message }))
 }`;
 
-  const plugin = Bun.spawn(["bun", "-e", engine], {
+  const plugin = Bun.spawn(["bun", "-e", engineWithAHubThatTakesEverything], {
     env: { ...env, HOME: home },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
   });
 
-  const steps: any[] = [];
-  let listening!: (port: number) => void;
-  const port = new Promise<number>((resolve) => (listening = resolve));
+  const steps: z.infer<typeof Step>[] = [];
+  const { promise: port, resolve: listening } = Promise.withResolvers<number>();
   void (async () => {
     let buffer = "";
 
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk);
       const lines = buffer.split("\n");
-      buffer = lines.pop()!;
+      buffer = lines.pop() ?? "";
 
-      for (const step of lines.map((line) => JSON.parse(line))) {
-        if (step.step === "listening") {
+      for (const step of lines.map((line) => Step.parse(JSON.parse(line)))) {
+        if (step.step === "listening" && step.port !== undefined) {
           listening(step.port);
         } else {
           steps.push(step);
@@ -142,11 +175,15 @@ for await (const line of console) {
     throw new Error(`the engine exited (${code}) before it listened`);
   });
 
-  const listened = await Promise.race([port, exited]).catch((error) => {
-    openai.stop(true);
+  let listened: number;
+
+  try {
+    listened = await Promise.race([port, exited]);
+  } catch (error) {
+    await openai.stop(true);
     rmSync(home, { recursive: true, force: true });
     throw error;
-  });
+  }
 
   const base = `http://127.0.0.1:${listened}`;
 
@@ -155,13 +192,21 @@ for await (const line of console) {
     heard,
     started,
     steps,
-    tell: (line: string) => (plugin.stdin.write(`${line}\n`), plugin.stdin.flush()),
-    speak: (audio: string) =>
-      voice!.send(JSON.stringify({ type: "session.output_audio.delta", delta: audio })),
+    tell: async (line: string) => {
+      await plugin.stdin.write(`${line}\n`);
+      await plugin.stdin.flush();
+    },
+    speak: (audio: string) => {
+      if (voice === undefined) {
+        throw new Error("OpenAI's stand-in has no session open");
+      }
+
+      voice.send(JSON.stringify({ type: "session.output_audio.delta", delta: audio }));
+    },
     [Symbol.asyncDispose]: async () => {
       plugin.kill();
       await plugin.exited;
-      openai.stop(true);
+      await openai.stop(true);
       rmSync(home, { recursive: true, force: true });
     },
   };
@@ -169,13 +214,15 @@ for await (const line of console) {
 
 test("a call on another client's line is held like a phone call: PCM both ways, the voice session told, a record of its own, and the line ended when the caller hangs up", async () => {
   await using call = await lineCall();
-  const session = await until(() => call.started[0]);
+  const session = Session.parse(await until(() => call.started[0]));
   expect(session.audio.format).toEqual({ type: "audio/pcm", rate: 24_000 });
-  expect(session.input[0].content[0].text).toBe("They joined you in a Discord voice channel.");
+  expect(session.input[0]?.content[0]?.text).toBe("They joined you in a Discord voice channel.");
 
   await until(() => call.steps.find((step) => step.step === "keep"));
-  expect(call.steps.find((step) => step.step === "deliver").content).toStartWith("A call started.");
-  call.tell("hear AAAA");
+  expect(call.steps.find((step) => step.step === "deliver")?.content).toStartWith(
+    "A call started.",
+  );
+  await call.tell("hear AAAA");
   await until(() => call.heard.length);
   expect(call.heard).toEqual(["AAAA"]);
   call.speak("BBBB");
@@ -183,9 +230,11 @@ test("a call on another client's line is held like a phone call: PCM both ways, 
     step: "play",
     audio: "BBBB",
   });
-  expect((await fetch(`${call.base}/calls`).then((r) => r.json())).live).toBe("sess_discord");
+  expect(Calls.parse(await fetch(`${call.base}/calls`).then((r) => r.json())).live).toBe(
+    "sess_discord",
+  );
 
-  call.tell(
+  await call.tell(
     `send ${JSON.stringify({ thread: "Anchors", about: "the anchors", text: "look into the anchors", app: "discord" })}`,
   );
   expect(await until(() => call.steps.find((step) => step.step === "sent"))).toEqual({
@@ -208,10 +257,10 @@ test("a call on another client's line is held like a phone call: PCM both ways, 
     },
   });
 
-  call.tell("hangup");
+  await call.tell("hangup");
   await until(() => call.steps.find((step) => step.step === "end"));
   await until(() => call.steps.find((step) => step.step === "renew"));
-  const record = await fetch(`${call.base}/calls/sess_discord`).then((r) => r.json());
+  const record: unknown = await fetch(`${call.base}/calls/sess_discord`).then((r) => r.json());
   expect(record).toMatchObject({
     id: "sess_discord",
     from: "discord",
@@ -222,34 +271,34 @@ test("a call on another client's line is held like a phone call: PCM both ways, 
 
 test("a line hung up on before its session starts never becomes a call, and one OpenAI refuses ends its line and is reported once", async () => {
   {
-    await using call = await lineCall({ hold: true });
+    await using call = await lineCall({ openaiNeverStarts: true });
     await until(() => call.started[0]);
-    call.tell("hangup");
+    await call.tell("hangup");
     await until(() => call.steps.find((step) => step.step === "end"));
     await Bun.sleep(200);
-    expect((await fetch(`${call.base}/calls`).then((r) => r.json())).calls).toEqual([]);
+    expect(Calls.parse(await fetch(`${call.base}/calls`).then((r) => r.json())).calls).toEqual([]);
     expect(call.steps.some((step) => step.step === "deliver" || step.step === "keep")).toBe(false);
   }
 
-  await using call = await lineCall({ refuse: true });
+  await using call = await lineCall({ openaiRefuses: true });
   await until(() => call.steps.find((step) => step.step === "end"));
   await Bun.sleep(200);
   const told = call.steps.filter((step) => step.step === "deliver");
   expect(told).toHaveLength(1);
-  expect(told[0].content).toBe(
+  expect(told[0]?.content).toBe(
     "A call from a Discord voice channel didn't happen: it never connected (OpenAI refused the discord session: no capacity).",
   );
-  const [record] = (await fetch(`${call.base}/calls`).then((r) => r.json())).calls;
+  const [record] = Calls.parse(await fetch(`${call.base}/calls`).then((r) => r.json())).calls;
   expect(record).toMatchObject({ from: "discord", end: "no-connect" });
 }, 20_000);
 
 test("on a call, a note on a shown card reaches its thread and the call and leaves it open, and an answer says what it did", async () => {
-  const relayed: any[] = [];
+  const relayed: z.infer<typeof Relayed>[] = [];
   const thread = "-1001234:5";
   let hub: ReturnType<typeof createServer> | undefined;
 
   await using call = await lineCall({
-    before: (hex) => {
+    readyHexStateBeforeTheEngine: (hex) => {
       mkdirSync(join(hex, "telegram"));
       const store = open(hex);
       store.keepThreads("telegram", { [thread]: { name: "desk", link: "https://t.me/c/1234/5" } });
@@ -271,14 +320,14 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
       });
       hub = createServer((socket) => {
         socket.setEncoding("utf-8");
-        socket.on("data", (chunk: string) =>
+        socket.on("data", (chunk: string) => {
           relayed.push(
             ...chunk
               .trim()
               .split("\n")
-              .map((line) => JSON.parse(line)),
-          ),
-        );
+              .map((line) => Relayed.parse(JSON.parse(line))),
+          );
+        });
       }).listen(join(hex, "telegram", "hub.sock"));
     },
   });
@@ -286,13 +335,13 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
   try {
     await until(() => call.steps.find((step) => step.step === "keep"));
     const id = `telegram:${thread}:1`;
-    call.tell(`tool ask ${JSON.stringify({ id })}`);
+    await call.tell(`tool ask ${JSON.stringify({ id })}`);
     await until(() => call.steps.find((step) => step.step === "tool"));
 
-    const post = (verb: string, body?: object) =>
+    const post = (verb: string, body?: Record<string, string>) =>
       fetch(`${call.base}/asks/${encodeURIComponent(id)}/${verb}`, {
         method: "POST",
-        body: body && JSON.stringify(body),
+        body: body === undefined ? null : JSON.stringify(body),
       });
 
     const noted = await post("note", { text: "more context first" });
@@ -312,15 +361,16 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
     await until(() =>
       call.steps.find(
         (step) =>
-          step.step === "deliver" && step.content.startsWith("The caller wrote a note on the card"),
+          step.step === "deliver" &&
+          step.content?.startsWith("The caller wrote a note on the card") === true,
       ),
     );
-    expect(call.steps.findLast((step) => step.step === "deliver").content).toBe(
+    expect(call.steps.findLast((step) => step.step === "deliver")?.content).toBe(
       `The caller wrote a note on the card for ${id}: "more context first". It's sent to its thread, and the question stays open.`,
     );
     expect(relayed).toHaveLength(1);
     expect(
-      (await fetch(`${call.base}/asks`).then((r) => r.json())).asks.map((ask: any) => ask.id),
+      Asks.parse(await fetch(`${call.base}/asks`).then((r) => r.json())).asks.map((ask) => ask.id),
     ).toContain(id);
     expect((await post("note", { text: " " })).status).toBe(400);
 
@@ -331,14 +381,14 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
       settled: 1,
       missed: 0,
     });
-    const [card] = (await fetch(`${call.base}/activity`).then((r) => r.json())).asks;
+    const [card] = Cards.parse(await fetch(`${call.base}/activity`).then((r) => r.json())).asks;
     expect(card).toMatchObject({
       answer: "Yes",
       sent: { thread: `telegram:${thread}`, topic: "desk", settled: 1, missed: 0 },
     });
 
     const other = `telegram:${thread}:2`;
-    call.tell(`tool ask ${JSON.stringify({ id: other })}`);
+    await call.tell(`tool ask ${JSON.stringify({ id: other })}`);
     await until(() => call.steps.filter((step) => step.step === "tool").length === 2);
 
     const dismissed = await fetch(`${call.base}/asks/${encodeURIComponent(other)}/dismiss`, {
@@ -362,8 +412,8 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
       },
       { type: "settle", thread, message: 2, note: "✓ Not needed, said in the app" },
     ]);
-    const cards = (await fetch(`${call.base}/activity`).then((r) => r.json())).asks;
-    expect(cards.find((card: any) => card.ask.id === other)).toMatchObject({
+    const cards = Cards.parse(await fetch(`${call.base}/activity`).then((r) => r.json())).asks;
+    expect(cards.find((shown) => shown.ask.id === other)).toMatchObject({
       answer: "Not needed",
       sent: { settled: 1, missed: 0 },
     });
@@ -372,14 +422,15 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
         .status,
     ).toBe(204);
 
-    const undone = (await fetch(`${call.base}/activity`).then((r) => r.json())).asks.find(
-      (card: any) => card.ask.id === other,
-    );
+    const undone = Cards.parse(
+      await fetch(`${call.base}/activity`).then((r) => r.json()),
+    ).asks.find((shown) => shown.ask.id === other);
 
-    expect(undone.answer).toBeUndefined();
+    expect(undone?.answer).toBeUndefined();
     await until(() =>
       call.steps.find(
-        (step) => step.step === "deliver" && step.content.startsWith("The caller took back"),
+        (step) =>
+          step.step === "deliver" && step.content?.startsWith("The caller took back") === true,
       ),
     );
     expect(
@@ -392,7 +443,7 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
 
 test("on a call, running answers from every thread hex has at work, not only what the call started", async () => {
   await using call = await lineCall({
-    before: (hex) => {
+    readyHexStateBeforeTheEngine: (hex) => {
       mkdirSync(join(hex, "telegram"));
       open(hex).keepThreads("telegram", {
         "-1001234:7": { name: "desk", session: "77777777-desk" },
@@ -412,7 +463,7 @@ test("on a call, running answers from every thread hex has at work, not only wha
   });
 
   await until(() => call.steps.find((step) => step.step === "keep"));
-  call.tell("tool running {}");
+  await call.tell("tool running {}");
   const { text } = await until(() => call.steps.find((step) => step.step === "tool"));
   expect(text).toStartWith("Everything hex is running, 1 thread working:");
   expect(text).toContain("\n- desk (Telegram), working for 1 minute");
