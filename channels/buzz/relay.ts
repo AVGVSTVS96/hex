@@ -15,7 +15,7 @@ export type Relay = {
 
 type Request = { message: unknown[]; events?: Event[]; done: (error?: string) => void };
 
-const nostrEvent = z.looseObject({
+export const nostrEvent = z.looseObject({
   id: z.string(),
   pubkey: z.string(),
   created_at: z.number(),
