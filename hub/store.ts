@@ -363,6 +363,7 @@ const TakenAtRow = z.object({ at: TextOrNull });
 const TakerRow = z.object({ taken_by: z.string(), taken_at: z.string() }).nullable();
 const LastRow = z.object({ last: z.number().nullable() });
 const UntakenRow = z.object({ untaken: z.number() });
+const RepliesRow = z.object({ replies: z.number() });
 const WakingRow = z.object({ count: z.number(), oldest: TextOrAbsent });
 const TaskNumberRow = z.object({ n: z.number() }).nullable();
 const DoneInRows = z.array(z.object({ done_in: z.string() }));
@@ -2278,6 +2279,34 @@ export class Store {
         )
         .get(session) !== null
     );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What the owner said to a session since its last turn ended, when it outnumbers the replies the session sent since: Claude Code passes on a chat message that arrives mid-turn as one from outside, not the user, so the turn can end without answering it.
+  unanswered(session: string, more = 0): Row[] {
+    const { handled } = this.turn(session);
+
+    if (handled === undefined) {
+      return [];
+    }
+
+    const owners = MessageRows.parse(
+      this.db
+        .query(
+          `select * from messages where taken_by = ?1 and author = 'owner' and "from" <> 'terminal' and taken_at > ?2 and json_extract(meta, '$.reaction') is null order by taken_at`,
+        )
+        .all(session, handled),
+    );
+
+    const { replies } = RepliesRow.parse(
+      this.db
+        .query(
+          `select count(*) as replies from messages where taken_by = ?1 and author = 'hex' and at > ?2 and json_extract(meta, '$.unsent') is null`,
+        )
+        .get(session, handled),
+    );
+
+    return owners.length > replies + more ? owners : [];
   }
 
   turn(session: string): { began?: string; ended?: string; handled?: string } {
