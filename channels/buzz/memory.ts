@@ -71,6 +71,7 @@ const editRequest = z.looseObject({
   content: z.string(),
 });
 
+// The memory panel is NIP-AE (https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/docs/nips/NIP-AE.md) and Agent Files is NIP-AF (https://github.com/AVGVSTVS96/buzz/blob/8f9e4593dbaf029beed0490b3ca2e6464e536732/docs/nips/NIP-AF.md)
 export function startMemory({
   relay,
   secretKey,
@@ -353,6 +354,7 @@ export function startMemory({
     });
   }
 
+  // NIP-AF answers only a readable edit request addressed to this agent alone, so any other gets no result: https://github.com/AVGVSTVS96/buzz/blob/8f9e4593dbaf029beed0490b3ca2e6464e536732/docs/nips/NIP-AF.md#edit-requests
   async function answer(event: Event) {
     if (answered.has(event.id) || event.pubkey !== owner) {
       return;

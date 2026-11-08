@@ -42,7 +42,6 @@ const OVERLAP = 60;
 
 const now = () => Math.floor(Date.now() / 1000);
 
-
 export function connectRelay({
   url,
   secretKey,

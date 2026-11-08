@@ -185,18 +185,7 @@ const threadSummary = z.looseObject({
   last_reply_at: z.number().exactOptional(),
 });
 
-const KEYCAPS = [
-  "1️⃣",
-  "2️⃣",
-  "3️⃣",
-  "4️⃣",
-  "5️⃣",
-  "6️⃣",
-  "7️⃣",
-  "8️⃣",
-  "9️⃣",
-  "🔟",
-];
+const KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
 
 function assertNotChannelStateOrSecrets(f: string): void {
   let real: string;
@@ -360,6 +349,19 @@ const isChannel = (thread: string) => thread.includes("-");
 
 const link = (channel: string, id: string) => `buzz://message?channel=${channel}&id=${id}`;
 
+function threadTags(thread: string, parent?: string): string[][] {
+  if (isChannel(thread)) {
+    return isGiven(parent) ? [["e", parent, "", "reply"]] : [];
+  }
+
+  return isGiven(parent) && parent !== thread
+    ? [
+        ["e", thread, "", "root"],
+        ["e", parent, "", "reply"],
+      ]
+    : [["e", thread, "", "reply"]];
+}
+
 function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof authTagSchema>) {
   const [, owner] = authTag;
   const relay = connectRelay({ url, secretKey, authTag });
@@ -502,19 +504,6 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     return channel;
   }
 
-  function threadTags(thread: string, parent?: string): string[][] {
-    if (isChannel(thread)) {
-      return isGiven(parent) ? [["e", parent, "", "reply"]] : [];
-    }
-
-    return isGiven(parent) && parent !== thread
-      ? [
-          ["e", thread, "", "root"],
-          ["e", parent, "", "reply"],
-        ]
-      : [["e", thread, "", "reply"]];
-  }
-
   async function post(
     thread: string,
     content: string,
@@ -547,12 +536,16 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     return { thread: root.id, link: tappable(link(channel, root.id)) };
   }
 
+  // The relay refuses events dated more than 15 minutes off, so a backfill posts the chat now, quoting the owner's lines: https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/crates/buzz-relay/src/handlers/ingest.rs#L2670
   async function backfill(thread: string, turns: Turn[]) {
     const name = await nameOf(owner);
 
     for (const { from, text } of turns) {
       for (const part of chunksThatCloseAndReopenCodeFences(text, MAX_CHUNK_LIMIT)) {
-        await post(thread, from === "me" ? `> **${name}**\n${part.replaceAll(/^/gmu, "> ")}` : part);
+        await post(
+          thread,
+          from === "me" ? `> **${name}**\n${part.replaceAll(/^/gmu, "> ")}` : part,
+        );
       }
     }
   }
@@ -821,7 +814,9 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     return await rows(hits, (event) => {
       const channel = channels.get(tag(event, "h") ?? "");
       const root = nip10RootAsBuzzReadsIt(event);
-      const where = channel?.dm === true ? "this direct message" : `#${channel?.name ?? "undefined"}`;
+
+      const where =
+        channel?.dm === true ? "this direct message" : `#${channel?.name ?? "undefined"}`;
 
       return `, in ${where}${isGiven(root) ? `, thread ${root}` : ""}`;
     });
@@ -934,7 +929,9 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
 
   function unack(thread: string) {
     for (const id of acks.get(thread) ?? []) {
-      void relay.publish({ kind: NIP09_DELETION, content: "", tags: [["e", id]] }).catch(() => null);
+      void relay
+        .publish({ kind: NIP09_DELETION, content: "", tags: [["e", id]] })
+        .catch(() => null);
     }
 
     acks.delete(thread);
@@ -973,23 +970,25 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     if (started) {
       sendTyping(thread);
 
-      if (latest) {
-        void ack(thread, latest, "💬").catch(() => {});
+      if (isGiven(latest)) {
+        void ack(thread, latest, "💬").catch(() => null);
       }
     }
 
-    void channelOf(thread)
-      .then((channel) => {
-        if (typing.has(thread)) {
-          activity?.busy({
-            thread,
-            channel,
-            session: hub.session(thread),
-            triggers: triggers.get(thread) ?? [],
-          });
-        }
-      })
-      .catch(() => {});
+    void showBusyInActivity(thread).catch(() => null);
+  }
+
+  async function showBusyInActivity(thread: string) {
+    const channel = await channelOf(thread);
+
+    if (typing.has(thread)) {
+      activity?.busy({
+        thread,
+        channel,
+        session: hub.session(thread),
+        triggers: triggers.get(thread) ?? [],
+      });
+    }
   }
 
   function cancel({
@@ -1004,25 +1003,27 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     const matches = [...typing.keys()].filter(
       (busy) =>
         (isChannel(busy) ? busy : homes.get(busy)) === channel &&
-        (!thread || busy === thread) &&
-        (!session || hub.session(busy) === session),
+        (!isGiven(thread) || busy === thread) &&
+        (!isGiven(session) || hub.session(busy) === session),
     );
 
-    if (matches.length === 0) {
+    const [only, ...others] = matches;
+
+    if (only === undefined) {
       return "no_active_turn";
     }
 
-    if (matches.length > 1) {
+    if (others.length > 0) {
       return "ambiguous_target";
     }
 
-    stop(matches[0]!);
+    stop(only);
 
     return "sent";
   }
 
   function stop(thread: string) {
-    void hub.interrupt(thread).catch(() => {});
+    void hub.interrupt(thread).catch(() => null);
   }
 
   const handlers: Handlers<typeof tools> = {
@@ -1045,7 +1046,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     },
     fetch_messages: history,
     search_messages: search,
-    list_channels: async () => listChannels(),
+    list_channels: () => Promise.resolve(listChannels()),
     create_channel: async (_caller, args) => await createChannel(args),
     presence: async () => await whoIsOnline(),
     canvas: async (caller, args) => {
@@ -1114,11 +1115,11 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       const lastId = sentIds.at(-1);
 
       if (choices.length > 0 && lastId !== undefined) {
-        const asked: Asked = { thread, choices: choices.map((label) => ({ label })) };
-        buttons[lastId] = asked;
+        const offered: Asked = { thread, choices: choices.map((label) => ({ label })) };
+        buttons[lastId] = offered;
         keep(BUTTONS_FILE, buttons);
 
-        for (const [i, choice] of asked.choices.entries()) {
+        for (const [i, choice] of offered.choices.entries()) {
           choice.reaction = (await react(lastId, KEYCAPS[i] ?? "")).id;
         }
 
@@ -1247,13 +1248,13 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       isChannel(thread)
         ? `buzz://channel/${thread}`
         : homes.has(thread)
-          ? link(homes.get(thread)!, thread)
+          ? link(homes.get(thread) ?? "", thread)
           : undefined,
     call,
     state: showState,
     fresh: (thread) => channels.get(thread)?.dm ?? false,
     failed: (thread, reason) => {
-      void post(thread, `Couldn't start this thread's session: ${reason}`).catch(() => {});
+      void post(thread, `Couldn't start this thread's session: ${reason}`).catch(() => null);
     },
     hexDir: process.env.HEX_DIR,
     launcher: process.env.HEX_LAUNCHER,
@@ -1261,19 +1262,21 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
 
   clients.set("buzz", { hub, place, backfill, close: shutdown, stop });
 
-  // Desktop writes a mention as "@Name", or "@Name (pubkey)" when two members share a name.
   async function unmention(text: string): Promise<string> {
-    const label = (await nameOf(me)).replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const label = (await nameOf(me)).replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const pubkeyDesktopAddsWhenTwoMembersShareAName = `(?: \\(${me}\\))?`;
 
     return text
-      .replaceAll(new RegExp(`(^|\\s)@${label}(?: \\(${me}\\))?(?=[\\s,;.!?:)]|$)`, "gi"), "$1")
+      .replaceAll(
+        new RegExp(
+          `(^|\\s)@${label}${pubkeyDesktopAddsWhenTwoMembersShareAName}(?=[\\s,;.!?:)]|$)`,
+          "giu",
+        ),
+        "$1",
+      )
       .trim();
   }
 
-  // A tag in a channel starts a thread on that message, or joins the thread
-  // it was sent in; inside a thread Hex knows, and in a DM, no tag is needed.
-  // Desktop's replies at any depth carry the top-level message as their root, so
-  // each top-level message is one thread and every reply under it reaches its session.
   function threadOf(event: Event, tagged: boolean): string | undefined {
     const head = nip10RootAsBuzzReadsIt(event) ?? event.id;
 
@@ -1281,19 +1284,15 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       return head;
     }
 
-    const channel = tag(event, "h")!;
+    const channel = tag(event, "h") ?? "";
 
-    if (channels.get(channel)?.dm) {
+    if (channels.get(channel)?.dm === true) {
       return channel;
     }
 
-    if (tagged) {
-      return head;
-    }
+    return tagged ? head : undefined;
   }
 
-  // A reply's reply marker is the thread head, unless it answers one message in
-  // particular; the head is named too when the reply brings Hex into the thread.
   async function replyMeta(
     event: Event,
     thread: string,
@@ -1301,7 +1300,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
   ): Promise<{ meta: Record<string, string>; own?: string | undefined }> {
     const parent = marked(event, "reply");
 
-    if (!parent || (parent === thread && !joined)) {
+    if (!isGiven(parent) || (parent === thread && !joined)) {
       return { meta: {} };
     }
 
@@ -1313,31 +1312,36 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
 
     const atts = listed(replied);
 
+    const meta: Message["meta"] = {
+      reply_to_message_id: replied.id,
+      reply_to_user: replied.pubkey === me ? "me" : await nameOf(replied.pubkey),
+    };
+
+    if (replied.content !== "") {
+      meta.reply_to_text = replied.content;
+    }
+
+    if (atts.length > 0) {
+      meta.reply_to_attachments = atts.join("; ");
+    }
+
     return {
-      meta: {
-        reply_to_message_id: replied.id,
-        reply_to_user: replied.pubkey === me ? "me" : await nameOf(replied.pubkey),
-        ...(replied.content ? { reply_to_text: replied.content } : {}),
-        ...(atts.length > 0 ? { reply_to_attachments: atts.join("; ") } : {}),
-      },
+      meta,
       own: replied.pubkey === event.pubkey ? await unmention(replied.content) : undefined,
     };
   }
 
-  // An edit (kind 40003) names the message it replaces, which holds the thread and mention tags.
   async function originalOf(event: Event): Promise<Event | undefined> {
-    if (event.kind !== 40_003) {
+    if (event.kind !== EDIT) {
       return event;
     }
 
     const id = tag(event, "e");
-    const [original] = id ? await relay.query([{ kinds: MESSAGES, ids: [id] }]) : [];
+    const [original] = isGiven(id) ? await relay.query([{ kinds: MESSAGES, ids: [id] }]) : [];
 
     return original?.pubkey === event.pubkey ? original : undefined;
   }
 
-  // Buzz is shared, so only the owner's own key makes a message the owner's; anyone else's names
-  // them by key in meta.user_id, which a display name can't fake.
   function authorOf(event: Event) {
     return event.pubkey === owner ? "owner" : "other";
   }
@@ -1349,13 +1353,18 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
   ): Promise<Record<string, string>> {
     const where = channels.get(channel ?? "");
 
-    return {
+    const meta: Message["meta"] = {
       chat_id: thread,
       user: await nameOf(event.pubkey),
       user_id: event.pubkey,
       ts: iso(event.created_at),
-      ...(where && !where.dm ? { channel: where.name } : {}),
     };
+
+    if (where && !where.dm) {
+      meta.channel = where.name;
+    }
+
+    return meta;
   }
 
   async function inbound(event: Event): Promise<void> {
@@ -1363,13 +1372,13 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       return;
     }
 
-    if (event.kind === 7) {
+    if (event.kind === REACTION) {
       await handleReaction(event);
 
       return;
     }
 
-    if (event.kind === 5 || event.kind === 9005) {
+    if (event.kind === NIP09_DELETION || event.kind === NIP29_ADMIN_DELETION) {
       await handleDeletion(event);
 
       return;
@@ -1378,31 +1387,34 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     await handleInbound(event);
   }
 
-  // A reaction reaches the thread the message it's on belongs to, if Hex is in it.
-  // A keycap on a message with buttons is a tap instead, and only the first counts.
   async function handleReaction(event: Event): Promise<void> {
     const id = event.tags.findLast((t) => t[0] === "e")?.[1];
-    const asked = id ? buttons[id] : undefined;
+    const offered = isGiven(id) ? buttons[id] : undefined;
     const index = keycap(event.content);
 
-    if (asked?.choices[index]) {
-      asked.chosen === undefined ? await tap(event, id!, index) : undefined;
+    if (isGiven(id) && offered?.choices[index]) {
+      if (offered.chosen === undefined) {
+        await tap(event, id, offered, index);
+      }
 
       return;
     }
 
-    const [target] = id ? await relay.query([{ kinds: MESSAGES, ids: [id] }]) : [];
+    const [target] = isGiven(id) ? await relay.query([{ kinds: MESSAGES, ids: [id] }]) : [];
     const thread = target && threadOf(target, false);
 
-    if (!thread) {
+    if (!target || !isGiven(thread)) {
       return;
     }
 
-    const meta = {
+    const meta: Message["meta"] = {
       reaction_to_message_id: target.id,
       reaction_to_user: target.pubkey === me ? "me" : await nameOf(target.pubkey),
-      ...(target.content ? { reaction_to_text: target.content } : {}),
     };
+
+    if (target.content !== "") {
+      meta.reaction_to_text = target.content;
+    }
 
     reactions.set(event.id, { thread, emoji: event.content, meta });
     hub.deliver(thread, hub.name(thread) ?? (await nameOf(event.pubkey)), {
@@ -1413,25 +1425,23 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     });
   }
 
-  // The bot's other keycaps come off, so the one tapped stands out.
-  async function tap(event: Event, id: string, index: number): Promise<void> {
-    const asked = buttons[id]!;
-    asked.chosen = index;
+  async function tap(event: Event, id: string, offered: Asked, index: number): Promise<void> {
+    offered.chosen = index;
     keep(BUTTONS_FILE, buttons);
 
-    for (const [i, choice] of asked.choices.entries()) {
-      if (i !== index && choice.reaction) {
+    for (const [i, choice] of offered.choices.entries()) {
+      if (i !== index && isGiven(choice.reaction)) {
         void relay
-          .publish({ kind: 5, content: "", tags: [["e", choice.reaction]] })
-          .catch(() => {});
+          .publish({ kind: NIP09_DELETION, content: "", tags: [["e", choice.reaction]] })
+          .catch(() => null);
       }
     }
 
-    const meta = await about(event, asked.thread, await channelOf(asked.thread));
-    hub.deliver(asked.thread, hub.name(asked.thread) ?? meta.user!, {
+    const meta = await about(event, offered.thread, await channelOf(offered.thread));
+    hub.deliver(offered.thread, hub.name(offered.thread) ?? meta.user ?? "", {
       key: event.id,
       author: authorOf(event),
-      content: asked.choices[index]!.label,
+      content: offered.choices[index]?.label ?? "",
       meta: { ...meta, button: "true", button_message_id: id },
     });
   }
@@ -1439,21 +1449,28 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
   async function handleDeletion(event: Event): Promise<void> {
     const id = tag(event, "e") ?? "";
     const reaction = reactions.get(id);
-    // The relay hides deleted events, so a deletion is explained by the message hex.db kept.
-    const found = hub.said(id);
-    const said = found?.meta?.reaction || found?.meta?.button ? undefined : found;
+    const keptByHexDbSinceTheRelayHidesDeletedEvents = hub.said(id);
+    const found = keptByHexDbSinceTheRelayHidesDeletedEvents;
+    const wasReactionOrTap = isGiven(found?.meta?.reaction) || isGiven(found?.meta?.button);
+    const said = wasReactionOrTap ? undefined : found;
     const thread = reaction?.thread ?? said?.to;
 
-    if (!thread || (hub.name(thread) === undefined && !channels.get(thread)?.dm)) {
+    if (!isGiven(thread) || (hub.name(thread) === undefined && channels.get(thread)?.dm !== true)) {
       return;
     }
 
     reactions.delete(id);
     const meta = await about(event, thread);
     const author = authorOf(event);
+    const deletion: Message["meta"] = { ...meta, deleted: "true", message_id: id };
+
+    if (isGiven(said?.body)) {
+      deletion.deleted_text = said.body;
+    }
+
     hub.deliver(
       thread,
-      hub.name(thread) ?? meta.user!,
+      hub.name(thread) ?? meta.user ?? "",
       reaction
         ? {
             key: event.id,
@@ -1465,12 +1482,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
             key: event.id,
             author,
             content: "(deleted a message)",
-            meta: {
-              ...meta,
-              deleted: "true",
-              message_id: id,
-              ...(said?.body ? { deleted_text: said.body } : {}),
-            },
+            meta: deletion,
           },
     );
   }
@@ -1486,11 +1498,11 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     const tagged = [original, event].some((e) => e.tags.some((t) => t[0] === "p" && t[1] === me));
     const thread = threadOf(original, tagged);
 
-    if (!thread) {
+    if (!isGiven(thread)) {
       return;
     }
 
-    const channel = tag(original, "h")!;
+    const channel = tag(original, "h") ?? "";
     const joined = !edited && !isChannel(thread) && hub.name(thread) === undefined;
 
     if (!isChannel(thread)) {
@@ -1512,39 +1524,48 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     }
 
     triggers.set(thread, [...(triggers.get(thread) ?? []), original.id]);
-    void ack(thread, original.id, "👀").catch(() => {});
+    void ack(thread, original.id, "👀").catch(() => null);
 
-    // Attachments are listed (name/type/size) but not downloaded: the model
-    // calls download_attachment when it wants them. The listing goes in meta
-    // only, since an in-content annotation is forgeable by the sender.
-    const atts = listed(event);
+    const listedInMetaSinceContentIsForgeable = listed(event);
+    const atts = listedInMetaSinceContentIsForgeable;
     const { meta: reply, own } = await replyMeta(original, thread, joined);
 
-    const words = (text || reply.reply_to_text || "")
-      .split(/\s+/)
-      .filter((word) => word && !word.startsWith("@"));
+    const firstWord = (text || (reply.reply_to_text ?? ""))
+      .split(/\s+/u)
+      .find((word) => word !== "" && !word.startsWith("@"));
 
-    const name = isChannel(thread) ? await nameOf(event.pubkey) : (words[0] ?? "Thread");
+    const name = isChannel(thread) ? await nameOf(event.pubkey) : (firstWord ?? "Thread");
 
-    // A bare tag on someone's message brings Hex in to read it: the message is reply_to_*.
-    // On the sender's own message, those words are what they said, and the thread's log keeps them.
-    const message: Message = {
-      key: event.id,
-      author: authorOf(event),
-      content: text || (atts.length > 0 ? "(attachment)" : own || "(tagged you)"),
-      meta: {
-        ...(await about(event, thread, channel)),
-        message_id: original.id,
-        ...(joined ? { new_thread: "true" } : {}),
-        ...(atts.length > 0
-          ? { attachment_count: String(atts.length), attachments: atts.join("; ") }
-          : {}),
-        ...reply,
-        ...(edited ? { edited: "true" } : {}),
-      },
+    const meta: Message["meta"] = {
+      ...(await about(event, thread, channel)),
+      message_id: original.id,
     };
 
-    hub.deliver(thread, name, message);
+    if (joined) {
+      meta.new_thread = "true";
+    }
+
+    if (atts.length > 0) {
+      meta.attachment_count = String(atts.length);
+      meta.attachments = atts.join("; ");
+    }
+
+    Object.assign(meta, reply);
+
+    if (edited) {
+      meta.edited = "true";
+    }
+
+    const ownWordsOnABareTag = own ?? "";
+
+    const delivered: Message = {
+      key: event.id,
+      author: authorOf(event),
+      content: text || (atts.length > 0 ? "(attachment)" : ownWordsOnABareTag || "(tagged you)"),
+      meta,
+    };
+
+    hub.deliver(thread, name, delivered);
   }
 
   let cursor = load(CURSOR_FILE, cursorSchema, { at: start, ids: [] });
@@ -1561,53 +1582,65 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     keep(CURSOR_FILE, cursor);
   }
 
-  // Events are handled one at a time, in the order they came, so a thread's
-  // messages reach its session in order.
-  let queue = Promise.resolve();
+  let oneAtATimeInArrivalOrder = Promise.resolve();
   let off = false;
+  let unlisten: (() => void) | undefined;
 
-  // The relay only sends channel messages live to a subscription naming its
-  // channels, so membership changes swap it for one over the new set.
-  let unlisten = () => {};
+  async function handleInTurn(event: Event) {
+    if (off || (event.created_at === cursor.at && cursor.ids.includes(event.id))) {
+      return;
+    }
+
+    try {
+      await inbound(event);
+    } catch (error) {
+      log(`handleInbound failed: ${String(error)}`);
+    }
+
+    try {
+      handled(event);
+    } catch (error) {
+      log(`couldn't save where Buzz left off: ${String(error)}`);
+    }
+  }
 
   function listen() {
     const previous = unlisten;
+    const relaySendsLiveOnlyToASubscriptionNamingEachChannel = [...channels.keys()];
+
     unlisten =
       channels.size === 0
-        ? () => {}
+        ? undefined
         : relay.subscribe(
-            [{ kinds: INBOUND, "#h": [...channels.keys()], since: cursor.at }],
+            [
+              {
+                kinds: INBOUND,
+                "#h": relaySendsLiveOnlyToASubscriptionNamingEachChannel,
+                since: cursor.at,
+              },
+            ],
             (event) => {
-              queue = queue
-                .then(async () => {
-                  if (off || (event.created_at === cursor.at && cursor.ids.includes(event.id))) {
-                    return;
-                  }
-
-                  await inbound(event).catch((error) => {
-                    log(`handleInbound failed: ${error}`);
-                  });
-                  handled(event);
-                })
-                .catch((error) => {
-                  log(`couldn't save where Buzz left off: ${error}`);
-                });
+              const previousEvent = oneAtATimeInArrivalOrder;
+              oneAtATimeInArrivalOrder = (async () => {
+                await previousEvent;
+                await handleInTurn(event);
+              })();
             },
           );
-    previous();
+    previous?.();
   }
 
   async function enter(ids: string[]) {
     const metas = ids.length > 0 ? await relay.query([{ kinds: [39_000], "#d": ids }]) : [];
 
     for (const id of ids) {
-      const meta = metas.find((meta) => tag(meta, "d") === id);
+      const meta = metas.find((each) => tag(each, "d") === id);
 
       const dm =
         meta?.tags.some((t) => (t[0] === "t" && t[1] === "dm") || t[0] === "hidden") ?? false;
 
       const forum = meta?.tags.some((t) => t[0] === "t" && t[1] === "forum") ?? false;
-      channels.set(id, { name: (meta && tag(meta, "name")) ?? id, dm, forum });
+      channels.set(id, { name: (meta ? tag(meta, "name") : undefined) ?? id, dm, forum });
     }
 
     listen();
@@ -1615,8 +1648,16 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
 
   async function discover() {
     const members = await relay.query([{ kinds: [39_002], "#p": [me] }]);
-    await enter(members.map((event) => tag(event, "d")!).filter(Boolean));
+    await enter(members.map((event) => tag(event, "d") ?? "").filter((id) => id !== ""));
     log(`connected as ${me.slice(0, 8)}, in ${channels.size} channel(s)`);
+  }
+
+  async function joinChannel(id: string) {
+    try {
+      await enter([id]);
+    } catch (error) {
+      log(`joining ${id} failed: ${String(error)}`);
+    }
   }
 
   const membership = relay.subscribe(
@@ -1624,14 +1665,14 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     (event) => {
       const id = tag(event, "h");
 
-      if (!id) {
+      if (!isGiven(id)) {
         return;
       }
 
       if (event.kind === 44_100) {
-        return void enter([id]).catch((error) => {
-          log(`joining ${id} failed: ${error}`);
-        });
+        void joinChannel(id);
+
+        return;
       }
 
       channels.delete(id);
@@ -1639,28 +1680,32 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     },
   );
 
-  const presence = () =>
-    relay.publish({ kind: PRESENCE, content: "online", tags: [] }).catch(() => {});
+  function presence() {
+    void relay.publish({ kind: PRESENCE, content: "online", tags: [] }).catch(() => null);
+  }
 
   const heartbeat = setInterval(presence, 60_000);
-  void presence();
+  presence();
 
   async function locate() {
     for (const thread of hub.threads()) {
       if (!isChannel(thread) && !homes.has(thread)) {
-        await channelOf(thread).catch(() => {});
+        await channelOf(thread).catch(() => null);
       }
     }
   }
 
-  discover()
-    .then(locate)
-    .catch((error) => {
-      log(`channel discovery failed: ${error}`);
-    });
+  async function startUp() {
+    try {
+      await discover();
+      await locate();
+    } catch (error) {
+      log(`channel discovery failed: ${String(error)}`);
+    }
+  }
 
-  // !shutdown from the owner (Buzz Desktop's Shutdown button) takes Hex off
-  // Buzz until the service restarts; the rest of the hub keeps running.
+  void startUp();
+
   async function shutdown() {
     log("shutting down");
     off = true;
@@ -1672,9 +1717,9 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
 
     typing.clear();
     membership();
-    unlisten();
+    unlisten?.();
     await Promise.race([
-      relay.publish({ kind: PRESENCE, content: "offline", tags: [] }).catch(() => {}),
+      relay.publish({ kind: PRESENCE, content: "offline", tags: [] }).catch(() => null),
       Bun.sleep(2000),
     ]);
     activity?.close();
