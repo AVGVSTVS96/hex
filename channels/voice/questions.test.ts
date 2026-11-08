@@ -71,20 +71,30 @@ test('a question keeps all of its context, line by line, so the app can open the
   expect(fromLedger('telegram', asked(1, `Ship it?\n${context}`, ['Yes', 'No'])).context).toBe(context)
 })
 
-test('a long first line ends at its last sentence that fits, and the rest opens its context whole', () => {
+test('a long first line ends at its question, and the rest opens its context whole', () => {
   const first = 'The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean? My pick: bring it back, drawn cleanly.'
   const question = fromLedger('telegram', asked(1, `${first}\nMore.`, ['A', 'B']))
   expect(question.question).toBe('The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean?')
   expect(question.context).toBe('My pick: bring it back, drawn cleanly.\nMore.')
 })
 
-test('a long first line ends at its last question that fits, however short', () => {
+test('a long first line ends at its last question, however short', () => {
   const question = fromLedger('telegram', asked(1, `Should we ship tonight? ${'The redesign brings a calmer palette and bigger type. '.repeat(3).trim()}`, ['Yes', 'No']))
   expect(question.question).toBe('Should we ship tonight?')
   expect(question.context!.startsWith('The redesign')).toBe(true)
 })
 
-test('a long first line with no sentence end that fits stays whole as the question', () => {
+test('a long first line never ends inside brackets, and a long question stays whole', () => {
+  const pick = fromLedger('telegram', asked(1, "iikb site next step: a 3D Duo in the hero that folds on its real hinge, plus buttons drawn as keycaps? (hex's pick: Yes. It shows off the Duo and the keyboard with zero words)", ['Yes', 'No']))
+  expect(pick.question).toBe('iikb site next step: a 3D Duo in the hero that folds on its real hinge, plus buttons drawn as keycaps?')
+  expect(pick.context).toBe("(hex's pick: Yes. It shows off the Duo and the keyboard with zero words)")
+  const long = `Keep the calmer palette (the one you saw? the blue one) and ${'the bigger type everywhere it shows, '.repeat(4)}tonight? Yes.`
+  const question = fromLedger('telegram', asked(1, long, ['Yes', 'No']))
+  expect(question.question).toBe(long.slice(0, -5))
+  expect(question.context).toBe('Yes.')
+})
+
+test('a long first line with no question mark stays whole as the question', () => {
   const tail = 'and here the line keeps going well past the limit with plenty of words to spare for the cut'
   for (const first of [
     `Which way ${'one option costs this and the other takes that away '.repeat(4).trim()}`,

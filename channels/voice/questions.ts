@@ -629,9 +629,8 @@ export class Questions extends Changes {
   }
 }
 
-// A question as its thread asked it: its first line is the question (a long one ends at its last
-// sentence that fits, which opens its context, or stays whole) and the rest its context; the option the thread marked as its pick wears it. What hex
-// said before asking it is its card's words.
+// A question as its thread asked it: its first line is the question and the rest its context; the
+// option the thread marked as its pick wears it. What hex said before asking it is its card's words.
 export function fromLedger(app: string, asked: Asked): Curated {
   const lines = plain(asked.text)
     .split('\n')
@@ -698,15 +697,18 @@ function plain(text: string) {
     .replace(/^#+\s+/gm, '')
 }
 
-const SENTENCE_END = /(?:[?!]+|(?<!(?:^|[^\p{L}\p{N}'’])\p{Ll}|\.\p{L}|(?:^|[^\p{L}\p{N}])\p{N}+|\b(?:vs|Mr|Mrs|Ms|Dr|St|approx))\.)["')\]”’]*(?=\s+["'“‘(\[]?[\p{Lu}\p{N}]|\s*$)/gu
-
+// A long line ends at its last question mark outside brackets, and what follows opens its context;
+// one with none stays whole.
 function cut(line: string, max: number): [string, string] {
   if (line.length <= max) return [line, '']
-  const ends = [...line.matchAll(SENTENCE_END)].map(found => ({ at: found.index + found[0].length, asks: found[0].includes('?') }))
-  const lastAsk = line.search(/[?？][^?？]*$/)
-  const fits = ends.filter(({ at }) => at >= lastAsk && at <= max)
-  const end = fits.findLast(({ asks }) => asks)?.at ?? fits.findLast(({ at }) => at >= max / 2)?.at
-  return end === undefined ? [line, ''] : [line.slice(0, end), line.slice(end).trim()]
+  let depth = 0
+  let end = line.length
+  for (let i = 0; i < line.length; i++) {
+    if ('([{（'.includes(line[i]!)) depth++
+    else if (')]}）'.includes(line[i]!)) depth = Math.max(0, depth - 1)
+    else if (!depth && '?？'.includes(line[i]!)) end = i + 1
+  }
+  return [line.slice(0, end), line.slice(end).trim()]
 }
 
 export function clip(text: string, max: number) {

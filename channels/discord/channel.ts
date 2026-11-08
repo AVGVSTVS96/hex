@@ -40,7 +40,7 @@ export const server: ChannelServer = {
           buttons: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Button labels shown under the message (max 25, 80 chars each). A tap comes back as a message with button="true", and the buttons then lock showing the choice.',
+            description: 'Button labels shown under the message (max 25, 80 chars each). A tap comes back as a message with button="true", and the buttons then lock showing the choice. When you have a pick, end its label with (my pick).',
           },
           multiple: { type: 'boolean', description: 'Show the buttons as a menu where any number can be picked at once (labels up to 100 chars). The picks come back as one message.' },
         },
@@ -123,7 +123,7 @@ export const server: ChannelServer = {
         type: 'object',
         properties: {
           question: { type: 'string', description: 'Max 300 characters.' },
-          options: { type: 'array', items: { type: 'string' }, description: '1–10 answers, 55 characters each.' },
+          options: { type: 'array', items: { type: 'string' }, description: '1–10 answers, 55 characters each. When you have a pick, end its answer with (my pick).' },
           multiple: { type: 'boolean', description: 'Allow picking more than one answer.' },
         },
         required: ['question', 'options'],
