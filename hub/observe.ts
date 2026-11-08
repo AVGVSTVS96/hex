@@ -2,7 +2,7 @@ import { spawn } from 'child_process'
 import { closeSync, existsSync, openSync } from 'fs'
 import { join } from 'path'
 import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from './notes.ts'
-import { zoneOf } from './schedule.ts'
+import { zoneOf } from './zone.ts'
 import { hexDir, open, replied, shown, stateDir, type Row, type Store } from './store.ts'
 
 // The owner's profile, which this agent keeps current after every turn in hex.db; bin/wake puts it in

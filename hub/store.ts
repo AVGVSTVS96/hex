@@ -281,9 +281,9 @@ const migrations: (string | ((store: Store) => void))[] = [
     if (!db.query("select 1 from pragma_table_info('tasks') where name = 'done_in'").get()) db.run('alter table tasks add column done_in text')
     if (!db.query("select 1 from pragma_table_info('task_agents') where name = 'thread'").get()) db.run('alter table task_agents add column thread text')
   },
-  // Work on hold, and each thread it holds: when its hold on that thread ended and why, and the message that woke it.
+  // Work on hold, and each thread it holds: when its hold on that thread ended and why, the message that woke it, and when that wake settled.
   `create table if not exists holds (n integer primary key, by text not null, why text not null, message text, until text check (until ${UTC}), at text not null check (at ${UTC}));
-  create table if not exists held (hold integer not null references holds (n), thread text not null, ended text check (ended ${UTC}), ending text, woke text, primary key (hold, thread));`,
+  create table if not exists held (hold integer not null references holds (n), thread text not null, ended text check (ended ${UTC}), ending text, woke text, settled text check (settled ${UTC}), primary key (hold, thread));`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -356,6 +356,13 @@ function bookOf(text: () => string, file: string): Book | undefined {
 }
 
 const now = () => new Date().toISOString()
+
+function holdNumber(id: string) {
+  const n = /^h-(\d+)$/.exec(id)?.[1]
+  if (!n) throw new Error(`${id} isn't a hold's id, like h-3`)
+  return Number(n)
+}
+
 const SEEN = 2 * 24 * 60 * 60 * 1000
 const TURNS = 30 * 24 * 60 * 60 * 1000
 const BEATS = 7 * 24 * 60 * 60 * 1000
@@ -653,27 +660,27 @@ export class Store {
 
   hold({ threads, by, why, message, until }: Omit<Hold, 'id' | 'at' | 'threads'> & { threads: string[] }): Hold {
     why = why.trim()
-    if (!threads.length) throw new Error('a hold names the threads it holds')
+    threads = [...new Set(threads)].filter(thread => thread !== by)
+    if (!threads.length) throw new Error('a hold names the threads it holds, other than the one holding them')
     if (!why) throw new Error('a hold says why')
     if (message && !this.message(message)) throw new Error(`no message ${message}`)
-    if (until && !(Date.parse(until) > Date.now())) throw new Error(`${until} has passed, so that hold would end as it starts`)
+    if (until !== undefined && !(Date.parse(until) > Date.now())) throw new Error(`${until} has passed, so that hold would end as it starts`)
     return this.write(() => {
       const { lastInsertRowid } = this.db.query('insert into holds (by, why, message, until, at) values (?, ?, ?, ?, ?)').run(by, why, message ?? null, until ?? null, now())
-      for (const thread of new Set(threads)) this.db.query('insert into held (hold, thread) values (?, ?)').run(lastInsertRowid, thread)
+      for (const thread of threads) this.db.query('insert into held (hold, thread) values (?, ?)').run(lastInsertRowid, thread)
       return this.holdOf(`h-${lastInsertRowid}`)!
     })
   }
 
   holdOf(id: string): Hold | null {
-    return this.holds({ id }).at(0) ?? null
+    return this.holds({ id, all: true }).at(0) ?? null
   }
 
   // Holds newest first: only those still holding a thread, unless all.
   holds({ id, all = false }: { id?: string; all?: boolean } = {}): Hold[] {
-    const n = id === undefined ? null : Number(/^h-(\d+)$/.exec(id)?.[1] ?? NaN)
     const rows = this.db
       .query('select * from holds where (?1 is null or n = ?1) and (?2 or exists (select 1 from held where hold = n and ended is null)) order by n desc')
-      .all(n, all) as { n: number; by: string; why: string; message: string | null; until: string | null; at: string }[]
+      .all(id === undefined ? null : holdNumber(id), all) as { n: number; by: string; why: string; message: string | null; until: string | null; at: string }[]
     return rows.map(({ n, message, until, ...hold }) => ({
       id: `h-${n}`,
       ...hold,
@@ -691,7 +698,7 @@ export class Store {
     const stray = threads?.filter(thread => !hold.threads.some(held => held.thread === thread))
     if (stray?.length) throw new Error(`${id} doesn't hold ${stray.join(', ')}`)
     return this.write(() =>
-      (this.db.query('update held set ended = ?, ending = ? where hold = ? and ended is null and (?4 is null or thread in (select value from json_each(?4))) returning thread').values(at, ending.trim(), Number(id.slice(2)), threads ? JSON.stringify(threads) : null) as [string][]).map(([thread]) => thread),
+      (this.db.query('update held set ended = ?, ending = ? where hold = ? and ended is null and (?4 is null or thread in (select value from json_each(?4))) returning thread').values(at, ending.trim(), holdNumber(id), threads ? JSON.stringify(threads) : null) as [string][]).map(([thread]) => thread),
     )
   }
 
@@ -700,13 +707,16 @@ export class Store {
     return this.write(() => (this.db.query('select n from holds where until <= ? and exists (select 1 from held where hold = n and ended is null)').values(at) as [number][]).flatMap(([n]) => this.unhold(`h-${n}`, 'its time came', undefined, at)))
   }
 
-  // Threads holds freed that hex hasn't woken yet, unless another hold still holds them: in the order
-  // they were freed, each by its holds' last to end first.
+  // Threads holds freed that hex hasn't woken yet, unless another hold still holds them, in the order
+  // they were freed, each by its holds' last to end first. Only a thread that was told of its hold, or
+  // took a message while held, wakes; one that slept through it has nothing to pick up.
   freed(): { id: string; thread: string; why: string; ending: string }[] {
-    return (this.db
-      .query(`select 'h-' || hold as id, thread, why, ending from held join holds on n = hold where ended is not null and woke is null and not exists (select 1 from held other where other.thread = held.thread and other.ended is null)
+    return this.db
+      .query(`select 'h-' || hold as id, thread, why, ending from held join holds on n = hold
+        where ended is not null and woke is null and not exists (select 1 from held other where other.thread = held.thread and other.ended is null)
+          and (exists (select 1 from messages where key = 'hold:h-' || hold || '@' || thread) or exists (select 1 from messages where "to" = held.thread and taken_at >= holds.at and taken_at <= held.ended))
         order by (select max(ended) from held other where other.thread = held.thread), (select min(rowid) from held other where other.thread = held.thread), ended desc`)
-      .all() as { id: string; thread: string; why: string; ending: string }[])
+      .all() as { id: string; thread: string; why: string; ending: string }[]
   }
 
   // The thread's freed holds woke it with the message under key.
@@ -714,13 +724,21 @@ export class Store {
     this.write(() => this.db.query('update held set woke = ? where thread = ? and ended is not null and woke is null').run(key, thread))
   }
 
-  // How many threads hex woke from a hold are still on it: the message waits for an open thread to
-  // take it, or the turn that took it hasn't ended.
-  waking(): number {
-    return (this.db
-      .query(`select count(*) as n from held join messages m on m.key = held.woke left join turns t on t.session = m.taken_by
-        where (m.taken_at is null and exists (select 1 from threads where thread = held.thread and open = 1)) or (m.taken_at is not null and t.session is not null and (t.ended is null or t.ended < m.taken_at))`)
-      .get() as { n: number }).n
+  // How many threads hex woke from a hold are still on it. A wake settles once the turn that took its
+  // message ends, or its thread closes, or it has waited past patience (a session that never took it,
+  // or died mid-turn); a settled one never counts again, whatever its session does next. Returns how
+  // many still count, and when the oldest of them runs out of patience.
+  waking(patience: number, at = now()): { count: number; until?: string } {
+    return this.write(() => {
+      this.db
+        .query(`update held set settled = ?1 where woke is not null and settled is null and (
+          not exists (select 1 from threads where thread = held.thread and open = 1)
+          or exists (select 1 from messages m join turns t on t.session = m.taken_by where m.key = held.woke and t.ended >= m.taken_at)
+          or exists (select 1 from messages m where m.key = held.woke and m.at < ?2))`)
+        .run(at, new Date(Date.parse(at) - patience).toISOString())
+      const { count, oldest } = this.db.query('select count(distinct thread) as count, min(m.at) as oldest from held join messages m on m.key = held.woke where settled is null').get() as { count: number; oldest: string | null }
+      return { count, ...(oldest && { until: new Date(Date.parse(oldest) + patience).toISOString() }) }
+    })
   }
 
   // A task from the owner's message under key: all of it, or the part quote names, which has to be
@@ -1135,6 +1153,11 @@ export class Store {
   // Whether a session of the thread is in the middle of a turn, or of its background agents' work, in hex's record of it.
   midTurn(thread: string): boolean {
     return !!this.db.query(`select 1 from turns where (began is not null and ended is null or waiting is not null) and session in (select distinct taken_by from messages indexed by sessions where "to" = ? and taken_by is not null) limit 1`).get(thread)
+  }
+
+  // The session is mid-turn, or its turn ended with background agents still working for it.
+  atWork(session: string): boolean {
+    return !!this.db.query('select 1 from turns where session = ? and (began is not null and ended is null or waiting is not null)').get(session)
   }
 
   turn(session: string): { began?: string; ended?: string; handled?: string } {

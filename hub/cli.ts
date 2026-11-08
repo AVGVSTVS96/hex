@@ -4,11 +4,11 @@ import { parseArgs } from 'util'
 import { history } from './loaded.ts'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { record, settingsOf } from './claude.ts'
-import { running, served, serving, type Session } from './running.ts'
+import { busy, running, served, serving, type Session } from './running.ts'
 import { instant, line, place } from './holds.ts'
 import { checks } from './ideas.ts'
 import { entry, render, waiting } from './tasks.ts'
-import { zoneOf } from './schedule.ts'
+import { zoneOf } from './zone.ts'
 import { asked, open, sent, type Row, type Status, type Task } from './store.ts'
 
 const USAGE = `usage:
@@ -283,20 +283,45 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
   }
 }
 
+// The threads a hold names, each by its key: a name means the one thread of it, an open one before
+// any closed, and to end a hold, the one of that name it holds.
+function holdable(names: string[], among?: string[]) {
+  return names.map(given => {
+    const all = named(given)
+    const matches = among ? all.filter(({ thread }) => among.includes(thread)) : all.some(({ open }) => open) ? all.filter(({ open }) => open) : all
+    if (matches.length === 1) return matches[0]!.thread
+    if (matches.length) throw new Error(`more than one thread is named "${given}", so name one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(', ')}`)
+    throw new Error(all.length ? `that hold doesn't hold "${given}"` : `no thread is "${given}" (hex threads lists them; quote every value that has spaces)`)
+  })
+}
+
+// The threads at work now: a session working for one is mid-turn, or its turn ended with background
+// agents still working for it.
+function working() {
+  const threads = store.threads({ open: true })
+  const held = new Map(threads.flatMap(({ app, thread, session }) => (session ? [[session, `${app}:${thread}`] as [string, string]] : [])))
+  const sessions = running(store)
+  const busyNow = [...sessions.values()].filter(session => busy(session) || session.state === 'working').flatMap(session => serving(session, held, sessions) ?? [])
+  return new Set([...busyNow.map(thread => store.key(thread)), ...threads.filter(({ session }) => session && store.atWork(session)).map(({ thread }) => thread)])
+}
+
 // Holds the threads named, or with end, ends a hold on them, or on every thread it holds.
 function hold(words: string[]) {
   const zone = zoneOf(dirname(state!))
+  if (flags.key && !store.message(flags.key)) throw new Error(`no message ${flags.key}`)
   if (words[0] === 'end') {
     const [, id, ...threads] = words
     if (!id || !flags.why) usage()
-    const freed = store.unhold(id, `${flags.why}${flags.key ? ` [${flags.key}]` : ''}`, threads.length ? threads.map(recipient) : undefined)
+    const hold = store.holdOf(id)
+    if (!hold) throw new Error(`no hold ${id}`)
+    const freed = store.unhold(id, `${flags.why}${flags.key ? ` [${flags.key}]` : ''}`, threads.length ? holdable(threads, hold.threads.map(({ thread }) => thread)) : undefined)
     const names = store.names()
-    console.log(freed.length ? `${id} freed ${freed.map(thread => names[thread] ?? thread).join(', ')}; hex wakes them, a couple at a time` : `${id} held none of them any more`)
+    console.log(freed.length ? `${id} freed ${freed.map(thread => names[thread] ?? thread).join(', ')}; hex wakes each that worked while held, a couple at a time` : `${id} held none of them any more`)
     return
   }
   if (!words.length || !flags.why) usage()
-  const by = process.env.HEX_THREAD || served() || 'terminal'
-  const placed = place(store, { threads: words.map(recipient), by: store.key(by), why: flags.why, message: flags.key, until: flags.until && instant(flags.until, zone) }, zone)
+  const by = store.key(process.env.HEX_THREAD || served() || 'terminal')
+  const placed = place(store, { threads: holdable(words), by, why: flags.why, message: flags.key, until: flags.until ? instant(flags.until, zone) : undefined }, { zone, working: working() })
   console.log(line(placed, store, zone))
 }
 

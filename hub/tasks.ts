@@ -2,7 +2,7 @@ import { dirname } from 'path'
 import { clip, fit, ROOM } from './fit.ts'
 import { line } from './holds.ts'
 import { served } from './running.ts'
-import { zoneOf } from './schedule.ts'
+import { zoneOf } from './zone.ts'
 import { open, stateDir, type Question, type Task } from './store.ts'
 
 function facts(task: Task, named: Record<string, string>, said?: string) {
@@ -51,12 +51,13 @@ export function pending(state: string, thread?: string, room = ROOM): { text: st
   const store = open(state)
   const tasks = store.tasks({ owner: thread, status: ['open'] })
   const questions = store.questions({ thread, waiting: true })
-  const holds = store.holds().map(hold => [hold.id, line(hold, store, zoneOf(dirname(state)))] as const)
+  const zone = zoneOf(dirname(state))
+  const holds = store.holds().map(hold => [hold.id, line(hold, store, zone)] as const)
   const named = store.names()
   const whose = thread ? 'This thread' : 'Every thread'
   const sections = [
     {
-      header: "Work on hold, which every session sees: a thread on hold finishes the step it's on and starts nothing new. A hold ends by itself at its time; when my words in any thread lift one, end it with `.hex/bin/hex hold end <hold> [<thread>…] --why '<what lifts it>' --key <my message>`, and hex wakes each thread it frees, a couple at a time:",
+      header: "Work on hold, which every session sees: a thread on hold finishes the step it's on and starts nothing new. A hold ends by itself at its time; when my words in any thread lift one, end it with `.hex/bin/hex hold end <hold> [<thread>…] --why '<what lifts it>' --key <my message>`, and hex wakes each thread it frees that worked while held, a couple at a time:",
       items: holds.map(([, text]) => [text]),
       gap: '\n',
       rest: '`.hex/bin/hex holds` lists them all',

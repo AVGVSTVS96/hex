@@ -2,6 +2,7 @@ import { readFileSync } from 'fs'
 import { join } from 'path'
 import { study } from './ideas.ts'
 import { open } from './store.ts'
+import { zoneOf } from './zone.ts'
 
 // A job in schedules.json wakes its thread (the main one, unless it names another) with
 // "[name] prompt" at each minute its five-field cron names and at each "YYYY-MM-DD HH:MM" its at
@@ -84,19 +85,6 @@ function onCron(cron: string, at: Wall) {
 // the two when clocks go back, and as far past the jump as it was set when they skip it.
 function minuteOf(at: string, zone = Temporal.Now.timeZoneId()) {
   return Temporal.PlainDateTime.from(at).toZonedDateTime(zone).epochMilliseconds / MINUTE
-}
-
-// The owner's time zone: TZ in the hex folder's .claude/settings.json, or else this machine's.
-// The owner's zone, if settings name one Temporal knows.
-export function zoneOf(hexDir: string): string | undefined {
-  try {
-    const zone = JSON.parse(readFileSync(join(hexDir, '.claude', 'settings.json'), 'utf8')).env?.TZ || undefined
-    if (zone) Temporal.Now.zonedDateTimeISO(zone)
-    return zone
-  } catch (error) {
-    if (error instanceof RangeError) process.stderr.write(`hex: TZ in .claude/settings.json isn't a zone hex knows, so it uses this machine's: ${error}\n`)
-    return undefined
-  }
 }
 
 // One check at minute now (since the epoch): each job's newest slot since the last check fires,

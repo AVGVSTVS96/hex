@@ -2,15 +2,20 @@ import { clock } from './clock.ts'
 import { clip } from './fit.ts'
 import { open, type Hold, type Store } from './store.ts'
 
-// Threads a hold frees wake this many at a time, the next once one's turn ends, so a hold over a
-// dozen threads doesn't end in a dozen sessions starting work together.
+// Threads a hold frees wake this many at a time, the next once a woken one's turn ends, or once it
+// has waited PATIENCE for one that never does, so a hold over a dozen threads doesn't end in a dozen
+// sessions starting work together.
 const AT_ONCE = 2
+const PATIENCE = 15 * 60_000
 
-// A time as the owner writes it, "YYYY-MM-DD HH:MM" on their clock, or an instant with its offset.
+// A time as the owner writes it: an instant with its offset, or else "YYYY-MM-DD HH:MM" on their clock.
 export function instant(text: string, zone = Temporal.Now.timeZoneId()): string {
+  const iso = text.trim().replace(' ', 'T')
   try {
-    if (/(Z|[+-]\d\d:?\d\d)$/i.test(text)) return Temporal.Instant.from(text).toString({ smallestUnit: 'millisecond' })
-    return Temporal.PlainDateTime.from(text.replace(' ', 'T')).toZonedDateTime(zone).toInstant().toString({ smallestUnit: 'millisecond' })
+    return Temporal.Instant.from(iso).toString({ smallestUnit: 'millisecond' })
+  } catch {}
+  try {
+    return Temporal.PlainDateTime.from(iso).toZonedDateTime(zone).toInstant().toString({ smallestUnit: 'millisecond' })
   } catch {
     throw new Error(`"${text}" isn't a time: write it as YYYY-MM-DD HH:MM on your clock`)
   }
@@ -20,13 +25,14 @@ export function when(at: string, zone?: string) {
   return new Date(at).toLocaleString('en-US', { timeZone: zone, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
-// Puts the threads on hold and tells each one, except the thread holding them, which knows.
-export function place(store: Store, hold: Parameters<Store['hold']>[0], zone?: string): Hold {
+// Puts the threads on hold, and tells each one that's at work now (working: their keys) to stop
+// starting more. One at rest isn't woken just to hear it: its next prompt shows the hold.
+export function place(store: Store, hold: Parameters<Store['hold']>[0], { zone, working }: { zone?: string; working: Set<string> }): Hold {
   return store.write(() => {
     const placed = store.hold(hold)
     const by = store.names()[placed.by] ?? placed.by
     const ends = `${placed.until ? `at ${when(placed.until, zone)}, or ` : ''}when my word lifts it`
-    for (const { thread } of placed.threads.filter(({ thread }) => thread !== placed.by))
+    for (const { thread } of placed.threads.filter(({ thread }) => working.has(thread)))
       store.deliver({
         key: `hold:${placed.id}@${thread}`,
         to: thread,
@@ -39,36 +45,50 @@ export function place(store: Store, hold: Parameters<Store['hold']>[0], zone?: s
   })
 }
 
-// Wakes the threads holds have freed, as many as there's room for.
-export function wake(store: Store) {
-  store.write(() => {
-    let room = AT_ONCE - store.waking()
+// Wakes the threads holds have freed, as many as there's room for; returns when the oldest wake
+// still counted runs out of patience.
+export function wake(store: Store, at = new Date(clock.now()).toISOString()): string | undefined {
+  return store.write(() => {
+    const waking = store.waking(PATIENCE, at)
+    let room = AT_ONCE - waking.count
     const woken = new Set<string>()
     for (const { id, thread, why, ending } of store.freed()) {
       if (woken.has(thread)) continue
-      if (room-- <= 0) return
+      if (room-- <= 0) break
       woken.add(thread)
       const key = `hold:${id}@${thread}:ended`
       store.deliver({ key, to: thread, from: 'hold', author: 'prompt', body: `[hold ${id} ended] ${ending}. The hold on this thread (${why}) is over: pick up where you stopped.`, meta: { user: 'hold' } })
       store.woke(thread, key)
     }
+    return woken.size ? new Date(Date.parse(at) + PATIENCE).toISOString() : waking.until
   })
 }
 
 // The hub's part, in the hex that runs General: each hold ends as its time comes, and at every
-// change to hex.db the threads freed so far wake as room allows.
+// change to hex.db the threads freed so far wake as room allows. A timer waits for the next hold's
+// time, or a wake's patience, whichever comes first.
 export function holding(storeDir: string): () => void {
-  const store = open(storeDir)
+  let store: Store
+  try {
+    store = open(storeDir)
+  } catch (error) {
+    process.stderr.write(`hub: holds can't move on until hex.db opens: ${error}\n`)
+    return () => {}
+  }
   let timer: ReturnType<typeof clock.setTimeout> | undefined
   const step = () => {
+    let next = Infinity
     try {
-      store.due(new Date(clock.now()).toISOString())
-      wake(store)
-      clock.clearTimeout(timer)
-      const next = Math.min(...store.holds().flatMap(hold => (hold.until ? [Date.parse(hold.until)] : [])))
-      if (next < Infinity) timer = clock.setTimeout(step, Math.min(2 ** 31 - 1, Math.max(0, next - clock.now())))
+      const at = new Date(clock.now()).toISOString()
+      store.due(at)
+      const patience = wake(store, at)
+      next = Math.min(patience ? Date.parse(patience) : Infinity, ...store.holds().flatMap(hold => (hold.until ? [Date.parse(hold.until)] : [])))
     } catch (error) {
       process.stderr.write(`hub: holds couldn't move on: ${error}\n`)
+      next = clock.now() + 60_000
+    } finally {
+      clock.clearTimeout(timer)
+      if (next < Infinity) timer = clock.setTimeout(step, Math.min(2 ** 31 - 1, Math.max(0, next - clock.now())))
     }
   }
   const unwatch = store.watch(step)
