@@ -21,15 +21,22 @@ export function loaded(file: string, seen = new Set<string>(), depth = 0, read =
 }
 
 // What Claude Code reads from hex only as a session's process starts: which hooks run, the skills it
-// lists, and the flags hex's launcher works out for it. A restart or resume reads them again; compacting doesn't.
-export const STARTUP = { hooks: 'plugin/hooks/hooks.json', skills: 'plugin/skills', launcher: ['bin/session', 'bin/identity', 'bin/instructions', 'bin/chat'] }
+// lists, and the flags hex's launcher (bin/session, and what it runs) works out for it. A restart or
+// resume reads them again; compacting doesn't.
+export const STARTUP = { hooks: 'plugin/hooks/hooks.json', skills: 'plugin/skills', launcher: ['bin/session', 'bin/identity', 'bin/instructions', 'bin/chat', 'hub/loaded.ts', 'hub/fit.ts'] }
 export type Startup = keyof typeof STARTUP
 
 // hex's updates as git records them (the reflog), read once. Its times are whole seconds, so an
 // update in the second a session started counts as after it; a start older than the record, or
-// unknown, has no commit, since git can't say what that session started on.
+// unknown, has no commit, since git can't say what that session started on. Without git, it knows nothing.
 export function history(hex: string) {
-  const git = (...args: string[]) => Bun.spawnSync(['git', '-C', hex, ...args], { stderr: 'ignore' }).stdout.toString().trim()
+  const git = (...args: string[]) => {
+    try {
+      return Bun.spawnSync(['git', '-C', hex, '-c', 'core.quotePath=false', ...args], { stderr: 'ignore' }).stdout.toString().trim()
+    } catch {
+      return ''
+    }
+  }
   const moves = [...git('log', '-g', '--format=%H %gd', '--date=unix', 'HEAD').matchAll(/^(\w+) HEAD@\{(\d+)\}$/gm)]
   const head = moves.length ? git('rev-parse', 'HEAD') : ''
   const diffs = new Map<string, Startup[]>()

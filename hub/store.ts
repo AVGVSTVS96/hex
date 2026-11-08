@@ -955,11 +955,11 @@ export class Store {
   }
 
   // A tasks record nobody changed for SEEN goes, since a session's end leaves it (a resume still has
-  // the list): a session that's still there gets its whole list again. Rules and hex records go at the end.
+  // the list): a session that's still there gets its whole list again. Rules records go at the end.
   show(session: string, kind: string, record: string, at = now()) {
     this.write(() => {
       this.db.query('insert into seen (session, kind, record, at) values (?, ?, ?, ?) on conflict (session, kind) do update set record = excluded.record, at = excluded.at').run(session, kind, record, at)
-      this.db.query("delete from seen where kind not in ('rules', 'hex') and at < ?").run(new Date(Date.parse(at) - SEEN).toISOString())
+      this.db.query("delete from seen where kind <> 'rules' and at < ?").run(new Date(Date.parse(at) - SEEN).toISOString())
     })
   }
 

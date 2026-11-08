@@ -124,7 +124,7 @@ test('after hearing once, a session hears again only of a later update to what i
   expect(hook('UserPromptSubmit')).toBe('')
   commit(5000, 'plugin/skills/echo/SKILL.md', 'Restate the ask.')
   const out = JSON.parse(hook('UserPromptSubmit'))
-  expect(out.systemMessage).toContain('/reload-plugins for its new skills.')
+  expect(out.systemMessage).toContain('/reload-plugins for its new hooks and skills.')
 })
 
 test("a session older than git's record of hex says nothing, since git can't say what it started on", () => {

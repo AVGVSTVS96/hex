@@ -49,15 +49,13 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   return sessions
 }
 
-// When a session's running process started, as Claude Code records it: a background session's when
-// its job took a spare process, since that's when it loads the session's flags and plugins.
-export function startOf(session: string, claude = CLAUDE): number | undefined {
-  const dir = join(claude, 'sessions')
-  const starts = list(dir).flatMap(file => {
-    const record = file.endsWith('.json') ? readJson(join(dir, file)) : undefined
-    return record?.sessionId === session && typeof record.startedAt === 'number' && alive(record.pid, record.procStart) ? [record.startedAt as number] : []
-  })
-  return starts.length ? Math.max(...starts) : undefined
+// When the Claude Code process this one runs under started, as Claude Code records it: a background
+// session's when its job took a spare process, since that's when it loads the session's plugins.
+export function startedAt(claude = CLAUDE, pid = process.ppid): number | undefined {
+  for (let above = pid; above > 1; above = parentOf(above)) {
+    const record = readJson(join(claude, 'sessions', `${above}.json`))
+    if (typeof record?.startedAt === 'number') return record.startedAt
+  }
 }
 
 // Resolve ownership and the highest unheld session together. A T3 boundary makes its

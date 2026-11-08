@@ -4,7 +4,7 @@ import { parseArgs } from 'util'
 import { history } from './loaded.ts'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { record, settingsOf } from './claude.ts'
-import { running, serving, startOf, type Session } from './running.ts'
+import { running, serving, type Session } from './running.ts'
 import { checks } from './ideas.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
@@ -327,7 +327,7 @@ try {
       const updates = history(resolve(import.meta.dir, '..'))
       // Only a session working for a thread, or one of hex's helpers, runs hex.
       const behind = (session: Session, thread?: string) => {
-        const from = thread || session.helper ? updates.on(startOf(session.id)) : undefined
+        const from = thread || session.helper ? updates.on(session.started) : undefined
         const changed = from ? updates.changed(from) : []
         return changed.length ? { from, changed } : undefined
       }
