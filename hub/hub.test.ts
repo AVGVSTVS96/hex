@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { connect, createServer, type Socket } from 'net'
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, existsSync, watch } from 'fs'
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, existsSync, symlinkSync, watch } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { begin, clients, free, history, mirror, move, stamp, startHub, tappable, transcribe, type ChannelServer, type Message, type Permission } from './hub.ts'
@@ -77,7 +77,7 @@ function fold(received: { meta: { key: string } }[]) {
 }
 
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
-function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; connect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; hooks?: string[] } = {}) {
+function start(options: { call?: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>; main?: string; general?: boolean; idleStop?: number; cacheWarm?: number; compactAbove?: number; reconnect?: number; connect?: number; launcher?: string; registry?: Record<string, any>; stale?: boolean; agents?: object[]; fresh?: (thread: string) => boolean; capacity?: number; startup?: string[] } = {}) {
   const { idleStop, cacheWarm, compactAbove, reconnect, connect = 0, capacity } = options
   if (options.registry) open(dir).keepThreads('telegram', Object.fromEntries(Object.entries<any>(options.stale ? before(options.registry) : options.registry).map(([thread, { from, ...known }]) => [thread, { ...known, fork: from }])))
   if (options.agents) writeFileSync(join(dir, 'agents'), JSON.stringify(options.agents))
@@ -101,7 +101,7 @@ function start(options: { call?: (thread: string, tool: string, args: Record<str
     limits: Object.fromEntries(Object.entries({ idleStop, cacheWarm, compactAbove, reconnect, connect, capacity }).filter(([, value]) => value !== undefined)),
     launcher: options.launcher,
     fresh: options.fresh,
-    hooks: options.hooks,
+    startup: options.startup,
     mainName: 'hex',
   })
 }
@@ -1822,16 +1822,37 @@ test('a change to only the hooks a session loads renews it at its next rest', as
   expect(stamp([], SERVER, [hooks])).toBe(launched)
   writeFileSync(hooks, '{"hooks":{"Stop":[]}}')
   expect(stamp([], SERVER, [hooks])).not.toBe(launched)
-  start({ hooks: [hooks], registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, launched } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle', startedAt: 1 }] })
+  start({ startup: [hooks], registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, launched } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle', startedAt: 1 }] })
   const { send } = await session('chat:7')
   await send({ type: 'state', thread: 'chat:7', busy: false })
   expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
 })
 
+test('a new skill in a folder the session loads at start renews it at its next rest', async () => {
+  const skills = join(dir, 'skills')
+  mkdirSync(join(skills, 'echo'), { recursive: true })
+  writeFileSync(join(skills, 'echo/SKILL.md'), 'Restate the ask.')
+  const launched = stamp([], SERVER, [skills])
+  mkdirSync(join(skills, 'vault'))
+  writeFileSync(join(skills, 'vault/SKILL.md'), 'Secrets go through the vault.')
+  expect(stamp([], SERVER, [skills])).not.toBe(launched)
+  start({ startup: [skills], registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, launched } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle', startedAt: 1 }] })
+  const { send } = await session('chat:7')
+  await send({ type: 'state', thread: 'chat:7', busy: false })
+  expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
+})
+
+test('a file an update removes midway, or a dangling link, reads as missing rather than stopping the hub', () => {
+  const skills = join(dir, 'skills')
+  mkdirSync(skills)
+  symlinkSync(join(dir, 'gone'), join(skills, 'SKILL.md'))
+  expect(stamp([], SERVER, [skills, join(dir, 'nothing')])).toHaveLength(16)
+})
+
 test('a session whose hooks are unchanged keeps running across a hub restart', async () => {
   const hooks = join(dir, 'hooks.json')
   writeFileSync(hooks, '{"hooks":{}}')
-  start({ hooks: [hooks], registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, launched: stamp([], SERVER, [hooks]) } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle', startedAt: 1 }] })
+  start({ startup: [hooks], registry: { 'chat:7': { name: 'Desk anchors', session: SESSION, launched: stamp([], SERVER, [hooks]) } }, agents: [{ sessionId: SESSION, pid: 42, status: 'idle', startedAt: 1 }] })
   const { send } = await session('chat:7')
   await send({ type: 'state', thread: 'chat:7', busy: false })
   await time.advance(150)

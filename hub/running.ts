@@ -49,6 +49,17 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   return sessions
 }
 
+// The Claude Code process this one runs under, as Claude Code records it while it lives: when it
+// started (a background session's when its job took a spare process, since that's when it loads the
+// session's plugins) and the folder it started in. A /clear keeps the process and gives the record
+// the new session's id.
+export function own(session: string, claude = CLAUDE, pid = process.ppid): { started: number; cwd?: string } | undefined {
+  for (let above = pid; above > 0; above = parentOf(above)) {
+    const record = readJson(join(claude, 'sessions', `${above}.json`))
+    if (record?.sessionId === session && record.pid === above && typeof record.startedAt === 'number' && alive(above, record.procStart)) return { started: record.startedAt, cwd: record.cwd }
+  }
+}
+
 // Resolve ownership and the highest unheld session together. A T3 boundary makes its
 // handoff authoritative for the whole subtree, including inherited environments.
 export function ownership(session: Session, held: Map<string, string>, sessions: Map<string, Session>, { owners = held, boundary = (_: string) => false, display = (thread: string) => thread } = {}): { thread?: string; top: Session } {

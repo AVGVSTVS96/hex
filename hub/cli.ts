@@ -1,9 +1,10 @@
 import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { parseArgs } from 'util'
+import { history } from './loaded.ts'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { record, settingsOf } from './claude.ts'
-import { running, serving } from './running.ts'
+import { running, serving, type Session } from './running.ts'
 import { checks } from './ideas.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
@@ -323,11 +324,21 @@ try {
       const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]))
       const home = realpathSync(dirname(state!))
       const sessions = running(store)
-      const rows = [...sessions.values()].map(session => ({ ...session, thread: serving(session, held, sessions) }))
+      const updates = history(resolve(import.meta.dir, '..'))
+      // Only a session working for a thread, or one of hex's helpers, runs hex.
+      const behind = (session: Session, thread?: string) => {
+        const from = thread || session.helper ? updates.on(session.started) : undefined
+        const changed = from ? updates.changed(from) : []
+        return changed.length ? { from, changed } : undefined
+      }
+      const rows = [...sessions.values()].map(session => {
+        const thread = serving(session, held, sessions)
+        return { ...session, thread, behind: behind(session, thread) }
+      })
       if (flags.json) console.log(JSON.stringify(rows, null, 1))
-      else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs }) => {
+      else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs, behind: old }) => {
         const now = (state === 'blocked' && needs) || detail
-        return `${status} ${id.slice(0, 8)} ${name ?? ''}${cwd && cwd !== home ? ` in ${cwd}` : ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, ' ')}` : ''}` : ''}`
+        return `${status} ${id.slice(0, 8)} ${name ?? ''}${cwd && cwd !== home ? ` in ${cwd}` : ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${old ? ` · started on an older hex (${old.from!.slice(0, 7)}), ${old.changed.join(', ')} changed since` : ''}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, ' ')}` : ''}` : ''}`
       }).join('\n') || 'nothing running')
       break
     }

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { open } from '../../hub/store.ts'
 
 const BIN = join(import.meta.dir, '../../bin')
@@ -25,7 +25,7 @@ afterEach(() => rmSync(home, { recursive: true, force: true }))
 function hook(event: 'SessionStart' | 'UserPromptSubmit' | 'SessionEnd') {
   const run = Bun.spawnSync([join(home, '.hex/bin/rules')], {
     stdin: Buffer.from(JSON.stringify({ session_id: SESSION, hook_event_name: event })),
-    env: { ...process.env, HOME: home, TMPDIR: home, HEX_STORE: join(home, 'state') },
+    env: { ...process.env, HOME: home, TMPDIR: home, HEX_STORE: join(home, 'state'), CLAUDE_CONFIG_DIR: undefined },
   })
   expect(run.exitCode).toBe(0)
   return run.stdout.toString()
@@ -80,5 +80,77 @@ test('a memory pass rewriting the wake HEX.md imports is no change to the rules'
   writeFileSync(join(home, 'state/wake/CLAUDE.md'), '#0 a memory\n')
   hook('SessionStart')
   writeFileSync(join(home, 'state/wake/CLAUDE.md'), '#0 a memory\n#1 another\n')
+  expect(hook('UserPromptSubmit')).toBe('')
+})
+
+// hex as git records it: each update a commit at its own time (seconds), and the session's process
+// started at `started`, as Claude Code's record of it says.
+function commit(at: number, path: string, text: string) {
+  const git = (...args: string[]) => Bun.spawnSync(['git', '-C', join(home, '.hex'), '-c', 'user.name=hex', '-c', 'user.email=hex@example.com', '-c', 'commit.gpgsign=false', ...args], { env: { ...process.env, GIT_COMMITTER_DATE: `@${at} +0000`, GIT_AUTHOR_DATE: `@${at} +0000`, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } })
+  mkdirSync(dirname(join(home, '.hex', path)), { recursive: true })
+  writeFileSync(join(home, '.hex', path), text)
+  git('add', path)
+  git('commit', '-qm', path)
+}
+
+function updates(started: number, ...changes: [at: number, path: string, text: string][]) {
+  Bun.spawnSync(['git', 'init', '-q', join(home, '.hex')])
+  for (const change of changes) commit(...change)
+  mkdirSync(join(home, '.claude/sessions'), { recursive: true })
+  writeFileSync(join(home, '.claude/sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: SESSION, startedAt: started * 1000, cwd: home }))
+}
+
+test('a session started before an update to its hooks hears so once, and its owner is shown how to load them', () => {
+  updates(2000, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'plugin/hooks/hooks.json', '{"hooks":{"Stop":[]}}'])
+  hook('SessionStart')
+  const out = JSON.parse(hook('UserPromptSubmit'))
+  expect(out.systemMessage).toContain('/reload-plugins for its new hooks')
+  expect(out.hookSpecificOutput.additionalContext).toContain("Claude Code reads hex's hooks only at start")
+  expect(hook('UserPromptSubmit')).toBe('')
+})
+
+test("a hub thread's session hears its hub renews it, and nothing goes on its screen", () => {
+  updates(2000, [1000, 'plugin/skills/echo/SKILL.md', 'Restate the ask.'], [3000, 'bin/session', 'exec claude'])
+  open(join(home, 'state')).keepThreads('telegram', { '-100:7': { name: 'Desk', session: SESSION } })
+  const out = hook('UserPromptSubmit')
+  expect(out).toContain("hex's launch flags only at start")
+  expect(out).toContain('hex resumes it on the new hex at its next rest')
+})
+
+test('after hearing once, a session hears again only of a later update to what it loads at start', () => {
+  updates(2000, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'plugin/hooks/hooks.json', '{"hooks":{"Stop":[]}}'])
+  expect(hook('UserPromptSubmit')).toContain('/reload-plugins')
+  commit(4000, 'README.md', 'hex')
+  expect(hook('UserPromptSubmit')).toBe('')
+  commit(5000, 'plugin/skills/echo/SKILL.md', 'Restate the ask.')
+  const out = JSON.parse(hook('UserPromptSubmit'))
+  expect(out.systemMessage).toContain('/reload-plugins for its new hooks and skills.')
+})
+
+test("a session older than git's record of hex says nothing, since git can't say what it started on", () => {
+  updates(500, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'plugin/hooks/hooks.json', '{"hooks":{"Stop":[]}}'])
+  expect(hook('UserPromptSubmit')).toBe('')
+})
+
+test('an update that leaves what a session loads at start alone says nothing', () => {
+  updates(2000, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'bin/budget', 'echo ok'])
+  expect(hook('UserPromptSubmit')).toBe('')
+})
+
+test('a session started after the update says nothing', () => {
+  updates(4000, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'plugin/hooks/hooks.json', '{"hooks":{"Stop":[]}}'])
+  expect(hook('UserPromptSubmit')).toBe('')
+})
+
+test('a launcher change tells the owner to quit and resume through bin/session, in the folder the session started in', () => {
+  updates(2000, [1000, 'bin/session', 'exec claude'], [3000, 'bin/session', 'exec claude "$@"'])
+  const out = JSON.parse(hook('UserPromptSubmit'))
+  expect(out.systemMessage).toContain(`quit it and run cd '${home}' && '${home}/.hex/bin/session' --resume ${SESSION} for its new launch flags`)
+})
+
+test('a session told two days ago still hears nothing more of the same update', () => {
+  updates(2000, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'plugin/hooks/hooks.json', '{"hooks":{"Stop":[]}}'])
+  hook('UserPromptSubmit')
+  open(join(home, 'state')).show('another', 'tasks', 'x', new Date(Date.now() + 3 * 86_400_000).toISOString())
   expect(hook('UserPromptSubmit')).toBe('')
 })
