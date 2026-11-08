@@ -8,6 +8,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { z } from "zod";
 
 import { dispatch, endpoint, local, tool, toolList } from "./mcp.ts";
+import type { ToolArguments } from "./mcp.ts";
 import { open } from "./store.ts";
 import { until } from "./until.ts";
 
@@ -51,10 +52,23 @@ const SERVER = {
 
 const TOKEN = "secret";
 
-type Answer = { result: { content: { text: string }[]; isError?: true } };
+type Identity = { toolUse?: string; session?: string; id?: string | number };
 
-// A channel whose reply tool answers when the test says, counting how often it ran. A call made with
-// gaveUp is one the session stops waiting on, as Claude Code does at its timeout.
+const REPORT: Identity = { toolUse: "report" };
+
+const AnswerReply = z.object({
+  result: z.object({
+    content: z.array(z.object({ text: z.string() })),
+    isError: z.literal(true).optional(),
+  }),
+});
+
+type Answer = z.output<typeof AnswerReply>;
+
+const Listing = z.object({ result: z.object({ tools: z.array(z.unknown()) }) });
+
+const nothing = (): void => undefined;
+
 function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operations-")))) {
   let ran = 0;
   const waiting: (() => void)[] = [];
@@ -67,27 +81,30 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
     {
       call: async () => {
         ran++;
-        await new Promise<void>((resolve) => waiting.push(resolve));
+        await new Promise<void>((resolve) => {
+          waiting.push(resolve);
+        });
 
         if (fails) {
           throw new Error("Telegram said no");
         }
+
         return "sent (id: 5389)";
       },
-      permission: () => {},
-      open: () => {},
-      close: () => {},
+      permission: nothing,
+      open: nothing,
+      close: nothing,
     },
     store,
   );
 
   let ids = 0;
 
-  function call(
-    args: object,
+  async function call(
+    args: ToolArguments,
     gaveUp?: AbortController,
     name = "reply",
-    identity: { toolUse?: string; session?: string; id?: string | number } = { toolUse: "report" },
+    identity: Identity = REPORT,
   ): Promise<Answer> {
     const body = JSON.stringify({
       jsonrpc: "2.0",
@@ -96,7 +113,9 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
       params: {
         name,
         arguments: args,
-        ...(identity.toolUse && { _meta: { "claudecode/toolUseId": identity.toolUse } }),
+        ...(identity.toolUse !== undefined && {
+          _meta: { "claudecode/toolUseId": identity.toolUse },
+        }),
       },
     });
 
@@ -104,23 +123,23 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
       authorization: `Bearer ${TOKEN}`,
       "x-hex-channel": "chat",
       "x-hex-thread": "-100:7",
-      ...(identity.session && { "mcp-session-id": identity.session }),
+      ...(identity.session !== undefined && { "mcp-session-id": identity.session }),
     };
 
-    return serve(
+    const response = await serve(
       new Request("http://127.0.0.1/telegram", {
         method: "POST",
         headers,
         body,
         signal: gaveUp?.signal ?? null,
       }),
-    ).then((response) => response.json() as Promise<Answer>);
+    );
+
+    return AnswerReply.parse(await response.json());
   }
 
-  // Resolves once n calls are waiting in the tool.
   const reached = (n = 1) => until(() => waiting.length >= n);
 
-  // Answers every call underway, once at least one has reached the tool.
   async function answer() {
     await reached();
     await Bun.sleep(5);
@@ -130,15 +149,16 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
     }
   }
 
-  // Answers every call waiting in the tool right away, without letting anything else run first.
   const answerNow = () => {
-    waiting.splice(0).forEach((resolve) => resolve());
+    for (const resolve of waiting.splice(0)) {
+      resolve();
+    }
   };
 
   return { ran: () => ran, call, answer, answerNow, reached, store, serve };
 }
 
-const text = (answer: Answer) => answer.result.content[0]!.text;
+const text = (answer: Answer) => answer.result.content[0]?.text;
 
 test("an operation shares its running result and keeps it after an aborted request and a restart", async () => {
   const { ran, call, answer, reached, store } = channel();
@@ -179,7 +199,7 @@ test("a deliberate identical send uses a new operation id, while a reused id can
     }),
   );
 
-  expect((await listing.json()).result.tools).toEqual(toolList(SERVER.tools));
+  expect(Listing.parse(await listing.json()).result.tools).toEqual(toolList(SERVER.tools));
   const transport = { session: "standard-client", id: 7 };
   const first = call({ text: "standard MCP" }, undefined, "reply", transport);
   await answer();
@@ -263,15 +283,16 @@ test("a call whose client left while the hub was too busy to read it doesn't run
     for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
+
     expect(existsSync(left)).toBe(true);
     await Bun.sleep(200);
     expect(ran()).toBe(0);
     const heard = fetch(`http://127.0.0.1:${hub.port}/telegram`, { method: "POST", headers, body });
     await answer();
-    expect(text((await (await heard).json()) as Answer)).toBe("sent (id: 5389)");
+    expect(text(AnswerReply.parse(await (await heard).json()))).toBe("sent (id: 5389)");
     expect(ran()).toBe(1);
   } finally {
-    hub.stop(true);
+    await hub.stop(true);
   }
 });
 
@@ -314,14 +335,15 @@ test("a call whose client left while the hub was too busy to send its answer cou
     for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
+
     expect(existsSync(left)).toBe(true);
     answerNow();
     await Bun.sleep(200);
     const again = fetch(`http://127.0.0.1:${hub.port}/telegram`, { method: "POST", headers, body });
-    expect(text((await (await again).json()) as Answer)).toBe("sent (id: 5389)");
+    expect(text(AnswerReply.parse(await (await again).json()))).toBe("sent (id: 5389)");
     expect(ran()).toBe(1);
   } finally {
-    hub.stop(true);
+    await hub.stop(true);
   }
 });
 
@@ -332,10 +354,10 @@ test("a stock MCP client lists the tools and replies without an operation id", a
     TOKEN,
     SERVER,
     {
-      call: async () => "read",
-      permission: () => {},
-      open: () => {},
-      close: () => {},
+      call: () => Promise.resolve("read"),
+      permission: nothing,
+      open: nothing,
+      close: nothing,
     },
     open(mkdtempSync(join(tmpdir(), "operations-"))),
   );
@@ -366,7 +388,7 @@ test("a stock MCP client lists the tools and replies without an operation id", a
     expect(reply).toMatchObject({ content: [{ type: "text", text: "read" }] });
   } finally {
     await client.close();
-    hub.stop(true);
+    await hub.stop(true);
   }
 });
 
@@ -378,9 +400,10 @@ test("a call whose arguments don't match its tool's schema fails with zod's mess
   let ran = 0;
 
   const call = dispatch(tools, {
-    reply: async (_caller, { text }) => {
+    reply: (_caller, { text: said }) => {
       ran++;
-      return `sent ${text}`;
+
+      return Promise.resolve(`sent ${said}`);
     },
   });
 
@@ -391,9 +414,9 @@ test("a call whose arguments don't match its tool's schema fails with zod's mess
     { title: "Telegram", instructions: "", tools },
     {
       call: (thread, name, args) => call(thread, name, args),
-      permission: () => {},
-      open: () => {},
-      close: () => {},
+      permission: nothing,
+      open: nothing,
+      close: nothing,
     },
     open(mkdtempSync(join(tmpdir(), "operations-"))),
   );
@@ -415,14 +438,18 @@ test("a call whose arguments don't match its tool's schema fails with zod's mess
     }),
   );
 
-  const answer = (await response.json()) as Answer;
+  const answer = AnswerReply.parse(await response.json());
 
   expect(answer.result.isError).toBe(true);
   expect(text(answer)).toBe(
-    `reply failed: ${z.prettifyError(z.object({ text: z.string() }).safeParse({ text: 5 }).error!)}`,
+    `reply failed: ${z.prettifyError(new z.ZodError([{ code: "invalid_type", expected: "string", path: ["text"], message: "Invalid input: expected string, received number", input: 5 }]))}`,
   );
   expect(text(answer)).toContain("expected string, received number");
-  await expect(call("-100:7", "reply", {})).rejects.toThrow("expected string, received undefined");
+  const [missing] = await Promise.allSettled([call("-100:7", "reply", {})]);
+  const reason: unknown = missing?.status === "rejected" ? missing.reason : undefined;
+  expect(reason instanceof Error ? reason.message : "").toContain(
+    "expected string, received undefined",
+  );
   expect(ran).toBe(0);
   expect(await call("-100:7", "reply", { text: "hi" })).toBe("sent hi");
   expect(ran).toBe(1);
@@ -447,10 +474,10 @@ test("tools/list serves each tool's input as JSON Schema, descriptions, enums an
     TOKEN,
     { title: "Telegram", instructions: "", tools: [react] },
     {
-      call: async () => "",
-      permission: () => {},
-      open: () => {},
-      close: () => {},
+      call: () => Promise.resolve(""),
+      permission: nothing,
+      open: nothing,
+      close: nothing,
     },
     open(mkdtempSync(join(tmpdir(), "operations-"))),
   );
@@ -463,7 +490,7 @@ test("tools/list serves each tool's input as JSON Schema, descriptions, enums an
     }),
   );
 
-  expect(((await listing.json()) as { result: { tools: unknown[] } }).result.tools).toEqual([
+  expect(Listing.parse(await listing.json()).result.tools).toEqual([
     {
       name: "react",
       description: "React to a message.",
