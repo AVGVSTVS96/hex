@@ -48,7 +48,6 @@ import type {
   ActionRow,
   ButtonComponent,
   StringSelectMenuComponent,
-  RESTGetAPIGuildMessagesSearchResult,
   Attachment,
   Collection,
   Channel,
@@ -58,7 +57,9 @@ import type {
   ThreadChannel,
   AnyThreadChannel,
   DMChannel,
+  PartialDMChannel,
 } from "discord.js";
+import { z } from "zod";
 
 import {
   startHub,
@@ -89,52 +90,64 @@ const ENV_FILE = join(STATE_DIR, ".env");
 const INBOX_DIR = join(STATE_DIR, "inbox");
 const MAX_CHUNK_LIMIT = 2000;
 
-try {
-  chmodSync(ENV_FILE, 0o600);
+function readEnvFile(): string {
+  try {
+    chmodSync(ENV_FILE, 0o600);
 
-  for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
-    const m = /^(\w+)=(.*)$/.exec(line);
-
-    if (m) {
-      process.env[m[1]] = m[2];
-    }
+    return readFileSync(ENV_FILE, "utf-8");
+  } catch {
+    return "";
   }
-} catch {}
+}
+
+for (const line of readEnvFile().split("\n")) {
+  const [, key, value] = /^(\w+)=(.*)$/u.exec(line) ?? [];
+
+  if (key !== undefined && value !== undefined) {
+    process.env[key] = value;
+  }
+}
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 
-if (TOKEN) {
-  process.on("unhandledRejection", (err) => {
-    process.stderr.write(`discord hub: unhandled rejection: ${err}\n`);
+if (TOKEN !== undefined && TOKEN !== "") {
+  process.on("unhandledRejection", (error) => {
+    process.stderr.write(`discord hub: unhandled rejection: ${String(error)}\n`);
   });
-  process.on("uncaughtException", (err) => {
-    process.stderr.write(`discord hub: uncaught exception: ${err}\n`);
+  process.on("uncaughtException", (error) => {
+    process.stderr.write(`discord hub: uncaught exception: ${String(error)}\n`);
   });
   serve(TOKEN);
 } else {
   process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
 }
 
-type Access = {
-  allowFrom: string[];
-  /** Emoji to react with on receipt. Empty string disables. Unicode char or custom emoji ID. */
-  ackReaction?: string;
-  /** Which chunks get Discord's reply reference when reply_to is passed. Default: 'first'. 'off' = never thread. */
-  replyToMode?: "off" | "first" | "all";
-  /** Max chars per outbound message before splitting. Default: 2000 (Discord's hard cap). */
-  textChunkLimit?: number;
-  /** Split on paragraph boundaries instead of hard char count. Default: 'newline'. */
-  chunkMode?: "length" | "newline";
-};
+const Access = z.object({
+  allowFrom: z.array(z.string()).default([]),
+  ackReaction: z.string().optional(),
+  replyToMode: z.enum(["off", "first", "all"]).optional(),
+  textChunkLimit: z.number().optional(),
+  chunkMode: z.enum(["length", "newline"]).optional(),
+});
+
+type Access = z.output<typeof Access>;
+
+const Coded = z.object({ code: z.union([z.string(), z.number()]) });
+
+const codeOf = (cause: unknown) => Coded.safeParse(cause).data?.code;
+
+const failed = (what: string) => (cause: unknown) =>
+  void process.stderr.write(`discord hub: ${what}: ${String(cause)}\n`);
 
 function loadAccess(): Access {
   try {
-    return { allowFrom: [], ...JSON.parse(readFileSync(ACCESS_FILE, "utf-8")) };
+    return Access.parse(JSON.parse(readFileSync(ACCESS_FILE, "utf-8")));
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+    if (codeOf(error) !== "ENOENT") {
       process.stderr.write(
-        `discord hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${error}\n`,
+        `discord hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${String(error)}\n`,
       );
+    }
 
     return { allowFrom: [] };
   }
@@ -143,9 +156,7 @@ function loadAccess(): Access {
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const READ = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHistory];
 
-// reply's files param takes any path, but channel state and .env files (tokens)
-// are the things Claude has no reason to ever send.
-function assertSendable(f: string): void {
+function refuseChannelStateAndSecrets(f: string): void {
   let real;
   let stateReal: string;
 
@@ -169,7 +180,7 @@ function assertSendable(f: string): void {
 
 function sendable(files: string[]): string[] {
   for (const f of files) {
-    assertSendable(f);
+    refuseChannelStateAndSecrets(f);
     const st = statSync(f);
 
     if (st.size > MAX_ATTACHMENT_BYTES) {
@@ -194,33 +205,86 @@ const isPostable = (
   ch: Channel | null | undefined,
 ): ch is TextChannel | NewsChannel | ForumChannel => isText(ch) || isForum(ch);
 
-// A tapped set stays on its message, disabled, with the choice highlighted.
+type Conversation = ThreadChannel | DMChannel | PartialDMChannel;
+
+const nameOf = (ch: Conversation) => (ch.isThread() ? ch.name : "DM");
+
+function inThread(ch: Conversation): ThreadChannel {
+  if (!ch.isThread()) {
+    throw new Error("a DM is not a thread");
+  }
+
+  return ch;
+}
+
+async function messageIn(ch: Conversation, id: string): Promise<DiscordMessage> {
+  const msg =
+    ch.isThread() && id === ch.id ? await ch.fetchStarterMessage() : await ch.messages.fetch(id);
+
+  if (!msg) {
+    throw new Error(`no message ${id} in this thread`);
+  }
+
+  return msg;
+}
+
+const latestActivity = (post: ThreadChannel) =>
+  SnowflakeUtil.timestampFrom(post.lastMessageId ?? post.id);
+
+type ToolInput<Name extends (typeof tools)[number]["name"]> = Parameters<
+  Handlers<typeof tools>[Name]
+>[1];
+
+const SearchResult = z.union([
+  z.object({
+    total_results: z.number(),
+    messages: z.array(
+      z.array(
+        z.object({
+          id: z.string(),
+          channel_id: z.string(),
+          timestamp: z.string(),
+          content: z.string(),
+          author: z.object({ id: z.string(), username: z.string() }),
+          attachments: z.array(z.unknown()),
+        }),
+      ),
+    ),
+    threads: z.array(z.object({ id: z.string(), name: z.string() })).optional(),
+  }),
+  z.object({ retry_after: z.number().optional() }),
+]);
+
+const BUTTONS_PER_ROW = 5;
+
 function buttons(labels: string[], chosen?: number): ActionRowBuilder<ButtonBuilder>[] {
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-  labels.forEach((label, i) => {
-    if (i % 5 === 0) {
-      rows.push(new ActionRowBuilder<ButtonBuilder>());
-    }
 
-    rows.at(-1)!.addComponents(
-      new ButtonBuilder()
-        .setCustomId(String(i))
-        .setLabel(label)
-        .setStyle(i === chosen ? ButtonStyle.Primary : ButtonStyle.Secondary)
-        .setDisabled(chosen !== undefined),
+  for (let start = 0; start < labels.length; start += BUTTONS_PER_ROW) {
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        labels.slice(start, start + BUTTONS_PER_ROW).map((label, offset) => {
+          const i = start + offset;
+
+          return new ButtonBuilder()
+            .setCustomId(String(i))
+            .setLabel(label)
+            .setStyle(i === chosen ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(chosen !== undefined);
+        }),
+      ),
     );
-  });
+  }
 
   return rows;
 }
 
-// A menu takes any number of picks at once, and stays showing them, disabled, once sent.
 function menu(labels: string[], picked?: string[]): ActionRowBuilder<StringSelectMenuBuilder>[] {
   return [
     new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
       new StringSelectMenuBuilder()
         .setCustomId("menu")
-        .setPlaceholder(picked ? picked.join(", ").slice(0, 150) : "Pick any")
+        .setPlaceholder(picked === undefined ? "Pick any" : picked.join(", ").slice(0, 150))
         .setMinValues(1)
         .setMaxValues(labels.length)
         .setDisabled(picked !== undefined)
@@ -228,7 +292,7 @@ function menu(labels: string[], picked?: string[]): ActionRowBuilder<StringSelec
           labels.map((label, i) => ({
             label,
             value: String(i),
-            default: !!picked?.includes(label),
+            default: picked?.includes(label) === true,
           })),
         ),
     ),
@@ -239,7 +303,6 @@ function choices(labels: string[], multiple: boolean) {
   return multiple ? menu(labels) : buttons(labels);
 }
 
-// One disabled button saying what became of a question: answered elsewhere, settled, or moot.
 function only(text: string): ActionRowBuilder<ButtonBuilder>[] {
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -264,14 +327,17 @@ function verdicts(request: string, chosen?: string): ActionRowBuilder<ButtonBuil
         new ButtonBuilder()
           .setCustomId(`perm:${verdict}:${request}`)
           .setLabel(label)
-          .setStyle(chosen && chosen !== verdict ? ButtonStyle.Secondary : style)
+          .setStyle(
+            chosen !== undefined && chosen !== "" && chosen !== verdict
+              ? ButtonStyle.Secondary
+              : style,
+          )
           .setDisabled(chosen !== undefined),
       ),
     ),
   ];
 }
 
-// A fence inside the preview would close the block early, so its backticks are split.
 function block(text: string, limit: number): string {
   const body = text.replaceAll("```", "`​``");
 
@@ -332,34 +398,32 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
     }
 
     out.push(rest.slice(0, cut));
-    rest = rest.slice(cut).replace(/^\n+/, "");
+    rest = rest.slice(cut).replace(/^\n+/u, "");
   }
 
-  if (rest) {
+  if (rest !== "") {
     out.push(rest);
   }
 
   return out;
 }
 
-// A code block cut across two messages renders as broken text in both, so
-// each chunk closes the fence it opened and the next one reopens it.
 function fenced(text: string, limit: number, mode: "length" | "newline"): string[] {
   const out: string[] = [];
   let open = "";
 
   for (const part of chunk(text, limit - 16, mode)) {
-    let body = open ? `${open}\n${part}` : part;
+    let body = open === "" ? part : `${open}\n${part}`;
 
     for (const line of part.split("\n")) {
-      const fence = /^\s*```(\S*)/.exec(line);
+      const fence = /^\s*```(\S*)/u.exec(line);
 
       if (fence) {
-        open = open ? "" : "```" + fence[1];
+        open = open === "" ? `\`\`\`${fence[1] ?? ""}` : "";
       }
     }
 
-    if (open) {
+    if (open !== "") {
       body += "\n```";
     }
 
@@ -369,10 +433,10 @@ function fenced(text: string, limit: number, mode: "length" | "newline"): string
   return out;
 }
 
-// att.name is uploader-controlled. It lands inside the <channel> notification,
-// where delimiter chars would let the uploader break out of the tag.
+const CHANNEL_TAG_DELIMITERS = /[<>[\]\r\n;]/gu;
+
 function safeAttName(att: Attachment): string {
-  return (att.name ?? att.id).replaceAll(/[<>[\]\r\n;]/g, "_");
+  return (att.name ?? att.id).replaceAll(CHANNEL_TAG_DELIMITERS, "_");
 }
 
 function listed(attachments: Collection<string, Attachment>): string[] {
@@ -393,7 +457,7 @@ async function downloadAttachment(att: Attachment): Promise<string> {
   const buf = Buffer.from(await res.arrayBuffer());
   const name = att.name ?? att.id;
   const rawExt = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "bin";
-  const ext = rawExt.replaceAll(/[^a-zA-Z0-9]/g, "") || "bin";
+  const ext = rawExt.replaceAll(/[^a-zA-Z0-9]/gu, "") || "bin";
   const path = join(INBOX_DIR, `${Date.now()}-${att.id}.${ext}`);
   mkdirSync(INBOX_DIR, { recursive: true });
   writeFileSync(path, buf);
@@ -401,7 +465,6 @@ async function downloadAttachment(att: Attachment): Promise<string> {
   return path;
 }
 
-// Transcribed on arrival, so the words are the message itself and land in the conversation's log.
 async function hear(att: Attachment | undefined): Promise<string | undefined> {
   if (!att) {
     return;
@@ -410,25 +473,20 @@ async function hear(att: Attachment | undefined): Promise<string | undefined> {
   try {
     return await transcribe(() => downloadAttachment(att));
   } catch (error) {
-    process.stderr.write(`discord hub: voice transcription failed: ${error}\n`);
+    failed("voice transcription failed")(error);
   }
 }
 
-// Images are fetched on arrival, as Telegram's photos are, so a screenshot is one Read away.
 async function images(attachments: Collection<string, Attachment>): Promise<string[]> {
   const shown = attachments.filter(
-    (att) => att.contentType?.startsWith("image/") && att.size <= MAX_ATTACHMENT_BYTES,
+    (att) => att.contentType?.startsWith("image/") === true && att.size <= MAX_ATTACHMENT_BYTES,
   );
 
   const paths = await Promise.all(
-    shown.map((att) =>
-      downloadAttachment(att).catch(
-        (error: unknown) => void process.stderr.write(`discord hub: image download failed: ${error}\n`),
-      ),
-    ),
+    shown.map((att) => downloadAttachment(att).catch(failed("image download failed"))),
   );
 
-  return paths.filter((path): path is string => !!path);
+  return paths.filter((path) => path !== undefined);
 }
 
 function serve(token: string) {
@@ -456,20 +514,28 @@ function serve(token: string) {
 
   const ledger = new Ledger(STATE_DIR, "discord");
 
-  // A session talks in a thread, or in a DM, which is one conversation.
-  async function threadChannel(thread: string): Promise<ThreadChannel | DMChannel> {
-    const ch = await client.channels.fetch(thread);
-
-    if (!ch?.isThread() && !ch?.isDMBased()) {
-      throw new Error(`${thread} is not a Discord thread or DM`);
+  function bot() {
+    if (!client.user) {
+      throw new Error("the bot isn't logged in to Discord yet");
     }
 
-    return ch as ThreadChannel | DMChannel;
+    return client.user;
   }
 
-  const nameOf = (ch: ThreadChannel | DMChannel) => (ch.isThread() ? ch.name : "DM");
+  async function threadChannel(thread: string): Promise<Conversation> {
+    const ch = await client.channels.fetch(thread);
 
-  // How a status post shows here; the ledger decides when it changes (Ledger.rewrite).
+    if (ch?.isThread() === true) {
+      return ch;
+    }
+
+    if (ch?.type === ChannelType.DM) {
+      return ch;
+    }
+
+    throw new Error(`${thread} is not a Discord thread or DM`);
+  }
+
   const post: Post = {
     room: MAX_CHUNK_LIMIT,
     send: async (thread, text) => {
@@ -481,17 +547,17 @@ function serve(token: string) {
 
       return sent.id;
     },
-    pin: async (thread, id) => await (await message(await threadChannel(thread), String(id))).pin(),
-    // A message that's gone (10008) is unpinned already.
+    pin: async (thread, id) =>
+      await (await messageIn(await threadChannel(thread), String(id))).pin(),
     unpin: async (thread, id) => {
       try {
-        await (await message(await threadChannel(thread), String(id))).unpin();
+        await (await messageIn(await threadChannel(thread), String(id))).unpin();
       } catch (error) {
-        if ((error as { code?: number }).code !== 10008) throw error;
+        if (codeOf(error) !== RESTJSONErrorCodes.UnknownMessage) {
+          throw error;
+        }
       }
     },
-    // An archived thread's messages can't be edited (50083, or archived as far as the bot knows):
-    // its post catches up when it's back. One that's someone else's (50005) or gone (10008) never will be.
     edit: async (thread, id, text) => {
       const ch = await threadChannel(thread);
 
@@ -501,26 +567,33 @@ function serve(token: string) {
 
       try {
         await (
-          await message(ch, String(id))
+          await messageIn(ch, String(id))
         ).edit({ content: text, flags: MessageFlags.SuppressEmbeds });
       } catch (error) {
-        const { code } = error as { code?: number };
+        const code = codeOf(error);
 
-        if (code === 50083) return false;
+        if (code === RESTJSONErrorCodes.InvalidActionOnArchivedThread) {
+          return false;
+        }
 
-        if (code === 50005 || code === 10008) return null;
+        if (
+          code === RESTJSONErrorCodes.CannotEditMessageAuthoredByAnotherUser ||
+          code === RESTJSONErrorCodes.UnknownMessage
+        ) {
+          return null;
+        }
+
         throw error;
       }
     },
     link: (thread, id) => {
-      const at = shown(thread);
+      const where = shown(thread);
 
-      return at && `${at}/${id}`;
+      return where === undefined ? undefined : `${where}/${id}`;
     },
     ready: threadChannel,
   };
 
-  // Where Discord shows a thread the bot has seen.
   function shown(thread: string) {
     const channel = client.channels.cache.get(thread);
 
@@ -528,27 +601,19 @@ function serve(token: string) {
       return `https://discord.com/channels/@me/${thread}`;
     }
 
-    if (channel && "guildId" in channel) {
+    if (channel !== undefined && "guildId" in channel) {
       return `https://discord.com/channels/${channel.guildId}/${thread}`;
     }
   }
 
-  function inThread(ch: ThreadChannel | DMChannel): ThreadChannel {
-    if (!ch.isThread()) {
-      throw new Error("a DM is not a thread");
-    }
-
-    return ch;
-  }
-
   function guild() {
-    const guild = client.guilds.cache.first();
+    const first = client.guilds.cache.first();
 
-    if (!guild) {
+    if (!first) {
       throw new Error("the bot is in no Discord server");
     }
 
-    return guild;
+    return first;
   }
 
   async function textChannel(name?: string): Promise<TextChannel | NewsChannel>;
@@ -562,17 +627,18 @@ function serve(token: string) {
   ): Promise<TextChannel | NewsChannel | ForumChannel> {
     const fits = forums ? isPostable : isText;
     const g = guild();
-    const wanted = name?.replace(/^#/, "").toLowerCase();
+    const wanted = name?.replace(/^#/u, "").toLowerCase();
 
-    const found = wanted
-      ? (await g.channels.fetch()).find(
-          (ch) => fits(ch) && (ch.id === wanted || ch.name.toLowerCase() === wanted),
-        )
-      : g.systemChannel;
+    const found =
+      wanted !== undefined && wanted !== ""
+        ? (await g.channels.fetch()).find(
+            (ch) => fits(ch) && (ch.id === wanted || ch.name.toLowerCase() === wanted),
+          )
+        : g.systemChannel;
 
     if (!fits(found)) {
       throw new Error(
-        wanted
+        wanted !== undefined && wanted !== ""
           ? `no ${forums ? "text or forum" : "text"} channel named #${wanted}`
           : "name a channel to open the thread in",
       );
@@ -583,51 +649,57 @@ function serve(token: string) {
 
   async function readable(id: string): Promise<TextChannel | NewsChannel | ThreadChannel> {
     const ch = await client.channels.fetch(id).catch(() => null);
-    const text = isText(ch) || ch?.isThread() ? ch : undefined;
+    const text = ch !== null && (isText(ch) || ch.isThread()) ? ch : undefined;
 
-    if (!text || text.guildId !== guild().id || !text.permissionsFor(client.user!)?.has(READ)) {
+    if (
+      text === undefined ||
+      text.guildId !== guild().id ||
+      text.permissionsFor(bot())?.has(READ) !== true
+    ) {
       throw new Error(`the bot can't read ${id}; list_channels shows the channels it can`);
     }
 
     return text;
   }
 
-  // Results are newline-joined, so multi-line content would forge adjacent rows.
+  const oneRow = (content: string) => content.replaceAll(/[\r\n]+/gu, " ⏎ ");
+
   function row(
-    at: Date,
+    sentAt: Date,
     author: { id: string; username: string },
     content: string,
     details: string,
   ): string {
     const who = author.id === client.user?.id ? "me" : author.username;
 
-    return `[${at.toISOString()}] ${who}: ${content.replaceAll(/[\r\n]+/g, " ⏎ ")}  (${details})`;
+    return `[${sentAt.toISOString()}] ${who}: ${oneRow(content)}  (${details})`;
   }
 
-  async function history(caller: string, args: Record<string, unknown>): Promise<string> {
-    const limit = Math.min((args.limit as number) ?? 20, 100);
-    const named = args.thread as string | undefined;
+  async function history(caller: string, args: ToolInput<"fetch_messages">): Promise<string> {
+    const limit = Math.min(args.limit ?? 20, 100);
+    const named = args.thread === "" ? undefined : args.thread;
 
     const channel =
-      !named && args.channel ? await textChannel(args.channel as string, true) : undefined;
+      named === undefined && args.channel !== undefined && args.channel !== ""
+        ? await textChannel(args.channel, true)
+        : undefined;
 
     if (isForum(channel)) {
       return await posts(channel, limit);
     }
 
-    const id = named
-      ? /^\d+$/.test(named)
-        ? named
-        : hub.find(named)
-      : channel
-        ? channel.id
-        : caller;
+    const id =
+      named === undefined
+        ? (channel?.id ?? caller)
+        : /^\d+$/u.test(named)
+          ? named
+          : hub.find(named);
 
     const ch = id === caller ? await threadChannel(caller) : await readable(id);
 
     const msgs = await ch.messages.fetch({
       limit,
-      ...(args.before ? { before: args.before as string } : {}),
+      ...(args.before !== undefined && args.before !== "" && { before: args.before }),
     });
 
     const arr = [...msgs.values()].toReversed();
@@ -640,9 +712,12 @@ function serve(token: string) {
       .map((m) => {
         const atts = m.attachments.size > 0 ? ` +${m.attachments.size}att` : "";
 
-        const last = m.thread?.lastMessageId
-          ? `, last reply ${new Date(SnowflakeUtil.timestampFrom(m.thread.lastMessageId)).toISOString()}`
-          : "";
+        const lastReply = m.thread?.lastMessageId;
+
+        const last =
+          lastReply === undefined || lastReply === null || lastReply === ""
+            ? ""
+            : `, last reply ${new Date(SnowflakeUtil.timestampFrom(lastReply)).toISOString()}`;
 
         const thread = m.thread ? `, ${m.thread.messageCount ?? 0} replies${last}` : "";
 
@@ -651,9 +726,8 @@ function serve(token: string) {
       .join("\n");
   }
 
-  // A forum's posts are its threads: each one's title, newest activity last, read by its id.
   async function posts(forum: ForumChannel, limit: number): Promise<string> {
-    if (!forum.permissionsFor(client.user!)?.has(READ)) {
+    if (forum.permissionsFor(bot())?.has(READ) !== true) {
       throw new Error(`the bot can't read ${forum.id}; list_channels shows the channels it can`);
     }
 
@@ -663,50 +737,47 @@ function serve(token: string) {
     ]);
 
     const all = [...active.threads.values(), ...archived.threads.values()].filter(
-      (post) => post.parentId === forum.id,
+      (each) => each.parentId === forum.id,
     );
 
-    const latest = (post: ThreadChannel) =>
-      SnowflakeUtil.timestampFrom(post.lastMessageId ?? post.id);
-
     const rows = all
-      .toSorted((a, b) => latest(a) - latest(b))
+      .toSorted((a, b) => latestActivity(a) - latestActivity(b))
       .slice(-limit)
       .map(
-        (post) =>
-          `[${new Date(latest(post)).toISOString()}] ${post.name.replaceAll(/[\r\n]+/g, " ")}  (post ${post.id}, ${post.messageCount ?? 0} replies${post.archived ? ", archived" : ""})`,
+        (each) =>
+          `[${new Date(latestActivity(each)).toISOString()}] ${each.name.replaceAll(/[\r\n]+/gu, " ")}  (post ${each.id}, ${each.messageCount ?? 0} replies${each.archived === true ? ", archived" : ""})`,
       );
 
     return rows.join("\n") || "(no posts)";
   }
 
-  async function search(args: Record<string, unknown>): Promise<string> {
+  async function search(args: ToolInput<"search_messages">): Promise<string> {
     const query = new URLSearchParams({
-      content: args.query as string,
-      limit: String(Math.min((args.limit as number) ?? 25, 25)),
+      content: args.query,
+      limit: String(Math.min(args.limit ?? 25, 25)),
     });
 
-    if (args.channel) {
-      query.set("channel_id", (await textChannel(args.channel as string)).id);
+    if (args.channel !== undefined && args.channel !== "") {
+      query.set("channel_id", (await textChannel(args.channel)).id);
     }
 
-    if (args.offset) {
+    if (args.offset !== undefined && args.offset !== 0) {
       query.set("offset", String(args.offset));
     }
 
-    const found = (await client.rest.get(Routes.guildMessagesSearch(guild().id), {
-      query,
-    })) as RESTGetAPIGuildMessagesSearchResult;
+    const found = SearchResult.parse(
+      await client.rest.get(Routes.guildMessagesSearch(guild().id), { query }),
+    );
 
     if (!("messages" in found)) {
-      return `Discord is still indexing this server's messages; search again ${found.retry_after ? `in ${found.retry_after}s` : "shortly"}`;
+      return `Discord is still indexing this server's messages; search again ${(found.retry_after ?? 0) === 0 ? "shortly" : `in ${found.retry_after}s`}`;
     }
 
     const threads = new Map(found.threads?.map((t) => [t.id, t.name]));
 
     const rows = found.messages.flat().map((m) => {
       const where = threads.has(m.channel_id)
-        ? `thread ${m.channel_id} "${threads.get(m.channel_id)}"`
+        ? `thread ${m.channel_id} "${threads.get(m.channel_id) ?? ""}"`
         : `#${guild().channels.cache.get(m.channel_id)?.name ?? m.channel_id}`;
 
       const atts = m.attachments.length > 0 ? ` +${m.attachments.length}att` : "";
@@ -718,14 +789,13 @@ function serve(token: string) {
   }
 
   async function listChannels(): Promise<string> {
-    const found = (await guild().channels.fetch()).filter(
-      (ch) => isPostable(ch) && !!ch.permissionsFor(client.user!)?.has(READ),
+    const found = [...(await guild().channels.fetch()).values()].flatMap((ch) =>
+      isPostable(ch) && ch.permissionsFor(bot())?.has(READ) === true ? [ch] : [],
     );
 
     return (
-      found
-        .map((ch) => `#${ch!.name}  (id: ${ch!.id}${isForum(ch) ? ", forum" : ""})`)
-        .join("\n") || "(none)"
+      found.map((ch) => `#${ch.name}  (id: ${ch.id}${isForum(ch) ? ", forum" : ""})`).join("\n") ||
+      "(none)"
     );
   }
 
@@ -738,7 +808,7 @@ function serve(token: string) {
     text: string,
     meta: Record<string, string> = {},
   ) {
-    hub.sent(thread, { key: id, content: text, meta });
+    hub.sent(thread, { ...(id !== undefined && { key: id }), content: text, meta });
   }
 
   // A forum takes a thread only as a post, which opens with a message: the about line, or its title.
@@ -806,18 +876,6 @@ function serve(token: string) {
     }
   }
 
-  // A thread's starter message lives in the channel it hangs off, under the thread's own id.
-  async function message(ch: ThreadChannel | DMChannel, id: string): Promise<DiscordMessage> {
-    const msg =
-      ch.isThread() && id === ch.id ? await ch.fetchStarterMessage() : await ch.messages.fetch(id);
-
-    if (!msg) {
-      throw new Error(`no message ${id} in this thread`);
-    }
-
-    return msg;
-  }
-
   const deleting = new Set<string>();
 
   const typing = new Map<string, ReturnType<typeof setInterval>>();
@@ -825,7 +883,7 @@ function serve(token: string) {
   function sendTyping(thread: string): void {
     void threadChannel(thread)
       .then((ch) => ch.sendTyping())
-      .catch(() => undefined);
+      .catch(() => null);
   }
 
   // Discord shows "typing…" for about 10 seconds per call, so it is re-sent
@@ -876,7 +934,7 @@ function serve(token: string) {
     for (const id of asking.get(thread) ?? []) {
       void threadChannel(thread)
         .then((ch) => ch.messages.edit(id, { components: only("No longer waiting") }))
-        .catch(() => undefined);
+        .catch(() => null);
     }
 
     asking.delete(thread);
@@ -1071,7 +1129,7 @@ function serve(token: string) {
         : await threadChannel(hub.find(args.thread!));
 
       const sent = await (
-        await message(await threadChannel(caller), args.message_id)
+        await messageIn(await threadChannel(caller), args.message_id)
       ).forward(to.id);
 
       return `forwarded (id: ${sent.id})`;
@@ -1138,7 +1196,7 @@ function serve(token: string) {
 
     react: async (caller, args) => {
       const { ch } = await at(caller);
-      const msg = await message(ch, args.message_id);
+      const msg = await messageIn(ch, args.message_id);
 
       if (!args.remove) {
         await msg.react(args.emoji);
@@ -1176,7 +1234,7 @@ function serve(token: string) {
         return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`;
       }
 
-      const msg = await message(ch, args.message_id);
+      const msg = await messageIn(ch, args.message_id);
       const files = args.files ? sendable(args.files) : undefined;
 
       const edited =
@@ -1201,7 +1259,7 @@ function serve(token: string) {
 
     delete_message: async (caller, args) => {
       const { thread, ch } = await at(caller);
-      const msg = await message(ch, args.message_id);
+      const msg = await messageIn(ch, args.message_id);
 
       if (msg.author.id !== client.user!.id) {
         throw new Error("the bot can only delete its own messages");
@@ -1255,7 +1313,7 @@ function serve(token: string) {
 
     download_attachment: async (caller, args) => {
       const { ch } = await at(caller);
-      const msg = await message(ch, args.message_id);
+      const msg = await messageIn(ch, args.message_id);
       const attachments = msg.messageSnapshots.first()?.attachments ?? msg.attachments;
 
       if (attachments.size === 0) {
@@ -1329,22 +1387,20 @@ function serve(token: string) {
     fresh: (thread) => dms.has(thread),
     failed: (thread, reason) => {
       void threadChannel(thread)
-        .then((ch) => ch.send(`Couldn't start this thread's session: ${reason}`))
-        .catch(() => undefined);
+        .then(async (ch) => {
+          await ch.send(`Couldn't start this thread's session: ${reason}`);
+        })
+        .catch(() => null);
     },
     permission: (thread, request) =>
-      void ask(thread, request).catch((error: unknown) =>
-        process.stderr.write(
-          `discord hub: couldn't relay a permission prompt to ${thread}: ${error}\n`,
-        ),
-      ),
+      void ask(thread, request).catch(failed(`couldn't relay a permission prompt to ${thread}`)),
     questions: {
       answer: (thread, message, label, via) => void answerQuestion(thread, message, label, via),
       settle: (thread, message, note) => void settleQuestion(thread, message, note),
       reopen: (thread, message, via) => void reopenQuestion(thread, message, via),
     },
-    hexDir: process.env.HEX_DIR,
-    launcher: process.env.HEX_LAUNCHER,
+    ...(process.env.HEX_DIR !== undefined && { hexDir: process.env.HEX_DIR }),
+    ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
   });
 
   clients.set("discord", {
@@ -1359,13 +1415,13 @@ function serve(token: string) {
   // A tag in a channel starts a thread on that message, Claude-tag style; inside a thread
   // every message reaches its session without one, and so does the message it hangs off
   // once the hub serves that thread.
-  async function threadOf(msg: DiscordMessage): Promise<ThreadChannel | DMChannel | undefined> {
+  async function threadOf(msg: DiscordMessage): Promise<Conversation | undefined> {
     if (msg.channel.isDMBased()) {
       dms.add(msg.channelId);
     }
 
     if (msg.channel.isThread() || msg.channel.isDMBased()) {
-      return msg.channel as ThreadChannel | DMChannel;
+      return msg.channel as Conversation;
     }
 
     if (!isText(msg.channel)) {
@@ -1394,7 +1450,7 @@ function serve(token: string) {
       return {};
     }
 
-    const replied = await msg.fetchReference().catch(() => undefined);
+    const replied = await msg.fetchReference().catch(() => null);
 
     if (!replied) {
       return { reply_to_message_id: msg.reference.messageId };
@@ -1437,13 +1493,13 @@ function serve(token: string) {
     const forum = ch.isThread() && !!ch.parent?.isThreadOnly();
 
     if (ch.isThread() && ch.archived) {
-      await ch.setArchived(false).catch(() => undefined);
+      await ch.setArchived(false).catch(() => null);
     }
 
-    void ch.sendTyping().catch(() => undefined);
+    void ch.sendTyping().catch(() => null);
 
     if (access.ackReaction) {
-      void msg.react(access.ackReaction).catch(() => undefined);
+      void msg.react(access.ackReaction).catch(() => null);
     }
 
     // Attachments are listed (name/type/size) and only images are downloaded: the model
@@ -1508,7 +1564,7 @@ function serve(token: string) {
   // or on the message it hangs off, which shares the thread's id.
   async function servedThread(
     msg: DiscordMessage | PartialMessage,
-  ): Promise<ThreadChannel | DMChannel | undefined> {
+  ): Promise<Conversation | undefined> {
     const id = msg.channel.isThread() || msg.channel.isDMBased() ? msg.channelId : msg.id;
 
     return hub.name(id) ? await threadChannel(id) : undefined;
@@ -1530,7 +1586,7 @@ function serve(token: string) {
     }
 
     const target = reaction.message.partial
-      ? await reaction.message.fetch().catch(() => undefined)
+      ? await reaction.message.fetch().catch(() => null)
       : reaction.message;
 
     const who = user.partial ? await user.fetch() : user;
@@ -1637,7 +1693,7 @@ function serve(token: string) {
   // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does,
   // and its buttons are drawn again from the one that stands.
   async function picked(
-    ch: ThreadChannel | DMChannel,
+    ch: Conversation,
     label: string,
     at: Date,
     user: { id: string; username: string },
@@ -1865,8 +1921,7 @@ function serve(token: string) {
     }
   }
 
-  // Discord lists archived threads newest-archived first, and a thread that got a message
-  // after the cursor was archived after it, so paging stops at the first older archive.
+  // Discord lists archived threads newest-archived first: https://discord.com/developers/docs/resources/channel#list-public-archived-threads
   async function archivedSince(
     ch: TextChannel | NewsChannel | ForumChannel,
     from: string,
@@ -1875,7 +1930,11 @@ function serve(token: string) {
     const found: AnyThreadChannel[] = [];
 
     for (let before: number | undefined; ;) {
-      const page = await ch.threads.fetchArchived({ before, limit: 100 });
+      const page = await ch.threads.fetchArchived({
+        ...(before !== undefined && { before }),
+        limit: 100,
+      });
+
       const threads = [...page.threads.values()];
       found.push(...threads);
       const oldest = Math.min(...threads.map((t) => t.archiveTimestamp ?? 0));
@@ -1927,7 +1986,9 @@ function serve(token: string) {
     const missed = (
       await Promise.all(
         places.map((ch) =>
-          after(ch, from).catch((error: unknown) => (failure(`catching up on ${ch.id}`)(error), [])),
+          after(ch, from).catch(
+            (error: unknown) => (failure(`catching up on ${ch.id}`)(error), []),
+          ),
         ),
       )
     )
