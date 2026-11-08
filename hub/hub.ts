@@ -344,7 +344,7 @@ export function tappable(text: string): string {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A thread's chat, oldest first: what the owner said that a session took in, and hex's replies as first sent; with a session, from the first message that session took, the conversation it has.
 export function history(store: Store, thread: string, session?: string): Turn[] {
-  const rows = store.said(thread);
+  const rows = store.messages.said(thread);
   const start = present(session) ? (rows.find((row) => row.taken?.by === session)?.at ?? "9") : "";
 
   return rows.flatMap((row): Turn[] => {
@@ -614,8 +614,8 @@ export function startHub({
     db ??= open(storeDir);
 
     return new Map(
-      db
-        .threads({ app, open: true })
+      db.threads
+        .list({ app, open: true })
         .map(({ app: _app, open: _open, link: _link, thread, fork, model, ...known }) => [
           thread,
           {
@@ -630,7 +630,7 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The app gives each thread's link as it knows it now; one it can't give keeps the last it gave.
   function keepIn(store: Store, saved: Map<string, Saved>) {
-    store.keepThreads(
+    store.threads.keep(
       app,
       Object.fromEntries(
         [...saved].map(([thread, known]) => [
@@ -955,7 +955,7 @@ export function startHub({
         }
 
         kept((store) => {
-          store.handled(session);
+          store.turns.handled(session);
         }, undefined);
         void claude.stop(session);
 
@@ -1262,7 +1262,7 @@ export function startHub({
     if (present(prompt)) {
       kept(
         (store) =>
-          store.deliver(
+          store.messages.deliver(
             {
               key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`,
               to: thread,
@@ -1430,7 +1430,7 @@ export function startHub({
 
     if (
       !kept((store) => {
-        store.deliver({
+        store.messages.deliver({
           key,
           to: thread,
           from: "hub",
@@ -1500,7 +1500,7 @@ export function startHub({
         store.write(
           () =>
             (!along || along()) &&
-            store.deliver({
+            store.messages.deliver({
               key,
               to: thread,
               from: app,
@@ -1536,7 +1536,10 @@ export function startHub({
       meta,
     };
 
-    kept((store) => store.deliver(row, current(caller.getStore() ?? thread) ?? "hub"), false);
+    kept(
+      (store) => store.messages.deliver(row, current(caller.getStore() ?? thread) ?? "hub"),
+      false,
+    );
   }
 
   function pass(thread: string, name: string, message: Message) {
@@ -1608,7 +1611,7 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // What a thread's next session gets: every message no session has taken, and any the store couldn't keep.
   function waiting(thread: string): Message[] {
-    const rows = kept((store) => store.untaken(thread), []);
+    const rows = kept((store) => store.messages.untaken(thread), []);
 
     return [
       ...rows.map(toMessageWithKeyFirstForTheHook),
@@ -1623,7 +1626,10 @@ export function startHub({
       return;
     }
 
-    const rows = kept<Row[] | undefined>((store) => store.untaken([...threads.keys()]), undefined);
+    const rows = kept<Row[] | undefined>(
+      (store) => store.messages.untaken([...threads.keys()]),
+      undefined,
+    );
 
     if (!rows) {
       return;
@@ -1677,7 +1683,7 @@ export function startHub({
     }
 
     for (const key of keys) {
-      kept((store) => store.take(key, session), false);
+      kept((store) => store.messages.take(key, session), false);
     }
   }
 
@@ -1929,7 +1935,7 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. Only for a thread none of whose sessions runs.
   function cut(thread: string) {
-    const given = new Set(kept((store) => store.cut(thread, current(thread)), []));
+    const given = new Set(kept((store) => store.turns.cut(thread, current(thread)), []));
 
     if (!given.size) {
       return;
@@ -2027,7 +2033,7 @@ export function startHub({
       run.turn === "done" &&
       !run.handed.size &&
       warmFor(thread) === undefined &&
-      !kept((store) => store.took(session), true)
+      !kept((store) => store.messages.took(session), true)
     ) {
       run.renew = "underway";
       void stop(thread).then(() => cycle(thread));
@@ -2236,7 +2242,7 @@ export function startHub({
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // An interrupt runs no Stop hook, so the hub records the turn's end in hex's record of it, as of the press, settling what the session took: a turn begun since then is left running.
       kept((store) => {
-        store.handled(session, pressed);
+        store.turns.handled(session, pressed);
       }, undefined);
       setState(thread, false, true);
 
@@ -2295,7 +2301,7 @@ export function startHub({
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // One that was mid-turn when the hub stopped may have died with it (a reboot): it gets the same wait, and if it's gone, its next session gets what it left.
       const cutShort = [...threads.keys()].filter(
-        (thread) => !outlived.has(thread) && kept((store) => store.midTurn(thread), false),
+        (thread) => !outlived.has(thread) && kept((store) => store.turns.midTurn(thread), false),
       );
 
       for (const thread of [...outlived, ...cutShort]) {
@@ -2325,7 +2331,7 @@ export function startHub({
   const api = {
     deliver,
     sent,
-    said: (key: string) => kept((store) => store.latest(`${app}:${key}`), null),
+    said: (key: string) => kept((store) => store.messages.latest(`${app}:${key}`), null),
     command: restart,
     configure,
     settings: (thread: string): Settings => ({

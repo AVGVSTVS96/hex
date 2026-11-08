@@ -83,17 +83,17 @@ export function pending(state: string, thread?: string, room = ROOM) {
 
   const tasks =
     thread === undefined
-      ? store.tasks({ status: ["open"] })
-      : store.tasks({ owner: thread, status: ["open"] });
+      ? store.tasks.list({ status: ["open"] })
+      : store.tasks.list({ owner: thread, status: ["open"] });
 
   const questions =
     thread === undefined
-      ? store.questions({ waiting: true })
-      : store.questions({ thread, waiting: true });
+      ? store.questions.list({ waiting: true })
+      : store.questions.list({ thread, waiting: true });
 
   const zone = zoneOf(dirname(state));
-  const holds = store.holds().map((hold) => [hold.id, holdLine(hold, store, zone)] as const);
-  const named = store.names();
+  const holds = store.holds.list().map((hold) => [hold.id, holdLine(hold, store, zone)] as const);
+  const named = store.threads.names();
   const whose = thread === undefined || thread === "" ? "Every thread" : "This thread";
 
   const sections = [
@@ -174,18 +174,20 @@ if (import.meta.main) {
       const store = open(stateDir());
 
       if (source === "compact" || source === "clear") {
-        store.unshow(session, "tasks");
+        store.seen.unshow(session, "tasks");
       }
 
       const worksFor = nonEmpty(process.env.HEX_THREAD) ?? served();
       const isMain = nonEmpty(process.env.HEX_MAIN) !== undefined;
 
       const thread =
-        isMain || worksFor === undefined || worksFor === "" ? undefined : store.key(worksFor);
+        isMain || worksFor === undefined || worksFor === ""
+          ? undefined
+          : store.threads.key(worksFor);
 
       const { text, seen } = pending(stateDir(), thread);
       const whole = text || "No open tasks or questions waiting on me now.";
-      const last = store.seen(session, "tasks");
+      const last = store.seen.get(session, "tasks");
 
       const before = last.startsWith("{")
         ? (Pushed.safeParse(JSON.parse(last)).data ?? null)
@@ -202,7 +204,7 @@ if (import.meta.main) {
           : "";
 
       if (before === null ? record !== last : diff !== "") {
-        store.show(session, "tasks", record);
+        store.seen.show(session, "tasks", record);
         console.log(out);
       }
     }

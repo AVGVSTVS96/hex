@@ -54,16 +54,16 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
     JSON.stringify({ pid: 2 ** 22 + 1, sessionId: "gone", kind: "bg", status: "busy" }),
   );
   status("4.json", "agents", "bg", "busy");
-  store.turned("agents", true);
-  store.turned("agents", false);
-  store.turned("ours", true);
-  store.turned("unheard", true);
-  store.turned("unheard", false);
+  store.turns.turned("agents", true);
+  store.turns.turned("agents", false);
+  store.turns.turned("ours", true);
+  store.turns.turned("unheard", true);
+  store.turns.turned("unheard", false);
   status("5.json", "unheard", "bg", "busy", Date.now() + 1000);
   const quiet = Bun.spawn([join(HEX, "bin/quiet")], { env, stdout: "pipe" });
   await Bun.sleep(500);
   expect(quiet.exitCode).toBeNull();
-  store.turned("ours", false);
+  store.turns.turned("ours", false);
   await Bun.sleep(500);
   expect(quiet.exitCode).toBeNull();
   status("5.json", "unheard", "bg", "idle", Date.now());
@@ -86,7 +86,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
       status: "busy",
     }),
   );
-  store.turned("asker", true);
+  store.turns.turned("asker", true);
   await Bun.sleep(5);
   writeFileSync(
     join(sessions, "2.json"),
@@ -98,7 +98,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
       status: "busy",
     }),
   );
-  store.turned("later", true);
+  store.turns.turned("later", true);
   const first = startQuiet();
   await Bun.sleep(300);
   expect(first.exitCode).toBeNull();
@@ -110,7 +110,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
   expect(await first.exited).toBe(0);
   expect(await new Response(first.stdout).text()).toBe("waiting on: asker, later\n");
   await Bun.sleep(5);
-  store.turned("asker", true);
+  store.turns.turned("asker", true);
   const next = startQuiet();
   await Bun.sleep(500);
   expect(next.exitCode).toBeNull();

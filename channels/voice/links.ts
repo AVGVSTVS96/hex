@@ -98,9 +98,9 @@ export class Links {
         this.schedule();
       }
     });
-    this.relays = JSON.stringify(open(state).relays());
+    this.relays = JSON.stringify(open(state).relays.list());
     this.unwatch = open(state).watch(() => {
-      const relays = JSON.stringify(open(state).relays());
+      const relays = JSON.stringify(open(state).relays.list());
 
       if (relays !== this.relays) {
         this.relays = relays;
@@ -344,7 +344,7 @@ export class Links {
       }
 
       const relayed = open(this.state)
-        .relays()
+        .relays.list()
         .flatMap(({ from, thread, run: task, at }): Delegation[] => {
           const ran = run.get(task);
           const hex = keys.get(thread);

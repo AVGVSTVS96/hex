@@ -17,8 +17,8 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "intent-"));
   mkdirSync(join(dir, "telegram"));
   store = open(dir);
-  store.keepThreads("telegram", { "-100:7": { name: "Website" } });
-  store.deliver({
+  store.threads.keep("telegram", { "-100:7": { name: "Website" } });
+  store.messages.deliver({
     key: "telegram:-100:50",
     to: "-100:7",
     from: "telegram",
@@ -26,8 +26,8 @@ beforeEach(() => {
     author: "owner",
     meta: { user: "owner" },
   });
-  store.take("telegram:-100:50", "main");
-  store.deliver({
+  store.messages.take("telegram:-100:50", "main");
+  store.messages.deliver({
     key: "telegram:-100:51",
     to: "-100:7",
     from: "telegram",
@@ -102,7 +102,7 @@ test("a brief is what hands work to another agent", () => {
 });
 
 test("the words a brief is checked against: its tasks and the newest this session got", () => {
-  const task = store.createTask({
+  const task = store.tasks.create({
     title: "Fast login",
     message: "telegram:-100:50",
     owner: "-100:7",
@@ -115,14 +115,14 @@ test("the words a brief is checked against: its tasks and the newest this sessio
 });
 
 test("a job is held to its own task, not to what the owner said to its thread since", () => {
-  const task = store.createTask({
+  const task = store.tasks.create({
     title: "Fast login",
     message: "telegram:-100:50",
     owner: "-100:7",
   });
 
-  store.addAgents(task.id, ["job-session"]);
-  store.deliver({
+  store.tasks.addAgents(task.id, ["job-session"]);
+  store.messages.deliver({
     key: "telegram:-100:52",
     to: "-100:7",
     from: "telegram",
@@ -130,7 +130,7 @@ test("a job is held to its own task, not to what the owner said to its thread si
     author: "owner",
     meta: { user: "owner" },
   });
-  store.take("telegram:-100:52", "main");
+  store.messages.take("telegram:-100:52", "main");
 
   const words = asked(store, "job-session", "SendMessage to its builder: inline the login CSS.");
   expect(words).toContain(`${task.id} (open`);
@@ -138,8 +138,8 @@ test("a job is held to its own task, not to what the owner said to its thread si
 });
 
 test("a delivery is checked against the words it cites and the thread it goes to", () => {
-  store.keepThreads("telegram", { "-100:7": { name: "Website" }, "-100:9": { name: "General" } });
-  store.deliver({
+  store.threads.keep("telegram", { "-100:7": { name: "Website" }, "-100:9": { name: "General" } });
+  store.messages.deliver({
     key: "telegram:-100:90",
     to: "-100:9",
     from: "telegram",

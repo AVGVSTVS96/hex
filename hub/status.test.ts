@@ -19,7 +19,7 @@ afterEach(() => {
 
 const said = (store: Store, n: number, body: string) => {
   const key = `telegram:-100:${n}`;
-  store.deliver({
+  store.messages.deliver({
     key,
     to: "-100:7",
     from: "telegram",
@@ -36,14 +36,14 @@ test("a status post is the note over the thread's waiting questions, open tasks 
   const note = "Site: https://example.com";
   expect(statusPost(store, "-100:7", note, 4096)).toBe(note);
 
-  store.ask({
+  store.questions.ask({
     app: "telegram",
     thread: "-100:7",
     message: 60,
     text: "Ship today?\nCI is green.",
     options: ["Yes", "No"],
   });
-  store.ask({
+  store.questions.ask({
     app: "telegram",
     thread: "-100:8",
     message: 61,
@@ -51,31 +51,31 @@ test("a status post is the note over the thread's waiting questions, open tasks 
     options: ["Yes", "No"],
   });
 
-  store.createTask({
+  store.tasks.create({
     title: "Fix the login page",
     message: said(store, 50, "Fix the login page"),
     owner: "-100:7",
   });
 
-  const old = store.createTask({
+  const old = store.tasks.create({
     title: "Rename the repo",
     message: said(store, 52, "Rename the repo"),
     owner: "-100:7",
   });
 
-  const done = store.createTask({
+  const done = store.tasks.create({
     title: "Blur the logo less",
     message: said(store, 51, "Blur the logo less"),
     owner: "-100:7",
   });
 
-  store.createTask({
+  store.tasks.create({
     title: "Not this thread",
     message: said(store, 53, "Not this thread"),
     owner: "-100:8",
   });
-  store.editTask(old.id, { status: "done", proof: "gh repo rename" });
-  store.editTask(done.id, {
+  store.tasks.edit(old.id, { status: "done", proof: "gh repo rename" });
+  store.tasks.edit(done.id, {
     status: "done",
     proof: "shipped in abc123, https://example.com/pull/3.",
   });
@@ -99,8 +99,8 @@ test("a status post is the note over the thread's waiting questions, open tasks 
   ).toContain("**Waiting on you**\n- [Ship today?](https://t.me/c/-100:7/60)\n\n");
 
   for (let n = 54; n < 58; n++) {
-    store.editTask(
-      store.createTask({
+    store.tasks.edit(
+      store.tasks.create({
         title: `Later ${n}`,
         message: said(store, n, `Later ${n}`),
         owner: "-100:7",
@@ -118,7 +118,7 @@ test("a status post fits the room the app gives one message, saying how many mor
   const store = new Store(dir);
 
   for (let n = 0; n < 40; n++) {
-    store.createTask({
+    store.tasks.create({
       title: `Task number ${n} with enough words to take some room`,
       message: said(store, n, `Task number ${n} with enough words to take some room`),
       owner: "-100:7",
@@ -148,8 +148,8 @@ test("a done task links to the first link in its proof, without the markdown or 
   ];
 
   for (const [n, proof] of proofs.entries()) {
-    store.editTask(
-      store.createTask({
+    store.tasks.edit(
+      store.tasks.create({
         title: `Task ${n}`,
         message: said(store, 70 + n, `Task ${n}`),
         owner: "-100:7",
@@ -186,21 +186,21 @@ test("a status post's note is its words above its first heading, plain or an old
 test("an open task links to the owner's latest words for it in the thread, to reply to with more", () => {
   const store = new Store(dir);
 
-  const task = store.createTask({
+  const task = store.tasks.create({
     title: "Fix the login page",
     message: said(store, 50, "Fix the login page"),
     owner: "-100:7",
   });
 
-  store.addWords(task.id, said(store, 58, "and the signup page"));
-  store.deliver({
+  store.tasks.addWords(task.id, said(store, 58, "and the signup page"));
+  store.messages.deliver({
     key: "telegram:42:90",
     to: "42",
     from: "telegram",
     body: "one more thing",
     author: "owner",
   });
-  store.addWords(task.id, "telegram:42:90");
+  store.tasks.addWords(task.id, "telegram:42:90");
   expect(
     statusPost(
       store,
@@ -214,7 +214,7 @@ test("an open task links to the owner's latest words for it in the thread, to re
 
 test("the owner's question hex answered waits on them, linked to the answer, and ideas get their own list", () => {
   const store = new Store(dir);
-  store.ask({
+  store.questions.ask({
     asker: "owner",
     app: "telegram",
     thread: "-100:7",
@@ -223,13 +223,13 @@ test("the owner's question hex answered waits on them, linked to the answer, and
     options: [],
   });
   expect(statusPost(store, "-100:7", "Note", 4096)).toBe("Note");
-  store.replied("telegram", "-100:7", {
+  store.questions.replied("telegram", "-100:7", {
     label: "Yes, at 4:02pm.",
     at: new Date().toISOString(),
     via: "hex",
     message: 72,
   });
-  store.createTask({
+  store.tasks.create({
     title: "Maybe a dark mode",
     message: said(store, 71, "Maybe a dark mode"),
     owner: "-100:7",

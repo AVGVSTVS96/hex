@@ -301,8 +301,8 @@ export class Board extends Changes {
           this.mark("threads");
         }
 
-        const beaten = open(state).beaten();
-        const linked = JSON.stringify(open(state).agentTasks());
+        const beaten = open(state).turns.beaten();
+        const linked = JSON.stringify(open(state).tasks.agentTasks());
         const closed = JSON.stringify(this.closedTasks());
 
         if (beaten !== this.beaten || linked !== this.linked || closed !== this.closed) {
@@ -334,7 +334,7 @@ export class Board extends Changes {
       return kept;
     }
 
-    const all = open(this.state).threads();
+    const all = open(this.state).threads.list();
     const row = all.find(({ app, thread }) => APPS.has(app) && `${app}:${thread}` === id);
 
     if (row === undefined || this.links.delegated(row.app, row.thread)) {
@@ -469,7 +469,7 @@ export class Board extends Changes {
     this.own();
     this.watchJobs();
     this.stale = { threads: false, sessions: false };
-    this.beats = open(this.state).everyBeat();
+    this.beats = open(this.state).turns.everyBeat();
     const since = new Date(Date.now() - KEEP).toISOString();
 
     const threads = this.threads
@@ -548,7 +548,7 @@ export class Board extends Changes {
   }
 
   private stored(): Thread[] {
-    const all = open(this.state).threads();
+    const all = open(this.state).threads.list();
     const general = generalOf(all);
 
     return all.filter((row) => row.open && APPS.has(row.app)).map((row) => threadOf(row, general));
@@ -885,7 +885,7 @@ export class Board extends Changes {
   /* A run of a project's own has no thread: it works while its agents do, and stays on the board
      until hex restarts, at most a week. */
   private group(runs: Run[]): Run[] {
-    const links = Object.entries(open(this.state).agentTasks());
+    const links = Object.entries(open(this.state).tasks.agentTasks());
 
     const taskOf = (agent: Agent) =>
       links.find(([id]) => id === agent.id || agent.id.startsWith(id))?.[1];
@@ -976,7 +976,7 @@ export class Board extends Changes {
 
   private finish(runs: Run[]): Finished[] {
     const store = open(this.state);
-    const all = store.threads();
+    const all = store.threads.list();
     const general = generalOf(all);
 
     const generalOrDM = (row?: Stored) =>
@@ -991,7 +991,10 @@ export class Board extends Changes {
 
       const whereItWasClosedOrItsAgentsStartedElseItsProof =
         !hasText(task.project) && generalOrDM(owner)
-          ? [...store.worked(task.id), store.message(task.proof?.split(/\s/u)[0] ?? "")?.to]
+          ? [
+              ...store.tasks.worked(task.id),
+              store.messages.get(task.proof?.split(/\s/u)[0] ?? "")?.to,
+            ]
           : [];
 
       const thread =
@@ -1017,7 +1020,7 @@ export class Board extends Changes {
   }
 
   private closedTasks() {
-    return open(this.state).finished(new Date(Date.now() - DAY).toISOString());
+    return open(this.state).tasks.finished(new Date(Date.now() - DAY).toISOString());
   }
 
   private projectRun(id: string, agents: Agent[]): Run {
@@ -1089,7 +1092,7 @@ export class Board extends Changes {
       return;
     }
 
-    const { began, ended } = open(this.state).turn(session.id);
+    const { began, ended } = open(this.state).turns.get(session.id);
 
     if (
       (!hasText(began) || (hasText(ended) && Date.parse(began) < flipped)) &&
@@ -1100,7 +1103,7 @@ export class Board extends Changes {
   }
 
   private untaken(thread: Thread) {
-    return open(this.state).untaken(thread.id);
+    return open(this.state).messages.untaken(thread.id);
   }
 
   private onlyAHeartbeatWaits(thread: Thread) {

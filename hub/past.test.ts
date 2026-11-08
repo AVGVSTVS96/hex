@@ -11,7 +11,7 @@ test("log/'s conversations come into hex.db once, under each session's thread, a
   const home = mkdtempSync(join(tmpdir(), "past-"));
   mkdirSync(join(home, "log", "threads"), { recursive: true });
   const store = open(join(home, "state"));
-  store.deliver(
+  store.messages.deliver(
     {
       key: "telegram:1",
       to: "-100:7",
@@ -35,7 +35,9 @@ test("log/'s conversations come into hex.db once, under each session's thread, a
     { from: "hex", text: "Roomy." },
   ]);
   expect(
-    store.observe("abc-session", new Date(Date.now() + 1000).toISOString()).map((row) => row.key),
+    store.messages
+      .observe("abc-session", new Date(Date.now() + 1000).toISOString())
+      .map((row) => row.key),
   ).toEqual(["telegram:1"]);
   rmSync(home, { recursive: true, force: true });
 });
@@ -44,15 +46,15 @@ test("a session's turns go under the thread each was said in, and its terminal n
   const home = mkdtempSync(join(tmpdir(), "past-"));
   mkdirSync(join(home, "log"), { recursive: true });
   const store = open(join(home, "state"));
-  store.deliver(
+  store.messages.deliver(
     { key: "telegram:1", to: "-100:7", from: "telegram", author: "owner", body: "first ask" },
     "abc-session",
   );
-  store.deliver(
+  store.messages.deliver(
     { key: "telegram:2", to: "-100:7", from: "telegram", author: "owner", body: "second ask" },
     "abc-session",
   );
-  store.deliver(
+  store.messages.deliver(
     { key: "discord:3", to: "900", from: "discord", author: "owner", body: "moved ask" },
     "abc-session",
   );
@@ -93,7 +95,7 @@ test("a session that took nothing hex.db kept comes in under its thread", () => 
   const home = mkdtempSync(join(tmpdir(), "past-"));
   mkdirSync(join(home, "log", "threads"), { recursive: true });
   const store = open(join(home, "state"));
-  store.keepThreads("telegram", { "-100:9": { name: "Errands", session: "old-session" } });
+  store.threads.keep("telegram", { "-100:9": { name: "Errands", session: "old-session" } });
   writeFileSync(
     join(home, "log", "threads", "2026-10-01-old-sess.md"),
     "# 2026-10-01 · session old-session\n\n## me · telegram · 2026-10-01 10:06\n\nbuy stamps\n\n## assistant · telegram · 2026-10-01 10:06\n\nOn it.\n",

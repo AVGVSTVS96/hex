@@ -309,7 +309,7 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
       board.runs,
       board.strays(),
       await jobs(),
-      open(HEX_STATE).names(),
+      open(HEX_STATE).threads.names(),
       Date.now(),
       yours.view.asks,
     );

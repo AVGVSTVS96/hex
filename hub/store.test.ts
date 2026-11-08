@@ -58,9 +58,9 @@ function matching(pattern: RegExp): string {
 
 test("a message is kept once, word for word, and a resend under its key changes nothing", () => {
   const store = new Store(dir);
-  expect(store.deliver(message)).toBe(true);
-  expect(store.deliver({ ...message, body: "something else" })).toBe(false);
-  const kept = store.message(message.key);
+  expect(store.messages.deliver(message)).toBe(true);
+  expect(store.messages.deliver({ ...message, body: "something else" })).toBe(false);
+  const kept = store.messages.get(message.key);
   expect(kept).toMatchObject({ ...message });
   expect(kept?.at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/u);
   expect(kept?.taken).toBeUndefined();
@@ -69,10 +69,10 @@ test("a message is kept once, word for word, and a resend under its key changes 
 test("a key has to start with its sender, so the keys hex makes stay its own", () => {
   const store = new Store(dir);
   expect(() =>
-    store.deliver({ ...message, key: "schedule:heartbeat@2026-10-18T21:45Z" }),
+    store.messages.deliver({ ...message, key: "schedule:heartbeat@2026-10-18T21:45Z" }),
   ).toThrow();
-  expect(() => store.deliver({ ...message, key: "42" })).toThrow();
-  expect(store.untaken()).toEqual([]);
+  expect(() => store.messages.deliver({ ...message, key: "42" })).toThrow();
+  expect(store.messages.untaken()).toEqual([]);
 });
 
 test("a message reads as its newest edit, made in any topic of its chat, even when only the edit was kept", () => {
@@ -86,49 +86,49 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
     body: "Deploy at 5",
   } satisfies NewRow;
 
-  store.deliver(sent);
-  expect(store.latest(sent.key)?.body).toBe("Deploy at 5");
-  store.deliver({
+  store.messages.deliver(sent);
+  expect(store.messages.latest(sent.key)?.body).toBe("Deploy at 5");
+  store.messages.deliver({
     ...sent,
     key: "telegram:edit-1",
     body: "Deploy at 6",
     meta: { edited: "true", message_id: "42" },
   });
-  store.deliver({
+  store.messages.deliver({
     ...sent,
     key: "telegram:edit-2",
     body: "Deploy at 7",
     meta: { edited: "true", message_id: "42" },
   });
-  store.deliver({
+  store.messages.deliver({
     ...sent,
     key: "telegram:edit-3",
     to: "-200:3",
     body: "another chat",
     meta: { edited: "true", message_id: "42" },
   });
-  store.deliver({
+  store.messages.deliver({
     ...sent,
     key: "discord:edit-4",
     from: "discord",
     body: "another app",
     meta: { edited: "true", message_id: "42" },
   });
-  expect(store.latest(sent.key)?.body).toBe("Deploy at 7");
-  store.deliver({
+  expect(store.messages.latest(sent.key)?.body).toBe("Deploy at 7");
+  store.messages.deliver({
     ...sent,
     key: "telegram:edit-5",
     to: "-100:9",
     body: "Deploy at 8, edited from another topic",
     meta: { edited: "true", message_id: "42" },
   });
-  expect(store.latest(sent.key)).toMatchObject({
+  expect(store.messages.latest(sent.key)).toMatchObject({
     key: sent.key,
     to: "-100:7",
     body: "Deploy at 8, edited from another topic",
   });
-  expect(store.latest("telegram:-100:43")).toBeNull();
-  store.deliver({
+  expect(store.messages.latest("telegram:-100:43")).toBeNull();
+  store.messages.deliver({
     key: "buzz:e2",
     to: "thread",
     from: "buzz",
@@ -136,77 +136,86 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
     body: "tagged on edit",
     meta: { edited: "true", message_id: "e1" },
   });
-  expect(store.latest("buzz:e1")?.body).toBe("tagged on edit");
+  expect(store.messages.latest("buzz:e1")?.body).toBe("tagged on edit");
 });
 
 test("the first session to take a message has it, and it leaves what waits", () => {
   const store = new Store(dir);
-  store.deliver(message);
-  store.deliver({ ...message, key: "telegram:-100:43", body: "and some chips" });
-  store.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
-  expect(store.take(message.key, "session-a")).toBe(true);
-  expect(store.take(message.key, "session-b")).toBe(false);
-  expect(store.take("telegram:-100:99", "session-a")).toBe(false);
-  expect(store.message(message.key)?.taken?.by).toBe("session-a");
-  expect(store.untaken("-100:7").map((row) => row.body)).toEqual(["and some chips"]);
-  expect(store.untaken().map((row) => row.key)).toEqual(["telegram:-100:43", "telegram:-100:44"]);
+  store.messages.deliver(message);
+  store.messages.deliver({ ...message, key: "telegram:-100:43", body: "and some chips" });
+  store.messages.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
+  expect(store.messages.take(message.key, "session-a")).toBe(true);
+  expect(store.messages.take(message.key, "session-b")).toBe(false);
+  expect(store.messages.take("telegram:-100:99", "session-a")).toBe(false);
+  expect(store.messages.get(message.key)?.taken?.by).toBe("session-a");
+  expect(store.messages.untaken("-100:7").map((row) => row.body)).toEqual(["and some chips"]);
+  expect(store.messages.untaken().map((row) => row.key)).toEqual([
+    "telegram:-100:43",
+    "telegram:-100:44",
+  ]);
 });
 
 test("some threads' untaken messages, and a mark that moves only when a thread's messages do", () => {
   const store = new Store(dir);
-  store.deliver(message);
-  store.deliver({ ...message, key: "telegram:-100:43", to: "-100:8" });
-  store.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
-  expect(store.untaken(["-100:9", "-100:7"]).map((row) => row.key)).toEqual([
+  store.messages.deliver(message);
+  store.messages.deliver({ ...message, key: "telegram:-100:43", to: "-100:8" });
+  store.messages.deliver({ ...message, key: "telegram:-100:44", to: "-100:9" });
+  expect(store.messages.untaken(["-100:9", "-100:7"]).map((row) => row.key)).toEqual([
     message.key,
     "telegram:-100:44",
   ]);
-  const mark = store.mark("-100:7");
-  store.take("telegram:-100:43", "session-a");
-  expect(store.mark("-100:7")).toBe(mark);
-  store.take(message.key, "session-a");
-  const taken = store.mark("-100:7");
+  const mark = store.messages.mark("-100:7");
+  store.messages.take("telegram:-100:43", "session-a");
+  expect(store.messages.mark("-100:7")).toBe(mark);
+  store.messages.take(message.key, "session-a");
+  const taken = store.messages.mark("-100:7");
   expect(taken).not.toBe(mark);
-  store.deliver({ ...message, key: "telegram:-100:45" });
-  const kept = store.mark("-100:7");
+  store.messages.deliver({ ...message, key: "telegram:-100:45" });
+  const kept = store.messages.mark("-100:7");
   expect(kept).not.toBe(taken);
   expect(
-    store.past(
+    store.messages.past(
       [[{ ...message, key: "telegram:-100:46" }, "2020-01-01T00:00:00.000Z"]],
       "session-a",
     ),
   ).toEqual(["telegram:-100:46"]);
-  expect(store.mark("-100:7")).not.toBe(kept);
+  expect(store.messages.mark("-100:7")).not.toBe(kept);
 });
 
 test("a schedule's slot fires once, and its next slot fires whether or not the last was taken", () => {
   const store = new Store(dir);
   const minute = Date.UTC(2026, 9, 18, 21, 45) / 60_000;
-  expect(store.fire("heartbeat", minute, "general", "[heartbeat] Hourly check")).toBe(true);
-  expect(store.fire("heartbeat", minute, "general", "[heartbeat] Hourly check")).toBe(false);
-  expect(store.fire("heartbeat", minute + 60, "general", "[heartbeat] Hourly check")).toBe(true);
-  expect(store.fire("call", minute, "general", "[call] Ring if needed", true)).toBe(true);
-  expect(store.message("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
+  expect(store.scheduler.fire("heartbeat", minute, "general", "[heartbeat] Hourly check")).toBe(
+    true,
+  );
+  expect(store.scheduler.fire("heartbeat", minute, "general", "[heartbeat] Hourly check")).toBe(
+    false,
+  );
+  expect(
+    store.scheduler.fire("heartbeat", minute + 60, "general", "[heartbeat] Hourly check"),
+  ).toBe(true);
+  expect(store.scheduler.fire("call", minute, "general", "[call] Ring if needed", true)).toBe(true);
+  expect(store.messages.get("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
     to: "general",
     from: "schedule",
     meta: { user: "schedule", schedule: "heartbeat" },
   });
-  expect(store.message("schedule:call@2026-10-18T21:45Z")?.meta?.late).toBe("true");
+  expect(store.messages.get("schedule:call@2026-10-18T21:45Z")?.meta?.late).toBe("true");
 });
 
 test("the scheduler keeps the last minute it checked", () => {
   const store = new Store(dir);
-  expect(store.checked()).toBeUndefined();
-  store.check(100);
-  store.check(101);
-  expect(new Store(dir).checked()).toBe(101);
+  expect(store.scheduler.checked()).toBeUndefined();
+  store.scheduler.check(100);
+  store.scheduler.check(101);
+  expect(new Store(dir).scheduler.checked()).toBe(101);
 });
 
 test("a change committed in another process rings the bell, and a write that changed nothing stays quiet", async () => {
   const store = open(dir);
   expect(open(dir)).toBe(store);
   let rang = 0;
-  store.keepThreads("telegram", { general: { name: "General" } });
+  store.threads.keep("telegram", { general: { name: "General" } });
 
   const stop = store.watch(() => {
     rang++;
@@ -227,14 +236,14 @@ test("a change committed in another process rings the bell, and a write that cha
 
   expect(await cli.exited).toBe(0);
   await until(() => rang > 0);
-  expect(store.message("job:build:abc")).toMatchObject({
+  expect(store.messages.get("job:build:abc")).toMatchObject({
     to: "general",
     from: "job",
     body: "[job] build ended",
     meta: { user: "job" },
   });
   const bell = readFileSync(join(dir, "hex.bell"), "utf-8");
-  expect(store.take("job:nothing:here", "session-a")).toBe(false);
+  expect(store.messages.take("job:nothing:here", "session-a")).toBe(false);
   expect(readFileSync(join(dir, "hex.bell"), "utf-8")).toBe(bell);
   stop();
 });
@@ -254,7 +263,7 @@ test("a listener runs at the first ring, then once for each change, however many
   await until(() => rang > 0);
   await Bun.sleep(100);
   expect(rang).toBe(1);
-  store.deliver(message);
+  store.messages.deliver(message);
   await until(() => rang > 1);
   await Bun.sleep(100);
   expect(rang).toBe(2);
@@ -275,7 +284,7 @@ test("hex watch prints a line once it listens and one for each change to hex.db,
     let n = 0;
 
     const change = () =>
-      store.deliver({
+      store.messages.deliver({
         key: `job:watched:${n++}`,
         to: "general",
         from: "job",
@@ -298,10 +307,10 @@ test("a change right after the one the bell just rang for is still heard", async
   const seen: (string | undefined)[] = [];
 
   const stop = store.watch(() => {
-    seen.push(store.message("job:quick:2")?.body);
+    seen.push(store.messages.get("job:quick:2")?.body);
 
     if (seen.length === 1) {
-      store.deliver({
+      store.messages.deliver({
         key: "job:quick:2",
         to: "general",
         from: "job",
@@ -311,7 +320,13 @@ test("a change right after the one the bell just rang for is still heard", async
     }
   });
 
-  store.deliver({ key: "job:quick:1", to: "general", from: "job", author: "prompt", body: "one" });
+  store.messages.deliver({
+    key: "job:quick:1",
+    to: "general",
+    from: "job",
+    author: "prompt",
+    body: "one",
+  });
   await until(() => seen.at(-1) === "two");
   stop();
 });
@@ -333,7 +348,7 @@ test("hex deliver says how to call it when something is missing", async () => {
 });
 
 test("hex deliver reaches a thread by its id, and a sender alone gets a key of its own", async () => {
-  open(dir).keepThreads("discord", { "1561": { name: "Fixhex" } });
+  open(dir).threads.keep("discord", { "1561": { name: "Fixhex" } });
 
   const cli = Bun.spawn([
     "bun",
@@ -349,7 +364,7 @@ test("hex deliver reaches a thread by its id, and a sender alone gets a key of i
   ]);
 
   expect(await cli.exited).toBe(0);
-  expect(open(dir).said("1561", 1)).toMatchObject([
+  expect(open(dir).messages.said("1561", 1)).toMatchObject([
     {
       key: matching(/^hex:[0-9a-f-]{36}$/u),
       from: "hex",
@@ -416,12 +431,12 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     "-100:4716",
     join(dir, "elsewhere"),
   );
-  open(dir).keepThreads("telegram", {
+  open(dir).threads.keep("telegram", {
     "-100:4715": { name: "Selfheal" },
     "-100:3655": { name: "portfolio", session: "3d599dd0-0000-4000-8000-000000000000" },
   });
-  open(dir).turned("d4365c34-312f-4a52-9704-36fcf657e5b9", true);
-  open(dir).keepThreads("telegram", {
+  open(dir).turns.turned("d4365c34-312f-4a52-9704-36fcf657e5b9", true);
+  open(dir).threads.keep("telegram", {
     "-100:7": { name: "General", session: "addfa113-11f6-4698-9b9e-c80b1d5aebdf" },
     "-100:452": { name: "hex keyboard" },
     "-100:65": { name: "Theo clips" },
@@ -490,18 +505,18 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
   });
   expect(
     open(dir)
-      .since()
+      .messages.since()
       .map((row) => row.to),
   ).toEqual(["-100:7", "-100:7", "-100:7", "-100:452", "-100:65", "-100:4715", "-100:3655"]);
 }, 20_000);
 
 test("hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has", async () => {
-  open(dir).keepThreads("t3", {
+  open(dir).threads.keep("t3", {
     "0f3a9c1e-0000-4000-8000-000000000000": { name: "Old T3 thread" },
   });
-  open(dir).keepThreads("t3", { "5b0e7d2a-0000-4000-8000-000000000000": { name: "t3: notes" } });
-  open(dir).keepThreads("telegram", { "-100:1": { name: "hex" } });
-  open(dir).keepThreads("telegram", {
+  open(dir).threads.keep("t3", { "5b0e7d2a-0000-4000-8000-000000000000": { name: "t3: notes" } });
+  open(dir).threads.keep("telegram", { "-100:1": { name: "hex" } });
+  open(dir).threads.keep("telegram", {
     "-100:4715": { name: "Selfheal" },
     "-100:2": { name: "hex" },
     selfheal: { name: "Old notes" },
@@ -536,7 +551,7 @@ test("hex deliver finds a thread by its name too, keeps one for a closed thread 
   });
   expect(
     open(dir)
-      .since()
+      .messages.since()
       .map((row) => row.to),
   ).toEqual([
     "-100:4715",
@@ -554,8 +569,8 @@ const ask = {
 
 test("a task from before titles gets its first words as its title", () => {
   const store = new Store(dir);
-  store.deliver({ ...ask, body: "Fix the login page.\nIt 500s on submit." });
-  store.createTask({ title: "x", message: ask.key, owner: "-100:7" });
+  store.messages.deliver({ ...ask, body: "Fix the login page.\nIt 500s on submit." });
+  store.tasks.create({ title: "x", message: ask.key, owner: "-100:7" });
   store.db.run("update tasks set title = null");
   store.db.run("drop index said; drop table profiles");
   store.db.run("alter table messages drop column author");
@@ -566,40 +581,40 @@ test("a task from before titles gets its first words as its title", () => {
   store.db.run("drop table turns; drop table relays");
   store.db.run("pragma user_version = 10");
   store.db.close();
-  expect(new Store(dir).task("t-1")?.title).toBe("Fix the login page. It 500s on submit.");
+  expect(new Store(dir).tasks.get("t-1")?.title).toBe("Fix the login page. It 500s on submit.");
 });
 
 test("a task has a clean title of its own, and its words still come from the message", () => {
   const store = new Store(dir);
-  store.deliver(ask);
+  store.messages.deliver(ask);
 
-  const task = store.createTask({
+  const task = store.tasks.create({
     title: "  Sharpen the logo on retina ",
     message: ask.key,
     owner: "-100:7",
   });
 
   expect(task).toMatchObject({ title: "Sharpen the logo on retina", words: [{ text: ask.body }] });
-  expect(() => store.createTask({ title: " ", message: ask.key, owner: "-100:7" })).toThrow(
+  expect(() => store.tasks.create({ title: " ", message: ask.key, owner: "-100:7" })).toThrow(
     "needs a title",
   );
-  expect(store.editTask(task.id, { title: "Make the logo crisp" }).title).toBe(
+  expect(store.tasks.edit(task.id, { title: "Make the logo crisp" }).title).toBe(
     "Make the logo crisp",
   );
-  expect(() => store.editTask(task.id, { title: " \n" })).toThrow("can't be empty");
-  expect(store.editTask(task.id, { title: "Make the logo\n  crisp " }).title).toBe(
+  expect(() => store.tasks.edit(task.id, { title: " \n" })).toThrow("can't be empty");
+  expect(store.tasks.edit(task.id, { title: "Make the logo\n  crisp " }).title).toBe(
     "Make the logo crisp",
   );
-  expect(store.editTask(task.id, { status: "done", proof: "abc123" }).title).toBe(
+  expect(store.tasks.edit(task.id, { status: "done", proof: "abc123" }).title).toBe(
     "Make the logo crisp",
   );
-  expect(store.editTask(task.id, { status: "open" }).proof).toBeUndefined();
+  expect(store.tasks.edit(task.id, { status: "open" }).proof).toBeUndefined();
 });
 
 test("a task holds the owner's words as they sent them, quoted whole or in part, and never retyped", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  const whole = store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  store.messages.deliver(ask);
+  const whole = store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
   expect(whole).toMatchObject({
     id: "t-1",
     owner: "-100:7",
@@ -607,7 +622,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
     words: [{ message: ask.key, text: ask.body, who: "owner" }],
   });
   expect(
-    store.createTask({
+    store.tasks.create({
       title: "Fix it",
       message: ask.key,
       quote: "the logo looks blurry on retina",
@@ -615,7 +630,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
     }).words[0]?.text,
   ).toBe("the logo looks blurry on retina");
   expect(() =>
-    store.createTask({
+    store.tasks.create({
       title: "Fix it",
       message: ask.key,
       quote: "the logo is blurry",
@@ -623,7 +638,7 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
     }),
   ).toThrow("isn't in telegram:-100:50 as written");
   expect(() =>
-    store.createTask({ title: "Fix it", message: "telegram:-100:404", owner: "-100:7" }),
+    store.tasks.create({ title: "Fix it", message: "telegram:-100:404", owner: "-100:7" }),
   ).toThrow("no message");
   expect(() =>
     store.db.run(
@@ -635,36 +650,38 @@ test("a task holds the owner's words as they sent them, quoted whole or in part,
   );
   expect(() => store.db.run("update messages set body = 'Fix it'")).toThrow("keeps its words");
   expect(() =>
-    store.createTask({ title: "Fix it", message: ask.key, quote: "", owner: "-100:7" }),
+    store.tasks.create({ title: "Fix it", message: ask.key, quote: "", owner: "-100:7" }),
   ).toThrow("needs words");
   store.db.run(
     "insert or replace into messages (key, \"to\", \"from\", author, body, at) values ('telegram:-100:50', '-100:7', 'telegram', 'owner', 'Fix it', '2026-10-19T00:00:00.000Z')",
   );
-  expect(store.message(ask.key)?.body).toBe(ask.body);
+  expect(store.messages.get(ask.key)?.body).toBe(ask.body);
   expect(() =>
     store.db.run(
       "insert or replace into words (rowid, task, message, text) values (1, 1, 'telegram:-100:50', 'Fix the login page.')",
     ),
   ).toThrow("never rewritten");
-  expect(store.tasks().map((task) => task.id)).toEqual(["t-2", "t-1"]);
-  expect(store.tasks({ owner: "-100:7", status: ["open"], words: false })).toEqual(
-    store.tasks({ owner: "-100:7", status: ["open"] }).map(({ words: _words, ...task }) => task),
+  expect(store.tasks.list().map((task) => task.id)).toEqual(["t-2", "t-1"]);
+  expect(store.tasks.list({ owner: "-100:7", status: ["open"], words: false })).toEqual(
+    store.tasks
+      .list({ owner: "-100:7", status: ["open"] })
+      .map(({ words: _words, ...task }) => task),
   );
-  expect(store.task("t-1")?.words[0]?.text).toBe(ask.body);
+  expect(store.tasks.get("t-1")?.words[0]?.text).toBe(ask.body);
 });
 
 test("a task can be cut down to the words that ask, still quoted as written", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  store.messages.deliver(ask);
+  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
   expect(
-    store.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
   ).toEqual(["Fix the login page."]);
-  expect(() => store.requote("t-1", ask.key, "fix it all")).toThrow("holds no whole message");
+  expect(() => store.tasks.requote("t-1", ask.key, "fix it all")).toThrow("holds no whole message");
   expect(
-    store.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
   ).toEqual(["Fix the login page."]);
-  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual(["Fix the login page."]);
+  expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual(["Fix the login page."]);
   expect(() => store.db.run("update words set text = 'Fix it all' where task = 1")).toThrow(
     "only ever cut down",
   );
@@ -673,11 +690,11 @@ test("a task can be cut down to the words that ask, still quoted as written", ()
 
 test("cutting a whole message down keeps the other asks quoted from it", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  store.addWords("t-1", ask.key, "the logo looks blurry on retina");
-  store.requote("t-1", ask.key, "Fix the login page.");
-  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual([
+  store.messages.deliver(ask);
+  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  store.tasks.addWords("t-1", ask.key, "the logo looks blurry on retina");
+  store.tasks.requote("t-1", ask.key, "Fix the login page.");
+  expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "the logo looks blurry on retina",
   ]);
@@ -685,14 +702,14 @@ test("cutting a whole message down keeps the other asks quoted from it", () => {
 
 test("a task already holding the ask folds its whole copy of the message into it", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  store.addWords("t-1", ask.key, "Fix the login page.");
+  store.messages.deliver(ask);
+  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  store.tasks.addWords("t-1", ask.key, "Fix the login page.");
   expect(
-    store.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
   ).toEqual(["Fix the login page."]);
   expect(
-    store.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
+    store.tasks.requote("t-1", ask.key, "Fix the login page.").words.map((words) => words.text),
   ).toEqual(["Fix the login page."]);
   expect(() => store.db.run("update words set rowid = 99 where task = 1")).toThrow(
     "only ever cut down",
@@ -701,19 +718,19 @@ test("a task already holding the ask folds its whole copy of the message into it
 
 test("cutting takes the whole message and leaves quotes picked on purpose alone", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  store.deliver({ ...ask, key: "telegram:-100:51", body: "Also the docs." });
-  store.addWords("t-1", "telegram:-100:51");
-  store.addWords("t-1", ask.key, "Fix the login page.");
-  store.requote("t-1", ask.key, "Fix the login page.");
-  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual([
+  store.messages.deliver(ask);
+  store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  store.messages.deliver({ ...ask, key: "telegram:-100:51", body: "Also the docs." });
+  store.tasks.addWords("t-1", "telegram:-100:51");
+  store.tasks.addWords("t-1", ask.key, "Fix the login page.");
+  store.tasks.requote("t-1", ask.key, "Fix the login page.");
+  expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "Also the docs.",
   ]);
-  store.addWords("t-1", ask.key, "the logo looks blurry on retina");
-  expect(() => store.requote("t-1", ask.key, "blurry")).toThrow("holds no whole message");
-  expect(store.task("t-1")?.words.map((words) => words.text)).toEqual([
+  store.tasks.addWords("t-1", ask.key, "the logo looks blurry on retina");
+  expect(() => store.tasks.requote("t-1", ask.key, "blurry")).toThrow("holds no whole message");
+  expect(store.tasks.get("t-1")?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "Also the docs.",
     "the logo looks blurry on retina",
@@ -729,7 +746,7 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
   const body =
     "<t3_code_instructions>\n## T3 Code interaction mode: Default\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n<runtime_info>opus</runtime_info>";
 
-  store.deliver({
+  store.messages.deliver({
     key: "t3:1",
     to: "thread-1",
     from: "t3",
@@ -738,14 +755,18 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.createTask({ title: "Fix it", message: "t3:1", owner: "thread-1" }).words[0]?.text,
+    store.tasks.create({ title: "Fix it", message: "t3:1", owner: "thread-1" }).words[0]?.text,
   ).toBe("ship it");
-  expect(() => store.addWords("t-1", "t3:1", body)).toThrow("isn't in");
-  expect(store.addWords("t-1", "t3:1").words.map((words) => words.text)).toEqual(["ship it"]);
-  expect(store.requote("t-1", "t3:1", "ship").words.map((words) => words.text)).toEqual(["ship"]);
-  expect(store.requote("t-1", "t3:1", "ship").words.map((words) => words.text)).toEqual(["ship"]);
+  expect(() => store.tasks.addWords("t-1", "t3:1", body)).toThrow("isn't in");
+  expect(store.tasks.addWords("t-1", "t3:1").words.map((words) => words.text)).toEqual(["ship it"]);
+  expect(store.tasks.requote("t-1", "t3:1", "ship").words.map((words) => words.text)).toEqual([
+    "ship",
+  ]);
+  expect(store.tasks.requote("t-1", "t3:1", "ship").words.map((words) => words.text)).toEqual([
+    "ship",
+  ]);
   const shot = `${body}\n\n[image: /inbox/1.png]`;
-  store.deliver({
+  store.messages.deliver({
     key: "t3:2",
     to: "thread-1",
     from: "t3",
@@ -754,16 +775,16 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store
-      .createTask({ title: "Fix it", message: "t3:2", owner: "thread-1" })
+    store.tasks
+      .create({ title: "Fix it", message: "t3:2", owner: "thread-1" })
       .words.map((words) => words.text),
   ).toEqual(["ship it", "[image: /inbox/1.png]"]);
-  expect(store.requote("t-2", "t3:2", "ship").words.map((words) => words.text)).toEqual([
+  expect(store.tasks.requote("t-2", "t3:2", "ship").words.map((words) => words.text)).toEqual([
     "ship",
     "[image: /inbox/1.png]",
   ]);
-  store.addWords("t-2", "t3:2");
-  expect(store.task("t-2")?.words.map((words) => words.text)).toEqual([
+  store.tasks.addWords("t-2", "t3:2");
+  expect(store.tasks.get("t-2")?.words.map((words) => words.text)).toEqual([
     "ship",
     "[image: /inbox/1.png]",
   ]);
@@ -771,7 +792,7 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
   const attached =
     "<t3_code_instructions>\nx\n</t3_code_instructions>\n\n<user_request>\nship it\n</user_request>\n\n[image: /inbox/2.png]";
 
-  store.deliver({
+  store.messages.deliver({
     key: "t3:5",
     to: "thread-1",
     from: "t3",
@@ -780,15 +801,15 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store
-      .createTask({ title: "Fix it", message: "t3:5", owner: "thread-1" })
+    store.tasks
+      .create({ title: "Fix it", message: "t3:5", owner: "thread-1" })
       .words.map((words) => words.text),
   ).toEqual(["ship it", "[image: /inbox/2.png]"]);
 
   const tagged =
     "<user_request>\nmake the header say\n<title>Hello</title>\n</user_request>\n\n<runtime_info>opus</runtime_info>";
 
-  store.deliver({
+  store.messages.deliver({
     key: "t3:4",
     to: "thread-1",
     from: "t3",
@@ -797,9 +818,9 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.createTask({ title: "Fix it", message: "t3:4", owner: "thread-1" }).words[0]?.text,
+    store.tasks.create({ title: "Fix it", message: "t3:4", owner: "thread-1" }).words[0]?.text,
   ).toBe("make the header say\n<title>Hello</title>");
-  store.deliver({
+  store.messages.deliver({
     key: "t3:3",
     to: "thread-1",
     from: "t3",
@@ -808,30 +829,38 @@ test("a task from a T3 Code prompt holds what was asked, not T3's instructions a
     meta: { ts: "2026-10-20T00:00:00.000Z" },
   });
   expect(
-    store.createTask({ title: "Fix it", message: "t3:3", owner: "thread-1" }).words[0]?.text,
+    store.tasks.create({ title: "Fix it", message: "t3:3", owner: "thread-1" }).words[0]?.text,
   ).toBe("and the docs");
-  store.deliver({ ...ask, key: "telegram:-100:51", body: "paste: <user_request>x</user_request>" });
+  store.messages.deliver({
+    ...ask,
+    key: "telegram:-100:51",
+    body: "paste: <user_request>x</user_request>",
+  });
   expect(
-    store.createTask({ title: "Fix it", message: "telegram:-100:51", owner: "-100:7" }).words[0]
+    store.tasks.create({ title: "Fix it", message: "telegram:-100:51", owner: "-100:7" }).words[0]
       ?.text,
   ).toBe("paste: <user_request>x</user_request>");
 });
 
 test("follow-ups are added after what was said first, and a repeat changes nothing", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  store.deliver({ ...message, key: "telegram:-100:51", body: "and make it work on mobile" });
+  store.messages.deliver(ask);
+  store.messages.deliver({
+    ...message,
+    key: "telegram:-100:51",
+    body: "and make it work on mobile",
+  });
 
-  const task = store.createTask({
+  const task = store.tasks.create({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
 
-  store.addWords(task.id, "telegram:-100:51");
-  store.addWords(task.id, "telegram:-100:51");
-  expect(store.task(task.id)?.words.map((words) => words.text)).toEqual([
+  store.tasks.addWords(task.id, "telegram:-100:51");
+  store.tasks.addWords(task.id, "telegram:-100:51");
+  expect(store.tasks.get(task.id)?.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "and make it work on mobile",
   ]);
@@ -839,102 +868,109 @@ test("follow-ups are added after what was said first, and a repeat changes nothi
 
 test("done needs a proof, and the states are the four a task has", () => {
   const store = new Store(dir);
-  store.deliver(ask);
+  store.messages.deliver(ask);
 
-  const { id } = store.createTask({
+  const { id } = store.tasks.create({
     title: "Fix it",
     message: ask.key,
     owner: "-100:7",
     status: "idea",
   });
 
-  expect(() => store.editTask(id, { status: "done" })).toThrow();
+  expect(() => store.tasks.edit(id, { status: "done" })).toThrow();
   // oxlint-disable-next-line typescript/no-unsafe-type-assertion anti-slop/require-safety-comment-for-type-assertion -- a status outside the four, to show the store refuses it
-  expect(() => store.editTask(id, { status: "finished" as never })).toThrow();
-  store.editTask(id, { project: "site", doneWhen: "it signs in" });
-  expect(store.editTask(id, { owner: "-100:9", project: undefined })).toMatchObject({
+  expect(() => store.tasks.edit(id, { status: "finished" as never })).toThrow();
+  store.tasks.edit(id, { project: "site", doneWhen: "it signs in" });
+  expect(store.tasks.edit(id, { owner: "-100:9", project: undefined })).toMatchObject({
     owner: "-100:9",
     project: "site",
     doneWhen: "it signs in",
   });
-  expect(store.editTask(id, { status: "done", proof: "https://example.com/pr/1" })).toMatchObject({
-    status: "done",
-    proof: "https://example.com/pr/1",
-  });
-  expect(store.tasks({ status: ["open", "idea"] })).toEqual([]);
-  expect(store.tasks({ status: ["done"] }).map((task) => task.id)).toEqual([id]);
+  expect(store.tasks.edit(id, { status: "done", proof: "https://example.com/pr/1" })).toMatchObject(
+    {
+      status: "done",
+      proof: "https://example.com/pr/1",
+    },
+  );
+  expect(store.tasks.list({ status: ["open", "idea"] })).toEqual([]);
+  expect(store.tasks.list({ status: ["done"] }).map((task) => task.id)).toEqual([id]);
 });
 
 test("a task keeps when it was closed: set when it ends, kept through later edits, cleared if it opens again", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  const { id } = store.createTask({ title: "Fix it", message: ask.key, owner: "-100:7" });
-  expect(store.task(id)).toMatchObject({ id, status: "open" });
-  expect(store.task(id)?.closed).toBeUndefined();
-  const { closed } = store.editTask(id, { status: "done", proof: "https://example.com/pr/1" });
+  store.messages.deliver(ask);
+  const { id } = store.tasks.create({ title: "Fix it", message: ask.key, owner: "-100:7" });
+  expect(store.tasks.get(id)).toMatchObject({ id, status: "open" });
+  expect(store.tasks.get(id)?.closed).toBeUndefined();
+  const { closed } = store.tasks.edit(id, { status: "done", proof: "https://example.com/pr/1" });
   expect(closed).toBeString();
-  expect(store.editTask(id, { proof: "https://example.com/pr/2" }).closed).toBe(closed);
-  expect(store.editTask(id, { status: "open" }).closed).toBeUndefined();
+  expect(store.tasks.edit(id, { proof: "https://example.com/pr/2" }).closed).toBe(closed);
+  expect(store.tasks.edit(id, { status: "open" }).closed).toBeUndefined();
 
-  const duplicate = store.createTask({
+  const duplicate = store.tasks.create({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
 
-  expect(store.mergeTasks(id, duplicate.id)).toMatchObject({ status: "open" });
-  expect(store.task(duplicate.id)?.closed).toBeString();
+  expect(store.tasks.merge(id, duplicate.id)).toMatchObject({ status: "open" });
+  expect(store.tasks.get(duplicate.id)?.closed).toBeString();
 });
 
 test("a merge puts the duplicate's words after the task's own, drops it, and its follow-ups go where it went", () => {
   const store = new Store(dir);
-  store.deliver(ask);
-  store.deliver({
+  store.messages.deliver(ask);
+  store.messages.deliver({
     ...message,
     key: "telegram:-100:60",
     to: "-100:9",
     body: "the login page is broken",
   });
-  store.deliver({ ...message, key: "telegram:-100:61", to: "-100:9", body: "still broken btw" });
+  store.messages.deliver({
+    ...message,
+    key: "telegram:-100:61",
+    to: "-100:9",
+    body: "still broken btw",
+  });
 
-  const kept = store.createTask({
+  const kept = store.tasks.create({
     title: "Fix it",
     message: ask.key,
     quote: "Fix the login page.",
     owner: "-100:7",
   });
 
-  const duplicate = store.createTask({
+  const duplicate = store.tasks.create({
     title: "Fix it",
     message: "telegram:-100:60",
     owner: "-100:9",
   });
 
-  const merged = store.mergeTasks(kept.id, duplicate.id);
+  const merged = store.tasks.merge(kept.id, duplicate.id);
   expect(merged.words.map((words) => words.text)).toEqual([
     "Fix the login page.",
     "the login page is broken",
   ]);
-  expect(store.task(duplicate.id)).toMatchObject({ status: "dropped", mergedInto: kept.id });
-  expect(store.addWords(duplicate.id, "telegram:-100:61").id).toBe(kept.id);
-  expect(store.task(kept.id)?.words).toHaveLength(3);
-  expect(() => store.editTask(duplicate.id, { status: "open" })).toThrow();
-  expect(() => store.mergeTasks(kept.id, duplicate.id)).toThrow("dropped");
-  expect(() => store.mergeTasks(kept.id, kept.id)).toThrow("itself");
+  expect(store.tasks.get(duplicate.id)).toMatchObject({ status: "dropped", mergedInto: kept.id });
+  expect(store.tasks.addWords(duplicate.id, "telegram:-100:61").id).toBe(kept.id);
+  expect(store.tasks.get(kept.id)?.words).toHaveLength(3);
+  expect(() => store.tasks.edit(duplicate.id, { status: "open" })).toThrow();
+  expect(() => store.tasks.merge(kept.id, duplicate.id)).toThrow("dropped");
+  expect(() => store.tasks.merge(kept.id, kept.id)).toThrow("itself");
 });
 
 test("hex log reads every thread a name means, a delivery to that name asks for one by its id, and hex recall takes rg's -i", async () => {
   const store = open(dir);
-  store.keepThreads("telegram", { "629": { name: "DM" } });
-  store.keepThreads("discord", { "1560": { name: "DM" } });
+  store.threads.keep("telegram", { "629": { name: "DM" } });
+  store.threads.keep("discord", { "1560": { name: "DM" } });
 
   for (const [from, key, to, body] of [
     ["telegram", "telegram:629:1", "629", "on Telegram"],
     ["discord", "discord:1560:1", "1560", "on Discord"],
     ["telegram", "telegram:629:2", "629", "Telegram again"],
   ] as const) {
-    store.deliver({ key, to, from, author: "owner", body });
+    store.messages.deliver({ key, to, from, author: "owner", body });
     await Bun.sleep(5);
   }
 
@@ -998,7 +1034,7 @@ test("each app's threads.json comes into hex.db once, as that app's open threads
   mkdirSync(join(dir, "discord"));
   writeFileSync(join(dir, "discord", "threads.json"), '{"broken');
   writeFileSync(join(dir, "threads.json"), JSON.stringify({ "7": { name: "Outside a hex" } }));
-  expect(new Store(dir).threads()).toEqual(
+  expect(new Store(dir).threads.list()).toEqual(
     [
       {
         app: "telegram",
@@ -1039,12 +1075,12 @@ test("a session that ended loses what it was shown, and log/'s turns headed t be
   store.db.close();
   const after = new Store(dir);
   expect([
-    after.seen("ended", "tasks"),
-    after.seen("live", "tasks"),
-    after.seen("live", "rules"),
+    after.seen.get("ended", "tasks"),
+    after.seen.get("live", "tasks"),
+    after.seen.get("live", "rules"),
   ]).toEqual(["", "now", "{}"]);
-  expect(after.message("t3:past:abc:0")).toMatchObject({ from: "t3", author: "owner" });
-  expect(after.message("t:past:abc:0")).toBeNull();
+  expect(after.messages.get("t3:past:abc:0")).toMatchObject({ from: "t3", author: "owner" });
+  expect(after.messages.get("t:past:abc:0")).toBeNull();
 });
 
 test("each app's relays.jsonl comes into hex.db once, the newest run per pair of threads", () => {
@@ -1060,7 +1096,7 @@ test("each app's relays.jsonl comes into hex.db once, the newest run per pair of
     join(dir, "discord", "relays.jsonl"),
     [...lines.map((line) => JSON.stringify(line)), "not json", ""].join("\n"),
   );
-  expect(new Store(dir).relays()).toEqual([
+  expect(new Store(dir).relays.list()).toEqual([
     { from: "discord:fix", thread: "thread-codex", run: "run-2", at: "2026-10-21T10:05:00.000Z" },
     { from: "discord:fix", thread: "thread-prims", run: "run-3", at: "2026-10-21T10:10:00.000Z" },
   ]);
@@ -1070,71 +1106,74 @@ test("each app's relays.jsonl comes into hex.db once, the newest run per pair of
 
 test("a session's turns: one begins, ends, and the next begins again, an end from before its begin is old news, and one not heard from in 30 days goes", () => {
   const store = new Store(dir);
-  store.turned("s-1", true);
-  expect(store.turn("s-1")).toEqual({ began: anyString(), handled: anyString() });
-  store.turned("s-1", false);
-  const { began = "", ended = "" } = store.turn("s-1");
+  store.turns.turned("s-1", true);
+  expect(store.turns.get("s-1")).toEqual({ began: anyString(), handled: anyString() });
+  store.turns.turned("s-1", false);
+  const { began = "", ended = "" } = store.turns.get("s-1");
   expect(began).not.toBe("");
   expect(ended >= began).toBe(true);
-  store.turned("s-1", true, "2026-10-21T10:00:00.000Z");
-  store.turned("s-1", false, "2026-10-21T09:59:59.000Z");
-  expect(store.turn("s-1")).toEqual({
+  store.turns.turned("s-1", true, "2026-10-21T10:00:00.000Z");
+  store.turns.turned("s-1", false, "2026-10-21T09:59:59.000Z");
+  expect(store.turns.get("s-1")).toEqual({
     began: "2026-10-21T10:00:00.000Z",
     handled: anyString(),
   });
   store.db.run(
     "update turns set began = '2026-01-01T00:00:00.000Z', ended = '2026-01-01T00:00:01.000Z'",
   );
-  store.turned("s-2", true);
-  expect(store.turn("s-1")).toEqual({});
-  expect(store.turn("s-2")).toEqual({ began: anyString(), handled: anyString() });
+  store.turns.turned("s-2", true);
+  expect(store.turns.get("s-1")).toEqual({});
+  expect(store.turns.get("s-2")).toEqual({ began: anyString(), handled: anyString() });
 });
 
 test("a thread's sessions cut short mid-turn give back what they took since last handled, never hex's own words or what was typed in them; a turn that ended, answered, failed or handled by the hub, gives nothing back", async () => {
   const store = new Store(dir);
 
   const give = (key: string, from = "telegram", author: "owner" | "hex" = "owner") =>
-    store.deliver({ key: `${from}:${key}`, to: "7", from, author, body: key, meta: {} });
+    store.messages.deliver({ key: `${from}:${key}`, to: "7", from, author, body: key, meta: {} });
 
   give("answered");
-  store.turned("s-1", true, "2026-10-21T10:00:00.000Z");
-  store.take("telegram:answered", "s-1");
-  store.handled("s-1");
+  store.turns.turned("s-1", true, "2026-10-21T10:00:00.000Z");
+  store.messages.take("telegram:answered", "s-1");
+  store.turns.handled("s-1");
   await Bun.sleep(2);
   give("open");
-  store.turned("s-1", true);
-  store.take("telegram:open", "s-1");
+  store.turns.turned("s-1", true);
+  store.messages.take("telegram:open", "s-1");
   give("reply", "telegram", "hex");
-  store.take("telegram:reply", "s-1");
-  store.deliver(
+  store.messages.take("telegram:reply", "s-1");
+  store.messages.deliver(
     { key: "terminal:typed", to: "7", from: "terminal", author: "owner", body: "typed", meta: {} },
     "s-1",
   );
   give("unsaved");
-  store.turned("s-2", true, "2026-10-21T10:00:00.000Z");
-  store.take("telegram:unsaved", "s-2");
-  expect(store.midTurn("7")).toBe(true);
-  expect(store.cut("7").toSorted()).toEqual(["telegram:open", "telegram:unsaved"]);
-  expect(store.untaken("7").map((row) => row.key)).toEqual(["telegram:open", "telegram:unsaved"]);
-  expect(store.turn("s-1").ended).toBeDefined();
-  expect(store.midTurn("7")).toBe(false);
-  expect(store.cut("7")).toEqual([]);
+  store.turns.turned("s-2", true, "2026-10-21T10:00:00.000Z");
+  store.messages.take("telegram:unsaved", "s-2");
+  expect(store.turns.midTurn("7")).toBe(true);
+  expect(store.turns.cut("7").toSorted()).toEqual(["telegram:open", "telegram:unsaved"]);
+  expect(store.messages.untaken("7").map((row) => row.key)).toEqual([
+    "telegram:open",
+    "telegram:unsaved",
+  ]);
+  expect(store.turns.get("s-1").ended).toBeDefined();
+  expect(store.turns.midTurn("7")).toBe(false);
+  expect(store.turns.cut("7")).toEqual([]);
   give("failed");
-  store.turned("s-3", true, "2026-10-21T10:00:00.000Z");
-  store.take("telegram:failed", "s-3");
-  store.turned("s-3", false);
+  store.turns.turned("s-3", true, "2026-10-21T10:00:00.000Z");
+  store.messages.take("telegram:failed", "s-3");
+  store.turns.turned("s-3", false);
   give("stopped");
-  store.turned("s-4", true, "2026-10-21T10:00:00.000Z");
-  store.take("telegram:stopped", "s-4");
-  store.handled("s-4");
+  store.turns.turned("s-4", true, "2026-10-21T10:00:00.000Z");
+  store.messages.take("telegram:stopped", "s-4");
+  store.turns.handled("s-4");
   give("old");
-  store.take("telegram:old", "s-0");
-  expect(store.cut("7")).toEqual([]);
+  store.messages.take("telegram:old", "s-0");
+  expect(store.turns.cut("7")).toEqual([]);
 });
 
 test("a session that only posted in a thread, as General does opening a topic, isn't one of its sessions: cutting the thread leaves that session's turn and what it took alone", () => {
   const store = new Store(dir);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:ask",
     to: "general",
     from: "telegram",
@@ -1142,9 +1181,9 @@ test("a session that only posted in a thread, as General does opening a topic, i
     body: "make a topic",
     meta: {},
   });
-  store.turned("general-1", true, "2026-10-21T10:00:00.000Z");
-  store.take("telegram:ask", "general-1");
-  store.deliver(
+  store.turns.turned("general-1", true, "2026-10-21T10:00:00.000Z");
+  store.messages.take("telegram:ask", "general-1");
+  store.messages.deliver(
     {
       key: "telegram:opened",
       to: "topic",
@@ -1155,19 +1194,19 @@ test("a session that only posted in a thread, as General does opening a topic, i
     },
     "general-1",
   );
-  expect(store.midTurn("topic")).toBe(false);
-  expect(store.cut("topic")).toEqual([]);
-  expect(store.untaken("general")).toEqual([]);
-  expect(store.midTurn("general")).toBe(true);
+  expect(store.turns.midTurn("topic")).toBe(false);
+  expect(store.turns.cut("topic")).toEqual([]);
+  expect(store.messages.untaken("general")).toEqual([]);
+  expect(store.turns.midTurn("general")).toBe(true);
 });
 
 test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
   const store = new Store(dir);
-  store.keepThreads("telegram", {
+  store.threads.keep("telegram", {
     "-100:7": { name: "tokenhub", session: "s-1", cwd: "/w" },
     "-100:8": { name: "portfolio" },
   });
-  store.keepThreads("telegram", {
+  store.threads.keep("telegram", {
     "-100:7": {
       name: "tokenhub and deck",
       session: "s-2",
@@ -1175,8 +1214,8 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
       link: "https://t.me/c/100/7",
     },
   });
-  store.keepThreads("discord", { "1561": { name: "Fixhex" } });
-  expect(store.threads()).toEqual([
+  store.threads.keep("discord", { "1561": { name: "Fixhex" } });
+  expect(store.threads.list()).toEqual([
     { app: "discord", thread: "1561", name: "Fixhex", open: true },
     {
       app: "telegram",
@@ -1189,25 +1228,25 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
     },
     { app: "telegram", thread: "-100:8", name: "portfolio", open: false },
   ]);
-  expect(store.threads({ app: "telegram", open: true }).map((thread) => thread.thread)).toEqual([
-    "-100:7",
-  ]);
+  expect(
+    store.threads.list({ app: "telegram", open: true }).map((thread) => thread.thread),
+  ).toEqual(["-100:7"]);
 });
 
 test("a thread's key names it in every app, and its id is <app>:<key>", async () => {
   const store = new Store(dir);
-  store.keepThreads("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
-  store.keepThreads("telegram", { "-100:7": { name: "Lab" } });
-  store.keepThreads("buzz", { "1561": { name: "Lab" }, abc: { name: "Buzz lab" } });
-  expect(store.threads({ app: "buzz" }).map(({ thread }) => thread)).toEqual(["1561", "abc"]);
-  store.keepThreads("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
-  expect(store.names()).toEqual({
+  store.threads.keep("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
+  store.threads.keep("telegram", { "-100:7": { name: "Lab" } });
+  store.threads.keep("buzz", { "1561": { name: "Lab" }, abc: { name: "Buzz lab" } });
+  expect(store.threads.list({ app: "buzz" }).map(({ thread }) => thread)).toEqual(["1561", "abc"]);
+  store.threads.keep("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
+  expect(store.threads.names()).toEqual({
     "1561": "Fixhex",
     "1562": "Deck",
     "-100:7": "Lab",
     abc: "Buzz lab",
   });
-  expect(store.ids()).toEqual({
+  expect(store.threads.ids()).toEqual({
     "1561": "discord:1561",
     "1562": "discord:1562",
     "-100:7": "telegram:-100:7",
@@ -1215,10 +1254,13 @@ test("a thread's key names it in every app, and its id is <app>:<key>", async ()
   });
   expect(
     ["discord:1561", "1561", "telegram:-100:7", "-100:7", "slack:1", "abc", "constructor"].map(
-      (id) => store.key(id),
+      (id) => store.threads.key(id),
     ),
   ).toEqual(["1561", "1561", "-100:7", "-100:7", "slack:1", "abc", "constructor"]);
-  expect(["constructor" in store.names(), "constructor" in store.ids()]).toEqual([false, false]);
+  expect(["constructor" in store.threads.names(), "constructor" in store.threads.ids()]).toEqual([
+    false,
+    false,
+  ]);
 
   const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, "threads", "--json"], {
     stdout: "pipe",
@@ -1239,7 +1281,7 @@ test("a key two apps had before keys were global keeps its open, then newest, ro
     "insert into threads (app, thread, name, open) values ('buzz', 'k', 'old', 0), ('discord', 'k', 'live', 1), ('t3', 'k', 'closed too', 0), ('buzz', 'j', 'first', 0), ('t3', 'j', 'later', 0)",
   );
   store.db.close();
-  expect(new Store(dir).threads().map(({ app, thread }) => `${app}:${thread}`)).toEqual([
+  expect(new Store(dir).threads.list().map(({ app, thread }) => `${app}:${thread}`)).toEqual([
     "discord:k",
     "t3:j",
   ]);
@@ -1247,32 +1289,32 @@ test("a key two apps had before keys were global keeps its open, then newest, ro
 
 test("what a session was shown is kept per kind until its context loses it, and a tasks record unchanged for 2 days goes, since a session's end leaves it behind and one still there just gets its whole list again", () => {
   const store = new Store(dir);
-  expect(store.seen("session-a", "tasks")).toBe("");
-  store.show("session-a", "tasks", "one");
-  store.show("session-a", "rules", "{}");
-  store.show("session-b", "tasks", "two");
-  expect(store.seen("session-a", "tasks")).toBe("one");
-  store.unshow("session-a", "tasks");
+  expect(store.seen.get("session-a", "tasks")).toBe("");
+  store.seen.show("session-a", "tasks", "one");
+  store.seen.show("session-a", "rules", "{}");
+  store.seen.show("session-b", "tasks", "two");
+  expect(store.seen.get("session-a", "tasks")).toBe("one");
+  store.seen.unshow("session-a", "tasks");
   expect([
-    store.seen("session-a", "tasks"),
-    store.seen("session-a", "rules"),
-    store.seen("session-b", "tasks"),
+    store.seen.get("session-a", "tasks"),
+    store.seen.get("session-a", "rules"),
+    store.seen.get("session-b", "tasks"),
   ]).toEqual(["", "{}", "two"]);
-  store.show(
+  store.seen.show(
     "session-c",
     "tasks",
     "three",
     new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
   );
   expect([
-    store.seen("session-a", "rules"),
-    store.seen("session-b", "tasks"),
-    store.seen("session-c", "tasks"),
+    store.seen.get("session-a", "rules"),
+    store.seen.get("session-b", "tasks"),
+    store.seen.get("session-c", "tasks"),
   ]).toEqual(["{}", "", "three"]);
 });
 
 test("hex task makes a task from a message by its key, and the owner is the thread asking", async () => {
-  open(dir).deliver(ask);
+  open(dir).messages.deliver(ask);
 
   const hex = async (...args: string[]) => {
     const cli = Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, ...args], {
@@ -1305,7 +1347,7 @@ test("hex task makes a task from a message by its key, and the owner is the thre
       "it signs in",
     ),
   ).toMatchObject({ code: 0 });
-  expect(open(dir).task("t-1")).toMatchObject({
+  expect(open(dir).tasks.get("t-1")).toMatchObject({
     title: "Fix the login page",
     owner: "chat:3",
     doneWhen: "it signs in",
@@ -1341,14 +1383,14 @@ test("hex task makes a task from a message by its key, and the owner is the thre
 
 test("hex pins lists the asking thread's pinned post, or every thread's with --all, as text or JSON", async () => {
   const store = open(dir);
-  store.pinned({
+  store.pins.pinned({
     app: "telegram",
     thread: "chat:3",
     message: 9,
     text: "Site: example.com\n\n🔴 **Blocked on you**",
     note: "Site: example.com",
   });
-  store.pinned({
+  store.pins.pinned({
     app: "discord",
     thread: "1561",
     message: "1562",
@@ -1381,7 +1423,7 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
       threadId: "discord:1561",
     },
   ]);
-  open(dir).keepThreads("discord", { "1561": { name: "Fixhex" } });
+  open(dir).threads.keep("discord", { "1561": { name: "Fixhex" } });
   expect(await hex("--thread", "discord:1561", "--json")).toBe(
     await hex("--thread", "1561", "--json"),
   );
@@ -1398,23 +1440,23 @@ test("a question keeps its first answer, a poll's vote replaces the one before, 
     options: ["Deploy", "Wait"],
   };
 
-  store.ask(question);
-  expect(store.answered("telegram", "-100:7", 41, "Wait", "telegram")).toBe(true);
-  expect(store.answered("telegram", "-100:7", 41, "Deploy", "app")).toBe(false);
-  expect(store.question("telegram", "-100:7", 41)?.answer).toMatchObject({
+  store.questions.ask(question);
+  expect(store.questions.answered("telegram", "-100:7", 41, "Wait", "telegram")).toBe(true);
+  expect(store.questions.answered("telegram", "-100:7", 41, "Deploy", "app")).toBe(false);
+  expect(store.questions.get("telegram", "-100:7", 41)?.answer).toMatchObject({
     label: "Wait",
     via: "telegram",
   });
-  expect(store.answered("telegram", "-100:7", 41, "Deploy", "telegram", true)).toBe(true);
-  expect(store.question("telegram", "-100:7", 41)?.answer).toMatchObject({ label: "Deploy" });
-  expect(store.reopened("telegram", "-100:7", 41)).toBe(true);
-  expect(store.reopened("telegram", "-100:7", 41)).toBe(false);
-  expect(store.answered("telegram", "-100:7", 99, "Wait", "telegram")).toBe(false);
+  expect(store.questions.answered("telegram", "-100:7", 41, "Deploy", "telegram", true)).toBe(true);
+  expect(store.questions.get("telegram", "-100:7", 41)?.answer).toMatchObject({ label: "Deploy" });
+  expect(store.questions.reopened("telegram", "-100:7", 41)).toBe(true);
+  expect(store.questions.reopened("telegram", "-100:7", 41)).toBe(false);
+  expect(store.questions.answered("telegram", "-100:7", 99, "Wait", "telegram")).toBe(false);
 });
 
 test("an answer and the message that wakes its thread with it land together or not at all", () => {
   const store = new Store(dir);
-  store.ask({
+  store.questions.ask({
     app: "telegram",
     thread: "-100:7",
     message: 41,
@@ -1432,25 +1474,27 @@ test("an answer and the message that wakes its thread with it land together or n
 
   expect(() =>
     store.write(() => {
-      store.answered("telegram", "-100:7", 41, "Wait", "telegram");
+      store.questions.answered("telegram", "-100:7", 41, "Wait", "telegram");
       throw new Error("killed before the wake was kept");
     }),
   ).toThrow("killed");
-  expect(store.question("telegram", "-100:7", 41)).toMatchObject({ message: 41 });
-  expect(store.question("telegram", "-100:7", 41)?.answer).toBeUndefined();
+  expect(store.questions.get("telegram", "-100:7", 41)).toMatchObject({ message: 41 });
+  expect(store.questions.get("telegram", "-100:7", 41)?.answer).toBeUndefined();
   expect(
     store.write(
-      () => store.answered("telegram", "-100:7", 41, "Wait", "telegram") && store.deliver(wake),
+      () =>
+        store.questions.answered("telegram", "-100:7", 41, "Wait", "telegram") &&
+        store.messages.deliver(wake),
     ),
   ).toBe(true);
   expect(
     store.write(
       () =>
-        store.answered("telegram", "-100:7", 41, "Deploy", "telegram") &&
-        store.deliver({ ...wake, key: "telegram:tap:2", body: "Deploy" }),
+        store.questions.answered("telegram", "-100:7", 41, "Deploy", "telegram") &&
+        store.messages.deliver({ ...wake, key: "telegram:tap:2", body: "Deploy" }),
     ),
   ).toBe(false);
-  expect(store.message("telegram:tap:2")).toBeNull();
+  expect(store.messages.get("telegram:tap:2")).toBeNull();
 });
 
 test("messages kept under a sender's name get one of hex's five authors, and keep the name in meta.user", () => {
@@ -1488,7 +1532,9 @@ test("messages kept under a sender's name get one of hex's five authors, and kee
   kept("telegram:6", "telegram", "", { user_id: "1" });
   store.db.close();
   const reopened = new Store(dir);
-  expect(reopened.since().map(({ key, author, meta }) => [key, author, meta?.user])).toEqual([
+  expect(
+    reopened.messages.since().map(({ key, author, meta }) => [key, author, meta?.user]),
+  ).toEqual([
     ["telegram:1", "prompt", "hex General"],
     ["job:a:1", "prompt", "job"],
     ["schedule:b@1", "prompt", "schedule"],
@@ -1503,7 +1549,7 @@ test("messages kept under a sender's name get one of hex's five authors, and kee
 test("a message's author is the owner, hex, a prompt (what hex itself tells a session: a job's end, a schedule, another thread, the hub), a call or someone other", () => {
   const store = new Store(dir);
   expect(() =>
-    store.deliver({
+    store.messages.deliver({
       key: "telegram:-100:90",
       to: "-100:7",
       from: "telegram",
@@ -1513,7 +1559,7 @@ test("a message's author is the owner, hex, a prompt (what hex itself tells a se
     }),
   ).toThrow("owner, hex, prompt, call or other");
   expect(() =>
-    store.deliver({
+    store.messages.deliver({
       key: "job:x:1",
       to: "-100:7",
       from: "job",
@@ -1523,7 +1569,7 @@ test("a message's author is the owner, hex, a prompt (what hex itself tells a se
     }),
   ).toThrow("owner, hex, prompt, call or other");
   expect(
-    store.deliver({
+    store.messages.deliver({
       key: "telegram:-100:91",
       to: "-100:7",
       from: "telegram",
@@ -1535,17 +1581,17 @@ test("a message's author is the owner, hex, a prompt (what hex itself tells a se
 
 test("the profile is its newest version, put in place only over the one a writer read, and every version stays", async () => {
   const store = open(dir);
-  expect(store.profile()).toBe("");
-  expect(store.profiled("", "# Who he is\n- Ships on fridays\n")).toBe(true);
-  expect(store.profiled("", "# Who he is\n- Ships any day")).toBe(false);
-  expect(store.profiled("# Who he is\n- Ships on fridays", "# Who he is\n- Ships on fridays")).toBe(
-    true,
-  );
-  expect(store.profiled("# Who he is\n- Ships on fridays", "# Who he is\n- Ships any day")).toBe(
-    true,
-  );
-  expect(store.profile()).toBe("# Who he is\n- Ships any day");
-  expect(store.profiles().map(({ body }) => body)).toEqual([
+  expect(store.profiles.current()).toBe("");
+  expect(store.profiles.profiled("", "# Who he is\n- Ships on fridays\n")).toBe(true);
+  expect(store.profiles.profiled("", "# Who he is\n- Ships any day")).toBe(false);
+  expect(
+    store.profiles.profiled("# Who he is\n- Ships on fridays", "# Who he is\n- Ships on fridays"),
+  ).toBe(true);
+  expect(
+    store.profiles.profiled("# Who he is\n- Ships on fridays", "# Who he is\n- Ships any day"),
+  ).toBe(true);
+  expect(store.profiles.current()).toBe("# Who he is\n- Ships any day");
+  expect(store.profiles.list().map(({ body }) => body)).toEqual([
     "# Who he is\n- Ships any day",
     "# Who he is\n- Ships on fridays",
   ]);
@@ -1571,13 +1617,13 @@ test("a profile kept in state/profile.md comes into hex.db with its history, in 
     `${history.map((each) => JSON.stringify(each)).join("\n")}\n{"at": "broken\n`,
   );
   const store = new Store(dir);
-  expect(store.profiles().map(({ body }) => body)).toEqual([
+  expect(store.profiles.list().map(({ body }) => body)).toEqual([
     "# Who he is\n- Third",
     "# Who he is\n- Second",
     "# Always\n- First",
   ]);
-  expect(store.profiles()[1]?.at).toBe("2026-10-21T13:32:54.590Z");
-  expect(store.profiles()[2]?.at).toBe("2026-10-21T13:00:00.000Z");
+  expect(store.profiles.list()[1]?.at).toBe("2026-10-21T13:32:54.590Z");
+  expect(store.profiles.list()[2]?.at).toBe("2026-10-21T13:00:00.000Z");
   expect(readFileSync(join(dir, "profile.md.moved-to-hex.db"), "utf-8")).toBe(
     "# Who he is\n- Third\n",
   );
@@ -1586,20 +1632,20 @@ test("a profile kept in state/profile.md comes into hex.db with its history, in 
 
 test("a carry that renamed the profile files and then failed to commit carries them from their new names", () => {
   writeFileSync(join(dir, "profile.md.moved-to-hex.db"), "# Who he is\n- Third\n");
-  expect(new Store(dir).profile()).toBe("# Who he is\n- Third");
+  expect(new Store(dir).profiles.current()).toBe("# Who he is\n- Third");
 });
 
 test("hex message gives the owner's words as he last edited them, and a task quote of an edit names it", async () => {
   const store = open(dir);
-  store.keepThreads("telegram", { "-100:7": { name: "Website" } });
-  store.deliver({
+  store.threads.keep("telegram", { "-100:7": { name: "Website" } });
+  store.messages.deliver({
     key: "telegram:-100:52",
     to: "-100:7",
     from: "telegram",
     author: "owner",
     body: "Tell selfheal, so it can be fixed next run",
   });
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:52@1",
     to: "-100:7",
     from: "telegram",
@@ -1630,26 +1676,28 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     meta: { edit: "telegram:-100:52@1" },
   });
 
-  const task = store.createTask({
+  const task = store.tasks.create({
     title: "Fix it at the root",
     message: "telegram:-100:52",
     quote: "Tell selfheal",
     owner: "-100:7",
   });
 
-  expect(() => store.addWords(task.id, "telegram:-100:52", "fixed properly at the root")).toThrow(
+  expect(() =>
+    store.tasks.addWords(task.id, "telegram:-100:52", "fixed properly at the root"),
+  ).toThrow(
     "is in telegram:-100:52@1, the owner's edit of telegram:-100:52: quote it under that key",
   );
   expect(
-    store.addWords(task.id, "telegram:-100:52@1", "fixed properly at the root").words,
+    store.tasks.addWords(task.id, "telegram:-100:52@1", "fixed properly at the root").words,
   ).toMatchObject([
     { text: "Tell selfheal" },
     { message: "telegram:-100:52@1", text: "fixed properly at the root" },
   ]);
-  expect(() => store.addWords(task.id, "telegram:-100:52", "tonight")).toThrow(
+  expect(() => store.tasks.addWords(task.id, "telegram:-100:52", "tonight")).toThrow(
     "isn't in telegram:-100:52 as written",
   );
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:52@2",
     to: "-100:7",
     from: "telegram",
@@ -1657,7 +1705,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     body: "Tell selfheal, so it can be fixed properly at the root tonight",
     meta: { edited: "true", message_id: "52" },
   });
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-200:52@3",
     to: "-200",
     from: "telegram",
@@ -1671,7 +1719,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
   expect(await hexMessage("telegram:-100:52@2")).toBe(
     "Tell selfheal, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
   );
-  store.deliver({
+  store.messages.deliver({
     key: "buzz:e2",
     to: "thread",
     from: "buzz",
@@ -1679,7 +1727,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     body: "first edit",
     meta: { edited: "true", message_id: "e1" },
   });
-  store.deliver({
+  store.messages.deliver({
     key: "buzz:e3",
     to: "thread",
     from: "buzz",

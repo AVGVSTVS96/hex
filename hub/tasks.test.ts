@@ -11,8 +11,8 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "tasks-"));
   mkdirSync(join(dir, "telegram"));
   const store = open(dir);
-  store.keepThreads("telegram", { "-100:7": { name: "Website" }, "-100:9": { name: "Errands" } });
-  store.deliver({
+  store.threads.keep("telegram", { "-100:7": { name: "Website" }, "-100:9": { name: "Errands" } });
+  store.messages.deliver({
     key: "telegram:-100:50",
     to: "-100:7",
     from: "telegram",
@@ -20,7 +20,7 @@ beforeEach(() => {
     author: "owner",
     meta: { user: "bassim" },
   });
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:60",
     to: "-100:9",
     from: "telegram",
@@ -28,13 +28,17 @@ beforeEach(() => {
     author: "owner",
     meta: { user: "bassim" },
   });
-  store.createTask({
+  store.tasks.create({
     title: "Fix the login page",
     message: "telegram:-100:50",
     owner: "-100:7",
     doneWhen: "it signs in",
   });
-  store.createTask({ title: "Buy a power adapter", message: "telegram:-100:60", owner: "-100:9" });
+  store.tasks.create({
+    title: "Buy a power adapter",
+    message: "telegram:-100:60",
+    owner: "-100:9",
+  });
 });
 
 afterEach(() => {
@@ -68,7 +72,7 @@ test("a thread's session gets its own open tasks as clean entries, once, and aga
   expect(first).not.toContain("telegram:-100:50");
   expect(first).not.toContain("power adapter");
   expect(await hook({ session_id: "a" }, { HEX_THREAD: "-100:7" })).toBe("");
-  open(dir).editTask("t-1", { status: "done", proof: "https://example.com/pr/1" });
+  open(dir).tasks.edit("t-1", { status: "done", proof: "https://example.com/pr/1" });
   expect(await hook({ session_id: "a" }, { HEX_THREAD: "-100:7" })).toBe(
     "No open tasks or questions waiting on me now.\n",
   );
@@ -98,7 +102,7 @@ test("after the first list, main gets only what changed, until the changes add u
   const main = { HEX_THREAD: "-100", HEX_MAIN: "1" };
   const all = await hook({ session_id: "m2" }, main);
   const store = open(dir);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:61",
     to: "-100:9",
     from: "telegram",
@@ -106,14 +110,14 @@ test("after the first list, main gets only what changed, until the changes add u
     author: "owner",
     meta: { user: "bassim" },
   });
-  store.createTask({ title: "Buy batteries", message: "telegram:-100:61", owner: "-100:9" });
-  store.editTask("t-1", { status: "done", proof: "https://example.com/pr/1" });
+  store.tasks.create({ title: "Buy batteries", message: "telegram:-100:61", owner: "-100:9" });
+  store.tasks.edit("t-1", { status: "done", proof: "https://example.com/pr/1" });
   const next = await hook({ session_id: "m2" }, main);
   expect(next).toBe(
     "New or changed since you last saw the list:\nt-3 (open, Errands): Buy batteries\n\nNo longer open or waiting:\n- t-1 (open, Website): Fix the login page\n",
   );
   expect(next.length).toBeLessThan(all.length);
-  store.editTask("t-2", { doneWhen: "it charges the laptop" });
+  store.tasks.edit("t-2", { doneWhen: "it charges the laptop" });
   const third = await hook({ session_id: "m2" }, main);
   expect(third).toContain("Every thread's open tasks");
   expect(third).toContain(
@@ -129,7 +133,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
   const store = open(dir);
 
   for (let n = 0; n < 120; n++) {
-    store.deliver({
+    store.messages.deliver({
       key: `telegram:-100:${100 + n}`,
       to: "-100:7",
       from: "telegram",
@@ -137,7 +141,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
       author: "owner",
       meta: { user: "bassim" },
     });
-    store.createTask({
+    store.tasks.create({
       title: `Chore ${n}: ${"tidy up the build ".repeat(7)}`,
       message: `telegram:-100:${100 + n}`,
       owner: "-100:7",
@@ -154,7 +158,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
     /\n {2}done when: the build is tidy[^\n]*\nt-\d+ \(open, Website\): Chore \d+: [^\n]*\n…and \d+ more: `\.hex\/bin\/hex tasks` lists them all\n$/u,
   );
   expect(shown).not.toContain("damn it");
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:300",
     to: "-100:7",
     from: "telegram",
@@ -163,14 +167,14 @@ test("a list too long for one hook's output gives each entry with its done-when 
     meta: { user: "bassim" },
   });
   const first = /\n(t-\d+) \(open, Website\)/u.exec(shown)?.[1] ?? "no task shown";
-  store.addWords(first, "telegram:-100:300");
+  store.tasks.addWords(first, "telegram:-100:300");
   expect(await hook({ session_id: "big" }, { HEX_THREAD: "-100:7" })).toContain(
     `${first} (open, Website, 2 messages): Chore`,
   );
 });
 
 test("the questions still waiting on the owner come with the tasks, and leave once answered", async () => {
-  open(dir).ask({
+  open(dir).questions.ask({
     app: "telegram",
     thread: "-100:7",
     message: 3935,
@@ -182,7 +186,7 @@ test("the questions still waiting on the owner come with the tasks, and leave on
   expect(shown).toContain("- telegram · Website · telegram:-100:3935 · ");
   expect(shown).toContain("Remove the 4 old pages? [Remove | Keep]");
   expect(shown).not.toContain("below the cutoff");
-  open(dir).answered("telegram", "-100:7", 3935, "Remove", "telegram");
+  open(dir).questions.answered("telegram", "-100:7", 3935, "Remove", "telegram");
   expect(await hook({ session_id: "q" }, { HEX_THREAD: "-100:7" })).not.toContain("waiting on me");
 });
 

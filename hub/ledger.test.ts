@@ -114,19 +114,19 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.pin("-100:9")).toBeUndefined();
   expect(existsSync(file)).toBe(false);
   expect(readFileSync(`${file}.moved-to-hex.db`, "utf-8")).toContain("Deploy now?");
-  expect(open(dir).pins()).toHaveLength(2);
+  expect(open(dir).pins.list()).toHaveLength(2);
 });
 
 test("a hex.db that took a ledger in at each start brings in only what an older hex changed in it since, then renames it", () => {
   const store = new Store(dir);
-  store.pinned({
+  store.pins.pinned({
     app: "telegram",
     thread: "-100:8",
     message: 30,
     text: "pinned again here",
     note: "pinned again here",
   });
-  store.pinned({
+  store.pins.pinned({
     app: "telegram",
     thread: "-100:9",
     message: 20,
@@ -158,11 +158,13 @@ test("a hex.db that took a ledger in at each start brings in only what an older 
     }),
   );
   const after = new Store(dir);
-  expect(after.pins().map(({ thread, message, text }) => ({ thread, message, text }))).toEqual([
-    { thread: "-100:6", message: 5, text: "pinned there" },
-    { thread: "-100:8", message: 30, text: "pinned again here" },
-    { thread: "-100:9", message: 20, text: "pinned after the move" },
-  ]);
+  expect(after.pins.list().map(({ thread, message, text }) => ({ thread, message, text }))).toEqual(
+    [
+      { thread: "-100:6", message: 5, text: "pinned there" },
+      { thread: "-100:8", message: 30, text: "pinned again here" },
+      { thread: "-100:9", message: 20, text: "pinned after the move" },
+    ],
+  );
   expect(existsSync(file)).toBe(false);
   expect(
     after.db.query("select name from sqlite_master where name in ('files', 'shown')").all(),
@@ -180,14 +182,16 @@ test("a question stays open through an edit and leaves the waiting list only whe
   const store = open(dir);
   ledger.ask("-100:7", 41, "Deploy now?", ["Deploy", "Wait"]);
   ledger.edited("-100:7", 41, "Deploy now? CI is green.");
-  expect(store.questions({ waiting: true })).toMatchObject([{ text: "Deploy now? CI is green." }]);
+  expect(store.questions.list({ waiting: true })).toMatchObject([
+    { text: "Deploy now? CI is green." },
+  ]);
   ledger.settled("-100:7", 41, "✓ Settled");
-  expect(store.questions({ waiting: true })).toEqual([]);
+  expect(store.questions.list({ waiting: true })).toEqual([]);
   ledger.reopened("-100:7", 41);
   ledger.answered("-100:7", 41, "Deploy", "app");
   expect(ledger.find("-100:7", 41)).toMatchObject({ answer: { label: "Deploy", via: "app" } });
   expect(found(ledger.find("-100:7", 41)).settled).toBeUndefined();
-  open(dir).pinned({
+  open(dir).pins.pinned({
     app: "telegram",
     thread: "-100:7",
     message: 9,
@@ -273,7 +277,7 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   const slow: Post = {
     ...post,
     edit: async (...args) => {
-      open(dir).pinned({
+      open(dir).pins.pinned({
         app: "telegram",
         thread: "-100:8",
         message: 11,
@@ -348,13 +352,13 @@ test("the owner's question waits on them once hex answers, until they quote-repl
     text: "did the migration run?",
   });
   expect(ledger.find("-100:7", 91)).toBeUndefined();
-  expect(store.questions({ thread: "-100:7", waiting: true })).toEqual([]);
+  expect(store.questions.list({ thread: "-100:7", waiting: true })).toEqual([]);
   ledger.said("-100:7", 92, "On it, checking the logs.");
   ledger.said("-100:7", 93, "Shipped.");
-  expect(store.questions({ thread: "-100:7", waiting: true })).toMatchObject([
+  expect(store.questions.list({ thread: "-100:7", waiting: true })).toMatchObject([
     { message: 90, answer: { via: "hex", message: 93 } },
   ]);
-  expect(store.questions({ thread: "-100:7", waiting: true, asker: "hex" })).toEqual([]);
+  expect(store.questions.list({ thread: "-100:7", waiting: true, asker: "hex" })).toEqual([]);
   ledger.heard("-100:7", 94, "now the docs");
   ledger.said("-100:7", 95, "Docs are up.");
   expect(ledger.find("-100:7", 90)).toMatchObject({ answer: { message: 93, kept: true } });
@@ -370,5 +374,5 @@ test("the owner's question waits on them once hex answers, until they quote-repl
   ledger.said("-100:7", 99, "Yes.");
   ledger.heard("-100:7", 100, "what about the queue?", 98);
   expect(found(ledger.find("-100:7", 98)).settled).toMatchObject({ note: "you replied" });
-  expect(store.questions({ waiting: true })).toEqual([]);
+  expect(store.questions.list({ waiting: true })).toEqual([]);
 });

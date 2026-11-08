@@ -366,7 +366,7 @@ export class Questions extends Changes {
     const pin = this.pins.get(`${app}:${thread}`);
     const pinned = !asked && pin && String(pin.message) === String(message) ? pin : undefined;
     // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Store#find(thread, message) is not Array#find
-    const row = asked || pinned ? undefined : db.find(thread, message);
+    const row = asked || pinned ? undefined : db.messages.find(thread, message);
 
     const said =
       asked ?? (row && { app, thread, message, text: row.body, at: row.at, options: [] });
@@ -909,9 +909,9 @@ export class Questions extends Changes {
     this.shots.clear();
     this.threads.clear();
     this.pins.clear();
-    const questions = store(this.state).questions({ asker: "hex" });
+    const questions = store(this.state).questions.list({ asker: "hex" });
 
-    for (const thread of store(this.state).threads()) {
+    for (const thread of store(this.state).threads.list()) {
       this.threads.set(`${thread.app}:${thread.thread}`, thread);
     }
 
@@ -920,7 +920,7 @@ export class Questions extends Changes {
       (question) => question.app,
     );
 
-    for (const pin of store(this.state).pins()) {
+    for (const pin of store(this.state).pins.list()) {
       if (pin.text !== "") {
         this.pins.set(`${pin.app}:${pin.thread}`, pin);
       }

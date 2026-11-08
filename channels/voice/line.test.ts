@@ -300,8 +300,8 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
     readyHexStateBeforeTheEngine: (hex) => {
       mkdirSync(join(hex, "telegram"));
       const store = open(hex);
-      store.keepThreads("telegram", { [thread]: { name: "desk", link: "https://t.me/c/1234/5" } });
-      store.ask({
+      store.threads.keep("telegram", { [thread]: { name: "desk", link: "https://t.me/c/1234/5" } });
+      store.questions.ask({
         app: "telegram",
         thread,
         message: 1,
@@ -309,7 +309,7 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
         options: ["Yes", "No"],
         at: "2026-11-01T00:00:00.000Z",
       });
-      store.ask({
+      store.questions.ask({
         app: "telegram",
         thread,
         message: 2,
@@ -444,7 +444,7 @@ test("on a call, running answers from every thread hex has at work, not only wha
   await using call = await lineCall({
     readyHexStateBeforeTheEngine: (hex) => {
       mkdirSync(join(hex, "telegram"));
-      open(hex).keepThreads("telegram", {
+      open(hex).threads.keep("telegram", {
         "-1001234:7": { name: "desk", session: "77777777-desk" },
       });
       const sessions = join(hex, "..", "..", ".claude", "sessions");

@@ -14,19 +14,19 @@ export function statusPost(
   room: number,
   link?: Link,
 ): string {
-  const waiting = store
-    .questions({ thread, waiting: true })
+  const waiting = store.questions
+    .list({ thread, waiting: true })
     .map(
       (question) =>
         `- ${question.asker ? linked(`Answered: ${clip(question.text, 110)}`, link?.(thread, question.answer?.message ?? question.message)) : linked(clip(question.text, 120), link?.(thread, question.message))}`,
     );
 
   const tasks = (status: "open" | "idea") =>
-    store
-      .tasks({ owner: thread, status: [status] })
+    store.tasks
+      .list({ owner: thread, status: [status] })
       .map((task) => `- ${linked(clip(task.title, 120), latest(store, thread, task, link))}`);
 
-  const done = store
+  const done = store.tasks
     .lastDone(thread, 5)
     .map((task) => `- ${linked(clip(task.title, 120), firstLinkIn(task.proof))}`);
 
@@ -52,7 +52,7 @@ export function statusPost(
 
 function latest(store: Store, thread: string, task: Task, link: Link | undefined) {
   const ownerLastAskedHere = task.words
-    .map((words) => store.message(words.message))
+    .map((words) => store.messages.get(words.message))
     .findLast((row) => row?.to === thread);
 
   return ownerLastAskedHere

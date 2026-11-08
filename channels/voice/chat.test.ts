@@ -61,7 +61,7 @@ afterEach(() => {
 
 test("a thread's chat is what the owner said and hex replied across its sessions, then what's waiting", () => {
   const store = open(state);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:1",
     to: DESK,
     from: "telegram",
@@ -69,16 +69,16 @@ test("a thread's chat is what the owner said and hex replied across its sessions
     body: "ship it",
     meta: { user_id: "1" },
   });
-  store.take("telegram:1", OLD);
-  store.deliver(
+  store.messages.take("telegram:1", OLD);
+  store.messages.deliver(
     { key: "terminal:1", to: DESK, from: "terminal", author: "hex", body: "thinking out loud" },
     OLD,
   );
-  store.deliver(
+  store.messages.deliver(
     { key: "telegram:10", to: DESK, from: "telegram", author: "hex", body: "Shipped." },
     OLD,
   );
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:2",
     to: DESK,
     from: "telegram",
@@ -86,12 +86,12 @@ test("a thread's chat is what the owner said and hex replied across its sessions
     body: "and the tests",
     meta: { user: "hex app" },
   });
-  store.take("telegram:2", NOW);
-  store.deliver(
+  store.messages.take("telegram:2", NOW);
+  store.messages.deliver(
     { key: "telegram:11", to: DESK, from: "telegram", author: "hex", body: "On it." },
     NOW,
   );
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:3",
     to: DESK,
     from: "telegram",
@@ -99,7 +99,7 @@ test("a thread's chat is what the owner said and hex replied across its sessions
     body: "then ship",
     meta: { user_id: "1" },
   });
-  store.deliver({
+  store.messages.deliver({
     key: "schedule:4",
     to: DESK,
     from: "schedule",
@@ -163,7 +163,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     throw new Error("nothing was delivered");
   }
 
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:app-00000002",
     to: DESK,
     from: "telegram",
@@ -171,7 +171,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     body: message.content,
     meta: message.meta,
   });
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:app-00000003",
     to: DESK,
     from: "telegram",
@@ -179,7 +179,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     body: "this one\n(photo)",
     meta: { media: "photo p2" },
   });
-  store.take("telegram:app-00000002", NOW);
+  store.messages.take("telegram:app-00000002", NOW);
   expect(chats.of(where)).toMatchObject({
     turns: [
       {
@@ -233,7 +233,7 @@ test("an app that shows only turns it starts, doesn't hold the thread, or isn't 
 test("a wait for the chat ends when it changes, and not on a change elsewhere", async () => {
   const { version } = chats.of(where);
   const waited = chats.next(() => where, version, 5000);
-  open(state).deliver({
+  open(state).messages.deliver({
     key: "telegram:5",
     to: "-1009:1",
     from: "telegram",
@@ -242,7 +242,7 @@ test("a wait for the chat ends when it changes, and not on a change elsewhere", 
     meta: { user_id: "1" },
   });
   await Bun.sleep(50);
-  open(state).deliver({
+  open(state).messages.deliver({
     key: "telegram:6",
     to: DESK,
     from: "telegram",
@@ -258,7 +258,7 @@ test("a wait for the chat ends when it changes, and not on a change elsewhere", 
 
 test("a chat is read again only once its thread's messages change", () => {
   const store = open(state);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:1",
     to: DESK,
     from: "telegram",
@@ -267,7 +267,7 @@ test("a chat is read again only once its thread's messages change", () => {
     meta: { user_id: "1" },
   });
   const first = chats.of(where);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:5",
     to: "-1001234:6",
     from: "telegram",
@@ -276,7 +276,7 @@ test("a chat is read again only once its thread's messages change", () => {
     meta: { user_id: "1" },
   });
   expect(chats.of(where)).toBe(first);
-  store.take("telegram:1", NOW);
+  store.messages.take("telegram:1", NOW);
   const taken = chats.of(where);
   expect(taken).not.toBe(first);
   expect(taken).toMatchObject({ total: 1, waiting: [] });

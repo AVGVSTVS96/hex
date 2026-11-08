@@ -60,7 +60,7 @@ function joinedMemoWake(env: Record<string, string | undefined>): Wake {
 
 function profileOrNothingKeepingTheMemory(store?: Store) {
   try {
-    return store?.profile() ?? "";
+    return store?.profiles.current() ?? "";
   } catch (error) {
     process.stderr.write(`hex couldn't read the profile: ${String(error)}\n`);
 
@@ -126,13 +126,13 @@ if (memoryDir === undefined || memoryDir === "") {
   const stuck = aWakeHoldingTheLeaseThisLongIsStuckMs;
   const until = Date.now() + stuck;
 
-  while (store?.lease("wake", holder, stuck) === false && Date.now() < until) {
+  while (store?.leases.take("wake", holder, stuck) === false && Date.now() < until) {
     Bun.sleepSync(100);
   }
 
   try {
     rewriteOrKeepTheLastSayingWhy(store);
   } finally {
-    store?.release("wake", holder);
+    store?.leases.release("wake", holder);
   }
 }

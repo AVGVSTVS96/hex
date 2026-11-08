@@ -557,7 +557,7 @@ const state = mkdtempSync(join(tmpdir(), "discord-"));
 const saved = () =>
   Object.fromEntries(
     open(state)
-      .threads({ open: true })
+      .threads.list({ open: true })
       .map((thread) => [thread.thread, thread]),
   );
 
@@ -601,7 +601,7 @@ const realFetch = globalThis.fetch;
 beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [OWNER] }));
   writeFileSync(join(state, "cursor.json"), JSON.stringify({ id: snowflake(60) }));
-  open(state).keepThreads("discord", { "7777": { name: "deleted in Discord" } });
+  open(state).threads.keep("discord", { "7777": { name: "deleted in Discord" } });
   Object.assign(process.env, {
     PATH: noClaude(),
     DISCORD_STATE_DIR: state,
@@ -667,14 +667,14 @@ async function session(thread: string) {
 const book = () => ({
   pins: Object.fromEntries(
     open(state)
-      .pins({ app: "discord" })
+      .pins.list({ app: "discord" })
       .map((pin) => [pin.thread, pin]),
   ),
 });
 
 const question = (asked: string) =>
   open(state)
-    .questions({ app: "discord" })
+    .questions.list({ app: "discord" })
     .find((each) => each.message === asked);
 
 const arrived = (id: string, edited?: string) =>
@@ -1032,7 +1032,7 @@ test("a thread the owner opens on his message starts from that message, kept in 
     ["audit the hex workers", asked.id, undefined],
     ["and keep them on track", then.id, undefined],
   ]);
-  expect(open(state).message(`discord:${asked.id}`)).toMatchObject({
+  expect(open(state).messages.get(`discord:${asked.id}`)).toMatchObject({
     to: thread.id,
     body: "audit the hex workers",
     meta: { ts: at(18).toISOString() },
@@ -1073,7 +1073,7 @@ test("a thread someone else opens on the owner's message stays theirs: his edit 
   const then = { ...say(here, 28, "back to work"), ...live(here) };
   emit("messageCreate", then);
   await inbound(received, (line) => line.meta.message_id === then.id);
-  expect(open(state).untaken(thread.id)).toEqual([]);
+  expect(open(state).messages.untaken(thread.id)).toEqual([]);
 });
 
 test("search_messages searches the whole server and says where each match is", async () => {

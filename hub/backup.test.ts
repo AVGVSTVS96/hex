@@ -25,7 +25,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "backup-"));
   path = process.env.PATH;
   named = process.env.HEX_COMPUTER;
-  open(dir).deliver({
+  open(dir).messages.deliver({
     key: "telegram:-100:42",
     to: "-100:7",
     from: "telegram",
@@ -144,7 +144,7 @@ test("the hub backs up the last night it missed at its start, and a failed one t
 
   const failed = await until(() =>
     open(dir)
-      .untaken()
+      .messages.untaken()
       .find((row) => row.from === "backup"),
   );
 

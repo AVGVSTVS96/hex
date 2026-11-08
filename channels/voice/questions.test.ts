@@ -69,11 +69,11 @@ function ledger(
     store.db.run("delete from pins");
 
     for (const question of kept) {
-      store.ask({ app: "telegram", ...question });
+      store.questions.ask({ app: "telegram", ...question });
     }
 
     for (const [thread, pin] of Object.entries(pins)) {
-      store.pinned({ app: "telegram", thread, note: pin.text, ...pin });
+      store.pins.pinned({ app: "telegram", thread, note: pin.text, ...pin });
     }
   });
 }
@@ -94,7 +94,7 @@ beforeEach(async () => {
   state = mkdtempSync(join(tmpdir(), "questions-"));
   mkdirSync(join(state, "telegram"));
   mkdirSync(join(state, "voice"));
-  open(state).keepThreads("telegram", {
+  open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex", link: "https://t.me/c/1234/1" },
     [DESK]: { name: "desk", link: "https://t.me/c/1234/5" },
   });
@@ -231,7 +231,7 @@ function chatKey(n: number, id?: number) {
 }
 
 function said(rows: Said[]) {
-  open(state).past(
+  open(state).messages.past(
     rows.map(([time, body, fields = {}], n): [NewRow, string] => [
       {
         key: chatKey(n, fields.id),
@@ -1470,13 +1470,13 @@ test("a closed thread's open question stays a check's ref, so answering the ques
 test("a question names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers", async () => {
   const DM = "777";
   const THREAD = "1560277464146644992";
-  open(state).keepThreads("telegram", {
+  open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex", link: "https://t.me/c/1234/1" },
     [DESK]: { name: "desk", link: "https://t.me/c/1234/5" },
     [DM]: { name: "DM", link: "https://t.me/hexbot" },
   });
   mkdirSync(join(state, "discord"));
-  open(state).keepThreads("discord", {
+  open(state).threads.keep("discord", {
     [THREAD]: { name: "fix hex NOW", link: `https://discord.com/channels/42/${THREAD}` },
   });
   const calls = join(state, "calls");
@@ -1601,7 +1601,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   const byHand = { message: 2, text: "Status: by hand", at: "2026-10-13T10:00:00.000Z" };
   ledger([asked(1, "Ship it?", ["Yes", "No"])], { [DESK]: pin, [GROUP]: byHand });
   const store = open(state);
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-1001234:40",
     to: DESK,
     from: "telegram",
@@ -1610,7 +1610,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
     meta: { user: "owner" },
   });
 
-  const task = store.createTask({
+  const task = store.tasks.create({
     title: "Fix the login page",
     message: "telegram:-1001234:40",
     owner: DESK,
@@ -1628,7 +1628,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   expect(questions.of(`telegram:${DESK}`).pin).toBe(shown);
   expect(questions.of(`telegram:${GROUP}`).pin).toBe("Status: by hand");
 
-  store.pinned({
+  store.pins.pinned({
     app: "telegram",
     thread: DESK,
     ...pin,
@@ -1636,7 +1636,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
   });
   await Bun.sleep(150);
   expect(checks).toEqual([]);
-  store.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.org" });
+  store.pins.pinned({ app: "telegram", thread: DESK, ...pin, note: "Site: example.org" });
   await until(() => checks.length);
   expect(checks).toEqual(["a pinned post changed"]);
 });
@@ -1860,7 +1860,7 @@ test("an ask read out by its own id, which a check then takes up under one of it
       ],
     }),
   );
-  open(state).ask(asked(8, "Unrelated?", ["A"]));
+  open(state).questions.ask(asked(8, "Unrelated?", ["A"]));
   await questions.changes(version, 2000);
   await until(() => questions.view.asks.some((question) => question.id === "check:ship"));
   expect(questions.find(heard)?.id).toBe("check:ship");
@@ -2045,7 +2045,7 @@ test("a check's ask names the ids its questions were listed under before it took
 
 test("General hears of the first failed check in a run of them, and of the first after one succeeds", () => {
   const store = open(state);
-  store.keepThreads("telegram", { [GROUP]: { name: "hex" } });
+  store.threads.keep("telegram", { [GROUP]: { name: "hex" } });
   mkdirSync(join(state, "voice", "check"), { recursive: true });
 
   const told = () =>

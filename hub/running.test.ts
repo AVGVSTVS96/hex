@@ -78,7 +78,7 @@ test("a session runs while its process lives, works for the thread it serves or 
   record("gone", { pid: 2 ** 22 + 1, sessionId: "cccccccc-1", status: "busy" });
   record("old", { pid: process.pid, sessionId: "dddddddd-1", status: "idle" });
   record("new", { pid: process.pid, sessionId: "dddddddd-1", status: "busy" });
-  store.turned("bbbbbbbb-1", true);
+  store.turns.turned("bbbbbbbb-1", true);
   const sessions = running(store, claude);
   expect([...sessions.keys()].toSorted()).toEqual([
     "aaaaaaaa-1",
@@ -101,7 +101,7 @@ test("a session runs while its process lives, works for the thread it serves or 
   const held = new Map([["aaaaaaaa-1", "discord:7"]]);
   expect(serving(found(sessions, "aaaaaaaa-1"), held)).toBe("discord:7");
   expect(serving(found(sessions, "bbbbbbbb-1"), held)).toBe("telegram:-100:65");
-  store.turned("bbbbbbbb-1", false);
+  store.turns.turned("bbbbbbbb-1", false);
   const ended = found(running(store, claude), "bbbbbbbb-1");
   expect(ended.status).toBe("busy");
   expect(Date.parse(ended.ended ?? "")).toBeGreaterThanOrEqual(Date.parse(ended.began ?? ""));

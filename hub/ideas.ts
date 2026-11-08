@@ -137,7 +137,7 @@ export async function research(
 ) {
   const store = open(state);
   const id = job.idea;
-  const task = store.task(id);
+  const task = store.tasks.get(id);
   const to = job.thread ?? task?.owner ?? main;
   const record: Check = { at: new Date().toISOString(), schedule: name, idea: id };
 
@@ -145,7 +145,7 @@ export async function research(
     record.ended = task?.status ?? "gone";
 
     const body = `[${name}] ${id} is ${record.ended}, so its check in schedules.json has nothing left to look into: take the job out.`;
-    store.deliver({
+    store.messages.deliver({
       key: `schedule:${name}:${id}-${record.ended}`,
       to,
       from: "schedule",
@@ -161,7 +161,7 @@ export async function research(
       .slice(-PAST_FINDINGS_GIVEN);
 
     record.input = [
-      render(task, store.names()),
+      render(task, store.threads.names()),
       `What to look into: ${job.prompt}`,
       past.length
         ? `What the last checks found:\n${past.map((check) => `- ${check.at.slice(0, 10)}: ${check.finding}`).join("\n")}`
@@ -173,7 +173,12 @@ export async function research(
       Object.assign(record, await ask(record.input));
 
       if (record.news === true) {
-        store.fire(name, minute, to, `[${name}] News for ${id} (${task.title}): ${record.finding}`);
+        store.scheduler.fire(
+          name,
+          minute,
+          to,
+          `[${name}] News for ${id} (${task.title}): ${record.finding}`,
+        );
       }
     } catch (error) {
       record.error = String(error);
@@ -183,7 +188,7 @@ export async function research(
       const secondFailureInARow = failed(last) && !failed(before);
 
       if (secondFailureInARow) {
-        store.fire(
+        store.scheduler.fire(
           name,
           minute,
           to,

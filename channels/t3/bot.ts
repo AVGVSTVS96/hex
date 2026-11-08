@@ -125,7 +125,7 @@ function link(thread: string) {
 function mirror(records: typeof recordsThisSave) {
   const links = new Map(
     open(storeOf(STATE_DIR))
-      .threads({ app: "t3" })
+      .threads.list({ app: "t3" })
       .map((row) => [row.thread, row.link]),
   );
 

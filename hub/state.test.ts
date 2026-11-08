@@ -44,13 +44,16 @@ async function hook(step: "busy" | "idle", input: Input) {
 }
 
 function said(key: string, body: string) {
-  open(dir).deliver({ key, to: "dm", from: "telegram", author: "owner", body });
+  open(dir).messages.deliver({ key, to: "dm", from: "telegram", author: "owner", body });
 
   return hook("busy", { hook_event_name: "UserPromptSubmit", prompt: tag(key, body) });
 }
 
 function replied(key: string) {
-  open(dir).deliver({ key, to: "dm", from: "telegram", author: "hex", body: "Fixed." }, "s");
+  open(dir).messages.deliver(
+    { key, to: "dm", from: "telegram", author: "hex", body: "Fixed." },
+    "s",
+  );
 }
 
 const stop = (input: Input = {}) =>
@@ -64,11 +67,11 @@ test("a turn that took a second message mid-turn and replied once doesn't end un
   const blocked = Blocked.parse(JSON.parse(await stop()));
   expect(blocked.reason).toContain("telegram:app-1: what's the server's uptime?");
   expect(blocked.reason).toContain("telegram:dm:980");
-  expect(open(dir).atWork("s")).toBe(true);
+  expect(open(dir).turns.atWork("s")).toBe(true);
 
   replied("telegram:dm:982");
   expect(await stop({ stop_hook_active: true })).toBe("");
-  expect(open(dir).atWork("s")).toBe(false);
+  expect(open(dir).turns.atWork("s")).toBe(false);
 });
 
 test("a turn ends as it is once each message has a reply, and the next turn counts from there", async () => {
@@ -85,7 +88,7 @@ test("a turn ends as it is once each message has a reply, and the next turn coun
 
 test("a reaction mid-turn asks for no reply", async () => {
   await said("telegram:dm:1", "how's the build?");
-  open(dir).deliver({
+  open(dir).messages.deliver({
     key: "telegram:dm:2",
     to: "dm",
     from: "telegram",

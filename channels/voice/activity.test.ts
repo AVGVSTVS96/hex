@@ -85,7 +85,7 @@ function threadNamed(wanted: string) {
 }
 
 function threads(app: string, all: Record<string, Kept>) {
-  open(state).keepThreads(app, all);
+  open(state).threads.keep(app, all);
 }
 
 test("a step reads as a few plain words: a command by its description or first line, a file by its name, an MCP tool by its app", async () => {
@@ -635,21 +635,21 @@ test("a session that dies mid-turn fails the message's work once hex's record en
 
   write(path, asked("call:dies"), said("Starting on it."));
   await until(() => steps.length === 1);
-  open(state).turned("dies", true);
-  open(state).turned("dies", false);
+  open(state).turns.turned("dies", true);
+  open(state).turns.turned("dies", false);
   await Bun.sleep(100);
   expect(steps).toEqual([{ line: "Starting on it." }]);
 
   rmSync(record);
-  open(state).turned("dies", true);
-  open(state).turned("dies", false);
+  open(state).turns.turned("dies", true);
+  open(state).turns.turned("dies", false);
   await until(() => steps.length === 2);
   expect(steps[1]).toEqual({ end: "failed" });
   stop();
 });
 
 const sentToRenewed = (tag: string, by: string) =>
-  open(state).deliver(
+  open(state).messages.deliver(
     {
       key: `buzz:${tag}`,
       to: "b3",
@@ -726,7 +726,7 @@ function resumedFrom(tag: string) {
 
 test("a session resumed from the one that took the message is followed past what it copied, after a restart or live", async () => {
   threads("buzz", { b4: { name: "Copied", session: "copy-now" } });
-  open(state).deliver(
+  open(state).messages.deliver(
     {
       key: "buzz:copied",
       to: "b4",
@@ -958,7 +958,7 @@ test("a session resumed from an earlier one than the last is followed past what 
 
 test("a session hex.db still names that took messages before the task message was taken is not gone back to", async () => {
   threads("buzz", { b12: { name: "Lagging", session: "lag-old" } });
-  open(state).deliver(
+  open(state).messages.deliver(
     {
       key: "buzz:lag-other",
       to: "b12",
@@ -971,7 +971,7 @@ test("a session hex.db still names that took messages before the task message wa
   );
   write(join(project, "lag-old.jsonl"), asked("call:other"), said("Old history."), ended);
   await Bun.sleep(5);
-  open(state).deliver(
+  open(state).messages.deliver(
     {
       key: "buzz:lag",
       to: "b12",
@@ -1034,7 +1034,7 @@ test("an agent restarted with its session is still out until it's back", async (
 });
 
 const sentToBackOnOld = (key: string, tag: string, by: string) =>
-  open(state).deliver(
+  open(state).messages.deliver(
     {
       key,
       to: "b15",

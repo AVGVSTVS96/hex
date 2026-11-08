@@ -39,11 +39,11 @@ export class Ledger {
   }
 
   get questions(): readonly Question[] {
-    return this.store.questions({ app: this.app });
+    return this.store.questions.list({ app: this.app });
   }
 
   pin(thread: string): Pin | undefined {
-    return this.store.pin(this.app, thread) ?? undefined;
+    return this.store.pins.get(this.app, thread) ?? undefined;
   }
 
   post(thread: string, note: string, post: Post): Promise<MessageId> {
@@ -53,7 +53,7 @@ export class Ledger {
       const text = await this.render(thread, words, post);
       const message = await post.send(thread, text);
       await post.pin(thread, message);
-      this.store.pinned({ app: this.app, thread, message, text, note: words });
+      this.store.pins.pinned({ app: this.app, thread, message, text, note: words });
 
       if (was) {
         await post.unpin(thread, was.message).catch(() => null);
@@ -85,7 +85,7 @@ export class Ledger {
       const shown = text === pin.text || (await post.edit(thread, pin.message, text));
 
       if (shown === null) {
-        this.store.unpinned(this.app, thread, pin.message);
+        this.store.pins.unpinned(this.app, thread, pin.message);
       }
 
       if (shown === null || shown === false) {
@@ -107,7 +107,7 @@ export class Ledger {
           return;
         }
 
-        this.store.pinned({ app: this.app, thread, message: pin.message, text, note: said });
+        this.store.pins.pinned({ app: this.app, thread, message: pin.message, text, note: said });
       });
     });
   }
@@ -140,7 +140,7 @@ export class Ledger {
     };
 
     const rewriteAll = () => {
-      for (const { thread } of this.store.pins({ app: this.app })) {
+      for (const { thread } of this.store.pins.list({ app: this.app })) {
         void rewriteOrReport(thread);
       }
     };
@@ -158,11 +158,11 @@ export class Ledger {
   }
 
   find(thread: string, message: MessageId) {
-    return this.store.question(this.app, thread, message) ?? undefined;
+    return this.store.questions.get(this.app, thread, message) ?? undefined;
   }
 
   byPoll(poll: string) {
-    return this.store.poll(this.app, poll) ?? undefined;
+    return this.store.questions.poll(this.app, poll) ?? undefined;
   }
 
   ask(
@@ -172,8 +172,8 @@ export class Ledger {
     options: string[],
     how: Pick<Question, "poll" | "multiple" | "shots"> = {},
   ) {
-    this.store.ask({ app: this.app, thread, message, text, options, ...how });
-    this.store.replied(this.app, thread, {
+    this.store.questions.ask({ app: this.app, thread, message, text, options, ...how });
+    this.store.questions.replied(this.app, thread, {
       label: clip(text, 60),
       at: new Date().toISOString(),
       via: "hex",
@@ -195,7 +195,7 @@ export class Ledger {
       their.thread === thread &&
       String(their.message) === String(quoted?.message)
     ) {
-      this.store.replied(this.app, thread, answer, their.message);
+      this.store.questions.replied(this.app, thread, answer, their.message);
 
       return;
     }
@@ -204,21 +204,21 @@ export class Ledger {
     const question = remindsOfQuoted ? undefined : asking(text);
 
     if (question === undefined) {
-      this.store.replied(this.app, thread, answer);
+      this.store.questions.replied(this.app, thread, answer);
     } else {
       this.ask(thread, message, question, []);
     }
   }
 
   heard(thread: string, message: MessageId, text: string, replyTo?: MessageId) {
-    this.store.returned(this.app, thread);
+    this.store.questions.returned(this.app, thread);
 
     const to =
       replyTo === undefined
         ? undefined
-        : (this.store.question(this.app, thread, replyTo) ??
-          this.store
-            .questions({ app: this.app, thread, asker: "owner", waiting: true })
+        : (this.store.questions.get(this.app, thread, replyTo) ??
+          this.store.questions
+            .list({ app: this.app, thread, asker: "owner", waiting: true })
             .find((question) => String(question.answer?.message) === String(replyTo)));
 
     if (to?.asker === "owner") {
@@ -230,7 +230,7 @@ export class Ledger {
     const question = theirs(text);
 
     if (question !== undefined) {
-      this.store.ask({
+      this.store.questions.ask({
         asker: "owner",
         app: this.app,
         thread,
@@ -242,22 +242,22 @@ export class Ledger {
   }
 
   answered(thread: string, message: MessageId, label: string, via: string, again = false) {
-    return this.store.answered(this.app, thread, message, label, via, again);
+    return this.store.questions.answered(this.app, thread, message, label, via, again);
   }
 
   settled(thread: string, message: MessageId, note: string) {
-    this.store.settled(this.app, thread, message, note);
+    this.store.questions.settled(this.app, thread, message, note);
   }
 
   reopened(thread: string, message: MessageId) {
-    return this.store.reopened(this.app, thread, message);
+    return this.store.questions.reopened(this.app, thread, message);
   }
 
   edited(thread: string, message: MessageId, text: string) {
-    const question = this.store.question(this.app, thread, message);
+    const question = this.store.questions.get(this.app, thread, message);
 
     if (question !== null) {
-      this.store.reworded(
+      this.store.questions.reworded(
         this.app,
         thread,
         message,
@@ -276,7 +276,7 @@ export class Ledger {
 
       await post.unpin(thread, target);
 
-      this.store.unpinned(this.app, thread, target);
+      this.store.pins.unpinned(this.app, thread, target);
 
       return target;
     });
@@ -284,12 +284,12 @@ export class Ledger {
 
   deleted(thread: string, message: MessageId): Promise<void> {
     this.store.write(() => {
-      this.store.unask(this.app, thread, message);
-      this.store.unpinned(this.app, thread, message);
+      this.store.questions.unask(this.app, thread, message);
+      this.store.pins.unpinned(this.app, thread, message);
     });
 
     const unpinWhatAPinStillRunningRecorded = () => {
-      this.store.unpinned(this.app, thread, message);
+      this.store.pins.unpinned(this.app, thread, message);
     };
 
     return this.turn(thread, unpinWhatAPinStillRunningRecorded);
@@ -297,12 +297,12 @@ export class Ledger {
 
   forget(thread: string): Promise<void> {
     this.store.write(() => {
-      this.store.unask(this.app, thread);
-      this.store.unpinned(this.app, thread);
+      this.store.questions.unask(this.app, thread);
+      this.store.pins.unpinned(this.app, thread);
     });
 
     return this.turn(thread, () => {
-      this.store.unpinned(this.app, thread);
+      this.store.pins.unpinned(this.app, thread);
     });
   }
 }

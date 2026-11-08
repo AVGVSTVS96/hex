@@ -47,7 +47,7 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   const state = join(home, "hex", "state");
   mkdirSync(join(voiceDir, "calls"), { recursive: true });
   mkdirSync(join(state, "telegram"), { recursive: true });
-  store(state).keepThreads("telegram", {
+  store(state).threads.keep("telegram", {
     "-100123": { name: "General", session: "aaaaaaaa-general" },
   });
   const relayedToGeneral: z.infer<typeof Relayed>[] = [];

@@ -17,14 +17,14 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "holds-"));
   mkdirSync(join(dir, "telegram"));
   store = open(dir);
-  store.keepThreads("telegram", {
+  store.threads.keep("telegram", {
     "-100:1": { name: "General" },
     "-100:2": { name: "Machines" },
     "-100:3": { name: "Extensions" },
     "-100:4": { name: "Cloth" },
     "-100:5": { name: "DM" },
   });
-  store.deliver({
+  store.messages.deliver({
     key: "telegram:-100:70",
     to: "-100:1",
     from: "telegram",
@@ -38,15 +38,16 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-const told = (thread: string) => store.untaken(thread).filter((row) => row.from === "hold");
+const told = (thread: string) =>
+  store.messages.untaken(thread).filter((row) => row.from === "hold");
 
 function takeAllAndFinishTurn(thread: string, session: string) {
-  for (const row of store.untaken(thread)) {
-    store.take(row.key, session);
+  for (const row of store.messages.untaken(thread)) {
+    store.messages.take(row.key, session);
   }
 
-  store.turned(session, true);
-  store.turned(session, false);
+  store.turns.turned(session, true);
+  store.turns.turned(session, false);
 }
 
 const all = new Set(["-100:2", "-100:3", "-100:4"]);
@@ -94,14 +95,14 @@ test("a hold ends at its time, and the threads it freed wake two at a time, each
     takeAllAndFinishTurn(thread, `s${thread}`);
   }
 
-  expect(store.due(new Date(Date.now() + 1_800_000).toISOString())).toEqual([]);
-  expect(store.due(new Date(Date.now() + 3_600_001).toISOString())).toEqual([
+  expect(store.holds.due(new Date(Date.now() + 1_800_000).toISOString())).toEqual([]);
+  expect(store.holds.due(new Date(Date.now() + 3_600_001).toISOString())).toEqual([
     "-100:2",
     "-100:3",
     "-100:4",
     "-100:5",
   ]);
-  expect(store.holds()).toEqual([]);
+  expect(store.holds.list()).toEqual([]);
   wake(store);
   expect(told("-100:2")[0]?.body).toBe(
     "[hold h-1 ended] its time came. The hold on this thread (focus on priorities) is over: pick up where you stopped.",
@@ -109,26 +110,26 @@ test("a hold ends at its time, and the threads it freed wake two at a time, each
   expect(told("-100:3")).toHaveLength(1);
   expect(told("-100:4")).toEqual([]);
 
-  for (const row of store.untaken("-100:2")) {
-    store.take(row.key, "s-100:2");
+  for (const row of store.messages.untaken("-100:2")) {
+    store.messages.take(row.key, "s-100:2");
   }
 
-  store.turned("s-100:2", true);
+  store.turns.turned("s-100:2", true);
   wake(store);
   expect(told("-100:4")).toEqual([]);
-  store.turned("s-100:2", false);
+  store.turns.turned("s-100:2", false);
   wake(store);
   expect(told("-100:4")).toHaveLength(1);
-  store.turned("s-100:2", true);
+  store.turns.turned("s-100:2", true);
   takeAllAndFinishTurn("-100:4", "s-100:4");
-  expect(store.waking(60_000).count).toBe(1);
+  expect(store.holds.waking(60_000).count).toBe(1);
   wake(store);
   expect(told("-100:2")).toEqual([]);
 
   const dmAtRestTookNothingWhileHeld = "-100:5";
 
   expect(told(dmAtRestTookNothingWhileHeld)).toEqual([]);
-  expect(store.freed()).toEqual([]);
+  expect(store.holds.freed()).toEqual([]);
 });
 
 test("a wake nobody takes stops counting once it has waited its patience, so the next thread still wakes", () => {
@@ -142,7 +143,7 @@ test("a wake nobody takes stops counting once it has waited its patience, so the
     takeAllAndFinishTurn(thread, `s${thread}`);
   }
 
-  store.unhold("h-1", "go");
+  store.holds.unhold("h-1", "go");
   expect(wake(store)).toBeDefined();
   expect(told("-100:4")).toEqual([]);
   wake(store, new Date(Date.now() + 15 * 60_000 + 1000).toISOString());
@@ -161,26 +162,26 @@ test("the owner's word lifts a hold on some threads; one another hold still hold
     { working: all },
   );
   expect(
-    store.unhold("h-1", "he said go on the side projects [telegram:-100:71]", ["-100:3"]),
+    store.holds.unhold("h-1", "he said go on the side projects [telegram:-100:71]", ["-100:3"]),
   ).toEqual(["-100:3"]);
   takeAllAndFinishTurn("-100:3", "s3");
   wake(store);
   expect(told("-100:3")).toEqual([]);
   expect(pending(dir).text).toContain("- h-1 holds Machines · freed Extensions");
-  store.unhold("h-2", "the build finished");
+  store.holds.unhold("h-2", "the build finished");
   wake(store);
   expect(told("-100:3").map((row) => row.body)).toEqual([
     "[hold h-2 ended] the build finished. The hold on this thread (the build is out of room) is over: pick up where you stopped.",
   ]);
-  expect(() => store.unhold("h-1", "go", ["-100:4"])).toThrow("h-1 doesn't hold -100:4");
+  expect(() => store.holds.unhold("h-1", "go", ["-100:4"])).toThrow("h-1 doesn't hold -100:4");
 
-  const unholdNow = (id: string) => () => store.unhold(id, "go");
+  const unholdNow = (id: string) => () => store.holds.unhold(id, "go");
 
   for (const id of ["h1", "1", "H-1"]) {
     expect(unholdNow(id)).toThrow("isn't a hold's id");
   }
 
-  expect(store.unhold("h-2", "again")).toEqual([]);
+  expect(store.holds.unhold("h-2", "again")).toEqual([]);
 });
 
 test("a thread told of a hold that lifts before it reads the notice still wakes", () => {
@@ -189,7 +190,7 @@ test("a thread told of a hold that lifts before it reads the notice still wakes"
     { threads: ["-100:2", "-100:4"], by: "-100:1", why: "focus on priorities" },
     { working: new Set(["-100:2"]) },
   );
-  store.unhold("h-1", "go");
+  store.holds.unhold("h-1", "go");
   wake(store);
   expect(told("-100:2").map((row) => row.key)).toEqual([
     "hold:h-1@-100:2",

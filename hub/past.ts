@@ -33,8 +33,8 @@ export function importLogs(store: Store, dir: string, zone: string): number {
   const takenCountsBySession = new Map<string, Map<string, number>>();
 
   const threadOfSessionThatTookNothing = new Map(
-    store
-      .threads()
+    store.threads
+      .list()
       .flatMap(({ thread, session }) =>
         session !== undefined && session !== "" ? [[session, thread] as const] : [],
       ),
@@ -42,7 +42,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
 
   const keptByWords = new Map<string, Kept[]>();
 
-  for (const row of store.since()) {
+  for (const row of store.messages.since()) {
     if (row.taken) {
       const counts = takenCountsBySession.get(row.taken.by) ?? new Map<string, number>();
 
@@ -170,7 +170,7 @@ export function importLogs(store: Store, dir: string, zone: string): number {
       ]);
     });
 
-    return store.past(rows, id).length;
+    return store.messages.past(rows, id).length;
   }
 }
 
