@@ -256,10 +256,15 @@ export function stamp(args: string[], server?: ChannelServer, startup: string[] 
   return createHash('sha256').update(JSON.stringify([args, server ?? null, ...(startup.length ? [startup.map(read)] : [])])).digest('hex').slice(0, 16)
 }
 
-function read(path: string): string | [string, string][] | null {
-  if (!existsSync(path)) return null
-  if (!statSync(path).isDirectory()) return readFileSync(path, 'utf8')
-  return (readdirSync(path, { recursive: true }) as string[]).sort().flatMap(name => (statSync(join(path, name)).isFile() ? [[name, readFileSync(join(path, name), 'utf8')] as [string, string]] : []))
+// An update rewrites these while the hub runs, so a file gone midway reads as missing.
+type Read = string | [string, Read][] | null
+function read(path: string): Read {
+  try {
+    if (!statSync(path).isDirectory()) return readFileSync(path, 'utf8')
+    return readdirSync(path).sort().map(name => [name, read(join(path, name))])
+  } catch {
+    return null
+  }
 }
 
 // A voice call runs in this process (its call engine holds the caller's audio), so a restart
@@ -288,7 +293,7 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, waits, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', startup = process.env.HEX_STARTUP ? Object.values(STARTUP).map(path => join(process.env.HEX_STARTUP!, path)) : [], link }: {
+export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, waits, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', startup = process.env.HEX_STARTUP ? Object.values(STARTUP).flat().map(path => join(process.env.HEX_STARTUP!, path)) : [], link }: {
   stateDir: string
   storeDir?: string
   channel: string

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
 import { connect, createServer, type Socket } from 'net'
-import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, existsSync, watch } from 'fs'
+import { appendFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, chmodSync, existsSync, symlinkSync, watch } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { begin, clients, free, history, mirror, move, stamp, startHub, tappable, transcribe, type ChannelServer, type Message, type Permission } from './hub.ts'
@@ -1840,6 +1840,13 @@ test('a new skill in a folder the session loads at start renews it at its next r
   const { send } = await session('chat:7')
   await send({ type: 'state', thread: 'chat:7', busy: false })
   expect(await until(() => calls().find(args => args[0] === 'stop'))).toEqual(['stop', SESSION.slice(0, 8)])
+})
+
+test('a file an update removes midway, or a dangling link, reads as missing rather than stopping the hub', () => {
+  const skills = join(dir, 'skills')
+  mkdirSync(skills)
+  symlinkSync(join(dir, 'gone'), join(skills, 'SKILL.md'))
+  expect(stamp([], SERVER, [skills, join(dir, 'nothing')])).toHaveLength(16)
 })
 
 test('a session whose hooks are unchanged keeps running across a hub restart', async () => {

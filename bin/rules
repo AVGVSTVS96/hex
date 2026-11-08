@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
-import { behind, type Startup } from '../hub/loaded.ts'
+import { history, type Startup } from '../hub/loaded.ts'
 import { startOf } from '../hub/running.ts'
 import { open, stateDir } from '../hub/store.ts'
 import { files } from './instructions'
@@ -54,19 +54,29 @@ try {
   }
   // Kept before it's said, so a record that can't be kept doesn't show the same change on every prompt.
   if (JSON.stringify(now) !== kept) store.show(session_id, 'rules', JSON.stringify(now))
-  const started = hook_event_name === 'UserPromptSubmit' ? startOf(session_id) : undefined
-  const old = started ? behind(hex, started) : undefined
   let shown = ''
-  if (old && store.seen(session_id, 'hex') !== old.to) {
-    store.show(session_id, 'hex', old.to)
-    const span = old.from ? ` (${old.from.slice(0, 7)} to ${old.to.slice(0, 7)})` : ''
-    const names = (keys: Startup[]) => new Intl.ListFormat('en').format(keys.map(key => WHAT[key]))
-    const after = process.env.HEX_THREAD ? 'hex resumes it on the new hex at its next rest, once its work here is done' : 'It takes the new ones when it restarts'
-    out = [out, `hex was updated${span} after this session started, and Claude Code reads hex's ${names(old.changed)} only at start, so this session still runs the old ones. ${after}. Tell me so in a line when you next write to me.`].filter(Boolean).join('\n\n')
-    const reload = old.changed.filter(key => key !== 'launcher')
-    const steps = [...(reload.length ? [`run /reload-plugins for its new ${names(reload)}`] : []), ...(old.changed.includes('launcher') ? [`resume it with .hex/bin/session --resume ${session_id} for its new launch flags`] : [])]
-    // Nobody reads a hub thread's screen, and its hub renews it.
-    if (!process.env.HEX_THREAD) shown = `hex was updated after this session started: ${steps.join(', and ')}.`
+  // Measured from what it last heard of, or else what it started on: a /reload-plugins fires no
+  // hook, so after hearing once a session counts as caught up.
+  if (hook_event_name === 'UserPromptSubmit') {
+    try {
+      const updates = history(hex)
+      const told = store.seen(session_id, 'hex')
+      const base = updates.head && told !== updates.head ? told || updates.on(startOf(session_id)) : undefined
+      const changed = base ? updates.changed(base) : []
+      if (base && changed.length) {
+        store.show(session_id, 'hex', updates.head)
+        const names = (keys: Startup[]) => new Intl.ListFormat('en').format(keys.map(key => WHAT[key]))
+        const hub = store.threads({ open: true }).some(thread => thread.session === session_id)
+        const after = hub ? 'hex resumes it on the new hex at its next rest, once its work here is done' : 'It takes the new ones when it restarts'
+        out = [out, `hex was updated (${base.slice(0, 7)} to ${updates.head.slice(0, 7)}) after this session started, and Claude Code reads hex's ${names(changed)} only at start, so this session still runs the old ones. ${after}. Tell me so in a line when you next write to me.`].filter(Boolean).join('\n\n')
+        const reload = changed.filter(key => key !== 'launcher')
+        const steps = [...(reload.length ? [`run /reload-plugins for its new ${names(reload)}`] : []), ...(changed.includes('launcher') ? [`resume it with ${hex}/bin/session --resume ${session_id} for its new launch flags`] : [])]
+        // Nobody reads a hub thread's screen, and its hub renews it.
+        if (!hub) shown = `hex was updated after this session started: ${steps.join(', and ')}.`
+      }
+    } catch (error) {
+      console.error(`hex couldn't tell whether this session runs an older hex: ${error}`)
+    }
   }
   if (shown) console.log(JSON.stringify({ systemMessage: shown, hookSpecificOutput: { hookEventName: hook_event_name, additionalContext: out } }))
   else if (out) console.log(out)
