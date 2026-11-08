@@ -12,13 +12,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// bin/place against fake machines: each one's room reading, and what ran where.
-
 const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "place-"));
 const fake = join(home, "fake");
 const here = Bun.spawnSync(["uname", "-n"]).stdout.toString().trim();
 const slots = join(home, "state/hex/slots");
+const AWAY_EXIT_WHEN_THE_JOB_CANT_RUN_THERE = 76;
 
 const script = (path: string, body: string) => {
   writeFileSync(path, `#!/bin/sh\n${body}\n`);
@@ -35,7 +34,6 @@ beforeAll(() => {
 
   script(join(home, ".hex/bin/room"), `cat "${fake}/${here}"; exit $(cat "${fake}/${here}.code")`);
   script(join(home, ".hex/bin/session"), `echo "session $* $(cat)"`);
-  // A machine's away exits as that machine's file says: 76 when the job can't run there.
   script(
     join(home, ".hex/bin/away"),
     `echo "away $* $(cat)"; exit $(cat "${fake}/$1.away" 2>/dev/null || echo 0)`,
@@ -50,12 +48,15 @@ afterAll(() => {
   rmSync(home, { recursive: true });
 });
 
-function machine(name: string, reading: string, code: number, away?: number) {
+function machine(name: string, reading: string, code: number, awayExit?: number) {
   writeFileSync(join(fake, name), reading ? `${reading}\n` : "");
+
   writeFileSync(join(fake, `${name}.code`), `${code}`);
-  away === undefined
-    ? rmSync(join(fake, `${name}.away`), { force: true })
-    : writeFileSync(join(fake, `${name}.away`), `${away}`);
+  if (awayExit === undefined) {
+    rmSync(join(fake, `${name}.away`), { force: true });
+  } else {
+    writeFileSync(join(fake, `${name}.away`), `${awayExit}`);
+  }
 }
 
 function place(settings: Record<string, string> = {}, wait = 10_000) {
@@ -101,7 +102,7 @@ test("a job goes to the next machine with room, as a T3 Code thread on that mach
 test("held slots, a machine without a hex T3 Code, and one where the job could not run are passed over, and the next machine gets all of its stdin", () => {
   machine(here, "cpu 3% busy", 0);
   machine("cloud", "cpu 1% busy", 0);
-  machine("mini", "cpu 1% busy\nt3 env-mini", 0, 76);
+  machine("mini", "cpu 1% busy\nt3 env-mini", 0, AWAY_EXIT_WHEN_THE_JOB_CANT_RUN_THERE);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
   mkdirSync(slots, { recursive: true });
   const held = Bun.spawn(["flock", "-o", join(slots, `${here}.1`), "sleep", "30"]);

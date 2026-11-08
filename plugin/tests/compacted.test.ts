@@ -1,14 +1,9 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  symlinkSync,
-} from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import type { Author } from "../../hub/store.ts";
 import { open } from "../../hub/store.ts";
 
 const BIN = join(import.meta.dir, "../../bin");
@@ -33,8 +28,7 @@ afterEach(() => {
   rmSync(home, { recursive: true, force: true });
 });
 
-// A thread's messages in hex.db, a minute apart, as its session took or wrote them.
-function kept(thread: string, turns: [string, string][]) {
+function kept(thread: string, turns: [Author, string][]) {
   const store = open(join(home, "state"));
 
   for (const [i, [author, body]] of turns.entries()) {
@@ -86,7 +80,7 @@ test("brings back the thread's whole conversation when it fits", () => {
 test("brings back the last whole turns of a long conversation, and points to the earlier ones", () => {
   kept(
     SESSION,
-    Array.from({ length: 40 }, (_, i): [string, string] => [
+    Array.from({ length: 40 }, (_, i): [Author, string] => [
       i % 2 ? "hex" : "owner",
       `turn ${i} ${"y".repeat(600)}`,
     ]),
@@ -95,7 +89,7 @@ test("brings back the last whole turns of a long conversation, and points to the
   expect(out).toContain(
     `\`${join(home, ".hex/bin")}/hex log -- '${SESSION}'\` has any before them`,
   );
-  expect(out.split("\n\n").slice(1).join("\n\n")).toMatch(/^## (owner|hex) · /);
+  expect(out.split("\n\n").slice(1).join("\n\n")).toMatch(/^## (owner|hex) · /u);
   expect(out).toContain("turn 39");
   expect(out).not.toContain("turn 20 ");
 });
