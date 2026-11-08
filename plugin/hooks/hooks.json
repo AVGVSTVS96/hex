@@ -23,7 +23,7 @@
     "PreToolUse": [
       { "matcher": "mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }] },
       { "matcher": "^(Edit|Write|MultiEdit)$", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
-      { "matcher": "^(Bash|Agent|mcp__plugin_telegram_telegram__new_thread|mcp__t3.code__(t3_thread_launch|delegate_task|create_threads))$", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/intent.ts", "timeout": 120 }] }
+      { "matcher": "^(Bash|Agent|SendMessage|mcp__.*__new_thread|mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads))$", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/intent.ts", "timeout": 120 }] }
     ],
     "PostToolUse": [
       { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*.md*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
