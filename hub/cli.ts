@@ -4,7 +4,8 @@ import { parseArgs } from 'util'
 import { history } from './loaded.ts'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { record, settingsOf } from './claude.ts'
-import { running, serving, type Session } from './running.ts'
+import { running, served, serving, type Session } from './running.ts'
+import { instant, line, place } from './holds.ts'
 import { checks } from './ideas.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
@@ -22,6 +23,9 @@ const USAGE = `usage:
   hex task agent <task> <agent or session id…>
   hex task <task> [--json]
   hex tasks [--owner <thread> | --all] [--status open,idea,done,dropped] [--json]
+  hex hold <thread…> --why '<what the hold is for>' [--until 'YYYY-MM-DD HH:MM'] [--key <the owner's message>]
+  hex hold end <hold> [<thread…>] --why '<what ends it>' [--key <the owner's message>]
+  hex holds [--all] [--json]
   hex questions [--thread <thread> | --all] [--json]
   hex pins [--thread <thread> | --all] [--json]
   hex threads [--json]
@@ -46,6 +50,9 @@ const { values: flags, positionals } = parseArgs({
     idea: { type: 'boolean' },
     proof: { type: 'string' },
     into: { type: 'string' },
+    why: { type: 'string' },
+    until: { type: 'string' },
+    key: { type: 'string' },
     status: { type: 'string' },
     all: { type: 'boolean' },
     json: { type: 'boolean' },
@@ -65,7 +72,7 @@ if (flags['ignore-case'] && command !== 'recall') {
 }
 // How many words each command takes before its flags; a word past them is a flag's value left
 // unquoted, which would otherwise be cut short without a word.
-const takes = command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2, agent: Infinity } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
+const takes = command === 'hold' ? Infinity : command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2, agent: Infinity } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
 if (args.length > takes) {
   console.error(`hex: ${stray(args[takes]!)}`)
   process.exit(1)
@@ -276,8 +283,34 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
   }
 }
 
+// Holds the threads named, or with end, ends a hold on them, or on every thread it holds.
+function hold(words: string[]) {
+  const zone = zoneOf(dirname(state!))
+  if (words[0] === 'end') {
+    const [, id, ...threads] = words
+    if (!id || !flags.why) usage()
+    const freed = store.unhold(id, `${flags.why}${flags.key ? ` [${flags.key}]` : ''}`, threads.length ? threads.map(recipient) : undefined)
+    const names = store.names()
+    console.log(freed.length ? `${id} freed ${freed.map(thread => names[thread] ?? thread).join(', ')}; hex wakes them, a couple at a time` : `${id} held none of them any more`)
+    return
+  }
+  if (!words.length || !flags.why) usage()
+  const by = process.env.HEX_THREAD || served() || 'terminal'
+  const placed = place(store, { threads: words.map(recipient), by: store.key(by), why: flags.why, message: flags.key, until: flags.until && instant(flags.until, zone) }, zone)
+  console.log(line(placed, store, zone))
+}
+
 try {
   switch (command) {
+    case 'hold':
+      hold(args)
+      break
+    case 'holds': {
+      const holds = store.holds({ all: flags.all })
+      if (flags.json) json(holds)
+      else console.log(holds.map(each => line(each, store, zoneOf(dirname(state!)))).join('\n') || 'nothing on hold')
+      break
+    }
     case 'deliver': {
       const [given, ...words] = args
       const from = given?.split(':')[0]

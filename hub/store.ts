@@ -24,6 +24,12 @@ export type Words = { message: string; text: string; who: Author; at: string }
 export type Task = { id: string; title: string; owner: string; status: Status; words: Words[]; at: string; project?: string; doneWhen?: string; proof?: string; mergedInto?: string; closed?: string }
 export type NewTask = { title: string; message: string; quote?: string; owner: string; status?: 'idea' | 'open'; project?: string; doneWhen?: string }
 export type TaskChange = { title?: string; status?: Status; proof?: string; doneWhen?: string; project?: string; owner?: string; doneIn?: string }
+// Work one session put on hold, in hex.db so every session sees it: the threads it holds, the thread
+// that held them, why, the owner's message it came from, and when it ends by itself. Its hold on a
+// thread ends at until, or once the owner's word lifts it (ending says which), and then hex wakes
+// that thread (woke: the message it sent).
+export type Held = { thread: string; ended?: string; ending?: string; woke?: string }
+export type Hold = { id: string; by: string; why: string; message?: string; until?: string; at: string; threads: Held[] }
 // A call that's the owner's: a question a thread asked with buttons, a poll or in words, in one
 // app's thread, under that app's id for the message. via: where the answer came from (the chat app's
 // own buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
@@ -275,6 +281,9 @@ const migrations: (string | ((store: Store) => void))[] = [
     if (!db.query("select 1 from pragma_table_info('tasks') where name = 'done_in'").get()) db.run('alter table tasks add column done_in text')
     if (!db.query("select 1 from pragma_table_info('task_agents') where name = 'thread'").get()) db.run('alter table task_agents add column thread text')
   },
+  // Work on hold, and each thread it holds: when its hold on that thread ended and why, and the message that woke it.
+  `create table if not exists holds (n integer primary key, by text not null, why text not null, message text, until text check (until ${UTC}), at text not null check (at ${UTC}));
+  create table if not exists held (hold integer not null references holds (n), thread text not null, ended text check (ended ${UTC}), ending text, woke text, primary key (hold, thread));`,
 ]
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -640,6 +649,78 @@ export class Store {
   fire(schedule: string, minute: number, to: string, body: string, late = false): boolean {
     const slot = new Date(minute * 60_000).toISOString().slice(0, 16)
     return this.deliver({ key: `schedule:${schedule}@${slot}Z`, to, from: 'schedule', author: 'prompt', body, meta: { user: 'schedule', schedule, ...(late && { late: 'true' }) } })
+  }
+
+  hold({ threads, by, why, message, until }: Omit<Hold, 'id' | 'at' | 'threads'> & { threads: string[] }): Hold {
+    why = why.trim()
+    if (!threads.length) throw new Error('a hold names the threads it holds')
+    if (!why) throw new Error('a hold says why')
+    if (message && !this.message(message)) throw new Error(`no message ${message}`)
+    if (until && !(Date.parse(until) > Date.now())) throw new Error(`${until} has passed, so that hold would end as it starts`)
+    return this.write(() => {
+      const { lastInsertRowid } = this.db.query('insert into holds (by, why, message, until, at) values (?, ?, ?, ?, ?)').run(by, why, message ?? null, until ?? null, now())
+      for (const thread of new Set(threads)) this.db.query('insert into held (hold, thread) values (?, ?)').run(lastInsertRowid, thread)
+      return this.holdOf(`h-${lastInsertRowid}`)!
+    })
+  }
+
+  holdOf(id: string): Hold | null {
+    return this.holds({ id }).at(0) ?? null
+  }
+
+  // Holds newest first: only those still holding a thread, unless all.
+  holds({ id, all = false }: { id?: string; all?: boolean } = {}): Hold[] {
+    const n = id === undefined ? null : Number(/^h-(\d+)$/.exec(id)?.[1] ?? NaN)
+    const rows = this.db
+      .query('select * from holds where (?1 is null or n = ?1) and (?2 or exists (select 1 from held where hold = n and ended is null)) order by n desc')
+      .all(n, all) as { n: number; by: string; why: string; message: string | null; until: string | null; at: string }[]
+    return rows.map(({ n, message, until, ...hold }) => ({
+      id: `h-${n}`,
+      ...hold,
+      ...(message && { message }),
+      ...(until && { until }),
+      threads: (this.db.query('select thread, ended, ending, woke from held where hold = ? order by rowid').all(n) as Record<string, string | null>[]).map(row => Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Held),
+    }))
+  }
+
+  // Ends a hold on the threads named, or all it still holds, saying why; returns the threads it freed.
+  unhold(id: string, ending: string, threads?: string[], at = now()): string[] {
+    const hold = this.holdOf(id)
+    if (!hold) throw new Error(`no hold ${id}`)
+    if (!ending.trim()) throw new Error('say why the hold ends')
+    const stray = threads?.filter(thread => !hold.threads.some(held => held.thread === thread))
+    if (stray?.length) throw new Error(`${id} doesn't hold ${stray.join(', ')}`)
+    return this.write(() =>
+      (this.db.query('update held set ended = ?, ending = ? where hold = ? and ended is null and (?4 is null or thread in (select value from json_each(?4))) returning thread').values(at, ending.trim(), Number(id.slice(2)), threads ? JSON.stringify(threads) : null) as [string][]).map(([thread]) => thread),
+    )
+  }
+
+  // Every hold whose time has come ends.
+  due(at = now()): string[] {
+    return this.write(() => (this.db.query('select n from holds where until <= ? and exists (select 1 from held where hold = n and ended is null)').values(at) as [number][]).flatMap(([n]) => this.unhold(`h-${n}`, 'its time came', undefined, at)))
+  }
+
+  // Threads holds freed that hex hasn't woken yet, unless another hold still holds them: in the order
+  // they were freed, each by its holds' last to end first.
+  freed(): { id: string; thread: string; why: string; ending: string }[] {
+    return (this.db
+      .query(`select 'h-' || hold as id, thread, why, ending from held join holds on n = hold where ended is not null and woke is null and not exists (select 1 from held other where other.thread = held.thread and other.ended is null)
+        order by (select max(ended) from held other where other.thread = held.thread), (select min(rowid) from held other where other.thread = held.thread), ended desc`)
+      .all() as { id: string; thread: string; why: string; ending: string }[])
+  }
+
+  // The thread's freed holds woke it with the message under key.
+  woke(thread: string, key: string) {
+    this.write(() => this.db.query('update held set woke = ? where thread = ? and ended is not null and woke is null').run(key, thread))
+  }
+
+  // How many threads hex woke from a hold are still on it: the message waits for an open thread to
+  // take it, or the turn that took it hasn't ended.
+  waking(): number {
+    return (this.db
+      .query(`select count(*) as n from held join messages m on m.key = held.woke left join turns t on t.session = m.taken_by
+        where (m.taken_at is null and exists (select 1 from threads where thread = held.thread and open = 1)) or (m.taken_at is not null and t.session is not null and (t.ended is null or t.ended < m.taken_at))`)
+      .get() as { n: number }).n
   }
 
   // A task from the owner's message under key: all of it, or the part quote names, which has to be
