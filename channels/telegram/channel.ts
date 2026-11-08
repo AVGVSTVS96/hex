@@ -48,7 +48,7 @@ export const server: ChannelServer = {
           buttons: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Labels of one- or two-word choices under the message, e.g. ["Yes", "No"]. A tap comes back as a message and leaves only the chosen label on it.',
+            description: 'Labels of one- or two-word choices under the message, e.g. ["Yes", "No"]. A tap comes back as a message and leaves only the chosen label on it. When you have a pick, end its label with (my pick).',
           },
         },
       },
@@ -140,7 +140,7 @@ export const server: ChannelServer = {
         type: 'object',
         properties: {
           question: { type: 'string', maxLength: 300 },
-          options: { type: 'array', items: { type: 'string', maxLength: 100 }, maxItems: 12 },
+          options: { type: 'array', items: { type: 'string', maxLength: 100 }, maxItems: 12, description: 'When you have a pick, end its option with (my pick).' },
           multiple: { type: 'boolean', description: 'Allow picking more than one option.' },
         },
         required: ['question', 'options'],

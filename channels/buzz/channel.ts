@@ -40,7 +40,7 @@ export const server: ChannelServer = {
           buttons: {
             type: 'array',
             items: { type: 'string' },
-            description: 'Choices the user can tap, at most 10, like ["Yes", "No"]. They show as a numbered list under the text.',
+            description: 'Choices the user can tap, at most 10, like ["Yes", "No"]. They show as a numbered list under the text. When you have a pick, end its label with (my pick).',
           },
         },
         required: ['text'],
