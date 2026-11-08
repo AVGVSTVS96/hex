@@ -734,7 +734,7 @@ test("a check.json's links reach the app only when they open a page or an app, i
 
 
 test("an answered ask the check lists again without buttons is flagged, not listed", () => {
-  const ask = { id: 'check:sign-in', kind: 'do' as const, task: `telegram:${DESK}`, at: '', question: 'Sign in', options: [{ label: 'Done' }], from: [] }
+  const ask = { id: 'check:sign-in', kind: 'do' as const, task: `telegram:${DESK}`, at: new Date().toISOString(), question: 'Sign in', options: [{ label: 'Done' }], from: [] }
   const verdict = vet({ asks: [ask, { ...ask, id: 'check:other' }], settle: [], fixed: [], flagged: [], stuck: [] }, {}, { threads: {}, calls: [], answered: { 'check:sign-in': { label: 'Done', at: '2026-10-13T12:00:00.000Z', via: 'app' } } })
   expect(verdict.asks.map(question => question.id)).toEqual(['check:other'])
   expect(verdict.flagged).toEqual([{ title: 'Sign in', text: 'You answered this "Done" on 2026-10-13, and the check found it asked again.' }])
@@ -752,7 +752,7 @@ test("the check's fingerprint takes in the answers it reads, and stays the same 
 test("a check's links keep only what opens a page or an app on the phone", () => {
   const urls = ['https://github.com/a/b/pull/2', 'http://100.1.2.3:4800/page', 'tg://resolve?domain=hexbot', 't3code://threads/env/1', 'buzz://channel/x', 'discord://-/channels/1', 'file:///home/a/report.md', 'javascript:alert(1)', '/home/a/report.md']
   const verdict = vet(
-    { asks: [{ id: 'read', kind: 'look', task: `telegram:${DESK}`, at: '', question: 'Read it', options: [{ label: 'Seen' }], links: urls.map(url => ({ label: 'Page', url })), from: [] }], settle: [], fixed: [], flagged: [], stuck: [] },
+    { asks: [{ id: 'read', kind: 'look', task: `telegram:${DESK}`, at: new Date().toISOString(), question: 'Read it', options: [{ label: 'Seen' }], links: urls.map(url => ({ label: 'Page', url })), from: [] }], settle: [], fixed: [], flagged: [], stuck: [] },
     {},
     { threads: {}, calls: [] },
   )
@@ -903,4 +903,25 @@ test('General hears of the first failed check in a run of them, and of the first
   rmSync(join(state, 'voice', 'check', 'error'))
   failed(state, 'wednesday: the check hit a limit')
   expect(told()).toHaveLength(2)
+})
+
+test('an ask stays only while a place still asks it: an open question, an open thread\'s pinned post, a recent call, or a message from the last three days', () => {
+  const old = new Date(Date.now() - 4 * 24 * 60 * 60_000).toISOString()
+  const ask = (id: string, at: string, from: object[]) => ({ id, kind: 'do' as const, task: `telegram:${DESK}`, at, question: id, options: [{ label: 'Done' }], from })
+  const verdict = vet(
+    {
+      asks: [
+        ask('question', old, [{ app: 'telegram', thread: DESK, message: 1 }]),
+        ask('pin', old, [{ app: 'telegram', thread: DESK, message: 50 }]),
+        ask('call', old, [{ app: 'voice', call: 'live_1' }]),
+        ask('recent', new Date().toISOString(), [{ app: 'telegram', thread: DESK, message: 60 }]),
+        ask('stale', old, [{ app: 'telegram', thread: DESK, message: 60 }]),
+        ask('old-pin', old, [{ app: 'telegram', thread: DESK, message: 40 }]),
+      ],
+      settle: [], fixed: [], flagged: [], stuck: [],
+    },
+    { telegram: [asked(1, 'Twilio?', ['Upgrade', 'Not yet'])] },
+    { threads: { [`telegram:${DESK}`]: 'desk' }, calls: [{ id: 'live_1' }], pins: [{ app: 'telegram', thread: DESK, message: 50 }] },
+  )
+  expect(verdict.asks.map(question => question.id)).toEqual(['check:question', 'check:pin', 'check:call', 'check:recent'])
 })

@@ -12,7 +12,7 @@ import { relay } from './relay.ts'
 import { T3, type Stuck } from './t3.ts'
 
 type Verdict = Pick<CheckResult, 'asks' | 'fixed' | 'flagged' | 'stuck'> & { settle: (Ref & { note: string })[] }
-type Known = { threads: Record<string, string>; calls: { id: string }[]; answered?: Record<string, Pick<Answer, 'label' | 'at'>> }
+type Known = { threads: Record<string, string>; calls: { id: string }[]; pins?: Ref[]; answered?: Record<string, Pick<Answer, 'label' | 'at'>> }
 
 const MODEL = process.env.HEX_CHECK_MODEL ?? 'opus'
 const CALLS = join(homedir(), '.claude', 'channels', 'voice', 'calls')
@@ -90,7 +90,7 @@ async function pass(state: string, why: string) {
   const inputs = digest(records)
   if (records.previous?.inputs === inputs) return
   const hexDir = dirname(state)
-  const verdict = vet(await claude(prompt(records, hexDir), hexDir, state), records.ledgers, { threads: records.threads, calls: records.calls, answered: records.answered })
+  const verdict = vet(await claude(prompt(records, hexDir), hexDir, state), records.ledgers, { threads: records.threads, calls: records.calls, pins: records.pins.map(({ pin }) => pin), answered: records.answered })
   for (const ref of verdict.settle) await relay(state, ref.app, { type: 'settle', thread: ref.thread, message: ref.message, note: ref.note }).catch(error => process.stderr.write(`voice: check: ${error}\n`))
   const result: CheckResult = {
     at: started,
@@ -122,7 +122,8 @@ function gather(state: string) {
   const general = generalOf(threads)
   for (const thread of threads) if (thread.app !== 'voice') names[`${thread.app}:${thread.thread}`] = nameOf(thread, general)
   const ledgers = Object.groupBy(questions.filter(question => question.app !== 'voice' && question.options.length), question => question.app) as Record<string, Asked[]>
-  for (const pin of store(state).pins()) if (pin.note) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(pin.note, LONG) })
+  const openThreads = new Set(threads.filter(thread => thread.open).map(thread => `${thread.app}:${thread.thread}`))
+  for (const pin of store(state).pins()) if (pin.note && openThreads.has(`${pin.app}:${pin.thread}`)) pins.push({ pin: { app: pin.app, thread: pin.thread, message: pin.message }, topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread, text: clip(pin.note, LONG) })
   const shown = (app: string, question: Asked) => ({
     ref: { app, thread: question.thread, message: question.message },
     topic: names[`${app}:${question.thread}`] ?? question.thread,
@@ -175,12 +176,13 @@ export function digest({ open, closed, answered, pins, calls, t3 }: ReturnType<t
   return createHash('sha256').update(JSON.stringify({ open, closed, answered, pins, calls, t3 })).digest('hex')
 }
 
-function prompt({ ledgers, ...records }: ReturnType<typeof gather>, hexDir: string) {
+function prompt({ ledgers, previous, ...records }: ReturnType<typeof gather>, hexDir: string) {
+  const ids = { asks: (previous?.asks ?? []).map(({ id, question }: Curated) => ({ id, question })), stuck: (previous?.stuck ?? []).map(({ id, title }: Stuck) => ({ id, title })) }
   return `You're hex's check. hex is a personal assistant (its owner, and their rules, are in ${hexDir}/AGENTS.md): it works for its owner in many threads at once (Telegram topics, Discord threads, T3 Code threads, calls with its voice app), and each thread asks them things: questions with buttons, polls, the "waiting on you" part of its pinned status post, and the waiting lines of a call's wrap-up. They pile up in dozens of places and many go stale. Your pass turns them into one honest list in their voice app, where they answer each in place.
 
 It's there so the owner can manage their tasks with hex: by going through the transcripts, gathering, auditing and checking on work other agents did, including older work from a day or two ago that might not be done, it shows what needs to get done so they can ship more and get unblocked.
 
-The records are below as JSON: every open question asked with buttons or a poll (open, each with its ref and before: what hex said in its thread just before asking), the ones answered or settled lately (closed), the asks they answered in the app or on a call (answered, by id: their answer, when, the question and the threads told), each thread's pinned post (pins, each with its own ref), calls' wrap-ups (calls, each with its id), what T3 Code shows as stuck or newly finished (t3; the app lists those already), and your previous pass (previous). To confirm something before you settle it, read their records: every message hex.db holds in messages.md in your folder (one heading per message: author, app, thread, time, key; rg it), every thread hex has had in threads.json in your folder (app, thread, name, open, session, cwd, link), session transcripts under ~/.claude/projects/, project notes under ${hexDir}/projects/. In a transcript, the owner's messages arrive as <channel source="..." chat_id="..." message_id="..."> and hex's own replies come back as "sent (id: N)", so a question asked in plain words has a message id there.
+The records are below as JSON: every open question asked with buttons or a poll (open, each with its ref and before: what hex said in its thread just before asking), the ones answered or settled lately (closed), the asks they answered in the app or on a call (answered, by id: their answer, when, the question and the threads told), each thread's pinned post (pins, each with its own ref), calls' wrap-ups (calls, each with its id), what T3 Code shows as stuck or newly finished (t3; the app lists those already), and the ids your previous pass gave (previous). To confirm something before you settle it, read their records: every message hex.db holds in messages.md in your folder (one heading per message: author, app, thread, time, key; rg it), every thread hex has had in threads.json in your folder (app, thread, name, open, session, cwd, link), session transcripts under ~/.claude/projects/, project notes under ${hexDir}/projects/. In a transcript, the owner's messages arrive as <channel source="..." chat_id="..." message_id="..."> and hex's own replies come back as "sent (id: N)", so a question asked in plain words has a message id there.
 
 Return:
 - asks: one entry per decision or action that is still theirs, however many places asked it. from lists every place that asked it, so they can open each one: an open question (copy its ref), a pinned post (copy the pin's ref), a plain message you found ({app, thread, message} with its id, or {app, thread} when you can't find the id), or a call ({app: "voice", call: its id}); thread is a key of threads without its "<app>:" prefix. Leave none out: an ask from a pinned post and a call has both. id is "check:" plus a short slug, the same slug as in your previous pass for the same thing, never one in answered. task is the thread it belongs to ("<app>:<thread id>", from threads). question is one short plain line (60 characters at most). context is a few short plain sentences they can follow cold, without opening the thread: what the thing is, what its terms mean, and what each option means for them, in words rather than message numbers. options are their possible answers, as short labels, each one telling the thread something; mark the thread's own pick with pick (one at most, only where the thread made one); when an option stands for a button, value is that button's exact text from the first open question in from. links are the pages it points to, never answers: label names the page in one to three words without a verb ("Apple Store", "PR #2", "Paper file"), url opens it. kind is pick (one of several), yesno (two ways), do (only their hands can do it, like a sign-in, a purchase, a recording: options like Done and Later, its page in links) or look (something to watch or read: options like Seen and Later, its page in links). tag is "money" when an option spends money, or "unblocks N" when N other things wait on it. Order: what unblocks the most first, even when it costs money, then the quickest; other money and anything sent in their name last. An ask's task is the thread it belongs to, even when only a pinned post or a call asked it.
@@ -189,9 +191,9 @@ Return:
 - flagged: what they should look at that you can't settle yourself, like the same thing asked with different options, or a question days old whose work has stalled: title and text.
 - stuck: work stopped with nobody moving it that the t3 list doesn't already show, like a failing service a pinned post mentions: id (a short slug), title, why (one sentence), action (one or two words, like Restore or Look), mark (paused or failed), at, and request: what hex should do when they tap the action, as a message to hex.
 
-Every answer is theirs: an ask stays open until they answer it. One in answered is answered: leave it out. Anything new, and a thread asking it again after the answer, gets an id that isn't in answered. Leave health details and phone numbers out of everything you write.
+Every answer is theirs, and an ask stays only while a place still asks it: an open question, a pinned post, a call, or a message from the last three days. One that only an older message asked is no longer theirs. One in answered is answered: leave it out. Anything new, and a thread asking it again after the answer, gets an id that isn't in answered. Leave health details and phone numbers out of everything you write.
 
-${JSON.stringify(records)}`
+${JSON.stringify({ ...records, previous: ids })}`
 }
 
 const NOTE = { type: 'object', properties: { title: { type: 'string' }, text: { type: 'string' }, did: { type: 'string' } }, required: ['title', 'text'] }
@@ -278,9 +280,10 @@ function claude(input: string, hexDir: string, state: string) {
 // What the pass returned, held to the records: its places are real threads, questions and calls (a
 // closed thread's question still is), the open questions among them are its refs, a value is a
 // real button, a link opens a page or an app, and a question it settles isn't also one it lists. An
-// answered ask it lists again without buttons is flagged for them to look at, not listed, since the
-// app hides an answered id for good.
-export function vet(verdict: Verdict, ledgers: Record<string, Asked[]>, { threads, calls, answered = {} }: Known): Verdict {
+// ask stays only while a place still asks it: an open question, an open thread's pinned post, a
+// recent call, or a message from the last three days. An answered ask it lists again without buttons
+// is flagged for them to look at, not listed, since the app hides an answered id for good.
+export function vet(verdict: Verdict, ledgers: Record<string, Asked[]>, { threads, calls, pins = [], answered = {} }: Known): Verdict {
   const find = (ref: Ref) => ledgers[ref.app]?.find(question => question.thread === ref.thread && String(question.message) === String(ref.message))
   const open = (ref: Ref) => {
     const question = find(ref)
@@ -301,15 +304,17 @@ export function vet(verdict: Verdict, ledgers: Record<string, Asked[]>, { thread
       refs,
     }
   })
+  const pinned = ({ app, thread, message }: Source) => pins.some(pin => pin.app === app && pin.thread === thread && String(pin.message) === String(message))
+  const asked = (question: Curated) => !!question.refs?.length || !!question.from?.some(place => place.call || pinned(place)) || Date.parse(question.at) > Date.now() - RECENT
   const again = (question: Curated) => !!answered[question.id] && !question.refs?.length
   const listed = new Set(curated.flatMap(question => question.refs ?? []).map(ref => `${ref.app} ${ref.thread} ${ref.message}`))
   return {
-    asks: curated.filter(question => !again(question)),
+    asks: curated.filter(question => asked(question) && !again(question)),
     settle: verdict.settle.filter(ref => open(ref) && !listed.has(`${ref.app} ${ref.thread} ${ref.message}`)).map(ref => ({ ...ref, note: ref.note.slice(0, 60) })),
     fixed: verdict.fixed,
     flagged: [
       ...verdict.flagged,
-      ...curated.filter(again).map(question => ({ title: question.question, text: `You answered this "${answered[question.id]!.label}" on ${answered[question.id]!.at.slice(0, 10)}, and the check found it asked again.` })),
+      ...curated.filter(question => asked(question) && again(question)).map(question => ({ title: question.question, text: `You answered this "${answered[question.id]!.label}" on ${answered[question.id]!.at.slice(0, 10)}, and the check found it asked again.` })),
     ],
     stuck: verdict.stuck.map((item: Omit<Stuck, 'app'>) => ({ ...item, id: item.id.startsWith('check-') ? item.id : `check-${item.id}` })),
   }
