@@ -72,7 +72,7 @@ try {
         const after = hub ? 'hex resumes it on the new hex at its next rest, once its work here is done' : 'It takes the new ones when it restarts'
         out = [out, `hex was updated (${from.slice(0, 7)} to ${updates.head.slice(0, 7)}) after this session started, and Claude Code reads hex's ${names(changed)} only at start, so this session may still run the old ones. ${after}. Tell me so in a line when you next write to me.`].filter(Boolean).join('\n\n')
         const reload = changed.filter(key => key !== 'launcher')
-        const steps = [...(reload.length ? [`run /reload-plugins for its new ${names(reload)}`] : []), ...(changed.includes('launcher') ? [`quit it and run ${quote(`${hex}/bin/session`)} --resume ${session_id} in ${quote(self?.cwd ?? home)} for its new launch flags`] : [])]
+        const steps = [...(reload.length ? [`run /reload-plugins for its new ${names(reload)}`] : []), ...(changed.includes('launcher') ? [`quit it and run cd ${quote(self?.cwd ?? home)} && ${quote(`${hex}/bin/session`)} --resume ${session_id} for its new launch flags`] : [])]
         // Nobody reads a hub thread's screen, and its hub renews it.
         if (!hub) shown = `hex was updated after this session started: ${steps.join(', and ')}.`
       }

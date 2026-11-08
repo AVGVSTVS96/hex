@@ -54,7 +54,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
 // session's plugins) and the folder it started in. A /clear keeps the process and gives the record
 // the new session's id.
 export function own(session: string, claude = CLAUDE, pid = process.ppid): { started: number; cwd?: string } | undefined {
-  for (let above = pid; above > 1; above = parentOf(above)) {
+  for (let above = pid; above > 0; above = parentOf(above)) {
     const record = readJson(join(claude, 'sessions', `${above}.json`))
     if (record?.sessionId === session && record.pid === above && typeof record.startedAt === 'number' && alive(above, record.procStart)) return { started: record.startedAt, cwd: record.cwd }
   }

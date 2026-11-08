@@ -145,7 +145,7 @@ test('a session started after the update says nothing', () => {
 test('a launcher change tells the owner to quit and resume through bin/session, in the folder the session started in', () => {
   updates(2000, [1000, 'bin/session', 'exec claude'], [3000, 'bin/session', 'exec claude "$@"'])
   const out = JSON.parse(hook('UserPromptSubmit'))
-  expect(out.systemMessage).toContain(`quit it and run '${home}/.hex/bin/session' --resume ${SESSION} in '${home}' for its new launch flags`)
+  expect(out.systemMessage).toContain(`quit it and run cd '${home}' && '${home}/.hex/bin/session' --resume ${SESSION} for its new launch flags`)
 })
 
 test('a session told two days ago still hears nothing more of the same update', () => {
