@@ -14,12 +14,9 @@ import { join } from "node:path";
 
 import { until } from "../../hub/until.ts";
 
-// bin/hex run against a hex of its own, whose hub stands in for the real one: it logs when it
-// starts and stops, and takes half a second to stop, the way the real one waits out a call.
-
 const BIN = join(import.meta.dir, "../../bin");
 
-const HUB = `import { appendFileSync } from 'fs'
+const HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS = `import { appendFileSync } from 'fs'
 const log = (line: string) => appendFileSync(process.env.HEX_DIR + '/state/hubs', line + ' ' + process.pid + '\\n')
 log('start mark=' + process.env.MARK + ' loop=' + (process.env.LOOP ?? 1))
 const stop = () => setTimeout(() => (log('stop'), process.exit(0)), 500)
@@ -92,7 +89,7 @@ afterEach(async () => {
 });
 
 test("a restart lets the hub finish before the next one starts, on the settings and bin/hex as they are now", async () => {
-  commit(HUB, "a hub");
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   const running = run();
   await until(() => hubs().length === 1);
   writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nMARK=2\n");
@@ -108,45 +105,45 @@ test("a restart lets the hub finish before the next one starts, on the settings 
   Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
   await until(() => hubs().length === 3);
   const [first, stopped, next] = hubs();
-  const pid = first!.split(" ").at(-1);
+  const pid = first?.split(" ").at(-1);
   expect(first).toBe(`start mark=1 loop=1 ${pid}`);
   expect(stopped).toBe(`stop ${pid}`);
-  expect(next).toMatch(/^start mark=2 loop=2 \d+$/);
+  expect(next).toMatch(/^start mark=2 loop=2 \d+$/u);
   expect(readFileSync(join(home, "state/hub.pid"), "utf-8").trim()).toBe(String(running.pid));
 });
 
 test("the hub gets the env of the settings files over .env, so a setting changes without touching .env", async () => {
   mkdirSync(join(home, ".claude"));
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ env: { MARK: "settings" } }));
-  commit(HUB, "a hub");
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   run();
   await until(() => hubs().length === 1);
-  expect(hubs()[0]).toMatch(/^start mark=settings loop=1 \d+$/);
+  expect(hubs()[0]).toMatch(/^start mark=settings loop=1 \d+$/u);
 });
 
 test("a stop waits for the hub to finish", async () => {
-  commit(HUB, "a hub");
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   const running = run();
   await until(() => hubs().length === 1);
   running.kill("SIGTERM");
   expect(await running.exited).toBe(0);
-  const pid = hubs()[0]!.split(" ").at(-1);
+  const pid = hubs()[0]?.split(" ").at(-1);
   expect(hubs()).toEqual([`start mark=1 loop=1 ${pid}`, `stop ${pid}`]);
   expect(existsSync(join(home, "state/hub.pid"))).toBe(false);
 });
 
 test("hex stop returns once the hub has finished, so whatever starts hex next never runs two", async () => {
-  commit(HUB, "a hub");
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   run();
   await until(() => hubs().length === 1);
   expect(await Bun.spawn([join(hex, "bin/hex"), "stop"]).exited).toBe(0);
-  const pid = hubs()[0]!.split(" ").at(-1);
+  const pid = hubs()[0]?.split(" ").at(-1);
   expect(hubs()).toEqual([`start mark=1 loop=1 ${pid}`, `stop ${pid}`]);
   expect(existsSync(join(home, "state/hub.pid"))).toBe(false);
 });
 
 test("a commit whose hub can't start goes back to the last one General connected on, and bin/update won't take it again", async () => {
-  const good = commit(HUB, "a hub");
+  const good = commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   writeFileSync(join(home, "state/good"), `${good}\n`);
   const bad = commit("process.exit(1)\n", "a hub that crashes");
   Bun.spawnSync(["git", "init", "-q", "--bare", "-b", "main", join(home, "origin")]);
