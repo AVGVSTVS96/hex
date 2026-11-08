@@ -5,6 +5,7 @@ import { basename, dirname, join } from "node:path";
 
 import { toAcpNotifications } from "@agentclientprotocol/claude-agent-acp";
 import type { SessionNotification, ToolCall } from "@agentclientprotocol/sdk";
+import { z } from "zod";
 
 import { running } from "../../hub/running.ts";
 import { open } from "../../hub/store.ts";
@@ -15,20 +16,27 @@ export type Step = { line?: string; end?: "done" | "failed" };
 
 export type Thread = { app: string; id: string; name: string; cwd?: string; state: string };
 
+type Notify = Parameters<typeof toAcpNotifications>;
+
 const claude = () => process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude");
 const projects = () => join(claude(), "projects");
 
-const client = { sessionUpdate: async () => {} } as unknown as Parameters<
-  typeof toAcpNotifications
->[4];
+// SAFETY: a replay hands its updates back as its result and never calls on the client.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a replay needs no client, only one to pass
+const client = {
+  sessionUpdate: (_update: Parameters<Notify[4]["sessionUpdate"]>[0]) => Promise.resolve(),
+} as Notify[4];
 
 const logger = {
+  // oxlint-disable-next-line eslint/no-empty-function -- a replay's own log lines aren't worth keeping
   log: () => {},
-  error: (...args: unknown[]) => process.stderr.write(`voice: activity: ${args.join(" ")}\n`),
+  error: (...args: unknown[]) => {
+    process.stderr.write(`voice: activity: ${args.join(" ")}\n`);
+  },
 };
 
-const ID = /^[\w-]+$/;
-const CHUNK = 1 << 20;
+const ID = /^[\w-]+$/u;
+const CHUNK = 1024 * 1024;
 
 export type Kind =
   | "think"
@@ -44,8 +52,6 @@ export type Kind =
 
 export type State = "running" | "done" | "failed";
 
-// What an agent did, as a kind of step and a few words for it. A tool call keeps its id, what it acted
-// on, and once it's back, whether it worked, the first lines it said and the agent it started.
 export type Did = {
   kind: Kind;
   text: string;
@@ -56,115 +62,270 @@ export type Did = {
   agent?: string;
 };
 
-// A T3 Code task's or thread's name by its id, where it's known.
 export type Names = (id: string) => string | undefined;
 
-// One of T3 Code's turn items: a provider's own record of one thing in its turn, as Codex keeps them.
-export type Item = { id: string; type: string; status: string; payload: any };
+export type Item = { id: string; type: string; status: string; payload: unknown };
 
-const QUIET =
-  /^(Read|Edit|MultiEdit|Write|NotebookEdit|Agent|Task|ToolSearch|mcp__t3-code__(delegate_task|task_\w+|t3_thread_\w+))$/;
+const loose = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
+
+const scalar = z.union([z.string(), z.number(), z.boolean()]);
+
+const fieldLines = z.record(z.string(), z.unknown()).transform((fields) =>
+  Object.entries(fields)
+    .flatMap(([key, value]) => {
+      const plainValue = scalar.safeParse(value);
+
+      return plainValue.success && plainValue.data !== ""
+        ? [`${key}: ${firstLine(String(plainValue.data)) ?? ""}`]
+        : [];
+    })
+    .join("\n"),
+);
+
+const blockText = z.object({ type: z.literal("text"), text: z.string().catch("") });
+
+const toolSaid = z
+  .union([
+    z.string(),
+    z
+      .array(z.unknown())
+      .transform((blocks) =>
+        blocks.flatMap((block) => blockText.safeParse(block).data?.text ?? []).join("\n"),
+      ),
+    fieldLines,
+  ])
+  .catch("");
+
+const toolFields = z.object({
+  file_path: loose(z.string()),
+  notebook_path: loose(z.string()),
+  command: loose(z.string()),
+  description: loose(z.string()),
+  pattern: loose(z.string()),
+  path: loose(z.string()),
+  query: loose(z.string()),
+  url: loose(z.string()),
+  prompt: loose(z.string()),
+  subagent_type: loose(z.string()),
+  skill: loose(z.string()),
+  args: loose(z.string()),
+  title: loose(z.string()),
+  task: loose(z.string()),
+  taskId: loose(z.string()),
+  reason: loose(z.string()),
+  threadId: loose(z.string()),
+  message: loose(z.string()),
+});
+
+const toolInput = z
+  .record(z.string(), z.unknown())
+  .catch({})
+  .transform((fields) => ({ ...toolFields.parse(fields), lines: fieldLines.parse(fields) }));
+
+type ToolInput = z.output<typeof toolInput>;
+
+const claudeCodeMeta = z
+  .object({ claudeCode: loose(z.object({ toolName: loose(z.string()) })) })
+  .catch({});
+
+const itemPayload = z
+  .object({
+    startedAt: loose(z.string()),
+    updatedAt: loose(z.string()),
+    completedAt: loose(z.string()),
+    input: z.unknown().optional(),
+    output: z.unknown().optional(),
+    exitCode: loose(z.number()),
+    patterns: loose(z.array(z.string())),
+    query: loose(z.string()),
+    diffStr: loose(z.string()),
+    fileName: loose(z.string()),
+    toolName: loose(z.string()),
+    text: loose(z.string()),
+    title: loose(z.string()),
+    prompt: loose(z.string()),
+    childThreadId: loose(z.string()),
+    failure: loose(z.object({ message: loose(z.string()) })),
+  })
+  .catch({});
+
+type ItemPayload = z.output<typeof itemPayload>;
+
+const toolOutputError = z.object({ error: z.unknown() });
+const errorMessage = z.object({ message: z.unknown() });
+const delegated = z.object({ childThreadId: z.string() });
+
+const origin = loose(z.object({ kind: loose(z.string()) }).loose());
+
+const transcriptLine = z
+  .object({
+    type: loose(z.string()),
+    subtype: loose(z.string()),
+    uuid: loose(z.string()),
+    timestamp: loose(z.string()),
+    sessionId: loose(z.string()),
+    cwd: loose(z.string()),
+    isApiErrorMessage: z.unknown().optional(),
+    origin,
+    message: loose(z.object({ id: loose(z.string()), content: z.unknown().optional() }).loose()),
+    toolUseResult: z.unknown().optional(),
+    attachment: loose(
+      z
+        .object({
+          type: loose(z.string()),
+          commandMode: loose(z.string()),
+          origin,
+          prompt: z.unknown().optional(),
+        })
+        .loose(),
+    ),
+  })
+  .loose()
+  .catch({});
+
+export type TranscriptLine = z.output<typeof transcriptLine>;
+
+const asyncLaunch = z.object({ isAsync: z.literal(true), agentId: z.string() });
+
+const blockTextOnly = z.object({ text: z.string() });
+
+const channelText = z
+  .union([
+    z.string(),
+    z
+      .array(z.unknown())
+      .transform((blocks) =>
+        blocks.map((block) => blockTextOnly.safeParse(block).data?.text ?? "").join(""),
+      ),
+  ])
+  .catch("");
+
+const SAYS_NOTHING_WORTH_READING =
+  /^(Read|Edit|MultiEdit|Write|NotebookEdit|Agent|Task|ToolSearch|mcp__t3-code__(delegate_task|task_\w+|t3_thread_\w+))$/u;
 
 const RUNNING = new Set(["pending", "running", "waiting"]);
 
-const PAST: Record<string, string> = {
-  Reading: "Read",
-  Editing: "Edited",
-  Writing: "Wrote",
-  Searching: "Searched",
-  Running: "Ran",
-  Waiting: "Waited",
-  Using: "Used",
-  Listing: "Listed",
-  Looking: "Looked",
-};
+const PAST = new Map([
+  ["Reading", "Read"],
+  ["Editing", "Edited"],
+  ["Writing", "Wrote"],
+  ["Searching", "Searched"],
+  ["Running", "Ran"],
+  ["Waiting", "Waited"],
+  ["Using", "Used"],
+  ["Listing", "Listed"],
+  ["Looking", "Looked"],
+]);
 
 const READS = new Set(["cat", "sed", "head", "tail", "nl", "less", "bat"]);
 const SEARCHES = new Set(["rg", "grep"]);
 const LISTS = new Set(["ls", "fd", "find", "tree"]);
 const SETUP = new Set(["cd", "pwd", "echo", "set", "export", "true"]);
 const VALUED = new Set(["-g", "--glob", "-t", "--type", "-A", "-B", "-C", "-m", "--max-count"]);
-const nobody: Names = () => {};
 
-// What an agent is doing right now, from one ACP session/update. A thought keeps its own words.
-export function stepOf(update: Update, names = nobody): Did | undefined {
+const filled = (text: string | undefined) => text !== undefined && text !== "";
+
+const nameIn = (names: Names | undefined, id: string | undefined) =>
+  id === undefined ? undefined : names?.(id);
+
+export function stepOf(update: Update, names?: Names): Did | undefined {
   switch (update.sessionUpdate) {
     case "tool_call": {
       const did = step(update, names);
 
-      return did && { ...did, id: update.toolCallId };
+      return did === undefined ? undefined : { ...did, id: update.toolCallId };
     }
 
     case "agent_message_chunk": {
       const text = update.content.type === "text" ? firstParagraph(update.content.text) : undefined;
 
-      return text ? { kind: "say", text } : undefined;
+      return text === undefined ? undefined : { kind: "say", text };
     }
 
     case "agent_thought_chunk": {
-      return {
-        kind: "think",
-        text: (update.content.type === "text" && plain(update.content.text)) || "Thinking",
-      };
+      const thought = update.content.type === "text" ? plain(update.content.text) : "";
+
+      return { kind: "think", text: thought === "" ? "Thinking" : thought };
     }
 
     case "plan": {
       const text = update.entries.find((entry) => entry.status === "in_progress")?.content;
 
-      return text ? { kind: "plan", text } : undefined;
+      return text !== undefined && text !== "" ? { kind: "plan", text } : undefined;
+    }
+
+    case "user_message_chunk":
+    case "tool_call_update":
+    case "plan_update":
+    case "plan_removed":
+    case "available_commands_update":
+    case "current_mode_update":
+    case "config_option_update":
+    case "session_info_update":
+    case "usage_update":
+    case "notice":
+    case "compaction_update":
+    case "compaction_summary_chunk":
+    case "subagent_update":
+    case "session_message":
+    case "session_message_chunk": {
+      return undefined;
     }
   }
 }
 
-// How a tool call came back, from its last update: whether it worked, the first lines it said where
-// they're worth reading (not a file's body or a hand-off's receipt), and the agent it started.
 export function backOf(update: Update): Pick<Did, "state" | "result" | "agent"> | undefined {
   if (
     update.sessionUpdate !== "tool_call_update" ||
     (update.status !== "completed" && update.status !== "failed")
   ) {
-    return;
+    return undefined;
   }
 
-  const tool: string = (update._meta as any)?.claudeCode?.toolName ?? "";
+  const tool = claudeCodeMeta.parse(update._meta).claudeCode?.toolName ?? "";
   const state = update.status === "failed" ? "failed" : "done";
-  const text = said(update.rawOutput);
+  const text = toolSaid.parse(update.rawOutput);
 
   const agent =
     tool === "Agent" || tool === "Task"
-      ? /agentId: (\w+)/.exec(text)?.[1]
+      ? /agentId: (\w+)/u.exec(text)?.[1]
       : tool === "mcp__t3-code__delegate_task"
-        ? json(text)?.childThreadId
+        ? childThreadOf(text)
         : undefined;
 
-  const result = state === "failed" || !QUIET.test(tool) ? firstLines(text) : undefined;
+  const result =
+    state === "failed" || !SAYS_NOTHING_WORTH_READING.test(tool) ? firstLines(text) : undefined;
 
-  return { state, ...(result && { result }), ...(agent && { agent }) };
+  return {
+    state,
+    ...(result !== undefined && result !== "" && { result }),
+    ...(agent !== undefined && agent !== "" && { agent }),
+  };
 }
 
-// A finished step's words: what it was doing, now done.
 export function past(text: string) {
-  const [first, rest] = [text.split(" ")[0]!, text.slice(text.indexOf(" "))];
+  const first = text.split(" ")[0] ?? "";
+  const rest = text.slice(text.indexOf(" "));
+  const done = PAST.get(first);
 
-  return PAST[first] && text.includes(" ") ? `${PAST[first]}${rest}` : text;
+  return done !== undefined && done !== "" && text.includes(" ") ? `${done}${rest}` : text;
 }
 
-// The same in a few plain words, for a call's agent line, where a thought is just Thinking.
 export function headline(update: Update): string | undefined {
   const did = stepOf(update);
 
   return did?.kind === "think" ? "Thinking" : did?.text;
 }
 
-// A turn item as a step, from what T3 Code keeps of it: its words, what it acted on and what came back.
 export function itemStep(
-  { id, type, status, payload: item }: Item,
-  names = nobody,
+  { id, type, status, payload }: Item,
+  names?: Names,
 ): (Did & { at: string; end?: string }) | undefined {
+  const item = itemPayload.parse(payload);
   const did = itemDid(type, item, names);
 
   if (!did) {
-    return;
+    return undefined;
   }
 
   const tool = !["think", "say", "plan"].includes(did.kind);
@@ -176,46 +337,57 @@ export function itemStep(
     ...did,
     ...(tool && state !== "running" && { text: past(did.text) }),
     id,
-    at: item.startedAt ?? item.updatedAt,
-    ...(tool && state !== "running" && item.completedAt && { end: item.completedAt }),
+    at: item.startedAt ?? item.updatedAt ?? "",
+    ...(tool &&
+      state !== "running" &&
+      item.completedAt !== undefined &&
+      item.completedAt !== "" && { end: item.completedAt }),
     ...(tool && { state }),
   };
 }
 
-function itemDid(type: string, item: any, names: Names): Did | undefined {
+function itemDid(type: string, item: ItemPayload, names: Names | undefined): Did | undefined {
   switch (type) {
     case "command_execution": {
-      const command = unwrap((item.input ?? "").trim());
+      const command = withoutCodexShellWrap(z.string().catch("").parse(item.input).trim());
 
       return {
         kind: "run",
         text: commandWords(command),
-        ...clipped({ detail: command, result: firstLines(item.output ?? "") }),
-        ...(typeof item.exitCode === "number" && item.exitCode !== 0 && { state: "failed" }),
+        ...clipped({
+          detail: command,
+          result: firstLines(z.string().catch("").parse(item.output)),
+        }),
+        ...(item.exitCode !== undefined && item.exitCode !== 0 && { state: "failed" }),
       };
     }
 
     case "web_search": {
-      const patterns: string[] = [
-        ...new Set<string>(item.patterns ?? (item.query ? [item.query] : [])),
+      const patterns = [
+        ...new Set<string>(item.patterns ?? (filled(item.query) ? [item.query ?? ""] : [])),
       ];
 
       const [, what, page] =
-        patterns.map((pattern) => /^'(.+)' in (https?:\/\/\S+)$/.exec(pattern)).find(Boolean) ?? [];
+        patterns
+          .map((pattern) => /^'(.+)' in (https?:\/\/\S+)$/u.exec(pattern))
+          .find((match) => match !== null) ?? [];
 
-      const text = what
-        ? `Looking for ${what} on ${host(page!)}`
-        : /^https?:\/\//.test(patterns[0] ?? "")
-          ? `Reading ${host(patterns[0]!)}`
-          : patterns[0]
-            ? `Searching the web for ${patterns[0]}`
-            : "Searching the web";
+      const [first] = patterns;
+
+      const text =
+        what !== undefined && page !== undefined
+          ? `Looking for ${what} on ${host(page)}`
+          : first !== undefined && /^https?:\/\//u.test(first)
+            ? `Reading ${host(first)}`
+            : first !== undefined && first !== ""
+              ? `Searching the web for ${first}`
+              : "Searching the web";
 
       return { kind: "web", text, ...clipped({ detail: patterns.join("\n") }) };
     }
 
     case "file_change": {
-      const diff: string[] = (item.diffStr ?? "").split("\n");
+      const diff = (item.diffStr ?? "").split("\n");
       const added = diff.filter((line) => line.startsWith("+") && !line.startsWith("+++")).length;
       const removed = diff.filter((line) => line.startsWith("-") && !line.startsWith("---")).length;
 
@@ -223,64 +395,66 @@ function itemDid(type: string, item: any, names: Names): Did | undefined {
         kind: "edit",
         text: `Editing ${basename(item.fileName ?? "a file")}`,
         ...clipped({
-          detail: item.fileName && tilde(item.fileName),
+          detail: item.fileName === undefined ? undefined : tilde(item.fileName),
           result: `+${added} −${removed}`,
         }),
       };
     }
 
     case "dynamic_tool": {
-      const name: string = item.toolName ?? "";
+      const name = item.toolName ?? "";
 
       const [, server, tool] =
-        /^mcp__(.+?)__(.+)$/.exec(name) ?? /^([^.]+)\.(.+)$/.exec(name) ?? [];
+        /^mcp__(.+?)__(.+)$/u.exec(name) ?? /^([^.]+)\.(.+)$/u.exec(name) ?? [];
 
-      const input = item.input ?? {};
+      const input = toolInput.parse(item.input ?? {});
+      const mcp = server !== undefined && tool !== undefined;
 
-      const did: Did | undefined =
-        server && tool
-          ? called(server, tool, input, names)
-          : name === "Read"
-            ? {
-                kind: "read",
-                text: `Reading ${basename(input.file_path ?? "a file")}`,
-                ...clipped({ detail: input.file_path && tilde(input.file_path) }),
-              }
-            : name === "ToolSearch" || !name
-              ? undefined
-              : { kind: "tool", text: name, ...clipped({ detail: pairs(input) }) };
+      const did: Did | undefined = mcp
+        ? called(server, tool, input, names)
+        : name === "Read"
+          ? {
+              kind: "read",
+              text: `Reading ${basename(input.file_path ?? "a file")}`,
+              ...clipped({
+                detail: input.file_path === undefined ? undefined : tilde(input.file_path),
+              }),
+            }
+          : name === "ToolSearch" || name === ""
+            ? undefined
+            : { kind: "tool", text: name, ...clipped({ detail: input.lines }) };
 
       const quiet =
-        name === "Read" || QUIET.test(server && tool ? `mcp__${server}__${tool}` : name);
+        name === "Read" || SAYS_NOTHING_WORTH_READING.test(mcp ? `mcp__${server}__${tool}` : name);
 
-      const error = item.output?.error;
+      const error = toolOutputError.safeParse(item.output).data?.error;
+      const failed = error !== undefined && error !== null && error !== "";
 
-      const result = error
-        ? said(typeof error === "string" ? error : (error.message ?? error))
+      const result = failed
+        ? toolSaid.parse(errorMessage.safeParse(error).data?.message ?? error)
         : quiet
           ? ""
-          : said(item.output);
+          : toolSaid.parse(item.output);
 
       return (
         did && {
           ...did,
           ...clipped({ result: firstLines(result) }),
-          ...(error && { state: "failed" }),
+          ...(failed && { state: "failed" }),
         }
       );
     }
 
     case "reasoning": {
-      return {
-        kind: "think",
-        text: plain((item.text ?? "").replace(/^\*\*(.+?)\*\*\s*/, "$1. ")) || "Thinking",
-      };
+      const thought = plain((item.text ?? "").replace(/^\*\*(.+?)\*\*\s*/u, "$1. "));
+
+      return { kind: "think", text: thought === "" ? "Thinking" : thought };
     }
 
     case "assistant_message": {
       const text = firstParagraph(item.text ?? "");
 
-      return text ? { kind: "say", text } : undefined;
+      return text === undefined ? undefined : { kind: "say", text };
     }
 
     case "subagent": {
@@ -288,7 +462,8 @@ function itemDid(type: string, item: any, names: Names): Did | undefined {
         kind: "agent",
         text: `Handed off ${item.title ?? "a task"}`,
         ...clipped({ detail: firstLine(item.prompt ?? "") }),
-        ...(item.childThreadId && { agent: item.childThreadId }),
+        ...(item.childThreadId !== undefined &&
+          item.childThreadId !== "" && { agent: item.childThreadId }),
       };
     }
 
@@ -300,22 +475,28 @@ function itemDid(type: string, item: any, names: Names): Did | undefined {
         ...clipped({ result: firstLines(item.failure?.message ?? "") }),
       };
     }
+
+    default: {
+      return undefined;
+    }
   }
 }
 
 function step(
   { title, kind, rawInput, locations, _meta }: ToolCall,
-  names: Names,
+  names: Names | undefined,
 ): Did | undefined {
-  const input = (rawInput ?? {}) as Record<string, any>;
-  const tool: string = (_meta as any)?.claudeCode?.toolName ?? title;
-  const file: string | undefined = locations?.[0]?.path ?? input.file_path ?? input.notebook_path;
+  const input = toolInput.parse(rawInput ?? {});
+  const tool = claudeCodeMeta.parse(_meta).claudeCode?.toolName ?? title;
+  const file = locations?.[0]?.path ?? input.file_path ?? input.notebook_path;
 
   switch (kind) {
     case "execute": {
       return {
         kind: "run",
-        text: input.description || `Running ${firstLine(input.command ?? title)}`,
+        text: filled(input.description)
+          ? (input.description ?? "")
+          : `Running ${firstLine(input.command ?? title) ?? ""}`,
         ...clipped({ detail: input.command }),
       };
     }
@@ -323,8 +504,8 @@ function step(
     case "read": {
       return {
         kind: "read",
-        text: file ? `Reading ${basename(file)}` : title,
-        ...clipped({ detail: file && tilde(file) }),
+        text: filled(file) ? `Reading ${basename(file ?? "")}` : title,
+        ...clipped({ detail: filled(file) ? tilde(file ?? "") : file }),
       };
     }
 
@@ -332,16 +513,18 @@ function step(
       return {
         kind: "edit",
         text: `${tool === "Write" ? "Writing" : "Editing"} ${basename(file ?? title)}`,
-        ...clipped({ detail: file && tilde(file) }),
+        ...clipped({ detail: filled(file) ? tilde(file ?? "") : file }),
       };
     }
 
     case "search": {
       return {
         kind: "search",
-        text: input.pattern ? `Searching for ${input.pattern}` : title,
+        text: filled(input.pattern) ? `Searching for ${input.pattern ?? ""}` : title,
         ...clipped({
-          detail: [input.pattern, input.path && tilde(input.path)].filter(Boolean).join("\n"),
+          detail: [input.pattern, filled(input.path) ? tilde(input.path ?? "") : input.path]
+            .filter(filled)
+            .join("\n"),
         }),
       };
     }
@@ -349,40 +532,48 @@ function step(
     case "fetch": {
       return {
         kind: "web",
-        text: input.query
-          ? `Searching the web for ${input.query}`
-          : input.url
-            ? `Reading ${host(input.url)}`
+        text: filled(input.query)
+          ? `Searching the web for ${input.query ?? ""}`
+          : filled(input.url)
+            ? `Reading ${host(input.url ?? "")}`
             : title,
         ...clipped({ detail: input.query ?? input.url }),
       };
     }
 
     case "think": {
-      return input.description
+      return filled(input.description)
         ? {
             kind: "agent",
-            text: `Started ${input.description}`,
+            text: `Started ${input.description ?? ""}`,
             ...clipped({
               detail: [input.subagent_type, firstLine(input.prompt ?? "")]
-                .filter(Boolean)
+                .filter(filled)
                 .join("\n"),
             }),
           }
         : undefined;
     }
+
+    case "delete":
+    case "move":
+    case "switch_mode":
+    case "other":
+    case undefined: {
+      break;
+    }
   }
 
-  const mcp = /^mcp__(.+?)__(.+)$/.exec(tool);
+  const [, server, name] = /^mcp__(.+?)__(.+)$/u.exec(tool) ?? [];
 
-  if (mcp) {
-    return called(mcp[1], mcp[2], input, names);
+  if (server !== undefined && name !== undefined) {
+    return called(server, name, input, names);
   }
 
-  if (input.skill) {
+  if (filled(input.skill)) {
     return {
       kind: "tool",
-      text: `Using the ${input.skill} skill`,
+      text: `Using the ${input.skill ?? ""} skill`,
       ...clipped({ detail: input.args }),
     };
   }
@@ -390,155 +581,156 @@ function step(
   return title === tool ? undefined : { kind: "tool", text: title };
 }
 
-// An MCP tool in a few words: T3 Code's hand-offs by the agent or thread they're about, any other by
-// its app and its name, with what it was given.
-function called(server: string, tool: string, input: Record<string, any>, names: Names): Did {
+function called(server: string, tool: string, input: ToolInput, names: Names | undefined): Did {
   if (server === "t3-code") {
     switch (tool) {
-      case "delegate_task":
+      case "delegate_task": {
         return {
           kind: "agent",
           text: `Handed off ${input.title ?? "a task"}`,
           ...clipped({ detail: firstLine(input.task ?? "") }),
         };
-      case "task_status":
-        return { kind: "tool", text: `Checked on ${names(input.taskId) ?? "an agent"}` };
-      case "task_cancel":
+      }
+
+      case "task_status": {
+        return { kind: "tool", text: `Checked on ${nameIn(names, input.taskId) ?? "an agent"}` };
+      }
+
+      case "task_cancel": {
         return {
           kind: "tool",
-          text: `Stopped ${names(input.taskId) ?? "an agent"}`,
+          text: `Stopped ${nameIn(names, input.taskId) ?? "an agent"}`,
           ...clipped({ detail: input.reason }),
         };
-      case "t3_thread_wait":
+      }
+
+      case "t3_thread_wait": {
         return { kind: "tool", text: "Waiting on agents" };
-      case "t3_thread_send":
+      }
+
+      case "t3_thread_send": {
         return {
           kind: "tool",
-          text: `Wrote to ${names(input.threadId) ?? "a thread"}`,
+          text: `Wrote to ${nameIn(names, input.threadId) ?? "a thread"}`,
           ...clipped({ detail: input.message }),
         };
-      case "t3_thread_read":
-        return { kind: "tool", text: `Read ${names(input.threadId) ?? "a thread"}` };
+      }
+
+      case "t3_thread_read": {
+        return { kind: "tool", text: `Read ${nameIn(names, input.threadId) ?? "a thread"}` };
+      }
+
+      default: {
+        break;
+      }
     }
   }
 
-  const app = server
-    .split("_")
-    .at(-1)!
+  const app = (server.split("_").at(-1) ?? "")
     .split("-")
-    .map((word) => word.replace(/^./, (letter) => letter.toUpperCase()))
+    .map((word) => word.replace(/^./u, (letter) => letter.toUpperCase()))
     .join(" ");
 
   return {
     kind: "tool",
     text: `${app}: ${tool.replaceAll("_", " ")}`,
-    ...clipped({ detail: pairs(input) }),
+    ...clipped({ detail: input.lines }),
   };
 }
 
-// A command in a few plain words, for a provider that gives none: the file it reads or writes, what
-// it looks for or lists, or the program it runs, from its first command past any setup like cd or
-// one whose output is thrown away.
+const silent = (part: string[]) =>
+  part.some((token, i) => /^1?>>?$/u.test(token) && part[i + 1] === "/dev/null");
+
+const redirect = (arg = "") => /^\d*>>?$/u.test(arg);
+
+const cut = (text: string, size: number) =>
+  text.length > size ? `${text.slice(0, size - 1)}…` : text;
+
 function commandWords(command: string) {
   const tokens =
-    command.match(/'[^']*'|"(?:\\.|[^"\\])*"|&&|\|\||[;|\n]|\d*>>?|[^\s;|&'"<>]+/g) ?? [];
+    command.match(/'[^']*'|"(?:\\.|[^"\\])*"|&&|\|\||[;|\n]|\d*>>?|[^\s;|&'"<>]+/gu) ?? [];
 
-  const parts: string[][] = [[]];
+  let current: string[] = [];
+  const parts = [current];
 
   for (const token of tokens) {
-    /^(&&|\|\||[;|\n])$/.test(token)
-      ? parts.push([])
-      : parts.at(-1)!.push(token.replace(/^(['"])([\s\S]*)\1$/, "$2"));
+    if (/^(&&|\|\||[;|\n])$/u.test(token)) {
+      current = [];
+      parts.push(current);
+    } else {
+      current.push(token.replace(/^(['"])([\s\S]*)\1$/u, "$2"));
+    }
   }
-
-  const silent = (part: string[]) =>
-    part.some((token, i) => /^1?>>?$/.test(token) && part[i + 1] === "/dev/null");
 
   const [name, ...args] =
-    parts.find((part) => part.length && !SETUP.has(part[0]!) && !silent(part)) ?? [];
+    parts.find((part) => {
+      const [first] = part;
 
-  if (!name) {
-    return `Running ${firstLine(command)}`;
+      return first !== undefined && !SETUP.has(first) && !silent(part);
+    }) ?? [];
+
+  if (name === undefined || name === "") {
+    return `Running ${firstLine(command) ?? ""}`;
   }
 
-  const redirect = (arg = "") => /^\d*>>?$/.test(arg);
   const out = args.findIndex((arg) => arg === ">" || arg === ">>");
-  const into = out !== -1 ? args[out + 1] : undefined;
+  const into = out === -1 ? undefined : args[out + 1];
 
-  const plain = args.filter(
+  const plainArgs = args.filter(
     (arg, i) =>
-      !arg.startsWith("-") && !redirect(arg) && !redirect(args[i - 1]) && !VALUED.has(args[i - 1]!),
+      !arg.startsWith("-") &&
+      !redirect(arg) &&
+      !redirect(args[i - 1]) &&
+      !VALUED.has(args[i - 1] ?? ""),
   );
 
-  if (into && (READS.has(name) || name === "tee")) {
-    return `Writing ${basename(into)}`;
+  if (filled(into) && (READS.has(name) || name === "tee")) {
+    return `Writing ${basename(into ?? "")}`;
   }
 
-  if (READS.has(name) && plain.length) {
-    return `Reading ${basename(plain.at(-1)!)}`;
+  const last = plainArgs.at(-1);
+
+  if (READS.has(name) && last !== undefined) {
+    return `Reading ${basename(last)}`;
   }
 
-  const place = plain.find((arg) => arg !== ".");
+  const place = plainArgs.find((arg) => arg !== ".");
 
   if (LISTS.has(name) || args.includes("--files")) {
-    return `Listing ${place ? basename(place) : "files"}`;
+    return `Listing ${filled(place) ? basename(place ?? "") : "files"}`;
   }
 
-  if (SEARCHES.has(name) && plain.length) {
-    return `Searching for ${plain[0]}`;
+  const [term] = plainArgs;
+
+  if (SEARCHES.has(name) && term !== undefined) {
+    return `Searching for ${term}`;
   }
 
-  return `Running ${name}${/^[a-z][a-z-]*$/.test(args[0] ?? "") ? ` ${args[0]}` : ""}`;
+  return `Running ${name}${/^[a-z][a-z-]*$/u.test(args[0] ?? "") ? ` ${args[0] ?? ""}` : ""}`;
 }
 
-// A step's detail and result, kept to what a line on a phone can show, and left out when empty.
-function clipped({ detail, result }: { detail?: string; result?: string }) {
-  const cut = (text: string, size: number) =>
-    text.length > size ? `${text.slice(0, size - 1)}…` : text;
+function clipped({ detail, result }: { detail?: string | undefined; result?: string | undefined }) {
+  const shownDetail = detail?.trim() ?? "";
+  const shownResult = result?.trim() ?? "";
 
   return {
-    ...(detail?.trim() && { detail: cut(detail.trim(), 240) }),
-    ...(result?.trim() && { result: cut(result.trim(), 400) }),
+    ...(shownDetail !== "" && { detail: cut(shownDetail, 240) }),
+    ...(shownResult !== "" && { result: cut(shownResult, 400) }),
   };
-}
-
-// What a tool said, as text: its own words, the text of its blocks, or its fields.
-function said(output: unknown): string {
-  if (typeof output === "string") {
-    return output;
-  }
-
-  if (Array.isArray(output)) {
-    return output.flatMap((block) => (block?.type === "text" ? [block.text] : [])).join("\n");
-  }
-
-  return output && typeof output === "object" ? pairs(output as Record<string, unknown>) : "";
-}
-
-// An input or an output's plain fields as `key: value` lines.
-function pairs(input: Record<string, unknown>) {
-  return Object.entries(input)
-    .flatMap(([key, value]) =>
-      ["string", "number", "boolean"].includes(typeof value) && value !== ""
-        ? [`${key}: ${firstLine(String(value)) ?? ""}`]
-        : [],
-    )
-    .join("\n");
 }
 
 function firstLines(text: string) {
   return text.trim().split("\n").slice(0, 6).join("\n");
 }
 
-// A command as it was typed, without the `bash -lc "…"` Codex wraps it in.
-function unwrap(command: string) {
-  const [, quote, inner] = /^(?:\S*\/)?(?:ba|z)?sh -l?c (["'])([\s\S]*)\1$/.exec(command) ?? [];
+function withoutCodexShellWrap(command: string) {
+  const [, quote, inner] = /^(?:\S*\/)?(?:ba|z)?sh -l?c (["'])([\s\S]*)\1$/u.exec(command) ?? [];
 
-  if (!inner) {
+  if (inner === undefined || inner === "") {
     return command;
   }
 
-  return quote === '"' ? inner.replaceAll(/\\(["\\$`])/g, "$1") : inner.replaceAll(`'"'"'`, `'`);
+  return quote === '"' ? inner.replaceAll(/\\(["\\$`])/gu, "$1") : inner.replaceAll(`'"'"'`, `'`);
 }
 
 function host(url: string) {
@@ -553,72 +745,101 @@ function tilde(path: string) {
   return path.startsWith(homedir()) ? `~${path.slice(homedir().length)}` : path;
 }
 
-function json(text: string) {
+function childThreadOf(text: string): string | undefined {
   try {
-    return JSON.parse(text);
-  } catch {}
+    return delegated.safeParse(JSON.parse(text)).data?.childThreadId;
+  } catch {
+    return undefined;
+  }
 }
 
 function plain(text: string) {
   return text
-    .replaceAll(/\*\*|__|`/g, "")
-    .replaceAll(/\s+/g, " ")
+    .replaceAll(/\*\*|__|`/gu, "")
+    .replaceAll(/\s+/gu, " ")
     .trim();
 }
 
-// A text's first line, without its markdown or a list marker.
 export function firstLine(text: string) {
   const line = unmark(
-    text
-      .trim()
-      .split("\n")[0]
-      .replace(/^(#+|[-*>]|\d+\.)\s+/, ""),
+    (text.trim().split("\n")[0] ?? "").replace(/^(#+|[-*>]|\d+\.)\s+/u, ""),
   ).trim();
 
-  return line ? line.slice(0, 160) : undefined;
+  return line === "" ? undefined : line.slice(0, 160);
 }
 
-// A text's first paragraph whole, as one line without its markdown or list markers.
 export function firstParagraph(text: string) {
-  const paragraph = text.trim().split(/\n\s*\n/)[0]!;
+  const paragraph = text.trim().split(/\n\s*\n/u)[0] ?? "";
 
-  const lines = paragraph
+  const paragraphLines = paragraph
     .split("\n")
-    .map((line) => line.trim().replace(/^(#+|[-*>]|\d+\.)\s+/, ""));
+    .map((line) => line.trim().replace(/^(#+|[-*>]|\d+\.)\s+/u, ""));
 
-  return unmark(lines.join(" ")).trim() || undefined;
+  const joined = unmark(paragraphLines.join(" ")).trim();
+
+  return joined === "" ? undefined : joined;
 }
 
-// Markdown's marks dropped and its links read as their words, for text shown plain.
 export function unmark(text: string) {
-  return text.replaceAll(/\*\*|__|`/g, "").replaceAll(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+  return text.replaceAll(/\*\*|__|`/gu, "").replaceAll(/\[([^\]]+)\]\([^)]*\)/gu, "$1");
 }
 
-// Follows one Claude Code transcript as Claude Code writes it (a file change, not a timer), from
-// a byte offset or its end, once after has settled: every new line, and the ACP updates its assistant
-// content and tool results make, converted when asked for. A line cut in half by the offset is
-// skipped. It reads a chunk at a time, off the thread, so a long transcript never holds up the
-// process, and one read at a time, so lines come in order.
+function contentOf(entry: TranscriptLine): { role: Notify[1]; content: Notify[0] } | undefined {
+  const content = entry.message?.content;
+
+  const role =
+    entry.type === "assistant"
+      ? "assistant"
+      : entry.type === "user" && Array.isArray(content)
+        ? "user"
+        : undefined;
+
+  if (role === undefined) {
+    return undefined;
+  }
+
+  // SAFETY: Claude Code writes each turn's content as the API's own content blocks.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the blocks pass through to the ACP converter as written
+  return { role, content: content as Notify[0] };
+}
+
 export function followTranscript(
   path: string,
   from: number | "end",
-  onEntry: (entry: any, updates: () => Update[]) => void,
+  onEntry: (entry: TranscriptLine, updates: () => Update[]) => void,
   after: Promise<unknown> = Promise.resolve(),
 ) {
-  const tools = {};
-  const tasks = new Map();
+  const tools: Notify[3] = {};
+  const tasks: NonNullable<NonNullable<Notify[6]>["taskState"]> = new Map();
   let offset = from === "end" ? sizeOf(path) : from;
   let rest = Buffer.alloc(0);
   let closed = false;
   mkdirSync(dirname(path), { recursive: true });
-  const watcher = watch(dirname(path), (_, file) => file === basename(path) && read());
-  let reading = after.then(() => {});
-  read();
+
+  const watcher = watch(dirname(path), (_, file) => {
+    if (file === basename(path)) {
+      void read();
+    }
+  });
+
+  let reading: Promise<unknown> = after;
+  void read();
 
   function read() {
-    return (reading = reading
-      .then(more)
-      .catch((error) => logger.error(`couldn't read ${path}: ${error}`)));
+    const previous = reading;
+
+    const next = (async () => {
+      try {
+        await previous;
+        await more();
+      } catch (error) {
+        logger.error(`couldn't read ${path}: ${String(error)}`);
+      }
+    })();
+
+    reading = next;
+
+    return next;
   }
 
   async function more() {
@@ -626,18 +847,21 @@ export function followTranscript(
       return;
     }
 
-    const file = await fs.open(path, "r").catch(() => {});
+    let file: fs.FileHandle;
 
-    if (!file) {
+    try {
+      file = await fs.open(path, "r");
+    } catch {
       return;
     }
 
     try {
+      // oxlint-disable-next-line eslint/no-unmodified-loop-condition -- the closer sets closed while a read awaits
       for (const { size } = await file.stat(); offset < size && !closed;) {
         const chunk = Buffer.alloc(Math.min(size - offset, CHUNK));
         const { bytesRead } = await file.read(chunk, 0, chunk.length, offset);
 
-        if (!bytesRead) {
+        if (bytesRead === 0) {
           return;
         }
 
@@ -647,8 +871,11 @@ export function followTranscript(
         rest = data.subarray(last + 1);
 
         if (last !== -1) {
-          for (const line of data.subarray(0, last).toString("utf8").split("\n"))
-            if (!closed) take(line);
+          for (const line of data.subarray(0, last).toString("utf-8").split("\n")) {
+            if (!closed) {
+              take(line);
+            }
+          }
         }
       }
     } finally {
@@ -657,91 +884,101 @@ export function followTranscript(
   }
 
   function take(line: string) {
-    let entry;
+    let raw: unknown;
 
     try {
-      entry = JSON.parse(line);
+      raw = JSON.parse(line);
     } catch {
       return;
     }
 
-    const content =
-      entry.type === "assistant" || (entry.type === "user" && Array.isArray(entry.message?.content))
-        ? entry.message.content
-        : undefined;
+    const entry = transcriptLine.parse(raw);
+    const turn = contentOf(entry);
 
     onEntry(entry, () =>
-      content
-        ? toAcpNotifications(content, entry.type, entry.sessionId ?? "", tools, client, logger, {
-            registerHooks: false,
-            replay: true,
-            cwd: entry.cwd ?? "",
-            taskState: tasks,
-            messageId: entry.message.id,
-            toolUseResult: entry.toolUseResult,
-          }).map((notification) => notification.update)
+      turn
+        ? toAcpNotifications(
+            turn.content,
+            turn.role,
+            entry.sessionId ?? "",
+            tools,
+            client,
+            logger,
+            {
+              registerHooks: false,
+              replay: true,
+              cwd: entry.cwd ?? "",
+              taskState: tasks,
+              ...(entry.message?.id !== undefined && { messageId: entry.message.id }),
+              toolUseResult: entry.toolUseResult,
+            },
+          ).map((notification) => notification.update)
         : [],
     );
   }
 
-  // last: read what the file has that the watcher hasn't brought yet, first; it settles once read.
-  return (last = false): Promise<void> => {
+  return async (readTheRestFirst = false): Promise<void> => {
     watcher.close();
 
-    if (!last) {
+    if (!readTheRestFirst) {
       closed = true;
     }
 
-    return read().then(() => void (closed = true));
+    await read();
+    closed = true;
   };
 }
 
-// A background subagent's live steps, by the agentId its Agent call returned. Its own session's
-// subagents come first; any session's will do.
 export function followAgent(
   agent: string,
   session: string | undefined,
   onStep: (step: Step) => void,
-) {
+): ReturnType<typeof followTranscript> | undefined {
   if (!ID.test(agent)) {
-    return;
+    return undefined;
   }
 
   const patterns = [
-    ...(session && ID.test(session) ? [`*/${session}/subagents/agent-${agent}.jsonl`] : []),
+    ...(session !== undefined && ID.test(session)
+      ? [`*/${session}/subagents/agent-${agent}.jsonl`]
+      : []),
     `*/*/subagents/agent-${agent}.jsonl`,
   ];
 
   for (const pattern of patterns) {
-    for (const path of new Bun.Glob(pattern).scanSync({ cwd: projects(), absolute: true }))
+    const [path] = new Bun.Glob(pattern).scanSync({ cwd: projects(), absolute: true });
+
+    if (path !== undefined) {
       return followTranscript(path, 0, (_, updates) => {
         lines(updates(), onStep);
       });
+    }
   }
+
+  return undefined;
 }
 
 type Named = { app: string; thread: string; name: string; open?: boolean };
 
-// hex's General: the Telegram group HEX_MAIN_THREAD names, the one its bot opens topics in, else
-// the first open group chat hex.db has.
 export function generalOf<T extends Named>(
   threads: Iterable<T>,
   main = process.env.HEX_MAIN_THREAD,
 ) {
   const groups = [...threads].filter(
-    ({ app, thread }) => app === "telegram" && /^-\d+$/.test(thread),
+    ({ app, thread }) => app === "telegram" && /^-\d+$/u.test(thread),
   );
 
-  return groups.find(({ thread }) => thread === main) ?? groups.find(({ open }) => open !== false);
+  return (
+    groups.find(({ thread }) => thread === main) ?? groups.find((group) => group.open !== false)
+  );
 }
 
-// What a thread is called on screen: General is General, whatever hex.db names it.
 export function nameOf({ app, thread, name }: Named, general?: Named) {
-  return general && app === general.app && thread === general.thread ? "General" : name;
+  return general !== undefined && app === general.app && thread === general.thread
+    ? "General"
+    : name;
 }
 
-// An open hex thread (a Telegram topic, a Discord, Buzz or T3 Code thread) from hex.db, by its key or
-// its id as `hex threads --json` gives it (app:key), else by its name, as hex.db keeps it or as it's shown.
 export function findThread(state: string, wanted: string): Thread | undefined {
   const store = open(state);
   const key = store.key(wanted);
@@ -751,10 +988,10 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 
   const ways = [
     all.filter(({ thread }) => thread === key),
-    all.filter((found) => is(found.name) || is(nameOf(found, general))),
+    all.filter((one) => is(one.name) || is(nameOf(one, general))),
   ];
 
-  const matches = ways.find((found) => found.length) ?? [];
+  const matches = ways.find((way) => way.length > 0) ?? [];
 
   if (matches.length > 1) {
     throw new Error(
@@ -762,27 +999,21 @@ export function findThread(state: string, wanted: string): Thread | undefined {
     );
   }
 
-  const found = matches[0];
+  const [found] = matches;
 
-  return (
-    found && {
-      app: found.app,
-      id: found.thread,
-      name: nameOf(found, general),
-      cwd: found.cwd,
-      state,
-    }
-  );
+  return found === undefined
+    ? undefined
+    : {
+        app: found.app,
+        id: found.thread,
+        name: nameOf(found, general),
+        ...(found.cwd !== undefined && { cwd: found.cwd }),
+        state,
+      };
 }
 
-// One message sent to a hex thread, followed through its session's transcript: it waits until the
-// session takes in the message carrying `tag`, shows each step after that (its background agents'
-// steps too), and ends when a turn ends with none of those agents still out. A new session for the
-// thread (a renewal or a restart) shows up in hex.db and is followed from its start, past what it
-// copied when resumed from an earlier one: a copy keeps each entry's uuid and time. Following
-// resumes a message sent earlier from the start of the session that took it, as hex.db has it,
-// then goes on in the thread's session now, if that's another. A session between the two isn't
-// read, though what the session now copied from it is, as its own.
+const nothingToStop = (_last?: boolean) => Promise.resolve();
+
 export function followThread(
   thread: Thread,
   hexDir: string,
@@ -792,23 +1023,29 @@ export function followThread(
 ) {
   const agents = new Map<string, (last?: boolean) => Promise<void>>();
   let session: string | undefined;
-  let stopSession = (_last?: boolean) => Promise.resolve();
+  let stopSession = nothingToStop;
   let picked = false;
   let failed = false;
   let ended = false;
-  // Every entry already read, in this session or one before it, which a copy carries with the same uuid.
-  const seen = new Set<string>();
-  // When the session took the message in: a copy's history from before it keeps its older times.
-  let floor: string | undefined;
-  // When hex's record last said the session's turn ended, as of the last look.
-  let turnEnd: string | undefined;
+  const uuidsReadHereOrCopiedFromBefore = new Set<string>();
+  let tookTheMessageAtBeforeWhichACopyKeepsOlderTimes: string | undefined;
+  let turnEndAtTheLastLook: string | undefined;
 
-  const project = join(projects(), (thread.cwd ?? hexDir).replaceAll(/[^a-zA-Z0-9]/g, "-"));
+  const project = join(projects(), (thread.cwd ?? hexDir).replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   const transcript = (id: string) => join(project, `${id}.jsonl`);
   const store = open(thread.state);
   const taken = resumed ? store.taker(thread.id, "voice_task", tag) : undefined;
-  const took = taken && ID.test(taken.by) && existsSync(transcript(taken.by)) ? taken : undefined;
-  const stopState = store.watch(() => (locate(), died()));
+
+  const took =
+    taken !== undefined && ID.test(taken.by) && existsSync(transcript(taken.by))
+      ? taken
+      : undefined;
+
+  const stopState = store.watch(() => {
+    locate();
+    endIfTheSessionDiedMidTurn();
+  });
+
   locate();
 
   function locate() {
@@ -818,23 +1055,25 @@ export function followThread(
 
     const next = session === undefined && took ? took.by : current;
 
-    if (ended || !next || next === session || !ID.test(next)) {
+    if (ended || next === undefined || next === "" || next === session || !ID.test(next)) {
       return;
     }
 
-    // hex.db can still name the session before the one that took the message, for a moment.
-    if (took && session === took.by && (store.lastTaken(next) ?? took.at) < took.at) {
+    const hexDbStillNamesTheSessionBeforeTheOneThatTookIt =
+      took !== undefined && session === took.by && (store.lastTaken(next) ?? took.at) < took.at;
+
+    if (hexDbStillNamesTheSessionBeforeTheOneThatTookIt) {
       return;
     }
 
     const fresh = resumed || session !== undefined;
     const read = stopSession(true);
     session = next;
-    turnEnd = undefined;
+    turnEndAtTheLastLook = undefined;
     const stop = followTranscript(transcript(session), fresh ? 0 : "end", take, read);
 
     if (ended) {
-      stop();
+      void stop();
     } else {
       stopSession = stop;
     }
@@ -844,47 +1083,58 @@ export function followThread(
     }
   }
 
-  function take(entry: any, updates: () => Update[]) {
-    if (ended || seen.has(entry.uuid)) {
+  function take(entry: TranscriptLine, updates: () => Update[]) {
+    if (ended || uuidsReadHereOrCopiedFromBefore.has(entry.uuid ?? "")) {
       return;
     }
 
-    if (entry.uuid) {
-      seen.add(entry.uuid);
+    if (filled(entry.uuid)) {
+      uuidsReadHereOrCopiedFromBefore.add(entry.uuid ?? "");
     }
 
-    if (floor && entry.timestamp < floor) {
+    const floor = tookTheMessageAtBeforeWhichACopyKeepsOlderTimes;
+
+    if (filled(floor) && entry.timestamp !== undefined && entry.timestamp < (floor ?? "")) {
       return;
     }
 
     if (!picked) {
       const text = channelMessage(entry);
-      picked = !!text && text.slice(0, text.indexOf(">") + 1).includes(` voice_task="${tag}"`);
+
+      picked =
+        text !== undefined &&
+        text !== "" &&
+        text.slice(0, text.indexOf(">") + 1).includes(` voice_task="${tag}"`);
 
       if (picked) {
-        floor = entry.timestamp;
+        tookTheMessageAtBeforeWhichACopyKeepsOlderTimes = entry.timestamp;
       }
 
       return;
     }
 
-    const launched = entry.toolUseResult?.isAsync && entry.toolUseResult.agentId;
+    const launched = asyncLaunch.safeParse(entry.toolUseResult).data?.agentId;
 
-    if (launched && ID.test(launched) && !agents.has(launched)) {
+    if (
+      launched !== undefined &&
+      ID.test(launched) &&
+      !agents.has(launched) &&
+      session !== undefined
+    ) {
       agents.set(
         launched,
         followTranscript(
-          join(project, session!, "subagents", `agent-${launched}.jsonl`),
+          join(project, session, "subagents", `agent-${launched}.jsonl`),
           0,
-          (_, updates) => {
-            lines(updates(), onStep);
+          (_, agentUpdates) => {
+            lines(agentUpdates(), onStep);
           },
         ),
       );
     }
 
     for (const back of agentsBack(entry)) {
-      agents.get(back)?.(true);
+      void agents.get(back)?.(true);
       agents.delete(back);
     }
 
@@ -894,49 +1144,50 @@ export function followThread(
 
     lines(updates(), onStep);
 
-    if (entry.type === "system" && entry.subtype === "turn_duration" && !agents.size) {
+    if (entry.type === "system" && entry.subtype === "turn_duration" && agents.size === 0) {
       close();
       onStep({ end: failed ? "failed" : "done" });
     }
   }
 
-  // A session that dies mid-turn never ends it in its transcript: the hub ends it in hex's record
-  // once the session is gone, and the work it was on failed.
-  function died() {
-    if (ended || !picked || !session) {
+  function endIfTheSessionDiedMidTurn() {
+    if (ended || !picked || session === undefined) {
       return;
     }
 
     const end = store.turn(session).ended;
 
-    if (end === turnEnd) {
+    if (end === turnEndAtTheLastLook) {
       return;
     }
 
-    turnEnd = end;
+    turnEndAtTheLastLook = end;
 
-    if (!end || running(store, claude()).has(session)) {
+    if (end === undefined || end === "" || running(store, claude()).has(session)) {
       return;
     }
 
     const dead = session;
-    void stopSession(true).then(() => {
+
+    void (async () => {
+      await stopSession(true);
+
       if (ended || session !== dead) {
         return;
       }
 
       close();
       onStep({ end: "failed" });
-    });
+    })();
   }
 
   function close() {
     ended = true;
     stopState();
-    stopSession();
+    void stopSession();
 
     for (const stop of agents.values()) {
-      stop();
+      void stop();
     }
 
     agents.clear();
@@ -945,10 +1196,7 @@ export function followThread(
   return close;
 }
 
-// The background agents a session was just told are back, in a turn of its own or queued while a
-// turn ran: each notice in it names one or more in its header, before its status. A notice with
-// no status says they were restarted with their session, and are still out.
-function agentsBack(entry: any): string[] {
+function agentsBack(entry: TranscriptLine): string[] {
   const queued = entry.attachment?.type === "queued_command" ? entry.attachment : undefined;
 
   if (
@@ -965,39 +1213,30 @@ function agentsBack(entry: any): string[] {
 
     return status === -1
       ? []
-      : Array.from(
-          block.slice(0, status).matchAll(/<task-id>([\w-]+)<\/task-id>/g),
-          (match) => match[1],
+      : [...block.slice(0, status).matchAll(/<task-id>([\w-]+)<\/task-id>/gu)].flatMap(
+          (match) => match[1] ?? [],
         );
   });
 }
 
-// A channel message as a session took it in: a turn of its own, or queued while a turn ran. Only its
-// opening tag is the channel's; the rest is the message's own words.
-function channelMessage(entry: any): string | undefined {
+function channelMessage(entry: TranscriptLine): string | undefined {
   const queued = entry.attachment?.type === "queued_command" ? entry.attachment : undefined;
 
   if (
     !(entry.type === "user" && entry.origin?.kind === "channel") &&
     queued?.origin?.kind !== "channel"
   ) {
-    return;
+    return undefined;
   }
 
-  const content = queued ? queued.prompt : entry.message?.content;
-
-  return typeof content === "string"
-    ? content
-    : Array.isArray(content)
-      ? content.map((block) => block?.text ?? "").join("")
-      : "";
+  return channelText.parse(queued ? queued.prompt : entry.message?.content);
 }
 
 function lines(updates: Update[], onStep: (step: Step) => void) {
   for (const update of updates) {
     const line = headline(update);
 
-    if (line) {
+    if (line !== undefined && line !== "") {
       onStep({ line });
     }
   }
