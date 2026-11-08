@@ -1,11 +1,209 @@
+import { z } from "zod";
+
+import { tool } from "../../hub/hub.ts";
 import type { ChannelServer } from "../../hub/hub.ts";
 
-const titleProperty = {
-  type: "string",
-  description: 'One word, like a chat name ("Anchors", "Frontier").',
-};
+const title = z.string().describe('One word, like a chat name ("Anchors", "Frontier").');
+const limit = z.number().describe("Max messages (default 20, max 100).");
 
-// What each session's channel says and offers; the hub serves it over HTTP.
+export const tools = [
+  tool({
+    name: "reply",
+    _meta: { "anthropic/alwaysLoad": true },
+    description:
+      "Reply in this Buzz thread, or post in another one by name. Optionally pass reply_to (message_id) for threading, and files (absolute paths) to attach images or other files.",
+    input: z.object({
+      text: z.string(),
+      thread: z.string().describe("Thread name to post in instead of this thread.").optional(),
+      reply_to: z
+        .string()
+        .describe(
+          "Message ID to thread under. Use message_id from the inbound <channel> block, or an id from fetch_messages.",
+        )
+        .optional(),
+      files: z
+        .array(z.string())
+        .describe(
+          "Absolute file paths to attach: images, MP4 video, PDFs or other files, but not audio. Max 100MB each.",
+        )
+        .optional(),
+      buttons: z
+        .array(z.string())
+        .describe(
+          'Choices the user can tap, at most 10, like ["Yes", "No"]. They show as a numbered list under the text. When you have a pick, end its label with (my pick).',
+        )
+        .optional(),
+    }),
+  }),
+  tool({
+    name: "react",
+    _meta: { "anthropic/alwaysLoad": true },
+    description: "Add an emoji reaction to a Buzz message, or take yours off.",
+    input: z.object({
+      message_id: z.string(),
+      emoji: z.string(),
+      remove: z.boolean().describe("Take your reaction with this emoji off instead.").optional(),
+    }),
+  }),
+  tool({
+    name: "delete_message",
+    description: "Delete a message the bot sent.",
+    input: z.object({ message_id: z.string() }),
+  }),
+  tool({
+    name: "edit_message",
+    description:
+      "Edit a message the bot previously sent. Useful for interim progress updates. Edits don't trigger push notifications — send a new reply when a long task completes so the user's device pings.",
+    input: z.object({ message_id: z.string(), text: z.string() }),
+  }),
+  tool({
+    name: "download_attachment",
+    annotations: { readOnlyHint: true },
+    description:
+      "Download attachments from a message in this thread to the local inbox. Use after the inbound meta or fetch_messages shows a message has attachments. Returns file paths ready to Read.",
+    input: z.object({ message_id: z.string() }),
+  }),
+  tool({
+    name: "fetch_messages",
+    annotations: { readOnlyHint: true },
+    description:
+      "Fetch recent messages from this thread, or from a channel or another thread. Returns oldest-first with message IDs. In a channel, a message that has a thread shows its reply count and last reply; pass its id as thread to read the thread.",
+    input: z.object({
+      channel: z
+        .string()
+        .describe('Channel to read instead of this thread, by name ("open-source") or id.')
+        .optional(),
+      thread: z
+        .string()
+        .describe(
+          "Thread to read instead of this thread: the id of the message it hangs off, or its name.",
+        )
+        .optional(),
+      before: z
+        .string()
+        .describe(
+          "Message ID: only messages older than it. Pass the oldest ID you have to page back.",
+        )
+        .optional(),
+      limit: limit.optional(),
+    }),
+  }),
+  tool({
+    name: "search_messages",
+    annotations: { readOnlyHint: true },
+    description:
+      "Search the Buzz channels you are in for messages containing words, best matches first. Each row names its channel, and the thread a reply belongs to, for fetch_messages.",
+    input: z.object({
+      query: z.string(),
+      channel: z.string().describe("Only search this channel, by name or id.").optional(),
+      limit: limit.optional(),
+    }),
+  }),
+  tool({
+    name: "canvas",
+    reads: (args) => args.text === undefined,
+    description:
+      "Read this channel's canvas, or replace it by passing text. Reading returns its Markdown and revision.",
+    input: z.object({
+      text: z.string().describe("The whole new canvas, in Markdown.").optional(),
+      revision: z
+        .string()
+        .describe("The revision you read: the save is refused if the canvas changed since.")
+        .optional(),
+      channel: z
+        .string()
+        .describe("Channel whose canvas to use instead of this one, by name or id.")
+        .optional(),
+    }),
+  }),
+  tool({
+    name: "presence",
+    annotations: { readOnlyHint: true },
+    description: "Whether the user is online, away or offline in Buzz right now.",
+    input: z.object({}),
+  }),
+  tool({
+    name: "list_channels",
+    annotations: { readOnlyHint: true },
+    description: "List the Buzz channels you are in, with their IDs. Direct messages are marked.",
+    input: z.object({}),
+  }),
+  tool({
+    name: "create_channel",
+    description:
+      "Create a Buzz channel. You own it and the user is added to it, so it shows up for them; open threads in it with new_thread.",
+    input: z.object({
+      name: z.string().describe('Channel name, like "research" or "open source".'),
+      about: z.string().describe("One line on what the channel is for.").optional(),
+      type: z
+        .enum(["stream", "forum"])
+        .describe("stream (default): a chat like #general. forum: every thread is a post.")
+        .optional(),
+      private: z
+        .boolean()
+        .describe("Only members can see it. Default: open to the workspace.")
+        .optional(),
+    }),
+  }),
+  tool({
+    name: "rename_thread",
+    description:
+      "Name this thread. Buzz threads have no titles, so the name is for your thread list and handoffs; a thread you opened with new_thread also shows it as its first message.",
+    input: z.object({ title }),
+  }),
+  tool({
+    name: "close_thread",
+    description:
+      "Close a thread whose work is done and stop its session once it is idle. Defaults to this thread. Tagging the bot in it again starts a fresh session.",
+    input: z.object({
+      thread: z.string().describe("Thread name to close instead of this thread.").optional(),
+    }),
+  }),
+  tool({
+    name: "new_thread",
+    description:
+      "Open a new thread, start a fresh session for it, and give that session the prompt as its first message. The title is the thread's first message in Buzz.",
+    input: z.object({
+      title,
+      prompt: z
+        .string()
+        .describe(
+          "The user's request and the context the new session can't find itself: it starts from this prompt alone.",
+        ),
+      about: z
+        .string()
+        .describe(
+          "One line the user sees first in the new thread, saying what it is for and where it came from.",
+        ),
+      app: z
+        .enum(["buzz", "discord", "telegram"])
+        .describe("Where to open it. Default: buzz.")
+        .optional(),
+      channel: z
+        .string()
+        .describe(
+          "Channel to open it in, by name. Defaults to this thread's channel; in Discord, the server's system channel.",
+        )
+        .optional(),
+    }),
+  }),
+  tool({
+    name: "handoff",
+    description:
+      "Move this conversation to another app when the user asks. It opens a thread there, and this session stops here once the turn ends and resumes there with its full memory (in T3 Code, with the user's next message there). The title defaults to this thread's name.",
+    input: z.object({
+      to: z.enum(["telegram", "discord", "t3"]),
+      title: title.optional(),
+      channel: z
+        .string()
+        .describe(
+          "Discord only: the channel to open it in, by name. Default: the server's system channel.",
+        )
+        .optional(),
+    }),
+  }),
+] as const;
+
 export const server: ChannelServer = {
   title: "Buzz",
   instructions: [
@@ -21,259 +219,5 @@ export const server: ChannelServer = {
     "",
     "fetch_messages pulls real Buzz history, from this thread by default. The tag's channel attribute names the channel this thread is in: fetch_messages(channel) reads that channel's top-level messages, a message with a thread shows its reply count, and fetch_messages(thread: that message's id) reads the thread. When the user refers to earlier work or talk in the channel, read it rather than saying you can't see it. search_messages finds older messages by their words.",
   ].join("\n"),
-  tools: [
-    {
-      name: "reply",
-      _meta: { "anthropic/alwaysLoad": true },
-      description:
-        "Reply in this Buzz thread, or post in another one by name. Optionally pass reply_to (message_id) for threading, and files (absolute paths) to attach images or other files.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          text: { type: "string" },
-          thread: { type: "string", description: "Thread name to post in instead of this thread." },
-          reply_to: {
-            type: "string",
-            description:
-              "Message ID to thread under. Use message_id from the inbound <channel> block, or an id from fetch_messages.",
-          },
-          files: {
-            type: "array",
-            items: { type: "string" },
-            description:
-              "Absolute file paths to attach: images, MP4 video, PDFs or other files, but not audio. Max 100MB each.",
-          },
-          buttons: {
-            type: "array",
-            items: { type: "string" },
-            description:
-              'Choices the user can tap, at most 10, like ["Yes", "No"]. They show as a numbered list under the text. When you have a pick, end its label with (my pick).',
-          },
-        },
-        required: ["text"],
-      },
-    },
-    {
-      name: "react",
-      _meta: { "anthropic/alwaysLoad": true },
-      description: "Add an emoji reaction to a Buzz message, or take yours off.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          message_id: { type: "string" },
-          emoji: { type: "string" },
-          remove: {
-            type: "boolean",
-            description: "Take your reaction with this emoji off instead.",
-          },
-        },
-        required: ["message_id", "emoji"],
-      },
-    },
-    {
-      name: "delete_message",
-      description: "Delete a message the bot sent.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          message_id: { type: "string" },
-        },
-        required: ["message_id"],
-      },
-    },
-    {
-      name: "edit_message",
-      description:
-        "Edit a message the bot previously sent. Useful for interim progress updates. Edits don't trigger push notifications — send a new reply when a long task completes so the user's device pings.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          message_id: { type: "string" },
-          text: { type: "string" },
-        },
-        required: ["message_id", "text"],
-      },
-    },
-    {
-      name: "download_attachment",
-      annotations: { readOnlyHint: true },
-      description:
-        "Download attachments from a message in this thread to the local inbox. Use after the inbound meta or fetch_messages shows a message has attachments. Returns file paths ready to Read.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          message_id: { type: "string" },
-        },
-        required: ["message_id"],
-      },
-    },
-    {
-      name: "fetch_messages",
-      annotations: { readOnlyHint: true },
-      description:
-        "Fetch recent messages from this thread, or from a channel or another thread. Returns oldest-first with message IDs. In a channel, a message that has a thread shows its reply count and last reply; pass its id as thread to read the thread.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          channel: {
-            type: "string",
-            description: 'Channel to read instead of this thread, by name ("open-source") or id.',
-          },
-          thread: {
-            type: "string",
-            description:
-              "Thread to read instead of this thread: the id of the message it hangs off, or its name.",
-          },
-          before: {
-            type: "string",
-            description:
-              "Message ID: only messages older than it. Pass the oldest ID you have to page back.",
-          },
-          limit: { type: "number", description: "Max messages (default 20, max 100)." },
-        },
-      },
-    },
-    {
-      name: "search_messages",
-      annotations: { readOnlyHint: true },
-      description:
-        "Search the Buzz channels you are in for messages containing words, best matches first. Each row names its channel, and the thread a reply belongs to, for fetch_messages.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          query: { type: "string" },
-          channel: { type: "string", description: "Only search this channel, by name or id." },
-          limit: { type: "number", description: "Max messages (default 20, max 100)." },
-        },
-        required: ["query"],
-      },
-    },
-    {
-      name: "canvas",
-      reads: (args) => args.text === undefined,
-      description:
-        "Read this channel's canvas, or replace it by passing text. Reading returns its Markdown and revision.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          text: { type: "string", description: "The whole new canvas, in Markdown." },
-          revision: {
-            type: "string",
-            description: "The revision you read: the save is refused if the canvas changed since.",
-          },
-          channel: {
-            type: "string",
-            description: "Channel whose canvas to use instead of this one, by name or id.",
-          },
-        },
-      },
-    },
-    {
-      name: "presence",
-      annotations: { readOnlyHint: true },
-      description: "Whether the user is online, away or offline in Buzz right now.",
-      inputSchema: { type: "object", properties: {} },
-    },
-    {
-      name: "list_channels",
-      annotations: { readOnlyHint: true },
-      description: "List the Buzz channels you are in, with their IDs. Direct messages are marked.",
-      inputSchema: { type: "object", properties: {} },
-    },
-    {
-      name: "create_channel",
-      description:
-        "Create a Buzz channel. You own it and the user is added to it, so it shows up for them; open threads in it with new_thread.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: 'Channel name, like "research" or "open source".' },
-          about: { type: "string", description: "One line on what the channel is for." },
-          type: {
-            type: "string",
-            enum: ["stream", "forum"],
-            description: "stream (default): a chat like #general. forum: every thread is a post.",
-          },
-          private: {
-            type: "boolean",
-            description: "Only members can see it. Default: open to the workspace.",
-          },
-        },
-        required: ["name"],
-      },
-    },
-    {
-      name: "rename_thread",
-      description:
-        "Name this thread. Buzz threads have no titles, so the name is for your thread list and handoffs; a thread you opened with new_thread also shows it as its first message.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          title: titleProperty,
-        },
-        required: ["title"],
-      },
-    },
-    {
-      name: "close_thread",
-      description:
-        "Close a thread whose work is done and stop its session once it is idle. Defaults to this thread. Tagging the bot in it again starts a fresh session.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          thread: { type: "string", description: "Thread name to close instead of this thread." },
-        },
-      },
-    },
-    {
-      name: "new_thread",
-      description:
-        "Open a new thread, start a fresh session for it, and give that session the prompt as its first message. The title is the thread's first message in Buzz.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          title: titleProperty,
-          prompt: {
-            type: "string",
-            description:
-              "The user's request and the context the new session can't find itself: it starts from this prompt alone.",
-          },
-          about: {
-            type: "string",
-            description:
-              "One line the user sees first in the new thread, saying what it is for and where it came from.",
-          },
-          app: {
-            type: "string",
-            enum: ["buzz", "discord", "telegram"],
-            description: "Where to open it. Default: buzz.",
-          },
-          channel: {
-            type: "string",
-            description:
-              "Channel to open it in, by name. Defaults to this thread's channel; in Discord, the server's system channel.",
-          },
-        },
-        required: ["title", "prompt", "about"],
-      },
-    },
-    {
-      name: "handoff",
-      description:
-        "Move this conversation to another app when the user asks. It opens a thread there, and this session stops here once the turn ends and resumes there with its full memory (in T3 Code, with the user's next message there). The title defaults to this thread's name.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          to: { type: "string", enum: ["telegram", "discord", "t3"] },
-          title: titleProperty,
-          channel: {
-            type: "string",
-            description:
-              "Discord only: the channel to open it in, by name. Default: the server's system channel.",
-          },
-        },
-        required: ["to"],
-      },
-    },
-  ],
+  tools,
 };

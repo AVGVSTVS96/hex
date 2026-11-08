@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { nip19 } from "nostr-tools";
+import { z } from "zod";
 
 import { version } from "./package.json";
 
@@ -28,40 +29,83 @@ const info = {
   },
 };
 
-type Agent = { relay_url?: unknown; private_key_nsec?: unknown; auth_tag?: unknown };
+const RELAY_URL = "agent.relay_url must be a ws:// or wss:// URL";
+const NSEC = "agent.private_key_nsec must be an nsec";
+const AUTH_TAG = 'agent.auth_tag must be a JSON ["auth", owner, conditions, sig] tag';
+const TARGET = "provider_config.target must be an ssh destination, e.g. user@host";
 
-type Config = { target?: unknown; home?: unknown };
+const signedAuthTag = z.tuple([
+  z.literal("auth"),
+  z.string().regex(/^[0-9a-f]{64}$/u),
+  z.string(),
+  z.string(),
+]);
 
-export function respond(input: string, ssh = "/usr/bin/ssh"): object {
-  const request = JSON.parse(input);
+const authTag = z.unknown().transform((value, context) => {
+  let raw: unknown;
+
+  try {
+    raw = JSON.parse(String(value));
+  } catch {
+    raw = undefined;
+  }
+
+  const parsed = signedAuthTag.safeParse(raw);
+
+  if (!parsed.success) {
+    context.addIssue({ code: "custom", message: AUTH_TAG });
+
+    return z.NEVER;
+  }
+
+  return parsed.data;
+});
+
+const anyObject = z.record(z.string(), z.unknown()).catch({});
+
+const deployment = z.object({
+  agent: anyObject.pipe(
+    z.object({
+      relay_url: z.string(RELAY_URL).regex(/^wss?:\/\/\S+$/u, RELAY_URL),
+      private_key_nsec: z.string(NSEC).refine(isNsec, NSEC),
+      auth_tag: authTag,
+    }),
+  ),
+  provider_config: anyObject.pipe(
+    z.object({
+      target: z.string(TARGET).regex(/^[^-\s]\S*$/u, TARGET),
+      home: z.string().trim().min(1).catch("~/hex"),
+    }),
+  ),
+});
+
+type Deployment = z.output<typeof deployment>;
+
+export function respond(input: string, ssh = "/usr/bin/ssh") {
+  const request = z.looseObject({ op: z.unknown().exactOptional() }).parse(JSON.parse(input));
 
   if (request.op === "info") {
     return info;
   }
+
   if (request.op === "deploy") {
-    return { ok: true, agent_id: deploy(request.agent ?? {}, request.provider_config ?? {}, ssh) };
+    const parsed = deployment.safeParse(request);
+
+    if (!parsed.success) {
+      throw new Error(parsed.error.issues[0]?.message);
+    }
+
+    return { ok: true, agent_id: deploy(parsed.data, ssh) };
   }
+
   throw new Error(`unknown op ${JSON.stringify(request.op)}`);
 }
 
-function deploy(agent: Agent, config: Config, ssh: string): string {
-  const { relay_url, private_key_nsec, auth_tag } = agent;
+function deploy({ agent, provider_config: config }: Deployment, ssh: string): string {
+  const { relay_url, private_key_nsec, auth_tag: tag } = agent;
+  const { target, home } = config;
 
-  if (typeof relay_url !== "string" || !/^wss?:\/\/\S+$/.test(relay_url)) {
-    throw new Error("agent.relay_url must be a ws:// or wss:// URL");
-  }
-  if (typeof private_key_nsec !== "string" || !isNsec(private_key_nsec)) {
-    throw new Error("agent.private_key_nsec must be an nsec");
-  }
-  const tag = authTag(auth_tag);
-  const target = config.target;
-
-  if (typeof target !== "string" || !/^[^-\s]\S*$/.test(target)) {
-    throw new Error("provider_config.target must be an ssh destination, e.g. user@host");
-  }
-  const home = typeof config.home === "string" && config.home.trim() ? config.home.trim() : "~/hex";
-
-  if (/[\n\r]/.test(home)) {
+  if (/[\n\r]/u.test(home)) {
     throw new Error("provider_config.home must be one line");
   }
 
@@ -106,35 +150,17 @@ function isNsec(value: string): boolean {
   }
 }
 
-function authTag(value: unknown): string[] {
-  let tag: unknown;
-
-  try {
-    tag = JSON.parse(String(value));
-  } catch {}
-
-  if (
-    !Array.isArray(tag) ||
-    tag.length !== 4 ||
-    tag[0] !== "auth" ||
-    !tag.every((part) => typeof part === "string") ||
-    !/^[0-9a-f]{64}$/.test(tag[1])
-  ) {
-    throw new Error('agent.auth_tag must be a JSON ["auth", owner, conditions, sig] tag');
-  }
-
-  return tag;
-}
+const quote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
 
 function remotePath(path: string): string {
-  const quote = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
-
   if (path === "~") {
     return '"$HOME"';
   }
+
   if (path.startsWith("~/")) {
     return `"$HOME"/${quote(path.slice(2))}`;
   }
+
   return quote(path);
 }
 
