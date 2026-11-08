@@ -148,7 +148,7 @@ test("drops a section it cannot read, and says none for one that is empty", () =
 test("stays quiet and exits 0 when neither git nor claude can run", () => {
   const only = join(bin, "only");
   mkdirSync(only);
-  symlinkSync(Bun.which("python3") ?? "", join(only, "python3"));
+  symlinkSync(Bun.which("bun") ?? "", join(only, "bun"));
 
   const run = Bun.spawnSync([join(home, ".hex/bin/live-status")], {
     stdin: Buffer.from("{}"),
