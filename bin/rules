@@ -4,6 +4,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
+import { behind, type Startup } from '../hub/loaded.ts'
+import { startOf } from '../hub/running.ts'
 import { open, stateDir } from '../hub/store.ts'
 import { files } from './instructions'
 
@@ -11,15 +13,19 @@ import { files } from './instructions'
 // compacts, so a session that runs for days keeps the rules it started with.
 // SessionStart records in hex.db what the session loaded, and each prompt after that
 // gets a diff of whatever changed since. Every start records it again, so it goes
-// when the session ends.
+// when the session ends. hex's own hooks, skills and launch flags load only at start too, and
+// can't be shown as a diff, so a prompt after an update changed them says so once per update.
 
-const home = resolve(import.meta.dir, '../..')
+const hex = resolve(import.meta.dir, '..')
+const home = resolve(hex, '..')
+const WHAT: Record<Startup, string> = { hooks: 'hooks', skills: 'skills', launcher: 'launch flags' }
 const { session_id, hook_event_name } = JSON.parse(await Bun.stdin.text())
 
 try {
   const store = open(stateDir())
   if (hook_event_name === 'SessionEnd') {
     store.unshow(session_id, 'rules')
+    store.unshow(session_id, 'hex')
     process.exit(0)
   }
   const now: Record<string, string> = Object.fromEntries(files().map(file => [file.path, file.text]))
@@ -48,7 +54,22 @@ try {
   }
   // Kept before it's said, so a record that can't be kept doesn't show the same change on every prompt.
   if (JSON.stringify(now) !== kept) store.show(session_id, 'rules', JSON.stringify(now))
-  if (out) console.log(out)
+  const started = hook_event_name === 'UserPromptSubmit' ? startOf(session_id) : undefined
+  const old = started ? behind(hex, started) : undefined
+  let shown = ''
+  if (old && store.seen(session_id, 'hex') !== old.to) {
+    store.show(session_id, 'hex', old.to)
+    const span = old.from ? ` (${old.from.slice(0, 7)} to ${old.to.slice(0, 7)})` : ''
+    const names = (keys: Startup[]) => new Intl.ListFormat('en').format(keys.map(key => WHAT[key]))
+    const after = process.env.HEX_THREAD ? 'hex resumes it on the new hex at its next rest, once its work here is done' : 'It takes the new ones when it restarts'
+    out = [out, `hex was updated${span} after this session started, and Claude Code reads hex's ${names(old.changed)} only at start, so this session still runs the old ones. ${after}. Tell me so in a line when you next write to me.`].filter(Boolean).join('\n\n')
+    const reload = old.changed.filter(key => key !== 'launcher')
+    const steps = [...(reload.length ? [`run /reload-plugins for its new ${names(reload)}`] : []), ...(old.changed.includes('launcher') ? [`resume it with .hex/bin/session --resume ${session_id} for its new launch flags`] : [])]
+    // Nobody reads a hub thread's screen, and its hub renews it.
+    if (!process.env.HEX_THREAD) shown = `hex was updated after this session started: ${steps.join(', and ')}.`
+  }
+  if (shown) console.log(JSON.stringify({ systemMessage: shown, hookSpecificOutput: { hookEventName: hook_event_name, additionalContext: out } }))
+  else if (out) console.log(out)
 } catch (error) {
   console.error(`hex couldn't compare this session's rules with the ones it loaded: ${error}`)
 }

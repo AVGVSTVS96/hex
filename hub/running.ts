@@ -49,6 +49,17 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   return sessions
 }
 
+// When a session's running process started, as Claude Code records it: a background session's when
+// its job took a spare process, since that's when it loads the session's flags and plugins.
+export function startOf(session: string, claude = CLAUDE): number | undefined {
+  const dir = join(claude, 'sessions')
+  const starts = list(dir).flatMap(file => {
+    const record = file.endsWith('.json') ? readJson(join(dir, file)) : undefined
+    return record?.sessionId === session && typeof record.startedAt === 'number' && alive(record.pid, record.procStart) ? [record.startedAt as number] : []
+  })
+  return starts.length ? Math.max(...starts) : undefined
+}
+
 // Resolve ownership and the highest unheld session together. A T3 boundary makes its
 // handoff authoritative for the whole subtree, including inherited environments.
 export function ownership(session: Session, held: Map<string, string>, sessions: Map<string, Session>, { owners = held, boundary = (_: string) => false, display = (thread: string) => thread } = {}): { thread?: string; top: Session } {

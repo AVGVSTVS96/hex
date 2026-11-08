@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
 import { dirname, join, resolve } from 'path'
 import { parseArgs } from 'util'
+import { behind } from './loaded.ts'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { record, settingsOf } from './claude.ts'
 import { running, serving } from './running.ts'
@@ -323,11 +324,12 @@ try {
       const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]))
       const home = realpathSync(dirname(state!))
       const sessions = running(store)
-      const rows = [...sessions.values()].map(session => ({ ...session, thread: serving(session, held, sessions) }))
+      const hex = resolve(import.meta.dir, '..')
+      const rows = [...sessions.values()].map(session => ({ ...session, thread: serving(session, held, sessions), behind: behind(hex, session.started) }))
       if (flags.json) console.log(JSON.stringify(rows, null, 1))
-      else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs }) => {
+      else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs, behind: old }) => {
         const now = (state === 'blocked' && needs) || detail
-        return `${status} ${id.slice(0, 8)} ${name ?? ''}${cwd && cwd !== home ? ` in ${cwd}` : ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, ' ')}` : ''}` : ''}`
+        return `${status} ${id.slice(0, 8)} ${name ?? ''}${cwd && cwd !== home ? ` in ${cwd}` : ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${old ? ` · started on an older hex${old.from ? ` (${old.from.slice(0, 7)})` : ''}, ${old.changed.join(', ')} changed since` : ''}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, ' ')}` : ''}` : ''}`
       }).join('\n') || 'nothing running')
       break
     }

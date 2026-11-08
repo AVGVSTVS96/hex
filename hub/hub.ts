@@ -1,10 +1,11 @@
 import { AsyncLocalStorage } from 'async_hooks'
 import { createServer } from 'net'
 import { createHash, randomBytes, randomUUID } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync, type FSWatcher } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, type FSWatcher } from 'fs'
 import { basename, join } from 'path'
 import * as claude from './claude.ts'
 import { clock } from './clock.ts'
+import { STARTUP } from './loaded.ts'
 import { endpoint, type ChannelServer, type Line } from './mcp.ts'
 import { queue } from './observe.ts'
 import { schedule, zoneOf } from './schedule.ts'
@@ -249,11 +250,16 @@ function capacity(tokens?: string) {
 }
 
 // What a session reads only as it starts: its launch arguments, its channel's instructions and
-// tools, and the hooks its launcher loads. hex.db keeps a digest of what each thread's
-// session started with.
-export function stamp(args: string[], server?: ChannelServer, hooks: string[] = []) {
-  const read = (file: string) => (existsSync(file) ? readFileSync(file, 'utf8') : null)
-  return createHash('sha256').update(JSON.stringify([args, server ?? null, ...(hooks.length ? [hooks.map(read)] : [])])).digest('hex').slice(0, 16)
+// tools, and the files and folders its launcher loads that way. hex.db keeps a digest of what each
+// thread's session started with.
+export function stamp(args: string[], server?: ChannelServer, startup: string[] = []) {
+  return createHash('sha256').update(JSON.stringify([args, server ?? null, ...(startup.length ? [startup.map(read)] : [])])).digest('hex').slice(0, 16)
+}
+
+function read(path: string): string | [string, string][] | null {
+  if (!existsSync(path)) return null
+  if (!statSync(path).isDirectory()) return readFileSync(path, 'utf8')
+  return (readdirSync(path, { recursive: true }) as string[]).sort().flatMap(name => (statSync(join(path, name)).isFile() ? [[name, readFileSync(join(path, name), 'utf8')] as [string, string]] : []))
 }
 
 // A voice call runs in this process (its call engine holds the caller's audio), so a restart
@@ -282,7 +288,7 @@ function tokenOf(stateDir: string) {
   return readFileSync(file, 'utf8').trim()
 }
 
-export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, waits, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', hooks = process.env.HEX_HOOKS?.split(':').filter(Boolean) ?? [], link }: {
+export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, server, port = PORT, main, mainName = 'main', general = false, call, state, failed, waits, permission, questions, args = () => [], fresh = () => false, limits, hexDir = process.cwd(), launcher = 'claude', startup = process.env.HEX_STARTUP ? Object.values(STARTUP).map(path => join(process.env.HEX_STARTUP!, path)) : [], link }: {
   stateDir: string
   storeDir?: string
   channel: string
@@ -307,9 +313,9 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   limits?: Partial<Limits>
   hexDir?: string
   launcher?: string
-  // The hooks files the launcher's plugins load (HEX_HOOKS, colon-separated): a change to one
-  // renews sessions like a change to the channel does.
-  hooks?: string[]
+  // What the launcher's sessions read only as they start (STARTUP, in the hex folder HEX_STARTUP
+  // names): a change to one renews sessions like a change to the channel does.
+  startup?: string[]
   // Where the app opens a thread, which hex.db keeps with it.
   link?: (thread: string) => string | undefined
 }) {
@@ -615,7 +621,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
   // plain restart of the hub leaves every session running. A thread with no record started its
   // session with none of its own arguments, before the hub kept one.
   function stale(thread: string) {
-    return (threads[thread]?.launched ?? stamp([], server)) !== stamp(extra(thread), server, hooks)
+    return (threads[thread]?.launched ?? stamp([], server)) !== stamp(extra(thread), server, startup)
   }
 
   function configure(thread: string, settings: Settings) {
@@ -654,7 +660,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
     if (prompt) kept(store => store.deliver({ key: `hub:${thread}:${Bun.hash(prompt).toString(36)}`, to: thread, from: 'hub', author: 'prompt', body: prompt, meta: {} }, 'hub'), false)
     const launchArgs = extra(thread)
-    const launched = stamp(launchArgs, server, hooks)
+    const launched = stamp(launchArgs, server, startup)
     if (known.launched !== launched) {
       known.launched = launched
       save()

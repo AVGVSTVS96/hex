@@ -51,8 +51,8 @@ case "${1:-}" in
   run)
     (. "$hex/bin/settings"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]) || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
-    # The hooks bin/session's plugins load: a change to them renews sessions at their next rest.
-    export HEX_HOOKS="$hex/plugin/hooks/hooks.json"
+    # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
+    export HEX_STARTUP="$hex"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
     echo $$ > "$pidfile"
     # Apps following hex with `hex watch` read it again as it starts, as after a restore of hex.db.
