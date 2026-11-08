@@ -14,10 +14,16 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+const ToolCall = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()) });
+
+const McpRequest = z.object({
+  id: z.number().optional(),
+  method: z.string(),
+  params: z.unknown().optional(),
+});
+
 const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "away-"));
-const ToolCall = z.object({ name: z.string(), arguments: z.record(z.string(), z.unknown()) });
-const Request = z.object({ id: z.number().optional(), method: z.string(), params: z.unknown().optional() });
 let calls: z.infer<typeof ToolCall>[] = [];
 let waits: object[] = [];
 let drop = 0;
@@ -42,7 +48,7 @@ const server = Bun.serve({
       return new Response(null, { status: 200 });
     }
 
-    const body = Request.parse(await request.json());
+    const body = McpRequest.parse(await request.json());
 
     // https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#session-management: a new session starts without the old one's id.
     if (body.method === "initialize" && request.headers.has("mcp-session-id")) {
