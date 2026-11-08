@@ -6,6 +6,7 @@
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "catalog:",
     "@noble/curves": "2.0.1",
-    "nostr-tools": "2.25.2"
+    "nostr-tools": "2.25.2",
+    "zod": "catalog:"
   }
 }
