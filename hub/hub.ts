@@ -14,6 +14,8 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createServer } from "node:net";
 import { basename, join } from "node:path";
 
+import { z } from "zod";
+
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
 import { holding } from "./holds.ts";
@@ -23,7 +25,7 @@ import type { ChannelServer, Line } from "./mcp.ts";
 import { queue } from "./observe.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
-import type { Author, MessageId, Row, Store } from "./store.ts";
+import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 export { dispatch, tool } from "./mcp.ts";
@@ -55,7 +57,7 @@ export type Permission = {
   input_preview: string;
 };
 
-export type Settings = { model?: string; effort?: string };
+export type Settings = { model?: string | undefined; effort?: string | undefined };
 
 // The choices a client offers for a thread's settings. Models are Claude Code's aliases, so a
 // thread runs the newest model of the family it picked.
@@ -99,6 +101,51 @@ export type Questions = {
   reopen: (thread: string, message: MessageId, via: string) => void;
 };
 
+const messageId = z.union([z.number(), z.string()]);
+
+const HubRequest = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("state"),
+    thread: z.string(),
+    busy: z.boolean(),
+    background: z.boolean().optional(),
+    failed: z.boolean().optional(),
+    taken: z.array(z.string()).optional(),
+    session: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("open"),
+    thread: z.string(),
+    name: z.string(),
+    prompt: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("answer"),
+    thread: z.string(),
+    message: messageId,
+    label: z.string(),
+    via: z.string(),
+  }),
+  z.object({ type: z.literal("settle"), thread: z.string(), message: messageId, note: z.string() }),
+  z.object({ type: z.literal("reopen"), thread: z.string(), message: messageId, via: z.string() }),
+  z.object({
+    type: z.literal("inbound"),
+    thread: z.string(),
+    content: z.string(),
+    meta: z.record(z.string(), z.string()).optional(),
+    key: z.string().optional(),
+    author: z.custom<Author>(isAuthor).catch("prompt"),
+  }),
+  z.object({
+    type: z.literal("mirror"),
+    thread: z.string(),
+    to: z.string(),
+    where: z.string().optional(),
+  }),
+]);
+
+type HubRequest = z.output<typeof HubRequest>;
+
 export type Hub = ReturnType<typeof startHub>;
 
 // idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main
@@ -122,10 +169,10 @@ export type Limits = {
 // from: the session the thread continues as a fork with its first message, until it has its own.
 type Saved = Settings & {
   name: string;
-  session?: string;
-  from?: string;
-  cwd?: string;
-  launched?: string;
+  session?: string | undefined;
+  from?: string | undefined;
+  cwd?: string | undefined;
+  launched?: string | undefined;
 };
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -140,11 +187,11 @@ type Phase =
       is: "launching";
       job?: string;
       watch?: FSWatcher;
-      deadline?: Timer;
+      deadline?: Timer | undefined;
       respawned?: boolean;
-      again?: boolean;
+      again?: boolean | undefined;
     }
-  | { is: "recovering"; deadline?: Timer; again?: boolean }
+  | { is: "recovering"; deadline?: Timer | undefined; again?: boolean | undefined }
   | { is: "live"; line: Line };
 
 // Everything the hub keeps on a thread while it runs; hex.db keeps what outlives the hub.
@@ -157,31 +204,31 @@ type Run = {
   turn: "busy" | "background" | "done";
   // asked: the session asked to start over (a call ended). stale: it started with what the hub no
   // longer gives a session. underway: it's starting over, and its renewal waits for the new session.
-  renew?: "asked" | "stale" | "underway";
-  rest?: Timer;
-  leaving?: (session: string) => void;
+  renew?: "asked" | "stale" | "underway" | undefined;
+  rest?: Timer | undefined;
+  leaving?: ((session: string) => void) | undefined;
   // The thread's session was told to stop and hasn't exited yet.
-  ending?: Promise<void>;
+  ending?: Promise<void> | undefined;
   // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
-  interrupting?: Promise<void>;
+  interrupting?: Promise<void> | undefined;
   // A new session whose conversation Claude hasn't saved yet.
-  unsaved?: string;
+  unsaved?: string | undefined;
   held: (() => void)[];
   // A call waited for the session now connected to start, so it is as new as the call.
-  awaited?: boolean;
+  awaited?: boolean | undefined;
   // When the hub last had the session compact, until its context is back under compactAbove.
-  compacting?: number;
+  compacting?: number | undefined;
   // The starts that failed in a row since the thread's session last connected; retried: another
   // session's start set one off since a message's last failed, told: General heard.
-  failing?: { count: number; retried?: boolean; told?: boolean };
-  opening?: Opening;
+  failing?: { count: number; retried?: boolean; told?: boolean } | undefined;
+  opening?: Opening | undefined;
   // The kept messages the client was told wait for a session, by key, until one takes them.
   waiting: Map<string, Message>;
 };
 
 // What a new session starts with: its first prompt, and the session it continues as a fork. quiet:
 // the prompt is the hub's own (a compaction), so the thread doesn't show as working.
-type Opening = { prompt?: string; fork?: string; quiet?: boolean };
+type Opening = { prompt?: string | undefined; fork?: string | undefined; quiet?: boolean };
 
 // A call on a line a client holds, like a Discord voice channel: the line plays the voice's audio
 // and ends when the call does, and the call engine hears the caller and can be hung up on. Audio is
@@ -289,7 +336,7 @@ export function history(store: Store, thread: string, session?: string): Turn[] 
   const rows = store.said(thread);
   const start = session ? (rows.find((row) => row.taken?.by === session)?.at ?? "9") : "";
 
-  return rows.flatMap((row) => {
+  return rows.flatMap((row): Turn[] => {
     if (row.from === "terminal" || !row.taken || row.at < start) {
       return [];
     }
@@ -536,17 +583,23 @@ export function startHub({
           thread,
           {
             name: known.name,
-            session: known.session,
-            cwd: known.cwd,
-            model: known.model,
-            effort: known.effort,
-            launched: known.launched,
-            fork: known.from,
-            link: linkOf(thread),
+            ...(known.session !== undefined && { session: known.session }),
+            ...(known.cwd !== undefined && { cwd: known.cwd }),
+            ...(known.model !== undefined && { model: known.model }),
+            ...(known.effort !== undefined && { effort: known.effort }),
+            ...(known.launched !== undefined && { launched: known.launched }),
+            ...(known.from !== undefined && { fork: known.from }),
+            ...withLink(thread),
           },
         ]),
       ),
     );
+  }
+
+  function withLink(thread: string) {
+    const link = linkOf(thread);
+
+    return link === undefined ? {} : { link };
   }
 
   // A link the app can't give now is no reason to lose a save.
@@ -939,7 +992,7 @@ export function startHub({
   async function launch(
     thread: string,
     name: string,
-    { cwd, again, ...given }: Opening & { cwd?: string; again?: boolean } = {},
+    { cwd, again, ...given }: Opening & { cwd?: string | undefined; again?: boolean | undefined } = {},
   ) {
     const run = runOf(thread);
 
@@ -1293,7 +1346,9 @@ export function startHub({
   // does; when it changes nothing, or hex.db can't take it, there's nothing to tell. Whether the
   // thread is told.
   function deliver(thread: string, name: string, message: Message, along?: () => boolean): boolean {
-    if (!message.author) {
+    const { author } = message;
+
+    if (!author) {
       throw new Error(`a message to ${thread} has no author`);
     }
     const key = `${app}:${message.key ?? randomUUID()}`;
@@ -1308,7 +1363,7 @@ export function startHub({
               key,
               to: thread,
               from: app,
-              author: message.author,
+              author,
               body: content,
               meta,
             }),
@@ -1330,7 +1385,7 @@ export function startHub({
     thread: string,
     { key, content, meta = {} }: Partial<Message> & { content: string },
   ) {
-    const row = {
+    const row: NewRow = {
       key: `${app}:${key ?? randomUUID()}`,
       to: thread,
       from: app,
@@ -1457,12 +1512,12 @@ export function startHub({
   }
 
   // A session that started before hex kept messages can't mark one taken itself, so its hook says so here.
-  function took(keys: unknown, session: unknown) {
-    if (!Array.isArray(keys) || typeof session !== "string") {
+  function took(keys: string[] | undefined, session: string | undefined) {
+    if (keys === undefined || session === undefined) {
       return;
     }
     for (const key of keys) {
-      kept((store) => store.take(String(key), session), false);
+      kept((store) => store.take(key, session), false);
     }
   }
 
@@ -1826,7 +1881,7 @@ export function startHub({
         buffer = buffer.slice(end + 1);
 
         try {
-          handle(JSON.parse(raw));
+          handle(HubRequest.parse(JSON.parse(raw)));
         } catch (error) {
           process.stderr.write(`hub: dropped a bad line: ${error}\n`);
         }
@@ -1835,44 +1890,55 @@ export function startHub({
     socket.on("error", () => {});
   }).listen(socketPath);
 
-  function handle(request: any) {
-    if (request.type === "state") {
-      took(request.taken, request.session);
-      setState(request.thread, request.busy, request.background === true);
+  function handle(request: HubRequest) {
+    switch (request.type) {
+      case "state": {
+        took(request.taken, request.session);
+        setState(request.thread, request.busy, request.background === true);
 
-      if (!request.busy && !request.failed) {
-        for (const each of answered) each();
+        if (!request.busy && request.failed !== true) {
+          for (const each of answered) {
+            each();
+          }
+        }
+        return;
       }
-    }
-
-    if (request.type === "open") {
-      void launch(request.thread, request.name, { prompt: request.prompt });
-    }
-    if (request.type === "answer") {
-      questions?.answer(request.thread, request.message, request.label, request.via);
-    }
-    if (request.type === "settle") {
-      questions?.settle(request.thread, request.message, request.note);
-    }
-    if (request.type === "reopen") {
-      questions?.reopen(request.thread, request.message, request.via);
-    }
-    if (request.type === "inbound") {
-      inbound(request.thread, {
-        content: request.content,
-        meta: request.meta ?? {},
-        key: request.key,
-        author: isAuthor(request.author) ? request.author : "prompt",
-      });
-    }
-    if (request.type === "mirror") {
-      void mirror(api, find(request.thread), request.to, request.where).then(
-        (link) => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
-        (error) =>
-          process.stderr.write(
-            `hub: couldn't mirror ${request.thread} to ${request.to}: ${error}\n`,
-          ),
-      );
+      case "open": {
+        void launch(request.thread, request.name, {
+          ...(request.prompt !== undefined && { prompt: request.prompt }),
+        });
+        return;
+      }
+      case "answer": {
+        questions?.answer(request.thread, request.message, request.label, request.via);
+        return;
+      }
+      case "settle": {
+        questions?.settle(request.thread, request.message, request.note);
+        return;
+      }
+      case "reopen": {
+        questions?.reopen(request.thread, request.message, request.via);
+        return;
+      }
+      case "inbound": {
+        inbound(request.thread, {
+          content: request.content,
+          meta: request.meta ?? {},
+          ...(request.key !== undefined && { key: request.key }),
+          author: request.author,
+        });
+        return;
+      }
+      case "mirror": {
+        void mirror(api, find(request.thread), request.to, request.where).then(
+          (link) => process.stderr.write(`hub: mirrored ${request.thread} to ${link}\n`),
+          (error: unknown) =>
+            process.stderr.write(
+              `hub: couldn't mirror ${request.thread} to ${request.to}: ${String(error)}\n`,
+            ),
+        );
+      }
     }
   }
 
@@ -1942,7 +2008,7 @@ export function startHub({
       }, undefined);
       setState(thread, false, true);
 
-      if ((await claude.listing(session))?.state !== "working" && run.turn === "background") {
+      if ((await claude.listing(session))?.state !== "working" && runOf(thread).turn === "background") {
         setState(thread, false);
       }
       return;

@@ -18,6 +18,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 import { settled } from "./claude.ts";
 import { clock, manual } from "./clock.ts";
 import {
@@ -30,6 +32,7 @@ import {
   stamp,
   startHub,
   tappable,
+  tool,
   transcribe,
 } from "./hub.ts";
 import type { ChannelServer, Message, Permission } from "./hub.ts";
@@ -45,7 +48,7 @@ const message: Message = { content: "hi", author: "owner", meta: { chat_id: "1" 
 const SERVER: ChannelServer = {
   title: "Telegram",
   instructions: 'Messages arrive as <channel source="telegram">.',
-  tools: [{ name: "reply", description: "Reply.", inputSchema: { type: "object" } }],
+  tools: [tool({ name: "reply", description: "Reply.", input: z.object({}) })],
   permission: true,
 };
 
@@ -1359,14 +1362,20 @@ test("a thread whose compaction failed stops at its rest, and resumes to compact
   expect(states.filter(([, busy]) => busy)).toEqual([]);
 });
 
-test("a bad line on hub.sock is dropped, and the lines after it still work", async () => {
+test("a line on hub.sock that isn't one of its requests is dropped, and the lines after it still work", async () => {
   start();
   const { received } = await session("chat:9");
   const socket = connect(join(dir, "hub.sock"));
   sockets.push(socket);
   socket.on("connect", () =>
     socket.end(
-      `not json\nnull\n${JSON.stringify({
+      `not json\nnull\n${[
+        { type: "launch", thread: "chat:9" },
+        { type: "state", thread: "chat:9", busy: "yes" },
+        { type: "inbound", thread: "chat:9", content: 7 },
+      ]
+        .map((bad) => JSON.stringify(bad))
+        .join("\n")}\n${JSON.stringify({
         type: "inbound",
         thread: "chat:9",
         content: "still here",

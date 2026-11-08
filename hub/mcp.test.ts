@@ -5,8 +5,9 @@ import { join } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { z } from "zod";
 
-import { endpoint, local } from "./mcp.ts";
+import { dispatch, endpoint, local, tool, toolList } from "./mcp.ts";
 import { open } from "./store.ts";
 import { until } from "./until.ts";
 
@@ -32,23 +33,19 @@ const SERVER = {
   title: "Telegram",
   instructions: "",
   tools: [
-    {
+    tool({
       name: "fetch_messages",
       description: "Read.",
-      inputSchema: { type: "object" },
+      input: z.object({}),
       annotations: { readOnlyHint: true },
-    },
-    {
+    }),
+    tool({
       name: "canvas",
       description: "Read or write.",
-      inputSchema: { type: "object" },
-      reads: (args: Record<string, unknown>) => args.text === undefined,
-    },
-    {
-      name: "reply",
-      description: "Send.",
-      inputSchema: { type: "object", properties: { text: { type: "string" } } },
-    },
+      input: z.object({ text: z.string().optional() }),
+      reads: (args) => args.text === undefined,
+    }),
+    tool({ name: "reply", description: "Send.", input: z.object({ text: z.string() }) }),
   ],
 };
 
@@ -182,7 +179,7 @@ test("a deliberate identical send uses a new operation id, while a reused id can
     }),
   );
 
-  expect((await listing.json()).result.tools).toEqual(JSON.parse(JSON.stringify(SERVER.tools)));
+  expect((await listing.json()).result.tools).toEqual(toolList(SERVER.tools));
   const transport = { session: "standard-client", id: 7 };
   const first = call({ text: "standard MCP" }, undefined, "reply", transport);
   await answer();
@@ -358,7 +355,7 @@ test("a stock MCP client lists the tools and replies without an operation id", a
         requestInit: { headers },
       }),
     );
-    expect((await client.listTools()).tools).toEqual(JSON.parse(JSON.stringify(SERVER.tools)));
+    expect((await client.listTools()).tools).toEqual(toolList(SERVER.tools));
 
     const reply = await client.callTool({
       name: "reply",
@@ -370,4 +367,115 @@ test("a stock MCP client lists the tools and replies without an operation id", a
     await client.close();
     hub.stop(true);
   }
+});
+
+test("a call whose arguments don't match its tool's schema fails with zod's message and never reaches the handler", async () => {
+  const tools = [
+    tool({ name: "reply", description: "Send.", input: z.object({ text: z.string() }) }),
+  ] as const;
+
+  let ran = 0;
+
+  const call = dispatch(tools, {
+    reply: async (_caller, { text }) => {
+      ran++;
+      return `sent ${text}`;
+    },
+  });
+
+  const serve = endpoint(
+    "telegram",
+    "chat",
+    TOKEN,
+    { title: "Telegram", instructions: "", tools },
+    {
+      call: (thread, name, args) => call(thread, name, args),
+      permission: () => {},
+      open: () => {},
+      close: () => {},
+    },
+    open(mkdtempSync(join(tmpdir(), "operations-"))),
+  );
+
+  const response = await serve(
+    new Request("http://127.0.0.1/telegram", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        "x-hex-channel": "chat",
+        "x-hex-thread": "-100:7",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "reply", arguments: { text: 5 } },
+      }),
+    }),
+  );
+
+  const answer = (await response.json()) as Answer;
+
+  expect(answer.result.isError).toBe(true);
+  expect(text(answer)).toBe(
+    `reply failed: ${z.prettifyError(z.object({ text: z.string() }).safeParse({ text: 5 }).error!)}`,
+  );
+  expect(text(answer)).toContain("expected string, received number");
+  await expect(call("-100:7", "reply", {})).rejects.toThrow("expected string, received undefined");
+  expect(ran).toBe(0);
+  expect(await call("-100:7", "reply", { text: "hi" })).toBe("sent hi");
+  expect(ran).toBe(1);
+});
+
+test("tools/list serves each tool's input as JSON Schema, descriptions, enums and required fields intact", async () => {
+  const react = tool({
+    name: "react",
+    description: "React to a message.",
+    input: z.object({
+      message_id: z.string().describe("The message to react to."),
+      emoji: z.enum(["👍", "👀"]).describe("Which reaction."),
+      remove: z.boolean().optional().describe("Take the reaction off."),
+    }),
+    annotations: { readOnlyHint: false },
+    reads: () => false,
+  });
+
+  const serve = endpoint(
+    "telegram",
+    "chat",
+    TOKEN,
+    { title: "Telegram", instructions: "", tools: [react] },
+    {
+      call: async () => "",
+      permission: () => {},
+      open: () => {},
+      close: () => {},
+    },
+    open(mkdtempSync(join(tmpdir(), "operations-"))),
+  );
+
+  const listing = await serve(
+    new Request("http://127.0.0.1/telegram", {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
+    }),
+  );
+
+  expect(((await listing.json()) as { result: { tools: unknown[] } }).result.tools).toEqual([
+    {
+      name: "react",
+      description: "React to a message.",
+      annotations: { readOnlyHint: false },
+      inputSchema: {
+        type: "object",
+        properties: {
+          message_id: { type: "string", description: "The message to react to." },
+          emoji: { type: "string", enum: ["👍", "👀"], description: "Which reaction." },
+          remove: { type: "boolean", description: "Take the reaction off." },
+        },
+        required: ["message_id", "emoji"],
+      },
+    },
+  ]);
 });
