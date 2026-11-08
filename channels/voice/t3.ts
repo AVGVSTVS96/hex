@@ -15,6 +15,9 @@ export type Stuck = {
   request?: string;
 };
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* Projects T3 Code makes for a thread with none, rooted at the home folder or in its own scratch,
+   are no project. */
 export type Fresh = {
   id: string;
   app: string;

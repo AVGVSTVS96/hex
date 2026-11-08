@@ -7,6 +7,10 @@ import type { MessageId } from "../../hub/ledger.ts";
 import { open } from "../../hub/store.ts";
 import type { Item } from "./activity.ts";
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A relay is a message any hex thread sent a T3 thread: the thread's work is the relay's until
+   something else asks it. T3 Code wakes a thread when its delegations finish with a message of its
+   own, which doesn't count as asking it. */
 export type Delegation = {
   id: string;
   task: string;
@@ -51,6 +55,8 @@ const SHOWN = [
   "error",
 ];
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev. */
 export class Links {
   private threads = new Map<string, { thread: string; title: string }>();
   private handed: Delegation[] = [];

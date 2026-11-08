@@ -265,6 +265,10 @@ type Phone = Dial & {
   voiceBeganAt?: number | undefined;
 };
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* What the call engine asks of the voice thread's hub: hand its session a message, hold the
+   session for a call (keep) or let it start over for the next (renew), wait for a renew on its
+   way, and name the session now serving the thread. */
 export type Hub = {
   deliver: (content: string, meta: Record<string, string>) => void;
   keep: () => Promise<void>;
@@ -280,6 +284,9 @@ type ToolCall = { [Name in keyof Args]: [name: Name, args: Args[Name]] }[keyof A
 let hub: Hub;
 let HEX_STATE: string;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* Every step to the hub in the order the calls take them; a new call's first step waits out the
+   last call's renew, so the new call's words reach the new session. */
 let hubStepsInCallOrder = Promise.resolve();
 let live: Live | undefined;
 
@@ -686,6 +693,9 @@ function current(call: string, id: string): Task | undefined {
   return latest;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The change is on the call's record when mark returns, or it throws; what it returns settles once
+   the voice has heard of it, on a live call. */
 function mark(call: string, change: Task): Promise<string> {
   if (live?.id === call) {
     live.call.track(change, Date.now() - Date.parse(live.record.started));
@@ -806,6 +816,12 @@ async function hangUpCall(call: Live) {
   return "hanging up";
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The caller or hex hangs up, and the first hang-up is the one the call ends by. Each goes out at
+   once over an open connection to the voice, so a later one retries a close the session didn't act
+   on; without one, the first goes out once one opens or, if the call ends first, on a connection
+   opened just for it. A phone or Discord call's socket is its session, so once that socket isn't
+   open there's nothing left to close. */
 function close(call: Live, event: string) {
   const state = call.socket.readyState;
   const socketIsTheSession = call.speak !== undefined;
@@ -1332,6 +1348,9 @@ function reconnect(call: Live, attempt: number) {
   }
 
   call.pending.clear();
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* A close sent on the dropped connection may never have reached the session, so it goes out
+     again. */
   delete call.closed;
 
   const socketIsTheSession = call.speak !== undefined;
@@ -1833,6 +1852,9 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
     why: twilio.data.why,
     format: { type: "audio/pcmu", rate: 8000 },
     notes: placed.get(twilio.data.token)?.notesForWhenItConnects,
+    // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+    /* Twilio plays what it's sent as it comes, faster than it's said, and echoes each mark once
+       the audio before it has played or been cleared. */
     play: (audio) => {
       twilio.send(
         JSON.stringify({
@@ -2394,6 +2416,10 @@ async function showRuns(url: URL, runs: Board) {
   return Response.json({ version: runs.version, tasks: runs.rows(), finished: runs.finished });
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The Tasks button's counts: threads that need you and are working, and how many things are yours,
+   as many as Tasks lists under Needs you: every question, everything stuck, and every thread that
+   needs you without a question. */
 async function showSummary(url: URL, runs: Board, questions: Questions) {
   const version = () => runs.counts.version + questions.counts.version;
   const after = Number(url.searchParams.get("after"));

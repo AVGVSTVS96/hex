@@ -247,6 +247,12 @@ const TOLD = new Map<string, Agent["state"]>([
   ["failed", "failed"],
 ]);
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* Every hex thread as a run, from the records Claude Code already keeps (the same ones `claude
+   agents --json` prints). A session a thread's session started (a topic's `claude -p` build), a
+   job a thread owns (bin/job), or a T3 Code thread's session below one the thread handed off
+   counts toward it as one of its agents. A running session that works for no thread (hex's own
+   check, its memory agent, a terminal) isn't on the board. */
 export class Board extends Changes {
   runs: Run[] = [];
   finished: Finished[] = [];
@@ -378,6 +384,9 @@ export class Board extends Changes {
       ?.session;
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* A session whose process died (killed, crashed) leaves its record behind, so no file change
+     says it's gone. */
   refresh() {
     clearTimeout(this.pending);
     this.stale = { threads: true, sessions: true };
@@ -874,6 +883,9 @@ export class Board extends Changes {
     };
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* A run of a project's own has no thread: it works while its agents do, and stays on the board
+     until hex restarts, at most a week. */
   private group(runs: Run[]): Run[] {
     const links = Object.entries(open(this.state).agentTasks());
 
@@ -1052,6 +1064,10 @@ export class Board extends Changes {
     };
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  /* Heartbeats begin when Claude Code marks the session busy while a heartbeat waits as its only
+     message, and last until a prompt that isn't one comes, or Claude Code marks it busy again for
+     a message that isn't one. */
   private heartbeatsBegan(thread: Thread, beats: HeartbeatTurn[], session?: Session) {
     const heartbeatsSinceLastPrompt = beats.slice(
       beats.findLastIndex((beat) => hasText(beat.after)) + 1,
@@ -1510,6 +1526,9 @@ function currentStateBegan(timeline: Entry[], state?: string) {
   return since;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A thread's last week for its lane, drawn on a log scale. Two working runs whose gap (only
+   finished or idle in it) is under a fiftieth of its age are one, since neither shows apart. */
 export function track(turns: Turn[], now: number): Turn[] {
   const from = now - TRACK;
 
