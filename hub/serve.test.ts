@@ -6,9 +6,7 @@ import { join } from "node:path";
 import { listen } from "./hub.ts";
 import { until } from "./until.ts";
 
-// A hub a stop left running, finishing a call, as KillMode=process left one: it holds the port
-// until it exits.
-const OLD = `const listener = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: () => new Response('old hub') })
+const OLD_HUB_FINISHING_A_CALL_HOLDS_THE_PORT = `const listener = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: () => new Response('old hub') })
 console.log(listener.port)
 setInterval(() => {}, 1000)`;
 
@@ -24,14 +22,20 @@ afterEach(async () => {
   for (const child of [hub, old]) {
     child?.kill("SIGKILL");
   }
+
   await Promise.all([hub?.exited, old?.exited]);
-  hub = old = undefined;
+  hub = undefined;
+  old = undefined;
   rmSync(dir, { recursive: true, force: true });
 });
 
 async function oldHub() {
-  old = Bun.spawn(["bun", "-e", OLD], { stdout: "pipe" });
-  const { value } = await (old.stdout as ReadableStream<Uint8Array>).getReader().read();
+  const started = Bun.spawn(["bun", "-e", OLD_HUB_FINISHING_A_CALL_HOLDS_THE_PORT], {
+    stdout: "pipe",
+  });
+
+  old = started;
+  const { value } = await started.stdout.getReader().read();
 
   return Number(new TextDecoder().decode(value));
 }
@@ -52,11 +56,13 @@ test("a hub that finds the port held waits for it instead of exiting, which bin/
     ]),
   );
 
-  const waiting = (hub = Bun.spawn(["bun", join(import.meta.dir, "serve.ts")], {
+  const waiting = Bun.spawn(["bun", join(import.meta.dir, "serve.ts")], {
     env: { ...env, ...states, HEX_DIR: dir, HEX_PORT: String(port) },
     stdout: "ignore",
     stderr: "pipe",
-  }));
+  });
+
+  hub = waiting;
 
   let said = "";
   void (async () => {
@@ -78,13 +84,13 @@ test("the next hub listens once the one holding the port exits", async () => {
   const listening = listen(port).then((listener) => (server = listener));
   await Bun.sleep(1500);
   expect(server).toBeUndefined();
-  old!.kill("SIGTERM");
-  await listening;
+  old?.kill("SIGTERM");
+  const listener = await listening;
 
   try {
     const response = await fetch(`http://127.0.0.1:${port}/nowhere`);
     expect(await response.text()).toBe("Not Found");
   } finally {
-    server!.stop(true);
+    await listener.stop(true);
   }
 }, 15_000);
