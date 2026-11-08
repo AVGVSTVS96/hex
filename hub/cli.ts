@@ -4,6 +4,7 @@ import { parseArgs } from 'util'
 import { holds, keysOf, problems, verdict } from './notes.ts'
 import { record, settingsOf } from './claude.ts'
 import { running, serving } from './running.ts'
+import { checks } from './ideas.ts'
 import { entry, render, waiting } from './tasks.ts'
 import { zoneOf } from './schedule.ts'
 import { asked, open, sent, type Row, type Status, type Task } from './store.ts'
@@ -78,11 +79,13 @@ function usage(): never {
   process.exit(2)
 }
 
-// One task in full, with the owner's words; a list as one clean entry per task.
+// One task in full, with the owner's words and what its idea checks last found; a list as one
+// clean entry per task.
 function show(tasks: Task[], full = true) {
   if (flags.json) return json(withThread(tasks, task => task.owner))
   const named = store.names()
-  console.log(tasks.map(task => (full ? render(task, named) : entry(task, named))).join(full ? '\n\n' : '\n') || 'no tasks')
+  const found = (task: Task) => checks(state, task.id).filter(check => check.finding).slice(-5).map(check => `  checked ${check.at.slice(0, 10)}${check.news ? ', news' : ''}: ${check.finding}`)
+  console.log(tasks.map(task => (full ? [render(task, named), ...found(task)].join('\n') : entry(task, named))).join(full ? '\n\n' : '\n') || 'no tasks')
 }
 
 // Every line memo recalls, with the words of each message a note names by its [key] under it, what

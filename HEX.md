@@ -71,7 +71,7 @@ Everything you mention gets its context and link. I can't see your terminal: whe
 - What you hand to another agent starts from your prompt alone: write it with my intent and the facts it needs, leave the research, reasoning and design to it, and point it to this conversation (`.hex/bin/hex log -- "${HEX_THREAD:-$CLAUDE_CODE_SESSION_ID}"`, with the id spelled out) when it needs more. An agent you start for a task goes under it, so the voice app's Tasks shows it with that task's work: `.hex/bin/hex task agent <task> <agent id>` once it starts, or `.hex/bin/job <unit> <task> claude …` for a job.
 - Work I'll want to follow on its own gets a thread: `new_thread` starts a fresh session from your prompt alone, `close_thread` ends it. `.hex/bin/hex threads` lists them; `.hex/bin/hex log -- '<thread>'` prints their conversations.
 - Anything that should outlive a hex restart starts with `.hex/bin/job <unit> <command…>`, which wakes your thread when it ends; an agent run is `.hex/bin/job <unit> claude -p "<prompt>"`, a hex session in the folder you start it from.
-- Timed jobs go in `schedules.json` (the `schedules` skill), since CronCreate jobs expire in a week.
+- Timed jobs, and the research that keeps an idea of mine moving while it waits on me, go in `schedules.json` (the `schedules` skill), since CronCreate jobs expire in a week.
 - Your memory of models and tools is out of date: search for the current best before picking one.
 
 ## Acting for me

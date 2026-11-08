@@ -149,3 +149,13 @@ test('a job needs a prompt and a cron or an at it can read', () => {
   expect(parse(JSON.stringify({ a: { cron: '5/15 0-23/2 1,15 */3 0-7', prompt: 'x' } }))).toEqual({ a: { cron: '5/15 0-23/2 1,15 */3 0-7', prompt: 'x' } })
   expect(parse(JSON.stringify({ a: { at: '2026-10-20 16:00', prompt: 'x' } }))).toEqual({ a: { at: '2026-10-20 16:00', prompt: 'x' } })
 })
+
+test("a job that names an idea is handed to its check every minute, with its slot when one came due, and at most daily", () => {
+  expect(() => parse(JSON.stringify({ broken: { cron: '0 9 * * 1', idea: 'four', prompt: 'x' } }))).toThrow('idea must be')
+  expect(() => parse(JSON.stringify({ hourly: { cron: '0 * * * *', idea: 't-4', prompt: 'x' } }))).toThrow('at most daily')
+  jobs({ 'gpt-live': { cron: '0 9 * * 1', idea: 't-4', prompt: 'Is GPT Live 1.1 on the API?' } })
+  const checked: [string, string | undefined, number | undefined][] = []
+  for (let minute = at(19, 8, 59); minute <= at(19, 9, 1); minute++) check(dir, hexDir, 'general', minute, (_, name, job, __, slot) => checked.push([name, job.idea, slot]))
+  expect(checked).toEqual([['gpt-live', 't-4', undefined], ['gpt-live', 't-4', at(19, 9)], ['gpt-live', 't-4', undefined]])
+  expect(fired()).toEqual([])
+})
