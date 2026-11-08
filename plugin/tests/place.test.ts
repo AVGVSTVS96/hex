@@ -32,7 +32,10 @@ beforeAll(() => {
     cpSync(join(HEX, file), join(home, ".hex", file));
   }
 
-  script(join(home, ".hex/bin/room"), `cat "${fake}/${here}"; exit $(cat "${fake}/${here}.code")`);
+  script(
+    join(home, ".hex/bin/room"),
+    `echo "$*" > "${fake}/busiest"; cat "${fake}/${here}"; exit $(cat "${fake}/${here}.code")`,
+  );
   script(join(home, ".hex/bin/session"), `echo "session $* $(cat)"`);
   script(
     join(home, ".hex/bin/away"),
@@ -89,6 +92,12 @@ test("a job runs here as a hex session while this machine has room, with what ca
   expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
     `hex/deck runs on ${here}\nsession -n hex/deck -p build it the log\n`,
   );
+});
+
+test("this machine keeps its jobs until its CPU is 85% busy, while other machines take them only half idle", () => {
+  machine(here, "cpu 70% busy", 0);
+  place({ HEX_MACHINES: "mac:3" });
+  expect(readFileSync(join(fake, "busiest"), "utf-8")).toBe("85\n");
 });
 
 test("a job goes to the next machine with room, as a T3 Code thread on that machine's hex T3", () => {
