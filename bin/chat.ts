@@ -529,7 +529,11 @@ function tooLong(line: string) {
   return `Too long: your line is ${size(line)} bytes, over the ${NODE}-byte limit. Write\nthe whole line again for the same <input>, cutting just enough of the\nleast valuable items to fit before this cut:\n${cut(line, NODE)}| ← LIMIT`;
 }
 
-const Result = z.object({ type: z.unknown(), result: z.unknown(), is_error: z.unknown() });
+const Result = z.object({
+  type: z.unknown().optional(),
+  result: z.unknown().optional(),
+  is_error: z.unknown().optional(),
+});
 
 function lineReader(stream: ReadableStream<Uint8Array>) {
   const reader = stream.getReader();
@@ -769,23 +773,25 @@ function heard(text: string): [Kind, string] {
 }
 
 const Block = z.looseObject({
-  type: z.unknown(),
+  type: z.unknown().optional(),
   text: z.string().optional(),
   name: z.string().optional(),
   input: z.record(z.string(), z.unknown()).optional(),
-  content: z.unknown(),
+  content: z.unknown().optional(),
 });
 
 const Content = z.union([z.string(), z.array(Block)]);
 
 const Transcribed = z.looseObject({
-  isSidechain: z.unknown(),
-  isCompactSummary: z.unknown(),
-  isMeta: z.unknown(),
-  origin: z.looseObject({ kind: z.unknown() }).nullish(),
-  type: z.unknown(),
-  attachment: z.looseObject({ type: z.unknown(), prompt: z.unknown() }).nullish(),
-  message: z.unknown(),
+  isSidechain: z.unknown().optional(),
+  isCompactSummary: z.unknown().optional(),
+  isMeta: z.unknown().optional(),
+  origin: z.looseObject({ kind: z.unknown().optional() }).nullish(),
+  type: z.unknown().optional(),
+  attachment: z
+    .looseObject({ type: z.unknown().optional(), prompt: z.unknown().optional() })
+    .nullish(),
+  message: z.unknown().optional(),
   timestamp: z.string().nullish(),
 });
 
@@ -846,7 +852,9 @@ function* entries(record: z.infer<typeof Transcribed>): Generator<[Kind, string]
     content = Said.parse(record.message).content;
   } else {
     if (record.type === "assistant") {
-      yield* replied(z.looseObject({ content: z.unknown() }).parse(record.message).content);
+      yield* replied(
+        z.looseObject({ content: z.unknown().optional() }).parse(record.message).content,
+      );
     }
 
     return;
@@ -1055,10 +1063,14 @@ const TOOLS = [
   },
 ];
 
-const Request = z.looseObject({ method: z.unknown(), id: z.unknown(), params: z.unknown() });
+const Request = z.looseObject({
+  method: z.unknown().optional(),
+  id: z.unknown().optional(),
+  params: z.unknown().optional(),
+});
 
 const Called = z.looseObject({
-  name: z.unknown(),
+  name: z.unknown().optional(),
   arguments: z.record(z.string(), z.unknown()).nullish(),
 });
 
@@ -1108,6 +1120,10 @@ const reply = (line: string) => writeSync(1, `${line}\n`);
 
 async function mcp(root: string) {
   for await (const line of console) {
+    if (line === "") {
+      continue;
+    }
+
     const request = Request.parse(JSON.parse(line));
     const { method, id } = request;
 
@@ -1119,7 +1135,7 @@ async function mcp(root: string) {
 
     if (method === "initialize") {
       result = {
-        protocolVersion: z.object({ protocolVersion: z.unknown() }).parse(request.params)
+        protocolVersion: z.object({ protocolVersion: z.unknown().optional() }).parse(request.params)
           .protocolVersion,
         capabilities: { tools: {} },
         serverInfo: { name: "chat", version: "1" },

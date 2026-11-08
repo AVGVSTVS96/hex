@@ -64,6 +64,7 @@ beforeEach(() => {
   }
 
   symlinkSync(join(HEX, "hub"), join(home, ".hex/hub"));
+  symlinkSync(join(HEX, "node_modules"), join(home, ".hex/node_modules"));
   copyFileSync(join(HEX, "chat/prompt.md"), join(home, ".hex/chat/prompt.md"));
   mkdirSync(join(home, ".claude"));
   writeFileSync(join(home, ".claude/CLAUDE.md"), "# Global\n");
@@ -74,20 +75,21 @@ beforeEach(() => {
   writeFileSync(join(home, "calls"), "");
   writeFileSync(
     join(home, "claude"),
-    `#!/usr/bin/env python3
-import json, os, re, sys
-with open("${home}/calls", "a") as f:
-    f.write(json.dumps(sys.argv[1:]) + "\\n")
-tries = 0
-for line in sys.stdin:
-    text = json.loads(line)["message"]["content"]
-    with open("${home}/calls", "a") as f:
-        f.write(json.dumps({"prompt": text}) + "\\n")
-    tries += 1
-    found = re.search(r"<input>\\n([\\s\\S]*)\\n</input>", text)
-    squeezed = " ".join((found[1] if found else text).split())[:60]
-    reply = "x" * 700 if os.environ.get("LONG") and tries == 1 else ("long " * 110 if os.environ.get("LONG") and tries == 2 else "sum " + squeezed + " " + "~" * 240)
-    print(json.dumps({"type": "result", "result": reply, "is_error": False}), flush=True)
+    `#!/usr/bin/env bun
+import { appendFileSync } from "node:fs";
+const calls = ${JSON.stringify(join(home, "calls"))};
+const long = Boolean(process.env.LONG);
+appendFileSync(calls, JSON.stringify(process.argv.slice(2)) + "\\n");
+let tries = 0;
+for await (const line of console) {
+  const text = JSON.parse(line).message.content;
+  appendFileSync(calls, JSON.stringify({ prompt: text }) + "\\n");
+  tries += 1;
+  const found = /<input>\\n([\\s\\S]*)\\n<\\/input>/.exec(text);
+  const squeezed = [...(found ? found[1] : text).split(/\\s+/).filter(Boolean).join(" ")].slice(0, 60).join("");
+  const reply = long && tries === 1 ? "x".repeat(700) : long && tries === 2 ? "long ".repeat(110) : "sum " + squeezed + " " + "~".repeat(240);
+  console.log(JSON.stringify({ type: "result", result: reply, is_error: false }));
+}
 `,
   );
   chmodSync(join(home, "claude"), 0o755);
@@ -141,14 +143,24 @@ function run(args: string[], input = "", extra: Record<string, string> = {}) {
   return result.stdout.toString();
 }
 
+function simulation(script: string) {
+  const file = join(home, `simulation-${readdirSync(home).length}.ts`);
+  writeFileSync(
+    file,
+    `const { Chat } = await import(process.argv[2]);\nconst c = new Chat(process.argv[3]);\n${script}`,
+  );
+
+  return file;
+}
+
 function simulate(script: string, dir: string) {
   const result = Bun.spawnSync([
     "sh",
     "-c",
-    `ulimit -t ${cpuSecondsBeforeAHangEnds} && exec python3 -I -B -c "$@"`,
+    `ulimit -t ${cpuSecondsBeforeAHangEnds} && exec bun "$@"`,
     "simulate",
-    script,
-    join(HEX, "bin/chat"),
+    simulation(script),
+    join(HEX, "bin/chat.ts"),
     join(home, dir),
   ]);
 
@@ -441,28 +453,27 @@ test(
         JSON.parse(
           simulate(
             `
-import importlib.machinery, json, sys
-chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
-c = chat.Chat(sys.argv[2])
-sizes, batches, stable, lows = [], 0, True, []
-for t in range(1200):
-    before = list(c.view)
-    c.add("user", "y" * 300, "2026-10-11T00:00:00+00:00")
-    while c.pending:
-        l, i = min(c.pending)
-        c.put(l, i, "z" * 400)
-    if len(c.view) < len(before):
-        batches += 1
-        lows.append(c.weight(c.view))
-    else:
-        stable &= c.view[:len(before)] == before
-    covered = 0
-    for l, i in c.view:
-        assert i << l == covered, (t, c.view)
-        covered += 1 << l
-    assert covered == t + 1
-    sizes.append(c.weight(c.view))
-print(json.dumps({"max": max(sizes), "batches": batches, "stable": stable, "lows": max(lows)}))
+let sizes = [], batches = 0, stable = true, lows = [];
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+for (let t = 0; t < 1200; t++) {
+  const before = [...c.view];
+  c.add("user", "y".repeat(300), "2026-10-11T00:00:00+00:00");
+  while (c.pending.size) c.put(c.todo()[0], "z".repeat(400));
+  if (c.view.length < before.length) {
+    batches += 1;
+    lows.push(c.weight(c.view));
+  } else {
+    stable &&= same(c.view.slice(0, before.length), before);
+  }
+  let covered = 0;
+  for (const [l, i] of c.view) {
+    if (i * 2 ** l !== covered) throw new Error(JSON.stringify([t, c.view]));
+    covered += 2 ** l;
+  }
+  if (covered !== t + 1) throw new Error(String(t));
+  sizes.push(c.weight(c.view));
+}
+console.log(JSON.stringify({ max: Math.max(...sizes), batches, stable, lows: Math.max(...lows) }));
 `,
             "sim",
           ),
@@ -483,18 +494,13 @@ test(
     const result: unknown = JSON.parse(
       simulate(
         `
-import importlib.machinery, json, sys
-chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
-c = chat.Chat(sys.argv[2])
-for t in range(150):
-    c.add("user", "y" * 300, "2026-10-11T00:00:00+00:00")
-    while c.pending:
-        l, i = min(c.pending)
-        c.put(l, i, "z" * 400)
-before = list(c.view)
-for t in range(40):
-    c.add("echo", "o" * 25_000, "2026-10-11T00:00:00+00:00")
-print(json.dumps({"kept": c.view[:len(before)] == before, "folding": c.folding}))
+for (let t = 0; t < 150; t++) {
+  c.add("user", "y".repeat(300), "2026-10-11T00:00:00+00:00");
+  while (c.pending.size) c.put(c.todo()[0], "z".repeat(400));
+}
+const before = [...c.view];
+for (let t = 0; t < 40; t++) c.add("echo", "o".repeat(25_000), "2026-10-11T00:00:00+00:00");
+console.log(JSON.stringify({ kept: JSON.stringify(c.view.slice(0, before.length)) === JSON.stringify(before), folding: c.folding }));
 `,
         "burst",
       ),
@@ -512,21 +518,17 @@ test(
       JSON.parse(
         simulate(
           `
-import importlib.machinery, json, sys
-chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
-c = chat.Chat(sys.argv[2])
-last, kept, whole, tails = None, 0, True, []
-for t in range(1200):
-    c.add("user", "y" * 300, f"2026-10-11T00:00:{t % 60:02}+00:00")
-    while c.pending:
-        l, i = min(c.pending)
-        c.put(l, i, "z" * 400)
-    head, tail = c.split()
-    whole &= "\\n".join(filter(None, [head, tail])) == c.lines(c.view, c.recent())
-    kept += head == last
-    last = head
-    tails.append(len(tail.encode()))
-print(json.dumps({"kept": kept, "whole": whole, "tail": max(tails)}))
+let last, kept = 0, whole = true, tails = [];
+for (let t = 0; t < 1200; t++) {
+  c.add("user", "y".repeat(300), "2026-10-11T00:00:" + String(t % 60).padStart(2, "0") + "+00:00");
+  while (c.pending.size) c.put(c.todo()[0], "z".repeat(400));
+  const [head, tail] = c.split();
+  whole &&= [head, tail].filter(Boolean).join("\\n") === c.lines(c.view, c.recent());
+  kept += head === last ? 1 : 0;
+  last = head;
+  tails.push(Buffer.byteLength(tail));
+}
+console.log(JSON.stringify({ kept, whole, tail: Math.max(...tails) }));
 `,
           "split",
         ),
@@ -555,19 +557,16 @@ test(
     expect(
       simulate(
         `
-import importlib.machinery, sys
-chat = importlib.machinery.SourceFileLoader("chat", sys.argv[1]).load_module()
-c = chat.Chat(sys.argv[2])
-for t in range(10):
-    c.messages.append({"i": t})
-c.nodes = {p: "n" for p in [(0, i) for i in range(10)] + [(1, i) for i in range(5)] + [(2, 0), (2, 1), (3, 0)]}
-lines = [(2, 0), (2, 1), (0, 8), (0, 9)]
-c.fold(lines, 3)
-print(lines)
+for (let t = 0; t < 10; t++) c.messages.push({ i: t });
+const built = [...Array.from({ length: 10 }, (_, i) => [0, i]), ...Array.from({ length: 5 }, (_, i) => [1, i]), [2, 0], [2, 1], [3, 0]];
+c.nodes = new Map(built.map(([l, i]) => [l + ":" + i, "n"]));
+const lines = [[2, 0], [2, 1], [0, 8], [0, 9]];
+c.fold(lines, 3);
+console.log(JSON.stringify(lines));
 `,
         "due",
       ).trim(),
-    ).toBe("[(2, 0), (2, 1), (1, 4)]");
+    ).toBe("[[2,0],[2,1],[1,4]]");
   },
   noWallClockLimit,
 );
