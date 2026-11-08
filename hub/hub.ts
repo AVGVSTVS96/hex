@@ -21,7 +21,7 @@ import { clock } from "./clock.ts";
 import { holding } from "./holds.ts";
 import { STARTUP } from "./loaded.ts";
 import { endpoint, toolList } from "./mcp.ts";
-import type { ChannelServer, Line } from "./mcp.ts";
+import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { queue } from "./observe.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
@@ -29,7 +29,7 @@ import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 export { dispatch, tool } from "./mcp.ts";
-export type { ChannelServer, Handlers, Tool } from "./mcp.ts";
+export type { ChannelServer, Handlers, Permission, Tool, ToolArguments } from "./mcp.ts";
 
 // key: the app's own id for what the message is, so the app sending it again changes nothing.
 // author: who wrote it, which every message a client delivers says (Store.deliver).
@@ -40,7 +40,7 @@ export type Message = {
   author?: Author;
 };
 
-export type Call = (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>;
+export type Call = (thread: string, tool: string, args: ToolArguments) => Promise<string>;
 
 // background: the session's turn ended with background agents still working.
 export type State = (thread: string, busy: boolean, background: boolean) => void;
@@ -49,13 +49,6 @@ export type Failed = (thread: string, reason: string) => void;
 
 // still: the message waits for the thread's session, or else that wait is over.
 export type Waits = (thread: string, message: Message, still: boolean) => void;
-
-export type Permission = {
-  request_id: string;
-  tool_name: string;
-  description: string;
-  input_preview: string;
-};
 
 export type Settings = { model?: string | undefined; effort?: string | undefined };
 
