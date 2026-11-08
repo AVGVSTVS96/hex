@@ -1,4 +1,4 @@
-import { Database } from "bun:sqlite";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import {
   appendFileSync,
   existsSync,
@@ -116,6 +116,8 @@ export type Question = {
   poll?: string;
   // Asked with a menu where any number of options can be picked, so a reopen puts the menu back.
   multiple?: boolean;
+  // Screenshots of the options, one per option in their order, as files on this machine.
+  shots?: string[];
   answer?: Answer;
   settled?: { note: string; at: string };
 };
@@ -160,6 +162,7 @@ type StoredQuestion = {
   at: string;
   poll: string | null;
   multiple: number;
+  shots: string | null;
   answer: string | null;
   settled: string | null;
 };
@@ -419,6 +422,13 @@ const migrations: (string | ((store: Store) => void))[] = [
   // Work on hold, and each thread it holds: when its hold on that thread ended and why, the message that woke it, and when that wake settled.
   `create table if not exists holds (n integer primary key, by text not null, why text not null, message text, until text check (until ${UTC}), at text not null check (at ${UTC}));
   create table if not exists held (hold integer not null references holds (n), thread text not null, ended text check (ended ${UTC}), ending text, woke text, settled text check (settled ${UTC}), primary key (hold, thread));`,
+  // Screenshots of a question's options, one per option.
+  ({ db }: Store) => {
+    if (!db.query("select 1 from pragma_table_info('questions') where name = 'shots'").get())
+      db.run(
+        "alter table questions add column shots text check (json_valid(shots) and json_type(shots) = 'array')",
+      );
+  },
 ];
 
 // Each app's folder: a hex's state/<app>/, or outside a hex the app's own state folder, named for the app.
@@ -1391,29 +1401,34 @@ export class Store {
     options,
     poll,
     multiple,
+    shots,
     at = now(),
     answer,
     settled,
   }: NewQuestion) {
+    // An older hex's questions, which steps before the asker and shots columns bring in, are hex's
+    // and fill only the columns they had.
+    const row = {
+      ...(asker && { asker }),
+      app,
+      thread,
+      message,
+      text,
+      options: JSON.stringify(options),
+      poll: poll ?? null,
+      multiple: multiple ? 1 : 0,
+      ...(shots?.length && { shots: JSON.stringify(shots) }),
+      answer: answer ? JSON.stringify(answer) : null,
+      settled: settled ? JSON.stringify(settled) : null,
+      at,
+    };
+    const columns = Object.keys(row);
     this.write(() =>
       this.db
-        // An older hex's questions, which a step before the asker column brings in, are hex's.
         .query(
-          `insert into questions (${asker ? "asker, " : ""}app, thread, message, text, options, poll, multiple, answer, settled, at) values (${asker ? "?, " : ""}?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict do nothing`,
+          `insert into questions (${columns.join(", ")}) values (${columns.map(() => "?").join(", ")}) on conflict do nothing`,
         )
-        .run(
-          ...(asker ? [asker] : []),
-          app,
-          thread,
-          message,
-          text,
-          JSON.stringify(options),
-          poll ?? null,
-          multiple ? 1 : 0,
-          answer ? JSON.stringify(answer) : null,
-          settled ? JSON.stringify(settled) : null,
-          at,
-        ),
+        .run(...(Object.values(row) as SQLQueryBindings[])),
     );
   }
 
@@ -1971,6 +1986,7 @@ function toQuestion(row: StoredQuestion): Question {
     at: row.at,
     ...(row.poll && { poll: row.poll }),
     ...(row.multiple && { multiple: true }),
+    ...(row.shots && { shots: JSON.parse(row.shots) }),
     ...(row.answer && { answer: JSON.parse(row.answer) }),
     ...(row.settled && { settled: JSON.parse(row.settled) }),
   };

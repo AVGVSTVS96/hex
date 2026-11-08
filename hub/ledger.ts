@@ -131,10 +131,9 @@ export class Ledger {
     message: MessageId,
     text: string,
     options: string[],
-    poll?: string,
-    multiple = false,
+    how: Pick<Question, "poll" | "multiple" | "shots"> = {},
   ) {
-    this.store.ask({ app: this.app, thread, message, text, options, poll, multiple });
+    this.store.ask({ app: this.app, thread, message, text, options, ...how });
     this.store.replied(this.app, thread, {
       label: clip(text, 60),
       at: new Date().toISOString(),

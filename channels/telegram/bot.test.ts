@@ -44,6 +44,8 @@ function answer(method: string, payload: Record<string, any>) {
       const sent = message();
       return { ...sent, poll: { id: `poll-${sent.message_id}` } };
     }
+    case "sendMediaGroup":
+      return payload.media.map(message);
     case "forwardMessages":
       return payload.message_ids.map(() => ({ message_id: ++nextMessage }));
     case "getForumTopicIconStickers":
@@ -978,6 +980,28 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
   ).toBe(`no question waits on message ${id}, so nothing was settled`);
   general.close();
   dm.close();
+});
+
+test("a poll's screenshots go above it as one album, each captioned with its option, and its question keeps them", async () => {
+  const one = join(outbox, `one-${Date.now()}.png`);
+  const both = join(outbox, `both-${Date.now()}.png`);
+  writeFileSync(one, "png");
+  writeFileSync(both, "png");
+  expect(
+    (await call("poll", { question: "Buttons?", options: ["One", "Both"], files: [one] })).error,
+  ).toContain("one screenshot per option");
+  const before = calls.length;
+  const sent = await call("poll", {
+    question: "Buttons?",
+    options: ["One", "Both"],
+    files: [one, both],
+  });
+  const id = Number(sent.text.match(/id: (\d+)/)[1]);
+  const [album, poll] = calls.slice(before);
+  expect(album!.method).toBe("sendMediaGroup");
+  expect(album!.payload.media.map((m: any) => m.caption)).toEqual(["One", "Both"]);
+  expect(poll!.payload.reply_parameters).toEqual({ message_id: id - 2 });
+  expect(asked(id).shots).toEqual([one, both]);
 });
 
 test("edit_message settles a poll even with text, which a poll can't change, and without settled says so", async () => {

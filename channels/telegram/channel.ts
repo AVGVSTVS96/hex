@@ -178,6 +178,13 @@ export const server: ChannelServer = {
             description: "When you have a pick, end its option with (my pick).",
           },
           multiple: { type: "boolean", description: "Allow picking more than one option." },
+          files: {
+            type: "array",
+            items: { type: "string" },
+            maxItems: 10,
+            description:
+              "For a choice between looks: one screenshot per option, in the options' order (absolute paths), showing what picking it gives; an option that keeps things as they are shows how they are now. They go above the poll, and hex voice shows each under its option.",
+          },
         },
         required: ["question", "options"],
       },
