@@ -1018,7 +1018,11 @@ test("rename_thread renames a thread Hex opened in Buzz too, by editing its firs
   const { session } = await threadStarted(bot);
   await session.call("rename_thread", { title: "Loose" });
   expect(bot.published(40_003)).toEqual([]);
-  await session.call("new_thread", { title: "Anchors", prompt: "find better anchors" });
+  await session.call("new_thread", {
+    title: "Anchors",
+    prompt: "find better anchors",
+    about: "",
+  });
   const root = await until(() => bot.published(9).find((event) => event.content === "**Anchors**"));
   const opened = await bot.session(root.id);
   expect((await opened.call("rename_thread", { title: "Mounts" })).text).toBe(
@@ -1250,7 +1254,12 @@ test("a forum post that tags Hex is its own thread: comments on it reach the ses
     kind: 45_003,
     tags: [["h", bot.forum], ["e", post.id, "", "reply"], ["p", owner], bot.auth],
   });
-  await session.call("new_thread", { title: "Notes", prompt: "draft them", channel: "ideas" });
+  await session.call("new_thread", {
+    title: "Notes",
+    prompt: "draft them",
+    about: "",
+    channel: "ideas",
+  });
   expect(
     await until(() => bot.relay.events.find((event) => event.content === "**Notes**")),
   ).toMatchObject({ kind: 45_001, tags: [["h", bot.forum], ["p", owner], bot.auth] });
@@ -1294,6 +1303,7 @@ test("create_channel makes a channel Hex owns, adds the owner, and new_thread ca
   await session.call("new_thread", {
     title: "Reading",
     prompt: "gather them",
+    about: "",
     channel: "research",
   });
   expect(
@@ -1329,7 +1339,11 @@ test("the channel of every thread is kept in channels.json for the voice app: th
   await until(() => channels()[known.id] === bot.channel);
   const { root, session } = await threadStarted(bot);
   await until(() => channels()[root.id] === bot.channel);
-  await session.call("new_thread", { title: "Anchors", prompt: "find better anchors" });
+  await session.call("new_thread", {
+    title: "Anchors",
+    prompt: "find better anchors",
+    about: "",
+  });
 
   const opened = await until(() =>
     bot.published(9).find((event) => event.content === "**Anchors**"),

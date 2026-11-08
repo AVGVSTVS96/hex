@@ -42,7 +42,7 @@ type Turn = {
   channel: string;
   startedAt: string;
   beat: number;
-  session?: string;
+  session?: string | undefined;
   transcript?: Transcript;
   ending?: boolean;
   cut?: boolean;
@@ -134,7 +134,7 @@ export function startActivity({
   }: {
     thread: string;
     channel: string;
-    session?: string;
+    session?: string | undefined;
     triggers: string[];
   }) {
     const turn = turns.get(thread);

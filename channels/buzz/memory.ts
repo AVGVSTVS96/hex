@@ -52,7 +52,7 @@ export function startMemory({
   secretKey: Uint8Array;
   owner: string;
   hexDir: string;
-  share?: string[];
+  share?: string[] | undefined;
 }) {
   const key = getConversationKey(secretKey, owner);
   const engrams = book(ENGRAM, "agent-memory/v1/d-tag", (body) => body?.slug);

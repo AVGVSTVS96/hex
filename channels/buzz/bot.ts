@@ -17,10 +17,10 @@ import { finalizeEvent } from "nostr-tools/pure";
 import type { Event } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 
-import { startHub, clients, begin, move, tappable, title } from "../../hub/hub.ts";
-import type { Message, Turn } from "../../hub/hub.ts";
+import { startHub, clients, begin, move, tappable, title, dispatch } from "../../hub/hub.ts";
+import type { Handlers, Message, Turn } from "../../hub/hub.ts";
 import { startActivity } from "./activity.ts";
-import { server } from "./channel.ts";
+import { server, tools } from "./channel.ts";
 import { startMemory } from "./memory.ts";
 import { connectRelay } from "./relay.ts";
 
@@ -38,10 +38,10 @@ try {
   chmodSync(ENV_FILE, 0o600);
 
   for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
-    const m = /^(\w+)=(.*)$/.exec(line);
+    const [, name, value] = /^(\w+)=(.*)$/u.exec(line) ?? [];
 
-    if (m) {
-      process.env[m[1]] = m[2];
+    if (name !== undefined && value !== undefined) {
+      process.env[name] = value;
     }
   }
 } catch {}
@@ -74,6 +74,13 @@ type Access = {
   /** Files and folders, relative to the hex folder, shown in the owner's memory panel. */
   share?: string[];
 };
+
+type Args<Name extends keyof Handlers<typeof tools>> = Parameters<Handlers<typeof tools>[Name]>[1];
+
+type Asked = { thread: string; choices: { label: string; reaction?: string }[]; chosen?: number };
+
+const isGiven = (value: string | undefined): value is string =>
+  value !== undefined && value !== "";
 
 function loadAccess(): Access {
   try {
@@ -281,12 +288,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   >();
 
   // Messages Hex sent with buttons, its keycap reaction for each, and which one was tapped.
-  const buttons = load<
-    Record<
-      string,
-      { thread: string; choices: { label: string; reaction?: string }[]; chosen?: number }
-    >
-  >(BUTTONS_FILE, {});
+  const buttons = load<Record<string, Asked>>(BUTTONS_FILE, {});
 
   const access = loadAccess();
   const panels = access.panels !== false;
@@ -651,16 +653,16 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     });
   }
 
-  async function history(caller: string, args: Record<string, unknown>): Promise<string> {
-    const limit = Math.min((args.limit as number) ?? 20, 100);
-    const named = args.thread as string | undefined;
+  async function history(caller: string, args: Args<"fetch_messages">): Promise<string> {
+    const limit = Math.min(args.limit ?? 20, 100);
+    const named = args.thread;
 
-    const thread = named
-      ? /^[0-9a-f]{64}$/.test(named)
+    const thread = isGiven(named)
+      ? /^[0-9a-f]{64}$/u.test(named)
         ? named
         : hub.find(named)
-      : args.channel
-        ? channelNamed(args.channel as string)
+      : isGiven(args.channel)
+        ? channelNamed(args.channel)
         : caller;
 
     const channel = await channelOf(thread);
@@ -668,7 +670,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     if (thread !== caller) {
       readable(caller, channel);
     }
-    const before = args.before ? await message(channel, args.before as string) : undefined;
+    const before = isGiven(args.before) ? await message(channel, args.before) : undefined;
 
     if (isChannel(thread) && !channels.get(thread)?.dm) {
       return await channelWindow(thread, limit, before);
@@ -692,16 +694,16 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     );
   }
 
-  async function search(caller: string, args: Record<string, unknown>): Promise<string> {
-    const limit = Math.min((args.limit as number) ?? 20, 100);
+  async function search(caller: string, args: Args<"search_messages">): Promise<string> {
+    const limit = Math.min(args.limit ?? 20, 100);
 
-    const scope = args.channel
-      ? [readable(caller, channelNamed(args.channel as string))]
-      : [...channels.keys()].filter((id) => !channels.get(id)!.dm || id === caller);
+    const scope = isGiven(args.channel)
+      ? [readable(caller, channelNamed(args.channel))]
+      : [...channels].filter(([id, channel]) => !channel.dm || id === caller).map(([id]) => id);
 
     const hits =
       scope.length > 0
-        ? await relay.query([{ kinds: MESSAGES, search: args.query as string, "#h": scope, limit }])
+        ? await relay.query([{ kinds: MESSAGES, search: args.query, "#h": scope, limit }])
         : [];
 
     return await rows(hits, (event) => {
@@ -777,8 +779,8 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   }
 
   // NIP-29 create-group: Hex owns the channel it creates, and adds the owner so it shows up for them.
-  async function createChannel(args: Record<string, unknown>): Promise<string> {
-    const name = (args.name as string).trim().replace(/^#/, "");
+  async function createChannel(args: Args<"create_channel">): Promise<string> {
+    const name = args.name.trim().replace(/^#/u, "");
 
     if (!name) {
       throw new Error("a channel needs a name");
@@ -791,9 +793,9 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       tags: [
         ["h", id],
         ["name", name],
-        ["visibility", args.private ? "private" : "open"],
+        ["visibility", args.private === true ? "private" : "open"],
         ["channel_type", forum ? "forum" : "stream"],
-        ...(args.about ? [["about", args.about as string]] : []),
+        ...(isGiven(args.about) ? [["about", args.about]] : []),
       ],
     });
     await relay.publish({
@@ -911,250 +913,210 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     void hub.interrupt(thread).catch(() => {});
   }
 
-  async function call(
-    caller: string,
-    tool: string,
-    args: Record<string, unknown>,
-  ): Promise<string> {
-    if (tool === "new_thread") {
-      const name = title(args.title as string);
-      const app = (args.app as string | undefined) ?? "buzz";
-      const about = args.about as string | undefined;
+  const handlers: Handlers<typeof tools> = {
+    new_thread: async (caller, args) => {
+      const name = title(args.title);
+      const app = args.app ?? "buzz";
 
       if (app !== "buzz") {
-        return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt as string, { about, where: args.channel as string | undefined })).link}`;
+        const where = args.channel === undefined ? {} : { where: args.channel };
+        const opened = await begin(app, name, args.prompt, { about: args.about, ...where });
+
+        return `started thread "${name}" in ${app}: ${opened.link}`;
       }
-      const { thread } = await place(
-        name,
-        (args.channel as string | undefined) ?? (await channelOf(caller)),
-        about,
-      );
+      const { thread } = await place(name, args.channel ?? (await channelOf(caller)), args.about);
 
-      hub.open(thread, name, args.prompt as string);
+      hub.open(thread, name, args.prompt);
 
-      return `started thread "${name}": ${link(homes.get(thread)!, thread)}`;
-    }
-
-    if (tool === "fetch_messages") {
-      return await history(caller, args);
-    }
-    if (tool === "search_messages") {
-      return await search(caller, args);
-    }
-    if (tool === "list_channels") {
-      return listChannels();
-    }
-    if (tool === "create_channel") {
-      return await createChannel(args);
-    }
-    if (tool === "presence") {
-      return await whoIsOnline();
-    }
-    if (tool === "canvas") {
-      const channel = args.channel
-        ? readable(caller, channelNamed(args.channel as string))
+      return `started thread "${name}": ${link(await channelOf(thread), thread)}`;
+    },
+    fetch_messages: history,
+    search_messages: search,
+    list_channels: async () => listChannels(),
+    create_channel: async (_caller, args) => await createChannel(args),
+    presence: async () => await whoIsOnline(),
+    canvas: async (caller, args) => {
+      const channel = isGiven(args.channel)
+        ? readable(caller, channelNamed(args.channel))
         : await channelOf(caller);
 
-      return await canvas(
-        channel,
-        args.text as string | undefined,
-        args.revision as string | undefined,
-      );
-    }
+      return await canvas(channel, args.text, args.revision);
+    },
+    reply: async (caller, args) => {
+      const thread = isGiven(args.thread) ? hub.find(args.thread) : caller;
+      const choices = args.buttons ?? [];
 
-    const thread = args.thread ? hub.find(args.thread as string) : caller;
+      if (choices.length > KEYCAPS.length) {
+        throw new Error(`at most ${KEYCAPS.length} buttons`);
+      }
+      const text = [args.text, choices.map((label, i) => `${KEYCAPS[i]} ${label}`).join("\n")]
+        .filter(Boolean)
+        .join("\n\n");
 
-    switch (tool) {
-      case "reply": {
-        const choices = (args.buttons as string[] | undefined) ?? [];
+      const files = args.files ?? [];
 
-        if (choices.length > KEYCAPS.length) {
-          throw new Error(`at most ${KEYCAPS.length} buttons`);
-        }
-        const text = [
-          args.text as string,
-          choices.map((label, i) => `${KEYCAPS[i]} ${label}`).join("\n"),
-        ]
-          .filter(Boolean)
-          .join("\n\n");
+      for (const f of files) {
+        assertSendable(f);
+        const st = statSync(f);
 
-        const reply_to = args.reply_to as string | undefined;
-        const files = (args.files as string[] | undefined) ?? [];
-
-        for (const f of files) {
-          assertSendable(f);
-          const st = statSync(f);
-
-          if (st.size > MAX_ATTACHMENT_BYTES) {
-            throw new Error(
-              `file too large: ${f} (${(st.size / 1024 / 1024).toFixed(1)}MB, max 100MB)`,
-            );
-          }
-        }
-
-        const uploads = await Promise.all(files.map(upload));
-        const chunks = fenced(text, MAX_CHUNK_LIMIT);
-        const sentIds: string[] = [];
-
-        try {
-          for (let i = 0; i < chunks.length; i++) {
-            const last = i === chunks.length - 1;
-
-            const content = last
-              ? chunks[i] + uploads.map((u) => `\n${u.line}`).join("")
-              : chunks[i]!;
-
-            const sent = await post(
-              thread,
-              content,
-              last ? uploads.map((u) => u.imeta) : [],
-              i === 0 ? reply_to : undefined,
-            );
-
-            hub.sent(thread, { key: sent.id, content });
-            sentIds.push(sent.id);
-          }
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          hub.sent(thread, {
-            content: chunks.slice(sentIds.length).join("\n"),
-            meta: { failed: msg },
-          });
+        if (st.size > MAX_ATTACHMENT_BYTES) {
           throw new Error(
-            `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
+            `file too large: ${f} (${(st.size / 1024 / 1024).toFixed(1)}MB, max 100MB)`,
           );
         }
+      }
 
-        if (choices.length > 0) {
-          const asked = (buttons[sentIds.at(-1)!] = {
+      const uploads = await Promise.all(files.map(upload));
+      const chunks = fenced(text, MAX_CHUNK_LIMIT);
+      const sentIds: string[] = [];
+
+      try {
+        for (const [i, part] of chunks.entries()) {
+          const last = i === chunks.length - 1;
+          const content = last ? part + uploads.map((u) => `\n${u.line}`).join("") : part;
+
+          const sent = await post(
             thread,
-            choices: choices.map((label) => ({ label })),
-          });
+            content,
+            last ? uploads.map((u) => u.imeta) : [],
+            i === 0 ? args.reply_to : undefined,
+          );
 
-          keep(BUTTONS_FILE, buttons);
-
-          for (const [i, choice] of asked.choices.entries()) {
-            choice.reaction = (await react(sentIds.at(-1)!, KEYCAPS[i]!)).id;
-          }
-          keep(BUTTONS_FILE, buttons);
+          hub.sent(thread, { key: sent.id, content });
+          sentIds.push(sent.id);
         }
-
-        return sentIds.length === 1
-          ? `sent (id: ${sentIds[0]})`
-          : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
-      }
-
-      case "react": {
-        const target = await message(thread, args.message_id as string);
-
-        if (!args.remove) {
-          await react(target.id, args.emoji as string);
-
-          return "reacted";
-        }
-
-        const mine = await relay.query([
-          { kinds: [7], authors: [me], "#e": [target.id], "#h": [tag(target, "h")!] },
-        ]);
-
-        const reaction = mine.find((event) => event.content === args.emoji);
-
-        if (!reaction) {
-          throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
-        }
-        await relay.publish({ kind: 5, content: "", tags: [["e", reaction.id]] });
-
-        return "reaction removed";
-      }
-
-      case "edit_message": {
-        const target = await message(thread, args.message_id as string);
-
-        if (target.pubkey !== me) {
-          throw new Error("only the bot's own messages can be edited");
-        }
-        const edited = await edit(target, args.text as string);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
         hub.sent(thread, {
-          key: edited.id,
-          content: args.text as string,
-          meta: { edited: "true", message_id: target.id },
+          content: chunks.slice(sentIds.length).join("\n"),
+          meta: { failed: msg },
         });
-
-        return `edited (id: ${edited.id})`;
+        throw new Error(
+          `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
+          { cause: error },
+        );
       }
 
-      case "delete_message": {
-        const target = await message(thread, args.message_id as string);
+      const lastId = sentIds.at(-1);
 
-        if (target.pubkey !== me) {
-          throw new Error("only the bot's own messages can be deleted");
+      if (choices.length > 0 && lastId !== undefined) {
+        const asked: Asked = { thread, choices: choices.map((label) => ({ label })) };
+        buttons[lastId] = asked;
+        keep(BUTTONS_FILE, buttons);
+
+        for (const [i, choice] of asked.choices.entries()) {
+          choice.reaction = (await react(lastId, KEYCAPS[i] ?? "")).id;
         }
-        await relay.publish({
-          kind: 5,
-          content: "",
-          tags: [
-            ["h", tag(target, "h")!],
-            ["e", target.id],
-          ],
-        });
-
-        return "deleted";
+        keep(BUTTONS_FILE, buttons);
       }
 
-      case "download_attachment": {
-        const msg = await message(thread, args.message_id as string);
-        const files = filesOf(msg);
+      return sentIds.length === 1
+        ? `sent (id: ${lastId})`
+        : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
+    },
+    react: async (caller, args) => {
+      const target = await message(caller, args.message_id);
 
-        if (files.length === 0) {
-          return "message has no attachments";
-        }
-        const lines: string[] = [];
+      if (args.remove !== true) {
+        await react(target.id, args.emoji);
 
-        for (const file of files) {
-          const path = await download(file, msg.id);
-          lines.push(`  ${path}  (${file.name}, ${file.type}, ${(file.size / 1024).toFixed(0)}KB)`);
-        }
-
-        return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
+        return "reacted";
       }
 
-      case "rename_thread": {
-        const name = title(args.title as string);
-        hub.rename(thread, name);
-        const head = isChannel(thread) ? undefined : await message(thread, thread);
+      const mine = await relay.query([
+        { kinds: [7], authors: [me], "#e": [target.id], "#h": [tag(target, "h") ?? ""] },
+      ]);
 
-        if (head?.pubkey !== me) {
-          return `renamed to "${name}"`;
-        }
-        await edit(head, `**${name}**`);
+      const reaction = mine.find((event) => event.content === args.emoji);
 
-        return `renamed to "${name}", and its first message in Buzz now says so`;
+      if (!reaction) {
+        throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
+      }
+      await relay.publish({ kind: 5, content: "", tags: [["e", reaction.id]] });
+
+      return "reaction removed";
+    },
+    edit_message: async (caller, args) => {
+      const target = await message(caller, args.message_id);
+
+      if (target.pubkey !== me) {
+        throw new Error("only the bot's own messages can be edited");
+      }
+      const edited = await edit(target, args.text);
+      hub.sent(caller, {
+        key: edited.id,
+        content: args.text,
+        meta: { edited: "true", message_id: target.id },
+      });
+
+      return `edited (id: ${edited.id})`;
+    },
+    delete_message: async (caller, args) => {
+      const target = await message(caller, args.message_id);
+
+      if (target.pubkey !== me) {
+        throw new Error("only the bot's own messages can be deleted");
+      }
+      await relay.publish({
+        kind: 5,
+        content: "",
+        tags: [
+          ["h", tag(target, "h") ?? ""],
+          ["e", target.id],
+        ],
+      });
+
+      return "deleted";
+    },
+    download_attachment: async (caller, args) => {
+      const msg = await message(caller, args.message_id);
+      const files = filesOf(msg);
+
+      if (files.length === 0) {
+        return "message has no attachments";
+      }
+      const lines: string[] = [];
+
+      for (const file of files) {
+        const path = await download(file, msg.id);
+        lines.push(`  ${path}  (${file.name}, ${file.type}, ${(file.size / 1024).toFixed(0)}KB)`);
       }
 
-      case "close_thread": {
-        if (isChannel(thread)) {
-          throw new Error("only threads can be closed");
-        }
-        void hub.retire(thread);
-        await react(thread, "✅");
+      return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
+    },
+    rename_thread: async (caller, args) => {
+      const name = title(args.title);
+      hub.rename(caller, name);
+      const head = isChannel(caller) ? undefined : await message(caller, caller);
 
-        return `closed "${hub.name(thread) ?? thread}"; its session stops once it's idle`;
+      if (head?.pubkey !== me) {
+        return `renamed to "${name}"`;
       }
+      await edit(head, `**${name}**`);
 
-      case "handoff": {
-        const to = args.to as string;
-        const name = args.title ? title(args.title as string) : (hub.name(thread) ?? "Buzz");
-        const target = await move(hub, thread, to, name, args.channel as string | undefined);
-        await post(thread, `Moved to ${to}: ${target}`);
+      return `renamed to "${name}", and its first message in Buzz now says so`;
+    },
+    close_thread: async (caller, args) => {
+      const thread = isGiven(args.thread) ? hub.find(args.thread) : caller;
 
-        return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
+      if (isChannel(thread)) {
+        throw new Error("only threads can be closed");
       }
+      void hub.retire(thread);
+      await react(thread, "✅");
 
-      default: {
-        throw new Error(`unknown tool: ${tool}`);
-      }
-    }
-  }
+      return `closed "${hub.name(thread) ?? thread}"; its session stops once it's idle`;
+    },
+    handoff: async (caller, args) => {
+      const name = isGiven(args.title) ? title(args.title) : (hub.name(caller) ?? "Buzz");
+      const target = await move(hub, caller, args.to, name, args.channel);
+      await post(caller, `Moved to ${args.to}: ${target}`);
+
+      return `moving to ${args.to}: ${target}. Your session stops here once this turn ends and resumes there.`;
+    },
+  };
+
+  const call = dispatch(tools, handlers);
 
   const hub = startHub({
     stateDir: STATE_DIR,
@@ -1213,7 +1175,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     event: Event,
     thread: string,
     joined: boolean,
-  ): Promise<{ meta: Record<string, string>; own?: string }> {
+  ): Promise<{ meta: Record<string, string>; own?: string | undefined }> {
     const parent = marked(event, "reply");
 
     if (!parent || (parent === thread && !joined)) {
