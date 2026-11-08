@@ -520,6 +520,7 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
   return out;
 }
 
+// A code block cut across two messages renders broken in both, so each chunk closes the fence it opened and the next reopens it: https://support.discord.com/hc/en-us/articles/210298617
 function fenced(text: string, limit: number, mode: "length" | "newline"): string[] {
   const out: string[] = [];
   let open = "";
@@ -1069,6 +1070,7 @@ function serve(token: string) {
 
     const answeredElsewhere = question.answer !== undefined && question.answer.via !== "discord";
 
+    // Discord has no endpoint for the bot to vote, so a poll answered elsewhere is ended: https://docs.discord.com/developers/resources/poll#poll-endpoints
     if (question.settled !== undefined || answeredElsewhere) {
       const { poll } = await ch.messages.fetch(String(message));
 
@@ -1951,7 +1953,7 @@ function serve(token: string) {
 
   let cursor = readCursor();
 
-  let handledInOrder: Promise<unknown> = Promise.resolve();
+  let oneAtATimeBehindTheCursor: Promise<unknown> = Promise.resolve();
   let caught = new Set<string>();
 
   async function take(msg: DiscordMessage) {
@@ -2039,11 +2041,13 @@ function serve(token: string) {
   }
 
   client.on("shardReady", () => {
-    handledInOrder = handledInOrder.then(catchUp).catch(failure("catching up"));
+    oneAtATimeBehindTheCursor = oneAtATimeBehindTheCursor
+      .then(catchUp)
+      .catch(failure("catching up"));
   });
 
   client.on("messageCreate", (msg) => {
-    handledInOrder = handledInOrder
+    oneAtATimeBehindTheCursor = oneAtATimeBehindTheCursor
       .then(() => (caught.has(msg.id) ? undefined : take(msg)))
       .catch(failure("handling a message"));
   });
