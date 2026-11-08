@@ -109,6 +109,8 @@ export type Question = {
   settled?: { note: string; at: string };
 };
 
+export type LaunchStamp = string;
+
 export type Thread = {
   app: string;
   thread: string;
@@ -118,7 +120,7 @@ export type Thread = {
   cwd?: string;
   model?: string;
   effort?: string;
-  launched?: string;
+  launched?: LaunchStamp;
   fork?: string;
   link?: string;
 };
@@ -840,7 +842,7 @@ function holdNumber(id: string) {
   return Number(n);
 }
 
-const SEEN = 2 * 24 * 60 * 60 * 1000;
+const TASKS_RECORD_KEPT_UNCHANGED = 2 * 24 * 60 * 60 * 1000;
 const TURNS = 30 * 24 * 60 * 60 * 1000;
 const BEATS = 7 * 24 * 60 * 60 * 1000;
 
@@ -2084,7 +2086,7 @@ export class Store {
         .run(session, kind, record, at);
       this.db
         .query("delete from seen where kind not in ('rules', 'hex') and at < ?")
-        .run(new Date(Date.parse(at) - SEEN).toISOString());
+        .run(new Date(Date.parse(at) - TASKS_RECORD_KEPT_UNCHANGED).toISOString());
     });
   }
 
@@ -2532,6 +2534,8 @@ const SqliteFailure = z.object({
   message: z.string().optional(),
 });
 
+// SQLITE_BUSY can come back despite busy_timeout, to avoid a deadlock: https://www.sqlite.org/c3ref/busy_handler.html
+// Running a busy write again is safe, since Bun rolls back a transaction that throws: https://bun.com/docs/runtime/sqlite#transactions
 function retryWhileBusy<T>(fn: () => T): T {
   for (let attempt = 1; ; attempt++) {
     try {

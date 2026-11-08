@@ -1216,7 +1216,7 @@ test("a key two apps had before keys were global keeps its open, then newest, ro
   ]);
 });
 
-test("what a session was shown is kept per kind, until its context loses it", () => {
+test("what a session was shown is kept per kind until its context loses it, and a tasks record unchanged for 2 days goes, since a session's end leaves it behind and one still there just gets its whole list again", () => {
   const store = new Store(dir);
   expect(store.seen("session-a", "tasks")).toBe("");
   store.show("session-a", "tasks", "one");
@@ -1471,7 +1471,7 @@ test("messages kept under a sender's name get one of hex's five authors, and kee
   ]);
 });
 
-test("a message's author is the owner, hex, a prompt, a call or someone other", () => {
+test("a message's author is the owner, hex, a prompt (what hex itself tells a session: a job's end, a schedule, another thread, the hub), a call or someone other", () => {
   const store = new Store(dir);
   expect(() =>
     store.deliver({
