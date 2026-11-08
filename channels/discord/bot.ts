@@ -180,6 +180,7 @@ function sendable(files: string[]): string[] {
   if (files.length > 10) {
     throw new Error("Discord allows max 10 attachments per message");
   }
+
   return files;
 }
 
@@ -200,6 +201,7 @@ function buttons(labels: string[], chosen?: number): ActionRowBuilder<ButtonBuil
     if (i % 5 === 0) {
       rows.push(new ActionRowBuilder<ButtonBuilder>());
     }
+
     rows.at(-1)!.addComponents(
       new ButtonBuilder()
         .setCustomId(String(i))
@@ -315,6 +317,7 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
   if (text.length <= limit) {
     return [text];
   }
+
   const out: string[] = [];
   let rest = text;
 
@@ -335,6 +338,7 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
   if (rest) {
     out.push(rest);
   }
+
   return out;
 }
 
@@ -358,6 +362,7 @@ function fenced(text: string, limit: number, mode: "length" | "newline"): string
     if (open) {
       body += "\n```";
     }
+
     out.push(body);
   }
 
@@ -401,6 +406,7 @@ async function hear(att: Attachment | undefined): Promise<string | undefined> {
   if (!att) {
     return;
   }
+
   try {
     return await transcribe(() => downloadAttachment(att));
   } catch (error) {
@@ -417,7 +423,7 @@ async function images(attachments: Collection<string, Attachment>): Promise<stri
   const paths = await Promise.all(
     shown.map((att) =>
       downloadAttachment(att).catch(
-        (error) => void process.stderr.write(`discord hub: image download failed: ${error}\n`),
+        (error: unknown) => void process.stderr.write(`discord hub: image download failed: ${error}\n`),
       ),
     ),
   );
@@ -457,6 +463,7 @@ function serve(token: string) {
     if (!ch?.isThread() && !ch?.isDMBased()) {
       throw new Error(`${thread} is not a Discord thread or DM`);
     }
+
     return ch as ThreadChannel | DMChannel;
   }
 
@@ -491,13 +498,16 @@ function serve(token: string) {
       if (ch.isThread() && ch.archived) {
         return false;
       }
+
       try {
         await (
           await message(ch, String(id))
         ).edit({ content: text, flags: MessageFlags.SuppressEmbeds });
       } catch (error) {
         const { code } = error as { code?: number };
+
         if (code === 50083) return false;
+
         if (code === 50005 || code === 10008) return null;
         throw error;
       }
@@ -517,6 +527,7 @@ function serve(token: string) {
     if (channel?.isDMBased()) {
       return `https://discord.com/channels/@me/${thread}`;
     }
+
     if (channel && "guildId" in channel) {
       return `https://discord.com/channels/${channel.guildId}/${thread}`;
     }
@@ -526,6 +537,7 @@ function serve(token: string) {
     if (!ch.isThread()) {
       throw new Error("a DM is not a thread");
     }
+
     return ch;
   }
 
@@ -535,6 +547,7 @@ function serve(token: string) {
     if (!guild) {
       throw new Error("the bot is in no Discord server");
     }
+
     return guild;
   }
 
@@ -564,6 +577,7 @@ function serve(token: string) {
           : "name a channel to open the thread in",
       );
     }
+
     return found;
   }
 
@@ -600,6 +614,7 @@ function serve(token: string) {
     if (isForum(channel)) {
       return await posts(channel, limit);
     }
+
     const id = named
       ? /^\d+$/.test(named)
         ? named
@@ -615,11 +630,12 @@ function serve(token: string) {
       ...(args.before ? { before: args.before as string } : {}),
     });
 
-    const arr = [...msgs.values()].reverse();
+    const arr = [...msgs.values()].toReversed();
 
     if (arr.length === 0) {
       return "(no messages)";
     }
+
     return arr
       .map((m) => {
         const atts = m.attachments.size > 0 ? ` +${m.attachments.size}att` : "";
@@ -640,6 +656,7 @@ function serve(token: string) {
     if (!forum.permissionsFor(client.user!)?.has(READ)) {
       throw new Error(`the bot can't read ${forum.id}; list_channels shows the channels it can`);
     }
+
     const [active, archived] = await Promise.all([
       forum.threads.fetchActive(),
       forum.threads.fetchArchived({ limit }),
@@ -653,7 +670,7 @@ function serve(token: string) {
       SnowflakeUtil.timestampFrom(post.lastMessageId ?? post.id);
 
     const rows = all
-      .sort((a, b) => latest(a) - latest(b))
+      .toSorted((a, b) => latest(a) - latest(b))
       .slice(-limit)
       .map(
         (post) =>
@@ -672,9 +689,11 @@ function serve(token: string) {
     if (args.channel) {
       query.set("channel_id", (await textChannel(args.channel as string)).id);
     }
+
     if (args.offset) {
       query.set("offset", String(args.offset));
     }
+
     const found = (await client.rest.get(Routes.guildMessagesSearch(guild().id), {
       query,
     })) as RESTGetAPIGuildMessagesSearchResult;
@@ -682,6 +701,7 @@ function serve(token: string) {
     if (!("messages" in found)) {
       return `Discord is still indexing this server's messages; search again ${found.retry_after ? `in ${found.retry_after}s` : "shortly"}`;
     }
+
     const threads = new Map(found.threads?.map((t) => [t.id, t.name]));
 
     const rows = found.messages.flat().map((m) => {
@@ -731,6 +751,7 @@ function serve(token: string) {
       if (about) {
         said(thread.id, (await thread.send(about)).id, about);
       }
+
       return { thread: thread.id, link: link(thread.id) };
     }
 
@@ -742,6 +763,7 @@ function serve(token: string) {
         `#${parent.name} has the tags ${parent.availableTags.map((tag) => tag.name).join(", ") || "(none)"}`,
       );
     }
+
     const post = await parent.threads.create({
       name,
       message: { content: about ?? name },
@@ -761,6 +783,7 @@ function serve(token: string) {
     if (!isPostable(parent)) {
       throw new Error(`${thread} hangs off no text or forum channel`);
     }
+
     const hook =
       (await parent.fetchWebhooks()).find(
         (hook) => hook.owner?.id === client.user!.id && hook.token,
@@ -791,6 +814,7 @@ function serve(token: string) {
     if (!msg) {
       throw new Error(`no message ${id} in this thread`);
     }
+
     return msg;
   }
 
@@ -801,7 +825,7 @@ function serve(token: string) {
   function sendTyping(thread: string): void {
     void threadChannel(thread)
       .then((ch) => ch.sendTyping())
-      .catch(() => {});
+      .catch(() => undefined);
   }
 
   // Discord shows "typing…" for about 10 seconds per call, so it is re-sent
@@ -814,6 +838,7 @@ function serve(token: string) {
     if (!busy) {
       return;
     }
+
     sendTyping(thread);
     typing.set(
       thread,
@@ -847,11 +872,13 @@ function serve(token: string) {
     if (busy || background) {
       return;
     }
+
     for (const id of asking.get(thread) ?? []) {
       void threadChannel(thread)
         .then((ch) => ch.messages.edit(id, { components: only("No longer waiting") }))
-        .catch(() => {});
+        .catch(() => undefined);
     }
+
     asking.delete(thread);
   }
 
@@ -869,12 +896,15 @@ function serve(token: string) {
     if (settled) {
       return only(settled.note);
     }
+
     if (!answer) {
       return choices(options, !!multiple);
     }
+
     if (answer.via !== "discord") {
       return only(answeredText(answer));
     }
+
     return multiple
       ? menu(options, answer.label.split("; "))
       : buttons(options, options.indexOf(answer.label));
@@ -894,16 +924,18 @@ function serve(token: string) {
         if (!question?.options.length) {
           return;
         }
+
         const ch = await threadChannel(thread);
 
         if (!question.poll) {
           return void (await ch.messages.edit(String(message), { components: controls(question) }));
         }
+
         if (question.settled || (question.answer && question.answer.via !== "discord")) {
           await (await ch.messages.fetch(String(message))).poll!.end();
         }
       })
-      .catch((error) => {
+      .catch((error: unknown) => {
         process.stderr.write(
           `discord hub: couldn't draw the buttons on ${thread} ${message}: ${error}\n`,
         );
@@ -921,6 +953,7 @@ function serve(token: string) {
     if (!question || question.answer) {
       return;
     }
+
     const answered = hub.deliver(
       thread,
       hub.name(thread) ?? thread,
@@ -951,6 +984,7 @@ function serve(token: string) {
     if (!question || !waits(question)) {
       return;
     }
+
     ledger.settled(thread, message, note);
     await draw(thread, message);
   }
@@ -963,6 +997,7 @@ function serve(token: string) {
     if (!question || !(question.answer || question.settled)) {
       return;
     }
+
     const taken = question.answer?.label;
 
     const reopened = taken
@@ -1011,6 +1046,7 @@ function serve(token: string) {
       if (app !== "discord") {
         return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt, { about, ...(where === undefined ? {} : { where }) })).link}`;
       }
+
       const here = await threadChannel(caller);
       const parent = where ?? (here.isThread() ? here.parent?.name : undefined);
       const { thread, link } = await place(name, parent, about, args.tags);
@@ -1029,6 +1065,7 @@ function serve(token: string) {
       if (!args.thread && !args.channel) {
         throw new Error("name a thread or channel to forward to");
       }
+
       const to = args.channel
         ? await textChannel(args.channel)
         : await threadChannel(hub.find(args.thread!));
@@ -1085,6 +1122,7 @@ function serve(token: string) {
           { cause: error },
         );
       }
+
       const last = sentIds.at(-1);
 
       if (labels?.length) {
@@ -1109,11 +1147,12 @@ function serve(token: string) {
       }
 
       const { id, name } = parseEmoji(args.emoji) ?? {};
-      const mine = msg.reactions.cache.get((id || name)!);
+      const mine = msg.reactions.cache.get((id ?? name)!);
 
       if (!mine?.me) {
         throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
       }
+
       await mine.users.remove();
 
       return "reaction removed";
@@ -1127,10 +1166,11 @@ function serve(token: string) {
         if (args.files) {
           throw new Error("a status post is text: send the file in its own message");
         }
+
         await ledger.rewrite(thread, post, tappable(args.text), pinned.message);
         said(thread, undefined, tappable(args.text), {
           edited: "true",
-          message_id: String(pinned.message),
+          message_id: pinned.message,
         });
 
         return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`;
@@ -1155,6 +1195,7 @@ function serve(token: string) {
       if (args.settled) {
         await settleQuestion(thread, edited.id, "✓ Settled");
       }
+
       return `edited (id: ${edited.id})`;
     },
 
@@ -1165,6 +1206,7 @@ function serve(token: string) {
       if (msg.author.id !== client.user!.id) {
         throw new Error("the bot can only delete its own messages");
       }
+
       deleting.add(msg.id);
       await msg.delete().catch((error: unknown) => {
         deleting.delete(msg.id);
@@ -1189,6 +1231,7 @@ function serve(token: string) {
       if (args.note === undefined) {
         throw new Error("pin takes the status post's note, or unpin: true");
       }
+
       return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`;
     },
 
@@ -1218,6 +1261,7 @@ function serve(token: string) {
       if (attachments.size === 0) {
         return "message has no attachments";
       }
+
       const lines: string[] = [];
 
       for (const att of attachments.values()) {
@@ -1248,8 +1292,9 @@ function serve(token: string) {
 
         return `forgot "${name}": its Discord thread no longer exists`;
       }
+
       const closing = inThread(await threadChannel(thread));
-      hub.retire(thread);
+      void hub.retire(thread);
       await closing.setArchived(true);
 
       return `archived "${closing.name}"; its session stops once it's idle`;
@@ -1265,6 +1310,7 @@ function serve(token: string) {
       if (ch.isThread()) {
         await ch.setArchived(true);
       }
+
       return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
     },
   };
@@ -1284,10 +1330,10 @@ function serve(token: string) {
     failed: (thread, reason) => {
       void threadChannel(thread)
         .then((ch) => ch.send(`Couldn't start this thread's session: ${reason}`))
-        .catch(() => {});
+        .catch(() => undefined);
     },
     permission: (thread, request) =>
-      void ask(thread, request).catch((error) =>
+      void ask(thread, request).catch((error: unknown) =>
         process.stderr.write(
           `discord hub: couldn't relay a permission prompt to ${thread}: ${error}\n`,
         ),
@@ -1317,18 +1363,23 @@ function serve(token: string) {
     if (msg.channel.isDMBased()) {
       dms.add(msg.channelId);
     }
+
     if (msg.channel.isThread() || msg.channel.isDMBased()) {
       return msg.channel as ThreadChannel | DMChannel;
     }
+
     if (!isText(msg.channel)) {
       return;
     }
+
     if (msg.thread && hub.name(msg.thread.id)) {
       return msg.thread;
     }
+
     if (!client.user || !msg.mentions.has(client.user)) {
       return;
     }
+
     const words = msg.content
       .replaceAll(/<@[!&]?\d+>/g, "")
       .trim()
@@ -1342,11 +1393,13 @@ function serve(token: string) {
     if (msg.type !== MessageType.Reply || !msg.reference?.messageId) {
       return {};
     }
-    const replied = await msg.fetchReference().catch(() => {});
+
+    const replied = await msg.fetchReference().catch(() => undefined);
 
     if (!replied) {
       return { reply_to_message_id: msg.reference.messageId };
     }
+
     const atts = listed(replied.attachments);
 
     return {
@@ -1367,6 +1420,7 @@ function serve(token: string) {
     if (!access.allowFrom.includes(msg.author.id)) {
       return;
     }
+
     // A thread opened on a message begins with an empty starter pointing at it: that message is what opens the thread.
     if (msg.type === MessageType.ThreadStarterMessage) {
       return await handleInbound(await msg.fetchReference(), edited, msg.channel as ThreadChannel);
@@ -1377,18 +1431,19 @@ function serve(token: string) {
     if (!ch) {
       return;
     }
+
     const opened = !edited && ch.id === msg.id;
     const tagged = opened && ch.isThread() && ch.ownerId === client.user!.id;
     const forum = ch.isThread() && !!ch.parent?.isThreadOnly();
 
     if (ch.isThread() && ch.archived) {
-      await ch.setArchived(false).catch(() => {});
+      await ch.setArchived(false).catch(() => undefined);
     }
 
-    void ch.sendTyping().catch(() => {});
+    void ch.sendTyping().catch(() => undefined);
 
     if (access.ackReaction) {
-      void msg.react(access.ackReaction).catch(() => {});
+      void msg.react(access.ackReaction).catch(() => undefined);
     }
 
     // Attachments are listed (name/type/size) and only images are downloaded: the model
@@ -1467,13 +1522,15 @@ function serve(token: string) {
     if (!allowed(user.id)) {
       return;
     }
+
     const ch = await servedThread(reaction.message);
 
     if (!ch) {
       return;
     }
+
     const target = reaction.message.partial
-      ? await reaction.message.fetch().catch(() => {})
+      ? await reaction.message.fetch().catch(() => undefined)
       : reaction.message;
 
     const who = user.partial ? await user.fetch() : user;
@@ -1501,11 +1558,13 @@ function serve(token: string) {
     if (deleting.delete(msg.id)) {
       return;
     }
+
     const ch = await servedThread(msg);
 
     if (!ch) {
       return;
     }
+
     void ledger.deleted(ch.id, msg.id);
     hub.deliver(ch.id, nameOf(ch), {
       author: "other",
@@ -1529,11 +1588,13 @@ function serve(token: string) {
     if (!allowed(userId)) {
       return;
     }
+
     const ch = await servedThread(answer.poll.message);
 
     if (!ch) {
       return;
     }
+
     const msg = answer.poll.message.partial
       ? await answer.poll.message.fetch()
       : answer.poll.message;
@@ -1541,6 +1602,7 @@ function serve(token: string) {
     if (msg.author.id !== client.user!.id || !msg.poll) {
       return;
     }
+
     const vote = msg.poll.answers.get(answer.id)?.text ?? "";
     const who = await client.users.fetch(userId);
     hub.deliver(
@@ -1566,6 +1628,7 @@ function serve(token: string) {
         } else if (ledger.find(ch.id, msg.id)?.answer?.label === vote) {
           ledger.reopened(ch.id, msg.id);
         }
+
         return true;
       },
     );
@@ -1609,6 +1672,7 @@ function serve(token: string) {
     if (!allowed(tap.user.id)) {
       return void (await tap.deferUpdate());
     }
+
     const verdict = /^perm:(allow|deny):(\w+)$/.exec(tap.customId);
 
     if (verdict) {
@@ -1616,6 +1680,7 @@ function serve(token: string) {
       asking.get(tap.channelId)?.delete(tap.message.id);
 
       hub.answer(tap.channelId, verdict[2]!, verdict[1] as "allow" | "deny");
+
       return;
     }
 
@@ -1638,6 +1703,7 @@ function serve(token: string) {
     if (!allowed(pick.user.id)) {
       return void (await pick.deferUpdate());
     }
+
     const labels = (pick.component as StringSelectMenuComponent).options.map(
       (option) => option.label,
     );
@@ -1660,6 +1726,7 @@ function serve(token: string) {
     if (!allowed(command.user.id)) {
       return void (await answer("hex only answers its owner."));
     }
+
     const thread = command.channelId;
 
     if (!hub.name(thread)) {
@@ -1667,6 +1734,7 @@ function serve(token: string) {
         "This channel has no session: use it in one of hex's threads or the DM.",
       ));
     }
+
     switch (command.commandName) {
       case "model":
       case "effort": {
@@ -1686,15 +1754,20 @@ function serve(token: string) {
           return void (await answer(
             "The DM starts a fresh session whenever its last one is spent, so there's nothing to compact.",
           ));
+
         if (typing.has(thread))
           return void (await answer("This thread is working; compact it once it's done."));
+
         if (!hub.session(thread))
           return void (await answer("This thread has nothing to compact yet."));
         void hub.command(thread, "/compact");
+
         return void (await answer("Compacting this thread."));
       }
+
       case "stop": {
-        hub.stop(thread);
+        void hub.stop(thread);
+
         return void (await answer("Stopped. The next message resumes it."));
       }
     }
@@ -1765,6 +1838,7 @@ function serve(token: string) {
     if (!msg.author.bot) {
       await handleInbound(msg).catch(failure("handleInbound"));
     }
+
     if (BigInt(msg.id) > BigInt(cursor)) {
       cursor = keepCursor(msg.id);
     }
@@ -1786,6 +1860,7 @@ function serve(token: string) {
       if (page.length < 100) {
         return found;
       }
+
       since = page.reduce((newest, m) => (BigInt(m.id) > BigInt(newest) ? m.id : newest), since);
     }
   }
@@ -1808,6 +1883,7 @@ function serve(token: string) {
       if (!page.hasMore || threads.length === 0 || oldest < since) {
         return found;
       }
+
       before = oldest;
     }
   }
@@ -1827,7 +1903,7 @@ function serve(token: string) {
         loadAccess().allowFrom.map((id) =>
           client.users
             .createDM(id, { force: true })
-            .catch((error) => void failure(`opening the DM with ${id}`)(error)),
+            .catch((error: unknown) => void failure(`opening the DM with ${id}`)(error)),
         ),
       ),
     ]);
@@ -1839,7 +1915,7 @@ function serve(token: string) {
     const archived = await Promise.all(
       parents.map((ch) =>
         archivedSince(ch, from).catch(
-          (error) => (failure(`listing ${ch.id}'s archived threads`)(error), []),
+          (error: unknown) => (failure(`listing ${ch.id}'s archived threads`)(error), []),
         ),
       ),
     );
@@ -1851,18 +1927,19 @@ function serve(token: string) {
     const missed = (
       await Promise.all(
         places.map((ch) =>
-          after(ch, from).catch((error) => (failure(`catching up on ${ch.id}`)(error), [])),
+          after(ch, from).catch((error: unknown) => (failure(`catching up on ${ch.id}`)(error), [])),
         ),
       )
     )
       .flat()
-      .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
+      .toSorted((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
 
     if (missed.length > 0) {
       process.stderr.write(
         `discord hub: catching up on ${missed.length} message(s) since ${new Date(SnowflakeUtil.timestampFrom(from)).toISOString()}\n`,
       );
     }
+
     caught = new Set(missed.map((m) => m.id));
 
     for (const msg of missed) {
@@ -1884,6 +1961,7 @@ function serve(token: string) {
     if (before.partial || before.content === after.content || after.author.bot) {
       return;
     }
+
     handleInbound(after, true).catch(failure("handleInbound"));
   });
 
@@ -1891,10 +1969,11 @@ function serve(token: string) {
     if (before.name !== after.name) {
       hub.rename(after.id, after.name);
     }
+
     if (before.archived && !after.archived) {
       ledger
         .rewrite(after.id, post)
-        .catch((err) =>
+        .catch((err: unknown) =>
           process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`),
         );
     }
@@ -1917,6 +1996,7 @@ function serve(token: string) {
     if (id) {
       writeFileSync(GUILD_FILE, JSON.stringify({ id }) + "\n");
     }
+
     hub.save();
     void c.application?.commands.set(COMMANDS).catch(failure("registering slash commands"));
     ledger.keep(post, (thread, err) =>

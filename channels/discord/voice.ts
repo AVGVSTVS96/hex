@@ -64,6 +64,7 @@ function silent(pcm: Buffer): boolean {
   for (let i = 0; i < pcm.length; i += 2) {
     if (Math.abs(pcm.readInt16LE(i)) > QUIET) return false;
   }
+
   return true;
 }
 
@@ -90,6 +91,7 @@ export function speaker(player: AudioPlayer) {
     if (!stretch && quiet) {
       return;
     }
+
     if (!stretch) {
       stretch = new PassThrough();
       stretch.write(CUSHION);
@@ -110,6 +112,7 @@ export function listener(hear: (audio: string) => void) {
     if (Date.now() - heard < TICK) {
       return;
     }
+
     heard = Date.now();
     hear(SILENCE.toString("base64"));
   }, TICK);
@@ -146,6 +149,7 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
         "discord hub: the voice app isn't running, so a voice channel takes no calls\n",
       );
     }
+
     const connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
@@ -162,11 +166,13 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
       if (over) {
         return;
       }
+
       over = true;
 
       if (current?.end === end) {
         current = undefined;
       }
+
       held?.hangUp();
       voice?.destroy();
       ear?.close();
@@ -196,12 +202,14 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
       process.stderr.write(`discord hub: couldn't join #${channel.name}: ${error}\n`);
 
       end();
+
       return;
     }
 
     if (over) {
       return;
     }
+
     const player = createAudioPlayer({ behaviors: { maxMissedFrames: 50 } });
     player.on("error", (err) =>
       process.stderr.write(`discord hub: the voice's audio failed: ${err}\n`),
@@ -218,6 +226,7 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
       process.stderr.write(`discord hub: ${error}\n`);
 
       end();
+
       return;
     }
 
@@ -234,11 +243,13 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
     if (!owner(after.id) || before.channelId === after.channelId) {
       return;
     }
+
     if (current && current.channel === before.channelId) {
       current.end();
     }
+
     if (after.channel && !current) {
-      void call(after.channel, after.id).catch((err) =>
+      void call(after.channel, after.id).catch((err: unknown) =>
         process.stderr.write(`discord hub: voice call failed: ${err}\n`),
       );
     }

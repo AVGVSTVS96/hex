@@ -75,17 +75,18 @@ function channel(id: string, fields: Channel): Channel {
           return await (messages.find((m) => m.id === query) ??
             Promise.reject(new Error("Unknown Message")));
         }
+
         const { limit, before, after } = query;
         const newest = (a: Channel, b: Channel) => Number(BigInt(b.id) - BigInt(a.id));
 
         const page = after
           ? messages
               .filter((m) => BigInt(m.id) > BigInt(after))
-              .sort(newest)
+              .toSorted(newest)
               .slice(-limit)
           : messages
               .filter((m) => !before || BigInt(m.id) < BigInt(before))
-              .sort(newest)
+              .toSorted(newest)
               .slice(0, limit);
 
         return new Collection(page.map((m) => [m.id, m]));
@@ -118,7 +119,7 @@ function channel(id: string, fields: Channel): Channel {
       fetchArchived: async ({ before, limit = 50 }: { before?: number; limit?: number } = {}) => {
         const shelf = [...channels.values()]
           .filter((c) => c.parent === ch && c.archived && (!before || c.archiveTimestamp < before))
-          .sort((a, b) => b.archiveTimestamp - a.archiveTimestamp);
+          .toSorted((a, b) => b.archiveTimestamp - a.archiveTimestamp);
 
         const page = shelf.slice(0, Math.min(limit, 2));
 
@@ -232,6 +233,7 @@ class Client {
       if (!channels.has(id)) {
         throw Object.assign(new Error("Unknown Channel"), { code: 10003 });
       }
+
       return channels.get(id);
     },
   };
@@ -283,11 +285,12 @@ class Client {
     if (++logins === 1) {
       throw new Error("getaddrinfo ETIMEOUT discord.com");
     }
+
     return "token";
   };
 }
 
-mock.module("discord.js", () => ({ ...discord, Client }));
+void mock.module("discord.js", () => ({ ...discord, Client }));
 
 const state = mkdtempSync(join(tmpdir(), "discord-"));
 
@@ -325,12 +328,15 @@ beforeAll(async () => {
     if (url === "https://cdn.discord/voice-message.ogg") {
       return new Response("ogg");
     }
+
     if (url === "https://cdn.discord/shot.png") {
       return new Response("png bytes");
     }
+
     if (url !== TRANSCRIBER) {
       return await fetch(url, init);
     }
+
     return Response.json({
       text:
         (init!.body as FormData).get("model") === "whisper"
@@ -1390,6 +1396,7 @@ test("back online, the bot reads what was said while it was away, archived threa
       archiveTimestamp: at(minute).getTime(),
     });
   }
+
   const reopened = await session(shelved.id);
   const revived = say(shelved, 68, "back to the old plan", away);
 

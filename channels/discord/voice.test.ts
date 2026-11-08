@@ -34,7 +34,7 @@ function connection() {
   return emitter;
 }
 
-mock.module("@discordjs/voice", () => ({
+void mock.module("@discordjs/voice", () => ({
   ...real,
   joinVoiceChannel: (options: any) => {
     const made = connection();
@@ -81,6 +81,7 @@ test("the voice plays in stretches of speech: silence before it is skipped, a sh
   for (let i = 0; i < 3; i++) {
     play(tick(0));
   }
+
   expect(stretch.writableEnded).toBe(false);
   play(tick(0));
   expect(stretch.writableEnded).toBe(true);
