@@ -14,14 +14,15 @@ export type Task = {
 
 export type Moment = Task & { at: number };
 
-// What an answer, a note or a not needed did: the hex thread it went to (app:thread), that thread's
-// name, how many open copies of the question it sent an answer or settle to, and how many copies or
-// threads it couldn't reach (a hub that was down), which stay as they were.
-export type Sent = { thread: string; topic: string; settled: number; missed: number };
+type AppColonThread = string;
 
-// ask: a question put on the caller's screen (its text) by its id; answered: its answer, and what
-// sending it did; undone: that answer taken back; photo and video: what the caller sent from the
-// app, by its media id.
+export type Sent = {
+  thread: AppColonThread;
+  topic: string;
+  settled: number;
+  missed: number;
+};
+
 export type Mark = {
   at: number;
   kind:
@@ -77,13 +78,9 @@ export class Call {
   }
 
   hear(fragment: Fragment) {
-    let i = this.fragments.length;
+    const after = this.fragments.findLastIndex((earlier) => earlier.start <= fragment.start);
 
-    while (i > 0 && this.fragments[i - 1].start > fragment.start) {
-      i--;
-    }
-
-    this.fragments.splice(i, 0, fragment);
+    this.fragments.splice(after + 1, 0, fragment);
   }
 
   handOff(): Turn[] {
@@ -93,7 +90,7 @@ export class Call {
       fragment.sent = true;
     }
 
-    return join(due).map(({ who, text, start }) => ({ who, text, start }));
+    return turnsJoinedAcrossBackchannels(due).map(({ who, text, start }) => ({ who, text, start }));
   }
 
   track(task: Task, at = 0) {
@@ -118,7 +115,11 @@ export class Call {
   }
 
   activity() {
-    return this.recent.map((id) => ({ ...this.tasks.get(id)!, line: this.lines.get(id) }));
+    return this.recent.flatMap((id) => {
+      const task = this.tasks.get(id);
+
+      return task ? [{ ...task, line: this.lines.get(id) }] : [];
+    });
   }
 
   private touch(id: string) {
@@ -138,11 +139,17 @@ export class Call {
   }
 
   change(id: string): string {
-    return `Task update:\n${entry(this.tasks.get(id)!)}`;
+    const task = this.tasks.get(id);
+
+    if (!task) {
+      throw new Error(`no task ${id} on this call`);
+    }
+
+    return `Task update:\n${entry(task)}`;
   }
 
   record() {
-    const turns = join(this.fragments);
+    const turns = turnsJoinedAcrossBackchannels(this.fragments);
 
     return {
       turns: turns.map(({ who, start, text }) => ({ who, at: start, text })),
@@ -153,12 +160,10 @@ export class Call {
 }
 
 function entry(task: Task) {
-  return `- ${task.id} ${task.state}: ${task.text}${task.to ? ` (sent to ${task.to})` : ""}`;
+  return `- ${task.id} ${task.state}: ${task.text}${task.to !== undefined && task.to !== "" ? ` (sent to ${task.to})` : ""}`;
 }
 
-// Each speaker's words as whole turns: a fragment joins that speaker's last turn when it follows
-// within a pause, even with the other speaker's words in between, as a backchannel over a sentence.
-function join(fragments: Fragment[]) {
+function turnsJoinedAcrossBackchannels(fragments: Fragment[]) {
   const turns: (Turn & { end: number })[] = [];
 
   for (const { who, text, start, end } of fragments) {
@@ -172,11 +177,15 @@ function join(fragments: Fragment[]) {
     }
   }
 
-  return tidy(turns.sort((a, b) => a.start - b.start));
+  return tidy(turns.toSorted((a, b) => a.start - b.start));
 }
 
 function tidy<T extends Turn>(turns: T[]): T[] {
-  return turns.map((turn) => ({ ...turn, text: turn.text.trim() })).filter((turn) => turn.text);
+  return turns.flatMap((turn) => {
+    const text = turn.text.trim();
+
+    return text === "" ? [] : [{ ...turn, text }];
+  });
 }
 
 export function transcript(turns: Turn[]): string {
