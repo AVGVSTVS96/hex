@@ -15,23 +15,27 @@ export function statusPost(
   thread: string,
   note: string,
   room: number,
-  link: Link = () => undefined,
+  link: Link = () => {},
 ): string {
   const linked = (text: string, url: string | undefined) =>
-    url ? `[${text.replace(/[[\]]/g, "")}](${url})` : text;
+    url ? `[${text.replaceAll(/[[\]]/g, "")}](${url})` : text;
+
   const waiting = store
     .questions({ thread, waiting: true })
     .map(
       (question) =>
         `- ${question.asker ? linked(`Answered: ${clip(question.text, 110)}`, link(thread, question.answer!.message ?? question.message)) : linked(clip(question.text, 120), link(thread, question.message))}`,
     );
+
   const tasks = (status: "open" | "idea") =>
     store
       .tasks({ owner: thread, status: [status] })
       .map((task) => `- ${linked(clip(task.title, 120), latest(store, thread, task, link))}`);
+
   const done = store
     .lastDone(thread, 5)
     .map((task) => `- ${linked(clip(task.title, 120), url(task.proof!))}`);
+
   const sections = (
     [
       [HEADINGS[0], waiting],
@@ -46,9 +50,11 @@ export function statusPost(
       items: lines.map((line) => [line]),
       gap: "\n",
     }));
+
   const space = room - fit(sections, 0).length - 2;
   const trimmed = note.trim();
   const head = trimmed.length > space ? `${trimmed.slice(0, Math.max(0, space - 1))}…` : trimmed;
+
   return [head, fit(sections, room - (head ? head.length + 2 : 0))].filter(Boolean).join("\n\n");
 }
 
@@ -57,6 +63,7 @@ function latest(store: Store, thread: string, task: Task, link: Link) {
   const row = task.words
     .map((words) => store.message(words.message))
     .findLast((row) => row?.to === thread);
+
   return row
     ? link(thread, row.meta?.message_id ?? row.key.slice(row.key.lastIndexOf(":") + 1))
     : undefined;
@@ -64,12 +71,14 @@ function latest(store: Store, thread: string, task: Task, link: Link) {
 
 // The first link in a proof, without the markdown or punctuation around it.
 function url(proof: string) {
-  let found = proof.match(/https?:\/\/[^\s<>[\]"'`]+/)?.[0];
+  let found = /https?:\/\/[^\s<>[\]"'`]+/.exec(proof)?.[0];
+
   while (
     found &&
     (/[*_!?.,;:]$/.test(found) ||
       (found.endsWith(")") && found.split(")").length > found.split("(").length))
-  )
+  ) {
     found = found.slice(0, -1);
+  }
   return found;
 }

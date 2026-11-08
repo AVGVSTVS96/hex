@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import type { Author } from "../../hub/store.ts";
 
@@ -24,13 +24,16 @@ type Frame = {
 
 async function cli(...args: string[]) {
   const run = Bun.spawn([join(HOME, "bin", "t3"), ...args], { stdout: "pipe", stderr: "pipe" });
+
   const [out, err, code] = await Promise.all([
     new Response(run.stdout).text(),
     new Response(run.stderr).text(),
     run.exited,
   ]);
-  if (code !== 0)
+
+  if (code !== 0) {
     throw new Error(`t3 ${args.slice(0, 3).join(" ")} failed: ${err.trim() || `exit ${code}`}`);
+  }
   return out;
 }
 
@@ -44,9 +47,10 @@ function failure(exit: Extract<NonNullable<Frame["exit"]>, { _tag: "Failure" }>)
 export async function withT3<T>(
   work: (call: (tag: string, payload: object) => Promise<any>) => Promise<T>,
 ): Promise<T> {
-  const { origin } = JSON.parse(readFileSync(join(USERDATA, "server-runtime.json"), "utf8")) as {
+  const { origin } = JSON.parse(readFileSync(join(USERDATA, "server-runtime.json"), "utf-8")) as {
     origin: string;
   };
+
   const issued = JSON.parse(
     await cli(
       "auth",
@@ -60,47 +64,72 @@ export async function withT3<T>(
       "--json",
     ),
   ) as { sessionId: string; token: string };
+
   let ws: WebSocket | undefined;
+
   try {
     const answer = await fetch(`${origin}/api/auth/websocket-ticket`, {
       method: "POST",
       headers: { authorization: `Bearer ${issued.token}` },
     });
-    if (!answer.ok) throw new Error(`T3 Code refused a websocket ticket: HTTP ${answer.status}`);
+
+    if (!answer.ok) {
+      throw new Error(`T3 Code refused a websocket ticket: HTTP ${answer.status}`);
+    }
     const { ticket } = (await answer.json()) as { ticket: string };
+
     const socket = (ws = new WebSocket(
       `${origin.replace(/^http/, "ws")}/ws?orchestrationProtocol=2&wsTicket=${encodeURIComponent(ticket)}`,
     ));
+
     const pending = new Map<
       string,
       { resolve: (value: unknown) => void; reject: (error: Error) => void }
     >();
+
     let next = 0;
+
     const lost = new Promise<never>((_, reject) => {
-      socket.onerror = () => reject(new Error("T3 Code's server dropped the connection"));
+      socket.onerror = () => {
+        reject(new Error("T3 Code's server dropped the connection"));
+      };
       socket.onclose = () => {
-        for (const { reject: drop } of pending.values())
+        for (const { reject: drop } of pending.values()) {
           drop(new Error("T3 Code's server closed the connection"));
+        }
         reject(new Error("T3 Code's server closed the connection"));
       };
     });
+
     lost.catch(() => {});
     await Promise.race([new Promise((resolve) => (socket.onopen = resolve)), lost]);
     socket.onmessage = (event) => {
       for (const frame of ([] as Frame[]).concat(JSON.parse(String(event.data)))) {
-        if (frame._tag === "Ping") socket.send(JSON.stringify({ _tag: "Pong" }));
+        if (frame._tag === "Ping") {
+          socket.send(JSON.stringify({ _tag: "Pong" }));
+        }
         const waiting = frame._tag === "Exit" && pending.get(frame.requestId!);
-        if (!waiting) continue;
+
+        if (!waiting) {
+          continue;
+        }
         pending.delete(frame.requestId!);
-        if (frame.exit!._tag === "Success") waiting.resolve(frame.exit!.value);
-        else waiting.reject(new Error(failure(frame.exit!)));
+
+        if (frame.exit!._tag === "Success") {
+          waiting.resolve(frame.exit!.value);
+        } else {
+          waiting.reject(new Error(failure(frame.exit!)));
+        }
       }
     };
+
     const call = (tag: string, payload: object) => {
       const id = String(++next);
       socket.send(JSON.stringify({ _tag: "Request", id, tag, payload, headers: [] }));
+
       return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
     };
+
     return await work(call);
   } finally {
     ws?.close();
@@ -113,8 +142,12 @@ export async function withT3<T>(
 // The T3 project whose folder is root, from T3's own records, read only.
 export function projectAt(root: string): string | undefined {
   const file = join(USERDATA, "statev2.sqlite");
-  if (!existsSync(file)) return;
+
+  if (!existsSync(file)) {
+    return;
+  }
   const db = new Database(file, { readonly: true });
+
   try {
     return db
       .query<{ id: string }, [string]>(
@@ -133,8 +166,12 @@ export function projectAt(root: string): string | undefined {
 // contracts. If the read fails, the cancel is a Stop.
 export function steering(session: string) {
   const file = join(USERDATA, "statev2.sqlite");
-  if (!existsSync(file)) return false;
+
+  if (!existsSync(file)) {
+    return false;
+  }
   const db = new Database(file, { readonly: true });
+
   try {
     return !!db
       .query(`select 1 from orchestration_v2_projection_runs run
@@ -146,6 +183,7 @@ export function steering(session: string) {
     process.stderr.write(
       `t3: can't read whether T3 is steering ${session}, so its cancel is a Stop: ${error}\n`,
     );
+
     return false;
   } finally {
     db.close();
@@ -166,12 +204,18 @@ const AUTHORS: Record<string, Author> = {
   "agent/server": "other",
   "agent/provider": "other",
 };
+
 export function promptedBy(session: string, asked: string): Author {
   const file = join(USERDATA, "statev2.sqlite");
-  if (!existsSync(file) || !asked) return "owner";
+
+  if (!existsSync(file) || !asked) {
+    return "owner";
+  }
   let db: Database | undefined;
+
   try {
     db = new Database(file, { readonly: true });
+
     const recent = db
       .query<
         { by: string; text: string | null },
@@ -181,12 +225,15 @@ export function promptedBy(session: string, asked: string): Author {
         join orchestration_v2_projection_provider_threads thread on thread.thread_id = message.thread_id
         where json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ? and message.role = 'user' order by message.created_at desc limit 5`)
       .all(session);
+
     const by = recent.find((prompt) => prompt.text?.trim() === asked.trim())?.by;
+
     return (by && AUTHORS[by]) ?? (by?.startsWith("system/") ? "other" : "owner");
   } catch (error) {
     process.stderr.write(
       `t3: can't read who wrote ${session}'s prompt, so it's the owner's: ${error}\n`,
     );
+
     return "owner";
   } finally {
     db?.close();
@@ -199,8 +246,12 @@ export function appThreads():
   | Map<string, { thread: string; title: string; deleted: boolean }>
   | undefined {
   const file = join(USERDATA, "statev2.sqlite");
-  if (!existsSync(file)) return;
+
+  if (!existsSync(file)) {
+    return;
+  }
   const db = new Database(file, { readonly: true });
+
   try {
     const rows = db
       .query<{ key: string; thread: string; title: string; deleted: number }, []>(
@@ -211,6 +262,7 @@ export function appThreads():
          order by t.deleted_at is null, p.updated_at`,
       )
       .all();
+
     return new Map(
       rows.map(({ key, thread, title, deleted }) => [key, { thread, title, deleted: !!deleted }]),
     );
@@ -221,6 +273,7 @@ export function appThreads():
 
 // T3_APP_SCHEME is the T3 Code app's URL scheme: t3code, t3code-preview or t3code-dev.
 export function linkTo(thread: string) {
-  const environment = readFileSync(join(USERDATA, "environment-id"), "utf8").trim();
+  const environment = readFileSync(join(USERDATA, "environment-id"), "utf-8").trim();
+
   return `${process.env.T3_APP_SCHEME || "t3code"}://threads/${environment}/${encodeURIComponent(thread)}`;
 }

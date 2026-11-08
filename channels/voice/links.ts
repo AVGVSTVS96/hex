@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
-import { existsSync, readFileSync, watch } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { existsSync, readFileSync, watch } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 import type { MessageId } from "../../hub/ledger.ts";
 import { open } from "../../hub/store.ts";
@@ -35,6 +35,7 @@ const T3_HOME = join(homedir(), ".t3", "userdata");
 const DATABASE = "statev2.sqlite";
 const REFRESH = 500;
 const ITEMS = 40;
+
 // How a handoff that has ended went, by its status in T3 Code.
 export const HANDED: Record<string, "done" | "failed" | "stopped"> = {
   completed: "done",
@@ -44,6 +45,7 @@ export const HANDED: Record<string, "done" | "failed" | "stopped"> = {
   cancelled: "stopped",
   rolled_back: "stopped",
 };
+
 const SHOWN = [
   "command_execution",
   "web_search",
@@ -65,23 +67,26 @@ export class Links {
   private ran = new Map<string, string>();
   private above = new Map<string, { parent: string; since: string }>();
   private starts = new Map<string, { parent: string; since: string; shown: boolean }>();
-  private items = new Map<string, Item[]>();
-  private titles = new Map<string, string | undefined>();
-  private environment?: string;
-  private db?: Database;
-  private watcher?: ReturnType<typeof watch>;
-  private unwatch?: () => void;
+  private readonly items = new Map<string, Item[]>();
+  private readonly titles = new Map<string, string | undefined>();
+  private readonly environment?: string;
+  private readonly db?: Database;
+  private readonly watcher?: ReturnType<typeof watch>;
+  private readonly unwatch?: () => void;
   private relays = "";
   private pending?: ReturnType<typeof setTimeout>;
 
   constructor(
-    private state: string,
-    private changed: () => void,
-    private t3 = T3_HOME,
-    private scheme = process.env.T3_APP_SCHEME || "t3code",
+    private readonly state: string,
+    private readonly changed: () => void,
+    private readonly t3 = T3_HOME,
+    private readonly scheme = process.env.T3_APP_SCHEME || "t3code",
   ) {
     const database = join(t3, DATABASE);
-    if (!existsSync(database)) return;
+
+    if (!existsSync(database)) {
+      return;
+    }
     this.environment = word(readFile(join(t3, "environment-id"))?.trim());
     this.db = new Database(database, { readonly: true });
     this.watcher = watch(t3, (_, file) => file?.startsWith(DATABASE) && this.schedule());
@@ -121,13 +126,19 @@ export class Links {
   // its T3 thread work, as owner() has it, where that one shows and still counts as an owner; else
   // the newest that does.
   under(app: string, id: string) {
-    if (app !== "t3" || !this.delegated(app, id)) return;
+    if (app !== "t3" || !this.delegated(app, id)) {
+      return;
+    }
     const shows = (parent?: string) => !!parent && this.shows(parent, new Set([`t3:${id}`]));
     const last = this.starts.get(this.threads.get(id)?.thread ?? "")?.parent;
-    if (last && this.owners(id).includes(last) && shows(last)) return last;
+
+    if (last && this.owners(id).includes(last) && shows(last)) {
+      return last;
+    }
     const handoffs = this.handed.filter(
       (one) => one.hex === id && (!one.relay || one.latest) && shows(one.parent),
     );
+
     return handoffs.reduce<Delegation | undefined>(
       (newest, one) => (!newest || (one.since ?? "") >= (newest.since ?? "") ? one : newest),
       undefined,
@@ -142,8 +153,11 @@ export class Links {
 
   // Whether a thread shows: on its own, or under an owner that does without coming back through it.
   private shows(thread: string, passed: Set<string>): boolean {
-    if (passed.has(thread)) return false;
+    if (passed.has(thread)) {
+      return false;
+    }
     const owners = thread.startsWith("t3:") ? this.owners(thread.slice(3)) : [];
+
     return (
       !owners.length || owners.some((owner) => this.shows(owner, new Set([...passed, thread])))
     );
@@ -159,11 +173,14 @@ export class Links {
   // delegation, handed); or, where another T3 thread handed it work since, whichever that one's goes to.
   owner(session: string): { thread: string; handed: boolean } | undefined {
     const seen = new Set<string>();
+
     for (let thread = this.ran.get(session); thread && !seen.has(thread);) {
       const one = this.starts.get(thread);
       const up = this.above.get(thread);
-      if (one && (!up || one.since >= up.since))
+
+      if (one && (!up || one.since >= up.since)) {
         return { thread: one.parent, handed: !seen.size && one.shown };
+      }
       seen.add(thread);
       thread = up?.parent;
     }
@@ -172,8 +189,11 @@ export class Links {
   // A T3 task or thread's title, by either id.
   name(id: string) {
     const one = this.handed.find((one) => one.task === id || one.id === id);
-    if (one) return one.title;
-    if (!this.titles.has(id))
+
+    if (one) {
+      return one.title;
+    }
+    if (!this.titles.has(id)) {
       this.titles.set(
         id,
         word(
@@ -184,12 +204,14 @@ export class Links {
             .get(id)?.title,
         ),
       );
+    }
     return this.titles.get(id);
   }
 
   // A T3 thread's newest turn items that read as steps, newest first.
   turns(thread: string) {
     let items = this.items.get(thread);
+
     if (!items) {
       items = (
         this.db
@@ -201,6 +223,7 @@ export class Links {
       ).map((item) => ({ ...item, payload: JSON.parse(item.payload) }));
       this.items.set(thread, items);
     }
+
     return items;
   }
 
@@ -213,10 +236,15 @@ export class Links {
   }
 
   private schedule() {
-    if (this.pending) return;
+    if (this.pending) {
+      return;
+    }
     this.pending = setTimeout(() => {
       this.pending = undefined;
-      if (this.read()) this.changed();
+
+      if (this.read()) {
+        this.changed();
+      }
     }, REFRESH);
   }
 
@@ -231,8 +259,10 @@ export class Links {
            where p.driver = 'acpRegistry' and t.deleted_at is null
            order by p.updated_at`,
       ).all();
+
       const threads = new Map(rows.map(({ key, thread, title }) => [key, { thread, title }]));
       const keys = new Map(rows.map(({ key, thread }) => [thread, key]));
+
       const subagents = this.db!.query<
         Omit<Delegation, "hex" | "link" | "latest"> & { driver: string; latest: number | null },
         []
@@ -246,10 +276,12 @@ export class Links {
            where s.origin = 'app_owned' and s.child_thread_id is not null
            order by s.started_at`,
       ).all();
+
       const handed = subagents
         .filter((row) => keys.has(row.parent))
         .map(({ driver, latest, parent, ...row }): Delegation => {
           const hex = driver === "acpRegistry" ? keys.get(row.id) : undefined;
+
           return omit({
             ...row,
             parent: `t3:${keys.get(parent)}`,
@@ -259,6 +291,7 @@ export class Links {
             latest: latest === 1,
           });
         });
+
       const run = this.db!.query<
         Omit<Delegation, "id" | "task" | "parent" | "hex" | "link" | "latest"> & { latest: number },
         [string]
@@ -270,23 +303,33 @@ export class Links {
          from orchestration_v2_projection_runs r join orchestration_v2_projection_threads t on t.thread_id = r.thread_id
          where r.run_id = ? and t.deleted_at is null`,
       );
+
       // The newest hex handoff to each T3 thread: a delegation by when it started, or a relay by when
       // hex sent it, queued or not (one to a thread its sender delegated before shows as that
       // delegation), and whether it shows as a working delegation.
       const starts = new Map<string, { parent: string; since: string; shown: boolean }>();
+
       const start = (thread: string, parent: string, since = "", shown = false) => {
-        if (since >= (starts.get(thread)?.since ?? ""))
+        if (since >= (starts.get(thread)?.since ?? "")) {
           starts.set(thread, { parent, since, shown });
+        }
       };
-      for (const one of handed) start(one.id, one.parent, one.since, !HANDED[one.status]);
+
+      for (const one of handed) {
+        start(one.id, one.parent, one.since, !HANDED[one.status]);
+      }
       const relayed = open(this.state)
         .relays()
         .flatMap(({ from, thread, run: task, at }): Delegation[] => {
           const ran = run.get(task);
           const hex = keys.get(thread);
-          if (!ran || from === `t3:${hex}`) return [];
+
+          if (!ran || from === `t3:${hex}`) {
+            return [];
+          }
           const behind = handed.findLast((one) => one.parent === from && one.id === thread);
           start(thread, from, at, !HANDED[(behind ?? ran).status]);
+
           return behind
             ? []
             : [
@@ -303,7 +346,9 @@ export class Links {
                 }),
               ];
         });
+
       handed.push(...relayed);
+
       const ran = new Map(
         this.db!.query<{ session: string; thread: string }, []>(
           `select json_extract(payload_json, '$.nativeThreadRef.nativeId') session, json_extract(payload_json, '$.appThreadId') thread
@@ -312,14 +357,17 @@ export class Links {
           .all()
           .map(({ session, thread }) => [session, thread]),
       );
+
       // The T3 thread that last handed off each one, and when.
       const above = new Map(
         subagents.map(({ id, parent, since }) => [id, { parent, since: since ?? "" }]),
       );
+
       const asked = this.items.size > 0;
       this.items.clear();
       this.titles.clear();
       const now = JSON.stringify([[...threads], handed, [...ran], [...above], [...starts]]);
+
       if (
         !asked &&
         now ===
@@ -330,16 +378,19 @@ export class Links {
             [...this.above],
             [...this.starts],
           ])
-      )
+      ) {
         return false;
+      }
       this.threads = threads;
       this.handed = handed;
       this.ran = ran;
       this.above = above;
       this.starts = starts;
+
       return true;
     } catch (error) {
       process.stderr.write(`voice: links: couldn't read T3 Code's threads: ${error}\n`);
+
       return false;
     }
   }
@@ -360,16 +411,21 @@ function word(value: unknown) {
 
 function readFile(path: string) {
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync(path, "utf-8");
   } catch {}
 }
 
 // A message's own link where its app has one (in a Telegram group or topic, or a Discord thread), else
 // its thread's.
 export function linkAt(app: string, link: string | undefined, message?: MessageId) {
-  if (!link || message === undefined) return link;
-  if (app === "discord") return `${link}/${message}`;
-  if (app === "telegram" && link.startsWith("https://t.me/c/"))
+  if (!link || message === undefined) {
+    return link;
+  }
+  if (app === "discord") {
+    return `${link}/${message}`;
+  }
+  if (app === "telegram" && link.startsWith("https://t.me/c/")) {
     return `${link.replace(/\/1$/, "")}/${message}`;
+  }
   return link;
 }

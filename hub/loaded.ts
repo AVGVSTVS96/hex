@@ -1,29 +1,36 @@
-import { readFileSync } from "fs";
-import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 // AGENTS.md as Claude Code loads it: the file, then each `@path` it imports outside code
 // (relative to the importing file, `~/` for home), five levels deep at most. The wake HEX.md
 // imports is memory, rewritten after every turn, not instructions: it's left out.
 export const WAKE = "state/wake/CLAUDE.md";
+
 export function loaded(
   file: string,
   seen = new Set<string>(),
   depth = 0,
-  read = (path: string) => readFileSync(path, "utf8"),
+  read = (path: string) => readFileSync(path, "utf-8"),
 ): [string, string][] {
-  if (seen.has(file) || depth > 5 || file.endsWith(`/${WAKE}`)) return [];
+  if (seen.has(file) || depth > 5 || file.endsWith(`/${WAKE}`)) {
+    return [];
+  }
   seen.add(file);
   let text;
+
   try {
     text = read(file);
   } catch {
     return [];
   }
-  const prose = text.replace(/^(`{3,})[^]*?^\1`*$/gm, "").replace(/`[^`\n]*`/g, "");
+
+  const prose = text.replaceAll(/^(`{3,})[^]*?^\1`*$/gm, "").replaceAll(/`[^`\n]*`/g, "");
+
   const imports = [...prose.matchAll(/(?:^|\s)@(\S+)/g)].map(([, target]) =>
     target!.startsWith("~/") ? join(homedir(), target!.slice(2)) : resolve(dirname(file), target!),
   );
+
   return [[file, text], ...imports.flatMap((target) => loaded(target, seen, depth + 1, read))];
 }
 
@@ -42,6 +49,7 @@ export const STARTUP = {
     "hub/fit.ts",
   ],
 };
+
 export type Startup = keyof typeof STARTUP;
 
 // hex's updates as git records them (the reflog), read once. Its times are whole seconds, so an
@@ -59,13 +67,16 @@ export function history(hex: string) {
       return "";
     }
   };
+
   const moves = [
     ...git("log", "-g", "--format=%H %gd", "--date=unix", "HEAD").matchAll(
       /^(\w+) HEAD@\{(\d+)\}$/gm,
     ),
   ];
+
   const head = moves.length ? git("rev-parse", "HEAD") : "";
   const diffs = new Map<string, Startup[]>();
+
   return {
     head,
     on: (started?: number) =>
@@ -80,6 +91,7 @@ export function history(hex: string) {
           "--",
           ...Object.values(STARTUP).flat(),
         ).split("\n");
+
         diffs.set(
           from,
           (Object.keys(STARTUP) as Startup[]).filter((key) =>
@@ -89,6 +101,7 @@ export function history(hex: string) {
           ),
         );
       }
+
       return diffs.get(from)!;
     },
   };

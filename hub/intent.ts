@@ -1,9 +1,10 @@
-import { appendFileSync, readFileSync, statSync } from "fs";
-import { homedir } from "os";
-import { join, resolve } from "path";
+import { appendFileSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
 
 import { served } from "./running.ts";
-import { hexDir, open, type Row, spoken, stateDir, type Store } from "./store.ts";
+import { hexDir, open, spoken, stateDir } from "./store.ts";
+import type { Row, Store } from "./store.ts";
 import { render } from "./tasks.ts";
 
 // The intent check: before a session hands the owner's work to another agent, a quick model reads the
@@ -37,6 +38,7 @@ type Hook = {
   tool_name?: string;
   tool_input?: Record<string, unknown>;
 };
+
 export type Verdict = { verdict: "ok" | "revise"; notes: string };
 
 // A command that hands work to another agent: a job or a headless claude or codex run, here or over
@@ -54,21 +56,28 @@ export function brief({
 }: Hook): string | undefined {
   if (tool === "Bash") {
     const command = String(input.command ?? "");
-    if (!HANDOFF.test(command)) return;
+
+    if (!HANDOFF.test(command)) {
+      return;
+    }
     return [command, ...files(command, cwd).map(([path, text]) => `${path}:\n${text}`)].join(
       "\n\n",
     );
   }
+
   if (tool === "Agent") {
     const prompt = String(input.prompt ?? "");
+
     return named(prompt).length ? prompt : undefined;
   }
+
   if (
     /^SendMessage$|new_thread$|^mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads)$/.test(
       tool,
     )
-  )
+  ) {
     return JSON.stringify(input, null, 1);
+  }
 }
 
 // The files a command reads its prompt from, like "$(cat ~/scratch/x/prompt.md)", as they are now.
@@ -76,10 +85,11 @@ function files(command: string, cwd: string): [string, string][] {
   const paths = [...new Set(command.match(/[\w.~-]*\/[\w.~/-]+/g))].map((path) =>
     resolve(cwd, path.replace(/^~/, homedir())),
   );
+
   return paths.flatMap((path) => {
     try {
       return statSync(path).isFile() && statSync(path).size < 100_000 && !path.includes("/bin/")
-        ? [[path, readFileSync(path, "utf8")] as [string, string]]
+        ? [[path, readFileSync(path, "utf-8")] as [string, string]]
         : [];
     } catch {
       return [];
@@ -93,19 +103,24 @@ export function asked(store: Store, thread: string | undefined, text: string): s
   const tasks = named(text)
     .map((id) => store.task(id))
     .filter((task) => task !== null);
+
   const cited = [...new Set(text.match(/\b(?:telegram|discord|buzz|t3|voice):[\w@.:-]*\w/g))]
     .map((key) => store.message(key))
     .filter((row) => row && spoken(row))
     .slice(0, 12) as Row[];
+
   const newest = (key: string) =>
     store
       .said(key, 40)
       .filter((row) => spoken(row) && !cited.some(({ key }) => key === row.key))
       .slice(-4);
+
   const from = thread ? store.key(thread) : undefined;
   const to = destination(store, text);
+
   const quote = (rows: Row[]) =>
     rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${spoken(row)}`).join("\n\n");
+
   return [
     tasks.length &&
       `The tasks it names, with his words:\n\n${tasks.map((task) => render(task, store.names())).join("\n\n")}`,
@@ -124,9 +139,13 @@ export function asked(store: Store, thread: string | undefined, text: string): s
 
 // The thread a delivery goes to, by the id or name after its --to.
 function destination(store: Store, text: string): string | undefined {
-  const to = text.match(/\bhex\s+deliver\b.*?--to[= ]['"]?([^'"\s]+)/s)?.[1];
-  if (!to) return;
+  const to = /\bhex\s+deliver\b.*?--to[= ]['"]?([^'"\s]+)/s.exec(text)?.[1];
+
+  if (!to) {
+    return;
+  }
   const threads = store.threads();
+
   return (
     threads.find(({ thread }) => thread === store.key(to)) ??
     threads.find(({ name }) => name === to)
@@ -138,6 +157,7 @@ export async function judge(input: string): Promise<Verdict> {
     stdout: "pipe",
     stderr: "ignore",
   }).stdout.toString();
+
   const env = {
     ...Object.fromEntries(
       Object.entries(process.env).filter(
@@ -147,6 +167,7 @@ export async function judge(input: string): Promise<Verdict> {
     CLAUDE_CODE_ENTRYPOINT: "hex",
     HEX_HELPER: "intent",
   };
+
   const run = Bun.spawn(
     [
       "claude",
@@ -168,14 +189,18 @@ export async function judge(input: string): Promise<Verdict> {
     ],
     { cwd: hexDir(), env, stdin: new Blob([input]), stdout: "pipe", stderr: "pipe", timeout: CALL },
   );
+
   const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
   const result = JSON.parse(out || "{}");
-  if (code !== 0 || result.is_error || !result.structured_output)
+
+  if (code !== 0 || result.is_error || !result.structured_output) {
     throw new Error(`claude exited ${code}: ${String(result.result ?? "").slice(0, 300)}`);
+  }
   return result.structured_output;
 }
 
 type Sent = { at: number; rounds: number; brief: string; notes: string };
+
 export type Checked = {
   verdict: Verdict | "failed";
   text: string;
@@ -193,25 +218,33 @@ export async function check(
   decide = judge,
 ): Promise<Checked | undefined> {
   const text = brief(hook);
-  if (!text) return;
+
+  if (!text) {
+    return;
+  }
   const session = hook.session_id ?? "";
   const sent = (JSON.parse(store.seen(session, "intent") || "null") as Sent | null) ?? undefined;
   const last = sent?.rounds && Date.now() - sent.at < AGAIN ? sent : undefined;
   const round = (last?.rounds ?? 0) + 1;
+
   const before =
     last &&
     `This session's last brief, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That brief:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
+
   const words =
     asked(store, thread, text) ||
     "No task or message of his was found for this brief; judge it by his rules and memory.";
+
   try {
     const verdict = await decide(
       [words, before, `The brief (${hook.tool_name}):\n\n${text.slice(0, 40_000)}`]
         .filter(Boolean)
         .join("\n\n"),
     );
+
     const through = verdict.verdict === "revise" && round > ROUNDS;
-    if (verdict.verdict === "revise" && !through)
+
+    if (verdict.verdict === "revise" && !through) {
       store.show(
         session,
         "intent",
@@ -222,7 +255,9 @@ export async function check(
           notes: verdict.notes,
         } satisfies Sent),
       );
-    else store.unshow(session, "intent");
+    } else {
+      store.unshow(session, "intent");
+    }
     return { verdict, text, round, ...(through && { through }) };
   } catch (error) {
     return { verdict: "failed", text, round, error: String(error) };
@@ -234,14 +269,18 @@ export async function check(
 if (import.meta.main) {
   try {
     const hook = JSON.parse((await Bun.stdin.text()) || "{}") as Hook;
+
     const thread =
       served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD }) ??
       process.env.HEX_FROM ??
       process.env.HEX_OWNER;
+
     const began = Date.now();
     const result = await check(hook, open(stateDir()), thread);
+
     if (result) {
       const { verdict, text, round, through, error } = result;
+
       const record = {
         at: new Date().toISOString(),
         ms: Date.now() - began,
@@ -255,12 +294,15 @@ if (import.meta.main) {
         notes: typeof verdict === "string" ? error : verdict.notes,
         brief: text.slice(0, 4000),
       };
+
       appendFileSync(join(stateDir(), "intent.jsonl"), `${JSON.stringify(record)}\n`);
+
       if (typeof verdict === "object" && verdict.verdict === "revise" && !through) {
         const next =
           round < ROUNDS
             ? "The check reads your rewrite next to these notes."
             : "This is its last sendback: your next version goes through whatever the check says, so weigh these notes yourself.";
+
         const reason = `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`;
         console.log(
           JSON.stringify({

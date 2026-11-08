@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { connect } from "net";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import * as grammy from "grammy";
 
@@ -13,7 +13,7 @@ import { until } from "../../hub/until.ts";
 
 const CHANNEL = "plugin:telegram@hex";
 const OWNER = 2000;
-const FORUM = -1001234;
+const FORUM = -1_001_234;
 const DESK = `${FORUM}:5`;
 const owner = { id: OWNER, is_bot: false, first_name: "Bassim", username: "bassim" };
 const hex = { id: 1000, is_bot: true, first_name: "hex", username: "hex_bot" };
@@ -21,8 +21,10 @@ const forum = { id: FORUM, type: "supergroup", title: "hex", is_forum: true };
 const TRANSCRIBER = "http://transcriber/v1/audio/transcriptions";
 
 type Call = { method: string; payload: Record<string, any>; result?: any };
+
 const calls: Call[] = [];
 const captionOnly = new Set<number>();
+
 // Messages whose next button edit reaches Telegram late, and each button edit in the order it landed.
 const slow = new Set<number>();
 const landed: Record<string, any>[] = [];
@@ -39,32 +41,42 @@ function answer(method: string, payload: Record<string, any>) {
     chat: { id: payload.chat_id },
     from: hex,
   });
+
   switch (method) {
     case "sendPoll": {
       const sent = message();
+
       return { ...sent, poll: { id: `poll-${sent.message_id}` } };
     }
-    case "forwardMessages":
+
+    case "forwardMessages": {
       return payload.message_ids.map(() => ({ message_id: ++nextMessage }));
-    case "getForumTopicIconStickers":
+    }
+    case "getForumTopicIconStickers": {
       return [
         { emoji: "🔥", custom_emoji_id: "111" },
         { emoji: "❤️", custom_emoji_id: "222" },
       ];
-    case "createForumTopic":
+    }
+    case "createForumTopic": {
       return { message_thread_id: 9, name: payload.name, icon_color: 0 };
-    case "getChat":
+    }
+    case "getChat": {
       return forum;
-    case "getChatMember":
+    }
+    case "getChatMember": {
       return { status: "creator", user: payload.user_id === OWNER ? owner : hex };
-    case "getFile":
+    }
+    case "getFile": {
       return {
         file_id: payload.file_id,
         file_unique_id: payload.file_id,
         file_path: `photos/${payload.file_id}.jpg`,
       };
-    default:
+    }
+    default: {
       return method.startsWith("send") || method.startsWith("forward") ? message() : true;
+    }
   }
 }
 
@@ -76,16 +88,21 @@ class Bot extends grammy.Bot {
     this.api.config.use(async (_prev, method, payload: any) => {
       const call: Call = { method, payload };
       calls.push(call);
-      if (method.startsWith("send") && throttled && throttled--)
+
+      if (method.startsWith("send") && throttled && throttled--) {
         return {
           ok: false,
           error_code: 429,
           description: "Too Many Requests: retry after 0",
           parameters: { retry_after: 0 },
         } as any;
-      if (method === "editMessageReplyMarkup" && slow.delete(payload.message_id))
+      }
+      if (method === "editMessageReplyMarkup" && slow.delete(payload.message_id)) {
         await Bun.sleep(200);
-      if (method === "editMessageReplyMarkup") landed.push(payload);
+      }
+      if (method === "editMessageReplyMarkup") {
+        landed.push(payload);
+      }
       if (
         method.startsWith("editMessage") &&
         method !== "editMessageReplyMarkup" &&
@@ -97,6 +114,7 @@ class Bot extends grammy.Bot {
           description: `Bad Request: there is no ${method === "editMessageCaption" ? "caption" : "text"} in the message to edit`,
         } as any;
       }
+
       if (method === "editMessageText" && captionOnly.has(payload.message_id)) {
         return {
           ok: false,
@@ -104,6 +122,7 @@ class Bot extends grammy.Bot {
           description: "Bad Request: there is no text in the message to edit",
         } as any;
       }
+
       return { ok: true, result: (call.result = answer(method, payload)) } as any;
     });
   }
@@ -124,11 +143,14 @@ const saved = (): Record<string, any> =>
       .threads({ open: true })
       .map((thread) => [thread.thread, thread]),
   );
+
 const outbox = mkdtempSync(join(tmpdir(), "telegram-outbox-"));
+
 afterAll(() => {
   rmSync(state, { recursive: true, force: true });
   rmSync(outbox, { recursive: true, force: true });
 });
+
 let received: any[] = [];
 let call: (tool: string, args: object) => Promise<any>;
 let ask: (request: object) => Promise<unknown>;
@@ -136,15 +158,17 @@ let session: (payload: object) => void;
 
 const called = (method: string, match: (payload: Record<string, any>) => boolean = () => true) =>
   until(() => calls.find((c) => c.method === method && match(c.payload))?.payload);
+
 const idOf = (payload: Record<string, any>) =>
   calls.find((c) => c.payload === payload)!.result.message_id;
+
 const inbound = (match: (line: any) => boolean) =>
   until(() => received.find((line) => line.type === "inbound" && match(line)));
 
 function message(fields: Record<string, any>) {
   return {
     message_id: ++nextMessage,
-    date: 1760000000,
+    date: 1_760_000_000,
     chat: forum,
     from: owner,
     message_thread_id: 5,
@@ -154,7 +178,7 @@ function message(fields: Record<string, any>) {
 }
 
 async function update(fields: Record<string, any>) {
-  await bot.handleUpdate({ update_id: nextUpdate++, ...fields } as any);
+  await bot.handleUpdate({ update_id: nextUpdate++, ...fields });
 }
 
 // Opening hex.db, loading the bot and connecting a session: seconds of work on a loaded machine.
@@ -177,26 +201,33 @@ beforeAll(async () => {
   });
   const fetch = globalThis.fetch;
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
-    if (url.startsWith("https://api.telegram.org/file/")) return new Response("jpeg");
-    if (url !== TRANSCRIBER) return fetch(url, init);
+    if (url.startsWith("https://api.telegram.org/file/")) {
+      return new Response("jpeg");
+    }
+    if (url !== TRANSCRIBER) {
+      return await fetch(url, init);
+    }
     const form = init!.body as FormData;
+
     return Response.json({
       text: form.get("model") === "whisper" ? " anchors ship friday " : "wrong model",
     });
   }) as any;
   await import("./bot.ts");
+
   const desk = await connectSession({
     stateDir: state,
     path: "/telegram",
     channel: CHANNEL,
     thread: DESK,
   });
+
   received = desk.received;
   call = desk.call;
   ask = desk.ask;
   const hooks = connect(join(state, "hub.sock"));
   await new Promise((resolve) => hooks.on("connect", resolve));
-  session = (payload) => hooks.write(JSON.stringify(payload) + "\n");
+  session = (payload) => hooks.write(`${JSON.stringify(payload)}\n`);
 }, 30_000);
 
 test("closing a thread list entry that isn't a topic forgets it, instead of failing", async () => {
@@ -219,17 +250,19 @@ test("the bot asks Telegram for reactions, button taps and poll votes", () => {
 test("a reaction reaches the thread of the message it is on, with that message's text and author", async () => {
   const sent = await call("reply", { text: "deploy is green" });
   const id = Number(sent.text.match(/id: (\d+)/)[1]);
+
   const react = (old_reaction: object[], new_reaction: object[]) =>
     update({
       message_reaction: {
         chat: forum,
         message_id: id,
         user: owner,
-        date: 1760000000,
+        date: 1_760_000_000,
         old_reaction,
         new_reaction,
       },
     });
+
   const thumbs = { type: "emoji", emoji: "👍" };
 
   await react([], [thumbs]);
@@ -253,7 +286,7 @@ test("a reaction on a forum message the hub never saw is dropped, since Telegram
       chat: forum,
       message_id: 1,
       user: owner,
-      date: 1760000000,
+      date: 1_760_000_000,
       old_reaction: [],
       new_reaction: [{ type: "emoji", emoji: "🔥" }],
     },
@@ -276,6 +309,7 @@ test("buttons come back as a tap with the label, and the message keeps only the 
       ],
     },
   });
+
   const markup = {
     inline_keyboard: [
       [
@@ -284,6 +318,7 @@ test("buttons come back as a tap with the label, and the message keeps only the 
       ],
     ],
   };
+
   await update({
     callback_query: {
       id: "tap",
@@ -310,6 +345,7 @@ test("a permission prompt asks in its own topic, and the owner's tap answers the
     input_preview: '{"command":"rm -rf build","description":"Delete the build folder"}',
   });
   const prompt = await called("sendMessage", (p) => p.text?.startsWith("🔐"));
+
   const markup = {
     inline_keyboard: [
       [
@@ -318,6 +354,7 @@ test("a permission prompt asks in its own topic, and the owner's tap answers the
       ],
     ],
   };
+
   expect(prompt).toMatchObject({
     chat_id: String(FORUM),
     message_thread_id: 5,
@@ -325,6 +362,7 @@ test("a permission prompt asks in its own topic, and the owner's tap answers the
     reply_markup: markup,
   });
   const id = idOf(prompt);
+
   const tap = (from: object) =>
     update({
       callback_query: {
@@ -389,6 +427,7 @@ test("a poll goes out with named votes, and each vote comes back as the chosen o
     options: ["tacos", "pho", "salad"],
     multiple: true,
   });
+
   const id = Number(sent.text.match(/id: (\d+)/)[1]);
   expect(await called("sendPoll")).toMatchObject({
     question: "Lunch?",
@@ -433,14 +472,19 @@ test("markdown goes out as Telegram's own rich markdown, and a code block cut be
     join(state, "access.json"),
     JSON.stringify({ allowFrom: [String(OWNER)], textChunkLimit: 40 }),
   );
-  await call("reply", { text: "```ts\n" + "const a = 1\n".repeat(5) + "```", format: "markdown" });
+  await call("reply", { text: `\`\`\`ts\n${"const a = 1\n".repeat(5)}\`\`\``, format: "markdown" });
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [String(OWNER)] }));
+
   const parts = calls
     .filter((c) => c.method === "sendRichMessage")
     .slice(1)
     .map((c) => c.payload.rich_message.markdown);
+
   expect(parts.length).toBeGreaterThan(1);
-  for (const part of parts) expect(part.match(/```/g)!.length % 2).toBe(0);
+
+  for (const part of parts) {
+    expect(part.match(/```/g)!.length % 2).toBe(0);
+  }
 });
 
 test("a newline in markdown stays a new line, where Telegram would join it into the paragraph, and code blocks go as written", async () => {
@@ -463,6 +507,7 @@ test("a newline in markdown stays a new line, where Telegram would join it into 
     "```",
     "after",
   ].join("\n");
+
   await call("reply", { text, format: "markdown" });
   expect(
     (await called("sendRichMessage", (p) => p.rich_message.markdown.startsWith("**Status**")))
@@ -553,6 +598,7 @@ test("an album arrives as one message with every photo and the caption", async (
     { file_id: `${id}-small`, file_unique_id: `${id}-small`, width: 90, height: 90 },
     { file_id: id, file_unique_id: id, width: 900, height: 900 },
   ];
+
   const first = message({ media_group_id: "g1", photo: photo("one"), caption: "the anchors" });
   await update({ message: first });
   await update({ message: message({ media_group_id: "g1", photo: photo("two") }) });
@@ -581,6 +627,7 @@ test("a voice message arrives as its transcript, with the recording still attach
 test("a reply to a message in another topic keeps the quote and what the hub knows of it", async () => {
   const sent = await call("reply", { text: "anchors ship friday", thread: "notes" });
   const id = Number(sent.text.match(/id: (\d+)/)[1]);
+
   const reply = message({
     text: "still true?",
     external_reply: {
@@ -590,6 +637,7 @@ test("a reply to a message in another topic keeps the quote and what the hub kno
     },
     quote: { text: "friday", position: 0 },
   });
+
   await update({ message: reply });
   expect(
     (await inbound((line) => line.meta.message_id === String(reply.message_id))).meta,
@@ -620,15 +668,18 @@ test("a message no session has read shows it waits, until a session takes it", a
   expect(
     await called("setMessageReaction", (p) => p.message_id === waiting.message_id),
   ).toMatchObject({ reaction: [{ type: "emoji", emoji: "😴" }] });
+
   const notes = await connectSession({
     stateDir: state,
     path: "/telegram",
     channel: CHANNEL,
     thread: `${FORUM}:6`,
   });
+
   const handed = await until(() =>
     notes.received.find((line) => line.meta?.message_id === String(waiting.message_id)),
   );
+
   open(state).take(handed.meta.key, "notes-session");
   expect(
     await called(
@@ -637,13 +688,15 @@ test("a message no session has read shows it waits, until a session takes it", a
     ),
   ).toBeTruthy();
   notes.close();
+
   const marks = () =>
     calls.filter(
       (c) => c.method === "setMessageReaction" && c.payload.message_id === waiting.message_id,
     ).length;
+
   const before = marks();
   await update({
-    edited_message: { ...waiting, text: "anyone there at all?", edit_date: 1760000100 },
+    edited_message: { ...waiting, text: "anyone there at all?", edit_date: 1_760_000_100 },
   });
   await until(() =>
     calls.some((c) => c.method === "sendChatAction" && c.payload.message_thread_id === 6),
@@ -660,25 +713,31 @@ test("a session's own reaction stays once the message it took stops waiting, and
   const plain = message({ text: "second", message_thread_id: 7 });
   await update({ message: reacted });
   await update({ message: plain });
+
   const on = (id: number) => () =>
     calls
       .filter((c) => c.method === "setMessageReaction" && c.payload.message_id === id)
       .map((c) => c.payload.reaction.map((r: any) => r.emoji).join(""));
+
   await until(
     () => on(reacted.message_id)().includes("😴") && on(plain.message_id)().includes("😴"),
   );
+
   const topic = await connectSession({
     stateDir: state,
     path: "/telegram",
     channel: CHANNEL,
     thread: `${FORUM}:7`,
   });
+
   const first = await until(() =>
     topic.received.find((line) => line.meta?.message_id === String(reacted.message_id)),
   );
+
   const second = await until(() =>
     topic.received.find((line) => line.meta?.message_id === String(plain.message_id)),
   );
+
   await topic.call("react", { message_id: String(reacted.message_id), emoji: "🔥" });
   open(state).take(first.meta.key, "topic-session");
   open(state).take(second.meta.key, "topic-session");
@@ -696,21 +755,24 @@ test("a DM is its own thread: it reaches the DM session, not the group, and repl
     channel: CHANNEL,
     thread: String(OWNER),
   });
+
   const lines = dm.received;
   const forwards = calls.filter((c) => c.method === "forwardMessage").length;
 
   await update({
     message: {
       message_id: ++nextMessage,
-      date: 1760000000,
+      date: 1_760_000_000,
       chat: { id: OWNER, type: "private", first_name: "Bassim" },
       from: owner,
       text: "quick one",
     },
   });
+
   const got = await until(() =>
     lines.find((line) => line.type === "inbound" && line.content === "quick one"),
   );
+
   expect(got.meta.chat_id).toBe(String(OWNER));
   expect(calls.filter((c) => c.method === "forwardMessage").length).toBe(forwards);
 
@@ -728,6 +790,7 @@ const ledger = () => ({
       .map((pin) => [pin.thread, pin]),
   ),
 });
+
 const asked = (id: number) => open(state).question("telegram", DESK, id)!;
 
 test("a question with buttons goes in the ledger, and a tap there answers it", async () => {
@@ -739,6 +802,7 @@ test("a question with buttons goes in the ledger, and a tap there answers it", a
     text: "Deploy now?",
     options: ["Deploy", "Wait"],
   });
+
   const markup = {
     inline_keyboard: [
       [
@@ -747,6 +811,7 @@ test("a question with buttons goes in the ledger, and a tap there answers it", a
       ],
     ],
   };
+
   await update({
     callback_query: {
       id: "deploy",
@@ -799,6 +864,7 @@ test("an answer taken back right away gets its buttons back, even when the answe
       /id: (\d+)/,
     )[1],
   );
+
   slow.add(id);
   session({ type: "answer", thread: DESK, message: id, label: "Tue", via: "app" });
   await inbound((line) => line.meta.button_message_id === String(id) && line.content === "Tue");
@@ -821,6 +887,7 @@ test("of two taps on one question only the first counts: the thread hears it onc
       /id: (\d+)/,
     )[1],
   );
+
   const markup = {
     inline_keyboard: [
       [
@@ -829,6 +896,7 @@ test("of two taps on one question only the first counts: the thread hears it onc
       ],
     ],
   };
+
   const tap = (callback: string, data: string) =>
     update({
       callback_query: {
@@ -844,11 +912,14 @@ test("of two taps on one question only the first counts: the thread hears it onc
         }),
       },
     });
+
   await Promise.all([tap("ship", "0"), tap("hold", "1")]);
   const { label } = asked(id).answer!;
+
   const shown = () =>
     calls.findLast((c) => c.method === "editMessageReplyMarkup" && c.payload.message_id === id)
       ?.payload.reply_markup.inline_keyboard[0][0].text;
+
   await until(() => shown() === `✓ ${label}`);
   await inbound((line) => line.meta.button_message_id === String(id));
   expect(
@@ -871,6 +942,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
       /id: (\d+)/,
     )[1],
   );
+
   const before = received.length;
   session({ type: "settle", thread: DESK, message: first, note: "Settled: bought on Oct 12" });
   expect(await called("editMessageReplyMarkup", (p) => p.message_id === first)).toMatchObject({
@@ -886,6 +958,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
       /id: (\d+)/,
     )[1],
   );
+
   await call("edit_message", { message_id: String(second), text: "Rename it? It reads better." });
   expect(await called("editMessageText", (p) => p.message_id === second)).toMatchObject({
     reply_markup: {
@@ -919,6 +992,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
       /id: (\d+)/,
     )[1],
   );
+
   await call("edit_message", { message_id: String(third), settled: true });
   expect(await called("editMessageReplyMarkup", (p) => p.message_id === third)).toMatchObject({
     reply_markup: { inline_keyboard: [[{ text: "✓ Settled", disabled: {} }]] },
@@ -938,18 +1012,21 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
       /id: (\d+)/,
     )[1],
   );
+
   const general = await connectSession({
     stateDir: state,
     path: "/telegram",
     channel: CHANNEL,
     thread: String(FORUM),
   });
+
   const dm = await connectSession({
     stateDir: state,
     path: "/telegram",
     channel: CHANNEL,
     thread: String(OWNER),
   });
+
   const reminder = Number(
     (
       await dm.call("reply", {
@@ -958,6 +1035,7 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
       })
     ).text.match(/id: (\d+)/)[1],
   );
+
   expect(
     await called("sendMessage", (p) => p.text === "Still waiting: ship the site?"),
   ).toMatchObject({
@@ -986,6 +1064,7 @@ test("edit_message settles a poll even with text, which a poll can't change, and
       /id: (\d+)/,
     )[1],
   );
+
   expect(
     (await call("edit_message", { message_id: String(id), text: "Ship it? Shipped." })).error,
   ).toContain("a poll's own text can't be edited");
@@ -1007,6 +1086,7 @@ test("edit_message settles a poll even with text, which a poll can't change, and
       /id: (\d+)/,
     )[1],
   );
+
   await update({ poll_answer: { poll_id: `poll-${voted}`, user: owner, option_ids: [1] } });
   await until(() => asked(voted).answer);
   expect(
@@ -1022,6 +1102,7 @@ test("a poll answered in the app closes, and its vote reaches the thread", async
       /id: (\d+)/,
     )[1],
   );
+
   expect(asked(id)).toMatchObject({ options: ["A", "B"], poll: `poll-${id}` });
   session({ type: "answer", thread: DESK, message: id, label: "B", via: "call" });
   expect(await called("stopPoll", (p) => p.message_id === id)).toBeTruthy();
@@ -1034,17 +1115,21 @@ test("a poll answered in the app closes, and its vote reaches the thread", async
 test("a message edited before it is forwarded goes with its new text", async () => {
   const id = Number((await call("reply", { text: "Status: drafting" })).text.match(/id: (\d+)/)[1]);
   await call("edit_message", { message_id: String(id), text: "Status: live" });
+
   const forwarded = Number(
     (await call("forward", { message_id: String(id), thread: "notes" })).text.match(/id: (\d+)/)[1],
   );
+
   expect(open(state).message(`telegram:${FORUM}:${forwarded}`)?.body).toBe("Status: live");
 });
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
   const id = Number((await call("pin", { note: "Site: example.com" })).text.match(/id: (\d+)/)[1]);
+
   const sent = await called("sendRichMessage", (p) =>
     p.rich_message.markdown.startsWith("Site: example.com"),
   );
+
   expect(sent.rich_message.markdown).toStartWith("Site: example.com\n\n**Waiting on you");
   expect(await called("pinChatMessage", (p) => p.message_id === id)).toBeTruthy();
   expect(ledger().pins[DESK]).toMatchObject({ message: id, note: "Site: example.com" });
@@ -1053,6 +1138,7 @@ test("a status post is the session's note over lines hex keeps current from the 
     calls
       .filter((c) => c.method === "editMessageText" && c.payload.message_id === id)
       .map((c) => c.payload.rich_message.markdown as string);
+
   await call("reply", { text: "Rename the site?", buttons: ["Yes", "No"] });
   await until(() =>
     /\n- \[Rename the site\?\]\(https:\/\/t\.me\/c\/\d+\/\d+\/\d+\)/.test(edits().at(-1) ?? ""),

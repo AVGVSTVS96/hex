@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { copyFileSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { copyFileSync, symlinkSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const BIN = join(import.meta.dir, "../../bin");
+
 const env = Object.fromEntries(
   Object.entries(process.env).filter(([name]) => !name.startsWith("HEX_")),
 );
@@ -13,14 +14,19 @@ let home: string;
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "budget-"));
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
-  for (const script of ["budget", "identity"])
+
+  for (const script of ["budget", "identity"]) {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
+  }
   symlinkSync(join(BIN, "../hub"), join(home, ".hex/hub"));
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n@SOUL.md\n\n- Keep it short.\n");
   writeFileSync(join(home, "SOUL.md"), "# Who you are\n\nA sharp friend.\n");
   writeFileSync(join(home, ".hex/HEX.md"), `# How you work\n\n${"word ".repeat(500)}\n`);
 });
-afterEach(() => rmSync(home, { recursive: true }));
+
+afterEach(() => {
+  rmSync(home, { recursive: true });
+});
 
 function hook(tool_name: string, tool_input: object, budget = "20") {
   const run = Bun.spawnSync([join(home, ".hex/bin/budget")], {
@@ -33,8 +39,10 @@ function hook(tool_name: string, tool_input: object, budget = "20") {
     ),
     env: { ...env, HEX_RULES_WORDS: budget },
   });
+
   expect(run.exitCode).toBe(0);
   const out = run.stdout.toString();
+
   return out ? JSON.parse(out) : null;
 }
 
@@ -50,6 +58,7 @@ test("an edit past the budget is refused, with the numbers and what to do instea
     "- Keep it short.",
     "- Keep it short.\n- Always add one more long rule for this one moment.",
   );
+
   expect(out.hookSpecificOutput.permissionDecision).toBe("deny");
   expect(out.hookSpecificOutput.permissionDecisionReason).toContain(
     "AGENTS.md and SOUL.md from 13 to 24 words, over the 20",
@@ -77,7 +86,7 @@ test("imported files count, and hex's own files under .hex/ do not", () => {
 });
 
 test("a new import counts the words of the file it brings in", () => {
-  writeFileSync(join(home, "prefs.md"), `${"- rule\n".repeat(10)}`);
+  writeFileSync(join(home, "prefs.md"), "- rule\n".repeat(10));
   expect(
     edit("- Keep it short.", "- Keep it short.\n@prefs.md").hookSpecificOutput
       .permissionDecisionReason,
@@ -87,7 +96,7 @@ test("a new import counts the words of the file it brings in", () => {
 test("writing a file AGENTS.md already imports counts it", () => {
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n@SOUL.md\n@prefs.md\n");
   expect(
-    hook("Write", { file_path: join(home, "prefs.md"), content: `${"- rule\n".repeat(20)}` })
+    hook("Write", { file_path: join(home, "prefs.md"), content: "- rule\n".repeat(20) })
       .hookSpecificOutput.permissionDecision,
   ).toBe("deny");
 });

@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
-import { randomUUID } from "crypto";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { Filter } from "nostr-tools/filter";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
-import { finalizeEvent, generateSecretKey, getPublicKey, type Event } from "nostr-tools/pure";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
 
 import { until } from "../../hub/until.ts";
 import { startActivity } from "./activity.ts";
@@ -43,26 +44,30 @@ beforeEach(() => {
   writeFileSync(join(hexDir, "MEMORY.md"), "Bassim likes short answers.\n");
   writeFileSync(join(hexDir, ".hex", "HEX.md"), "How hex works.\n");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
-  const projects = join(dir, "claude", "projects", hexDir.replace(/[^a-zA-Z0-9]/g, "-"));
+  const projects = join(dir, "claude", "projects", hexDir.replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(projects, { recursive: true });
   transcript = join(projects, `${SESSION}.jsonl`);
   published = [];
   filters = [];
   cancels = [];
+
   const relay: Relay = {
     pubkey: agent,
     publish: async (event) => {
       published.push({ event: event as Event, at: Date.now() });
+
       return event as Event;
     },
     subscribe: (wanted, onEvent) => {
       filters.push(wanted);
       deliver = onEvent;
+
       return () => {};
     },
     query: async () => [],
     close: () => {},
   };
+
   activity = startActivity({
     relay,
     secretKey: agentKey,
@@ -70,6 +75,7 @@ beforeEach(() => {
     hexDir,
     cancel: (target) => {
       cancels.push(target);
+
       return "sent";
     },
   });
@@ -84,7 +90,7 @@ afterEach(() => {
 function line(entry: object) {
   appendFileSync(
     transcript,
-    JSON.stringify({
+    `${JSON.stringify({
       parentUuid: null,
       isSidechain: false,
       userType: "external",
@@ -95,7 +101,7 @@ function line(entry: object) {
       uuid: randomUUID(),
       timestamp: new Date().toISOString(),
       ...entry,
-    }) + "\n",
+    })}\n`,
   );
 }
 
@@ -171,6 +177,7 @@ function plaintexts() {
 function frames(): any[] {
   return plaintexts().flatMap((text) => {
     const frame = JSON.parse(text);
+
     return frame.kind === "batch" ? frame.payload.events : [frame];
   });
 }
@@ -186,7 +193,7 @@ function control(payload: object, options: { from?: Uint8Array; created_at?: num
   deliver(
     finalizeEvent(
       {
-        kind: 24200,
+        kind: 24_200,
         created_at: options.created_at ?? Math.floor(Date.now() / 1000),
         tags: [
           ["p", agent],
@@ -238,7 +245,7 @@ test("a turn streams its new transcript lines as ACP session updates, then compl
   ).toBe(true);
   expect(all.slice(1).every((frame) => frame.sessionId === SESSION)).toBe(true);
   expect(all.map((frame) => frame.seq)).toEqual(
-    [...all.map((frame) => frame.seq)].sort((a, b) => a - b),
+    all.map((frame) => frame.seq).sort((a, b) => a - b),
   );
 
   const read = all.filter((frame) => frame.kind === "acp_read");
@@ -272,27 +279,34 @@ test("a turn streams its new transcript lines as ACP session updates, then compl
     content: { type: "text", text: "It's noon." },
     messageId: "msg_02",
   });
-  expect(plaintexts().join()).not.toContain("an earlier turn");
-  expect(plaintexts().join()).not.toContain("what time is it");
+  expect(plaintexts().join(",")).not.toContain("an earlier turn");
+  expect(plaintexts().join(",")).not.toContain("what time is it");
 
   for (const { event } of published) {
-    expect(event.kind).toBe(24200);
+    expect(event.kind).toBe(24_200);
     expect(event.tags).toEqual([
       ["p", owner],
       ["agent", agent],
       ["frame", "telemetry"],
     ]);
   }
+
   expect(filters).toEqual([
-    [{ kinds: [24200], "#p": [agent], authors: [owner], since: expect.any(Number) }],
+    [{ kinds: [24_200], "#p": [agent], authors: [owner], since: expect.any(Number) }],
   ]);
-}, 15000);
+}, 15_000);
 
 test("at most one relay event a second, with what piled up sent as one batch", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
-  for (let i = 0; i < 20; i++) assistant(`msg_${i}`, { type: "text", text: `step ${i}` });
+
+  for (let i = 0; i < 20; i++) {
+    assistant(`msg_${i}`, { type: "text", text: `step ${i}` });
+  }
   await until(() => published.length);
-  for (let i = 0; i < 5; i++) assistant(`msg_late_${i}`, { type: "text", text: `late ${i}` });
+
+  for (let i = 0; i < 5; i++) {
+    assistant(`msg_late_${i}`, { type: "text", text: `late ${i}` });
+  }
   await until(
     () =>
       updates().filter((update) => update.sessionUpdate === "agent_message_chunk").length === 25,
@@ -301,17 +315,21 @@ test("at most one relay event a second, with what piled up sent as one batch", a
 
   const gaps = published.slice(1).map(({ at }, i) => at - published[i]!.at);
   expect(gaps.every((gap) => gap >= 900)).toBe(true);
+
   const batches = plaintexts()
     .map((text) => JSON.parse(text))
     .filter((frame) => frame.kind === "batch");
+
   expect(batches.length).toBeGreaterThan(0);
+
   for (const batch of batches) {
     expect(batch.payload.events.length).toBeGreaterThan(1);
     expect(batch.seq).toBe(batch.payload.events.at(-1).seq);
   }
+
   const seqs = frames().map((frame) => frame.seq);
   expect(seqs).toEqual([...new Set(seqs)].sort((a, b) => a - b));
-}, 15000);
+}, 15_000);
 
 test("a turn reported over before its last step is written completes once Claude Code has written it", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -328,7 +346,7 @@ test("a turn reported over before its last step is written completes once Claude
       .filter((frame) => frame.kind === "acp_read" || frame.kind === "turn_completed")
       .map((frame) => frame.payload.params?.update.content.text ?? frame.kind),
   ).toEqual(["working on it", "all done", "turn_completed"]);
-}, 15000);
+}, 15_000);
 
 test("an interrupted turn, which runs no Stop hooks, completes at the line Claude Code writes for the interrupt", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -369,7 +387,7 @@ test("a turn whose session was stopped completes with what it wrote, and the nex
       .filter((kind) => kind.startsWith("turn_")),
   ).toEqual(["turn_started", "turn_completed", "turn_started", "turn_completed", "turn_started"]);
   expect(updates().map((update) => update.content.text)).toEqual(["halfway"]);
-}, 15000);
+}, 15_000);
 
 test("session/new is sent once per session, with AGENTS.md and what it imports", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -407,7 +425,7 @@ You are hex.
 ── MEMORY.md ──
 Bassim likes short answers.
 </agent-instructions>`);
-}, 15000);
+}, 15_000);
 
 test("a session learned mid-turn picks up the lines written since the turn began", async () => {
   assistant("msg_old", { type: "text", text: "an earlier turn" });
@@ -419,23 +437,24 @@ test("a session learned mid-turn picks up the lines written since the turn began
   await until(() => updates().length === 2);
   expect(updates().map((update) => update.content.text)).toEqual(["first", "second"]);
   expect(frames().filter((frame) => frame.kind === "turn_started")).toHaveLength(1);
-}, 15000);
+}, 15_000);
 
 test("a transcript that appears late and arrives in pieces is read whole", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
   await Bun.sleep(1100);
-  const text =
-    JSON.stringify({
-      type: "assistant",
-      uuid: randomUUID(),
-      timestamp: new Date().toISOString(),
-      sessionId: SESSION,
-      message: {
-        id: "msg_01",
-        role: "assistant",
-        content: [{ type: "text", text: "héllo wörld" }],
-      },
-    }) + "\n";
+
+  const text = `${JSON.stringify({
+    type: "assistant",
+    uuid: randomUUID(),
+    timestamp: new Date().toISOString(),
+    sessionId: SESSION,
+    message: {
+      id: "msg_01",
+      role: "assistant",
+      content: [{ type: "text", text: "héllo wörld" }],
+    },
+  })}\n`;
+
   const bytes = Buffer.from(text);
   const middle = bytes.indexOf(Buffer.from("ö")) + 1;
   appendFileSync(transcript, bytes.subarray(0, middle));
@@ -443,19 +462,21 @@ test("a transcript that appears late and arrives in pieces is read whole", async
   appendFileSync(transcript, bytes.subarray(middle));
   await until(() => updates().length === 1);
   expect(updates()[0].content.text).toBe("héllo wörld");
-}, 15000);
+}, 15_000);
 
 test("an oversized tool result is cut down to fit one frame", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
-  bash("msg_01", "toolu_01", "cat big", "x".repeat(200_000) + "THE END");
+  bash("msg_01", "toolu_01", "cat big", `${"x".repeat(200_000)}THE END`);
   await until(() => updates().some((update) => update.sessionUpdate === "tool_call_update"));
   expect(plaintexts().every((text) => Buffer.byteLength(text) <= 65_535)).toBe(true);
+
   const result = JSON.stringify(
     updates().find((update) => update.sessionUpdate === "tool_call_update"),
   );
+
   expect(result).toContain("characters cut");
   expect(result).toContain("THE END");
-}, 15000);
+}, 15_000);
 
 test("cancel_turn from the owner cancels the open turn and answers with control_result", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -479,7 +500,7 @@ test("cancel_turn from the owner cancels the open turn and answers with control_
     turnId: null,
     payload: { type: "cancel_turn", status: "sent", requestId: "r4" },
   });
-}, 15000);
+}, 15_000);
 
 test("turn_liveness every 10 s while a turn is open, none after it completes", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -498,7 +519,7 @@ test("turn_liveness every 10 s while a turn is open, none after it completes", a
     sessionId: SESSION,
     payload: { threadRootEventId: ROOT },
   });
-}, 15000);
+}, 15_000);
 
 test("log_follow answers with the buffered tail, then streams new lines until the lease lapses", async () => {
   activity.log("buzz hub: one");
@@ -527,10 +548,10 @@ test("log_follow answers with the buffered tail, then streams new lines until th
         frame.turnId === null,
     ),
   ).toBe(true);
-}, 15000);
+}, 15_000);
 
 test("log_follow with nothing buffered still answers, so Desktop knows logs work", async () => {
   control({ type: "log_follow", requestId: "l1", tail: 200 });
   await until(() => frames().some((frame) => frame.kind === "log"));
   expect(frames()[0].payload).toEqual({ lines: [], dropped: 0 });
-}, 15000);
+}, 15_000);

@@ -9,9 +9,9 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 
@@ -22,12 +22,14 @@ const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "job-"));
 const job = join(home, ".hex/bin/job");
 const ran = join(home, "ran.json");
+
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
     ([name]) =>
       !name.startsWith("HEX_") && !["CLAUDE_CODE_SESSION_ID", "CLAUDE_CONFIG_DIR"].includes(name),
   ),
 );
+
 const session = { HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: "stray-key" };
 
 beforeAll(() => {
@@ -45,8 +47,9 @@ beforeAll(() => {
     "hub/running.ts",
     "hub/claude.ts",
     "hub/until.ts",
-  ])
+  ]) {
     cpSync(join(HEX, file), join(home, ".hex", file));
+  }
   for (const [app, threads] of Object.entries({
     t3: { "stray-key": { name: "hex" } },
     telegram: { "-100123:908": { name: "autofork" } },
@@ -54,6 +57,7 @@ beforeAll(() => {
   })) {
     open(join(home, "state")).keepThreads(app, threads);
   }
+
   mkdirSync(join(home, "fake"));
   writeFileSync(
     join(home, "fake/systemd-run"),
@@ -71,20 +75,25 @@ esac
   );
   chmodSync(join(home, "fake/systemctl"), 0o755);
 });
-afterAll(() => rmSync(home, { recursive: true }));
+
+afterAll(() => {
+  rmSync(home, { recursive: true });
+});
 
 function run(args: string[], more: Record<string, string> = {}, cwd = home, stdin = "") {
   rmSync(ran, { force: true });
+
   const done = Bun.spawnSync(["bun", job, ...args], {
     cwd,
     stdin: Buffer.from(stdin),
     env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, ...more },
     stderr: "pipe",
   });
+
   return {
     code: done.exitCode,
     error: done.stderr.toString(),
-    args: done.exitCode ? [] : (JSON.parse(readFileSync(ran, "utf8")) as string[]),
+    args: done.exitCode ? [] : (JSON.parse(readFileSync(ran, "utf-8")) as string[]),
   };
 }
 
@@ -162,11 +171,13 @@ test("a job a job session starts is its owner's too", () => {
 
 test("a job session's prompt is hex's words in hex.db, its answer too, what the owner types in a terminal or into the job is theirs, and an app session's terminal words are kept as unsent", () => {
   const state = join(home, "state");
+
   const hook = (step: string, input: object, extra: Record<string, string> = {}) =>
     Bun.spawnSync(["bun", join(HEX, "hub/state.ts"), step], {
       stdin: Buffer.from(JSON.stringify(input)),
       env: { ...env, HEX_STORE: state, MEMORY_DIR: "", ...extra },
     });
+
   hook(
     "busy",
     { session_id: "job-1", prompt: "Build the deck tab." },
@@ -195,9 +206,11 @@ test("a job session's prompt is hex's words in hex.db, its answer too, what the 
     { hook_event_name: "Stop", session_id: "chat-1", last_assistant_message: "narration" },
     { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:1" },
   );
+
   const rows = open(state)
     .since()
     .map(({ to, from, author, body, taken }) => ({ to, from, author, body, by: taken?.by }));
+
   expect(rows).toEqual([
     { to: "job-1", from: "terminal", author: "prompt", body: "Build the deck tab.", by: "job-1" },
     { to: "job-1", from: "terminal", author: "hex", body: "Built.", by: "job-1" },
@@ -250,13 +263,16 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
       env: { ...env, SERVICE_RESULT: "success", EXIT_STATUS: "0" },
       stderr: "pipe",
     }).exited;
+
   expect(await end("round3", "t3:stray-key")).toBe(0);
   expect(await end("older", "555")).toBe(0);
   expect(await end("topic", "telegram:-100123:908")).toBe(0);
   expect(await end("early", "telegram:-100123:909")).toBe(0);
+
   const rows = new Database(join(home, "state/hex.db"))
     .query('select "to", "from", body, meta from messages where taken_at is null order by rowid')
     .all();
+
   expect(rows).toEqual([
     {
       to: "stray-key",
@@ -306,25 +322,29 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   run(["live", "make", "all"], session);
   writeFileSync(join(home, "active.txt"), "live\n");
   writeFileSync(join(home, "system.txt"), "stopping\n");
+
   const end = (unit: string) =>
     Bun.spawnSync(["bun", job, "--ended", unit, "t3:stray-key"], {
       env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}` },
     });
+
   end("make");
-  expect(readFileSync(join(jobs, "make.json"), "utf8")).toContain('"make","all"');
+  expect(readFileSync(join(jobs, "make.json"), "utf-8")).toContain('"make","all"');
   rmSync(join(home, "system.txt"));
   writeFileSync(join(home, "state/moving"), "");
   end("make");
-  expect(readFileSync(join(jobs, "make.json"), "utf8")).toContain('"make","all"');
+  expect(readFileSync(join(jobs, "make.json"), "utf-8")).toContain('"make","all"');
   rmSync(join(home, "state/moving"));
   rmSync(ran, { force: true });
+
   const resumed = Bun.spawnSync(["bun", job, "--resume"], {
     cwd: home,
     env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, CLAUDE_CONFIG_DIR: config },
     stderr: "pipe",
   });
+
   expect(resumed.exitCode).toBe(0);
-  const args = JSON.parse(readFileSync(ran, "utf8")) as string[];
+  const args = JSON.parse(readFileSync(ran, "utf-8")) as string[];
   expect(args).toContain("--unit=deck");
   expect(args.slice(args.indexOf("--"), -1)).toEqual([
     "--",
@@ -338,6 +358,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   ]);
   expect(args.at(-1)).toContain("carry on");
   expect(readdirSync(jobs).sort()).toEqual(["deck.json", "live.json"]);
+
   const told = new Database(join(home, "state/hex.db"))
     .query(
       `select body from messages where "from" = 'job' and key like 'job:%:%' and (body like '%resumed%' or body like '%hasn''t run%') order by rowid`,
@@ -345,6 +366,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     .values()
     .flat()
     .sort();
+
   expect(told).toEqual([
     expect.stringContaining("[job] deck stopped when the machine went down, and resumed"),
     expect.stringContaining("[job] early stopped"),

@@ -25,17 +25,17 @@ test("a fragment that arrives late still reaches the next handoff, placed by its
 
 test("a handoff keeps the caller's sentence whole when the voice's backchannel lands inside it", () => {
   const call = new Call();
-  call.hear({ who: "you", text: "Okay, well I'm asking you", start: 173200, end: 174400 });
-  call.hear({ who: "voice", text: "Mm-h", start: 174400, end: 174500 });
-  call.hear({ who: "you", text: ", well", start: 174600, end: 174700 });
-  call.hear({ who: "voice", text: "mm.", start: 174600, end: 174700 });
+  call.hear({ who: "you", text: "Okay, well I'm asking you", start: 173_200, end: 174_400 });
+  call.hear({ who: "voice", text: "Mm-h", start: 174_400, end: 174_500 });
+  call.hear({ who: "you", text: ", well", start: 174_600, end: 174_700 });
+  call.hear({ who: "voice", text: "mm.", start: 174_600, end: 174_700 });
   call.hear({
     who: "you",
     text: ", hold on a second. Clarify everything right now",
-    start: 174800,
-    end: 191000,
+    start: 174_800,
+    end: 191_000,
   });
-  call.hear({ who: "voice", text: "Hmm.", start: 191600, end: 191900 });
+  call.hear({ who: "voice", text: "Hmm.", start: 191_600, end: 191_900 });
   expect(transcript(call.handOff())).toBe(
     "[173.2s] you: Okay, well I'm asking you, well, hold on a second. Clarify everything right now\n[174.4s] voice: Mm-hmm.\n[191.6s] voice: Hmm.",
   );

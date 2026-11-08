@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open as store } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
@@ -23,10 +23,12 @@ async function appCall({ open = false } = {}) {
     "-100123": { name: "General", session: "aaaaaaaa-general" },
   });
   const relayed: any[] = [];
+
   const hub = Bun.listen({
     unix: join(state, "telegram", "hub.sock"),
     socket: { data: (_, data) => void relayed.push(JSON.parse(String(data))) },
   });
+
   // Each session.close the stand-in got, as `<session id> <event id>`.
   const closes: string[] = [];
   // What the engine told the voice with session.instructions.append.
@@ -38,10 +40,11 @@ async function appCall({ open = false } = {}) {
   let held = false;
   let made = 0;
   const waiting: (() => void)[] = [];
+
   const openai = Bun.serve({
     port: 0,
     async fetch(request, server) {
-      if (request.method === "POST")
+      if (request.method === "POST") {
         return Response.json(
           {
             session: {
@@ -52,11 +55,13 @@ async function appCall({ open = false } = {}) {
           },
           { status: 201 },
         );
+      }
       if (hold) {
         held = true;
         await new Promise<void>((resolve) => waiting.push(resolve));
         held = false;
       }
+
       return server.upgrade(request, {
         data: { id: new URL(request.url).pathname.split("/").at(-2) },
       })
@@ -67,14 +72,21 @@ async function appCall({ open = false } = {}) {
       open: (socket) => void (voice = socket),
       message(socket, raw) {
         const event = JSON.parse(String(raw));
-        if (event.type === "session.instructions.append") instructed.push(event.content);
-        if (event.type === "session.thinking.append")
+
+        if (event.type === "session.instructions.append") {
+          instructed.push(event.content);
+        }
+        if (event.type === "session.thinking.append") {
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
           );
-        if (event.type !== "session.close") return;
+        }
+        if (event.type !== "session.close") {
+          return;
+        }
         closes.push(`${(socket.data as { id: string }).id} ${event.event_id}`);
-        if (acking)
+
+        if (acking) {
           socket.send(
             JSON.stringify({
               type: "session.closed",
@@ -82,9 +94,11 @@ async function appCall({ open = false } = {}) {
               client_event_id: event.event_id,
             }),
           );
+        }
       },
     },
   });
+
   writeFileSync(
     join(voiceDir, ".env"),
     [
@@ -93,7 +107,8 @@ async function appCall({ open = false } = {}) {
       "VOICE_PORT=0",
     ].join("\n"),
   );
-  if (open)
+
+  if (open) {
     writeFileSync(
       join(voiceDir, "calls", `${ID}.json`),
       JSON.stringify({
@@ -104,6 +119,7 @@ async function appCall({ open = false } = {}) {
         tasks: [],
       }),
     );
+  }
   const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), renewal: async () => {}, session: () => 'brain' }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))
@@ -111,15 +127,18 @@ for await (const line of console) {
   const { name, args } = JSON.parse(line)
   tool(name, args).then(result => console.log(JSON.stringify({ result })), error => console.log(JSON.stringify({ error: error.message })))
 }`;
+
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)),
   );
+
   const plugin = Bun.spawn(["bun", "-e", engine], {
     env: { ...env, HOME: home, CLAUDE_CONFIG_DIR: join(home, "claude") },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
   });
+
   const answers: ((line: any) => void)[] = [];
   // What the engine asked of the hub, in order: each message it delivered, and each renew.
   const told: { hub: string; content?: string; meta?: Record<string, string> }[] = [];
@@ -127,16 +146,21 @@ for await (const line of console) {
   const port = new Promise<number>((resolve) => (listening = resolve));
   void (async () => {
     let buffer = "";
+
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk);
       const lines = buffer.split("\n");
       buffer = lines.pop()!;
-      for (const line of lines.map((line) => JSON.parse(line)))
+
+      for (const line of lines.map((line) => JSON.parse(line))) {
         line.port ? listening(line.port) : line.hub ? told.push(line) : answers.shift()?.(line);
+      }
     }
   })();
+
   const base = `http://127.0.0.1:${await port}`;
   const call = () => fetch(`${base}/calls/${ID}`).then((r) => r.json());
+
   return {
     base,
     closes,
@@ -146,8 +170,9 @@ for await (const line of console) {
     call,
     live: async () => (await fetch(`${base}/calls`).then((r) => r.json())).live,
     tool: (name: string, args: object = {}) => {
-      plugin.stdin.write(JSON.stringify({ name, args }) + "\n");
+      plugin.stdin.write(`${JSON.stringify({ name, args })}\n`);
       plugin.stdin.flush();
+
       return new Promise<{ result?: string; error?: string }>((resolve) => answers.push(resolve));
     },
     attached: () => until(() => voice),
@@ -165,7 +190,10 @@ for await (const line of console) {
     acks: () => void (acking = true),
     back: () => {
       hold = false;
-      for (const resolve of waiting.splice(0)) resolve();
+
+      for (const resolve of waiting.splice(0)) {
+        resolve();
+      }
     },
     hangUp: () =>
       fetch(`${base}/session`, { method: "DELETE", body: JSON.stringify({ sessionId: ID }) }),
@@ -199,7 +227,8 @@ async function ends(engine: Engine) {
     expect(tries).toBeLessThan(100);
     await Bun.sleep(50);
   }
-  return engine.call();
+
+  return await engine.call();
 }
 
 test("hanging up while the connection to the call is coming back ends the call once it is back", async () => {
@@ -305,11 +334,13 @@ test("OpenAI closing a call on a later hang-up's close still records the first h
 test("a call a new one replaces before its connection opened is still closed", async () => {
   await using engine = await appCall();
   engine.hold();
+
   const start = () =>
     fetch(`${engine.base}/session`, {
       method: "POST",
       body: JSON.stringify({ sdp: "offer", from: "app" }),
     });
+
   expect((await start()).status).toBe(201);
   await engine.attaching();
   expect((await start()).status).toBe(201);
@@ -323,11 +354,13 @@ test("a call a new one replaces before its connection opened is still closed", a
 test("a hung-up call a new one replaces before its connection opened ends as hung up", async () => {
   await using engine = await appCall();
   engine.hold();
+
   const start = () =>
     fetch(`${engine.base}/session`, {
       method: "POST",
       body: JSON.stringify({ sdp: "offer", from: "app" }),
     });
+
   expect((await start()).status).toBe(201);
   await engine.attaching();
   expect((await engine.hangUp()).status).toBe(204);
@@ -344,6 +377,7 @@ test("hanging up a call the engine is attaching back to after a restart ends it 
     { hangUp: (engine: Engine) => engine.hangUp(), end: "you", close: "close-you-app" },
     { hangUp: (engine: Engine) => engine.tool("hang_up"), end: "hex", close: "close_hex_" },
   ];
+
   for (const { hangUp, end, close } of ways) {
     await using engine = await appCall({ open: true });
     await engine.attaching();
@@ -392,11 +426,13 @@ test("work sent while the connection to the call is coming back still goes out a
   await using engine = await appCall();
   await started(engine);
   await engine.drop();
+
   const { result } = await engine.tool("send", {
     thread: "General",
     about: "Look into it",
     text: "look into it",
   });
+
   expect(result).toBe(
     "sent to General, on the board as look-into-it, but the voice may not have heard of it; the work went out, so it needn't be sent again",
   );
@@ -425,11 +461,13 @@ test("a say the voice never confirms gives the voice session an answer instead o
 
 test("a photo sent during the call shows in its transcript, reaches hex to look at, and has the voice hand off", async () => {
   await using engine = await appCall();
+
   const png = await fetch(`${engine.base}/media`, {
     method: "POST",
     headers: { "content-type": "image/png" },
     body: "png bytes",
   });
+
   expect(png.status).toBe(201);
   const { id, kind } = await png.json();
   expect(kind).toBe("photo");

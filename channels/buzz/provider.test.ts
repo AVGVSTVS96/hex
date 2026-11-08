@@ -9,9 +9,9 @@ import {
   chmodSync,
   statSync,
   existsSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 
@@ -86,7 +86,9 @@ HOME="${join(dir, "home")}" exec sh -c "$last"
   chmodSync(ssh, 0o755);
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 function fakeHex(home: string) {
   mkdirSync(join(home, ".hex", "bin"), { recursive: true });
@@ -112,6 +114,7 @@ function run(input: string) {
   const result = Bun.spawnSync(["bun", join(import.meta.dir, "provider.ts")], {
     stdin: new TextEncoder().encode(input),
   });
+
   return {
     code: result.exitCode,
     out: JSON.parse(result.stdout.toString()),
@@ -121,8 +124,9 @@ function run(input: string) {
 
 const envFile = () => join(home, "state", "buzz", ".env");
 const mode = (path: string) => statSync(path).mode & 0o777;
+
 const lines = (file: string) =>
-  existsSync(file) ? readFileSync(file, "utf8").trim().split("\n") : [];
+  existsSync(file) ? readFileSync(file, "utf-8").trim().split("\n") : [];
 
 test("info has exactly the fields Desktop accepts", () => {
   const { code, out } = run('{"op":"info","request_id":"req-1"}');
@@ -144,7 +148,7 @@ test("info has exactly the fields Desktop accepts", () => {
 
 test("deploy writes the credentials over ssh stdin and restarts hex", () => {
   expect(respond(request(), ssh)).toEqual({ ok: true, agent_id: `me@box:${home}` });
-  expect(readFileSync(envFile(), "utf8")).toBe(
+  expect(readFileSync(envFile(), "utf-8")).toBe(
     `BUZZ_RELAY_URL=wss://relay.example\nBUZZ_PRIVATE_KEY=${fixture.agent.private_key_nsec}\nBUZZ_AUTH_TAG=${AUTH_TAG}\n`,
   );
   expect(mode(envFile())).toBe(0o600);
@@ -159,9 +163,9 @@ test("redeploys are idempotent and tighten a loose .env", () => {
   mkdirSync(join(home, "state", "buzz"), { recursive: true, mode: 0o755 });
   writeFileSync(envFile(), "OLD=1\n", { mode: 0o644 });
   const first = respond(request(), ssh);
-  const written = readFileSync(envFile(), "utf8");
+  const written = readFileSync(envFile(), "utf-8");
   expect(respond(request(), ssh)).toEqual(first);
-  expect(readFileSync(envFile(), "utf8")).toBe(written);
+  expect(readFileSync(envFile(), "utf-8")).toBe(written);
   expect(readdirSync(join(home, "state", "buzz"))).toEqual([".env"]);
   expect(mode(envFile())).toBe(0o600);
   expect(mode(join(home, "state", "buzz"))).toBe(0o700);
@@ -188,7 +192,7 @@ test("a home with quotes and spaces is quoted for the remote shell", () => {
     ok: true,
     agent_id: `me@box:${odd}`,
   });
-  expect(readFileSync(join(odd, "state", "buzz", ".env"), "utf8")).toStartWith(
+  expect(readFileSync(join(odd, "state", "buzz", ".env"), "utf-8")).toStartWith(
     "BUZZ_RELAY_URL=wss://relay.example\n",
   );
 });
@@ -212,6 +216,7 @@ test("bad input is refused with ok:false and a non-zero exit", () => {
     ['{"op":"undeploy"}', /unknown op/],
     ["not json", /./],
   ];
+
   for (const [input, error] of cases) {
     const { code, out, err } = run(input);
     expect(code).toBe(1);
@@ -220,6 +225,7 @@ test("bad input is refused with ok:false and a non-zero exit", () => {
     expect(out.error).toMatch(error);
     expect(err).toContain(out.error);
   }
+
   expect(existsSync(join(home, "state"))).toBe(false);
 });
 

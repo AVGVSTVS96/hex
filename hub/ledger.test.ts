@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { asking, Ledger } from "./ledger.ts";
 import { open, Store } from "./store.ts";
@@ -25,12 +25,14 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
     text: "📌 **desk**\nShipping today\n\n🔴 **Blocked on you**\n- old",
     at: "2026-10-18T09:00:00.000Z",
   };
+
   const post = {
     message: "12",
     text: "Site: example.com\n\nmore",
     note: "Site: example.com",
     at: "2026-10-18T09:30:00.000Z",
   };
+
   writeFileSync(
     file,
     JSON.stringify({
@@ -99,7 +101,7 @@ test("an older hex's questions and pins move from ledger.json into hex.db once, 
   expect(ledger.pin("-100:8")).toEqual({ app: "telegram", thread: "-100:8", ...post });
   expect(ledger.pin("-100:9")).toBeUndefined();
   expect(existsSync(file)).toBe(false);
-  expect(readFileSync(`${file}.moved-to-hex.db`, "utf8")).toContain("Deploy now?");
+  expect(readFileSync(`${file}.moved-to-hex.db`, "utf-8")).toContain("Deploy now?");
   expect(open(dir).pins()).toHaveLength(2);
 });
 
@@ -122,12 +124,14 @@ test("a hex.db that took a ledger in at each start brings in only what an older 
   store.db.run(
     "drop table turns; drop table relays; create table files (name text primary key, body text not null); create table shown (session text primary key, digest text not null); alter table seen drop column at; pragma user_version = 19",
   );
+
   const taken = {
     pins: {
       "-100:7": { message: 9, text: "old", at: "2026-10-18T09:00:00.000Z" },
       "-100:8": { message: 12, text: "rolled back", at: "2026-10-19T09:00:00.000Z" },
     },
   };
+
   store.db
     .query("insert into files (name, body) values (?, ?)")
     .run("telegram/ledger.json", JSON.stringify(taken));
@@ -187,15 +191,17 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   const ledger = new Ledger(dir, "telegram");
   const done: unknown[][] = [];
   let next = 20;
+
   const post = {
     room: 4096,
-    link: () => undefined,
+    link: () => {},
     send: async (_: string, text: string) => (done.push(["send", ++next, text]), next),
     edit: async (_: string, message: unknown, text: string) =>
       void done.push(["edit", message, text]),
     pin: async (_: string, message: unknown) => void done.push(["pin", message]),
     unpin: async (_: string, message: unknown) => void done.push(["unpin", message]),
   };
+
   ledger.ask("-100:8", 10, "Ship it?", ["Yes", "No"]);
   expect(await ledger.post("-100:8", "Site: example.com", post)).toBe(21);
   const [[, , text]] = done as [[string, number, string]];
@@ -214,7 +220,9 @@ test("a status post is sent under its note and pinned in place of the last, rewr
   await expect(
     ledger.post("-100:8", "Site: unpinnable", {
       ...post,
-      pin: async () => Promise.reject(new Error("not enough rights")),
+      pin: async () => {
+        throw new Error("not enough rights");
+      },
     }),
   ).rejects.toThrow("rights");
   expect(ledger.pin("-100:8")).toMatchObject({ message: 21 });
@@ -246,6 +254,7 @@ test("a status post is sent under its note and pinned in place of the last, rewr
       await post.edit(...args);
     },
   };
+
   await ledger.rewrite("-100:8", slow, "Site: example.net");
   expect(ledger.pin("-100:8")).toEqual({
     app: "telegram",

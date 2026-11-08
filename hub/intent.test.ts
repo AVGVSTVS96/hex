@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { asked, brief, check, type Verdict } from "./intent.ts";
-import { open, type Store } from "./store.ts";
+import { asked, brief, check } from "./intent.ts";
+import type { Verdict } from "./intent.ts";
+import { open } from "./store.ts";
+import type { Store } from "./store.ts";
 
 let dir: string;
 let store: Store;
@@ -31,14 +33,18 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 test("a brief is what hands work to another agent", () => {
   writeFileSync(join(dir, "prompt.md"), "Fix the login page.");
+
   const job = brief({
     tool_name: "Bash",
     tool_input: { command: `cd ~/hex && .hex/bin/job login claude -p "$(cat ${dir}/prompt.md)"` },
   });
+
   expect(job).toContain("Fix the login page.");
   expect(
     brief({
@@ -98,6 +104,7 @@ test("the words a brief is checked against: its tasks and the newest of the owne
     message: "telegram:-100:50",
     owner: "-100:7",
   });
+
   const words = asked(store, "telegram:-100:7", `Task ${task.id}: make login fast.`);
   expect(words).toContain(`${task.id} (open`);
   expect(words).toContain("Make the login page load fast.");
@@ -114,11 +121,13 @@ test("a delivery is checked against the words it cites and the thread it goes to
     author: "owner",
     meta: { user: "owner" },
   });
+
   const words = asked(
     store,
     "telegram:-100:9",
     ".hex/bin/hex deliver hex --to=Website 'Add dark mode (telegram:-100:90).'",
   );
+
   expect(words).toContain("His messages it cites:\n\n[telegram:-100:90");
   expect(words).toContain("the thread it goes to:\n\n[telegram:-100:50");
   expect(words).not.toContain("the thread it comes from");
@@ -130,11 +139,14 @@ test("a rewrite is checked next to the notes it answers, and goes through after 
     tool_name: "Agent",
     tool_input: { prompt: "Task t-1: rewrite the whole site." },
   };
+
   const seen: string[] = [];
+
   const revise = async (input: string): Promise<Verdict> => (
     seen.push(input),
     { verdict: "revise", notes: "He asked for the login page only." }
   );
+
   expect(await check(hook, store, "telegram:-100:7", revise)).toMatchObject({
     round: 1,
     verdict: { verdict: "revise" },
@@ -165,8 +177,10 @@ test("a check that fails lets the work start", async () => {
     tool_name: "Agent",
     tool_input: { prompt: "Task t-1: fix login." },
   };
+
   const result = await check(hook, store, undefined, async () => {
     throw new Error("out of usage");
   });
+
   expect(result?.verdict).toBe("failed");
 });

@@ -1,6 +1,6 @@
-import { readFileSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 export const STATE_DIR = join(homedir(), ".claude", "channels", "voice");
 
@@ -9,12 +9,17 @@ export const STATE_DIR = join(homedir(), ".claude", "channels", "voice");
 // there stale. They stay here: the hub's sessions inherit its environment.
 function settings(): Record<string, string | undefined> {
   const file: Record<string, string> = {};
+
   try {
-    for (const line of readFileSync(join(STATE_DIR, ".env"), "utf8").split("\n")) {
-      const match = line.match(/^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/);
-      if (match) file[match[1]!] = match[2]!;
+    for (const line of readFileSync(join(STATE_DIR, ".env"), "utf-8").split("\n")) {
+      const match = /^\s*([A-Z_]+)\s*=\s*(.*?)\s*$/.exec(line);
+
+      if (match) {
+        file[match[1]!] = match[2]!;
+      }
     }
   } catch {}
+
   return { ...process.env, ...file };
 }
 

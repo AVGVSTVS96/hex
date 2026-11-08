@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdtempSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -51,7 +51,9 @@ const SERVER = {
     },
   ],
 };
+
 const TOKEN = "secret";
+
 type Answer = { result: { content: { text: string }[]; isError?: true } };
 
 // A channel whose reply tool answers when the test says, counting how often it ran. A call made with
@@ -59,6 +61,7 @@ type Answer = { result: { content: { text: string }[]; isError?: true } };
 function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operations-")))) {
   let ran = 0;
   const waiting: (() => void)[] = [];
+
   const serve = endpoint(
     "telegram",
     "chat",
@@ -68,7 +71,10 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
       call: async () => {
         ran++;
         await new Promise<void>((resolve) => waiting.push(resolve));
-        if (fails) throw new Error("Telegram said no");
+
+        if (fails) {
+          throw new Error("Telegram said no");
+        }
         return "sent (id: 5389)";
       },
       permission: () => {},
@@ -77,7 +83,9 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
     },
     store,
   );
+
   let ids = 0;
+
   function call(
     args: object,
     gaveUp?: AbortController,
@@ -94,12 +102,14 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
         ...(identity.toolUse && { _meta: { "claudecode/toolUseId": identity.toolUse } }),
       },
     });
+
     const headers = {
       authorization: `Bearer ${TOKEN}`,
       "x-hex-channel": "chat",
       "x-hex-thread": "-100:7",
       ...(identity.session && { "mcp-session-id": identity.session }),
     };
+
     return serve(
       new Request("http://127.0.0.1/telegram", {
         method: "POST",
@@ -109,16 +119,25 @@ function channel(fails = false, store = open(mkdtempSync(join(tmpdir(), "operati
       }),
     ).then((response) => response.json() as Promise<Answer>);
   }
+
   // Resolves once n calls are waiting in the tool.
   const reached = (n = 1) => until(() => waiting.length >= n);
+
   // Answers every call underway, once at least one has reached the tool.
   async function answer() {
     await reached();
     await Bun.sleep(5);
-    for (const resolve of waiting.splice(0)) resolve();
+
+    for (const resolve of waiting.splice(0)) {
+      resolve();
+    }
   }
+
   // Answers every call waiting in the tool right away, without letting anything else run first.
-  const answerNow = () => waiting.splice(0).forEach((resolve) => resolve());
+  const answerNow = () => {
+    waiting.splice(0).forEach((resolve) => resolve());
+  };
+
   return { ran: () => ran, call, answer, answerNow, reached, store, serve };
 }
 
@@ -143,15 +162,18 @@ test("an operation shares its running result and keeps it after an aborted reque
 
 test("a deliberate identical send uses a new operation id, while a reused id cannot change the call", async () => {
   const { ran, call, answer, serve } = channel();
+
   for (const toolUse of ["first", "second"]) {
     const sending = call({ text: "report" }, undefined, "reply", { toolUse });
     await answer();
     await sending;
   }
+
   expect(ran()).toBe(2);
   expect(
     text(await call({ text: "different" }, undefined, "reply", { toolUse: "first" })),
   ).toContain("different call");
+
   const listing = await serve(
     new Request("http://127.0.0.1/telegram", {
       method: "POST",
@@ -159,6 +181,7 @@ test("a deliberate identical send uses a new operation id, while a reused id can
       body: JSON.stringify({ jsonrpc: "2.0", id: 99, method: "tools/list" }),
     }),
   );
+
   expect((await listing.json()).result.tools).toEqual(JSON.parse(JSON.stringify(SERVER.tools)));
   const transport = { session: "standard-client", id: 7 };
   const first = call({ text: "standard MCP" }, undefined, "reply", transport);
@@ -168,11 +191,13 @@ test("a deliberate identical send uses a new operation id, while a reused id can
     "sent (id: 5389)",
   );
   expect(ran()).toBe(3);
+
   for (const _ of [1, 2]) {
     const noSession = call({ text: "sessionless" }, undefined, "reply", { id: 1 });
     await answer();
     await noSession;
   }
+
   expect(ran()).toBe(5);
 });
 
@@ -189,6 +214,7 @@ test("an unfinished persisted operation is uncertain and is never sent again", a
 
 test("reads run every time, while a write retains its result including a failure", async () => {
   const { call, answer, reached, ran } = channel(true);
+
   for (const [name, args] of [
     ["fetch_messages", {}],
     ["canvas", {}],
@@ -200,6 +226,7 @@ test("reads run every time, while a write retains its result including a failure
     await answer();
     await Promise.all([first, again]);
   }
+
   expect(ran()).toBe(5);
   expect((await call({ text: "plan" }, undefined, "canvas")).result.isError).toBe(true);
 });
@@ -208,6 +235,7 @@ test("a call whose client left while the hub was too busy to read it doesn't run
   const { ran, serve, answer } = channel();
   const hub = Bun.serve({ port: 0, fetch: serve });
   const left = join(mkdtempSync(join(tmpdir(), "mcp-")), "left");
+
   try {
     const body = JSON.stringify({
       jsonrpc: "2.0",
@@ -219,20 +247,25 @@ test("a call whose client left while the hub was too busy to read it doesn't run
         _meta: { "claudecode/toolUseId": "report" },
       },
     });
+
     const headers = {
       authorization: `Bearer ${TOKEN}`,
       "x-hex-channel": "chat",
       "x-hex-thread": "-100:7",
     };
+
     const client = `const gaveUp = new AbortController()
       fetch(${JSON.stringify(`http://127.0.0.1:${hub.port}/telegram`)}, { method: 'POST', headers: ${JSON.stringify(headers)}, body: ${JSON.stringify(body)}, signal: gaveUp.signal }).catch(() => {})
       await Bun.sleep(300)
       gaveUp.abort()
       await Bun.sleep(100)
       require('fs').writeFileSync(${JSON.stringify(left)}, '')`;
+
     Bun.spawn(["bun", "-e", client], { stdout: "ignore", stderr: "ignore" });
-    for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;)
+
+    for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
     expect(existsSync(left)).toBe(true);
     await Bun.sleep(200);
     expect(ran()).toBe(0);
@@ -250,6 +283,7 @@ test("a call whose client left while the hub was too busy to send its answer cou
   const hub = Bun.serve({ port: 0, fetch: serve });
   const left = join(mkdtempSync(join(tmpdir(), "mcp-")), "left");
   const gave = `${left}-asked`;
+
   try {
     const body = JSON.stringify({
       jsonrpc: "2.0",
@@ -261,11 +295,13 @@ test("a call whose client left while the hub was too busy to send its answer cou
         _meta: { "claudecode/toolUseId": "report" },
       },
     });
+
     const headers = {
       authorization: `Bearer ${TOKEN}`,
       "x-hex-channel": "chat",
       "x-hex-thread": "-100:7",
     };
+
     const client = `const fs = require('fs')
       const gaveUp = new AbortController()
       fetch(${JSON.stringify(`http://127.0.0.1:${hub.port}/telegram`)}, { method: 'POST', headers: ${JSON.stringify(headers)}, body: ${JSON.stringify(body)}, signal: gaveUp.signal }).catch(() => {})
@@ -273,11 +309,14 @@ test("a call whose client left while the hub was too busy to send its answer cou
       gaveUp.abort()
       await Bun.sleep(100)
       fs.writeFileSync(${JSON.stringify(left)}, '')`;
+
     Bun.spawn(["bun", "-e", client], { stdout: "ignore", stderr: "ignore" });
     await reached();
     writeFileSync(gave, "");
-    for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;)
+
+    for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+    }
     expect(existsSync(left)).toBe(true);
     answerNow();
     await Bun.sleep(200);
@@ -303,13 +342,16 @@ test("a stock MCP client lists the tools and replies without an operation id", a
     },
     open(mkdtempSync(join(tmpdir(), "operations-"))),
   );
+
   const headers = {
     Authorization: `Bearer ${TOKEN}`,
     "X-Hex-Channel": "chat",
     "X-Hex-Thread": "topic",
   };
+
   const hub = Bun.serve({ port: 0, fetch: serve });
   const client = new Client({ name: "stock-mcp-client", version: "1" });
+
   try {
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${hub.port}/telegram`), {
@@ -317,10 +359,12 @@ test("a stock MCP client lists the tools and replies without an operation id", a
       }),
     );
     expect((await client.listTools()).tools).toEqual(JSON.parse(JSON.stringify(SERVER.tools)));
+
     const reply = await client.callTool({
       name: "reply",
       arguments: { text: "ordinary reply without an operation id" },
     });
+
     expect(reply).toMatchObject({ content: [{ type: "text", text: "read" }] });
   } finally {
     await client.close();

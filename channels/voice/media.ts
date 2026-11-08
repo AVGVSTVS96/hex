@@ -1,5 +1,5 @@
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { transcribe } from "../../hub/hub.ts";
 
@@ -23,6 +23,7 @@ const TYPES: Record<string, [Kind, string]> = {
   "video/mp4": ["video", "mp4"],
   "video/quicktime": ["video", "mov"],
 };
+
 const STILL_EVERY = 5;
 const STILLS = 12;
 
@@ -30,8 +31,10 @@ const STILLS = 12;
 // stills across it and the words said in it.
 export class Media {
   constructor(
-    private dir: string,
-    private hear: (recording: () => Promise<string>) => Promise<string | undefined> = transcribe,
+    private readonly dir: string,
+    private readonly hear: (
+      recording: () => Promise<string>,
+    ) => Promise<string | undefined> = transcribe,
   ) {
     mkdirSync(dir, { recursive: true });
   }
@@ -45,6 +48,7 @@ export class Media {
     const id = crypto.randomUUID();
     const file = join(this.dir, `${id}.${ext}`);
     await Bun.write(file, bytes);
+
     try {
       const item =
         kind === "video"
@@ -52,20 +56,27 @@ export class Media {
           : ext === "heic"
             ? { id, kind, images: [await jpeg(file, join(this.dir, `${id}.jpg`))] }
             : { id, kind, images: [file] };
-      if (ext === "heic") rmSync(file);
+
+      if (ext === "heic") {
+        rmSync(file);
+      }
       writeFileSync(join(this.dir, `${id}.json`), JSON.stringify(item));
+
       return item;
     } catch (error) {
-      for (const name of readdirSync(this.dir))
+      for (const name of readdirSync(this.dir)) {
         if (name.startsWith(id)) rmSync(join(this.dir, name));
+      }
       throw error;
     }
   }
 
   get(id: string): Item | undefined {
-    if (!/^[\w-]+$/.test(id)) return;
+    if (!/^[\w-]+$/.test(id)) {
+      return;
+    }
     try {
-      return JSON.parse(readFileSync(join(this.dir, `${id}.json`), "utf8"));
+      return JSON.parse(readFileSync(join(this.dir, `${id}.json`), "utf-8"));
     } catch {}
   }
 
@@ -82,11 +93,14 @@ export class Media {
         file,
       ),
     );
+
     const seconds = Number(probe.format?.duration) || 0;
     const count = Math.min(STILLS, Math.max(1, Math.round(seconds / STILL_EVERY)));
+
     const images = await Promise.all(
       Array.from({ length: count }, (_, i) => {
         const still = join(this.dir, `${id}-${i + 1}.jpg`);
+
         return run(
           "ffmpeg",
           "-v",
@@ -103,19 +117,25 @@ export class Media {
         ).then(() => still);
       }),
     );
+
     const item: Item = { id, kind: "video", images, seconds: Math.round(seconds) };
-    if (!probe.streams?.some((stream: { codec_type?: string }) => stream.codec_type === "audio"))
+
+    if (!probe.streams?.some((stream: { codec_type?: string }) => stream.codec_type === "audio")) {
       return { ...item, mute: true };
+    }
     const audio = join(this.dir, `${id}.wav`);
+
     try {
       const words = await this.hear(() =>
         run("ffmpeg", "-v", "error", "-i", file, "-vn", "-ac", "1", "-ar", "16000", audio).then(
           () => audio,
         ),
       );
+
       return words === undefined ? item : { ...item, words };
     } catch (error) {
       process.stderr.write(`voice: ${id}'s sound didn't transcribe: ${error}\n`);
+
       return item;
     } finally {
       rmSync(audio, { force: true });
@@ -125,11 +145,16 @@ export class Media {
 
 // One line saying what an item is, for the session that reads its images.
 export function line({ kind, images, seconds = 0, mute, words }: Item) {
-  if (kind === "photo") return "(photo)";
+  if (kind === "photo") {
+    return "(photo)";
+  }
   const clip = `(video ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}, ${images.length} ${images.length === 1 ? "still" : "stills"}`;
-  if (mute) return `${clip}, no sound)`;
+
+  if (mute) {
+    return `${clip}, no sound)`;
+  }
   return words
-    ? `${clip}; said in it: "${words.replace(/\s+/g, " ")}")`
+    ? `${clip}; said in it: "${words.replaceAll(/\s+/g, " ")}")`
     : `${clip}; no words came through from its sound)`;
 }
 
@@ -145,7 +170,9 @@ export function typed(body: string, items: number) {
 
 // The meta a message with items carries: every image to read, and each item by kind and id.
 export function meta(items: Item[]): Record<string, string> {
-  if (!items.length) return {};
+  if (!items.length) {
+    return {};
+  }
   return {
     image_path: items.flatMap((item) => item.images).join("; "),
     media: items.map((item) => `${item.kind} ${item.id}`).join("; "),
@@ -154,16 +181,21 @@ export function meta(items: Item[]): Record<string, string> {
 
 async function jpeg(from: string, to: string) {
   await run("ffmpeg", "-v", "error", "-i", from, "-frames:v", "1", "-q:v", "2", to);
+
   return to;
 }
 
 async function run(...command: string[]) {
   const child = Bun.spawn(command, { stdout: "pipe", stderr: "pipe" });
+
   const [out, error, code] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
     child.exited,
   ]);
-  if (code !== 0) throw new Error(`${command[0]} failed: ${error.trim() || `exit ${code}`}`);
+
+  if (code !== 0) {
+    throw new Error(`${command[0]} failed: ${error.trim() || `exit ${code}`}`);
+  }
   return out;
 }

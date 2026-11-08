@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, expect, mock, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { connect as netConnect } from "net";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { connect as netConnect } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import * as discord from "discord.js";
 
@@ -21,6 +21,7 @@ const {
   MessageType,
   SnowflakeUtil,
 } = discord;
+
 const TRANSCRIBER = "http://transcriber/v1/audio/transcriptions";
 const BOT = "1000";
 const OWNER = "2000";
@@ -29,6 +30,7 @@ const at = (minute: number) => new Date(Date.UTC(2026, 9, 5, 12, minute));
 const snowflake = (minute: number) => SnowflakeUtil.generate({ timestamp: at(minute) }).toString();
 
 type Channel = Record<string, any>;
+
 const channels = new Map<string, Channel>();
 const handlers = new Map<string, (...args: any[]) => void>();
 const owner = { id: OWNER, username: "bassim", bot: false, partial: false };
@@ -42,6 +44,7 @@ let logins = 0;
 // A guild channel or thread whose messages the fake REST answers newest-first, as Discord does.
 function channel(id: string, fields: Channel): Channel {
   const messages: Channel[] = [];
+
   const ch: Channel = {
     id,
     guildId: GUILD,
@@ -57,6 +60,7 @@ function channel(id: string, fields: Channel): Channel {
     send: async (input: string | Channel) => {
       const options = typeof input === "string" ? { content: input } : input;
       done.push({ send: options, in: id });
+
       return say(ch, 59, options.content ?? "", {
         id: String(BigInt(snowflake(59)) + BigInt(++sent)),
         author: bot,
@@ -67,12 +71,13 @@ function channel(id: string, fields: Channel): Channel {
     posted: messages,
     messages: {
       fetch: async (query: string | { limit: number; before?: string; after?: string }) => {
-        if (typeof query === "string")
-          return (
-            messages.find((m) => m.id === query) ?? Promise.reject(new Error("Unknown Message"))
-          );
+        if (typeof query === "string") {
+          return await (messages.find((m) => m.id === query) ??
+            Promise.reject(new Error("Unknown Message")));
+        }
         const { limit, before, after } = query;
         const newest = (a: Channel, b: Channel) => Number(BigInt(b.id) - BigInt(a.id));
+
         const page = after
           ? messages
               .filter((m) => BigInt(m.id) > BigInt(after))
@@ -82,6 +87,7 @@ function channel(id: string, fields: Channel): Channel {
               .filter((m) => !before || BigInt(m.id) < BigInt(before))
               .sort(newest)
               .slice(0, limit);
+
         return new Collection(page.map((m) => [m.id, m]));
       },
       edit: async (message: string, options: Channel) => (
@@ -97,6 +103,7 @@ function channel(id: string, fields: Channel): Channel {
           ...(message && { message: message.content }),
           ...(appliedTags && { appliedTags }),
         });
+
         return channel(String(9000 + ++opened), {
           name,
           type: ChannelType.PublicThread,
@@ -112,7 +119,9 @@ function channel(id: string, fields: Channel): Channel {
         const shelf = [...channels.values()]
           .filter((c) => c.parent === ch && c.archived && (!before || c.archiveTimestamp < before))
           .sort((a, b) => b.archiveTimestamp - a.archiveTimestamp);
+
         const page = shelf.slice(0, Math.min(limit, 2));
+
         return {
           threads: new Collection(page.map((c) => [c.id, c])),
           hasMore: shelf.length > page.length,
@@ -121,13 +130,16 @@ function channel(id: string, fields: Channel): Channel {
     },
     ...fields,
   };
+
   channels.set(id, ch);
+
   return ch;
 }
 
 // A message whose Discord calls land in done; deleting it fires the gateway's messageDelete.
 function say(where: Channel, minute: number, content: string, fields: Channel = {}): Channel {
   const id = snowflake(minute);
+
   const message: Channel = {
     id,
     content,
@@ -154,8 +166,10 @@ function say(where: Channel, minute: number, content: string, fields: Channel = 
     },
     ...fields,
   };
+
   where.posted.push(message);
   where.lastMessageId = message.id;
+
   return message;
 }
 
@@ -163,6 +177,7 @@ const openSource = channel("4000", { name: "open-source", type: ChannelType.Guil
 const general = channel("4001", { name: "general", type: ChannelType.GuildText });
 const hidden = channel("4002", { name: "hidden", type: ChannelType.GuildText, visible: false });
 const dm = channel("4003", { name: "dm", type: ChannelType.DM, guildId: undefined });
+
 const elsewhere = channel("4004", {
   name: "elsewhere",
   type: ChannelType.PublicThread,
@@ -170,6 +185,7 @@ const elsewhere = channel("4004", {
 });
 
 const ci = say(openSource, 0, "flaky CI on the relay PR");
+
 const ciThread = channel(ci.id, {
   name: "flaky CI",
   type: ChannelType.PublicThread,
@@ -177,19 +193,25 @@ const ciThread = channel(ci.id, {
   messageCount: 2,
   lastMessageId: snowflake(3),
 });
+
 ci.thread = ciThread;
+
 const docs = say(openSource, 1, "merged the docs fix");
 const rebased = say(ciThread, 2, "rebased it");
 const pushed = say(ciThread, 3, "rebased again\nand pushed");
 const release = say(openSource, 4, "release tomorrow");
+
 say(hidden, 5, "not for the bot");
+
 const news = channel("4005", { name: "news", type: ChannelType.GuildAnnouncement });
 const ideas = channel("4006", { name: "ideas", type: ChannelType.GuildForum });
+
 const here = channel("5000", {
   name: "desk anchors",
   type: ChannelType.PublicThread,
   parent: general,
 });
+
 const live = (where: Channel) => ({
   inGuild: () => true,
   channel: where,
@@ -207,7 +229,9 @@ class Client {
   channels = {
     cache: channels,
     fetch: async (id: string) => {
-      if (!channels.has(id)) throw Object.assign(new Error("Unknown Channel"), { code: 10003 });
+      if (!channels.has(id)) {
+        throw Object.assign(new Error("Unknown Channel"), { code: 10003 });
+      }
       return channels.get(id);
     },
   };
@@ -239,7 +263,7 @@ class Client {
   users = {
     fetch: async (id: string) => (id === OWNER ? owner : { id, username: "someone" }),
     createDM: async (id: string) =>
-      id === OWNER ? dm : Promise.reject(new Error("Cannot send messages to this user")),
+      id === OWNER ? dm : await Promise.reject(new Error("Cannot send messages to this user")),
   };
   rest = {
     get: async (route: string, { query }: { query: URLSearchParams }) => (
@@ -249,13 +273,16 @@ class Client {
   };
   on(event: string, handler: (...args: any[]) => void) {
     handlers.set(event, handler);
+
     return this;
   }
   once(event: string, handler: (...args: any[]) => void) {
     return this.on(event, handler);
   }
   login = async () => {
-    if (++logins === 1) throw new Error("getaddrinfo ETIMEOUT discord.com");
+    if (++logins === 1) {
+      throw new Error("getaddrinfo ETIMEOUT discord.com");
+    }
     return "token";
   };
 }
@@ -271,7 +298,11 @@ const saved = (): Record<string, any> =>
       .threads({ open: true })
       .map((thread) => [thread.thread, thread]),
   );
-afterAll(() => rmSync(state, { recursive: true, force: true }));
+
+afterAll(() => {
+  rmSync(state, { recursive: true, force: true });
+});
+
 let received: any[];
 let call: (tool: string, args: object) => Promise<any>;
 let send: (payload: object) => void;
@@ -291,9 +322,15 @@ beforeAll(async () => {
   });
   const fetch = globalThis.fetch;
   globalThis.fetch = (async (url: string, init?: RequestInit) => {
-    if (url === "https://cdn.discord/voice-message.ogg") return new Response("ogg");
-    if (url === "https://cdn.discord/shot.png") return new Response("png bytes");
-    if (url !== TRANSCRIBER) return fetch(url, init);
+    if (url === "https://cdn.discord/voice-message.ogg") {
+      return new Response("ogg");
+    }
+    if (url === "https://cdn.discord/shot.png") {
+      return new Response("png bytes");
+    }
+    if (url !== TRANSCRIBER) {
+      return await fetch(url, init);
+    }
     return Response.json({
       text:
         (init!.body as FormData).get("model") === "whisper"
@@ -314,12 +351,15 @@ async function session(thread: string) {
     channel: "plugin:discord@hex",
     thread,
   });
+
   const send = async (payload: object) => {
     const hook = netConnect(join(state, "hub.sock"));
-    hook.end(JSON.stringify(payload) + "\n");
+    hook.end(`${JSON.stringify(payload)}\n`);
     await new Promise((resolve) => hook.on("close", resolve));
   };
+
   await line.call("list_channels", {});
+
   return { received: line.received, call: line.call, send, ask: line.ask };
 }
 
@@ -330,10 +370,12 @@ const book = () => ({
       .map((pin) => [pin.thread, pin]),
   ),
 });
+
 const question = (message: string) =>
   open(state)
     .questions({ app: "discord" })
     .find((question) => question.message === message)!;
+
 const labels = (components: any[]) => components[0].toJSON().components.map((c: any) => c.label);
 
 test("a message in a thread names the channel the thread is in", async () => {
@@ -355,7 +397,9 @@ test("a reply says which message it answers, an edit comes back marked edited, a
           line.type === "inbound" && line.meta.message_id === id && line.meta.edited === edited,
       ),
     );
+
   const asked = say(here, 7, "which anchors?");
+
   const reply = {
     ...say(here, 8, "the left ones"),
     ...live(here),
@@ -363,6 +407,7 @@ test("a reply says which message it answers, an edit comes back marked edited, a
     reference: { messageId: asked.id },
     fetchReference: async () => asked,
   };
+
   handlers.get("messageCreate")!(reply);
   expect((await inbound(reply.id)).meta).toMatchObject({
     reply_to_message_id: asked.id,
@@ -393,6 +438,7 @@ test("a reply says which message it answers, an edit comes back marked edited, a
       ],
     ]),
   };
+
   handlers.get("messageCreate")!(forward);
   const forwarded = await inbound(forward.id);
   expect(forwarded.content).toBe("ship it friday");
@@ -407,16 +453,20 @@ test("a voice message arrives as its transcript, with the recording still listed
     contentType: "audio/ogg",
     size: 2048,
   };
+
   const voice = {
     ...say(here, 40, ""),
     ...live(here),
     flags: new MessageFlagsBitField(MessageFlags.IsVoiceMessage),
     attachments: new Collection([[recording.id, recording]]),
   };
+
   handlers.get("messageCreate")!(voice);
+
   const heard = await until(() =>
     received.find((line) => line.type === "inbound" && line.meta.message_id === voice.id),
   );
+
   expect(heard).toMatchObject({
     content: "(voice message) anchors ship friday",
     meta: { attachments: "voice-message.ogg (audio/ogg, 2KB)" },
@@ -453,6 +503,7 @@ test("fetch_messages drills into a thread by the id of the message it hangs off,
 test("sessions read only text channels and threads in the server the bot can see, never a DM", async () => {
   const refused = (id: string) =>
     `the bot can't read ${id}; list_channels shows the channels it can`;
+
   expect((await call("fetch_messages", { channel: "hidden" })).error).toBe(refused(hidden.id));
   expect((await call("fetch_messages", { channel: "nowhere" })).error).toBe(
     "no text or forum channel named #nowhere",
@@ -474,6 +525,7 @@ const inbound = (lines: any[], check: (line: any) => boolean) =>
 
 test("a reaction reaches a served thread with what it was on, a removal says so, and reactions elsewhere or by others are dropped", async () => {
   const msg = say(here, 10, "ship the anchors?");
+
   const partial = {
     id: msg.id,
     channelId: here.id,
@@ -481,6 +533,7 @@ test("a reaction reaches a served thread with what it was on, a removal says so,
     partial: true,
     fetch: async () => msg,
   };
+
   const thumbs = { message: partial, emoji: { toString: () => "👍" } };
   handlers.get("messageReactionAdd")!(thumbs, owner);
   const added = await inbound(received, (line) => line.meta.reaction_to_message_id === msg.id);
@@ -622,11 +675,13 @@ test("forward sends a message from this thread into another thread by name or a 
 
 test("the message a thread was started from is found in the channel it hangs off", async () => {
   const shot = say(general, 17, "explain this screenshot", { id: "5001" });
+
   const started = channel(shot.id, {
     name: "screenshot",
     type: ChannelType.PublicThread,
     parent: general,
   });
+
   const s = await session(started.id);
   await s.call("react", { message_id: shot.id, emoji: "👀" });
   expect(done.at(-1)).toEqual({ react: "👀", on: shot.id });
@@ -638,28 +693,34 @@ test("the message a thread was started from is found in the channel it hangs off
 test("a thread the owner opens on his message starts from that message, kept in hex.db, and keeps the name he gave it", async () => {
   const asked = say(general, 18, "audit the hex workers", live(general));
   handlers.get("messageCreate")!({ ...asked });
+
   const thread = channel(asked.id, {
     name: "audit hex workers, keep on track",
     type: ChannelType.PublicThread,
     parent: general,
     ownerId: OWNER,
   });
+
   asked.thread = thread;
   const s = await session(thread.id);
+
   const starter = {
     ...say(thread, 19, ""),
     ...live(thread),
     type: MessageType.ThreadStarterMessage,
     fetchReference: async () => asked,
   };
+
   handlers.get("messageCreate")!(starter);
   const then = { ...say(thread, 19, "and keep them on track"), ...live(thread) };
   handlers.get("messageCreate")!(then);
   await inbound(s.received, (line) => line.meta.message_id === then.id);
+
   const heard = () =>
     s.received
       .filter((line) => line.type === "inbound")
       .map((line) => [line.content, line.meta.message_id, line.meta.new_thread]);
+
   expect(heard()).toEqual([
     ["audit the hex workers", asked.id, undefined],
     ["and keep them on track", then.id, undefined],
@@ -681,12 +742,14 @@ test("a thread the owner opens on his message starts from that message, kept in 
 test("a thread someone else opens on the owner's message stays theirs: his edit to it reaches no session", async () => {
   const someone = { id: "8888", username: "someone", bot: false };
   const asked = say(general, 20, "thinking out loud", live(general));
+
   const thread = channel(asked.id, {
     name: "their thread",
     type: ChannelType.PublicThread,
     parent: general,
     ownerId: someone.id,
   });
+
   asked.thread = thread;
   handlers.get("messageCreate")!({
     ...say(thread, 21, "", { author: someone }),
@@ -743,7 +806,7 @@ test("search_messages searches the whole server and says where each match is", a
     query: `content=relay&limit=25&channel_id=${openSource.id}`,
   });
 
-  found = { message: "Index not yet available. Try again later", code: 110000, retry_after: 2 };
+  found = { message: "Index not yet available. Try again later", code: 110_000, retry_after: 2 };
   expect((await call("search_messages", { query: "relay" })).text).toBe(
     "Discord is still indexing this server's messages; search again in 2s",
   );
@@ -757,6 +820,7 @@ test("stickers and polls arrive described, and a new forum post carries its titl
       ["1", { name: "wave", url: "https://media.discordapp.net/stickers/1.png" }],
     ]),
   };
+
   handlers.get("messageCreate")!(sticker);
   const waved = await inbound(received, (line) => line.meta.message_id === sticker.id);
   expect(waved.content).toBe("(sticker)");
@@ -774,6 +838,7 @@ test("stickers and polls arrive described, and a new forum post carries its titl
       allowMultiselect: false,
     },
   };
+
   handlers.get("messageCreate")!(poll);
   const asked = await inbound(received, (line) => line.meta.message_id === poll.id);
   expect(asked.content).toBe("(poll)");
@@ -786,6 +851,7 @@ test("stickers and polls arrive described, and a new forum post carries its titl
     parent: ideas,
     setArchived: async () => {},
   });
+
   const s = await session(thread.id);
   const post = { ...say(thread, 24, "it hurts my eyes", { id: thread.id }), ...live(thread) };
   handlers.get("messageCreate")!(post);
@@ -801,7 +867,9 @@ test("a tag in an announcement channel starts a thread like in a text channel", 
     parent: news,
     ownerId: BOT,
   });
+
   const s = await session(thread.id);
+
   const tag = {
     ...say(news, 25, "<@1000> launch post review"),
     inGuild: () => true,
@@ -811,6 +879,7 @@ test("a tag in an announcement channel starts a thread like in a text channel", 
     startThread: async () => thread,
     id: thread.id,
   };
+
   handlers.get("messageCreate")!(tag);
   const opened = await inbound(s.received, (line) => line.meta.message_id === thread.id);
   expect(opened.content).toBe("launch post review");
@@ -822,7 +891,9 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
     [1, { text: "Tacos" }],
     [2, { text: "Ramen" }],
   ]);
+
   const lunch = say(here, 26, "", { author: bot, poll: { question: { text: "Lunch?" }, answers } });
+
   const partial = {
     id: lunch.id,
     channelId: here.id,
@@ -830,6 +901,7 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
     partial: true,
     fetch: async () => lunch,
   };
+
   handlers.get("messagePollVoteAdd")!({ id: 2, poll: { message: partial } }, OWNER);
   const voted = await inbound(received, (line) => line.meta.poll_message_id === lunch.id);
   expect(voted.content).toBe("(vote: Ramen)");
@@ -858,6 +930,7 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
 test("a DM is its own session named DM, a message reaches it while it works, and replies go back to the DM", async () => {
   const mine = await session(dm.id);
   await mine.send({ type: "state", thread: dm.id, busy: true });
+
   const message = {
     ...say(dm, 30, "quick one"),
     inGuild: () => false,
@@ -865,10 +938,13 @@ test("a DM is its own session named DM, a message reaches it while it works, and
     mentions: { has: () => false },
     react: async () => {},
   };
+
   handlers.get("messageCreate")!(message);
+
   const inbound = await until(() =>
     mine.received.find((line) => line.type === "inbound" && line.content === "quick one"),
   );
+
   expect(inbound.meta.chat_id).toBe(dm.id);
   expect(inbound.meta.channel).toBeUndefined();
   await mine.call("reply", { text: "on it, from the DM" });
@@ -892,7 +968,7 @@ test("once connected the bot leaves the id of its server in guild.json, so the v
     user: { tag: "hex#0000" },
     application: { commands: { set: async (commands: any[]) => (registered = commands) } },
   });
-  expect(JSON.parse(readFileSync(join(state, "guild.json"), "utf8"))).toEqual({ id: GUILD });
+  expect(JSON.parse(readFileSync(join(state, "guild.json"), "utf-8"))).toEqual({ id: GUILD });
   await until(() => registered.length);
   expect(registered.map((command) => command.name)).toEqual(["model", "effort", "compact", "stop"]);
 });
@@ -908,6 +984,7 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
     description: "Run the tests",
     input_preview: JSON.stringify({ command: "bun test", description: "Run the tests" }),
   });
+
   await ask(prompt("abcde"));
   const asked = await until(() => here.posted.findLast((m: any) => m.content.startsWith("🔐")));
   expect(asked.content).toBe("🔐 **Bash**: Run the tests\n```\ncommand: bun test\n```");
@@ -938,9 +1015,11 @@ test("a permission prompt asks in the thread with Allow and Deny, a tap answers 
   ]);
 
   await ask(prompt("fghij"));
+
   const open = await until(() =>
     here.posted.findLast((m: any) => m.content.startsWith("🔐") && m !== asked),
   );
+
   await send({ type: "state", thread: here.id, busy: false, background: true });
   await Bun.sleep(100);
   expect(done.some((d) => d.edit === open.id)).toBe(false);
@@ -1068,15 +1147,17 @@ test("an image arrives already downloaded, as image_path, next to its listing", 
     contentType: "image/png",
     size: 1024,
   };
+
   const message = {
     ...say(here, 46, "what is this?"),
     ...live(here),
     attachments: new Collection([[shot.id, shot]]),
   };
+
   handlers.get("messageCreate")!(message);
   const arrived = await inbound(received, (line) => line.meta.message_id === message.id);
   expect(arrived.meta.image_path).toMatch(/inbox\/\d+-62\.png$/);
-  expect(readFileSync(arrived.meta.image_path, "utf8")).toBe("png bytes");
+  expect(readFileSync(arrived.meta.image_path, "utf-8")).toBe("png bytes");
   expect(arrived.meta.attachments).toBe("shot.png (image/png, 1KB)");
 });
 
@@ -1088,11 +1169,13 @@ test("new_thread opens with its about line and forwards nothing from the thread 
   say(desk, 33, "spin off the anchors work");
   say(desk, 34, "on it", { author: bot });
   await s.send({ type: "state", thread: desk.id, busy: true });
+
   const result = await s.call("new_thread", {
     title: "Anchors",
     prompt: "work on the anchors",
     about: "Spun off from desk",
   });
+
   await s.send({ type: "state", thread: desk.id, busy: false });
   const thread = [...channels.values()].find((ch) => ch.name === "Anchors")!;
   await session(thread.id);
@@ -1172,7 +1255,8 @@ test("new_thread with another app opens the thread there through the hub", async
 test("slash commands set a thread's model and effort, and answer only the owner in a thread with a session", async () => {
   const desk = channels.get("5100")!;
   const replies: any[] = [];
-  const command = (commandName: string, value?: string, user = owner, channelId = desk.id) =>
+
+  const command = (commandName: string, value?: string, user = owner, channelId = desk.id) => {
     handlers.get("interactionCreate")!({
       isButton: () => false,
       isStringSelectMenu: () => false,
@@ -1183,6 +1267,8 @@ test("slash commands set a thread's model and effort, and answer only the owner 
       options: { getString: () => value },
       reply: async (options: any) => replies.push(options),
     });
+  };
+
   command("model", "opus");
   command("effort", "max");
   command("stop", undefined, owner, general.id);
@@ -1205,12 +1291,15 @@ test("slash commands set a thread's model and effort, and answer only the owner 
 
 test("a backfill posts each line through one webhook of the channel, as the owner or the bot, split to fit", async () => {
   const hooked: any[] = [];
+
   const hook = {
     owner: { id: BOT },
     token: "secret",
     send: async (options: any) => void hooked.push(options),
   };
+
   const created: string[] = [];
+
   const repo = channel("4100", {
     name: "repo",
     type: ChannelType.GuildText,
@@ -1220,35 +1309,40 @@ test("a backfill posts each line through one webhook of the channel, as the owne
       ),
     createWebhook: async ({ name }: { name: string }) => (created.push(name), hook),
   });
+
   const thread = channel("4101", {
     name: "Context check",
     type: ChannelType.PublicThread,
     parent: repo,
     guild: { members: { me: { displayName: "hex" } } },
   });
+
   Object.assign(owner, { displayName: "Bassim", displayAvatarURL: () => "https://cdn/owner.png" });
   const backfill = clients.get("discord")!.backfill!;
   await backfill(thread.id, [
     { from: "me", text: "how full is your context?" },
-    { from: "hex", text: "a".repeat(1990) + "\n\n" + "b".repeat(100) },
+    { from: "hex", text: `${"a".repeat(1990)}\n\n${"b".repeat(100)}` },
   ]);
   await backfill(thread.id, [{ from: "me", text: "@everyone thanks" }]);
   expect(created).toEqual(["hex"]);
+
   const me = {
     username: "Bassim",
     avatarURL: "https://cdn/owner.png",
     threadId: thread.id,
     allowedMentions: { parse: [] },
   };
+
   const hex = {
     username: "hex",
     avatarURL: "https://cdn/hex.png",
     threadId: thread.id,
     allowedMentions: { parse: [] },
   };
+
   expect(hooked.map(({ content, ...rest }) => rest)).toEqual([me, hex, hex, me]);
   expect(hooked.every(({ content }) => content.length <= 2000)).toBe(true);
-  expect(hooked.map(({ content }) => content.replace(/\s/g, "")).join("")).toBe(
+  expect(hooked.map(({ content }) => content.replaceAll(/\s/g, "")).join("")).toBe(
     `howfullisyourcontext?${"a".repeat(1990)}${"b".repeat(100)}@everyonethanks`,
   );
 });
@@ -1257,23 +1351,27 @@ test("back online, the bot reads what was said while it was away, archived threa
   const someone = { id: "8888", username: "someone", bot: false };
   const away = { inGuild: () => true, mentions: { has: () => false }, react: async () => {} };
   const first = say(here, 61, "did the anchors ship?", away);
+
   const tag = say(general, 62, "<@1000> anchors", {
     ...away,
     mentions: { has: () => true },
     startThread: async () => tagged,
   });
+
   const tagged = channel(tag.id, {
     name: "anchors",
     type: ChannelType.PublicThread,
     parent: general,
     ownerId: BOT,
   });
+
   const opening = await session(tagged.id);
   const mine = await session(dm.id);
   const theirs = say(here, 63, "not for hex", { ...away, author: someone });
   say(here, 64, "shipped", { ...away, author: bot });
   const direct = say(dm, 65, "and the desk?", { ...away, inGuild: () => false });
   say(hidden, 66, "still not for the bot", away);
+
   const shelved = channel(snowflake(50), {
     name: "old plans",
     type: ChannelType.PublicThread,
@@ -1282,7 +1380,8 @@ test("back online, the bot reads what was said while it was away, archived threa
     archiveTimestamp: at(69).getTime(),
     setArchived: async () => {},
   });
-  for (const minute of [70, 71])
+
+  for (const minute of [70, 71]) {
     channel(snowflake(minute - 20), {
       name: `shelved at ${minute}`,
       type: ChannelType.PublicThread,
@@ -1290,6 +1389,7 @@ test("back online, the bot reads what was said while it was away, archived threa
       archived: true,
       archiveTimestamp: at(minute).getTime(),
     });
+  }
   const reopened = await session(shelved.id);
   const revived = say(shelved, 68, "back to the old plan", away);
 
@@ -1310,13 +1410,13 @@ test("back online, the bot reads what was said while it was away, archived threa
     (await inbound(reopened.received, (line) => line.meta.message_id === revived.id)).content,
   ).toBe("back to the old plan");
   await inbound(received, (line) => line.meta.message_id === then.id);
-  const late = [first.id, theirs.id, then.id];
+  const late = new Set([first.id, theirs.id, then.id]);
   expect(
     received
-      .filter((line) => line.type === "inbound" && late.includes(line.meta.message_id))
+      .filter((line) => line.type === "inbound" && late.has(line.meta.message_id))
       .map((line) => line.content),
   ).toEqual(["did the anchors ship?", "one more thing"]);
-  expect(JSON.parse(readFileSync(join(state, "cursor.json"), "utf8"))).toEqual({ id: revived.id });
+  expect(JSON.parse(readFileSync(join(state, "cursor.json"), "utf-8"))).toEqual({ id: revived.id });
 });
 
 test("a status post is the session's note over lines hex keeps current from the thread's questions and tasks", async () => {
@@ -1325,6 +1425,7 @@ test("a status post is the session's note over lines hex keeps current from the 
   expect(post.content).toBe("Site: example.com");
   expect(done).toContainEqual({ pin: post.id });
   expect(book().pins[here.id]).toMatchObject({ message: post.id, note: "Site: example.com" });
+
   const edits = () =>
     done.filter((d) => d.edit === post.id).map((d) => d.options.content as string);
 

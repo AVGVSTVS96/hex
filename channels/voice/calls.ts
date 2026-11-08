@@ -6,8 +6,8 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-} from "fs";
-import { join } from "path";
+} from "node:fs";
+import { join } from "node:path";
 
 import type { Mark, Moment, Speaker } from "./call.ts";
 import { Changes } from "./changes.ts";
@@ -56,11 +56,18 @@ export function usage(seconds: number, context?: number): Usage {
 const ID = /^[\w-]+$/;
 
 export function ending(reason: string, by?: string): Ending {
-  if (by?.startsWith("close_hex")) return "hex";
-  if (by?.startsWith("close-you") || reason === "close_requested" || reason === "remote_hangup")
+  if (by?.startsWith("close_hex")) {
+    return "hex";
+  }
+  if (by?.startsWith("close-you") || reason === "close_requested" || reason === "remote_hangup") {
     return "you";
-  if (reason === "expired") return "expired";
-  if (reason === "content") return "hex";
+  }
+  if (reason === "expired") {
+    return "expired";
+  }
+  if (reason === "content") {
+    return "hex";
+  }
   return "dropped";
 }
 
@@ -68,9 +75,9 @@ export class CallLog extends Changes {
   // Each file's summary by when it last changed: the list is read on every change to a live call
   // while the app waits on it, and parsing every past call's whole record each time stalls the
   // engine, phone audio and all.
-  private summaries = new Map<string, { stamp: string; summary: CallSummary }>();
+  private readonly summaries = new Map<string, { stamp: string; summary: CallSummary }>();
 
-  constructor(private dir: string) {
+  constructor(private readonly dir: string) {
     super();
     mkdirSync(dir, { recursive: true });
   }
@@ -84,17 +91,22 @@ export class CallLog extends Changes {
   }
 
   get(id: string): CallRecord | undefined {
-    if (!ID.test(id)) return;
+    if (!ID.test(id)) {
+      return;
+    }
     try {
-      return JSON.parse(readFileSync(this.file(id), "utf8"));
+      return JSON.parse(readFileSync(this.file(id), "utf-8"));
     } catch {}
   }
 
   delete(id: string) {
-    if (!this.get(id)) return false;
+    if (!this.get(id)) {
+      return false;
+    }
     rmSync(this.file(id));
     this.summaries.delete(id);
     this.changed();
+
     return true;
   }
 
@@ -102,14 +114,24 @@ export class CallLog extends Changes {
     return readdirSync(this.dir)
       .flatMap((name) => {
         const id = name.slice(0, -5);
-        if (!name.endsWith(".json") || !ID.test(id)) return [];
+
+        if (!name.endsWith(".json") || !ID.test(id)) {
+          return [];
+        }
         const now = stamp(this.file(id));
         const known = this.summaries.get(id);
-        if (now && known?.stamp === now) return [known.summary];
+
+        if (now && known?.stamp === now) {
+          return [known.summary];
+        }
         const record = this.get(id);
-        if (!record || !now) return [];
+
+        if (!record || !now) {
+          return [];
+        }
         const listed = summary(record);
         this.summaries.set(id, { stamp: now, summary: listed });
+
         return [listed];
       })
       .sort((a, b) => b.started.localeCompare(a.started));
@@ -123,6 +145,7 @@ export class CallLog extends Changes {
 function stamp(file: string) {
   try {
     const { mtimeMs, size } = statSync(file);
+
     return `${mtimeMs} ${size}`;
   } catch {}
 }
@@ -130,6 +153,7 @@ function stamp(file: string) {
 export function summary({ turns, tasks, moments, ...call }: CallRecord): CallSummary {
   const heard = Math.max(0, ...turns.map((turn) => turn.at), ...tasks.map((task) => task.at));
   const ms = call.ended ? Date.parse(call.ended) - Date.parse(call.started) : heard;
+
   return {
     ...call,
     seconds: Math.round(ms / 1000),

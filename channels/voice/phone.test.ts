@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { createHmac } from "crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { createHmac } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { until } from "../../hub/until.ts";
 
@@ -27,6 +27,7 @@ async function phoneCall({ late = false } = {}) {
   const told: { session: string; content: string }[] = [];
   let connected = 0;
   let sessions = 0;
+
   const openai = Bun.serve({
     port: 0,
     fetch: (request, server) =>
@@ -39,6 +40,7 @@ async function phoneCall({ late = false } = {}) {
       close: () => void connected--,
       message(socket: Bun.ServerWebSocket<{ id?: string }>, raw) {
         const event = JSON.parse(String(raw));
+
         const begin = () => {
           socket.data = { id: ++sessions === 1 ? "sess_phone" : `sess_phone_${sessions}` };
           socket.send(
@@ -48,14 +50,22 @@ async function phoneCall({ late = false } = {}) {
             }),
           );
         };
+
         if (/^session\.(thinking|commentary)\.append$/.test(event.type)) {
           told.push({ session: socket.data?.id ?? "", content: event.content });
           socket.send(JSON.stringify({ type: `${event.type}ed`, client_event_id: event.event_id }));
         }
-        if (event.type === "session.start") late ? starts.push(begin) : begin();
-        if (event.type === "session.close") closes.push(event.event_id);
-        if (event.type === "session.input_audio.append") audio.push(event.audio);
-        if (event.type === "session.close")
+
+        if (event.type === "session.start") {
+          late ? starts.push(begin) : begin();
+        }
+        if (event.type === "session.close") {
+          closes.push(event.event_id);
+        }
+        if (event.type === "session.input_audio.append") {
+          audio.push(event.audio);
+        }
+        if (event.type === "session.close") {
           socket.send(
             JSON.stringify({
               type: "session.closed",
@@ -63,19 +73,24 @@ async function phoneCall({ late = false } = {}) {
               client_event_id: event.event_id,
             }),
           );
+        }
       },
     },
   });
+
   // Twilio's REST API: each call placed, by the token its TwiML URL carries.
   const placed: string[] = [];
+
   const twilio = Bun.serve({
     port: 0,
     fetch: async (request) => {
       const url = (await request.formData()).get("Url");
-      placed.push(String(url).match(/\/twilio\/([\w-]+)\/twiml$/)![1]!);
+      placed.push(/\/twilio\/([\w-]+)\/twiml$/.exec(String(url))![1]!);
+
       return Response.json({ sid: `CA${placed.length}` }, { status: 201 });
     },
   });
+
   writeFileSync(
     join(state, ".env"),
     [
@@ -90,11 +105,14 @@ async function phoneCall({ late = false } = {}) {
       `TWILIO_BASE_URL=http://127.0.0.1:${twilio.port}`,
     ].join("\n"),
   );
+
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/.test(key)),
   );
+
   const hex = join(home, "hex", "state");
   mkdirSync(hex, { recursive: true });
+
   // The hub's side, as lines on stdout; a renewal holds until the test writes a line to stdin.
   const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
@@ -111,37 +129,48 @@ const tools = Bun.serve({ port: 0, fetch: async request => {
   return tool(name, args).then(result => Response.json({ result }), error => Response.json({ error: error.message }))
 } })
 step('listening', { port: server.port, tools: tools.port })`;
+
   const plugin = Bun.spawn(["bun", "-e", engine], {
     env: { ...env, HOME: home },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
   });
+
   const steps: any[] = [];
   let listening!: (ports: { port: number; tools: number }) => void;
   const port = new Promise<{ port: number; tools: number }>((resolve) => (listening = resolve));
   void (async () => {
     let buffer = "";
+
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk);
       const lines = buffer.split("\n");
       buffer = lines.pop()!;
+
       for (const step of lines.map((line) => JSON.parse(line))) {
-        if (step.step === "listening") listening(step);
-        else steps.push(step);
+        if (step.step === "listening") {
+          listening(step);
+        } else {
+          steps.push(step);
+        }
       }
     }
   })();
-  const exited = plugin.exited.then((code) =>
-    Promise.reject(new Error(`the engine exited (${code}) before it listened`)),
-  );
+
+  const exited = plugin.exited.then((code) => {
+    throw new Error(`the engine exited (${code}) before it listened`);
+  });
+
   const listened = await Promise.race([port, exited]).catch((error) => {
     openai.stop(true);
     twilio.stop(true);
     rmSync(home, { recursive: true, force: true });
     throw error;
   });
+
   const base = `http://127.0.0.1:${listened.port}`;
+
   return {
     base,
     audio,
@@ -156,7 +185,9 @@ step('listening', { port: server.port, tools: tools.port })`;
       }).then((r) => r.json()),
     connected: () => connected,
     starting: () => until(() => starts.length),
-    start: () => starts.splice(0).forEach((begin) => begin()),
+    start: () => {
+      starts.splice(0).forEach((begin) => begin());
+    },
     renewed: () => (plugin.stdin.write("renewed\n"), plugin.stdin.flush()),
     speak: (delta: string) =>
       voice!.send(JSON.stringify({ type: "session.output_audio.delta", delta })),
@@ -190,6 +221,7 @@ step('listening', { port: server.port, tools: tools.port })`;
 
 async function dialIn(base: string, { start = true } = {}) {
   const form = new URLSearchParams({ From: CALLER, CallSid: "CA1" });
+
   const signature = createHmac("sha1", TWILIO_TOKEN)
     .update(
       `https://${HOST}/twilio/incoming${[...form.keys()]
@@ -198,15 +230,20 @@ async function dialIn(base: string, { start = true } = {}) {
         .join("")}`,
     )
     .digest("base64");
+
   const twiml = await fetch(`${base}/twilio/incoming`, {
     method: "POST",
     body: form,
     headers: { "x-twilio-signature": signature },
   }).then((r) => r.text());
-  const [, token] = twiml.match(/\/twilio\/([\w-]+)"/)!;
+
+  const [, token] = /\/twilio\/([\w-]+)"/.exec(twiml)!;
   const phone = new WebSocket(`${base.replace("http", "ws")}/twilio/${token}`);
   await new Promise((resolve) => (phone.onopen = resolve));
-  if (start) phone.send(JSON.stringify({ event: "start", start: { streamSid: "MZ1" } }));
+
+  if (start) {
+    phone.send(JSON.stringify({ event: "start", start: { streamSid: "MZ1" } }));
+  }
   return phone;
 }
 
@@ -216,15 +253,20 @@ async function pickedUp(base: string, token: string) {
   const phone = new WebSocket(`${base.replace("http", "ws")}/twilio/${token}`);
   await new Promise((resolve) => (phone.onopen = resolve));
   phone.send(JSON.stringify({ event: "start", start: { streamSid: "MZ2" } }));
+
   return phone;
 }
 
 async function live(base: string) {
   for (let i = 0; i < 100; i++) {
     const { live } = await fetch(`${base}/calls`).then((r) => r.json());
-    if (live) return live as string;
+
+    if (live) {
+      return live as string;
+    }
     await Bun.sleep(50);
   }
+
   throw new Error("the phone call never went live");
 }
 
@@ -232,7 +274,10 @@ async function live(base: string) {
 async function listen(base: string, id: string, version: number, done: (call: any) => boolean) {
   for (;;) {
     const call = await fetch(`${base}/calls/${id}?after=${version}`).then((r) => r.json());
-    if (done(call)) return call;
+
+    if (done(call)) {
+      return call;
+    }
     version = call.version;
   }
 }
@@ -257,9 +302,11 @@ test("a phone call's words reach the app as they're heard, and how it ended land
 
   call.say("you", "green?", 1300);
   call.say("voice", "One sec.", 2500);
+
   const later = await listen(call.base, id, heard.version, (call) =>
     call.turns.some((turn: any) => turn.who === "voice"),
   );
+
   expect(later.turns).toEqual([
     { who: "you", at: 1000, text: "is the build green?" },
     { who: "voice", at: 2500, text: "One sec." },
@@ -283,6 +330,7 @@ test("the caller talking over the voice clears what Twilio hasn't played yet, bu
   const heard: any[] = [];
   phone.onmessage = ({ data }) => heard.push(JSON.parse(String(data)));
   const clears = () => heard.filter((message) => message.event === "clear");
+
   const recorded = (text: string) =>
     listen(call.base, id, 0, (record) =>
       record.turns.some((turn: any) => turn.text.includes(text)),
@@ -310,8 +358,9 @@ test("the caller talking over the voice clears what Twilio hasn't played yet, bu
   expect(clears()).toEqual([{ event: "clear", streamSid: "MZ1" }]);
 
   // Twilio hands back every mark the clear dropped; with nothing left unplayed, more words clear nothing.
-  for (let i = 0; i < 2; i++)
+  for (let i = 0; i < 2; i++) {
     phone.send(JSON.stringify({ event: "mark", streamSid: "MZ1", mark: { name: "voice" } }));
+  }
   await Bun.sleep(100);
   call.say("you", "stop.", 1300);
   await recorded("stop.");
@@ -329,11 +378,13 @@ test("hex never rings while a call is live, and a call it placed that picks up o
 
   const voicemail = await pickedUp(call.base, call.placed[0]!);
   await new Promise((resolve) => (voicemail.onclose = resolve));
+
   const missed = await until(() =>
     call.steps.find(
       (step) => step.step === "deliver" && step.content.startsWith("Your phone call"),
     ),
   );
+
   expect(missed.content).toContain("another call was live");
   expect((await fetch(`${call.base}/calls`).then((r) => r.json())).live).toBe(id);
 }, 20_000);
@@ -437,6 +488,7 @@ test("the app ends only the call it names: a stale screen closing its old call l
   await using call = await phoneCall();
   await dialIn(call.base);
   const id = await live(call.base);
+
   const end = (body?: object) =>
     fetch(`${call.base}/session`, {
       method: "DELETE",

@@ -1,6 +1,6 @@
 import { expect, mock, test } from "bun:test";
-import { EventEmitter } from "events";
-import { PassThrough } from "stream";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 
 import * as real from "@discordjs/voice";
 import OpusScript from "opusscript";
@@ -11,16 +11,18 @@ import { until } from "../../hub/until.ts";
 const OWNER = "2000";
 const joined: { options: any; connection: any }[] = [];
 const resources: PassThrough[] = [];
+
 const player = Object.assign(new EventEmitter(), {
   play: (resource: { stream: PassThrough }) => void resources.push(resource.stream),
 });
 
 function connection() {
   const voice = new PassThrough({ objectMode: true });
+
   const emitter = Object.assign(new EventEmitter(), {
-    state: { status: real.VoiceConnectionStatus.Ready as string },
+    state: { status: real.VoiceConnectionStatus.Ready },
     voice,
-    subscribed: undefined as unknown,
+    subscribed: undefined,
     subscribe: (to: unknown) => void (emitter.subscribed = to),
     receiver: { subscribe: (user: string) => (((emitter as any).listening = user), voice) },
     destroy: () => {
@@ -28,6 +30,7 @@ function connection() {
       emitter.emit(real.VoiceConnectionStatus.Destroyed);
     },
   });
+
   return emitter;
 }
 
@@ -36,6 +39,7 @@ mock.module("@discordjs/voice", () => ({
   joinVoiceChannel: (options: any) => {
     const made = connection();
     joined.push({ options, connection: made });
+
     return made;
   },
   entersState: async () => {},
@@ -48,10 +52,13 @@ const { narrow, widen, speaker, listener, voiceCalls } = await import("./voice.t
 const pcm = (...samples: number[]) => {
   const buffer = Buffer.alloc(samples.length * 2);
   samples.forEach((sample, i) => buffer.writeInt16LE(sample, i * 2));
+
   return buffer;
 };
+
 const samples = (buffer: Buffer) =>
   Array.from({ length: buffer.length / 2 }, (_, i) => buffer.readInt16LE(i * 2));
+
 const tick = (value: number) => pcm(...Array(2400).fill(value)).toString("base64");
 
 test("Discord's 48 kHz stereo becomes the engine's 24 kHz mono, and back, each new sample halfway to the next", () => {
@@ -67,10 +74,13 @@ test("the voice plays in stretches of speech: silence before it is skipped, a sh
   play(tick(5000));
   expect(resources).toHaveLength(1);
   const stretch = resources[0]!;
-  const cushion = stretch.read(19200) as Buffer;
+  const cushion = stretch.read(19_200) as Buffer;
   expect(samples(cushion).every((sample) => sample === 0)).toBe(true);
   expect(samples(stretch.read() as Buffer).slice(0, 4)).toEqual([5000, 5000, 5000, 5000]);
-  for (let i = 0; i < 3; i++) play(tick(0));
+
+  for (let i = 0; i < 3; i++) {
+    play(tick(0));
+  }
   expect(stretch.writableEnded).toBe(false);
   play(tick(0));
   expect(stretch.writableEnded).toBe(true);
@@ -97,23 +107,29 @@ test("the owner's voice is decoded and sent on at 24 kHz, and quiet is sent as s
 
 test("the owner joining a voice channel calls hex there through the call engine, and leaving hangs up and leaves", async () => {
   const handlers = new Map<string, (...args: any[]) => void>();
+
   const client = {
     on: (event: string, handler: (...args: any[]) => void) => handlers.set(event, handler),
   };
+
   const heard: string[] = [];
   const calls: { greeting: string; line: any; hungUp: boolean }[] = [];
   engine.take = (from, greeting, line) => {
     expect(from).toBe("discord");
     const call = { greeting, line, hungUp: false };
     calls.push(call);
+
     return { hear: (audio) => void heard.push(audio), hangUp: () => void (call.hungUp = true) };
   };
+
   voiceCalls(client as any, (user) => user === OWNER);
+
   const channel = {
     id: "6000",
     name: "General",
     guild: { id: "3000", voiceAdapterCreator: () => ({}) },
   };
+
   const state = (channelId: string | null, id = OWNER) => ({
     id,
     channelId,

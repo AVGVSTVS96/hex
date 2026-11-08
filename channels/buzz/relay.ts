@@ -1,5 +1,6 @@
 import type { Filter } from "nostr-tools/filter";
-import { finalizeEvent, getPublicKey, type Event } from "nostr-tools/pure";
+import { finalizeEvent, getPublicKey } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
 
 export type Relay = {
   pubkey: string;
@@ -32,10 +33,12 @@ export function connectRelay({
   authTag: string[];
 }): Relay {
   const pubkey = getPublicKey(secretKey);
+
   const subs = new Map<
     string,
     { filters: Filter[]; onEvent: (event: Event) => void; stored?: Event[] }
   >();
+
   const seen = new Set<string>();
   const requests = new Map<string, Request>();
   let socket: WebSocket | undefined;
@@ -48,7 +51,9 @@ export function connectRelay({
   let next = 0;
 
   function send(message: unknown[]) {
-    if (ready) socket!.send(JSON.stringify(message));
+    if (ready) {
+      socket!.send(JSON.stringify(message));
+    }
   }
 
   function sign(template: {
@@ -81,19 +86,27 @@ export function connectRelay({
   function flush(id: string) {
     const sub = subs.get(id);
     const stored = sub?.stored;
-    if (!stored) return;
+
+    if (!stored) {
+      return;
+    }
     sub.stored = undefined;
+
     for (const event of stored.sort(
       (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
-    ))
+    )) {
       sub.onEvent(event);
+    }
   }
 
   function open() {
     const ws = (socket = new WebSocket(url));
     ws.addEventListener("message", ({ data }) => {
-      if (ready) alive = now();
+      if (ready) {
+        alive = now();
+      }
       answered = true;
+
       try {
         handle(JSON.parse(String(data)));
       } catch (error) {
@@ -102,10 +115,15 @@ export function connectRelay({
     });
     ws.addEventListener("pong", () => (answered = true));
     ws.addEventListener("close", () => {
-      if (socket !== ws) return;
+      if (socket !== ws) {
+        return;
+      }
       socket = undefined;
       ready = false;
-      if (closed) return;
+
+      if (closed) {
+        return;
+      }
       const delay = Math.min(1000 * 2 ** attempt++, 30_000);
       process.stderr.write(`buzz hub: relay connection lost, reconnecting in ${delay / 1000}s\n`);
       setTimeout(open, delay);
@@ -116,50 +134,76 @@ export function connectRelay({
   function handle([type, id, ...rest]: any[]) {
     if (type === "AUTH") {
       const event = sign({
-        kind: 22242,
+        kind: 22_242,
         content: "",
         tags: [
           ["relay", url],
           ["challenge", id],
         ],
       });
+
       auth = event.id;
       socket!.send(JSON.stringify(["AUTH", event]));
     }
+
     if (type === "OK" && id === auth) {
       if (!rest[0]) {
         process.stderr.write(`buzz hub: relay refused auth: ${rest[1]}\n`);
-        return socket!.close();
+
+        socket!.close();
+        return;
       }
+
       ready = true;
       attempt = 0;
-      for (const [sub, { filters }] of subs) req(sub, filters, alive - OVERLAP);
-      for (const request of requests.values()) send(request.message);
+
+      for (const [sub, { filters }] of subs) {
+        req(sub, filters, alive - OVERLAP);
+      }
+      for (const request of requests.values()) {
+        send(request.message);
+      }
     }
-    if (type === "OK" && id !== auth)
+
+    if (type === "OK" && id !== auth) {
       requests.get(id)?.done(rest[0] ? undefined : rest[1] || "refused");
+    }
     if (type === "EVENT") {
       const sub = subs.get(id);
+
       if (sub && !seen.has(rest[0].id)) {
         seen.add(rest[0].id);
-        if (sub.stored) sub.stored.push(rest[0]);
-        else sub.onEvent(rest[0]);
+
+        if (sub.stored) {
+          sub.stored.push(rest[0]);
+        } else {
+          sub.onEvent(rest[0]);
+        }
       }
+
       requests.get(id)?.events?.push(rest[0]);
     }
+
     if (type === "EOSE" && requests.has(id)) {
       send(["CLOSE", id]);
       requests.get(id)!.done();
     }
-    if (type === "EOSE") flush(id);
+
+    if (type === "EOSE") {
+      flush(id);
+    }
     if (type === "CLOSED") {
-      if (requests.has(id)) requests.get(id)!.done(rest[0] || "closed");
-      else if (subs.has(id)) {
+      if (requests.has(id)) {
+        requests.get(id)!.done(rest[0] || "closed");
+      } else if (subs.has(id)) {
         flush(id);
         process.stderr.write(`buzz hub: relay closed a subscription: ${rest[0]}\n`);
       }
     }
-    if (type === "NOTICE") process.stderr.write(`buzz hub: relay notice: ${id}\n`);
+
+    if (type === "NOTICE") {
+      process.stderr.write(`buzz hub: relay notice: ${id}\n`);
+    }
   }
 
   function request<T>(
@@ -168,24 +212,38 @@ export function connectRelay({
     result: (events: Event[]) => T,
     collect = false,
   ): Promise<T> {
-    if (closed) return Promise.reject(new Error("the relay connection is closed"));
+    if (closed) {
+      return Promise.reject(new Error("the relay connection is closed"));
+    }
     return new Promise((resolve, reject) => {
       const events: Event[] = [];
-      const timer = setTimeout(() => done("timed out"), TIMEOUT);
+      const timer = setTimeout(() => {
+        done("timed out");
+      }, TIMEOUT);
+
       function done(error?: string) {
         clearTimeout(timer);
         requests.delete(id);
-        if (error) reject(new Error(error));
-        else resolve(result(events));
+
+        if (error) {
+          reject(new Error(error));
+        } else {
+          resolve(result(events));
+        }
       }
+
       requests.set(id, { message, done, ...(collect ? { events } : {}) });
       send(message);
     });
   }
 
   const ping = setInterval(() => {
-    if (!ready) return;
-    if (!answered) return socket!.terminate();
+    if (!ready) {
+      return;
+    }
+    if (!answered) {
+      return socket!.terminate();
+    }
     answered = false;
     socket!.ping();
   }, PING);
@@ -196,12 +254,14 @@ export function connectRelay({
     pubkey,
     publish(template) {
       const event = sign(template);
+
       return request(event.id, ["EVENT", event], () => event);
     },
     subscribe(filters, onEvent) {
       const id = `s${++next}`;
       subs.set(id, { filters, onEvent });
       req(id, filters);
+
       return () => {
         subs.delete(id);
         send(["CLOSE", id]);
@@ -209,6 +269,7 @@ export function connectRelay({
     },
     query(filters) {
       const id = `q${++next}`;
+
       return request(
         id,
         ["REQ", id, ...filters],
@@ -219,7 +280,10 @@ export function connectRelay({
     close() {
       closed = true;
       clearInterval(ping);
-      for (const request of requests.values()) request.done("the relay connection is closed");
+
+      for (const request of requests.values()) {
+        request.done("the relay connection is closed");
+      }
       socket?.close();
     },
   };

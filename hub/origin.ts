@@ -1,7 +1,8 @@
-import { join } from "path";
+import { join } from "node:path";
 
 import { served } from "./running.ts";
-import { open, spoken, stateDir, type Store } from "./store.ts";
+import { open, spoken, stateDir } from "./store.ts";
+import type { Store } from "./store.ts";
 
 // Where work handed to another agent came from: the owner's conversation, and their newest words in
 // it that the session had taken by `before`, both by the commands that print them word for word: an
@@ -14,10 +15,15 @@ export function origin(
   before?: string,
   hex = join(import.meta.dir, ".."),
 ): string | undefined {
-  if (!owner) return;
+  if (!owner) {
+    return;
+  }
   const thread = store.key(owner);
   const names = store.names();
-  if (!(thread in names)) return;
+
+  if (!(thread in names)) {
+    return;
+  }
   const said = store
     .said(thread, -1, before)
     .filter(
@@ -30,11 +36,14 @@ export function origin(
         ),
     )
     .at(-1);
+
   const message = said?.meta?.edited
     ? said.key.slice(0, said.key.lastIndexOf(":") + 1) + said.meta.message_id
     : said?.key;
+
   const name = names[thread];
   const log = `\`${hex}/bin/hex log --last 100 -- '${thread}'\` prints its newest 100 messages (without --last, all of it)`;
+
   return `This work comes from my conversation${name ? ` in ${name}` : ""}: ${message ? `${log}, and \`${hex}/bin/hex message ${message}\` my newest message there, word for word.` : `${log}.`}`;
 }
 
@@ -44,19 +53,24 @@ export function origin(
 if (import.meta.main) {
   try {
     const { hook_event_name: event } = JSON.parse((await Bun.stdin.text()) || "{}");
+
     const thread = served({
       HEX_CHANNEL: process.env.HEX_CHANNEL,
       HEX_THREAD: process.env.HEX_THREAD,
     });
+
     const owner = thread ?? process.env.HEX_FROM;
+
     const line =
       owner &&
       (event === "SubagentStart" || !thread) &&
       origin(open(stateDir()), owner, thread ? undefined : process.env.HEX_FROM_AT);
-    if (line)
+
+    if (line) {
       console.log(
         JSON.stringify({ hookSpecificOutput: { hookEventName: event, additionalContext: line } }),
       );
+    }
   } catch (error) {
     console.error(`hex couldn't say where this work came from: ${error}`);
   }

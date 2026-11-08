@@ -1,10 +1,10 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { createServer, type Server } from "net";
-import { tmpdir } from "os";
-import { homedir } from "os";
-import { join } from "path";
+import { createServer } from "net";
+import type { Server } from "net";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir, homedir } from "os";
 
 import type { Pin, Question } from "../../hub/ledger.ts";
 import { open } from "../../hub/store.ts";
@@ -29,9 +29,13 @@ function ledger(
   store.write(() => {
     store.db.run("delete from questions");
     store.db.run("delete from pins");
-    for (const question of kept) store.ask({ app: "telegram", ...question });
-    for (const [thread, pin] of Object.entries(pins))
+
+    for (const question of kept) {
+      store.ask({ app: "telegram", ...question });
+    }
+    for (const [thread, pin] of Object.entries(pins)) {
       store.pinned({ app: "telegram", thread, note: pin.text, ...pin });
+    }
   });
 }
 
@@ -57,7 +61,7 @@ beforeEach(async () => {
   lines = [];
   checks = [];
   hub = createServer((socket) => {
-    socket.setEncoding("utf8");
+    socket.setEncoding("utf-8");
     socket.on("data", (chunk: string) =>
       lines.push(
         ...chunk
@@ -85,6 +89,7 @@ test("a question asked with buttons reads as its first line, its context and the
       "Minimal",
     ]),
   );
+
   expect(question).toMatchObject({
     id: `telegram:${DESK}:1`,
     kind: "pick",
@@ -109,6 +114,7 @@ test("a question keeps all of its context, line by line, so the app can open the
 test("a long first line ends at its question, and the rest opens its context whole", () => {
   const first =
     "The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean? My pick: bring it back, drawn cleanly.";
+
   const question = fromLedger("telegram", asked(1, `${first}\nMore.`, ["A", "B"]));
   expect(question.question).toBe(
     "The line graphic next to each project in Tasks (you picked it Oct 15/18) has been deleted since you underlined it. What did you mean?",
@@ -125,6 +131,7 @@ test("a long first line ends at its last question, however short", () => {
       ["Yes", "No"],
     ),
   );
+
   expect(question.question).toBe("Should we ship tonight?");
   expect(question.context!.startsWith("The redesign")).toBe(true);
 });
@@ -138,6 +145,7 @@ test("a long first line never ends inside brackets, and a long question stays wh
       ["Yes", "No"],
     ),
   );
+
   expect(pick.question).toBe(
     "iikb site next step: a 3D Duo in the hero that folds on its real hinge, plus buttons drawn as keycaps?",
   );
@@ -153,6 +161,7 @@ test("a long first line never ends inside brackets, and a long question stays wh
 test("a long first line with no question mark stays whole as the question", () => {
   const tail =
     "and here the line keeps going well past the limit with plenty of words to spare for the cut";
+
   for (const first of [
     `Which way ${"one option costs this and the other takes that away ".repeat(4).trim()}`,
     `Ship the redesign with the calmer palette and the bigger type, e.g. Inter at sixteen points ${tail}`,
@@ -175,6 +184,7 @@ type Said = [
   string,
   Partial<{ id: number; author: "hex" | "owner"; to: string; meta: Record<string, string> }>?,
 ];
+
 function said(lines: Said[]) {
   const store = open(state);
   const key = (n: number, id?: number) => `telegram:${GROUP}:${id ?? 100 + n}`;
@@ -209,9 +219,11 @@ test("a question comes with hex's last two messages in the hour before it in its
     ["18:59:59", "A or B", { id: 9 }],
   ]);
   ledger([asked(8, "Ship it?", ["Yes", "No"])]);
+
   const question = asked(9, "**Which one serves the pages?**\nA or B", ["Caddy", "Tailscale"], {
     at: "2026-10-13T19:00:00.000Z",
   });
+
   expect(before(open(state), "telegram", question)).toEqual([
     "Caddy gives a short domain.",
     "The plan, A on the left.",
@@ -282,6 +294,7 @@ test("the check's asks read their words from their first place that has them: a 
       },
     },
   );
+
   const ask = (id: string, from: object[]) => ({
     id,
     kind: "pick",
@@ -291,6 +304,7 @@ test("the check's asks read their words from their first place that has them: a 
     options: [{ label: "Ok" }],
     from,
   });
+
   writeFileSync(
     join(state, "voice", "check.json"),
     JSON.stringify({
@@ -780,8 +794,9 @@ const TWO_HUBS = {
 async function discordHub() {
   mkdirSync(join(state, "discord"), { recursive: true });
   const heard: any[] = [];
+
   const server = createServer((socket) => {
-    socket.setEncoding("utf8");
+    socket.setEncoding("utf-8");
     socket.on("data", (chunk: string) =>
       heard.push(
         ...chunk
@@ -791,7 +806,9 @@ async function discordHub() {
       ),
     );
   });
+
   await new Promise<void>((resolve) => server.listen(join(state, "discord", "hub.sock"), resolve));
+
   return {
     heard,
     stop: () =>
@@ -838,6 +855,7 @@ test("a not needed with one hub down still reaches the rest and says what it mis
   await Bun.sleep(150);
   expect(questions.find("check:twilio")).toMatchObject({ partly: "Not needed" });
   const discord = await discordHub();
+
   try {
     expect(await questions.dismiss("check:twilio", "app")).toEqual({
       thread: `telegram:${DESK}`,
@@ -894,6 +912,7 @@ test("an answer that missed a copy is finished by the same answer, which only se
     'part of "Upgrade" went out',
   );
   const discord = await discordHub();
+
   try {
     expect(await questions.answer("check:twilio", "Upgrade", "app")).toEqual({
       thread: `telegram:${DESK}`,
@@ -912,10 +931,12 @@ test("an answer that missed a copy is finished by the same answer, which only se
 
 test("an option labelled Not needed that missed a copy is finished as the answer it was, not as a not needed", async () => {
   const options = ["Upgrade", "Not needed"];
+
   const hubs = {
     ...TWO_HUBS,
     asks: [{ ...TWO_HUBS.asks[0]!, options: options.map((label) => ({ label, value: label })) }],
   };
+
   ledger([
     asked(1, "Twilio?", options),
     { ...asked(2, "Upgrade Twilio now?", options), app: "discord" } as any,
@@ -935,6 +956,7 @@ test("an option labelled Not needed that missed a copy is finished as the answer
   await Bun.sleep(150);
   expect(questions.find("check:twilio")).toMatchObject({ partly: "Not needed" });
   const discord = await discordHub();
+
   try {
     expect(await questions.answer("check:twilio", "Not needed", "call")).toEqual({
       thread: `telegram:${DESK}`,
@@ -973,6 +995,7 @@ test("a question asked again while an earlier answer missed a copy is answered o
     { ...asked(2, "Twilio?", ["Upgrade", "Not yet"]), app: "discord" } as any,
     asked(3, "Twilio, again?", ["Upgrade", "Not yet"]),
   ]);
+
   const again = {
     ...TWO_HUBS,
     asks: [
@@ -985,6 +1008,7 @@ test("a question asked again while an earlier answer missed a copy is answered o
       },
     ],
   };
+
   writeFileSync(join(state, "voice", "check.json"), JSON.stringify(again));
   await Bun.sleep(150);
   expect(await questions.answer("check:twilio", "Not yet", "app")).toEqual({
@@ -1039,6 +1063,7 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
     "undo it again first",
   );
   discord = await discordHub();
+
   try {
     await questions.undo("check:twilio", "app");
     await until(() => discord.heard.some((line) => line.type === "reopen"));
@@ -1061,7 +1086,8 @@ test("an undo with a hub down takes back what it can, keeps the rest, and finish
 
 test("a question asked again over an earlier answer can be answered, and one undo takes back both", async () => {
   ledger([asked(1, "Ship it?", ["Yes", "No"]), asked(3, "Ship it now?", ["Yes", "No"])]);
-  const check = (refs: number[]) =>
+
+  const check = (refs: number[]) => {
     writeFileSync(
       join(state, "voice", "check.json"),
       JSON.stringify({
@@ -1082,6 +1108,8 @@ test("a question asked again over an earlier answer can be answered, and one und
         ],
       }),
     );
+  };
+
   check([1]);
   questions = new Questions(state, {
     t3Database: "/nonexistent",
@@ -1178,7 +1206,7 @@ test("a stuck item with a request goes to General once, however fast it is tappe
     sent: expect.any(String),
   });
   expect(
-    JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf8")).dismissed.runs,
+    JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8")).dismissed.runs,
   ).toBeString();
 });
 
@@ -1199,6 +1227,7 @@ test("T3 Code’s records give what waits on a limit, what never started, what f
     `insert into projection_projects values ('p', 'hex', '/code/hex'), ('home', '~', ?), ('none', 'No project', ?)`,
     [homedir(), join(homedir(), ".t3", "scratch")],
   );
+
   const thread = (id: string, payload: object, project = "p") =>
     db.run(`insert into orchestration_v2_projection_threads values (?, ?, ?, null, null, ?)`, [
       id,
@@ -1206,6 +1235,7 @@ test("T3 Code’s records give what waits on a limit, what never started, what f
       `${id} thread`,
       JSON.stringify(payload),
     ]);
+
   thread("parked", { limitRecovery: { resetAt: "2026-10-18T19:00:00.000Z" } });
   thread("queued", {});
   thread("broken", { lastVisitedAt: "2026-10-13T08:00:00.000Z" });
@@ -1213,11 +1243,13 @@ test("T3 Code’s records give what waits on a limit, what never started, what f
   thread("seen", { createdBy: "user", lastVisitedAt: "2026-10-13T12:00:00.000Z" });
   thread("loose", { createdBy: "user" }, "home");
   thread("scratch", { createdBy: "user" }, "none");
+
   const run = (id: string, ordinal: number, status: string, completed: string | null) =>
     db.run(
       `insert into orchestration_v2_projection_runs values (?, ?, ?, '2026-10-09T23:00:00.000Z', ?)`,
       [id, ordinal, status, completed],
     );
+
   run("parked", 1, "failed", "2026-10-13T10:00:00.000Z");
   run("queued", 1, "queued", null);
   run("broken", 1, "failed", "2026-10-13T10:00:00.000Z");
@@ -1265,7 +1297,9 @@ test("a check’s verdict is held to the ledger: real open refs and buttons only
       asked(3, "Music?", ["A", "B"]),
     ],
   };
+
   const ref = (message: number) => ({ app: "telegram", thread: DESK, message });
+
   const verdict = vet(
     {
       asks: [
@@ -1305,6 +1339,7 @@ test("a check’s verdict is held to the ledger: real open refs and buttons only
       calls: [{ id: "live_1" }],
     },
   );
+
   expect(verdict.asks[0]).toMatchObject({
     id: "check:twilio",
     refs: [ref(1)],
@@ -1325,6 +1360,7 @@ test("a check’s verdict is held to the ledger: real open refs and buttons only
 
 test("a closed thread's open question stays a check's ref, so answering the question settles it", () => {
   const closed = { app: "telegram", thread: `${GROUP}:7`, message: 4 };
+
   const verdict = vet(
     {
       asks: [
@@ -1346,6 +1382,7 @@ test("a closed thread's open question stays a check's ref, so answering the ques
     { telegram: [asked(4, "Music?", ["A", "B"], { thread: closed.thread })] },
     { threads: {}, calls: [] },
   );
+
   expect(verdict.asks[0]).toMatchObject({
     refs: [closed],
     from: [closed],
@@ -1557,6 +1594,7 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
     at: "2026-10-13T10:00:00.000Z",
     note: "Site: example.com",
   };
+
   const byHand = { message: 2, text: "Status: by hand", at: "2026-10-13T10:00:00.000Z" };
   ledger([asked(1, "Ship it?", ["Yes", "No"])], { [DESK]: pin, [GROUP]: byHand });
   const store = open(state);
@@ -1568,11 +1606,13 @@ test("a status post's page is read from hex.db as it opens, and only a new note 
     author: "owner",
     meta: { user: "owner" },
   });
+
   const task = store.createTask({
     title: "Fix the login page",
     message: "telegram:-1001234:40",
     owner: DESK,
   });
+
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
@@ -1644,6 +1684,7 @@ test("an answered ask the check lists again without buttons is flagged, not list
     options: [{ label: "Done" }],
     from: [],
   };
+
   const verdict = vet(
     { asks: [ask, { ...ask, id: "check:other" }], settle: [], fixed: [], flagged: [], stuck: [] },
     {},
@@ -1653,6 +1694,7 @@ test("an answered ask the check lists again without buttons is flagged, not list
       answered: { "check:sign-in": { label: "Done", at: "2026-10-13T12:00:00.000Z", via: "app" } },
     },
   );
+
   expect(verdict.asks.map((question) => question.id)).toEqual(["check:other"]);
   expect(verdict.flagged).toEqual([
     {
@@ -1672,6 +1714,7 @@ test("the check's fingerprint takes in the answers it reads, and stays the same 
       calls: [],
       t3: { stuck: [], fresh: [] },
     }) as unknown as Parameters<typeof digest>[0];
+
   const seen = { label: "Seen", at: "2026-10-13T00:00:00.000Z", via: "app" };
   expect(digest(records({ "check:read": seen }))).toBe(
     digest(records({ "check:read": { ...seen } })),
@@ -1691,6 +1734,7 @@ test("a check's links keep only what opens a page or an app on the phone", () =>
     "javascript:alert(1)",
     "/home/a/report.md",
   ];
+
   const verdict = vet(
     {
       asks: [
@@ -1713,11 +1757,13 @@ test("a check's links keep only what opens a page or an app on the phone", () =>
     {},
     { threads: {}, calls: [] },
   );
+
   expect(verdict.asks[0]!.links!.map((link) => link.url)).toEqual(urls.slice(0, 5));
 });
 
 test("an answer with no buttons is kept for good, other marks and unfinished answers for 14 days", () => {
   const old = new Date(Date.now() - 20 * 24 * 60 * 60_000).toISOString();
+
   const answers = {
     "check:read": { label: "Seen", at: old, via: "app" },
     "check:poll": {
@@ -1729,6 +1775,7 @@ test("an answer with no buttons is kept for good, other marks and unfinished ans
     },
     "check:half": { label: "B", at: old, via: "app", refs: [], told: [], undoing: true },
   };
+
   writeFileSync(
     join(state, "voice", "marks.json"),
     JSON.stringify({ answers, read: { "t3-done-0": old } }),
@@ -1739,7 +1786,7 @@ test("an answer with no buttons is kept for good, other marks and unfinished ans
     check: (why) => checks.push(why),
   });
   questions.read("t3-done-1");
-  const marks = JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf8"));
+  const marks = JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8"));
   expect([Object.keys(marks.answers), Object.keys(marks.read)]).toEqual([
     ["check:read"],
     ["t3-done-1"],
@@ -1793,7 +1840,7 @@ test("an old answer whose undo stops partway is kept until it is undone again", 
   await new Promise((resolve) => hub.close(resolve));
   await expect(questions.undo("check:read", "app")).rejects.toThrow("undo again to finish");
   expect(
-    JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf8")).answers["check:read"],
+    JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8")).answers["check:read"],
   ).toMatchObject({ undoing: true });
 });
 
@@ -1860,7 +1907,7 @@ test("an ask read out by its own id, which a check then takes up under one of it
 });
 
 test("a check's ask undone after a later check let it go stays one card, and answering it reaches every copy once, however often it's undone", async () => {
-  const check = (asks: object[]) =>
+  const check = (asks: object[]) => {
     writeFileSync(
       join(state, "voice", "check.json"),
       JSON.stringify({
@@ -1873,11 +1920,15 @@ test("a check's ask undone after a later check let it go stays one card, and ans
         asks,
       }),
     );
-  const both = (fields: Partial<Question> = {}) =>
+  };
+
+  const both = (fields: Partial<Question> = {}) => {
     ledger([
       asked(1, "Twilio?", ["Upgrade", "Not yet"], fields),
       asked(2, "Upgrade Twilio now?", ["Upgrade", "Wait"], fields),
     ]);
+  };
+
   both();
   check([
     {
@@ -2010,17 +2061,19 @@ test("General hears of the first failed check in a run of them, and of the first
   const store = open(state);
   store.keepThreads("telegram", { [GROUP]: { name: "hex" } });
   mkdirSync(join(state, "voice", "check"), { recursive: true });
+
   const told = () =>
     (
       store.db
         .query(`select body from messages where "to" = ? and "from" = 'check'`)
         .all(GROUP) as { body: string }[]
     ).map((row) => row.body);
+
   failed(state, "monday: the check hit a limit");
   failed(state, "tuesday: the check hit a limit");
   expect(told()).toHaveLength(1);
   expect(told()[0]).toContain("monday: the check hit a limit");
-  expect(readFileSync(join(state, "voice", "check", "error"), "utf8")).toBe(
+  expect(readFileSync(join(state, "voice", "check", "error"), "utf-8")).toBe(
     "tuesday: the check hit a limit\n",
   );
   rmSync(join(state, "voice", "check", "error"));
@@ -2030,6 +2083,7 @@ test("General hears of the first failed check in a run of them, and of the first
 
 test("an ask stays only while a place still asks it: an open question, an open thread's pinned post, a recent call, or a message from the last three days", () => {
   const old = new Date(Date.now() - 4 * 24 * 60 * 60_000).toISOString();
+
   const ask = (id: string, at: string, from: object[]) => ({
     id,
     kind: "do" as const,
@@ -2039,6 +2093,7 @@ test("an ask stays only while a place still asks it: an open question, an open t
     options: [{ label: "Done" }],
     from,
   });
+
   const verdict = vet(
     {
       asks: [
@@ -2061,6 +2116,7 @@ test("an ask stays only while a place still asks it: an open question, an open t
       pins: [{ app: "telegram", thread: DESK, message: 50 }],
     },
   );
+
   expect(verdict.asks.map((question) => question.id)).toEqual([
     "check:question",
     "check:pin",
@@ -2078,6 +2134,7 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
     },
     { label: "Sprite", detail: "Free, at half the speed." },
   ];
+
   const verdict = vet(
     {
       asks: [
@@ -2100,6 +2157,7 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
     {},
     { threads: {}, calls: [] },
   );
+
   expect(verdict.asks[0]).toMatchObject({
     why: "It is the only one as fast as the server.",
     options,

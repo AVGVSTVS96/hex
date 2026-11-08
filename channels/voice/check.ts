@@ -1,5 +1,5 @@
-import { spawn } from "child_process";
-import { createHash } from "crypto";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -10,21 +10,24 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-} from "fs";
-import { homedir, tmpdir } from "os";
-import { dirname, join } from "path";
+} from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { above } from "../../hub/fit.ts";
 import type { Question as Asked } from "../../hub/ledger.ts";
-import { open as store, shown, type Row, type Store } from "../../hub/store.ts";
+import { open as store, shown } from "../../hub/store.ts";
+import type { Row, Store } from "../../hub/store.ts";
 import { generalOf, nameOf } from "./activity.ts";
 import type { Answer, CheckResult, Curated, Ref, Source } from "./questions.ts";
 import { relay } from "./relay.ts";
-import { T3, type Stuck } from "./t3.ts";
+import { T3 } from "./t3.ts";
+import type { Stuck } from "./t3.ts";
 
 type Verdict = Pick<CheckResult, "asks" | "fixed" | "flagged" | "stuck"> & {
   settle: (Ref & { note: string })[];
 };
+
 type Known = {
   threads: Record<string, string>;
   calls: { id: string }[];
@@ -45,25 +48,28 @@ const LONG = 2400;
 // it. Events that land while it runs leave one mark, so a burst of them costs one more pass at
 // most, and a pass whose records haven't changed since the last one skips Opus.
 export class Check {
-  private dir: string;
+  private readonly dir: string;
 
-  constructor(private state: string) {
+  constructor(private readonly state: string) {
     this.dir = join(state, "voice", "check");
     mkdirSync(this.dir, { recursive: true });
   }
 
   get running() {
     const pid = Number(read(join(this.dir, "lock")));
+
     return !!pid && alive(pid);
   }
 
   start(why: string) {
     writeFileSync(join(this.dir, "next"), why);
-    if (!this.running)
+
+    if (!this.running) {
       spawn(process.execPath, [import.meta.path, this.state], {
         detached: true,
         stdio: "ignore",
       }).unref();
+    }
   }
 }
 
@@ -71,16 +77,20 @@ export class Check {
 // lock is let go is picked up again, by this process or the one that took the lock.
 async function run(state: string) {
   const dir = join(state, "voice", "check");
+
   while (existsSync(join(dir, "next")) && hold(join(dir, "lock"))) {
     try {
       for (let why = take(join(dir, "next")); why; why = take(join(dir, "next"))) {
         await pass(state, why).then(
-          () => rmSync(join(dir, "error"), { force: true }),
-          (error) =>
+          () => {
+            rmSync(join(dir, "error"), { force: true });
+          },
+          (error) => {
             failed(
               state,
               `${new Date().toISOString()} ${why}: ${error instanceof Error ? error.message : error}`,
-            ),
+            );
+          },
         );
       }
     } finally {
@@ -96,7 +106,8 @@ export function failed(state: string, error: string) {
   const first = !existsSync(file);
   writeFileSync(file, `${error}\n`);
   const general = first && generalOf(store(state).threads());
-  if (general)
+
+  if (general) {
     store(state).deliver({
       key: `check:failed:${createHash("sha256").update(error).digest("hex").slice(0, 12)}`,
       to: general.thread,
@@ -105,15 +116,20 @@ export function failed(state: string, error: string) {
       body: `[check] hex's question check failed, so nothing on the owner's Needs you list settles until it runs again: ${clip(error, 600)}. Its next failures stay in ${file} until a pass succeeds.`,
       meta: { user: "check" },
     });
+  }
 }
 
 function hold(lock: string): boolean {
   try {
     writeFileSync(lock, String(process.pid), { flag: "wx" });
+
     return true;
   } catch {
-    if (alive(Number(read(lock)))) return false;
+    if (alive(Number(read(lock)))) {
+      return false;
+    }
     rmSync(lock, { force: true });
+
     return hold(lock);
   }
 }
@@ -122,21 +138,27 @@ async function pass(state: string, why: string) {
   const started = new Date().toISOString();
   const records = gather(state);
   const inputs = digest(records);
-  if (records.previous?.inputs === inputs) return;
+
+  if (records.previous?.inputs === inputs) {
+    return;
+  }
   const hexDir = dirname(state);
+
   const verdict = vet(await claude(prompt(records, hexDir), hexDir, state), records.ledgers, {
     threads: records.threads,
     calls: records.calls,
     pins: records.pins.map(({ pin }) => pin),
     answered: records.answered,
   });
-  for (const ref of verdict.settle)
+
+  for (const ref of verdict.settle) {
     await relay(state, ref.app, {
       type: "settle",
       thread: ref.thread,
       message: ref.message,
       note: ref.note,
     }).catch((error) => process.stderr.write(`voice: check: ${error}\n`));
+  }
   const result: CheckResult = {
     at: started,
     why,
@@ -152,8 +174,9 @@ async function pass(state: string, why: string) {
     stuck: verdict.stuck,
     inputs,
   };
+
   const file = join(state, "voice", "check.json");
-  writeFileSync(`${file}.tmp`, JSON.stringify(result, null, 1) + "\n");
+  writeFileSync(`${file}.tmp`, `${JSON.stringify(result, null, 1)}\n`);
   renameSync(`${file}.tmp`, file);
 }
 
@@ -165,22 +188,27 @@ function gather(state: string) {
   const questions = store(state).questions({ asker: "hex" });
   const threads = store(state).threads();
   const general = generalOf(threads);
-  for (const thread of threads)
+
+  for (const thread of threads) {
     if (thread.app !== "voice") names[`${thread.app}:${thread.thread}`] = nameOf(thread, general);
+  }
   const ledgers = Object.groupBy(
     questions.filter((question) => question.app !== "voice" && question.options.length),
     (question) => question.app,
   ) as Record<string, Asked[]>;
+
   const openThreads = new Set(
     threads.filter((thread) => thread.open).map((thread) => `${thread.app}:${thread.thread}`),
   );
-  for (const pin of store(state).pins())
+
+  for (const pin of store(state).pins()) {
     if (pin.note && openThreads.has(`${pin.app}:${pin.thread}`))
       pins.push({
         pin: { app: pin.app, thread: pin.thread, message: pin.message },
         topic: names[`${pin.app}:${pin.thread}`] ?? pin.thread,
         text: clip(pin.note, LONG),
       });
+  }
   const shown = (app: string, question: Asked) => ({
     ref: { app, thread: question.thread, message: question.message },
     topic: names[`${app}:${question.thread}`] ?? question.thread,
@@ -191,6 +219,7 @@ function gather(state: string) {
     ...(question.answer && { answer: question.answer }),
     ...(question.settled && { settled: question.settled }),
   });
+
   const open = Object.entries(ledgers).flatMap(([app, questions]) =>
     questions
       .filter((question) => !question.answer && !question.settled)
@@ -199,14 +228,17 @@ function gather(state: string) {
         before: before(store(state), app, question),
       })),
   );
+
   const closed = Object.entries(ledgers).flatMap(([app, questions]) =>
     questions
       .filter((question) => (question.answer || question.settled) && question.at > recent)
       .map((question) => shown(app, question)),
   );
+
   const t3 = new T3(() => {});
   const t3Now = t3.query(now);
   t3.close();
+
   const calls = list(CALLS)
     .filter((file) => file.endsWith(".json") && statSync(join(CALLS, file)).mtimeMs > now - RECENT)
     .map((file) => json(join(CALLS, file)))
@@ -218,7 +250,9 @@ function gather(state: string) {
       summary: call.summary,
       waiting: call.waiting ?? [],
     }));
+
   const answers: Record<string, Answer> = json(join(state, "voice", "marks.json"))?.answers ?? {};
+
   const answered = Object.fromEntries(
     Object.entries(answers).flatMap(([id, answer]) =>
       final(answer)
@@ -236,6 +270,7 @@ function gather(state: string) {
         : [],
     ),
   );
+
   return {
     now: new Date(now).toISOString(),
     threads: names,
@@ -261,17 +296,22 @@ export function before(store: Store, app: string, question: Asked, max = 700) {
     question.at,
     new Date(Date.parse(question.at) - 60 * 60_000).toISOString(),
   );
+
   const id = (row: Row) => row.key.slice(row.key.lastIndexOf(":") + 1);
+
   const asked = Date.parse(
     rows.find((row) => id(row) === String(question.message))?.at ?? question.at,
   );
+
   const questions = new Set(
     store.questions({ app, thread: question.thread }).map((other) => String(other.message)),
   );
+
   const part = (row: Row) =>
     !!bare(row.body) &&
     Date.parse(row.at) > asked - 60_000 &&
     bare(question.text).includes(bare(row.body));
+
   return rows
     .filter(
       (row) =>
@@ -289,7 +329,7 @@ export function before(store: Store, app: string, question: Asked, max = 700) {
 
 // A message's words without the code fences a long message gains where it's cut into parts.
 function bare(text: string) {
-  return text.replace(/^```.*$/gm, "").trim();
+  return text.replaceAll(/^```.*$/gm, "").trim();
 }
 
 // What a pass reads, as one fingerprint: the same records give the same verdict.
@@ -304,6 +344,7 @@ function prompt({ ledgers, previous, ...records }: ReturnType<typeof gather>, he
     asks: (previous?.asks ?? []).map(({ id, question }: Curated) => ({ id, question })),
     stuck: (previous?.stuck ?? []).map(({ id, title }: Stuck) => ({ id, title })),
   };
+
   return `You're hex's check. hex is a personal assistant (its owner, and their rules, are in ${hexDir}/AGENTS.md): it works for its owner in many threads at once (Telegram topics, Discord threads, T3 Code threads, calls with its voice app), and each thread asks them things: questions with buttons, polls, the "waiting on you" part of its pinned status post, and the waiting lines of a call's wrap-up. They pile up in dozens of places and many go stale. Your pass turns them into one honest list in their voice app, where they answer each in place.
 
 It's there so the owner can manage their tasks with hex: by going through the transcripts, gathering, auditing and checking on work other agents did, including older work from a day or two ago that might not be done, it shows what needs to get done so they can ship more and get unblocked.
@@ -327,6 +368,7 @@ const NOTE = {
   properties: { title: { type: "string" }, text: { type: "string" }, did: { type: "string" } },
   required: ["title", "text"],
 };
+
 const REF = {
   type: "object",
   properties: {
@@ -336,11 +378,13 @@ const REF = {
   },
   required: ["app", "thread", "message"],
 };
+
 const SOURCE = {
   type: "object",
   properties: { ...REF.properties, call: { type: "string" } },
   required: ["app"],
 };
+
 const SCHEMA = {
   type: "object",
   properties: {
@@ -416,6 +460,7 @@ const SCHEMA = {
 function messages(hexDir: string) {
   try {
     const run = Bun.spawnSync([join(hexDir, ".hex", "bin", "hex"), "log"]);
+
     return run.success ? run.stdout : `The messages couldn't be read: ${run.stderr}`;
   } catch (error) {
     return `The messages couldn't be read: ${error}`;
@@ -443,9 +488,11 @@ function claude(input: string, hexDir: string, state: string) {
     hexDir,
     join(homedir(), ".claude", "projects"),
   ];
+
   const cwd = mkdtempSync(join(tmpdir(), "hex-check-"));
   writeFileSync(join(cwd, "messages.md"), messages(hexDir));
   writeFileSync(join(cwd, "threads.json"), JSON.stringify(store(state).threads(), null, 1));
+
   return new Promise<Verdict>((resolve, reject) => {
     const env = {
       ...Object.fromEntries(
@@ -456,6 +503,7 @@ function claude(input: string, hexDir: string, state: string) {
       CLAUDE_CODE_ENTRYPOINT: "hex",
       HEX_HELPER: "check",
     };
+
     const child = spawn("claude", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
     let out = "";
     let err = "";
@@ -464,10 +512,13 @@ function claude(input: string, hexDir: string, state: string) {
     child.on("error", reject);
     child.on("close", (code) => {
       rmSync(cwd, { recursive: true, force: true });
+
       try {
         const result = JSON.parse(out);
-        if (result.is_error || !result.structured_output)
+
+        if (result.is_error || !result.structured_output) {
           throw new Error(result.result ?? "no result");
+        }
         resolve(result.structured_output);
       } catch (error) {
         reject(new Error(`the check's claude exited ${code}: ${error} ${err.slice(-500)}`));
@@ -493,26 +544,33 @@ export function vet(
       (question) =>
         question.thread === ref.thread && String(question.message) === String(ref.message),
     );
+
   const open = (ref: Ref) => {
     const question = find(ref);
+
     return !!question && !question.answer && !question.settled;
   };
+
   const real = (source: Source) =>
     source.call
       ? calls.some((call) => call.id === source.call)
       : !!source.thread && (`${source.app}:${source.thread}` in threads || !!find(source as Ref));
+
   const curated: Curated[] = verdict.asks.map(({ from = [], ...question }) => {
     const places: Source[] = from
       .filter(real)
       .map(({ app, thread, message, call }) =>
         call ? { app: "voice", call } : { app, thread, ...(message !== undefined && { message }) },
       );
+
     const refs: Ref[] = places.flatMap(({ app, thread, message }) =>
       thread && message !== undefined && open({ app, thread, message })
         ? [{ app, thread, message }]
         : [],
     );
+
     const buttons = refs[0] ? find(refs[0])!.options : [];
+
     return {
       ...question,
       id: question.id.startsWith("check:") ? question.id : `check:${question.id}`,
@@ -525,20 +583,25 @@ export function vet(
       refs,
     };
   });
+
   const pinned = ({ app, thread, message }: Source) =>
     pins.some(
       (pin) => pin.app === app && pin.thread === thread && String(pin.message) === String(message),
     );
+
   const asked = (question: Curated) =>
     !!question.refs?.length ||
     !!question.from?.some((place) => place.call || pinned(place)) ||
     Date.parse(question.at) > Date.now() - RECENT;
+
   const again = (question: Curated) => !!answered[question.id] && !question.refs?.length;
+
   const listed = new Set(
     curated
       .flatMap((question) => question.refs ?? [])
       .map((ref) => `${ref.app} ${ref.thread} ${ref.message}`),
   );
+
   return {
     asks: curated.filter((question) => asked(question) && !again(question)),
     settle: verdict.settle
@@ -575,12 +638,13 @@ export function opens(url: string) {
 function take(file: string) {
   const why = read(file);
   rmSync(file, { force: true });
+
   return why || undefined;
 }
 
 function read(file: string) {
   try {
-    return readFileSync(file, "utf8").trim();
+    return readFileSync(file, "utf-8").trim();
   } catch {
     return "";
   }
@@ -588,7 +652,7 @@ function read(file: string) {
 
 function json(file: string) {
   try {
-    return JSON.parse(readFileSync(file, "utf8"));
+    return JSON.parse(readFileSync(file, "utf-8"));
   } catch {}
 }
 
@@ -613,4 +677,6 @@ function alive(pid: number) {
   }
 }
 
-if (import.meta.main) await run(process.argv[2]!);
+if (import.meta.main) {
+  await run(process.argv[2]!);
+}

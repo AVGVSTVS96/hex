@@ -7,9 +7,9 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 
@@ -23,16 +23,21 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "compacted-"));
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
   mkdirSync(join(home, ".hex/vendor"));
-  for (const script of ["compacted", "hex"])
+
+  for (const script of ["compacted", "hex"]) {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
+  }
   symlinkSync(join(import.meta.dir, "../../hub"), join(home, ".hex/hub"));
 });
 
-afterEach(() => rmSync(home, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 // A thread's messages in hex.db, a minute apart, as its session took or wrote them.
 function kept(thread: string, turns: [string, string][]) {
   const store = open(join(home, "state"));
+
   for (const [i, [author, body]] of turns.entries()) {
     store.deliver({ key: `telegram:${i}`, to: thread, from: "telegram", author, body }, SESSION);
     store.db
@@ -57,9 +62,11 @@ function hook(env: Record<string, string> = {}) {
       ...env,
     },
   });
+
   expect(run.exitCode).toBe(0);
   const out = run.stdout.toString();
   expect(out.trim().length).toBeLessThanOrEqual(LIMIT);
+
   return out;
 }
 

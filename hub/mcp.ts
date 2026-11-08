@@ -13,6 +13,7 @@ export type Tool = {
   reads?: (args: Record<string, unknown>) => boolean;
   _meta?: object;
 };
+
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
 export type ChannelServer = {
   title: string;
@@ -20,9 +21,11 @@ export type ChannelServer = {
   tools: Tool[];
   permission?: boolean;
 };
+
 export type Payload =
   | { type: "inbound"; content: string; meta: Record<string, string> }
   | { type: "permission"; request_id: string; behavior: string };
+
 export type Line = { send: (payload: Payload) => void };
 
 type Hooks = {
@@ -38,9 +41,12 @@ type Hooks = {
 const REVISIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const encoder = new TextEncoder();
 const NUDGE = 250;
+
 // Bun notices a disconnected request on the next event-loop tick.
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 type Result = { content: { type: "text"; text: string }[]; isError?: true };
+
 const failure = (text: string): Result => ({ content: [{ type: "text", text }], isError: true });
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
@@ -71,6 +77,7 @@ export function endpoint(
 
   function threadOf(request: Request) {
     const thread = request.headers.get("x-hex-thread");
+
     return request.headers.get("x-hex-channel") === channel && thread ? thread : undefined;
   }
 
@@ -80,8 +87,10 @@ export function endpoint(
 
   const active = new Map<string, Promise<Result>>();
   const tools = new Map(server.tools.map((tool) => [tool.name, tool]));
+
   const reads = (tool: string, args: Record<string, unknown>) =>
     !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args));
+
   async function once(
     thread: string | undefined,
     tool: string,
@@ -89,33 +98,44 @@ export function endpoint(
     gone: AbortSignal,
     id: string,
   ): Promise<Result> {
-    if (gone.aborted)
+    if (gone.aborted) {
       return failure(`${tool} didn't run: you stopped waiting before the hub read it`);
-    if (reads(tool, args)) return call(thread, tool, args);
-    if (!thread) return call(thread, tool, args);
+    }
+    if (reads(tool, args)) {
+      return await call(thread, tool, args);
+    }
+    if (!thread) {
+      return await call(thread, tool, args);
+    }
     const scope = `${channel}:${thread}`;
     const key = JSON.stringify([scope, id]);
     const value = [tool, args];
     const kept = store.operation(scope, id, JSON.stringify(value));
-    if (!isDeepStrictEqual(JSON.parse(kept.input), value))
+
+    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) {
       return failure(`${tool} didn't run: identity ${id} already identifies a different call`);
+    }
     if (!kept.fresh) {
-      if (kept.result !== null) return JSON.parse(kept.result);
-      return (
-        active.get(key) ??
+      if (kept.result !== null) {
+        return JSON.parse(kept.result);
+      }
+      return await (active.get(key) ??
         failure(
           `${tool} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
-        )
-      );
+        ));
     }
+
     const answer = call(thread, tool, args)
       .then((result) => {
         store.finishOperation(scope, id, JSON.stringify(result));
+
         return result;
       })
       .finally(() => active.delete(key));
+
     active.set(key, answer);
-    return answer;
+
+    return await answer;
   }
 
   async function call(
@@ -124,10 +144,11 @@ export function endpoint(
     args: Record<string, unknown>,
   ): Promise<Result> {
     try {
-      if (!thread)
+      if (!thread) {
         throw new Error(
           `this session is not bound to a ${server.title} thread (HEX_THREAD is unset)`,
         );
+      }
       return { content: [{ type: "text", text: await hooks.call(thread, tool, args) }] };
     } catch (error) {
       return {
@@ -144,11 +165,15 @@ export function endpoint(
 
   function listed(session: string | null) {
     const step = session ? starting.get(session) : undefined;
-    if (step?.is === "initialized") starting.set(session!, { is: "listed" });
+
+    if (step?.is === "initialized") {
+      starting.set(session!, { is: "listed" });
+    }
     if (step?.is === "streaming") {
       starting.set(session!, { is: "nudged", open: step.open });
       step.nudge();
     }
+
     if (step?.is === "nudged") {
       starting.delete(session!);
       step.open();
@@ -161,44 +186,71 @@ export function endpoint(
     let line: Line | undefined;
     let keepAlive: ReturnType<typeof setInterval> | undefined;
     const waiting = [": open\n\n"];
+
     const write = (text: string) => {
-      if (!controller) return void waiting.push(text);
+      if (!controller) {
+        return void waiting.push(text);
+      }
       try {
         controller.enqueue(encoder.encode(text));
       } catch {
         gone();
       }
     };
-    const event = (message: object) =>
+
+    const event = (message: object) => {
       write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", ...message })}\n\n`);
+    };
+
     function gone() {
       clearInterval(keepAlive);
-      if (session) starting.delete(session);
-      if (thread && line) hooks.close(thread, line);
+
+      if (session) {
+        starting.delete(session);
+      }
+      if (thread && line) {
+        hooks.close(thread, line);
+      }
       line = undefined;
     }
+
     const body = new ReadableStream<Uint8Array>({
       start(started) {
         controller = started;
-        for (const text of waiting.splice(0)) write(text);
+
+        for (const text of waiting.splice(0)) {
+          write(text);
+        }
       },
       cancel: gone,
     });
+
     if (thread) {
-      line = { send: (payload) => event(notification(payload, zone())) };
+      line = {
+        send: (payload) => {
+          event(notification(payload, zone()));
+        },
+      };
       keepAlive = setInterval(write, 15_000, ": keepalive\n\n");
       const open = () => line && hooks.open(thread, line);
+
       const nudge = () => {
         event({ method: "notifications/tools/list_changed" });
         clock.setTimeout(() => line && starting.get(session!)?.is === "nudged" && nudge(), NUDGE);
       };
+
       const step = session ? starting.get(session) : undefined;
-      if (!step) open();
-      else if (step.is === "listed") {
+
+      if (!step) {
+        open();
+      } else if (step.is === "listed") {
         starting.set(session!, { is: "nudged", open });
         nudge();
-      } else starting.set(session!, { is: "streaming", nudge, open });
+      } else {
+        starting.set(session!, { is: "streaming", nudge, open });
+      }
     }
+
     return new Response(body, {
       headers: {
         "content-type": "text/event-stream",
@@ -215,31 +267,45 @@ export function endpoint(
       request.headers.has("origin") ||
       !["127.0.0.1", "localhost"].includes(new URL(request.url).hostname) ||
       request.headers.get("authorization") !== `Bearer ${token}`
-    )
+    ) {
       return new Response("Forbidden", { status: 403 });
+    }
     const thread = threadOf(request);
     const session = request.headers.get("mcp-session-id");
-    if (request.method === "GET") return stream(thread, session);
-    if (request.method === "DELETE") return new Response(null, { status: 204 });
-    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+
+    if (request.method === "GET") {
+      return stream(thread, session);
+    }
+    if (request.method === "DELETE") {
+      return new Response(null, { status: 204 });
+    }
+    if (request.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
+    }
     let message: any;
+
     try {
       message = await request.json();
     } catch {
       return Response.json(
-        { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
+        { jsonrpc: "2.0", id: null, error: { code: -32_700, message: "Parse error" } },
         { status: 400 },
       );
     }
+
     const { id, method, params } = message ?? {};
+
     if (id === undefined || !method) {
-      if (method === "notifications/claude/channel/permission_request" && thread)
+      if (method === "notifications/claude/channel/permission_request" && thread) {
         hooks.permission(thread, params);
+      }
       return new Response(null, { status: 202 });
     }
+
     if (method === "initialize") {
       const opened = crypto.randomUUID();
       starting.set(opened, { is: "initialized" });
+
       const capabilities = {
         tools: { listChanged: true },
         experimental: {
@@ -247,42 +313,54 @@ export function endpoint(
           ...(server.permission && { "claude/channel/permission": {} }),
         },
       };
+
       const revision = REVISIONS.includes(params?.protocolVersion)
         ? params.protocolVersion
         : REVISIONS[0];
+
       const response = result(id, {
         protocolVersion: revision,
         capabilities,
         serverInfo: { name, version: "1.0.0" },
         instructions: server.instructions,
       });
+
       response.headers.set("mcp-session-id", opened);
+
       return response;
     }
+
     if (method === "tools/list") {
       listed(session);
+
       return result(id, { tools: server.tools });
     }
+
     if (method === "tools/call") {
       await tick();
       // Stock Claude Code sends its tool-use identity outside the model's arguments.
       const toolUse = params?._meta?.["claudecode/toolUseId"];
+
       const operation =
         typeof toolUse === "string" && toolUse
           ? JSON.stringify(["tool", toolUse])
           : session
             ? JSON.stringify(["mcp", session, id])
             : crypto.randomUUID();
+
       return result(
         id,
         await once(thread, params?.name, params?.arguments ?? {}, request.signal, operation),
       );
     }
-    if (method === "ping") return result(id, {});
+
+    if (method === "ping") {
+      return result(id, {});
+    }
     return Response.json({
       jsonrpc: "2.0",
       id,
-      error: { code: -32601, message: `Method not found: ${method}` },
+      error: { code: -32_601, message: `Method not found: ${method}` },
     });
   };
 
@@ -290,11 +368,12 @@ export function endpoint(
 }
 
 function notification(payload: Payload, zone: string) {
-  if (payload.type === "inbound")
+  if (payload.type === "inbound") {
     return {
       method: "notifications/claude/channel",
       params: { content: payload.content, meta: local(payload.meta, zone) },
     };
+  }
   return {
     method: "notifications/claude/channel/permission",
     params: { request_id: payload.request_id, behavior: payload.behavior },
@@ -304,8 +383,11 @@ function notification(payload: Payload, zone: string) {
 // The apps stamp a message in UTC, and a session that reads 06:31Z writes it down as 6:31am, so the
 // tag carries the owner's clock time with its offset instead.
 export function local(meta: Record<string, string>, zone: string): Record<string, string> {
-  const at = meta.ts ? Date.parse(meta.ts) : NaN;
-  if (Number.isNaN(at)) return meta;
+  const at = meta.ts ? Date.parse(meta.ts) : Number.NaN;
+
+  if (Number.isNaN(at)) {
+    return meta;
+  }
   try {
     return {
       ...meta,

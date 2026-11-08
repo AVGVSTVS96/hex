@@ -1,5 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { connect } from "net";
+import type { Socket } from "net";
 import {
   appendFileSync,
   chmodSync,
@@ -9,13 +11,13 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-} from "fs";
-import { connect, type Socket } from "net";
-import { tmpdir } from "os";
-import { join } from "path";
-import { Readable, Writable } from "stream";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Readable, Writable } from "node:stream";
 
-import { client, ndJsonStream, type SessionNotification } from "@agentclientprotocol/sdk";
+import { client, ndJsonStream } from "@agentclientprotocol/sdk";
+import type { SessionNotification } from "@agentclientprotocol/sdk";
 import type { Subprocess } from "bun";
 
 import { open as hexdb } from "../../hub/store.ts";
@@ -35,14 +37,16 @@ const proxies: Subprocess[] = [];
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "t3-bot-"));
   project = join(dir, "project");
+
   for (const path of [
     project,
     join(dir, "hex", ".claude"),
     join(dir, "state"),
     join(dir, "config", "jobs", "job12345"),
     join(dir, ".t3", "scratch", "chat"),
-  ])
+  ]) {
     mkdirSync(path, { recursive: true });
+  }
   writeFileSync(join(dir, ".claude.json"), '{"projects":{}}');
   script(
     "claude",
@@ -84,8 +88,12 @@ const registered = (): Record<string, any> =>
   );
 
 afterEach(() => {
-  for (const socket of sockets.splice(0)) socket.destroy();
-  for (const proxy of proxies.splice(0)) proxy.kill();
+  for (const socket of sockets.splice(0)) {
+    socket.destroy();
+  }
+  for (const proxy of proxies.splice(0)) {
+    proxy.kill();
+  }
   bot.kill();
   rmSync(dir, { recursive: true, force: true });
 });
@@ -111,7 +119,7 @@ function script(name: string, body: string) {
 
 function lines(file: string) {
   return existsSync(join(dir, file))
-    ? readFileSync(join(dir, file), "utf8").split("\n").slice(0, -1)
+    ? readFileSync(join(dir, file), "utf-8").split("\n").slice(0, -1)
     : [];
 }
 
@@ -119,12 +127,14 @@ async function open(path: string) {
   const socket = connect(path);
   sockets.push(socket);
   await new Promise((resolve) => socket.on("connect", resolve));
+
   return socket;
 }
 
 // T3 Code's side: an ACP client on the agent's socket.
 async function t3() {
   const socket = await open(join(dir, "state", "acp.sock"));
+
   return {
     ...(await acp(
       Writable.toWeb(socket) as WritableStream<Uint8Array>,
@@ -140,23 +150,29 @@ async function t3OverAcp() {
     ["bun", join(import.meta.dir, "acp.ts"), join(dir, "state", "acp.sock")],
     { stdin: "pipe", stdout: "pipe", stderr: "ignore" },
   );
+
   proxies.push(proxy);
+
   const stdin = new WritableStream<Uint8Array>({
     write: (chunk) => {
       proxy.stdin.write(chunk);
       proxy.stdin.flush();
     },
   });
+
   return { ...(await acp(stdin, proxy.stdout)), proxy };
 }
 
 async function acp(output: WritableStream<Uint8Array>, input: ReadableStream<Uint8Array>) {
   const updates: SessionNotification["update"][] = [];
+
   const connection = client({ name: "t3" })
     .onNotification("session/update", ({ params }) => void updates.push(params.update))
     .connect(ndJsonStream(output, input));
+
   const agent = connection.agent;
   await agent.request("initialize", { protocolVersion: 1, clientCapabilities: {} });
+
   return { agent, updates };
 }
 
@@ -183,14 +199,16 @@ async function session(thread: string) {
       respawnFlags: ["--settings", settings],
     }),
   );
+
   // A session the hub didn't start is found by its job record once it connects.
-  if (!existsSync(join(dir, "agents")))
+  if (!existsSync(join(dir, "agents"))) {
     writeFileSync(
       join(dir, "agents"),
       JSON.stringify([
         { id: "job12345", sessionId: SESSION, pid: Bun.spawn(["sleep", "60"]).pid, status: "idle" },
       ]),
     );
+  }
   const line = await channel({
     stateDir: join(dir, "state"),
     path: "/t3",
@@ -198,15 +216,19 @@ async function session(thread: string) {
     thread,
     at: PORT,
   });
+
   const inbound = line.received;
+
   const transcript = join(
     dir,
     "config",
     "projects",
-    project.replace(/[^a-zA-Z0-9]/g, "-"),
+    project.replaceAll(/[^a-zA-Z0-9]/g, "-"),
     `${SESSION}.jsonl`,
   );
+
   mkdirSync(join(transcript, ".."), { recursive: true });
+
   return {
     inbound,
     // As the prompt hook does for a session started before hex kept messages: it takes what reached it.
@@ -222,16 +244,17 @@ async function session(thread: string) {
     },
     idle: (background = false) =>
       hook({ type: "state", thread, busy: false, ...(background && { background }) }),
-    write: (...entries: object[]) =>
-      appendFileSync(transcript, entries.map((entry) => JSON.stringify(entry) + "\n").join("")),
-    read: () => readFileSync(transcript, "utf8"),
+    write: (...entries: object[]) => {
+      appendFileSync(transcript, entries.map((entry) => `${JSON.stringify(entry)}\n`).join(""));
+    },
+    read: () => readFileSync(transcript, "utf-8"),
   };
 }
 
 // A line on hub.sock, the way a session's hooks send one. Resolves once the hub has read it.
 async function hook(payload: object) {
   const socket = await open(join(dir, "state", "hub.sock"));
-  socket.end(JSON.stringify(payload) + "\n");
+  socket.end(`${JSON.stringify(payload)}\n`);
   await new Promise((resolve) => socket.on("close", resolve));
 }
 
@@ -241,20 +264,24 @@ const prompt = {
   isMeta: true,
   message: { content: '<channel source="t3">hi</channel>' },
 };
+
 const reply = {
   type: "assistant",
   message: { id: "m1", content: [{ type: "text", text: "hi from hex" }] },
 };
+
 const done = { type: "system", subtype: "turn_duration" };
 const now = () => new Date().toISOString();
 
 // A thread hex keeps: T3 opened it in the project, and its session answered the first prompt.
 async function kept(agent: Awaited<ReturnType<typeof t3>>["agent"]) {
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
+
   const first = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("launched").length);
   const hex = await session(sessionId);
   await hex.busy();
@@ -267,6 +294,7 @@ async function kept(agent: Awaited<ReturnType<typeof t3>>["agent"]) {
     `insert into messages (key, "to", "from", author, body, at, taken_by, taken_at) values ('t3:answer', ?1, 't3', 'hex', 'hi from hex', ?2, ?3, ?2)`,
   ).run(sessionId, new Date().toISOString(), SESSION);
   db.close();
+
   return { sessionId, hex };
 }
 
@@ -274,10 +302,12 @@ test("a new thread starts its hex session in its project on the first prompt, wh
   const { agent, updates } = await t3();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
   expect(lines("launched")).toEqual([]);
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("cwd").length);
   expect(lines("cwd")).toEqual([project]);
   const hex = await session(sessionId);
@@ -299,9 +329,11 @@ test("a turn whose session stops with a background agent still working stays ope
   const { agent, updates } = await t3();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
   let answered = false;
+
   const answer = agent
     .request("session/prompt", { sessionId, prompt: [{ type: "text", text: "hi" }] })
     .finally(() => (answered = true));
+
   await until(() => lines("cwd").length);
   const hex = await session(sessionId);
   await hex.busy();
@@ -356,6 +388,7 @@ test("/compact stops a running session, resumes it with the command once it has 
   const { agent, updates } = await t3();
   const { sessionId, hex } = await kept(agent);
   updates.length = 0;
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [
@@ -363,6 +396,7 @@ test("/compact stops a running session, resumes it with the command once it has 
       { type: "text", text: "T3 context" },
     ],
   });
+
   await until(() => lines("launched").some((line) => line.includes('"/compact"')));
   expect(lines("calls")).toContain(JSON.stringify(["stop", SESSION.slice(0, 8)]));
   expect(JSON.parse(lines("launched").at(-1)!)).toEqual(
@@ -382,10 +416,12 @@ test("/compact stops a running session, resumes it with the command once it has 
 test("a /compact that fails fails the prompt with the command's error", async () => {
   const { agent, updates } = await t3();
   const { sessionId, hex } = await kept(agent);
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "/compact" }],
   });
+
   await until(() => lines("launched").some((line) => line.includes('"/compact"')));
   hex.write({
     type: "system",
@@ -409,6 +445,7 @@ const t3Tools = (token: string) => ({
 
 test("a session gets T3's MCP servers, and starts again with them when they change", async () => {
   const { agent } = await t3();
+
   const { sessionId } = await agent.request("session/new", {
     cwd: project,
     mcpServers: [
@@ -421,10 +458,12 @@ test("a session gets T3's MCP servers, and starts again with them when they chan
       },
     ],
   });
+
   const first = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("launched").length);
   const launched = JSON.parse(lines("launched")[0]!);
   expect(JSON.parse(launched[launched.indexOf("--mcp-config") + 1])).toEqual({
@@ -437,7 +476,7 @@ test("a session gets T3's MCP servers, and starts again with them when they chan
       docs: { type: "http", url: "http://localhost:9/mcp", headers: { Authorization: "Bearer x" } },
     },
   });
-  const saved = join(dir, "config", "projects", project.replace(/[^a-zA-Z0-9]/g, "-"));
+  const saved = join(dir, "config", "projects", project.replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(sessionId);
@@ -446,10 +485,12 @@ test("a session gets T3's MCP servers, and starts again with them when they chan
   hex.write(prompt, reply, done);
   await hex.idle();
   expect(await first).toEqual({ stopReason: "end_turn" });
+
   // Not this test's child, so it's reaped once killed and the hub sees it go, as with a real session.
   const pid = Number(
     Bun.spawnSync(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"]).stdout.toString(),
   );
+
   writeFileSync(join(dir, "agents"), JSON.stringify([{ sessionId: SESSION, pid, status: "idle" }]));
   await agent.request("session/resume", { sessionId, cwd: project, mcpServers: [t3Tools("two")] });
   agent
@@ -465,23 +506,27 @@ test("a session gets T3's MCP servers, and starts again with them when they chan
 
 test("a turn whose T3 connection closes stops its session, and a reconnected T3 starts it again with its new tools", async () => {
   const first = await t3();
+
   const { sessionId } = await first.agent.request("session/new", {
     cwd: project,
     mcpServers: [t3Tools("one")],
   });
+
   first.agent
     .request("session/prompt", { sessionId, prompt: [{ type: "text", text: "hi" }] })
     .catch(() => {});
   await until(() => lines("launched").length);
-  const saved = join(dir, "config", "projects", project.replace(/[^a-zA-Z0-9]/g, "-"));
+  const saved = join(dir, "config", "projects", project.replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(sessionId);
   await until(() => JSON.stringify(registered()).includes(SESSION));
   await hex.busy();
+
   const pid = Number(
     Bun.spawnSync(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"]).stdout.toString(),
   );
+
   writeFileSync(join(dir, "agents"), JSON.stringify([{ sessionId: SESSION, pid, status: "busy" }]));
   first.socket.destroy();
   await until(
@@ -510,10 +555,12 @@ test("a thread offers T3 model and effort pickers, and its session starts again 
     JSON.stringify({ model: "opus", effortLevel: "medium" }),
   );
   const { agent } = await t3();
+
   const { sessionId, configOptions } = await agent.request("session/new", {
     cwd: project,
     mcpServers: [],
   });
+
   expect(
     configOptions!.map((option) => [
       option.id,
@@ -531,21 +578,25 @@ test("a thread offers T3 model and effort pickers, and its session starts again 
       value: "ludicrous",
     }),
   ).rejects.toThrow();
+
   const { configOptions: picked } = await agent.request("session/set_config_option", {
     sessionId,
     configId: "effort",
     value: "xhigh",
   });
+
   expect(picked.find((option) => option.id === "effort")).toMatchObject({ currentValue: "xhigh" });
+
   const first = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("launched").length);
   const launched = JSON.parse(lines("launched")[0]!);
   expect(launched[launched.indexOf("--effort") + 1]).toBe("xhigh");
   expect(launched).not.toContain("--model");
-  const saved = join(dir, "config", "projects", project.replace(/[^a-zA-Z0-9]/g, "-"));
+  const saved = join(dir, "config", "projects", project.replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(sessionId);
@@ -554,9 +605,11 @@ test("a thread offers T3 model and effort pickers, and its session starts again 
   hex.write(prompt, reply, done);
   await hex.idle();
   expect(await first).toEqual({ stopReason: "end_turn" });
+
   const pid = Number(
     Bun.spawnSync(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"]).stdout.toString(),
   );
+
   writeFileSync(join(dir, "agents"), JSON.stringify([{ sessionId: SESSION, pid, status: "idle" }]));
   await agent.request("session/set_config_option", {
     sessionId,
@@ -586,17 +639,19 @@ test("a thread T3 opens is kept only once it sends a prompt, so T3's provider ch
   await until(() => check.updates.length);
   check.socket.destroy();
   expect(registered()).toEqual({});
-  expect(JSON.parse(readFileSync(join(dir, ".claude.json"), "utf8")).projects).toEqual({});
+  expect(JSON.parse(readFileSync(join(dir, ".claude.json"), "utf-8")).projects).toEqual({});
   expect(lines("launched")).toEqual([]);
 });
 
 test("a known thread resumes, an unprompted one T3 opened before resumes as new, and a prompt to an unknown one is not found", async () => {
   const first = await t3();
   const { sessionId } = await kept(first.agent);
+
   const { sessionId: unprompted } = await first.agent.request("session/new", {
     cwd: project,
     mcpServers: [],
   });
+
   first.socket.destroy();
   const { agent } = await t3();
   expect(
@@ -617,10 +672,12 @@ test("a known thread resumes, an unprompted one T3 opened before resumes as new,
 test("hex acp keeps T3 connected through a hub restart, and the turn T3 waits on carries on without repeating what T3 has", async () => {
   const { agent, updates, proxy } = await t3OverAcp();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("launched").length);
   const hex = await session(sessionId);
   await hex.busy();
@@ -633,9 +690,11 @@ test("hex acp keeps T3 connected through a hub restart, and the turn T3 waits on
     },
   );
   await until(() => texts(updates).length);
+
   const pid = Number(
     Bun.spawnSync(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"]).stdout.toString(),
   );
+
   writeFileSync(
     join(dir, "agents"),
     JSON.stringify([{ id: "job12345", sessionId: SESSION, pid, status: "busy" }]),
@@ -665,10 +724,12 @@ test("hex acp keeps T3 connected through a hub restart, and the turn T3 waits on
 test("a turn rejoined after a hub restart follows the session running for its thread, not the one it saved before", async () => {
   const { agent, updates } = await t3OverAcp();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("launched").length);
   const hex = await session(sessionId);
   await hex.busy();
@@ -681,18 +742,20 @@ test("a turn rejoined after a hub restart follows the session running for its th
     },
   );
   await until(() => texts(updates).length);
+
   const pid = Number(
     Bun.spawnSync(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"]).stdout.toString(),
   );
+
   writeFileSync(
     join(dir, "agents"),
     JSON.stringify([{ id: "job12345", sessionId: SESSION, pid, status: "busy" }]),
   );
-  await restart(() =>
+  await restart(() => {
     hexdb(join(dir, "hex", "state")).keepThreads("t3", {
       [sessionId]: { ...registered()[sessionId], session: "f0e1d2c3-0000-4000-8000-000000000000" },
-    }),
-  );
+    });
+  });
   const back = await session(sessionId);
   back.write(
     {
@@ -732,10 +795,12 @@ test("what T3 picked for a thread it hasn't prompted yet still holds after a hub
 test("a prompt a hub restart lost before its session took it reaches the session once hex is back", async () => {
   const { agent } = await t3OverAcp();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("launched").length);
   await restart();
   await until(() => lines("launched").length === 2);
@@ -758,10 +823,12 @@ test("a prompt the old hub never read before a restart reaches the session once 
   const { agent } = await t3OverAcp();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
   bot.kill("SIGSTOP");
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   bot.kill("SIGKILL");
   await restart();
   await until(() => lines("launched").length);
@@ -777,11 +844,14 @@ test("a prompt the old hub never read before a restart reaches the session once 
 test("a thread's history loads the same each time, so hex acp can tell what T3 already has when a hub restart cuts a load short", async () => {
   const { agent, updates } = await t3();
   const { sessionId } = await kept(agent);
+
   const load = async () => {
     updates.splice(0);
     await agent.request("session/load", { sessionId, cwd: project, mcpServers: [] });
+
     return updates.filter((update) => update.sessionUpdate.endsWith("_message_chunk"));
   };
+
   const loaded = await load();
   expect(loaded.map((update) => update.sessionUpdate)).toEqual([
     "user_message_chunk",
@@ -792,7 +862,7 @@ test("a thread's history loads the same each time, so hex acp can tell what T3 a
 
 // Claude's daemon lists the session as working, as it does through a turn.
 function working() {
-  const agents = JSON.parse(readFileSync(join(dir, "agents"), "utf8"));
+  const agents = JSON.parse(readFileSync(join(dir, "agents"), "utf-8"));
   writeFileSync(
     join(dir, "agents"),
     JSON.stringify(agents.map((agent: object) => ({ ...agent, status: "busy" }))),
@@ -803,10 +873,12 @@ test("a Stop interrupts the turn the way Esc does: the prompt answers as cancell
   const { agent } = await t3();
   const { sessionId, hex } = await kept(agent);
   working();
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "run for a while" }],
   });
+
   await until(() => hex.inbound.length === 2);
   await hex.busy();
   await agent.notify("session/cancel", { sessionId });
@@ -826,10 +898,12 @@ test("a Stop that comes before the session reports its turn interrupts the turn 
   const { agent } = await t3();
   const { sessionId, hex } = await kept(agent);
   working();
+
   const answer = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "run for a while" }],
   });
+
   await until(() => hex.inbound.length === 2);
   await agent.notify("session/cancel", { sessionId });
   expect(hex.read()).not.toContain("[Request interrupted by user");
@@ -868,20 +942,24 @@ function steering(sessionId: string) {
 test("a steer leaves the session running, its message reaches the session mid-turn, and its turn ends with the session's", async () => {
   const { agent, updates } = await t3();
   const { sessionId, hex } = await kept(agent);
+
   const first = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "run for a while" }],
   });
+
   await until(() => hex.inbound.length === 2);
   await hex.busy();
   hex.write({ ...prompt, timestamp: now() });
   steering(sessionId);
   await agent.notify("session/cancel", { sessionId });
   expect(await first).toEqual({ stopReason: "cancelled" });
+
   const steered = agent.request("session/prompt", {
     sessionId,
     prompt: [{ type: "text", text: "and check the tests" }],
   });
+
   await until(() => hex.inbound.length === 3);
   expect(hex.inbound[2]).toMatchObject({ type: "inbound", content: "and check the tests" });
   hex.write(
@@ -919,6 +997,7 @@ function recorded(threads: [string, string, boolean?][]) {
   db.run(
     "create table orchestration_v2_projection_threads (thread_id text, title text, deleted_at text)",
   );
+
   for (const [key, title, deleted] of threads) {
     db.run(
       "insert into orchestration_v2_projection_provider_threads values ('acpRegistry', '2026-10-21', ?)",
@@ -930,6 +1009,7 @@ function recorded(threads: [string, string, boolean?][]) {
       deleted ? "2026-10-21" : null,
     ]);
   }
+
   db.close();
 }
 
@@ -1004,12 +1084,14 @@ test("a thread T3 recorded once and has no record of now stays open, since the r
 
 test("a chat with no project works in hex's folder", async () => {
   const { agent } = await t3();
+
   for (const cwd of [dir, join(dir, ".t3", "scratch", "chat"), project]) {
     const { sessionId } = await agent.request("session/new", { cwd, mcpServers: [] });
     agent
       .request("session/prompt", { sessionId, prompt: [{ type: "text", text: "hi" }] })
       .catch(() => {});
   }
+
   await until(() => lines("cwd").length === 3);
   expect(lines("cwd").sort()).toEqual([join(dir, "hex"), join(dir, "hex"), project]);
 });
@@ -1042,7 +1124,7 @@ test("images and files reach the session as paths it can read", async () => {
   const [text, image, link, file] = hex.inbound[0].content.split("\n\n");
   expect(text).toBe("look");
   const saved = image.match(/^\[image: (.+\.png)\]$/)[1];
-  expect(readFileSync(saved, "utf8")).toBe("png bytes");
+  expect(readFileSync(saved, "utf-8")).toBe("png bytes");
   expect(link).toBe("[notes.md](/work/notes.md)");
   expect(file).toBe('<file path="/work/a.ts">\nexport {}\n</file>');
 });
@@ -1066,40 +1148,48 @@ function t3Server() {
   db.run("insert into projection_projects values ('project-1', ?, '2026-10-06', null)", [project]);
   db.close();
   const requests: { tag: string; payload: any }[] = [];
+
   const listener = Bun.serve({
     port: 0,
     fetch: (request, server) => {
       const url = new URL(request.url);
-      if (url.pathname === "/api/auth/websocket-ticket")
+
+      if (url.pathname === "/api/auth/websocket-ticket") {
         return request.headers.get("authorization") === "Bearer tok"
           ? Response.json({ ticket: "tick" })
           : new Response(null, { status: 401 });
+      }
       if (
         url.pathname === "/ws" &&
         url.searchParams.get("wsTicket") === "tick" &&
         server.upgrade(request)
-      )
+      ) {
         return;
+      }
       return new Response(null, { status: 404 });
     },
     websocket: {
       message: (ws, data) => {
         const { id, tag, payload } = JSON.parse(String(data));
         requests.push({ tag, payload });
+
         const value =
           tag === "server.importAcpRegistrySession"
             ? { threadId: `thread:imported:${payload.sessionId}`, imported: true }
             : { sequence: requests.length };
+
         ws.send(
           JSON.stringify([{ _tag: "Exit", requestId: id, exit: { _tag: "Success", value } }]),
         );
       },
     },
   });
+
   writeFileSync(
     join(userdata, "server-runtime.json"),
     JSON.stringify({ origin: `http://127.0.0.1:${listener.port}` }),
   );
+
   return { requests, stop: () => listener.stop(true) };
 }
 
@@ -1107,16 +1197,19 @@ function t3Server() {
 async function mirrored(turns: [string, string][]) {
   const server = t3Server();
   const { agent } = await t3();
+
   const { sessionId: source } = await agent.request("session/new", {
     cwd: project,
     mcpServers: [],
   });
+
   const first = agent.request("session/prompt", {
     sessionId: source,
     prompt: [{ type: "text", text: "hi" }],
   });
+
   await until(() => lines("launched").length);
-  const saved = join(dir, "config", "projects", project.replace(/[^a-zA-Z0-9]/g, "-"));
+  const saved = join(dir, "config", "projects", project.replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(saved, { recursive: true });
   writeFileSync(join(saved, `${SESSION}.jsonl`), "");
   const hex = await session(source);
@@ -1127,7 +1220,8 @@ async function mirrored(turns: [string, string][]) {
   await first;
   const db = new Database(join(dir, "hex", "state", "hex.db"));
   db.query('delete from messages where "to" = ?').run(source);
-  for (const [i, [author, body]] of turns.entries())
+
+  for (const [i, [author, body]] of turns.entries()) {
     db.query(
       `insert into messages (key, "to", "from", author, body, at, taken_by, taken_at) values (?, ?, 'telegram', ?, ?, ?, ?, ?)`,
     ).run(
@@ -1139,11 +1233,13 @@ async function mirrored(turns: [string, string][]) {
       SESSION,
       `2026-10-06T10:0${i}:00.000Z`,
     );
+  }
   const sock = await open(join(dir, "state", "hub.sock"));
-  sock.write(JSON.stringify({ type: "mirror", thread: source, to: "t3" }) + "\n");
+  sock.write(`${JSON.stringify({ type: "mirror", thread: source, to: "t3" })}\n`);
   await until(() =>
     server.requests.some((request) => request.tag === "orchestration.dispatchCommand"),
   );
+
   return { server, agent, thread: server.requests[0]!.payload.sessionId as string };
 }
 
@@ -1155,6 +1251,7 @@ test("a thread mirrored into T3 is imported as a hex session in its project, wit
     ["hex", "Still roomy."],
     ["owner", "thanks"],
   ]);
+
   await until(
     () =>
       server.requests.filter((request) => request.tag === "orchestration.dispatchCommand")
@@ -1177,23 +1274,26 @@ test("a thread mirrored into T3 is imported as a hex session in its project, wit
     [`thread:imported:${thread}`, "how full is your context?", "user", "queue_after_active"],
     [`thread:imported:${thread}`, "thanks", "user", "queue_after_active"],
   ]);
+
   // Each token is revoked once its call is done, which hex doesn't wait for.
   const cli = await until(
     () =>
       lines("t3-cli").filter((line) => line.startsWith("auth session revoke")).length === 2 &&
       lines("t3-cli"),
   );
+
   const issued = cli.flatMap((line, at) => (line.startsWith("auth session issue") ? [at] : []));
   expect(issued).toHaveLength(2);
-  issued.forEach((at, n) =>
-    expect(cli.indexOf(`auth session revoke s${n + 1}`)).toBeGreaterThan(at),
-  );
+  issued.forEach((at, n) => {
+    expect(cli.indexOf(`auth session revoke s${n + 1}`)).toBeGreaterThan(at);
+  });
   expect((await agent.request("session/list", { cwd: project })).sessions).toEqual([
     { sessionId: thread, cwd: project, title: "project" },
   ]);
 
   const { agent: importer, updates } = await t3();
   await importer.request("session/load", { sessionId: thread, cwd: project, mcpServers: [] });
+
   const turn = async (text: string) => {
     updates.splice(0);
     expect(
@@ -1205,12 +1305,14 @@ test("a thread mirrored into T3 is imported as a hex session in its project, wit
         ],
       }),
     ).toEqual({ stopReason: "end_turn" });
+
     return updates.flatMap((update) =>
       update.sessionUpdate === "agent_message_chunk" && update.content.type === "text"
         ? [update.content.text]
         : [],
     );
   };
+
   expect(
     await turn(
       "<t3_code_instructions>\nBe brief.\n</t3_code_instructions>\n\n<user_request>\n(hex started this thread)\n</user_request>",
@@ -1237,6 +1339,7 @@ test("a T3 prompt that isn't the next message of a backfill drops what is left o
     ["owner", "anchors?"],
     ["hex", "In."],
   ]);
+
   const { agent: importer, updates } = await t3();
   await importer.request("session/load", { sessionId: thread, cwd: project, mcpServers: [] });
   updates.splice(0);

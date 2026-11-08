@@ -1,5 +1,7 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { createHash } from "crypto";
+import { connect } from "net";
+import type { Socket } from "net";
+import { createHash } from "node:crypto";
 import {
   mkdtempSync,
   mkdirSync,
@@ -8,21 +10,16 @@ import {
   writeFileSync,
   chmodSync,
   existsSync,
-} from "fs";
-import { connect, type Socket } from "net";
-import { tmpdir } from "os";
-import { dirname, join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { schnorr } from "@noble/curves/secp256k1.js";
 import type { ServerWebSocket, Subprocess } from "bun";
-import { matchFilter, type Filter } from "nostr-tools/filter";
-import {
-  generateSecretKey,
-  getPublicKey,
-  finalizeEvent,
-  verifyEvent,
-  type Event,
-} from "nostr-tools/pure";
+import { matchFilter } from "nostr-tools/filter";
+import type { Filter } from "nostr-tools/filter";
+import { generateSecretKey, getPublicKey, finalizeEvent, verifyEvent } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
 import { bytesToHex } from "nostr-tools/utils";
 
 import { open } from "../../hub/store.ts";
@@ -49,6 +46,7 @@ function fakeRelay() {
       event && [5, 7].includes(event.kind)
         ? events.find((stored) => stored.id === event.tags.find((t) => t[0] === "e")?.[1])
         : undefined;
+
     return event?.tags.find((t) => t[0] === "h")?.[1] ?? channelOf(target);
   }
 
@@ -71,32 +69,40 @@ function fakeRelay() {
 
   async function query(request: Request) {
     const body = await request.text();
+
     const auth: Event = JSON.parse(
       Buffer.from(
         request.headers.get("authorization")!.replace(/^Nostr /, ""),
         "base64",
       ).toString(),
     );
+
     const tag = (name: string) => auth.tags.find((t) => t[0] === name)?.[1];
+
     const signedFor =
       tag("u") === request.url &&
       tag("method") === "POST" &&
       tag("payload") === createHash("sha256").update(body).digest("hex");
+
     if (
       !verifyEvent(auth) ||
-      auth.kind !== 27235 ||
+      auth.kind !== 27_235 ||
       !signedFor ||
       JSON.parse(request.headers.get("x-auth-tag") ?? "[]")[1] !== owner
-    )
+    ) {
       return new Response("bad auth", { status: 401 });
+    }
     const [filter] = JSON.parse(body);
-    if (filter.kinds[0] === 20001)
+
+    if (filter.kinds[0] === 20_001) {
       return Response.json(
         filter.authors
           .filter((author: string) => online.has(author))
           .map((author: string) => signed(relayKey, 20001, online.get(author)!, [["p", author]])),
       );
+    }
     const channel = filter["#h"][0];
+
     const rows = events
       .filter(
         (event) => matchFilter({ kinds: filter.kinds, "#h": [channel] }, event) && !isReply(event),
@@ -109,18 +115,21 @@ function fakeRelay() {
           (event.created_at === filter.until && event.id > filter.before_id),
       )
       .slice(0, filter.limit);
+
     const summaries = rows.flatMap((row) => {
       const replies = events.filter((event) =>
         event.tags.some((t) => t[0] === "e" && t[1] === row.id),
       );
+
       const summary = {
         reply_count: replies.length,
         descendant_count: replies.length,
         last_reply_at: Math.max(...replies.map((reply) => reply.created_at)),
       };
+
       return replies.length > 0
         ? [
-            signed(relayKey, 39005, JSON.stringify(summary), [
+            signed(relayKey, 39_005, JSON.stringify(summary), [
               ["e", row.id],
               ["d", row.id],
               ["h", channel],
@@ -128,10 +137,11 @@ function fakeRelay() {
           ]
         : [];
     });
+
     return Response.json([
       ...rows,
       ...summaries,
-      signed(relayKey, 39006, '{"has_more":false,"next_cursor":null}', [
+      signed(relayKey, 39_006, '{"has_more":false,"next_cursor":null}', [
         ["d", `${channel}:head`],
         ["h", channel],
       ]),
@@ -141,11 +151,15 @@ function fakeRelay() {
   const server = Bun.serve<Peer, {}>({
     port: 0,
     fetch(request, server) {
-      if (new URL(request.url).pathname === "/query") return query(request);
+      if (new URL(request.url).pathname === "/query") {
+        return query(request);
+      }
       if (new URL(request.url).pathname.startsWith("/media/")) {
         downloads.push(request.headers.get("authorization") ?? "");
+
         return new Response("pixels");
       }
+
       return server.upgrade(request, { data: { challenge: crypto.randomUUID(), subs: new Map() } })
         ? undefined
         : new Response("relay");
@@ -163,25 +177,39 @@ function fakeRelay() {
         frames.push(frame);
         const [type, ...rest] = frame;
         const reply = (...message: unknown[]) => ws.send(JSON.stringify(message));
+
         if (type === "AUTH") {
           const event: Event = rest[0];
           const tag = (name: string) => event.tags.find((t) => t[0] === name);
+
           const ok =
             verifyEvent(event) &&
-            event.kind === 22242 &&
+            event.kind === 22_242 &&
             tag("challenge")?.[1] === ws.data.challenge &&
             tag("auth")?.[1] === owner;
-          if (ok) ws.data.pubkey = event.pubkey;
+
+          if (ok) {
+            ws.data.pubkey = event.pubkey;
+          }
           return reply("OK", event.id, ok, ok ? "" : "auth-required: bad auth");
         }
-        if (!ws.data.pubkey) return reply("CLOSED", rest[0], "auth-required: authenticate first");
+
+        if (!ws.data.pubkey) {
+          return reply("CLOSED", rest[0], "auth-required: authenticate first");
+        }
         if (type === "REQ") {
           const [id, ...filters] = rest;
           ws.data.subs.set(id, filters);
-          for (const event of stored(filters)) reply("EVENT", id, event);
+
+          for (const event of stored(filters)) {
+            reply("EVENT", id, event);
+          }
           return reply("EOSE", id);
         }
-        if (type === "CLOSE") return void ws.data.subs.delete(rest[0]);
+
+        if (type === "CLOSE") {
+          return void ws.data.subs.delete(rest[0]);
+        }
         if (type === "EVENT") {
           const event: Event = rest[0];
           reply("OK", event.id, verifyEvent(event), "");
@@ -190,14 +218,18 @@ function fakeRelay() {
       },
     },
   });
+
   function inject(event: Event) {
     events.push(event);
+
     for (const peer of peers) {
-      for (const [id, filters] of peer.data.subs)
+      for (const [id, filters] of peer.data.subs) {
         if (filters.some((filter) => matches(filter, event)))
           peer.send(JSON.stringify(["EVENT", id, event]));
+      }
     }
   }
+
   return {
     url: `ws://localhost:${server.port}`,
     events,
@@ -205,7 +237,9 @@ function fakeRelay() {
     downloads,
     online,
     inject,
-    drop: () => peers.forEach((peer) => peer.terminate()),
+    drop: () => {
+      peers.forEach((peer) => peer.terminate());
+    },
     stop: () => server.stop(true),
   };
 }
@@ -233,9 +267,11 @@ test("the relay connection authenticates with the auth tag before it asks for an
   const key = generateSecretKey();
   const client = connectRelay({ url: relay.url, secretKey: key, authTag });
   const event = await client.publish({ kind: 9, content: "hi", tags: [["h", "c1"]] });
+
   const auth = relay.frames.find(
     ([type, event]: any[]) => type === "AUTH" && event.pubkey === getPublicKey(key),
   )![1] as Event;
+
   expect(auth.tags).toContainEqual(authTag);
   expect(auth.tags).toContainEqual(["relay", relay.url]);
   expect(relay.frames.indexOf(relay.frames.find(([, sent]: any[]) => sent === auth)!)).toBeLessThan(
@@ -263,8 +299,10 @@ test("after a drop it reconnects, authenticates again, resubscribes from shortly
   client.subscribe([{ kinds: [9], "#h": ["c3"], since }], (event) => seen.push(event.content));
   relay.inject(signed(ownerKey, 9, "one", [["h", "c3"]]));
   await until(() => seen.length === 1);
+
   const reqs = () =>
     relay.frames.filter(([type, , filter]: any[]) => type === "REQ" && filter["#h"]?.[0] === "c3");
+
   relay.drop();
   relay.inject(signed(ownerKey, 9, "two", [["h", "c3"]]));
   await until(() => seen.length === 2, 5000);
@@ -275,6 +313,7 @@ test("after a drop it reconnects, authenticates again, resubscribes from shortly
 });
 
 const SESSION = "0a1b2c3d-0000-4000-8000-000000000000";
+
 const running: {
   bot: Subprocess;
   relay: ReturnType<typeof fakeRelay>;
@@ -322,10 +361,12 @@ exit 0
   const relay = fakeRelay();
   const key = generateSecretKey();
   const me = getPublicKey(key);
+
   const sig = schnorr.sign(
     createHash("sha256").update(`nostr:agent-auth:${me}:`).digest(),
     ownerKey,
   );
+
   const auth = ["auth", owner, "", bytesToHex(sig)];
   writeFileSync(
     join(state, ".env"),
@@ -341,7 +382,8 @@ exit 0
   const host = generateSecretKey();
   relay.inject(signed(key, 0, JSON.stringify({ name: "Hex" })));
   relay.inject(signed(ownerKey, 0, JSON.stringify({ display_name: "Bassim" })));
-  for (const id of [channel, openSource, dm, forum])
+
+  for (const id of [channel, openSource, dm, forum]) {
     relay.inject(
       signed(host, 39002, "", [
         ["d", id],
@@ -349,36 +391,37 @@ exit 0
         ["p", me],
       ]),
     );
+  }
   relay.inject(
-    signed(host, 39002, "", [
+    signed(host, 39_002, "", [
       ["d", secret],
       ["p", owner],
     ]),
   );
   relay.inject(
-    signed(host, 39000, "", [
+    signed(host, 39_000, "", [
       ["d", channel],
       ["name", "general"],
       ["t", "stream"],
     ]),
   );
   relay.inject(
-    signed(host, 39000, "", [
+    signed(host, 39_000, "", [
       ["d", openSource],
       ["name", "open-source"],
       ["t", "stream"],
     ]),
   );
   relay.inject(
-    signed(host, 39000, "", [
+    signed(host, 39_000, "", [
       ["d", secret],
       ["name", "secret"],
       ["t", "stream"],
     ]),
   );
-  relay.inject(signed(host, 39000, "", [["d", dm], ["name", "dm"], ["hidden"], ["t", "dm"]]));
+  relay.inject(signed(host, 39_000, "", [["d", dm], ["name", "dm"], ["hidden"], ["t", "dm"]]));
   relay.inject(
-    signed(host, 39000, "", [
+    signed(host, 39_000, "", [
       ["d", forum],
       ["name", "ideas"],
       ["t", "forum"],
@@ -389,6 +432,7 @@ exit 0
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([name]) => !/^(BUZZ_|HEX_|TELEGRAM_|DISCORD_)/.test(name)),
   );
+
   const { process: bot, port } = await service(join(import.meta.dir, "bot.ts"), {
     ...env,
     BUZZ_STATE_DIR: state,
@@ -396,6 +440,7 @@ exit 0
     CLAUDE_CONFIG_DIR: join(dir, "config"),
     PATH: `${dir}:${process.env.PATH}`,
   });
+
   const sockets: Socket[] = [];
   running.push({ bot, relay, sockets, dir });
   await until(() =>
@@ -404,9 +449,10 @@ exit 0
 
   const published = (kind: number) =>
     relay.events.filter((event) => event.kind === kind && event.pubkey === me);
+
   const calls = (): string[][] =>
     existsSync(join(dir, "calls"))
-      ? readFileSync(join(dir, "calls"), "utf8")
+      ? readFileSync(join(dir, "calls"), "utf-8")
           .split("\n")
           .slice(0, -1)
           .map((line) => JSON.parse(line))
@@ -418,6 +464,7 @@ exit 0
       join(dir, "config", "jobs", "job12345", "state.json"),
       JSON.stringify({ state: "working", sessionId: SESSION }),
     );
+
     const line = await connectSession({
       stateDir: state,
       path: "/buzz",
@@ -425,12 +472,14 @@ exit 0
       thread,
       at: port,
     });
+
     const socket = connect(join(state, "hub.sock"));
     sockets.push(socket);
     await new Promise((resolve) => socket.on("connect", resolve));
     const inbound = () => line.received.filter((message) => message.type === "inbound");
+
     return {
-      send: (payload: object) => socket.write(JSON.stringify(payload) + "\n"),
+      send: (payload: object) => socket.write(`${JSON.stringify(payload)}\n`),
       inbound: (count: number) => until(() => inbound()[count - 1] && inbound()),
       call: line.call,
     };
@@ -456,16 +505,18 @@ exit 0
         dir,
         "config",
         "projects",
-        join(dir, "hex").replace(/[^a-zA-Z0-9]/g, "-"),
+        join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/g, "-"),
         `${SESSION}.jsonl`,
       );
+
       mkdirSync(join(file, ".."), { recursive: true });
       writeFileSync(file, '{"type":"user","message":{"content":"desk anchors are loose"}}\n');
       writeFileSync(
         join(dir, "agents"),
         JSON.stringify([{ sessionId: SESSION, pid: 4_194_305, status: "busy" }]),
       );
-      return () => readFileSync(file, "utf8");
+
+      return () => readFileSync(file, "utf-8");
     },
     session,
     say: (
@@ -478,6 +529,7 @@ exit 0
     ) => {
       const event = signed(from, kind, content, [["h", where], ...tags], at);
       relay.inject(event);
+
       return event;
     },
   };
@@ -488,12 +540,13 @@ async function threadStarted(bot: Awaited<ReturnType<typeof startBot>>) {
   await until(() => bot.launches()[0]);
   const session = await bot.session(root.id);
   await session.inbound(1);
+
   return { root, session };
 }
 
 test("Hex goes online, and a tag in a channel starts a thread on that message, named by its first word", async () => {
   const bot = await startBot();
-  expect((await until(() => bot.published(20001)[0])).content).toBe("online");
+  expect((await until(() => bot.published(20_001)[0])).content).toBe("online");
   const root = bot.say("@Hex desk anchors are loose", [["p", bot.me]]);
   const args = await until(() => bot.launches()[0]);
   expect(args.slice(0, 5)).toEqual(["--bg", "--channels", "plugin:buzz@hex", "--name", "desk"]);
@@ -563,7 +616,7 @@ test("an edit reaches the thread as the edited message's new text", async () => 
   const typo = bot.say("the lfet one", [["e", root.id, "", "reply"]]);
   await session.inbound(2);
   bot.relay.inject(
-    signed(ownerKey, 40003, "the left one", [
+    signed(ownerKey, 40_003, "the left one", [
       ["h", bot.channel],
       ["e", typo.id],
     ]),
@@ -662,12 +715,15 @@ test("a deleted message reaches its thread with what it said", async () => {
 test("after a restart Hex picks up what was sent while it was down, in order, and nothing twice", async () => {
   const t = Math.floor(Date.now() / 1000) - 100;
   let root!: Event;
+
   const bot = await startBot(({ state, relay, channel, me }) => {
     const at = (offset: number, content: string, tags: string[][]) => {
       const event = signed(ownerKey, 9, content, [["h", channel], ...tags], t + offset);
       relay.inject(event);
+
       return event;
     };
+
     root = at(0, "@Hex desk anchors are loose", [["p", me]]);
     open(join(dirname(state), "hex", "state")).keepThreads("buzz", {
       [root.id]: { name: "Anchors" },
@@ -677,6 +733,7 @@ test("after a restart Hex picks up what was sent while it was down, in order, an
     at(0, "one", [["e", root.id, "", "reply"]]);
     at(5, "two", [["e", root.id, "", "reply"]]);
   });
+
   const session = await bot.session(root.id);
   expect((await session.inbound(3)).map((line) => line.content)).toEqual(["one", "two", "three"]);
   await Bun.sleep(300);
@@ -688,10 +745,12 @@ test("reply posts into the thread with NIP-10 markers, a p tag for the owner and
   const { root, session } = await threadStarted(bot);
   const later = bot.say("and the shelf", [["e", root.id, "", "reply"]]);
   await session.inbound(2);
+
   const sentBy = (result: any) =>
     bot.relay.events.find(
       (event) => event.id === result.text.match(/^sent \(id: ([0-9a-f]{64})\)$/)?.[1],
     )!;
+
   const direct = sentBy(await session.call("reply", { text: "on it" }));
   expect(direct).toMatchObject({
     kind: 9,
@@ -713,20 +772,24 @@ test("an edit keeps the message's attachments, since Desktop shows the edit's in
   const { root, session } = await threadStarted(bot);
   const url = `http://localhost/media/${"a".repeat(64)}.png`;
   const imeta = ["imeta", `url ${url}`, "m image/png", `x ${"a".repeat(64)}`, "size 10"];
+
   const original = bot.say(
     `here it is\n![image](${url})`,
     [["e", root.id, "", "reply"], imeta],
     bot.key,
   );
+
   const result = await session.call("edit_message", {
     message_id: original.id,
     text: "here it is, fixed",
   });
+
   const edit = bot.relay.events.find(
     (event) => event.id === result.text.match(/^edited \(id: (\w+)\)$/)?.[1],
   )!;
+
   expect(edit).toMatchObject({
-    kind: 40003,
+    kind: 40_003,
     content: `here it is, fixed\n![image](${url})`,
     tags: [["h", bot.channel], ["e", original.id], imeta, bot.auth],
   });
@@ -737,10 +800,12 @@ test("a busy thread shows typing, and going idle takes back the acks", async () 
   const { root, session } = await threadStarted(bot);
   await until(() => bot.published(7).find((event) => event.content === "💬"));
   session.send({ type: "state", thread: root.id, busy: false });
+
   const acks = bot
     .published(7)
     .map((event) => event.id)
     .sort();
+
   await until(() => bot.published(5).length === acks.length);
   expect(
     bot
@@ -748,9 +813,9 @@ test("a busy thread shows typing, and going idle takes back the acks", async () 
       .map((event) => event.tags[0]![1])
       .sort(),
   ).toEqual(acks);
-  const before = bot.published(20002).length;
+  const before = bot.published(20_002).length;
   session.send({ type: "state", thread: root.id, busy: true });
-  const typing = await until(() => bot.published(20002)[before]);
+  const typing = await until(() => bot.published(20_002)[before]);
   expect(typing.content).toBe("");
   expect(typing.tags).toEqual([["h", bot.channel], ["e", root.id, "", "reply"], bot.auth]);
 });
@@ -773,7 +838,7 @@ test("!shutdown from the owner takes Hex offline, and nothing reaches it after",
   const bot = await startBot();
   bot.say("!shutdown", [["p", bot.me]]);
   expect(
-    (await until(() => bot.published(20001).find((event) => event.content === "offline"))).content,
+    (await until(() => bot.published(20_001).find((event) => event.content === "offline"))).content,
   ).toBe("offline");
   bot.say("@Hex still there?", [["p", bot.me]]);
   await Bun.sleep(300);
@@ -784,14 +849,17 @@ test("!shutdown from the owner takes Hex offline, and nothing reaches it after",
 test("new_thread opens a thread in Buzz with its about line under the title, starts its session with the prompt, and links to it", async () => {
   const bot = await startBot();
   const { session } = await threadStarted(bot);
+
   const result = await session.call("new_thread", {
     title: "Anchors",
     prompt: "find better anchors",
     about: "From #general",
   });
+
   const root = await until(() =>
     bot.published(9).find((event) => event.content === "**Anchors**\nFrom #general"),
   );
+
   expect(root.tags).toEqual([["h", bot.channel], ["p", owner], bot.auth]);
   expect(result.text).toBe(
     `started thread "Anchors": buzz://message?channel=${bot.channel}&id=${root.id}`,
@@ -821,6 +889,7 @@ test("a mirror backfills the new thread with the chat, the owner's lines quoted 
   );
   session.send({ type: "mirror", thread: root.id, to: "buzz" });
   const head = await until(() => bot.published(9).find((event) => event.content === "**desk**"));
+
   const posts = await until(() =>
     ((posts) => posts.at(-1)?.content === "Roomy." && posts.slice(-2))(
       bot
@@ -828,6 +897,7 @@ test("a mirror backfills the new thread with the chat, the owner's lines quoted 
         .filter((event) => event.tags.some(([tag, id]) => tag === "e" && id === head.id)),
     ),
   );
+
   expect(posts.map((event) => event.content)).toEqual([
     "> **Bassim**\n> how full is\n> your context?",
     "Roomy.",
@@ -851,9 +921,11 @@ test("reply with buttons lists them numbered and reacts with each keycap; the fi
       })
     ).error,
   ).toBe("at most 10 buttons");
+
   const id = (await session.call("reply", { text: "Ship it?", buttons: ["Yes", "No"] })).text.match(
     /id: (\w+)/,
   )[1];
+
   expect(bot.relay.events.find((event) => event.id === id)!.content).toBe(
     "Ship it?\n\n1️⃣ Yes\n2️⃣ No",
   );
@@ -884,6 +956,7 @@ test("a tap on buttons sent before a restart still arrives as a button", async (
   const at = Math.floor(Date.now() / 1000) - 100;
   let question!: Event;
   let yes!: Event;
+
   const bot = await startBot(({ state, relay, channel, me, key }) => {
     const root = signed(
       ownerKey,
@@ -895,6 +968,7 @@ test("a tap on buttons sent before a restart still arrives as a button", async (
       ],
       at,
     );
+
     question = signed(
       key,
       9,
@@ -907,7 +981,10 @@ test("a tap on buttons sent before a restart still arrives as a button", async (
     );
     yes = signed(key, 7, "1️⃣", [["e", question.id]], at);
     const no = signed(key, 7, "2️⃣", [["e", question.id]], at);
-    for (const event of [root, question, yes, no]) relay.inject(event);
+
+    for (const event of [root, question, yes, no]) {
+      relay.inject(event);
+    }
     open(join(dirname(state), "hex", "state")).keepThreads("buzz", {
       [root.id]: { name: "Ship it" },
     });
@@ -924,6 +1001,7 @@ test("a tap on buttons sent before a restart still arrives as a button", async (
       }),
     );
   });
+
   bot.relay.inject(signed(ownerKey, 7, "2️⃣", [["e", question.id]]));
   const [tapped] = await (await bot.session(question.tags[1]![1]!)).inbound(1);
   expect(tapped).toMatchObject({
@@ -939,14 +1017,14 @@ test("rename_thread renames a thread Hex opened in Buzz too, by editing its firs
   const bot = await startBot();
   const { session } = await threadStarted(bot);
   await session.call("rename_thread", { title: "Loose" });
-  expect(bot.published(40003)).toEqual([]);
+  expect(bot.published(40_003)).toEqual([]);
   await session.call("new_thread", { title: "Anchors", prompt: "find better anchors" });
   const root = await until(() => bot.published(9).find((event) => event.content === "**Anchors**"));
   const opened = await bot.session(root.id);
   expect((await opened.call("rename_thread", { title: "Mounts" })).text).toBe(
     'renamed to "Mounts", and its first message in Buzz now says so',
   );
-  expect(bot.published(40003).map((event) => [event.content, event.tags])).toEqual([
+  expect(bot.published(40_003).map((event) => [event.content, event.tags])).toEqual([
     ["**Mounts**", [["h", bot.channel], ["e", root.id], bot.auth]],
   ]);
 });
@@ -967,10 +1045,12 @@ test("delete_message and react with remove take back what Hex posted, and nothin
   expect((await session.call("delete_message", { message_id: root.id })).error).toBe(
     "only the bot's own messages can be deleted",
   );
+
   const deletions = bot
     .published(5)
     .map((event) => event.tags)
     .filter((tags) => tags.some((t) => t[1] === check.id || t[1] === sent));
+
   expect(deletions).toEqual([
     [["e", check.id], bot.auth],
     [["h", bot.channel], ["e", sent], bot.auth],
@@ -984,7 +1064,7 @@ test("canvas reads the channel's canvas and saves new revisions ahead of the one
   const first = (await session.call("canvas", { text: "# Plan" })).text.match(/revision: (\w+)/)[1];
   expect((await session.call("canvas", {})).text).toBe(`# Plan\n\n(revision: ${first})`);
   await session.call("canvas", { text: "# Plan\n- anchors", revision: first });
-  const [v1, v2] = bot.published(40100);
+  const [v1, v2] = bot.published(40_100);
   expect(v1!.tags).toEqual([["h", bot.channel], bot.auth]);
   expect(v2!.tags).toEqual([["h", bot.channel], ["expected-revision", first], bot.auth]);
   expect(v2!.created_at).toBeGreaterThan(v1!.created_at);
@@ -1009,26 +1089,31 @@ test("download_attachment saves a message's files to the inbox, fetched with Blo
   const bot = await startBot();
   const { root, session } = await threadStarted(bot);
   const url = `${bot.relay.url.replace(/^ws/, "http")}/media/${"b".repeat(64)}.png`;
+
   const sent = bot.say("a picture", [
     ["e", root.id, "", "reply"],
     ["imeta", `url ${url}`, "m image/png", "size 6", "filename desk.png"],
   ]);
+
   const result = await session.call("download_attachment", { message_id: sent.id });
   const path = result.text.match(/^ {2}(\S+) {2}\(desk\.png, image\/png, 0KB\)$/m)?.[1];
-  expect(readFileSync(path!, "utf8")).toBe("pixels");
+  expect(readFileSync(path!, "utf-8")).toBe("pixels");
   expect(bot.relay.downloads).toEqual([expect.stringMatching(/^Nostr /)]);
 });
 
 // A channel with two threads' worth of PR work, posted by the owner a second apart.
 function seedOpenSource(bot: Awaited<ReturnType<typeof startBot>>) {
   const t = Math.floor(Date.now() / 1000) - 100;
+
   const at = (offset: number, content: string, tags: string[][] = []) =>
     bot.say(content, tags, ownerKey, bot.openSource, t + offset);
+
   const ci = at(0, "flaky CI on the relay PR");
   const docs = at(1, "merged the docs fix");
   const rebased = at(2, "rebased it", [["e", ci.id, "", "reply"]]);
   const pushed = at(3, "rebased again\nand pushed", [["e", ci.id, "", "reply"]]);
   const release = at(4, "release tomorrow");
+
   return { t, ci, docs, rebased, pushed, release };
 }
 
@@ -1074,7 +1159,7 @@ test("sessions read only channels Hex is in, and no direct message but their own
     "Hex is in no channel named #secret",
   );
   expect((await session.call("fetch_messages", { channel: bot.secret })).error).toBe(
-    "Hex is in no channel named #" + bot.secret,
+    `Hex is in no channel named #${bot.secret}`,
   );
   expect((await session.call("fetch_messages", { thread: hidden.id })).error).toBe(
     "Hex isn't in that channel; list_channels shows the ones it is in",
@@ -1116,10 +1201,13 @@ test("search_messages finds words in Hex's channels, naming each hit's channel a
 
 test("a forum post that tags Hex is its own thread: comments on it reach the session, edits and deletes too, and replies post as comments", async () => {
   const bot = await startBot();
+
   const posted = (content: string, tags: string[][] = []) =>
-    bot.say(content, tags, ownerKey, bot.forum, undefined, 45001);
+    bot.say(content, tags, ownerKey, bot.forum, undefined, 45_001);
+
   const comment = (content: string, tags: string[][] = []) =>
-    bot.say(content, tags, ownerKey, bot.forum, undefined, 45003);
+    bot.say(content, tags, ownerKey, bot.forum, undefined, 45_003);
+
   posted("nobody asked hex here");
   const post = posted("@Hex should we ship the relay PR", [["p", bot.me]]);
   const args = await until(() => bot.launches()[0]);
@@ -1127,7 +1215,7 @@ test("a forum post that tags Hex is its own thread: comments on it reach the ses
   const session = await bot.session(post.id);
   const first = comment("the CI is green now", [["e", post.id, "", "reply"]]);
   bot.relay.inject(
-    signed(ownerKey, 40003, "the CI is finally green", [
+    signed(ownerKey, 40_003, "the CI is finally green", [
       ["h", bot.forum],
       ["e", first.id],
     ]),
@@ -1159,13 +1247,13 @@ test("a forum post that tags Hex is its own thread: comments on it reach the ses
   });
   const sent = (await session.call("reply", { text: "ship it" })).text.match(/id: (\w+)/)[1];
   expect(bot.relay.events.find((event) => event.id === sent)).toMatchObject({
-    kind: 45003,
+    kind: 45_003,
     tags: [["h", bot.forum], ["e", post.id, "", "reply"], ["p", owner], bot.auth],
   });
   await session.call("new_thread", { title: "Notes", prompt: "draft them", channel: "ideas" });
   expect(
     await until(() => bot.relay.events.find((event) => event.content === "**Notes**")),
-  ).toMatchObject({ kind: 45001, tags: [["h", bot.forum], ["p", owner], bot.auth] });
+  ).toMatchObject({ kind: 45_001, tags: [["h", bot.forum], ["p", owner], bot.auth] });
   await until(() => bot.launches().length === 2);
 });
 
@@ -1186,9 +1274,11 @@ test("list_channels names the channels Hex is in, and marks direct messages", as
 test("create_channel makes a channel Hex owns, adds the owner, and new_thread can open threads in it", async () => {
   const bot = await startBot();
   const { session } = await threadStarted(bot);
+
   const created = (
     await session.call("create_channel", { name: "#research", about: "papers", type: "forum" })
   ).text;
+
   const id = created.match(/id: ([\w-]+)/)[1];
   expect(created).toBe(`created #research (id: ${id}); new_thread can open threads in it`);
   expect(bot.published(9007)[0]!.tags).toEqual([
@@ -1208,11 +1298,12 @@ test("create_channel makes a channel Hex owns, adds the owner, and new_thread ca
   });
   expect(
     await until(() => bot.relay.events.find((event) => event.content === "**Reading**")),
-  ).toMatchObject({ kind: 45001, tags: [["h", id], ["p", owner], bot.auth] });
+  ).toMatchObject({ kind: 45_001, tags: [["h", id], ["p", owner], bot.auth] });
 });
 
 test("the channel of every thread is kept in channels.json for the voice app: threads it starts, threads it joins, and threads it already had", async () => {
   let known!: Event;
+
   const bot = await startBot(({ state, relay, channel }) => {
     known = signed(
       ownerKey,
@@ -1227,19 +1318,23 @@ test("the channel of every thread is kept in channels.json for the voice app: th
       [crypto.randomUUID()]: { name: "bassim" },
     });
   });
+
   const channels = () =>
     JSON.parse(
       existsSync(join(bot.state, "channels.json"))
-        ? readFileSync(join(bot.state, "channels.json"), "utf8")
+        ? readFileSync(join(bot.state, "channels.json"), "utf-8")
         : "{}",
     );
+
   await until(() => channels()[known.id] === bot.channel);
   const { root, session } = await threadStarted(bot);
   await until(() => channels()[root.id] === bot.channel);
   await session.call("new_thread", { title: "Anchors", prompt: "find better anchors" });
+
   const opened = await until(() =>
     bot.published(9).find((event) => event.content === "**Anchors**"),
   );
+
   await until(() => channels()[opened.id] === bot.channel);
   expect(Object.keys(channels()).sort()).toEqual([known.id, root.id, opened.id].sort());
 });

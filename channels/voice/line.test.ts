@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { createServer } from "net";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
@@ -19,6 +19,7 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
   const heard: string[] = [];
   const started: any[] = [];
   let voice: Bun.ServerWebSocket<unknown> | undefined;
+
   const openai = Bun.serve({
     port: 0,
     fetch: (request, server) =>
@@ -29,24 +30,31 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
       },
       message(socket, raw) {
         const event = JSON.parse(String(raw));
+
         if (event.type === "session.start") {
           started.push(event.session);
-          if (refuse)
+
+          if (refuse) {
             socket.send(JSON.stringify({ type: "error", error: { message: "no capacity" } }));
-          else if (!hold)
+          } else if (!hold) {
             socket.send(
               JSON.stringify({
                 type: "session.started",
                 session: { id: "sess_discord", expires_at: Date.now() / 1000 + 3600 },
               }),
             );
+          }
         }
-        if (event.type === "session.input_audio.append") heard.push(event.audio);
-        if (event.type === "session.thinking.append")
+
+        if (event.type === "session.input_audio.append") {
+          heard.push(event.audio);
+        }
+        if (event.type === "session.thinking.append") {
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
           );
-        if (event.type === "session.close")
+        }
+        if (event.type === "session.close") {
           socket.send(
             JSON.stringify({
               type: "session.closed",
@@ -54,9 +62,11 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
               client_event_id: event.event_id,
             }),
           );
+        }
       },
     },
   });
+
   writeFileSync(
     join(state, ".env"),
     [
@@ -65,14 +75,17 @@ async function lineCall({ hold = false, refuse = false, before = (_hex: string) 
       `VOICE_PORT=0`,
     ].join("\n"),
   );
+
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_|^CLAUDE_CONFIG_DIR$/.test(key),
     ),
   );
+
   const hex = join(home, "hex", "state");
   mkdirSync(join(hex, "discord"), { recursive: true });
   before(hex);
+
   const engine = `import { serve, take, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 import { clients } from ${JSON.stringify(join(import.meta.dir, "..", "..", "hub", "hub.ts"))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
@@ -96,36 +109,47 @@ for await (const line of console) {
   if (verb === 'send') tool('send', JSON.parse(line.slice(5))).then(text => step('sent', { text }), error => step('sent', { error: error.message }))
   if (verb === 'tool') tool(audio, JSON.parse(line.split(' ').slice(2).join(' '))).then(text => step('tool', { text }), error => step('tool', { error: error.message }))
 }`;
+
   const plugin = Bun.spawn(["bun", "-e", engine], {
     env: { ...env, HOME: home },
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
   });
+
   const steps: any[] = [];
   let listening!: (port: number) => void;
   const port = new Promise<number>((resolve) => (listening = resolve));
   void (async () => {
     let buffer = "";
+
     for await (const chunk of plugin.stdout) {
       buffer += new TextDecoder().decode(chunk);
       const lines = buffer.split("\n");
       buffer = lines.pop()!;
+
       for (const step of lines.map((line) => JSON.parse(line))) {
-        if (step.step === "listening") listening(step.port);
-        else steps.push(step);
+        if (step.step === "listening") {
+          listening(step.port);
+        } else {
+          steps.push(step);
+        }
       }
     }
   })();
-  const exited = plugin.exited.then((code) =>
-    Promise.reject(new Error(`the engine exited (${code}) before it listened`)),
-  );
+
+  const exited = plugin.exited.then((code) => {
+    throw new Error(`the engine exited (${code}) before it listened`);
+  });
+
   const listened = await Promise.race([port, exited]).catch((error) => {
     openai.stop(true);
     rmSync(home, { recursive: true, force: true });
     throw error;
   });
+
   const base = `http://127.0.0.1:${listened}`;
+
   return {
     base,
     heard,
@@ -146,7 +170,7 @@ for await (const line of console) {
 test("a call on another client's line is held like a phone call: PCM both ways, the voice session told, a record of its own, and the line ended when the caller hangs up", async () => {
   await using call = await lineCall();
   const session = await until(() => call.started[0]);
-  expect(session.audio.format).toEqual({ type: "audio/pcm", rate: 24000 });
+  expect(session.audio.format).toEqual({ type: "audio/pcm", rate: 24_000 });
   expect(session.input[0].content[0].text).toBe("They joined you in a Discord voice channel.");
 
   await until(() => call.steps.find((step) => step.step === "keep"));
@@ -206,6 +230,7 @@ test("a line hung up on before its session starts never becomes a call, and one 
     expect((await fetch(`${call.base}/calls`).then((r) => r.json())).calls).toEqual([]);
     expect(call.steps.some((step) => step.step === "deliver" || step.step === "keep")).toBe(false);
   }
+
   await using call = await lineCall({ refuse: true });
   await until(() => call.steps.find((step) => step.step === "end"));
   await Bun.sleep(200);
@@ -222,6 +247,7 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
   const relayed: any[] = [];
   const thread = "-1001234:5";
   let hub: ReturnType<typeof createServer> | undefined;
+
   await using call = await lineCall({
     before: (hex) => {
       mkdirSync(join(hex, "telegram"));
@@ -244,7 +270,7 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
         at: "2026-11-01T00:00:00.000Z",
       });
       hub = createServer((socket) => {
-        socket.setEncoding("utf8");
+        socket.setEncoding("utf-8");
         socket.on("data", (chunk: string) =>
           relayed.push(
             ...chunk
@@ -256,11 +282,13 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
       }).listen(join(hex, "telegram", "hub.sock"));
     },
   });
+
   try {
     await until(() => call.steps.find((step) => step.step === "keep"));
     const id = `telegram:${thread}:1`;
     call.tell(`tool ask ${JSON.stringify({ id })}`);
     await until(() => call.steps.find((step) => step.step === "tool"));
+
     const post = (verb: string, body?: object) =>
       fetch(`${call.base}/asks/${encodeURIComponent(id)}/${verb}`, {
         method: "POST",
@@ -312,9 +340,11 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
     const other = `telegram:${thread}:2`;
     call.tell(`tool ask ${JSON.stringify({ id: other })}`);
     await until(() => call.steps.filter((step) => step.step === "tool").length === 2);
+
     const dismissed = await fetch(`${call.base}/asks/${encodeURIComponent(other)}/dismiss`, {
       method: "POST",
     });
+
     expect(await dismissed.json()).toEqual({
       thread: `telegram:${thread}`,
       topic: "desk",
@@ -341,9 +371,11 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
       (await fetch(`${call.base}/asks/${encodeURIComponent(other)}/undo`, { method: "POST" }))
         .status,
     ).toBe(204);
+
     const undone = (await fetch(`${call.base}/activity`).then((r) => r.json())).asks.find(
       (card: any) => card.ask.id === other,
     );
+
     expect(undone.answer).toBeUndefined();
     await until(() =>
       call.steps.find(
@@ -378,6 +410,7 @@ test("on a call, running answers from every thread hex has at work, not only wha
       );
     },
   });
+
   await until(() => call.steps.find((step) => step.step === "keep"));
   call.tell("tool running {}");
   const { text } = await until(() => call.steps.find((step) => step.step === "tool"));

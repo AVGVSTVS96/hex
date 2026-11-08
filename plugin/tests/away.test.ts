@@ -8,9 +8,9 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // bin/away against a fake T3 Code MCP server that records each tool call.
 
@@ -32,17 +32,23 @@ let unlinked = false;
 const server = Bun.serve({
   port: 0,
   async fetch(request) {
-    if (request.method === "GET") return new Response(null, { status: 405 });
-    if (request.method === "DELETE") return new Response(null, { status: 200 });
+    if (request.method === "GET") {
+      return new Response(null, { status: 405 });
+    }
+    if (request.method === "DELETE") {
+      return new Response(null, { status: 200 });
+    }
     const body = (await request.json()) as {
       id?: number;
       method: string;
       params: { name: string; arguments: Record<string, any> };
     };
+
     // As MCP's Streamable HTTP asks: a new session starts without the old one's id.
-    if (body.method === "initialize" && request.headers.has("mcp-session-id"))
+    if (body.method === "initialize" && request.headers.has("mcp-session-id")) {
       return new Response("already initialized", { status: 400 });
-    if (body.method === "initialize")
+    }
+    if (body.method === "initialize") {
       return Response.json(
         {
           jsonrpc: "2.0",
@@ -55,22 +61,32 @@ const server = Bun.serve({
         },
         { headers: { "mcp-session-id": "s1" } },
       );
-    if (body.method !== "tools/call") return new Response(null, { status: 202 });
+    }
+    if (body.method !== "tools/call") {
+      return new Response(null, { status: 202 });
+    }
     calls.push(body.params);
-    if (body.params.name === "t3_thread_launch" && launchSlow-- > 0) await Bun.sleep(3_000);
-    if (body.params.name === "t3_thread_launch" && launchDrop-- > 0 && (launched = true))
+
+    if (body.params.name === "t3_thread_launch" && launchSlow-- > 0) {
+      await Bun.sleep(3_000);
+    }
+    if (body.params.name === "t3_thread_launch" && launchDrop-- > 0 && (launched = true)) {
       return new Response("relay timed out", { status: 504 });
-    if (body.params.name === "t3_thread_wait" && drop-- > 0)
+    }
+    if (body.params.name === "t3_thread_wait" && drop-- > 0) {
       return new Response("gone", { status: 502 });
-    if (body.params.name === "t3_thread_wait" && refused-- > 0)
+    }
+    if (body.params.name === "t3_thread_wait" && refused-- > 0) {
       return new Response("expired", { status: 401 });
-    if (body.params.name === "t3_thread_wait" && flaky-- > 0)
+    }
+    if (body.params.name === "t3_thread_wait" && flaky-- > 0) {
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
         result: { content: [{ type: "text", text: "mac is not answering" }], isError: true },
       });
-    if (body.params.name === "orchestrator_capabilities" && unlinked)
+    }
+    if (body.params.name === "orchestrator_capabilities" && unlinked) {
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
@@ -79,7 +95,8 @@ const server = Bun.serve({
           isError: true,
         },
       });
-    if (body.params.name === refuse)
+    }
+    if (body.params.name === refuse) {
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
@@ -88,6 +105,7 @@ const server = Bun.serve({
           isError: true,
         },
       });
+    }
     const answers: Record<string, () => unknown> = {
       orchestrator_capabilities: () => ({
         providers: [
@@ -137,6 +155,7 @@ const server = Bun.serve({
           ? { requestIds: asked }
           : { requestId: asked[0], questions: [{ question: "Which branch should I push to?" }] },
     };
+
     return Response.json({
       jsonrpc: "2.0",
       id: body.id,
@@ -161,13 +180,14 @@ beforeAll(() => {
   script(join(home, ".hex/bin/identity"), 'echo "You are hex."');
   script(
     join(home, ".hex/bin/t3-mcp-headers"),
-    `echo "sign-in $*\${T3_REFUSED:+ refused=\$T3_REFUSED}" >> "${home}/signed"; echo '{"Authorization":"Bearer t"}'`,
+    `echo "sign-in $*\${T3_REFUSED:+ refused=$T3_REFUSED}" >> "${home}/signed"; echo '{"Authorization":"Bearer t"}'`,
   );
   writeFileSync(
     join(home, ".t3/userdata/server-runtime.json"),
     JSON.stringify({ port: server.port }),
   );
 });
+
 afterAll(() => {
   server.stop();
   rmSync(home, { recursive: true });
@@ -184,12 +204,14 @@ const away = (args: string[], stdin = "") => {
       env: { ...process.env, HOME: home, INVOCATION_ID: "inv1" },
     },
   );
+
   return {
     run,
     out: () => new Response(run.stdout).text(),
     error: () => new Response(run.stderr).text(),
   };
 };
+
 const reset = () => {
   calls = [];
   waits = [];
@@ -213,10 +235,12 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
     { status: "running", timedOut: true },
   ];
   drop = 1;
+
   const { run, out } = away(
     ["-p", "Build the Usage tab.", "--model", "opus", "--effort", "high"],
     "the log",
   );
+
   expect(await run.exited).toBe(0);
   expect(await out()).toBe(
     "hex/deck runs on mac as T3 Code thread <t3-thread://v2/env-mac/t1>\nBuilt the Usage tab.\n",
@@ -249,7 +273,7 @@ test("a refused token is renewed and a tool error without a final code is retrie
   flaky = 1;
   const { run } = away(["-p", "Build it."]);
   expect(await run.exited).toBe(0);
-  expect(readFileSync(join(home, "signed"), "utf8")).toBe(
+  expect(readFileSync(join(home, "signed"), "utf-8")).toBe(
     "sign-in \nsign-in --refresh refused=t\n",
   );
 }, 30_000);
@@ -287,7 +311,10 @@ test("stopping the job stops its thread", async () => {
   reset();
   running = true;
   const { run } = away(["-p", "Build it."]);
-  while (!calls.some(({ name }) => name === "t3_thread_wait")) await Bun.sleep(50);
+
+  while (!calls.some(({ name }) => name === "t3_thread_wait")) {
+    await Bun.sleep(50);
+  }
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
   expect(calls.find(({ name }) => name === "t3_thread_interrupt")!.arguments).toMatchObject({
@@ -302,7 +329,7 @@ test("stopping the job stops its thread", async () => {
 test("a sign-in that fails here is this machine's fault, named at once, and starts nothing", async () => {
   reset();
   const helper = join(home, ".hex/bin/t3-mcp-headers");
-  const kept = readFileSync(helper, "utf8");
+  const kept = readFileSync(helper, "utf-8");
   script(helper, 'echo "no pairing code" >&2; exit 1');
   const { run, error } = away(["-p", "Build it."]);
   expect(await run.exited).toBe(77);
@@ -315,7 +342,10 @@ test("a job stopped while its launch may have reached the other machine finds th
   reset();
   launchDrop = 1;
   const { run, error } = away(["-p", "Build it."]);
-  while (!calls.some(({ name }) => name === "t3_thread_launch")) await Bun.sleep(50);
+
+  while (!calls.some(({ name }) => name === "t3_thread_launch")) {
+    await Bun.sleep(50);
+  }
   await Bun.sleep(200);
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
@@ -337,11 +367,14 @@ test("a job stopped while its launch is on its way stops the thread the launch a
   reset();
   launchSlow = 1;
   const { run } = away(["-p", "Build it."]);
-  while (!calls.some(({ name }) => name === "t3_thread_launch")) await Bun.sleep(50);
+
+  while (!calls.some(({ name }) => name === "t3_thread_launch")) {
+    await Bun.sleep(50);
+  }
   const stopped = Date.now();
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
-  expect(Date.now() - stopped).toBeLessThan(5_000);
+  expect(Date.now() - stopped).toBeLessThan(5000);
   expect(calls.filter(({ name }) => name === "t3_thread_launch")).toHaveLength(1);
   expect(calls.find(({ name }) => name === "t3_thread_interrupt")).toMatchObject({
     name: "t3_thread_interrupt",
@@ -364,6 +397,7 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
     join(home, ".hex/bin/job"),
     `require('fs').writeFileSync(${JSON.stringify(join(home, "told"))}, process.argv.slice(2).map(arg => arg + '|').join(''))`,
   );
+
   const run = Bun.spawn(
     ["bun", join(home, ".hex/bin/away"), "mac", "env-mac", "hex/deck", "-p", "Build it."],
     {
@@ -374,11 +408,14 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
       env: { ...process.env, HOME: home, INVOCATION_ID: "inv1", HEX_OWNER: "telegram:-100123:908" },
     },
   );
-  while (!calls.some(({ name }) => name === "t3_thread_wait")) await Bun.sleep(50);
+
+  while (!calls.some(({ name }) => name === "t3_thread_wait")) {
+    await Bun.sleep(50);
+  }
   refuse = "t3_thread_interrupt";
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
-  expect(readFileSync(join(home, "told"), "utf8")).toBe(
+  expect(readFileSync(join(home, "told"), "utf-8")).toBe(
     '--tell|deck|telegram:-100123:908|couldn\'t stop on mac (t3_thread_interrupt: {"code":"capability_denied","message":"no link"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|',
   );
 }, 20_000);

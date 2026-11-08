@@ -9,9 +9,9 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { backup, nightly } from "./backup.ts";
 import { open } from "./store.ts";
@@ -37,8 +37,12 @@ beforeEach(() => {
 
 afterEach(() => {
   process.env.PATH = path;
-  if (named === undefined) delete process.env.HEX_COMPUTER;
-  else process.env.HEX_COMPUTER = named;
+
+  if (named === undefined) {
+    delete process.env.HEX_COMPUTER;
+  } else {
+    process.env.HEX_COMPUTER = named;
+  }
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -50,6 +54,7 @@ function computer(script = 'shift 4; HOME="$COMPUTER" exec "$@"') {
   writeFileSync(join(bin, "sprite"), `#!/bin/sh\nCOMPUTER=${join(dir, "computer")}\n${script}\n`);
   chmodSync(join(bin, "sprite"), 0o755);
   process.env.PATH = `${bin}:${path}`;
+
   return join(dir, "computer", "hex-backups");
 }
 
@@ -57,6 +62,7 @@ const saved = (file: string) => {
   const copy = new Database(file, { readonly: true });
   const rows = copy.query("select body from messages").all();
   copy.close();
+
   return rows;
 };
 
@@ -70,7 +76,10 @@ test("a backup is a whole copy of hex.db in state/backups, named for its day", a
 
 test("the last seven days are kept, here and on the computer", async () => {
   const there = computer();
-  for (let day = 10; day <= 19; day++) await backup(dir, `2026-10-${day}`, "cloud");
+
+  for (let day = 10; day <= 19; day++) {
+    await backup(dir, `2026-10-${day}`, "cloud");
+  }
   const kept = Array.from({ length: 7 }, (_, index) => `hex-2026-10-${13 + index}.db`);
   expect(readdirSync(join(dir, "backups")).sort()).toEqual(kept);
   expect(readdirSync(there).sort()).toEqual(kept);
@@ -115,11 +124,13 @@ test("the hub backs up the last night it missed at its start, and a failed one t
   computer('echo "no such sprite" >&2; exit 1');
   process.env.HEX_COMPUTER = "cloud";
   const stop = nightly(dir, dir, "general");
+
   const failed = await until(() =>
     open(dir)
       .untaken()
       .find((row) => row.from === "backup"),
   );
+
   stop();
   const day = failed.key.slice("backup:failed@".length);
   expect(failed).toMatchObject({

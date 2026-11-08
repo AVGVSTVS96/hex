@@ -7,9 +7,9 @@ import {
   realpathSync,
   chmodSync,
   renameSync,
-} from "fs";
-import { homedir } from "os";
-import { basename, join, sep } from "path";
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, sep } from "node:path";
 
 import {
   Client,
@@ -31,31 +31,33 @@ import {
   RESTJSONErrorCodes,
   Routes,
   parseEmoji,
-  type Message as DiscordMessage,
-  type PartialMessage,
-  type MessageReaction,
-  type PartialMessageReaction,
-  type User,
-  type PartialUser,
-  type ButtonInteraction,
-  type StringSelectMenuInteraction,
-  type ChatInputCommandInteraction,
-  type ChatInputApplicationCommandData,
-  type PollAnswer,
-  type PartialPollAnswer,
-  type ActionRow,
-  type ButtonComponent,
-  type StringSelectMenuComponent,
-  type RESTGetAPIGuildMessagesSearchResult,
-  type Attachment,
-  type Collection,
-  type Channel,
-  type NewsChannel,
-  type ForumChannel,
-  type TextChannel,
-  type ThreadChannel,
-  type AnyThreadChannel,
-  type DMChannel,
+} from "discord.js";
+import type {
+  Message as DiscordMessage,
+  PartialMessage,
+  MessageReaction,
+  PartialMessageReaction,
+  User,
+  PartialUser,
+  ButtonInteraction,
+  StringSelectMenuInteraction,
+  ChatInputCommandInteraction,
+  ChatInputApplicationCommandData,
+  PollAnswer,
+  PartialPollAnswer,
+  ActionRow,
+  ButtonComponent,
+  StringSelectMenuComponent,
+  RESTGetAPIGuildMessagesSearchResult,
+  Attachment,
+  Collection,
+  Channel,
+  NewsChannel,
+  ForumChannel,
+  TextChannel,
+  ThreadChannel,
+  AnyThreadChannel,
+  DMChannel,
 } from "discord.js";
 
 import {
@@ -69,16 +71,16 @@ import {
   transcribe,
   MODELS,
   EFFORTS,
-  type Message,
-  type Permission,
-  type Turn,
 } from "../../hub/hub.ts";
-import { Ledger, waits, type MessageId, type Post, type Question } from "../../hub/ledger.ts";
+import type { Message, Permission, Turn } from "../../hub/hub.ts";
+import { Ledger, waits } from "../../hub/ledger.ts";
+import type { MessageId, Post, Question } from "../../hub/ledger.ts";
 import { server } from "./channel.ts";
 import { voiceCalls } from "./voice.ts";
 
 const STATE_DIR =
   process.env.DISCORD_STATE_DIR ?? join(homedir(), ".claude", "channels", "hex", "discord");
+
 const ACCESS_FILE = join(STATE_DIR, "access.json");
 const GUILD_FILE = join(STATE_DIR, "guild.json");
 const CURSOR_FILE = join(STATE_DIR, "cursor.json");
@@ -88,17 +90,19 @@ const MAX_CHUNK_LIMIT = 2000;
 
 try {
   chmodSync(ENV_FILE, 0o600);
-  for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
-    const m = line.match(/^(\w+)=(.*)$/);
-    if (m) process.env[m[1]] = m[2];
+
+  for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
+    const m = /^(\w+)=(.*)$/.exec(line);
+
+    if (m) {
+      process.env[m[1]] = m[2];
+    }
   }
 } catch {}
 
 const TOKEN = process.env.DISCORD_BOT_TOKEN;
 
-if (!TOKEN) {
-  process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
-} else {
+if (TOKEN) {
   process.on("unhandledRejection", (err) => {
     process.stderr.write(`discord hub: unhandled rejection: ${err}\n`);
   });
@@ -106,6 +110,8 @@ if (!TOKEN) {
     process.stderr.write(`discord hub: uncaught exception: ${err}\n`);
   });
   serve(TOKEN);
+} else {
+  process.stderr.write(`discord hub: no DISCORD_BOT_TOKEN in ${ENV_FILE}, Discord stays off\n`);
 }
 
 type Access = {
@@ -122,12 +128,13 @@ type Access = {
 
 function loadAccess(): Access {
   try {
-    return { allowFrom: [], ...JSON.parse(readFileSync(ACCESS_FILE, "utf8")) };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT")
+    return { allowFrom: [], ...JSON.parse(readFileSync(ACCESS_FILE, "utf-8")) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
       process.stderr.write(
-        `discord hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${err}\n`,
+        `discord hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${error}\n`,
       );
+
     return { allowFrom: [] };
   }
 }
@@ -138,36 +145,49 @@ const READ = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.ReadMessageHi
 // reply's files param takes any path, but channel state and .env files (tokens)
 // are the things Claude has no reason to ever send.
 function assertSendable(f: string): void {
-  let real, stateReal: string;
+  let real;
+  let stateReal: string;
+
   try {
     real = realpathSync(f);
     stateReal = realpathSync(STATE_DIR);
   } catch {
     return;
   }
+
   const inbox = join(stateReal, "inbox");
+
   if (real.startsWith(stateReal + sep) && !real.startsWith(inbox + sep)) {
     throw new Error(`refusing to send channel state: ${f}`);
   }
-  if (basename(real) === ".env") throw new Error(`refusing to send secrets: ${f}`);
+
+  if (basename(real) === ".env") {
+    throw new Error(`refusing to send secrets: ${f}`);
+  }
 }
 
 function sendable(files: string[]): string[] {
   for (const f of files) {
     assertSendable(f);
     const st = statSync(f);
+
     if (st.size > MAX_ATTACHMENT_BYTES) {
       throw new Error(`file too large: ${f} (${(st.size / 1024 / 1024).toFixed(1)}MB, max 25MB)`);
     }
   }
-  if (files.length > 10) throw new Error("Discord allows max 10 attachments per message");
+
+  if (files.length > 10) {
+    throw new Error("Discord allows max 10 attachments per message");
+  }
   return files;
 }
 
 const isText = (ch: Channel | null | undefined): ch is TextChannel | NewsChannel =>
   ch?.type === ChannelType.GuildText || ch?.type === ChannelType.GuildAnnouncement;
+
 const isForum = (ch: Channel | null | undefined): ch is ForumChannel =>
   ch?.type === ChannelType.GuildForum;
+
 const isPostable = (
   ch: Channel | null | undefined,
 ): ch is TextChannel | NewsChannel | ForumChannel => isText(ch) || isForum(ch);
@@ -176,7 +196,9 @@ const isPostable = (
 function buttons(labels: string[], chosen?: number): ActionRowBuilder<ButtonBuilder>[] {
   const rows: ActionRowBuilder<ButtonBuilder>[] = [];
   labels.forEach((label, i) => {
-    if (i % 5 === 0) rows.push(new ActionRowBuilder<ButtonBuilder>());
+    if (i % 5 === 0) {
+      rows.push(new ActionRowBuilder<ButtonBuilder>());
+    }
     rows.at(-1)!.addComponents(
       new ButtonBuilder()
         .setCustomId(String(i))
@@ -185,6 +207,7 @@ function buttons(labels: string[], chosen?: number): ActionRowBuilder<ButtonBuil
         .setDisabled(chosen !== undefined),
     );
   });
+
   return rows;
 }
 
@@ -248,7 +271,8 @@ function verdicts(request: string, chosen?: string): ActionRowBuilder<ButtonBuil
 // A fence inside the preview would close the block early, so its backticks are split.
 function block(text: string, limit: number): string {
   const body = text.replaceAll("```", "`​``");
-  return "```\n" + (body.length > limit ? `${body.slice(0, limit - 1)}…` : body) + "\n```";
+
+  return `\`\`\`\n${body.length > limit ? `${body.slice(0, limit - 1)}…` : body}\n\`\`\``;
 }
 
 const COMMANDS: ChatInputApplicationCommandData[] = [
@@ -287,21 +311,29 @@ const COMMANDS: ChatInputApplicationCommandData[] = [
 }));
 
 function chunk(text: string, limit: number, mode: "length" | "newline"): string[] {
-  if (text.length <= limit) return [text];
+  if (text.length <= limit) {
+    return [text];
+  }
   const out: string[] = [];
   let rest = text;
+
   while (rest.length > limit) {
     let cut = limit;
+
     if (mode === "newline") {
       const para = rest.lastIndexOf("\n\n", limit);
       const line = rest.lastIndexOf("\n", limit);
       const space = rest.lastIndexOf(" ", limit);
       cut = para > limit / 2 ? para : line > limit / 2 ? line : space > 0 ? space : limit;
     }
+
     out.push(rest.slice(0, cut));
     rest = rest.slice(cut).replace(/^\n+/, "");
   }
-  if (rest) out.push(rest);
+
+  if (rest) {
+    out.push(rest);
+  }
   return out;
 }
 
@@ -310,22 +342,31 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
 function fenced(text: string, limit: number, mode: "length" | "newline"): string[] {
   const out: string[] = [];
   let open = "";
+
   for (const part of chunk(text, limit - 16, mode)) {
     let body = open ? `${open}\n${part}` : part;
+
     for (const line of part.split("\n")) {
-      const fence = line.match(/^\s*```(\S*)/);
-      if (fence) open = open ? "" : "```" + fence[1];
+      const fence = /^\s*```(\S*)/.exec(line);
+
+      if (fence) {
+        open = open ? "" : "```" + fence[1];
+      }
     }
-    if (open) body += "\n```";
+
+    if (open) {
+      body += "\n```";
+    }
     out.push(body);
   }
+
   return out;
 }
 
 // att.name is uploader-controlled. It lands inside the <channel> notification,
 // where delimiter chars would let the uploader break out of the tag.
 function safeAttName(att: Attachment): string {
-  return (att.name ?? att.id).replace(/[<>\[\]\r\n;]/g, "_");
+  return (att.name ?? att.id).replaceAll(/[<>[\]\r\n;]/g, "_");
 }
 
 function listed(attachments: Collection<string, Attachment>): string[] {
@@ -341,24 +382,28 @@ async function downloadAttachment(att: Attachment): Promise<string> {
       `attachment too large: ${(att.size / 1024 / 1024).toFixed(1)}MB, max ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB`,
     );
   }
+
   const res = await fetch(att.url);
   const buf = Buffer.from(await res.arrayBuffer());
-  const name = att.name ?? `${att.id}`;
+  const name = att.name ?? att.id;
   const rawExt = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "bin";
-  const ext = rawExt.replace(/[^a-zA-Z0-9]/g, "") || "bin";
+  const ext = rawExt.replaceAll(/[^a-zA-Z0-9]/g, "") || "bin";
   const path = join(INBOX_DIR, `${Date.now()}-${att.id}.${ext}`);
   mkdirSync(INBOX_DIR, { recursive: true });
   writeFileSync(path, buf);
+
   return path;
 }
 
 // Transcribed on arrival, so the words are the message itself and land in the conversation's log.
 async function hear(att: Attachment | undefined): Promise<string | undefined> {
-  if (!att) return;
+  if (!att) {
+    return;
+  }
   try {
     return await transcribe(() => downloadAttachment(att));
-  } catch (err) {
-    process.stderr.write(`discord hub: voice transcription failed: ${err}\n`);
+  } catch (error) {
+    process.stderr.write(`discord hub: voice transcription failed: ${error}\n`);
   }
 }
 
@@ -367,13 +412,15 @@ async function images(attachments: Collection<string, Attachment>): Promise<stri
   const shown = attachments.filter(
     (att) => att.contentType?.startsWith("image/") && att.size <= MAX_ATTACHMENT_BYTES,
   );
+
   const paths = await Promise.all(
     shown.map((att) =>
       downloadAttachment(att).catch(
-        (err) => void process.stderr.write(`discord hub: image download failed: ${err}\n`),
+        (error) => void process.stderr.write(`discord hub: image download failed: ${error}\n`),
       ),
     ),
   );
+
   return paths.filter((path): path is string => !!path);
 }
 
@@ -399,13 +446,16 @@ function serve(token: string) {
       Partials.PollAnswer,
     ],
   });
+
   const ledger = new Ledger(STATE_DIR, "discord");
 
   // A session talks in a thread, or in a DM, which is one conversation.
   async function threadChannel(thread: string): Promise<ThreadChannel | DMChannel> {
     const ch = await client.channels.fetch(thread);
-    if (!ch?.isThread() && !ch?.isDMBased())
+
+    if (!ch?.isThread() && !ch?.isDMBased()) {
       throw new Error(`${thread} is not a Discord thread or DM`);
+    }
     return ch as ThreadChannel | DMChannel;
   }
 
@@ -418,36 +468,42 @@ function serve(token: string) {
       const sent = await (
         await threadChannel(thread)
       ).send({ content: text, flags: MessageFlags.SuppressEmbeds });
+
       said(thread, sent.id, text);
+
       return sent.id;
     },
-    pin: async (thread, id) => (await message(await threadChannel(thread), String(id))).pin(),
+    pin: async (thread, id) => await (await message(await threadChannel(thread), String(id))).pin(),
     // A message that's gone (10008) is unpinned already.
     unpin: async (thread, id) => {
       try {
         await (await message(await threadChannel(thread), String(id))).unpin();
-      } catch (err) {
-        if ((err as { code?: number }).code !== 10008) throw err;
+      } catch (error) {
+        if ((error as { code?: number }).code !== 10008) throw error;
       }
     },
     // An archived thread's messages can't be edited (50083, or archived as far as the bot knows):
     // its post catches up when it's back. One that's someone else's (50005) or gone (10008) never will be.
     edit: async (thread, id, text) => {
       const ch = await threadChannel(thread);
-      if (ch.isThread() && ch.archived) return false;
+
+      if (ch.isThread() && ch.archived) {
+        return false;
+      }
       try {
         await (
           await message(ch, String(id))
         ).edit({ content: text, flags: MessageFlags.SuppressEmbeds });
-      } catch (err) {
-        const { code } = err as { code?: number };
+      } catch (error) {
+        const { code } = error as { code?: number };
         if (code === 50083) return false;
         if (code === 50005 || code === 10008) return null;
-        throw err;
+        throw error;
       }
     },
     link: (thread, id) => {
       const at = shown(thread);
+
       return at && `${at}/${id}`;
     },
     ready: threadChannel,
@@ -456,19 +512,28 @@ function serve(token: string) {
   // Where Discord shows a thread the bot has seen.
   function shown(thread: string) {
     const channel = client.channels.cache.get(thread);
-    if (channel?.isDMBased()) return `https://discord.com/channels/@me/${thread}`;
-    if (channel && "guildId" in channel)
+
+    if (channel?.isDMBased()) {
+      return `https://discord.com/channels/@me/${thread}`;
+    }
+    if (channel && "guildId" in channel) {
       return `https://discord.com/channels/${channel.guildId}/${thread}`;
+    }
   }
 
   function inThread(ch: ThreadChannel | DMChannel): ThreadChannel {
-    if (!ch.isThread()) throw new Error("a DM is not a thread");
+    if (!ch.isThread()) {
+      throw new Error("a DM is not a thread");
+    }
     return ch;
   }
 
   function guild() {
     const guild = client.guilds.cache.first();
-    if (!guild) throw new Error("the bot is in no Discord server");
+
+    if (!guild) {
+      throw new Error("the bot is in no Discord server");
+    }
     return guild;
   }
 
@@ -484,26 +549,31 @@ function serve(token: string) {
     const fits = forums ? isPostable : isText;
     const g = guild();
     const wanted = name?.replace(/^#/, "").toLowerCase();
+
     const found = wanted
       ? (await g.channels.fetch()).find(
           (ch) => fits(ch) && (ch.id === wanted || ch.name.toLowerCase() === wanted),
         )
       : g.systemChannel;
-    if (!fits(found))
+
+    if (!fits(found)) {
       throw new Error(
         wanted
           ? `no ${forums ? "text or forum" : "text"} channel named #${wanted}`
           : "name a channel to open the thread in",
       );
+    }
     return found;
   }
 
   async function readable(id: string): Promise<TextChannel | NewsChannel | ThreadChannel> {
     const ch = await client.channels.fetch(id).catch(() => null);
     const text = isText(ch) || ch?.isThread() ? ch : undefined;
+
     if (!text || text.guildId !== guild().id || !text.permissionsFor(client.user!)?.has(READ)) {
       throw new Error(`the bot can't read ${id}; list_channels shows the channels it can`);
     }
+
     return text;
   }
 
@@ -515,15 +585,20 @@ function serve(token: string) {
     details: string,
   ): string {
     const who = author.id === client.user?.id ? "me" : author.username;
-    return `[${at.toISOString()}] ${who}: ${content.replace(/[\r\n]+/g, " ⏎ ")}  (${details})`;
+
+    return `[${at.toISOString()}] ${who}: ${content.replaceAll(/[\r\n]+/g, " ⏎ ")}  (${details})`;
   }
 
   async function history(caller: string, args: Record<string, unknown>): Promise<string> {
     const limit = Math.min((args.limit as number) ?? 20, 100);
     const named = args.thread as string | undefined;
+
     const channel =
       !named && args.channel ? await textChannel(args.channel as string, true) : undefined;
-    if (isForum(channel)) return posts(channel, limit);
+
+    if (isForum(channel)) {
+      return await posts(channel, limit);
+    }
     const id = named
       ? /^\d+$/.test(named)
         ? named
@@ -531,20 +606,29 @@ function serve(token: string) {
       : channel
         ? channel.id
         : caller;
+
     const ch = id === caller ? await threadChannel(caller) : await readable(id);
+
     const msgs = await ch.messages.fetch({
       limit,
       ...(args.before ? { before: args.before as string } : {}),
     });
+
     const arr = [...msgs.values()].reverse();
-    if (arr.length === 0) return "(no messages)";
+
+    if (arr.length === 0) {
+      return "(no messages)";
+    }
     return arr
       .map((m) => {
         const atts = m.attachments.size > 0 ? ` +${m.attachments.size}att` : "";
+
         const last = m.thread?.lastMessageId
           ? `, last reply ${new Date(SnowflakeUtil.timestampFrom(m.thread.lastMessageId)).toISOString()}`
           : "";
+
         const thread = m.thread ? `, ${m.thread.messageCount ?? 0} replies${last}` : "";
+
         return row(m.createdAt, m.author, m.content, `id: ${m.id}${atts}${thread}`);
       })
       .join("\n");
@@ -552,24 +636,29 @@ function serve(token: string) {
 
   // A forum's posts are its threads: each one's title, newest activity last, read by its id.
   async function posts(forum: ForumChannel, limit: number): Promise<string> {
-    if (!forum.permissionsFor(client.user!)?.has(READ))
+    if (!forum.permissionsFor(client.user!)?.has(READ)) {
       throw new Error(`the bot can't read ${forum.id}; list_channels shows the channels it can`);
+    }
     const [active, archived] = await Promise.all([
       forum.threads.fetchActive(),
       forum.threads.fetchArchived({ limit }),
     ]);
+
     const all = [...active.threads.values(), ...archived.threads.values()].filter(
       (post) => post.parentId === forum.id,
     );
+
     const latest = (post: ThreadChannel) =>
       SnowflakeUtil.timestampFrom(post.lastMessageId ?? post.id);
+
     const rows = all
       .sort((a, b) => latest(a) - latest(b))
       .slice(-limit)
       .map(
         (post) =>
-          `[${new Date(latest(post)).toISOString()}] ${post.name.replace(/[\r\n]+/g, " ")}  (post ${post.id}, ${post.messageCount ?? 0} replies${post.archived ? ", archived" : ""})`,
+          `[${new Date(latest(post)).toISOString()}] ${post.name.replaceAll(/[\r\n]+/g, " ")}  (post ${post.id}, ${post.messageCount ?? 0} replies${post.archived ? ", archived" : ""})`,
       );
+
     return rows.join("\n") || "(no posts)";
   }
 
@@ -578,21 +667,32 @@ function serve(token: string) {
       content: args.query as string,
       limit: String(Math.min((args.limit as number) ?? 25, 25)),
     });
-    if (args.channel) query.set("channel_id", (await textChannel(args.channel as string)).id);
-    if (args.offset) query.set("offset", String(args.offset));
+
+    if (args.channel) {
+      query.set("channel_id", (await textChannel(args.channel as string)).id);
+    }
+    if (args.offset) {
+      query.set("offset", String(args.offset));
+    }
     const found = (await client.rest.get(Routes.guildMessagesSearch(guild().id), {
       query,
     })) as RESTGetAPIGuildMessagesSearchResult;
-    if (!("messages" in found))
+
+    if (!("messages" in found)) {
       return `Discord is still indexing this server's messages; search again ${found.retry_after ? `in ${found.retry_after}s` : "shortly"}`;
+    }
     const threads = new Map(found.threads?.map((t) => [t.id, t.name]));
+
     const rows = found.messages.flat().map((m) => {
       const where = threads.has(m.channel_id)
         ? `thread ${m.channel_id} "${threads.get(m.channel_id)}"`
         : `#${guild().channels.cache.get(m.channel_id)?.name ?? m.channel_id}`;
+
       const atts = m.attachments.length > 0 ? ` +${m.attachments.length}att` : "";
+
       return row(new Date(m.timestamp), m.author, m.content, `id: ${m.id}, in ${where}${atts}`);
     });
+
     return [`${found.total_results} found, newest first`, ...rows].join("\n");
   }
 
@@ -600,6 +700,7 @@ function serve(token: string) {
     const found = (await guild().channels.fetch()).filter(
       (ch) => isPostable(ch) && !!ch.permissionsFor(client.user!)?.has(READ),
     );
+
     return (
       found
         .map((ch) => `#${ch!.name}  (id: ${ch!.id}${isForum(ch) ? ", forum" : ""})`)
@@ -622,23 +723,32 @@ function serve(token: string) {
   // A forum takes a thread only as a post, which opens with a message: the about line, or its title.
   async function place(name: string, where?: string, about?: string, tags: string[] = []) {
     const parent = await textChannel(where, true);
+
     if (!isForum(parent)) {
       const thread = await parent.threads.create({ name });
-      if (about) said(thread.id, (await thread.send(about)).id, about);
+
+      if (about) {
+        said(thread.id, (await thread.send(about)).id, about);
+      }
       return { thread: thread.id, link: link(thread.id) };
     }
+
     const wanted = tags.map((tag) => tag.toLowerCase());
     const applied = parent.availableTags.filter((tag) => wanted.includes(tag.name.toLowerCase()));
-    if (applied.length < wanted.length)
+
+    if (applied.length < wanted.length) {
       throw new Error(
         `#${parent.name} has the tags ${parent.availableTags.map((tag) => tag.name).join(", ") || "(none)"}`,
       );
+    }
     const post = await parent.threads.create({
       name,
       message: { content: about ?? name },
       appliedTags: applied.map((tag) => tag.id),
     });
+
     said(post.id, post.id, about ?? name);
+
     return { thread: post.id, link: link(post.id) };
   }
 
@@ -646,12 +756,17 @@ function serve(token: string) {
   async function backfill(thread: string, turns: Turn[]) {
     const ch = inThread(await threadChannel(thread));
     const parent = ch.parent;
-    if (!isPostable(parent)) throw new Error(`${thread} hangs off no text or forum channel`);
+
+    if (!isPostable(parent)) {
+      throw new Error(`${thread} hangs off no text or forum channel`);
+    }
     const hook =
       (await parent.fetchWebhooks()).find(
         (hook) => hook.owner?.id === client.user!.id && hook.token,
       ) ?? (await parent.createWebhook({ name: "hex" }));
+
     const owner = await client.users.fetch(loadAccess().allowFrom[0]!);
+
     const as = {
       me: { username: owner.displayName, avatarURL: owner.displayAvatarURL() },
       hex: {
@@ -659,9 +774,11 @@ function serve(token: string) {
         avatarURL: client.user!.displayAvatarURL(),
       },
     };
+
     for (const { from, text } of turns) {
-      for (const content of fenced(text, MAX_CHUNK_LIMIT, "newline"))
+      for (const content of fenced(text, MAX_CHUNK_LIMIT, "newline")) {
         await hook.send({ content, threadId: ch.id, ...as[from], allowedMentions: { parse: [] } });
+      }
     }
   }
 
@@ -669,7 +786,10 @@ function serve(token: string) {
   async function message(ch: ThreadChannel | DMChannel, id: string): Promise<DiscordMessage> {
     const msg =
       ch.isThread() && id === ch.id ? await ch.fetchStarterMessage() : await ch.messages.fetch(id);
-    if (!msg) throw new Error(`no message ${id} in this thread`);
+
+    if (!msg) {
+      throw new Error(`no message ${id} in this thread`);
+    }
     return msg;
   }
 
@@ -689,11 +809,16 @@ function serve(token: string) {
     process.stderr.write(`discord hub: ${thread} ${busy ? "busy" : "idle"}\n`);
     clearInterval(typing.get(thread));
     typing.delete(thread);
-    if (!busy) return;
+
+    if (!busy) {
+      return;
+    }
     sendTyping(thread);
     typing.set(
       thread,
-      setInterval(() => sendTyping(thread), 8000),
+      setInterval(() => {
+        sendTyping(thread);
+      }, 8000),
     );
   }
 
@@ -704,10 +829,12 @@ function serve(token: string) {
   async function ask(thread: string, request: Permission): Promise<void> {
     const ch = await threadChannel(thread);
     const shown = preview(request);
+
     const sent = await ch.send({
       content: `🔐 **${request.tool_name}**: ${request.description.slice(0, 300)}${shown ? `\n${block(shown, 1500)}` : ""}`,
       components: verdicts(request.request_id),
     });
+
     said(thread, sent.id, sent.content, { permission: request.request_id });
     asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.id));
   }
@@ -715,11 +842,15 @@ function serve(token: string) {
   // A turn that ends with background agents out may still have one of their prompts open.
   function settle(thread: string, busy: boolean, background: boolean): void {
     showTyping(thread, busy);
-    if (busy || background) return;
-    for (const id of asking.get(thread) ?? [])
+
+    if (busy || background) {
+      return;
+    }
+    for (const id of asking.get(thread) ?? []) {
       void threadChannel(thread)
         .then((ch) => ch.messages.edit(id, { components: only("No longer waiting") }))
         .catch(() => {});
+    }
     asking.delete(thread);
   }
 
@@ -734,9 +865,15 @@ function serve(token: string) {
   // What a question's controls show: the pick its own tap made, where else it was answered, how it
   // was settled, or its choices again.
   function controls({ options, multiple, answer, settled }: Question) {
-    if (settled) return only(settled.note);
-    if (!answer) return choices(options, !!multiple);
-    if (answer.via !== "discord") return only(answeredText(answer));
+    if (settled) {
+      return only(settled.note);
+    }
+    if (!answer) {
+      return choices(options, !!multiple);
+    }
+    if (answer.via !== "discord") {
+      return only(answeredText(answer));
+    }
     return multiple
       ? menu(options, answer.label.split("; "))
       : buttons(options, options.indexOf(answer.label));
@@ -748,29 +885,41 @@ function serve(token: string) {
 
   function draw(thread: string, message: MessageId): Promise<void> {
     const at = `${thread}:${message}`;
+
     const drawn = (drawing.get(at) ?? Promise.resolve())
       .then(async () => {
         const question = ledger.find(thread, message);
-        if (!question?.options.length) return;
+
+        if (!question?.options.length) {
+          return;
+        }
         const ch = await threadChannel(thread);
-        if (!question.poll)
+
+        if (!question.poll) {
           return void (await ch.messages.edit(String(message), { components: controls(question) }));
-        if (question.settled || (question.answer && question.answer.via !== "discord"))
+        }
+        if (question.settled || (question.answer && question.answer.via !== "discord")) {
           await (await ch.messages.fetch(String(message))).poll!.end();
+        }
       })
-      .catch((err) => {
+      .catch((error) => {
         process.stderr.write(
-          `discord hub: couldn't draw the buttons on ${thread} ${message}: ${err}\n`,
+          `discord hub: couldn't draw the buttons on ${thread} ${message}: ${error}\n`,
         );
       });
+
     drawing.set(at, drawn);
     void drawn.then(() => drawing.get(at) === drawn && drawing.delete(at));
+
     return drawn;
   }
 
   async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
     const question = ledger.find(thread, message);
-    if (!question || question.answer) return;
+
+    if (!question || question.answer) {
+      return;
+    }
     const answered = hub.deliver(
       thread,
       hub.name(thread) ?? thread,
@@ -789,12 +938,18 @@ function serve(token: string) {
       },
       () => ledger.answered(thread, message, label, via),
     );
-    if (answered) await draw(thread, message);
+
+    if (answered) {
+      await draw(thread, message);
+    }
   }
 
   async function settleQuestion(thread: string, message: MessageId, note: string) {
     const question = ledger.find(thread, message);
-    if (!question || !waits(question)) return;
+
+    if (!question || !waits(question)) {
+      return;
+    }
     ledger.settled(thread, message, note);
     await draw(thread, message);
   }
@@ -803,8 +958,12 @@ function serve(token: string) {
   // that the answer it got no longer stands. An ended poll stays ended.
   async function reopenQuestion(thread: string, message: MessageId, via: string) {
     const question = ledger.find(thread, message);
-    if (!question || !(question.answer || question.settled)) return;
+
+    if (!question || !(question.answer || question.settled)) {
+      return;
+    }
     const taken = question.answer?.label;
+
     const reopened = taken
       ? hub.deliver(
           thread,
@@ -823,7 +982,10 @@ function serve(token: string) {
           () => ledger.reopened(thread, message),
         )
       : ledger.reopened(thread, message);
-    if (reopened) await draw(thread, message);
+
+    if (reopened) {
+      await draw(thread, message);
+    }
   }
 
   async function call(
@@ -836,42 +998,61 @@ function serve(token: string) {
       const app = (args.app as string | undefined) ?? "discord";
       const about = args.about as string | undefined;
       const where = args.channel as string | undefined;
-      if (app !== "discord")
+
+      if (app !== "discord") {
         return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt as string, { about, where })).link}`;
+      }
       const here = await threadChannel(caller);
       const parent = where ?? (here.isThread() ? here.parent?.name : undefined);
       const { thread, link } = await place(name, parent, about, args.tags as string[] | undefined);
       hub.open(thread, name, args.prompt as string);
+
       return `started thread "${name}": ${link}`;
     }
-    if (tool === "fetch_messages") return history(caller, args);
-    if (tool === "list_channels") return listChannels();
-    if (tool === "search_messages") return search(args);
+
+    if (tool === "fetch_messages") {
+      return await history(caller, args);
+    }
+    if (tool === "list_channels") {
+      return await listChannels();
+    }
+    if (tool === "search_messages") {
+      return await search(args);
+    }
     if (tool === "forward") {
-      if (!args.thread && !args.channel) throw new Error("name a thread or channel to forward to");
+      if (!args.thread && !args.channel) {
+        throw new Error("name a thread or channel to forward to");
+      }
       const to = args.channel
         ? await textChannel(args.channel as string)
         : await threadChannel(hub.find(args.thread as string));
+
       const sent = await (
         await message(await threadChannel(caller), args.message_id as string)
       ).forward(to.id);
+
       return `forwarded (id: ${sent.id})`;
     }
+
     const thread = args.thread ? hub.find(args.thread as string) : caller;
+
     if (
       tool === "close_thread" &&
       (await client.channels.fetch(thread).then(
         () => false,
-        (err) => err?.code === RESTJSONErrorCodes.UnknownChannel,
+        (error) => error?.code === RESTJSONErrorCodes.UnknownChannel,
       ))
     ) {
       const name = hub.name(thread) ?? thread;
       void hub.retire(thread);
       void ledger.forget(thread);
+
       return `forgot "${name}": its Discord thread no longer exists`;
     }
+
     const ch = await threadChannel(thread);
     const access = loadAccess();
+
     switch (tool) {
       case "reply": {
         const text = tappable(args.text as string);
@@ -885,6 +1066,7 @@ function serve(token: string) {
           100,
           Math.min(access.textChunkLimit ?? MAX_CHUNK_LIMIT, MAX_CHUNK_LIMIT),
         );
+
         const replyMode = access.replyToMode ?? "first";
         const chunks = fenced(text, limit, access.chunkMode ?? "newline");
         const sentIds: string[] = [];
@@ -893,6 +1075,7 @@ function serve(token: string) {
           for (let i = 0; i < chunks.length; i++) {
             const shouldReplyTo =
               reply_to != null && replyMode !== "off" && (replyMode === "all" || i === 0);
+
             const sent = await ch.send({
               content: chunks[i],
               ...(args.silent ? { flags: MessageFlags.SuppressNotifications } : {}),
@@ -902,56 +1085,76 @@ function serve(token: string) {
                 ? { reply: { messageReference: reply_to, failIfNotExists: false } }
                 : {}),
             });
+
             said(thread, sent.id, chunks[i]!);
             sentIds.push(sent.id);
           }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
           said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
           throw new Error(
             `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
           );
         }
-        if (labels?.length) ledger.ask(thread, sentIds.at(-1)!, text, labels, undefined, multiple);
-        else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text);
+
+        if (labels?.length) {
+          ledger.ask(thread, sentIds.at(-1)!, text, labels, undefined, multiple);
+        } else if (text && sentIds.length) {
+          ledger.said(thread, sentIds.at(-1)!, text);
+        }
 
         return sentIds.length === 1
           ? `sent (id: ${sentIds[0]})`
           : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
       }
+
       case "react": {
         const msg = await message(ch, args.message_id as string);
+
         if (!args.remove) {
           await msg.react(args.emoji as string);
+
           return "reacted";
         }
+
         const { id, name } = parseEmoji(args.emoji as string) ?? {};
         const mine = msg.reactions.cache.get((id || name)!);
-        if (!mine?.me) throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
+
+        if (!mine?.me) {
+          throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
+        }
         await mine.users.remove();
+
         return "reaction removed";
       }
+
       case "edit_message": {
         const pinned = ledger.pin(thread);
+
         if (pinned?.message === args.message_id && args.text !== undefined) {
-          if (args.files)
+          if (args.files) {
             throw new Error("a status post is text: send the file in its own message");
+          }
           await ledger.rewrite(thread, post, tappable(args.text as string), pinned.message);
           said(thread, undefined, tappable(args.text as string), {
             edited: "true",
             message_id: String(pinned.message),
           });
+
           return `edited the status post's note (id: ${pinned.message}); hex keeps the questions and tasks under it current`;
         }
+
         const msg = await message(ch, args.message_id as string);
         const files = args.files ? sendable(args.files as string[]) : undefined;
+
         const edited =
           args.text !== undefined || files
             ? await msg.edit({
-                ...(args.text !== undefined ? { content: tappable(args.text as string) } : {}),
+                ...(args.text === undefined ? {} : { content: tappable(args.text as string) }),
                 ...(files ? { files, attachments: [] } : {}),
               })
             : msg;
+
         if (args.text !== undefined) {
           said(thread, undefined, tappable(args.text as string), {
             edited: "true",
@@ -959,32 +1162,44 @@ function serve(token: string) {
           });
           ledger.edited(thread, edited.id, args.text as string);
         }
-        if (args.settled) await settleQuestion(thread, edited.id, "✓ Settled");
+
+        if (args.settled) {
+          await settleQuestion(thread, edited.id, "✓ Settled");
+        }
         return `edited (id: ${edited.id})`;
       }
+
       case "delete_message": {
         const msg = await message(ch, args.message_id as string);
-        if (msg.author.id !== client.user!.id)
+
+        if (msg.author.id !== client.user!.id) {
           throw new Error("the bot can only delete its own messages");
+        }
         deleting.add(msg.id);
-        await msg.delete().catch((err) => {
+        await msg.delete().catch((error) => {
           deleting.delete(msg.id);
-          throw err;
+          throw error;
         });
         await ledger.deleted(thread, msg.id);
+
         return "deleted";
       }
+
       case "pin": {
         if (args.unpin) {
           const was = await ledger.unpin(thread, post, args.message_id as string | undefined);
+
           return was === undefined
             ? "this thread has no status post"
             : `unpinned the status post (id: ${was})`;
         }
-        if (typeof args.note !== "string")
+
+        if (typeof args.note !== "string") {
           throw new Error("pin takes the status post's note, or unpin: true");
+        }
         return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`;
       }
+
       case "poll": {
         const sent = await ch.send({
           poll: {
@@ -994,50 +1209,69 @@ function serve(token: string) {
             duration: 24,
           },
         });
+
         said(thread, sent.id, args.question as string, {
           poll: (args.options as string[]).join(" / "),
         });
         ledger.ask(thread, sent.id, args.question as string, args.options as string[], sent.id);
+
         return `sent poll (id: ${sent.id})`;
       }
+
       case "download_attachment": {
         const msg = await message(ch, args.message_id as string);
         const attachments = msg.messageSnapshots.first()?.attachments ?? msg.attachments;
-        if (attachments.size === 0) return "message has no attachments";
+
+        if (attachments.size === 0) {
+          return "message has no attachments";
+        }
         const lines: string[] = [];
+
         for (const att of attachments.values()) {
           const path = await downloadAttachment(att);
           const kb = (att.size / 1024).toFixed(0);
           lines.push(`  ${path}  (${safeAttName(att)}, ${att.contentType ?? "unknown"}, ${kb}KB)`);
         }
+
         return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
       }
+
       case "rename_thread": {
         const name = title(args.title as string);
         await inThread(ch).setName(name);
         hub.rename(thread, name);
+
         return `renamed to "${name}"`;
       }
+
       case "close_thread": {
         const closing = inThread(ch);
         hub.retire(thread);
         await closing.setArchived(true);
+
         return `archived "${closing.name}"; its session stops once it's idle`;
       }
+
       case "handoff": {
         const to = args.to as string;
         const name = args.title ? title(args.title as string) : nameOf(ch);
         const target = await move(hub, thread, to, name, args.channel as string | undefined);
         await ch.send(`Moved to ${to}: ${target}`);
-        if (ch.isThread()) await ch.setArchived(true);
+
+        if (ch.isThread()) {
+          await ch.setArchived(true);
+        }
         return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
       }
-      default:
+
+      default: {
         throw new Error(`unknown tool: ${tool}`);
+      }
     }
   }
 
   const dms = new Set<string>();
+
   const hub = startHub({
     stateDir: STATE_DIR,
     channel: "plugin:discord@hex",
@@ -1052,9 +1286,9 @@ function serve(token: string) {
         .catch(() => {});
     },
     permission: (thread, request) =>
-      void ask(thread, request).catch((err) =>
+      void ask(thread, request).catch((error) =>
         process.stderr.write(
-          `discord hub: couldn't relay a permission prompt to ${thread}: ${err}\n`,
+          `discord hub: couldn't relay a permission prompt to ${thread}: ${error}\n`,
         ),
       ),
     questions: {
@@ -1079,25 +1313,41 @@ function serve(token: string) {
   // every message reaches its session without one, and so does the message it hangs off
   // once the hub serves that thread.
   async function threadOf(msg: DiscordMessage): Promise<ThreadChannel | DMChannel | undefined> {
-    if (msg.channel.isDMBased()) dms.add(msg.channelId);
-    if (msg.channel.isThread() || msg.channel.isDMBased())
+    if (msg.channel.isDMBased()) {
+      dms.add(msg.channelId);
+    }
+    if (msg.channel.isThread() || msg.channel.isDMBased()) {
       return msg.channel as ThreadChannel | DMChannel;
-    if (!isText(msg.channel)) return;
-    if (msg.thread && hub.name(msg.thread.id)) return msg.thread;
-    if (!client.user || !msg.mentions.has(client.user)) return;
+    }
+    if (!isText(msg.channel)) {
+      return;
+    }
+    if (msg.thread && hub.name(msg.thread.id)) {
+      return msg.thread;
+    }
+    if (!client.user || !msg.mentions.has(client.user)) {
+      return;
+    }
     const words = msg.content
-      .replace(/<@[!&]?\d+>/g, "")
+      .replaceAll(/<@[!&]?\d+>/g, "")
       .trim()
       .split(/\s+/)
       .filter(Boolean);
-    return msg.thread ?? msg.startThread({ name: words[0] ?? "Thread" });
+
+    return await (msg.thread ?? msg.startThread({ name: words[0] ?? "Thread" }));
   }
 
   async function replyMeta(msg: DiscordMessage): Promise<Record<string, string>> {
-    if (msg.type !== MessageType.Reply || !msg.reference?.messageId) return {};
-    const replied = await msg.fetchReference().catch(() => undefined);
-    if (!replied) return { reply_to_message_id: msg.reference.messageId };
+    if (msg.type !== MessageType.Reply || !msg.reference?.messageId) {
+      return {};
+    }
+    const replied = await msg.fetchReference().catch(() => {});
+
+    if (!replied) {
+      return { reply_to_message_id: msg.reference.messageId };
+    }
     const atts = listed(replied.attachments);
+
     return {
       reply_to_message_id: replied.id,
       reply_to_user: replied.author.username,
@@ -1112,20 +1362,33 @@ function serve(token: string) {
     thread?: ThreadChannel,
   ): Promise<void> {
     const access = loadAccess();
-    if (!access.allowFrom.includes(msg.author.id)) return;
+
+    if (!access.allowFrom.includes(msg.author.id)) {
+      return;
+    }
     // A thread opened on a message begins with an empty starter pointing at it: that message is what opens the thread.
-    if (msg.type === MessageType.ThreadStarterMessage)
-      return handleInbound(await msg.fetchReference(), edited, msg.channel as ThreadChannel);
+    if (msg.type === MessageType.ThreadStarterMessage) {
+      return await handleInbound(await msg.fetchReference(), edited, msg.channel as ThreadChannel);
+    }
 
     const ch = thread ?? (await threadOf(msg));
-    if (!ch) return;
+
+    if (!ch) {
+      return;
+    }
     const opened = !edited && ch.id === msg.id;
     const tagged = opened && ch.isThread() && ch.ownerId === client.user!.id;
     const forum = ch.isThread() && !!ch.parent?.isThreadOnly();
-    if (ch.isThread() && ch.archived) await ch.setArchived(false).catch(() => {});
+
+    if (ch.isThread() && ch.archived) {
+      await ch.setArchived(false).catch(() => {});
+    }
 
     void ch.sendTyping().catch(() => {});
-    if (access.ackReaction) void msg.react(access.ackReaction).catch(() => {});
+
+    if (access.ackReaction) {
+      void msg.react(access.ackReaction).catch(() => {});
+    }
 
     // Attachments are listed (name/type/size) and only images are downloaded: the model
     // calls download_attachment for the rest. The listing goes in meta only, since an
@@ -1146,7 +1409,7 @@ function serve(token: string) {
         ? `(voice message) ${heard}`
         : voiced
           ? "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)"
-          : source.content.replace(/<@[!&]?\d+>/g, "").trim() ||
+          : source.content.replaceAll(/<@[!&]?\d+>/g, "").trim() ||
             (atts.length > 0
               ? "(attachment)"
               : stickers.length > 0
@@ -1180,6 +1443,7 @@ function serve(token: string) {
         ...(forwarded ? { forwarded: "true" } : {}),
       },
     };
+
     hub.deliver(ch.id, nameOf(ch), message);
     ledger.heard(ch.id, msg.id, message.content, message.meta.reply_to_message_id);
   }
@@ -1190,7 +1454,8 @@ function serve(token: string) {
     msg: DiscordMessage | PartialMessage,
   ): Promise<ThreadChannel | DMChannel | undefined> {
     const id = msg.channel.isThread() || msg.channel.isDMBased() ? msg.channelId : msg.id;
-    return hub.name(id) ? threadChannel(id) : undefined;
+
+    return hub.name(id) ? await threadChannel(id) : undefined;
   }
 
   async function handleReaction(
@@ -1198,12 +1463,18 @@ function serve(token: string) {
     user: User | PartialUser,
     removed: boolean,
   ): Promise<void> {
-    if (!allowed(user.id)) return;
+    if (!allowed(user.id)) {
+      return;
+    }
     const ch = await servedThread(reaction.message);
-    if (!ch) return;
+
+    if (!ch) {
+      return;
+    }
     const target = reaction.message.partial
-      ? await reaction.message.fetch().catch(() => undefined)
+      ? await reaction.message.fetch().catch(() => {})
       : reaction.message;
+
     const who = user.partial ? await user.fetch() : user;
     const emoji = reaction.emoji.toString();
     hub.deliver(ch.id, nameOf(ch), {
@@ -1226,9 +1497,14 @@ function serve(token: string) {
   // Discord doesn't say who deleted a message, so every delete in a served
   // thread is reported except the bot's own delete_message calls.
   async function handleDelete(msg: DiscordMessage | PartialMessage): Promise<void> {
-    if (deleting.delete(msg.id)) return;
+    if (deleting.delete(msg.id)) {
+      return;
+    }
     const ch = await servedThread(msg);
-    if (!ch) return;
+
+    if (!ch) {
+      return;
+    }
     void ledger.deleted(ch.id, msg.id);
     hub.deliver(ch.id, nameOf(ch), {
       author: "other",
@@ -1249,13 +1525,21 @@ function serve(token: string) {
     userId: string,
     removed: boolean,
   ): Promise<void> {
-    if (!allowed(userId)) return;
+    if (!allowed(userId)) {
+      return;
+    }
     const ch = await servedThread(answer.poll.message);
-    if (!ch) return;
+
+    if (!ch) {
+      return;
+    }
     const msg = answer.poll.message.partial
       ? await answer.poll.message.fetch()
       : answer.poll.message;
-    if (msg.author.id !== client.user!.id || !msg.poll) return;
+
+    if (msg.author.id !== client.user!.id || !msg.poll) {
+      return;
+    }
     const vote = msg.poll.answers.get(answer.id)?.text ?? "";
     const who = await client.users.fetch(userId);
     hub.deliver(
@@ -1276,8 +1560,11 @@ function serve(token: string) {
         },
       },
       () => {
-        if (!removed) ledger.answered(ch.id, msg.id, vote, "discord", true);
-        else if (ledger.find(ch.id, msg.id)?.answer?.label === vote) ledger.reopened(ch.id, msg.id);
+        if (!removed) {
+          ledger.answered(ch.id, msg.id, vote, "discord", true);
+        } else if (ledger.find(ch.id, msg.id)?.answer?.label === vote) {
+          ledger.reopened(ch.id, msg.id);
+        }
         return true;
       },
     );
@@ -1310,21 +1597,31 @@ function serve(token: string) {
       },
       question && (() => ledger.answered(ch.id, message, label, "discord")),
     );
-    if (question) await draw(ch.id, message);
+
+    if (question) {
+      await draw(ch.id, message);
+    }
   }
 
   // Discord wants an answer to a tap within three seconds, so the buttons change before anything is fetched.
   async function handleTap(tap: ButtonInteraction): Promise<void> {
-    if (!allowed(tap.user.id)) return void (await tap.deferUpdate());
-    const verdict = tap.customId.match(/^perm:(allow|deny):(\w+)$/);
+    if (!allowed(tap.user.id)) {
+      return void (await tap.deferUpdate());
+    }
+    const verdict = /^perm:(allow|deny):(\w+)$/.exec(tap.customId);
+
     if (verdict) {
       await tap.update({ components: verdicts(verdict[2]!, verdict[1]) });
       asking.get(tap.channelId)?.delete(tap.message.id);
-      return hub.answer(tap.channelId, verdict[2]!, verdict[1] as "allow" | "deny");
+
+      hub.answer(tap.channelId, verdict[2]!, verdict[1] as "allow" | "deny");
+      return;
     }
+
     const labels = (tap.message.components as ActionRow<ButtonComponent>[]).flatMap((row) =>
       row.components.map((button) => button.label!),
     );
+
     const chosen = Number(tap.customId);
     await tap.update({ components: buttons(labels, chosen) });
     await picked(
@@ -1337,10 +1634,13 @@ function serve(token: string) {
   }
 
   async function handleMenu(pick: StringSelectMenuInteraction): Promise<void> {
-    if (!allowed(pick.user.id)) return void (await pick.deferUpdate());
+    if (!allowed(pick.user.id)) {
+      return void (await pick.deferUpdate());
+    }
     const labels = (pick.component as StringSelectMenuComponent).options.map(
       (option) => option.label,
     );
+
     const chosen = pick.values.map((value) => labels[Number(value)]!);
     await pick.update({ components: menu(labels, chosen) });
     await picked(
@@ -1355,24 +1655,32 @@ function serve(token: string) {
   // A thread's own controls, outside its conversation: its session never sees them.
   async function handleCommand(command: ChatInputCommandInteraction): Promise<void> {
     const answer = (content: string) => command.reply({ content, flags: MessageFlags.Ephemeral });
-    if (!allowed(command.user.id)) return void (await answer("hex only answers its owner."));
+
+    if (!allowed(command.user.id)) {
+      return void (await answer("hex only answers its owner."));
+    }
     const thread = command.channelId;
-    if (!hub.name(thread))
+
+    if (!hub.name(thread)) {
       return void (await answer(
         "This channel has no session: use it in one of hex's threads or the DM.",
       ));
+    }
     switch (command.commandName) {
       case "model":
       case "effort": {
         const value = command.options.getString(command.commandName, true);
         hub.configure(thread, { [command.commandName]: value });
+
         const name =
           [...MODELS, ...EFFORTS].find((choice) => choice.value === value)?.name ?? value;
+
         return void (await answer(
           `${command.commandName === "model" ? "Model" : "Effort"}: ${name}, from this thread's next message.`,
         ));
       }
-      case "compact":
+
+      case "compact": {
         if (dms.has(thread))
           return void (await answer(
             "The DM starts a fresh session whenever its last one is spent, so there's nothing to compact.",
@@ -1383,9 +1691,11 @@ function serve(token: string) {
           return void (await answer("This thread has nothing to compact yet."));
         void hub.command(thread, "/compact");
         return void (await answer("Compacting this thread."));
-      case "stop":
+      }
+      case "stop": {
         hub.stop(thread);
         return void (await answer("Stopped. The next message resumes it."));
+      }
     }
   }
 
@@ -1413,29 +1723,35 @@ function serve(token: string) {
   });
 
   client.on("messageDeleteBulk", (msgs) => {
-    for (const msg of msgs.values()) handleDelete(msg).catch(failure("handleDelete"));
+    for (const msg of msgs.values()) {
+      handleDelete(msg).catch(failure("handleDelete"));
+    }
   });
 
   client.on("interactionCreate", (interaction) => {
-    if (interaction.isButton()) handleTap(interaction).catch(failure("handleTap"));
-    else if (interaction.isStringSelectMenu()) handleMenu(interaction).catch(failure("handleMenu"));
-    else if (interaction.isChatInputCommand())
+    if (interaction.isButton()) {
+      handleTap(interaction).catch(failure("handleTap"));
+    } else if (interaction.isStringSelectMenu()) {
+      handleMenu(interaction).catch(failure("handleMenu"));
+    } else if (interaction.isChatInputCommand()) {
       handleCommand(interaction).catch(failure("handleCommand"));
+    }
   });
 
   // The newest message handled, kept so the bot reads what it missed while it was
   // down, or while Discord couldn't resume its gateway session.
   let cursor = (() => {
     try {
-      return JSON.parse(readFileSync(CURSOR_FILE, "utf8")).id as string;
+      return JSON.parse(readFileSync(CURSOR_FILE, "utf-8")).id as string;
     } catch {
       return keepCursor(SnowflakeUtil.generate().toString());
     }
   })();
 
   function keepCursor(id: string) {
-    writeFileSync(`${CURSOR_FILE}.tmp`, JSON.stringify({ id }) + "\n");
+    writeFileSync(`${CURSOR_FILE}.tmp`, `${JSON.stringify({ id })}\n`);
     renameSync(`${CURSOR_FILE}.tmp`, CURSOR_FILE);
+
     return id;
   }
 
@@ -1445,21 +1761,30 @@ function serve(token: string) {
   let caught = new Set<string>();
 
   async function take(msg: DiscordMessage) {
-    if (!msg.author.bot) await handleInbound(msg).catch(failure("handleInbound"));
-    if (BigInt(msg.id) > BigInt(cursor)) cursor = keepCursor(msg.id);
+    if (!msg.author.bot) {
+      await handleInbound(msg).catch(failure("handleInbound"));
+    }
+    if (BigInt(msg.id) > BigInt(cursor)) {
+      cursor = keepCursor(msg.id);
+    }
   }
 
   type Listened = TextChannel | NewsChannel | AnyThreadChannel | DMChannel;
+
   const listensIn = (ch: Channel | null | undefined): ch is Listened =>
     ch?.type === ChannelType.DM ||
     ((isText(ch) || !!ch?.isThread()) && !!ch.permissionsFor(client.user!)?.has(READ));
 
   async function after(ch: Listened, from: string): Promise<DiscordMessage[]> {
     const found: DiscordMessage[] = [];
+
     for (let since = from; ;) {
       const page = [...(await ch.messages.fetch({ after: since, limit: 100 })).values()];
       found.push(...page);
-      if (page.length < 100) return found;
+
+      if (page.length < 100) {
+        return found;
+      }
       since = page.reduce((newest, m) => (BigInt(m.id) > BigInt(newest) ? m.id : newest), since);
     }
   }
@@ -1472,12 +1797,16 @@ function serve(token: string) {
   ): Promise<AnyThreadChannel[]> {
     const since = SnowflakeUtil.timestampFrom(from);
     const found: AnyThreadChannel[] = [];
+
     for (let before: number | undefined; ;) {
       const page = await ch.threads.fetchArchived({ before, limit: 100 });
       const threads = [...page.threads.values()];
       found.push(...threads);
       const oldest = Math.min(...threads.map((t) => t.archiveTimestamp ?? 0));
-      if (!page.hasMore || threads.length === 0 || oldest < since) return found;
+
+      if (!page.hasMore || threads.length === 0 || oldest < since) {
+        return found;
+      }
       before = oldest;
     }
   }
@@ -1489,6 +1818,7 @@ function serve(token: string) {
   async function catchUp() {
     const from = cursor;
     const g = client.guilds.cache.first();
+
     const [channels, active, dms] = await Promise.all([
       g ? g.channels.fetch().then((found) => [...found.values()]) : [],
       g ? g.channels.fetchActiveThreads().then((found) => [...found.threads.values()]) : [],
@@ -1496,38 +1826,47 @@ function serve(token: string) {
         loadAccess().allowFrom.map((id) =>
           client.users
             .createDM(id, { force: true })
-            .catch((err) => void failure(`opening the DM with ${id}`)(err)),
+            .catch((error) => void failure(`opening the DM with ${id}`)(error)),
         ),
       ),
     ]);
+
     const parents = channels.flatMap((ch) =>
       isPostable(ch) && ch.permissionsFor(client.user!)?.has(READ) ? [ch] : [],
     );
+
     const archived = await Promise.all(
       parents.map((ch) =>
         archivedSince(ch, from).catch(
-          (err) => (failure(`listing ${ch.id}'s archived threads`)(err), []),
+          (error) => (failure(`listing ${ch.id}'s archived threads`)(error), []),
         ),
       ),
     );
+
     const places = [...channels, ...active, ...archived.flat(), ...dms]
       .filter(listensIn)
       .filter((ch) => !!ch.lastMessageId && BigInt(ch.lastMessageId) > BigInt(from));
+
     const missed = (
       await Promise.all(
         places.map((ch) =>
-          after(ch, from).catch((err) => (failure(`catching up on ${ch.id}`)(err), [])),
+          after(ch, from).catch((error) => (failure(`catching up on ${ch.id}`)(error), [])),
         ),
       )
     )
       .flat()
       .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
-    if (missed.length > 0)
+
+    if (missed.length > 0) {
       process.stderr.write(
         `discord hub: catching up on ${missed.length} message(s) since ${new Date(SnowflakeUtil.timestampFrom(from)).toISOString()}\n`,
       );
+    }
     caught = new Set(missed.map((m) => m.id));
-    for (const msg of missed) await take(msg);
+
+    for (const msg of missed) {
+      await take(msg);
+    }
   }
 
   client.on("shardReady", () => {
@@ -1541,18 +1880,23 @@ function serve(token: string) {
   });
 
   client.on("messageUpdate", (before, after) => {
-    if (before.partial || before.content === after.content || after.author.bot) return;
+    if (before.partial || before.content === after.content || after.author.bot) {
+      return;
+    }
     handleInbound(after, true).catch(failure("handleInbound"));
   });
 
   client.on("threadUpdate", (before, after) => {
-    if (before.name !== after.name) hub.rename(after.id, after.name);
-    if (before.archived && !after.archived)
+    if (before.name !== after.name) {
+      hub.rename(after.id, after.name);
+    }
+    if (before.archived && !after.archived) {
       ledger
         .rewrite(after.id, post)
         .catch((err) =>
           process.stderr.write(`discord hub: couldn't rewrite ${after.id}'s status post: ${err}\n`),
         );
+    }
   });
 
   client.on("threadDelete", (thread) => {
@@ -1568,7 +1912,10 @@ function serve(token: string) {
   client.once("clientReady", (c) => {
     process.stderr.write(`discord hub: gateway connected as ${c.user.tag}\n`);
     const id = client.guilds.cache.first()?.id;
-    if (id) writeFileSync(GUILD_FILE, JSON.stringify({ id }) + "\n");
+
+    if (id) {
+      writeFileSync(GUILD_FILE, JSON.stringify({ id }) + "\n");
+    }
     hub.save();
     void c.application?.commands.set(COMMANDS).catch(failure("registering slash commands"));
     ledger.keep(post, (thread, err) =>
@@ -1581,13 +1928,14 @@ function serve(token: string) {
   async function login(attempt = 1): Promise<void> {
     try {
       await client.login(token);
-    } catch (err) {
-      if ((err as { code?: string }).code === DiscordjsErrorCodes.TokenInvalid)
-        return void process.stderr.write(`discord hub: login failed: ${err}\n`);
+    } catch (error) {
+      if ((error as { code?: string }).code === DiscordjsErrorCodes.TokenInvalid)
+        return void process.stderr.write(`discord hub: login failed: ${error}\n`);
       const delay = Math.min(1000 * 2 ** (attempt - 1), 60_000);
-      process.stderr.write(`discord hub: login failed: ${err}, retrying in ${delay / 1000}s\n`);
+      process.stderr.write(`discord hub: login failed: ${error}, retrying in ${delay / 1000}s\n`);
       setTimeout(login, delay, attempt + 1);
     }
   }
+
   void login();
 }

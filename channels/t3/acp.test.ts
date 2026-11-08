@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { createServer, type Server, type Socket } from "net";
-import { tmpdir } from "os";
-import { join } from "path";
-import { createInterface } from "readline";
-import { Readable } from "stream";
+import { createServer } from "net";
+import type { Server, Socket } from "net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createInterface } from "node:readline";
+import { Readable } from "node:stream";
 
 import type { Subprocess } from "bun";
 
@@ -21,22 +22,35 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  for (const server of servers.splice(0)) server.close();
-  for (const proxy of proxies.splice(0)) proxy.kill();
+  for (const server of servers.splice(0)) {
+    server.close();
+  }
+  for (const proxy of proxies.splice(0)) {
+    proxy.kill();
+  }
   rmSync(dir, { recursive: true, force: true });
 });
 
 // A hub on acp.sock that answers each request with what `answer` writes back.
 function hub(answer: (request: any, socket: Socket) => void) {
   const server = createServer((socket) =>
-    createInterface({ input: socket }).on("line", (line) => answer(JSON.parse(line), socket)),
+    createInterface({ input: socket }).on("line", (line) => {
+      answer(JSON.parse(line), socket);
+    }),
   );
+
   servers.push(server);
-  return new Promise<Server>((resolve) => server.listen(path, () => resolve(server)));
+
+  return new Promise<Server>((resolve) =>
+    server.listen(path, () => {
+      resolve(server);
+    }),
+  );
 }
 
 const write = (socket: Socket, message: object) =>
   socket.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+
 const said = (text: string) => ({
   method: "session/update",
   params: {
@@ -51,7 +65,9 @@ const said = (text: string) => ({
 
 test("a thread's history a hub restart cut short loads again without repeating what T3 has", async () => {
   const first = await hub((request, socket) => {
-    if (request.method !== "session/load") return;
+    if (request.method !== "session/load") {
+      return;
+    }
     write(socket, said("one"));
     write(socket, said("two"));
     setTimeout(() => {
@@ -59,11 +75,13 @@ test("a thread's history a hub restart cut short loads again without repeating w
       socket.destroy();
     }, 100);
   });
+
   const proxy = Bun.spawn(["bun", join(import.meta.dir, "acp.ts"), path], {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "ignore",
   });
+
   proxies.push(proxy);
   const out: any[] = [];
   createInterface({ input: Readable.fromWeb(proxy.stdout as any) }).on("line", (line) =>
@@ -77,8 +95,12 @@ test("a thread's history a hub restart cut short loads again without repeating w
   await until(() => out.length === 2);
   await new Promise((resolve) => first.on("close", resolve));
   await hub((request, socket) => {
-    if (request.method !== "session/load") return write(socket, { id: request.id, result: {} });
-    for (const text of ["one", "two", "three"]) write(socket, said(text));
+    if (request.method !== "session/load") {
+      return write(socket, { id: request.id, result: {} });
+    }
+    for (const text of ["one", "two", "three"]) {
+      write(socket, said(text));
+    }
     write(socket, { id: request.id, result: {} });
   });
   await until(() => out.some((message) => message.id === 1));

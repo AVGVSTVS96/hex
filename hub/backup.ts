@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
-import { join } from "path";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "node:fs";
+import { join } from "node:path";
 
 import { open } from "./store.ts";
 import { zoneOf } from "./zone.ts";
@@ -8,6 +8,7 @@ import { zoneOf } from "./zone.ts";
 // Each night at 3:00 on the owner's clock, while hex is quietest.
 const HOUR = 3;
 const KEEP = 7;
+
 // A day's copy reaches the computer in about a second; one that can't answer in five minutes isn't there.
 const SEND_LIMIT = 5 * 60_000;
 
@@ -25,19 +26,28 @@ export async function backup(storeDir: string, day: string, computer?: string, l
   const copy = new Database(part, { readonly: true });
   const { quick_check } = copy.query("pragma quick_check").get() as { quick_check: string };
   copy.close();
-  if (quick_check !== "ok") throw new Error(`its copy fails SQLite's check: ${quick_check}`);
+
+  if (quick_check !== "ok") {
+    throw new Error(`its copy fails SQLite's check: ${quick_check}`);
+  }
   renameSync(part, join(dir, name));
+
   for (const old of readdirSync(dir)
     .filter((file) => /^hex-.*\.db$/.test(file))
     .sort()
-    .slice(0, -KEEP))
+    .slice(0, -KEEP)) {
     rmSync(join(dir, old));
-  if (!computer) return;
+  }
+  if (!computer) {
+    return;
+  }
   const hash = new Bun.CryptoHasher("sha256")
     .update(await Bun.file(join(dir, name)).arrayBuffer())
     .digest("hex");
+
   const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; find . -name 'hex-*.db.part' -mmin +${Math.ceil(limit / 60_000) + 1} -delete; cat > "$1.part"; echo "$2  $1.part" | sha256sum -c --quiet; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`;
   const late = AbortSignal.timeout(limit);
+
   const sent = Bun.spawn(
     ["sprite", "exec", "-s", computer, "--", "sh", "-c", keep, "sh", name, hash],
     {
@@ -49,14 +59,25 @@ export async function backup(storeDir: string, day: string, computer?: string, l
       killSignal: "SIGKILL",
     },
   );
+
   const answer = await Promise.race([
     Promise.all([sent.exited, new Response(sent.stdout).text(), new Response(sent.stderr).text()]),
-    new Promise<undefined>((resolve) => late.addEventListener("abort", () => resolve(undefined))),
+    new Promise<undefined>((resolve) => {
+      late.addEventListener("abort", () => resolve(undefined));
+    }),
   ]);
-  if (!answer) throw new Error(`${computer} didn't answer in ${limit / 60_000} minutes`);
+
+  if (!answer) {
+    throw new Error(`${computer} didn't answer in ${limit / 60_000} minutes`);
+  }
   const [exit, out, err] = answer;
-  if (exit !== 0) throw new Error(`${computer} didn't take it: ${err.trim() || `exit ${exit}`}`);
-  if (!out.startsWith(hash)) throw new Error(`the copy on ${computer} doesn't match hex.db's`);
+
+  if (exit !== 0) {
+    throw new Error(`${computer} didn't take it: ${err.trim() || `exit ${exit}`}`);
+  }
+  if (!out.startsWith(hash)) {
+    throw new Error(`the copy on ${computer} doesn't match hex.db's`);
+  }
 }
 
 // The hub that serves General backs up each night, and at its start when the last 3:00 passed
@@ -66,16 +87,19 @@ export async function backup(storeDir: string, day: string, computer?: string, l
 export function nightly(storeDir: string, hexDir: string, main: string): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
+
   const run = async () => {
     const now = Temporal.Now.zonedDateTimeISO(zoneOf(hexDir) ?? Temporal.Now.timeZoneId());
     const today = now.round({ smallestUnit: "hour", roundingMode: "floor" }).with({ hour: HOUR });
     const passed = Temporal.ZonedDateTime.compare(today, now) <= 0;
     const day = (passed ? today : today.subtract({ days: 1 })).toPlainDate().toString();
-    if (!stopped)
+
+    if (!stopped) {
       timer = setTimeout(
         run,
         (passed ? today.add({ days: 1 }) : today).epochMilliseconds - Date.now(),
       );
+    }
     if (!existsSync(join(storeDir, "backups", `hex-${day}.db`))) {
       try {
         await backup(storeDir, day, process.env.HEX_COMPUTER || undefined);
@@ -92,7 +116,9 @@ export function nightly(storeDir: string, hexDir: string, main: string): () => v
       }
     }
   };
+
   void run();
+
   return () => {
     stopped = true;
     clearTimeout(timer);

@@ -1,7 +1,7 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { running, served, serving } from "./running.ts";
 import { open } from "./store.ts";
@@ -9,7 +9,10 @@ import { until } from "./until.ts";
 
 const claude = mkdtempSync(join(tmpdir(), "running-"));
 const store = open(join(claude, "state"));
-afterEach(() => rmSync(join(claude, "sessions"), { recursive: true, force: true }));
+
+afterEach(() => {
+  rmSync(join(claude, "sessions"), { recursive: true, force: true });
+});
 
 function record(name: string, session: object) {
   mkdirSync(join(claude, "sessions"), { recursive: true });
@@ -20,9 +23,12 @@ test("a session runs while its process lives, works for the thread it serves or 
   const job = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "telegram:-100:65" },
   });
-  afterAll(() => job.kill());
+
+  afterAll(() => {
+    job.kill();
+  });
   await until(() =>
-    readFileSync(`/proc/${job.pid}/environ`, "utf8").includes("HEX_OWNER=telegram:-100:65"),
+    readFileSync(`/proc/${job.pid}/environ`, "utf-8").includes("HEX_OWNER=telegram:-100:65"),
   );
   record("thread", {
     pid: process.pid,
@@ -85,11 +91,16 @@ test("a session whose process runs under another's works for what that one works
   const tree = Bun.spawn(["sh", "-c", "sleep 30 & HEX_HELPER=check sleep 30 & wait"], {
     env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "" },
   });
+
   const kids = await until(() => children(tree.pid).length === 2 && children(tree.pid));
-  afterAll(() => [tree.pid, ...kids].forEach(stop));
+  afterAll(() => {
+    [tree.pid, ...kids].forEach(stop);
+  });
+
   const helper = kids.find((pid) =>
-    readFileSync(`/proc/${pid}/environ`, "utf8").includes("HEX_HELPER=check"),
+    readFileSync(`/proc/${pid}/environ`, "utf-8").includes("HEX_HELPER=check"),
   )!;
+
   record("topic", {
     pid: tree.pid,
     sessionId: "aaaaaaaa-2",
@@ -149,6 +160,7 @@ test("a background session works for the thread its job's settings name, before 
 
 test("a background session whose settings are a pipe or can't be opened works for no thread, without blocking", () => {
   Bun.spawnSync(["mkfifo", join(claude, "settings-pipe")]);
+
   for (const [id, settings] of [
     ["cccccccc", join(claude, "settings-pipe")],
     ["dddddddd", "/proc/1/environ"],
@@ -167,6 +179,7 @@ test("a background session whose settings are a pipe or can't be opened works fo
       startedAt: 1,
     });
   }
+
   const sessions = running(store, claude);
   expect(["cccccccc-5", "dddddddd-5", "eeeeeeee-5"].map((id) => sessions.get(id)?.thread)).toEqual([
     undefined,
@@ -179,7 +192,7 @@ test("a background session whose settings are a pipe or can't be opened works fo
 });
 
 test("a record whose pid now belongs to a process that started at another time isn't running", () => {
-  const since = readFileSync(`/proc/${process.pid}/stat`, "utf8").split(") ")[1].split(" ")[19];
+  const since = readFileSync(`/proc/${process.pid}/stat`, "utf-8").split(") ")[1].split(" ")[19];
   record("same", { pid: process.pid, sessionId: "aaaaaaaa-3", status: "busy", procStart: since });
   record("reused", { pid: process.pid, sessionId: "bbbbbbbb-3", status: "busy", procStart: "1" });
   expect([...running(store, claude).keys()]).toEqual(["aaaaaaaa-3"]);
@@ -192,7 +205,7 @@ function stop(pid: number) {
 }
 
 function children(pid: number) {
-  return readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8")
+  return readFileSync(`/proc/${pid}/task/${pid}/children`, "utf-8")
     .trim()
     .split(" ")
     .filter(Boolean)

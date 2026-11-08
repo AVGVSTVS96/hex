@@ -1,4 +1,4 @@
-import { execFile, spawn } from "child_process";
+import { execFile, spawn } from "node:child_process";
 import {
   closeSync,
   existsSync,
@@ -9,9 +9,9 @@ import {
   readdirSync,
   statSync,
   watch,
-} from "fs";
-import { homedir } from "os";
-import { dirname, join } from "path";
+} from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { sleep } from "./clock.ts";
 
@@ -25,6 +25,7 @@ export type Agent = {
   state?: string;
   startedAt?: number;
 };
+
 // The context a session's last request sent and when; short: it wrote the five-minute cache;
 // failed: when a compaction failed since.
 export type Usage = { sent: number; at?: number; short?: boolean; failed?: number };
@@ -46,14 +47,19 @@ export function inherited(): Record<string, string | undefined> {
 // systemd 254 began expanding ${VARIABLE} in a scope's command, which would rewrite a thread's
 // name or prompt, and added --expand-environment to turn that off; older ones pass it as given.
 let verbatim: string[] | undefined;
+
 function contained(command: string, args: string[]): [string, string[]] {
   const slice = process.env.HEX_SESSIONS_SLICE;
-  if (!slice) return [command, args];
+
+  if (!slice) {
+    return [command, args];
+  }
   verbatim ??= Bun.spawnSync(["systemd-run", "--help"])
     .stdout.toString()
     .includes("--expand-environment")
     ? ["--expand-environment=no"]
     : [];
+
   return [
     "systemd-run",
     [
@@ -77,6 +83,7 @@ function tracked<T>(command: Promise<T>): Promise<T> {
   running.add(command);
   const done = () => void running.delete(command);
   command.then(done, done);
+
   return command;
 }
 
@@ -85,18 +92,22 @@ function tracked<T>(command: Promise<T>): Promise<T> {
 export async function settled() {
   for (;;) {
     await new Promise((resolve) => setImmediate(resolve));
-    if (!running.size) return;
+
+    if (!running.size) {
+      return;
+    }
     await Promise.allSettled(running);
   }
 }
 
 function run(args: string[]): Promise<string | undefined> {
   const [command, argv] = contained("claude", args);
+
   return tracked(
     new Promise((resolve) =>
-      execFile(command, argv, { env: inherited(), timeout: 15_000 }, (error, stdout) =>
-        resolve(error ? undefined : stdout),
-      ),
+      execFile(command, argv, { env: inherited(), timeout: 15_000 }, (error, stdout) => {
+        resolve(error ? undefined : stdout);
+      }),
     ),
   );
 }
@@ -104,6 +115,7 @@ function run(args: string[]): Promise<string | undefined> {
 async function listed(): Promise<Agent[] | undefined> {
   try {
     const list = JSON.parse((await run(["agents", "--json"])) ?? "");
+
     return Array.isArray(list) ? list.filter((agent: Agent) => agent.pid) : undefined;
   } catch {
     return undefined;
@@ -114,13 +126,18 @@ async function listed(): Promise<Agent[] | undefined> {
 // sessions still running, and it comes back only for the next new session; started here instead,
 // it takes the running ones back as it comes up.
 async function awake(asking: () => boolean) {
-  if ((await run(["daemon", "status"])) !== undefined) return true;
-  if (!asking()) return false;
+  if ((await run(["daemon", "status"])) !== undefined) {
+    return true;
+  }
+  if (!asking()) {
+    return false;
+  }
   process.stderr.write("hub: Claude's daemon isn't answering, so the hub starts it\n");
   const [command, args] = contained("claude", ["daemon", "run"]);
   spawn(command, args, { detached: true, stdio: "ignore", env: inherited() })
     .on("error", () => {})
     .unref();
+
   return false;
 }
 
@@ -130,14 +147,23 @@ async function awake(asking: () => boolean) {
 export async function agents(asking = () => true): Promise<Agent[]> {
   for (let tries = 0; asking(); tries++) {
     const running = await listed();
-    if (!asking()) break;
-    if (running?.length || (running && (await awake(asking)) && asking())) return running;
-    if (!asking()) break;
-    if (!running && !tries)
+
+    if (!asking()) {
+      break;
+    }
+    if (running?.length || (running && (await awake(asking)) && asking())) {
+      return running;
+    }
+    if (!asking()) {
+      break;
+    }
+    if (!running && !tries) {
       process.stderr.write("hub: claude agents didn't answer, so the hub asks again\n");
+    }
     await sleep(Math.min(1000 * 2 ** tries, 30_000));
   }
-  return new Promise(() => {});
+
+  return await new Promise(() => {});
 }
 
 export async function agent(session: string, asking?: () => boolean): Promise<Agent | undefined> {
@@ -151,6 +177,7 @@ export async function listing(session: string): Promise<Agent | undefined> {
 }
 
 export const stop = (session: string) => run(["stop", short(session)]);
+
 // Presses Esc in the session's own terminal, as a terminal attached to it would: the turn ends, and
 // the session and what it started in the background keep running. interrupted once the transcript
 // records it; exited when the attach ends first (the session is gone), let go when the caller does.
@@ -161,17 +188,27 @@ export function interrupt(
 ): Promise<"interrupted" | "exited" | "let go"> {
   const file = transcript(cwd, session);
   const from = sizeOf(file);
-  if (from === undefined) return Promise.resolve("exited");
-  if (until.aborted) return Promise.resolve("let go");
+
+  if (from === undefined) {
+    return Promise.resolve("exited");
+  }
+  if (until.aborted) {
+    return Promise.resolve("let go");
+  }
   return new Promise((resolve, reject) => {
     let attach: ReturnType<typeof Bun.spawn> | undefined;
+
     const watcher = watch(
       dirname(file),
       (_, name) => name === `${session}.jsonl` && recorded(file, from) && done("interrupted"),
     );
+
     let over = false;
+
     const done = (how: "interrupted" | "exited" | "let go") => {
-      if (over) return;
+      if (over) {
+        return;
+      }
       over = true;
       watcher.close();
       until.removeEventListener("abort", letGo);
@@ -179,10 +216,16 @@ export function interrupt(
       attach?.terminal?.close();
       resolve(how);
     };
-    watcher.on("error", () => done("exited"));
-    const letGo = () => done("let go");
+
+    watcher.on("error", () => {
+      done("exited");
+    });
+    const letGo = () => {
+      done("let go");
+    };
     let shown = "";
     let pressed = false;
+
     try {
       // Claude Code has no command to interrupt a session's turn from outside, and an interrupt runs no Stop hook.
       const [command, args] = contained("claude", ["attach", short(session)]);
@@ -194,20 +237,30 @@ export function interrupt(
           // Attach shows its own Attaching line before it reaches the session, which drops keys
           // until then; the session's screen follows it.
           data: (terminal, output) => {
-            if (pressed) return;
+            if (pressed) {
+              return;
+            }
             shown += Buffer.from(output).toString("latin1");
-            if (!/Attaching[^\n]*\n[^]/.test(shown)) return;
+
+            if (!/Attaching[^\n]*\n[^]/.test(shown)) {
+              return;
+            }
             pressed = true;
-            terminal.write("\x1b");
+            terminal.write("\x1B");
           },
         },
       });
     } catch (error) {
       watcher.close();
-      return reject(error);
+
+      reject(error);
+      return;
     }
+
     until.addEventListener("abort", letGo);
-    void attach.exited.then(() => done(recorded(file, from) ? "interrupted" : "exited"));
+    void attach.exited.then(() => {
+      done(recorded(file, from) ? "interrupted" : "exited");
+    });
   });
 }
 
@@ -215,7 +268,7 @@ function sizeOf(file: string) {
   try {
     return statSync(file).size;
   } catch {
-    return undefined;
+    return;
   }
 }
 
@@ -224,22 +277,29 @@ function sizeOf(file: string) {
 function recorded(file: string, from: number) {
   try {
     const size = statSync(file).size;
-    if (size <= from) return false;
+
+    if (size <= from) {
+      return false;
+    }
     const added = Buffer.alloc(size - from);
     const fd = openSync(file, "r");
+
     try {
       readSync(fd, added, 0, added.length, from);
     } finally {
       closeSync(fd);
     }
-    return added.toString("utf8").split("\n").some(interruption);
+
+    return added.toString("utf-8").split("\n").some(interruption);
   } catch {
     return false;
   }
 }
 
 function interruption(line: string) {
-  if (!line.includes("[Request interrupted by user")) return false;
+  if (!line.includes("[Request interrupted by user")) {
+    return false;
+  }
   try {
     return interrupted(JSON.parse(line));
   } catch {
@@ -254,12 +314,14 @@ export function interrupted(entry: {
   message?: { content?: unknown };
 }) {
   const content = entry.message?.content;
+
   const texts =
     typeof content === "string"
       ? [content]
       : Array.isArray(content)
         ? content.map((block: { text?: string }) => block.text ?? "")
         : [];
+
   return (
     entry.type === "user" &&
     !entry.isSidechain &&
@@ -270,6 +332,7 @@ export function interrupted(entry: {
 // `claude --bg --resume` copies the conversation to a new id while the old session's job record
 // exists, even once stopped; this clears the record and keeps the conversation.
 export const rm = (session: string) => run(["rm", short(session)]);
+
 // Restarts a running session in place from the flags it started with, running a turn it was on again.
 export const respawn = (agent: Agent) => run(["respawn", job(agent)]);
 
@@ -277,12 +340,16 @@ export const respawn = (agent: Agent) => run(["respawn", job(agent)]);
 // through a wrapper stays on its version, and starts no session at all once that version is deleted.
 // Stopped with its sessions kept, it comes back current with the next session and takes them back.
 let checking: Promise<void> | undefined;
+
 function current() {
   return (checking ??= (async () => {
     const [status, version] = await Promise.all([run(["daemon", "status"]), run(["--version"])]);
     const running = status?.match(/^version:\s*(\S+)/m)?.[1];
     const installed = version?.match(/^\S+/)?.[0];
-    if (!running || !installed || running === installed) return;
+
+    if (!running || !installed || running === installed) {
+      return;
+    }
     process.stderr.write(
       `hub: Claude's daemon runs ${running} while claude is ${installed}, so the hub restarts it\n`,
     );
@@ -297,7 +364,8 @@ export async function start(
   options: { cwd: string; env: Record<string, string | undefined> },
 ): Promise<string> {
   await current();
-  return tracked(
+
+  return await tracked(
     new Promise((resolve, reject) => {
       const [command, argv] = contained(launcher, ["--bg", ...args]);
       const child = spawn(command, argv, { ...options, stdio: ["ignore", "pipe", "pipe"] });
@@ -306,9 +374,13 @@ export async function start(
       child.stderr.on("data", (chunk) => (output += chunk));
       child.on("error", reject);
       child.on("close", (code) => {
-        const job = output.match(/backgrounded · (\w+)/)?.[1];
-        if (job) resolve(job);
-        else reject(new Error(output.trim() || `claude --bg exited with code ${code}`));
+        const job = /backgrounded · (\w+)/.exec(output)?.[1];
+
+        if (job) {
+          resolve(job);
+        } else {
+          reject(new Error(output.trim() || `claude --bg exited with code ${code}`));
+        }
       });
     }),
   );
@@ -326,6 +398,7 @@ export function exited(pid: number): Promise<void> {
         resolve();
       }
     };
+
     check();
   });
 }
@@ -333,6 +406,7 @@ export function exited(pid: number): Promise<void> {
 export function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
+
     return true;
   } catch (error) {
     return (error as { code?: string }).code === "EPERM";
@@ -347,7 +421,7 @@ export type Job = { state?: string; detail?: string; sessionId?: string; respawn
 
 export function record(id: string): Job {
   try {
-    return JSON.parse(readFileSync(join(home(), "jobs", id, "state.json"), "utf8"));
+    return JSON.parse(readFileSync(join(home(), "jobs", id, "state.json"), "utf-8"));
   } catch {
     return {};
   }
@@ -362,25 +436,27 @@ type Launch = { enabledPlugins?: object; env?: Record<string, string> };
 // Claude keeps the flags a session started with, since it respawns from them.
 function settingsFlag(agent: Agent) {
   const flags = record(job(agent)).respawnFlags ?? [];
+
   return flags.includes("--settings") ? flags[flags.lastIndexOf("--settings") + 1]! : "";
 }
 
 // The settings file a session started with, which a respawn reads again.
 export function settingsOf(agent: Agent): Launch | undefined {
   try {
-    return JSON.parse(readFileSync(settingsFlag(agent), "utf8"));
+    return JSON.parse(readFileSync(settingsFlag(agent), "utf-8"));
   } catch {
     return undefined;
   }
 }
 
 export function transcript(cwd: string, session: string) {
-  return join(home(), "projects", cwd.replace(/[^a-zA-Z0-9]/g, "-"), `${session}.jsonl`);
+  return join(home(), "projects", cwd.replaceAll(/[^a-zA-Z0-9]/g, "-"), `${session}.jsonl`);
 }
 
 // Whether any project folder has the session's conversation, or it can't be told.
 export function saved(session: string) {
   const projects = join(home(), "projects");
+
   try {
     return readdirSync(projects).some((project) =>
       existsSync(join(projects, project, `${session}.jsonl`)),
@@ -396,46 +472,57 @@ const FAILED = "Error during compaction";
 // From the newest usage or compaction in the session's transcript, and a failed compaction after it.
 export function usage(cwd: string, session: string): Usage {
   let file: number;
+
   try {
     file = openSync(transcript(cwd, session), "r");
   } catch {
     return { sent: 0 };
   }
+
   try {
     const size = fstatSync(file).size;
     const tail = Buffer.alloc(Math.min(size, 1 << 20));
     readSync(file, tail, 0, tail.length, size - tail.length);
     let failed: number | undefined;
-    for (const line of tail.toString("utf8").split("\n").reverse()) {
+
+    for (const line of tail.toString("utf-8").split("\n").reverse()) {
       if (
         !line.includes('"usage"') &&
         !line.includes('"compact_boundary"') &&
         !line.includes(FAILED)
-      )
+      ) {
         continue;
+      }
       let entry: any;
+
       try {
         entry = JSON.parse(line);
       } catch {
         continue;
       }
+
       const at = entry.timestamp ? Date.parse(entry.timestamp) : undefined;
-      if (entry.type === "system" && entry.subtype === "compact_boundary")
+
+      if (entry.type === "system" && entry.subtype === "compact_boundary") {
         return { sent: entry.compactMetadata?.postTokens ?? 0, at };
+      }
       if (
         entry.type === "system" &&
         entry.subtype === "local_command" &&
         String(entry.content).includes(FAILED)
-      )
+      ) {
         failed ??= at ?? 0;
+      }
       const usage =
         entry.type === "assistant" && !entry.isSidechain ? entry.message?.usage : undefined;
+
       const sent = usage
         ? (usage.input_tokens ?? 0) +
           (usage.cache_creation_input_tokens ?? 0) +
           (usage.cache_read_input_tokens ?? 0)
         : 0;
-      if (sent)
+
+      if (sent) {
         return {
           sent,
           at,
@@ -444,7 +531,9 @@ export function usage(cwd: string, session: string): Usage {
             !usage.cache_creation?.ephemeral_1h_input_tokens,
           ...(failed !== undefined && { failed }),
         };
+      }
     }
+
     return { sent: 0 };
   } finally {
     closeSync(file);

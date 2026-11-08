@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 
 let home: string;
 let bin: string;
 
-const sh = (...cmd: string[]) => expect(Bun.spawnSync(cmd, { cwd: home }).exitCode).toBe(0);
+const sh = (...cmd: string[]) => {
+  expect(Bun.spawnSync(cmd, { cwd: home }).exitCode).toBe(0);
+};
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "live-status-"));
@@ -17,7 +19,8 @@ beforeEach(() => {
   copyFileSync(join(import.meta.dir, "../../bin/live-status"), join(home, ".hex/bin/live-status"));
   copyFileSync(join(import.meta.dir, "../../bin/hex"), join(home, ".hex/bin/hex"));
   symlinkSync(join(import.meta.dir, "../../hub"), join(home, ".hex/hub"));
-  const commit = (msg: string) =>
+
+  const commit = (msg: string) => {
     sh(
       "git",
       "-c",
@@ -32,6 +35,8 @@ beforeEach(() => {
       "-m",
       msg,
     );
+  };
+
   sh("git", "init", "-q", "-b", "trunk");
   commit("first");
   sh("git", "branch", "shipped");
@@ -48,12 +53,12 @@ afterEach(() => {
 // Running Claude Code sessions, as Claude Code records them while their process lives.
 function running(sessions: object[]) {
   mkdirSync(join(home, ".claude/sessions"), { recursive: true });
-  sessions.forEach((session, n) =>
+  sessions.forEach((session, n) => {
     writeFileSync(
       join(home, `.claude/sessions/${n}.json`),
       JSON.stringify({ pid: process.pid, sessionId: `${n}0000000-s`, ...session }),
-    ),
-  );
+    );
+  });
 }
 
 function hook() {
@@ -61,8 +66,10 @@ function hook() {
     stdin: Buffer.from(JSON.stringify({ source: "startup" })),
     env: { PATH: `${bin}:${process.env.PATH}`, HOME: home, TZ: "UTC" },
   });
+
   expect(run.exitCode).toBe(0);
   expect(run.stderr.toString()).toBe("");
+
   return run.stdout.toString();
 }
 
@@ -102,12 +109,14 @@ test("lists each thread active in the last day with its last message, skipping w
     "2": { name: "Stale", session: "bbbbbbbb-1" },
   });
   store.keepThreads("discord", { "3": { name: "Kiln", session: "cccccccc-1" } });
+
   const said = (key: string, to: string, author: string, body: string, minutesAgo: number) => {
     store.deliver({ key, to, from: key.split(":")[0]!, author, body }, "x");
     store.db
       .query("update messages set at = ? where key = ?")
       .run(new Date(Date.now() - minutesAgo * 60_000).toISOString(), key);
   };
+
   said("telegram:1", "1", "owner", "water the beds?", 90);
   said("telegram:2", "1", "hex", "**Done.** Beds watered.\n## not a header", 89);
   said("terminal:1", "1", "hex", "watered", 88);
@@ -138,10 +147,12 @@ test("stays quiet and exits 0 when neither git nor claude can run", () => {
   const only = join(bin, "only");
   mkdirSync(only);
   symlinkSync(Bun.which("python3")!, join(only, "python3"));
+
   const run = Bun.spawnSync([join(home, ".hex/bin/live-status")], {
     stdin: Buffer.from("{}"),
     env: { PATH: only, CLAUDE_PROJECT_DIR: join(home, "missing") },
   });
+
   expect(run.exitCode).toBe(0);
   expect(run.stderr.toString()).toBe("");
   expect(run.stdout.toString()).not.toContain("Unmerged hex branches");

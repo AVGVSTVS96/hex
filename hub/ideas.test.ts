@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { checks, research, study, type Found } from "./ideas.ts";
+import { checks, research, study } from "./ideas.ts";
+import type { Found } from "./ideas.ts";
 import { open, Store } from "./store.ts";
 
 let dir: string;
@@ -17,10 +18,12 @@ afterEach(() => {
 });
 
 const minute = Date.UTC(2026, 10, 9, 17) / 60_000;
+
 const sent = () =>
   open(dir)
     .untaken()
     .filter((row) => row.from === "schedule");
+
 const job = { cron: "0 9 * * 1", idea: "t-1", prompt: "Is GPT Live 1.1 on the API yet?" };
 
 function idea() {
@@ -33,6 +36,7 @@ function idea() {
     body: "swap in GPT Live 1.1 once it is on the API",
     meta: { user: "owner" },
   });
+
   return store.createTask({
     title: "Swap in GPT Live 1.1",
     message: "telegram:-100:5",
@@ -85,9 +89,11 @@ test("news reaches the idea's thread; a check without news wakes no one, and the
 
 test("a check that fails is kept with its error; the second failure in a row tells the thread, once", async () => {
   idea();
+
   const fail = async () => {
     throw new Error("rate limited");
   };
+
   await research(dir, "gpt-live", job, "general", minute, fail);
   expect(sent()).toEqual([]);
   expect(checks(dir, "t-1")[0]!.error).toContain("rate limited");

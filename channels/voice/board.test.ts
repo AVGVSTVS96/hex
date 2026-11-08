@@ -1,10 +1,18 @@
 import { Database } from "bun:sqlite";
 import { afterAll, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { open, type Kept } from "../../hub/store.ts";
+import { open } from "../../hub/store.ts";
+import type { Kept } from "../../hub/store.ts";
 import { until } from "../../hub/until.ts";
 import { Board, track } from "./board.ts";
 
@@ -12,8 +20,11 @@ const home = mkdtempSync(join(tmpdir(), "voice-board-"));
 const claude = join(home, "claude");
 const state = join(home, "hex", "state");
 const hex = join(home, "hex");
-const project = join(claude, "projects", hex.replace(/[^a-zA-Z0-9]/g, "-"));
-afterAll(() => rmSync(home, { recursive: true }));
+const project = join(claude, "projects", hex.replaceAll(/[^a-zA-Z0-9]/g, "-"));
+
+afterAll(() => {
+  rmSync(home, { recursive: true });
+});
 
 const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -27,7 +38,7 @@ function job(session: string, record: object, timeline: object[] = []) {
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, "timeline.jsonl"),
-    timeline.map((entry) => JSON.stringify(entry) + "\n").join(""),
+    timeline.map((entry) => `${JSON.stringify(entry)}\n`).join(""),
   );
   writeFileSync(join(dir, "state.json"), JSON.stringify(record));
 }
@@ -53,24 +64,24 @@ function said(path: string, content: object, more: object = {}) {
   mkdirSync(join(path, ".."), { recursive: true });
   appendFileSync(
     path,
-    JSON.stringify({
+    `${JSON.stringify({
       type: "assistant",
       timestamp: new Date().toISOString(),
       message: { id: `msg_${Math.random()}`, content: [content] },
       ...more,
-    }) + "\n",
+    })}\n`,
   );
 }
 
 function heard(path: string, content: unknown, more: object = {}) {
   appendFileSync(
     path,
-    JSON.stringify({
+    `${JSON.stringify({
       type: "user",
       timestamp: new Date().toISOString(),
       message: { role: "user", content },
       ...more,
-    }) + "\n",
+    })}\n`,
   );
 }
 
@@ -79,7 +90,9 @@ function back(path: string, id: string, content: string, more: object = {}) {
 }
 
 mkdirSync(join(claude, "jobs"), { recursive: true });
+
 mkdirSync(join(claude, "sessions"), { recursive: true });
+
 const telegram = {
   "-1001234567890": {
     name: "hex",
@@ -95,9 +108,13 @@ const telegram = {
   "-1001234567890:65": { name: "Theo clips", session: "dddddddd-theo" },
   "-1001234567890:72": { name: "Leisure time", session: "eeeeeeee-leisure" },
 };
+
 threads("telegram", telegram);
+
 threads("buzz", { b1: { name: "Old news", session: "ffffffff-old" } });
+
 job("aaaaaaaa-general", { state: "done", detail: "heartbeat ran", updatedAt: ago(5) });
+
 const [overnight, askedOvernight, published, finished, asked, still] = [
   ago(13 * 60),
   ago(12.5 * 60),
@@ -106,6 +123,7 @@ const [overnight, askedOvernight, published, finished, asked, still] = [
   ago(40),
   ago(20),
 ];
+
 job(
   "bbbbbbbb-autofork",
   {
@@ -123,54 +141,75 @@ job(
     { at: still, state: "blocked", detail: "still needs music", text: "Still yours" },
   ],
 );
+
 const [checking, checked, building] = [
   Date.now() - 9 * 60_000,
   Date.now() - 60_000,
   Date.now() - 5 * 60_000,
 ];
+
 const voiceFan = [
   { id: "old", kind: "agent", label: "Earlier", doneAt: 1 },
   { id: "agent2", kind: "agent", label: "Check the server", startedAt: checking, doneAt: checked },
   { id: "agent1", kind: "agent", label: "Build the Tasks view", startedAt: building },
   { id: "sh", kind: "shell", label: "sleep" },
 ];
+
 job(
   "cccccccc-voiceapp",
   { state: "working", detail: "building", updatedAt: ago(1), fan: voiceFan },
   [{ at: ago(14), state: "working", detail: "", text: "" }],
 );
+
 job("dddddddd-theo", { state: "stopped", detail: "stopped", updatedAt: ago(30) }, [
   { at: ago(100), state: "done", detail: "clips posted", text: "done" },
 ]);
+
 job("eeeeeeee-leisure", { state: "working", detail: "was working", updatedAt: ago(29) });
+
 job("ffffffff-old", { state: "done", detail: "long ago", updatedAt: ago(8 * 24 * 60) });
+
 running("aaaaaaaa-general", "idle");
+
 running("cccccccc-voiceapp", "busy");
-running("eeeeeeee-leisure", "busy", 2 ** 22 + 12345);
+
+running("eeeeeeee-leisure", "busy", 2 ** 22 + 12_345);
 
 const t3 = join(home, "t3");
+
 mkdirSync(t3);
+
 writeFileSync(join(t3, "environment-id"), "env-1\n");
+
 const t3db = new Database(join(t3, "statev2.sqlite"));
+
 t3db.run(
   "create table orchestration_v2_projection_threads (thread_id text primary key, title text, deleted_at text)",
 );
+
 t3db.run(
   "create table orchestration_v2_projection_provider_threads (provider_thread_id text primary key, driver text, updated_at text, payload_json text)",
 );
+
 t3db.run(
   "create table orchestration_v2_projection_subagents (subagent_id text primary key, thread_id text, child_thread_id text, origin text, driver text, status text, started_at text, completed_at text, payload_json text)",
 );
+
 t3db.run(
   "create table orchestration_v2_projection_turn_items (turn_item_id text primary key, thread_id text, ordinal integer, type text, status text, payload_json text)",
 );
+
 t3db.run(
   "create table orchestration_v2_projection_messages (thread_id text, role text, created_at text, payload_json text, run_id text)",
 );
+
 t3db.run(
   "create table orchestration_v2_projection_runs (run_id text primary key, thread_id text, ordinal integer, status text, requested_at text, completed_at text)",
 );
-afterAll(() => t3db.close());
+
+afterAll(() => {
+  t3db.close();
+});
 
 function mapped(
   key: string,
@@ -246,12 +285,17 @@ function item(thread: string, ordinal: number, type: string, status: string, pay
 }
 
 mkdirSync(join(project, "cccccccc-voiceapp", "subagents"), { recursive: true });
+
 writeFileSync(
   join(project, "cccccccc-voiceapp", "subagents", "agent-agent1.meta.json"),
   JSON.stringify({ agentType: "Explore", description: "Build the Tasks view" }),
 );
+
 const board = new Board(state, hex, claude, t3);
-afterAll(() => board.close());
+
+afterAll(() => {
+  board.close();
+});
 
 test("each thread is a run from its session's own records, what needs you first, then what's working, then what finished", () => {
   expect(board.runs.map((run) => [run.name, run.state])).toEqual([
@@ -335,10 +379,13 @@ test("a working thread's line is its newest step in words, never a tool call, an
   step(join(project, "cccccccc-voiceapp.jsonl"), "Bash", {
     command: "cd ~/repo && git status --short && git log --oneline -3",
   });
-  const record = (detail: string) =>
+
+  const record = (detail: string) => {
     job("cccccccc-voiceapp", { state: "working", detail, updatedAt: ago(1), fan: voiceFan }, [
       { at: ago(14), state: "working", detail: "", text: "" },
     ]);
+  };
+
   record("Running cd ~/repo && git status --short && git l…");
   await until(() => voiceapp().steps[0]?.kind === "run");
   await Bun.sleep(50);
@@ -360,6 +407,7 @@ test("a working thread's line is its newest step in words, never a tool call, an
   record("Wired the Tasks rows to the board");
   await Bun.sleep(50);
   expect(voiceapp().line).toBe("");
+
   for (const tool of [
     "Running pwd",
     "Running cd ~/repo && python3 -c ' import json print(1)'",
@@ -372,6 +420,7 @@ test("a working thread's line is its newest step in words, never a tool call, an
     await Bun.sleep(50);
     expect(voiceapp().line).toBe("");
   }
+
   record("Tasks rows wired to the board");
   await Bun.sleep(50);
   expect(voiceapp().line).toBe("");
@@ -586,8 +635,10 @@ test("a T3 Code thread is placed by T3's own title for it, where T3 has one", as
     },
     unmapped: { name: "Unmapped", session: "d3000005-unmapped" },
   });
-  for (const session of ["d3000001-mapped", "d3000005-unmapped"])
+
+  for (const session of ["d3000001-mapped", "d3000005-unmapped"]) {
     job(session, { state: "done", detail: "ok", updatedAt: ago(1) });
+  }
   mapped("mapped", "4a1e7c52", { title: "Voice app restyle" });
   await until(() => board.get("t3:mapped")?.place === "Voice app restyle");
   expect(board.get("t3:mapped")).toMatchObject({
@@ -653,9 +704,11 @@ test("a hex T3 thread's delegations are its agents, one on hex only under it wit
   const lead = () => board.get("t3:lead");
   await until(() => lead()?.agents.length === 4);
   expect(board.get("t3:kid")).toBeUndefined();
+
   const kidBuild = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: "kid", HEX_OWNER: "" },
   });
+
   running("e5000004-kidbuild", "busy", kidBuild.pid, {
     kind: "interactive",
     name: "kid build",
@@ -862,12 +915,13 @@ test("a session whose process died, leaving its record behind, is gone once the 
   const pid = Number(
     Bun.spawnSync(["sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $!"]).stdout.toString(),
   );
+
   running("57575757-crashed", "busy", pid, { kind: "interactive", name: "crashed-1" });
   await until(() => board.strays().some((one) => one.name === "crashed-1"));
   process.kill(pid, "SIGKILL");
   await until(() => {
     try {
-      return readFileSync(`/proc/${pid}/stat`, "utf8").includes(") Z ");
+      return readFileSync(`/proc/${pid}/stat`, "utf-8").includes(") Z ");
     } catch {
       return true;
     }
@@ -881,9 +935,11 @@ test("a session whose process died, leaving its record behind, is gone once the 
 // What hex's hook writes as a session takes a prompt: the message taken and the turn begun.
 function prompted(session: string, thread: string, body: string, heartbeat = false) {
   const store = open(state);
+
   const key = heartbeat
     ? `schedule:heartbeat@${crypto.randomUUID()}`
     : `telegram:${crypto.randomUUID()}`;
+
   store.deliver({
     key,
     to: thread,
@@ -892,6 +948,7 @@ function prompted(session: string, thread: string, body: string, heartbeat = fal
     body,
     ...(heartbeat && { meta: { user: "schedule", schedule: "heartbeat" } }),
   });
+
   return () =>
     store.write(
       () =>
@@ -929,6 +986,7 @@ test("the hourly heartbeat is no turn of work: from the moment its session is bu
   stopped(session);
   await until(() => board.get(`telegram:${thread}`)?.state === "done");
   const counted = board.counts.version;
+
   for (const _ of [1, 2]) {
     await Bun.sleep(5);
     const take = prompted(session, thread, "[heartbeat] Hourly check", true);
@@ -968,13 +1026,14 @@ test("the hourly heartbeat is no turn of work: from the moment its session is bu
       line: "shipped the fix",
       lately: [{ text: "shipped the fix" }],
     });
-    expect(pulse()!.at > shipped.at).toBe(true);
+    expect(pulse().at > shipped.at).toBe(true);
     rmSync(join(claude, "sessions", `${session.slice(0, 8)}.json`));
     await settle();
     expect(pulse()).toMatchObject({ state: "done", line: "shipped the fix" });
     running(session, "idle");
     expect(board.counts.version).toBe(counted);
   }
+
   running(session, "busy", process.pid, { statusUpdatedAt: Date.now() });
   await settle();
   expect(pulse()).toMatchObject({ state: "done", line: "shipped the fix", running: false });
@@ -1017,12 +1076,14 @@ test("a heartbeat after a turn that ended handing work off shows that turn's end
   const thread = "-1001234567890:4300";
   const off = () => board.get(`telegram:${thread}`)!;
   const older = { at: ago(30), state: "done", detail: "shipped the old fix", text: "Shipped." };
+
   const handed = {
     at: ago(5),
     state: "working",
     detail: "page job started; it runs on",
     text: "The page job is running.",
   };
+
   prompted(session, thread, "Build the page")();
   job(session, { state: "working", detail: handed.detail, updatedAt: handed.at }, [older, handed]);
   said(join(project, `${session}.jsonl`), { type: "text", text: handed.detail });
@@ -1056,12 +1117,14 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
   const work = () => board.get(`telegram:${thread}`)!;
   const flipped = Date.now() - 60_000;
   const building = { at: ago(1), state: "working", detail: "Building the page", text: "" };
+
   const agent = {
     id: "page",
     kind: "agent",
     label: "Build the page",
     startedAt: Date.now() - 60_000,
   };
+
   prompted(session, thread, "Build the page")();
   said(transcript, { type: "text", text: "Starting on the page." });
   job(session, { state: "working", detail: "Building the page", updatedAt: ago(2), fan: [agent] }, [
@@ -1097,12 +1160,14 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
   await Bun.sleep(5);
   const back = prompted(session, thread, "<task-notification>page built</task-notification>");
   back();
+
   const built = {
     at: new Date().toISOString(),
     state: "done",
     detail: "page built",
     text: "Built.",
   };
+
   job(
     session,
     {
@@ -1124,11 +1189,13 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
   check();
   await Bun.sleep(5);
   const own = { id: "sh", kind: "shell", label: "gh pr checks --watch", startedAt: Date.now() };
+
   const beaten = [
     building,
     built,
     { at: new Date().toISOString(), state: "done", detail: "Nothing new", text: "HEARTBEAT_OK" },
   ];
+
   job(session, { state: "done", detail: "Nothing new", updatedAt: ago(0), fan: [own] }, beaten);
   stopped(session, "shell");
   await settle();
@@ -1150,14 +1217,20 @@ test("a heartbeat while agents or shells from before it run leaves the thread wo
 
 test("a session whose process runs under a thread's session is one of its agents, and neither hex's own check there nor a session T3 Code runs there is", async () => {
   const env = { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "" };
+
   const topic = Bun.spawn(["sh", "-c", "sleep 30 & HEX_HELPER=check sleep 30 & sleep 30 & wait"], {
     env,
   });
+
   const kids = await until(() => children(topic.pid).length === 3 && children(topic.pid));
-  afterAll(() => [topic.pid, ...kids].forEach(stop));
+  afterAll(() => {
+    [topic.pid, ...kids].forEach(stop);
+  });
+
   const helper = kids.find((pid) =>
-    readFileSync(`/proc/${pid}/environ`, "utf8").includes("HEX_HELPER=check"),
+    readFileSync(`/proc/${pid}/environ`, "utf-8").includes("HEX_HELPER=check"),
   )!;
+
   const [build, t3run] = kids.filter((pid) => pid !== helper);
   threads("telegram", {
     ...telegram,
@@ -1203,7 +1276,7 @@ function stop(pid: number) {
 }
 
 function children(pid: number) {
-  return readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8")
+  return readFileSync(`/proc/${pid}/task/${pid}/children`, "utf-8")
     .trim()
     .split(" ")
     .filter(Boolean)
@@ -1214,7 +1287,10 @@ test("a thread stays working while a session it started runs, that session one o
   const build = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-1001234567890:3275" },
   });
-  afterAll(() => build.kill());
+
+  afterAll(() => {
+    build.kill();
+  });
   threads("telegram", {
     ...telegram,
     "-1001234567890:3275": { name: "lab", session: "32753275-lab" },
@@ -1249,11 +1325,15 @@ test("a job's session works under the thread that owns it, wherever it runs, and
   const owned = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:65" },
   });
+
   const orphan = Bun.spawn(["sh", "-c", "sleep 30 & wait"], {
     env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:404" },
   });
+
   const [sub] = await until(() => children(orphan.pid).length === 1 && children(orphan.pid));
-  afterAll(() => [owned.pid, orphan.pid, sub!].forEach(stop));
+  afterAll(() => {
+    [owned.pid, orphan.pid, sub!].forEach(stop);
+  });
   const theo = () => board.get("telegram:-1001234567890:65");
   const lastActive = Date.now() - 60_000;
   job("91919191-clips", { state: "working", detail: "cutting clips", updatedAt: ago(0) });
@@ -1307,7 +1387,10 @@ test("a job's session works under the thread that owns it while that thread has 
   const owned = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:3675" },
   });
-  afterAll(() => owned.kill());
+
+  afterAll(() => {
+    owned.kill();
+  });
   threads("telegram", { ...telegram, "-1001234567890:3675": { name: "unemployment" } });
   const claim = () => board.get("telegram:-1001234567890:3675");
   job("93939393-claim", { state: "working", detail: "filling the claim", updatedAt: ago(0) });
@@ -1343,6 +1426,7 @@ test("a lane holds a week: the change before it, steps only in the last hour, an
   const now = Date.parse("2026-10-17T12:00:00.000Z");
   const at = (minutes: number) => new Date(now - minutes * 60_000).toISOString();
   const day = 24 * 60;
+
   const turns = [
     { at: at(9 * day), state: "done" as const },
     { at: at(8 * day), state: "needs" as const },
@@ -1357,6 +1441,7 @@ test("a lane holds a week: the change before it, steps only in the last hour, an
     { at: at(20), state: "working" as const },
     { at: at(10), state: "done" as const },
   ];
+
   expect(track(turns, now)).toEqual([
     { at: at(8 * day), state: "needs" },
     { at: at(3 * day), state: "working" },
@@ -1386,7 +1471,7 @@ test("a thread's lane outlives its session starting over, kept in the voice fold
   await until(() => {
     try {
       return (
-        JSON.parse(readFileSync(join(state, "voice", "tracks.json"), "utf8"))[
+        JSON.parse(readFileSync(join(state, "voice", "tracks.json"), "utf-8"))[
           "telegram:-1001234567890"
         ]?.[0]?.at === earlier
       );
@@ -1446,7 +1531,8 @@ function run(
     since,
     end,
   ]);
-  if (said)
+
+  if (said) {
     t3db.run("insert into orchestration_v2_projection_messages values (?, ?, ?, ?, ?)", [
       thread,
       "assistant",
@@ -1454,6 +1540,7 @@ function run(
       JSON.stringify({ text: said }),
       id,
     ]);
+  }
   return id;
 }
 
@@ -1467,12 +1554,14 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
   mapped("codex", "thread-codex", { driver: "codex", title: "sol: a second look" });
   const first = run("thread-prims", 1, { status: "completed", since: ago(60), end: ago(50) });
   const relayed = run("thread-prims", 2, { since: ago(2) });
+
   const second = run("thread-codex", 1, {
     status: "completed",
     since: ago(4),
     end: ago(1),
     said: "Looks **sound**.",
   });
+
   open(state).relayed("discord:fix", "thread-prims", first, ago(55));
   open(state).relayed("discord:fix", "thread-prims", relayed, ago(2));
   open(state).relayed("discord:fix", "thread-codex", second, ago(4));
@@ -1517,8 +1606,8 @@ test("two T3 threads that send each other work each show on their own, the other
 });
 
 test("a thread off the board, quiet for a week or closed, is a page of what was last kept for it, read without touching the board", async () => {
-  expect(board.find("telegram:-1001234567890")).toBe(board.get("telegram:-1001234567890")!);
-  const lanes = readFileSync(join(state, "voice", "tracks.json"), "utf8");
+  expect(board.find("telegram:-1001234567890")).toBe(board.get("telegram:-1001234567890"));
+  const lanes = readFileSync(join(state, "voice", "tracks.json"), "utf-8");
   expect(board.find("buzz:b1")).toEqual({
     id: "buzz:b1",
     app: "buzz",
@@ -1526,7 +1615,7 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
     name: "Old news",
     where: "Buzz",
     place: "Old news",
-    at: JSON.parse(readFileSync(join(claude, "jobs", "ffffffff", "state.json"), "utf8")).updatedAt,
+    at: JSON.parse(readFileSync(join(claude, "jobs", "ffffffff", "state.json"), "utf-8")).updatedAt,
     line: "long ago",
   });
   threads("discord", {
@@ -1551,12 +1640,12 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
     name: "Data kit",
     where: "Discord",
     place: "Data kit",
-    at: JSON.parse(readFileSync(join(claude, "jobs", "abababab", "state.json"), "utf8")).updatedAt,
+    at: JSON.parse(readFileSync(join(claude, "jobs", "abababab", "state.json"), "utf-8")).updatedAt,
     link: "https://discord.com/channels/1/gone",
   });
   expect(board.find("discord:never")).toBeUndefined();
   expect(board.runs.map((run) => run.id)).not.toContainAnyValues(["buzz:b1", "discord:gone"]);
-  expect(readFileSync(join(state, "voice", "tracks.json"), "utf8")).toBe(lanes);
+  expect(readFileSync(join(state, "voice", "tracks.json"), "utf-8")).toBe(lanes);
 });
 
 test("a closed thread whose session another open thread holds now shows nothing of that session", async () => {
@@ -1741,8 +1830,11 @@ test("what a session T3 Code runs launches goes by T3's handoffs, not the thread
   const t3server = Bun.spawn(["sh", "-c", "HEX_OWNER=telegram:-1001234567890:65 sleep 30 & wait"], {
     env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "" },
   });
+
   const [kid] = await until(() => children(t3server.pid).length === 1 && children(t3server.pid));
-  afterAll(() => [t3server.pid, kid!].forEach(stop));
+  afterAll(() => {
+    [t3server.pid, kid!].forEach(stop);
+  });
   mapped("c5c5c5c5-loner", "thread-loner2", {
     driver: "claudeAgent",
     title: "nobody handed this off",
@@ -1918,26 +2010,31 @@ test("a thread that works again shows only this stretch's steps and plan, not th
   const claudeDir = join(root, "claude");
   const hexDir = join(root, "hex");
   const hexState = join(hexDir, "state");
-  const dir = join(claudeDir, "projects", hexDir.replace(/[^a-zA-Z0-9]/g, "-"));
+  const dir = join(claudeDir, "projects", hexDir.replaceAll(/[^a-zA-Z0-9]/g, "-"));
+
   for (const path of [
     dir,
     join(claudeDir, "sessions"),
     join(claudeDir, "jobs"),
     join(hexState, "telegram"),
-  ])
+  ]) {
     mkdirSync(path, { recursive: true });
+  }
   const session = "abababab-again";
   open(hexState).keepThreads("telegram", { "-100777:5": { name: "Again", session } });
   const transcript = join(dir, `${session}.jsonl`);
-  const line = (minutes: number, type: string, content: object) =>
+
+  const line = (minutes: number, type: string, content: object) => {
     appendFileSync(
       transcript,
-      JSON.stringify({
+      `${JSON.stringify({
         type,
         timestamp: ago(minutes),
         message: { id: `msg_${Math.random()}`, role: type, content: [content] },
-      }) + "\n",
+      })}\n`,
     );
+  };
+
   line(61, "assistant", {
     type: "tool_use",
     id: "toolu_old",
@@ -1954,19 +2051,23 @@ test("a thread that works again shows only this stretch's steps and plan, not th
     },
   });
   line(58, "user", { type: "tool_result", tool_use_id: "toolu_plan", content: "ok" });
-  const status = (status: string) =>
+
+  const status = (status: string) => {
     writeFileSync(
       join(claudeDir, "sessions", "abababab.json"),
       JSON.stringify({
         pid: process.pid,
         sessionId: session,
         status,
-        startedAt: Date.now() - 2 * 3600_000,
+        startedAt: Date.now() - 2 * 3_600_000,
         statusUpdatedAt: Date.now(),
       }),
     );
+  };
+
   status("idle");
   const again = new Board(hexState, hexDir, claudeDir);
+
   try {
     const run = () => again.get("telegram:-100777:5");
     await Bun.sleep(100);
@@ -1994,19 +2095,23 @@ test("agents started for a task show under the topic that owns it, or for Genera
     author: "owner",
     body: "check for stalls, and fix the voice bug",
   });
+
   const stall = store.createTask({
     title: "Stall check",
     message: "telegram:-1001234567890:9001",
     owner: "-1001234567890",
     project: "Stall check",
   });
+
   const voice = store.createTask({
     title: "Voice bug",
     message: "telegram:-1001234567890:9001",
     owner: "-1001234567890:2583",
     project: "hex-voice",
   });
+
   const started = Date.now() - 3 * 60_000;
+
   const fan = [
     { id: "achk1aaaaaaaaaaaa", kind: "agent", label: "Stall check 1", startedAt: started },
     { id: "achk2aaaaaaaaaaaa", kind: "agent", label: "Stall check 2", startedAt: started + 1000 },
@@ -2018,12 +2123,17 @@ test("agents started for a task show under the topic that owns it, or for Genera
     },
     { id: "aownaaaaaaaaaaaaa", kind: "agent", label: "Its own", startedAt: started + 3000 },
   ];
+
   job("aaaaaaaa-general", { state: "working", detail: "checking", updatedAt: ago(0), fan });
   running("aaaaaaaa-general", "busy");
+
   const sweep = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_OWNER: "telegram:-1001234567890" },
   });
-  afterAll(() => sweep.kill());
+
+  afterAll(() => {
+    sweep.kill();
+  });
   running("86868686-sweep", "busy", sweep.pid, {
     kind: "interactive",
     name: "hex/sweep",
@@ -2077,22 +2187,26 @@ test("each task closed in the last day is finished under the run it was done for
     author: "owner",
     body: "fix the done tab, and the call drop, and launch it",
   });
+
   const tab = store.createTask({
     title: "Done tab",
     message: "telegram:-1001234567890:9002",
     owner: "-1001234567890:2583",
   });
+
   const drop = store.createTask({
     title: "Call drop",
     message: "telegram:-1001234567890:9002",
     owner: "-1001234567890:2583",
   });
+
   const launch = store.createTask({
     title: "Launch",
     message: "telegram:-1001234567890:9002",
     owner: "-1001234567890",
     project: "Launch plan",
   });
+
   store.editTask(tab.id, { status: "done", proof: "https://github.com/x/y/pull/1 (**live**)" });
   store.editTask(launch.id, { status: "done", proof: "posted" });
   await until(() => board.finished.length === 2);
@@ -2139,16 +2253,19 @@ test("a task General owns with no project is finished in the topic its proof was
     author: "hex",
     body: "the mic is off",
   });
+
   const mic = store.createTask({
     title: "Mic off",
     message: "telegram:-1001234567890:9010",
     owner: "-1001234567890",
   });
+
   const chat = store.createTask({
     title: "Chat",
     message: "telegram:-1001234567890:9010",
     owner: "-1001234567890",
   });
+
   store.editTask(mic.id, { status: "done", proof: "telegram:-1001234567890:9011 build 9" });
   store.editTask(chat.id, { status: "done", proof: "telegram:-1001234567890:9010" });
   await until(
@@ -2170,16 +2287,19 @@ test("a task General owns with no project is finished in the topic that closed i
     author: "owner",
     body: "pool and keyboard",
   });
+
   const pool = store.createTask({
     title: "Pool",
     message: "telegram:-1001234567890:9020",
     owner: "-1001234567890",
   });
+
   const keys = store.createTask({
     title: "Keys",
     message: "telegram:-1001234567890:9020",
     owner: "-1001234567890",
   });
+
   store.addAgents(pool.id, ["poolagent1"], "-1001234567890:2583");
   store.editTask(pool.id, {
     status: "done",

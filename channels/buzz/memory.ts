@@ -1,5 +1,3 @@
-import { execFile } from "child_process";
-import { createHash, createHmac } from "crypto";
 import {
   lstatSync,
   readFileSync,
@@ -8,21 +6,24 @@ import {
   statSync,
   watch,
   writeFileSync,
-  type FSWatcher,
 } from "fs";
-import { join, posix } from "path";
-import { promisify } from "util";
+import type { FSWatcher } from "fs";
+import { execFile } from "node:child_process";
+import { createHash, createHmac } from "node:crypto";
+import { join, posix } from "node:path";
+import { promisify } from "node:util";
 
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
-import { verifyEvent, type Event } from "nostr-tools/pure";
+import { verifyEvent } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
 
 import type { Relay } from "./relay.ts";
 
-const ENGRAM = 30174;
-const FILE = 30180;
+const ENGRAM = 30_174;
+const FILE = 30_180;
 const EDIT = 4180;
 const RESULT = 4181;
-const LIMIT = 65535;
+const LIMIT = 65_535;
 const SHARE = ["AGENTS.md", "SOUL.md", "schedules.json"];
 const NOTES = "memory/LOG.txt";
 const SETTLE = 500;
@@ -34,6 +35,7 @@ const now = () => Math.floor(Date.now() / 1000);
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 const tag = (event: Event, name: string) => event.tags.find((tag) => tag[0] === name)?.[1];
 const log = (line: string) => process.stderr.write(`buzz hub: ${line}\n`);
+
 // Readers check content against sha256, and a default TextDecoder drops a leading BOM.
 const utf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 
@@ -55,11 +57,13 @@ export function startMemory({
   const key = getConversationKey(secretKey, owner);
   const engrams = book(ENGRAM, "agent-memory/v1/d-tag", (body) => body?.slug);
   const records = book(FILE, "agent-files/v1/d-tag", recordPath);
+
   const shared = share
     .map((entry) => posix.normalize(entry).replace(/\/$/, ""))
     .filter(
       (entry) => valid(entry) || void log(`can't share ${entry}, paths stay inside the hex folder`),
     );
+
   const answered = new Set<string>();
   const watchers: FSWatcher[] = [];
   let queue: Promise<unknown> = Promise.resolve();
@@ -74,8 +78,11 @@ export function startMemory({
 
   function open(event: Event): { text: string; body: any } | undefined {
     try {
-      if (!verifyEvent(event)) return;
+      if (!verifyEvent(event)) {
+        return;
+      }
       const text = decrypt(event.content, key);
+
       return { text, body: JSON.parse(text) };
     } catch {}
   }
@@ -91,13 +98,18 @@ export function startMemory({
       ])) {
         const opened = open(event);
         const name = opened && nameOf(opened.body);
-        if (typeof name !== "string" || address(domain, name) !== tag(event, "d")) continue;
+
+        if (typeof name !== "string" || address(domain, name) !== tag(event, "d")) {
+          continue;
+        }
         const head = heads.get(name);
+
         if (
           head &&
           (head.at > event.created_at || (head.at === event.created_at && head.id < event.id))
-        )
+        ) {
           continue;
+        }
         heads.set(name, { text: opened!.text, at: event.created_at, id: event.id });
       }
     }
@@ -105,9 +117,13 @@ export function startMemory({
     async function put(name: string, body: object) {
       const text = JSON.stringify(body);
       const head = heads.get(name);
-      if (head?.text === text) return;
-      if (Buffer.byteLength(text) > LIMIT)
+
+      if (head?.text === text) {
+        return;
+      }
+      if (Buffer.byteLength(text) > LIMIT) {
         return log(`${name} is over 64 KB, so the Buzz panel doesn't get it`);
+      }
       const event = await relay.publish({
         kind,
         content: encrypt(text, key),
@@ -117,6 +133,7 @@ export function startMemory({
         ],
         created_at: Math.max(now(), (head?.at ?? 0) + 1),
       });
+
       heads.set(name, { text, at: event.created_at, id: event.id });
     }
 
@@ -126,10 +143,16 @@ export function startMemory({
           loaded = undefined;
           throw error;
         }));
-        for (const [name, body] of wanted) await put(name, body);
+
+        for (const [name, body] of wanted) {
+          await put(name, body);
+        }
         for (const name of heads.keys()) {
           const body = wanted.has(name) ? undefined : gone(name);
-          if (body) await put(name, body);
+
+          if (body) {
+            await put(name, body);
+          }
         }
       },
     };
@@ -137,35 +160,51 @@ export function startMemory({
 
   function read(path: string) {
     try {
-      return readFileSync(join(hexDir, path), "utf8");
+      return readFileSync(join(hexDir, path), "utf-8");
     } catch {}
   }
 
   function memories() {
     const wanted = new Map<string, object>();
     const soul = read("SOUL.md");
-    if (soul !== undefined) wanted.set("core", { slug: "core", profile: soul });
+
+    if (soul !== undefined) {
+      wanted.set("core", { slug: "core", profile: soul });
+    }
     const notes = (read(NOTES) ?? "").matchAll(/^#\d+ (\d{4}-\d\d-\d\d) (.+?)\s*$/gm);
+
     for (const [day, lines] of Map.groupBy(notes, (note) => note[1]!)) {
       const slug = `mem/notes/${day}`;
       wanted.set(slug, { slug, value: lines.map((note) => `- ${note[2]}`).join("\n") });
     }
+
     return wanted;
   }
 
   function files() {
     const found = new Map<string, Buffer>();
+
     function visit(path: string) {
-      if (!valid(path)) return;
+      if (!valid(path)) {
+        return;
+      }
       const full = join(hexDir, path);
+
       try {
         const stat = lstatSync(full);
-        if (stat.isFile()) found.set(path, readFileSync(full));
-        if (stat.isDirectory())
+
+        if (stat.isFile()) {
+          found.set(path, readFileSync(full));
+        }
+        if (stat.isDirectory()) {
           for (const name of readdirSync(full)) if (!name.startsWith(".")) visit(`${path}/${name}`);
+        }
       } catch {}
     }
-    for (const entry of shared) visit(entry);
+
+    for (const entry of shared) {
+      visit(entry);
+    }
     return new Map([...found].map(([path, bytes]) => [path, record(path, bytes)]));
   }
 
@@ -189,40 +228,55 @@ export function startMemory({
   }
 
   async function publish() {
-    if (!sharing) return;
+    if (!sharing) {
+      return;
+    }
     try {
       await records.sync(files(), (path) => ({ path, removed: true }));
     } catch (error) {
-      if (!String(error).includes("unknown event kind")) throw error;
+      if (!String(error).includes("unknown event kind")) {
+        throw error;
+      }
       sharing = false;
+
       return log(
         `this relay doesn't take Agent Files yet (${error instanceof Error ? error.message : error}), so shared files stay off`,
       );
     }
+
     edits ??= await listen();
   }
 
   async function listen() {
     for (const event of await relay.query([
       { kinds: [RESULT], authors: [relay.pubkey], "#p": [owner] },
-    ]))
+    ])) {
       answered.add(tag(event, "e") ?? "");
-    if (closed) return;
-    return relay.subscribe([{ kinds: [EDIT], authors: [owner], "#p": [relay.pubkey] }], (event) =>
-      run(() => answer(event)),
-    );
+    }
+    if (closed) {
+      return;
+    }
+    return relay.subscribe([{ kinds: [EDIT], authors: [owner], "#p": [relay.pubkey] }], (event) => {
+      run(() => answer(event));
+    });
   }
 
   // A request that can't be read or names an invalid path gets no answer, as NIP-AF says.
   async function answer(event: Event) {
-    if (answered.has(event.id) || event.pubkey !== owner) return;
+    if (answered.has(event.id) || event.pubkey !== owner) {
+      return;
+    }
     const addressed = event.tags.filter((tag) => tag[0] === "p");
+
     const request =
       addressed.length === 1 && addressed[0]![1] === relay.pubkey ? open(event)?.body : undefined;
+
     if (!editRequest(request)) {
       answered.add(event.id);
+
       return log(`ignored an unreadable edit request ${event.id}`);
     }
+
     const result = await edit(request);
     await relay.publish({
       kind: RESULT,
@@ -247,10 +301,16 @@ export function startMemory({
     content: string;
   }) {
     const current = files().get(path);
-    if (!current) return { status: "declined", path, reason: "file is not shared" };
-    if (!("content" in current))
+
+    if (!current) {
+      return { status: "declined", path, reason: "file is not shared" };
+    }
+    if (!("content" in current)) {
       return { status: "declined", path, reason: "file is too large or not text" };
-    if (current.sha256 !== base) return { status: "conflict", path, sha256: current.sha256 };
+    }
+    if (current.sha256 !== base) {
+      return { status: "conflict", path, sha256: current.sha256 };
+    }
     const full = join(hexDir, path);
     const bytes = Buffer.from(content);
     const sha = sha256(bytes);
@@ -258,6 +318,7 @@ export function startMemory({
     renameSync(`${full}.tmp`, full);
     await commit(path);
     await publish();
+
     return { status: "applied", path, sha256: sha };
   }
 
@@ -267,6 +328,7 @@ export function startMemory({
     } catch {
       return;
     }
+
     try {
       await exec("git", ["-C", hexDir, "add", "--", path]);
       await exec("git", [
@@ -285,18 +347,28 @@ export function startMemory({
   }
 
   function arm() {
-    for (const watcher of watchers.splice(0)) watcher.close();
-    if (closed) return;
+    for (const watcher of watchers.splice(0)) {
+      watcher.close();
+    }
+    if (closed) {
+      return;
+    }
     const top = new Set(["SOUL.md", ...shared.map((entry) => entry.split("/")[0])]);
     follow("", false, (name) => top.has(name));
     follow(posix.dirname(NOTES), false, (name) => name === posix.basename(NOTES));
-    for (const dir of shared) follow(dir, true, () => true);
+
+    for (const dir of shared) {
+      follow(dir, true, () => true);
+    }
   }
 
   function follow(dir: string, recursive: boolean, wanted: (name: string) => boolean) {
     const full = join(hexDir, dir);
+
     try {
-      if (dir && !statSync(full).isDirectory()) return;
+      if (dir && !statSync(full).isDirectory()) {
+        return;
+      }
       watchers.push(
         watch(full, { recursive }, (_, name) => wanted(String(name)) && later()).on(
           "error",
@@ -314,7 +386,10 @@ export function startMemory({
       closed = true;
       clearTimeout(timer);
       clearInterval(resync);
-      for (const watcher of watchers.splice(0)) watcher.close();
+
+      for (const watcher of watchers.splice(0)) {
+        watcher.close();
+      }
       edits?.();
     },
   };
@@ -325,27 +400,39 @@ function record(
   bytes: Buffer,
 ): { path: string; sha256: string; size: number; content?: string } {
   const listed = { path, sha256: sha256(bytes), size: bytes.length };
+
   try {
     const inlined = { ...listed, content: utf8.decode(bytes) };
-    if (Buffer.byteLength(JSON.stringify(inlined)) <= LIMIT) return inlined;
+
+    if (Buffer.byteLength(JSON.stringify(inlined)) <= LIMIT) {
+      return inlined;
+    }
   } catch {}
+
   return listed;
 }
 
 // A file record body as NIP-AF defines it; anything else never counts as a head.
 function recordPath(body: any) {
-  if (typeof body?.path !== "string" || !valid(body.path)) return;
-  if ("removed" in body) return body.removed === true ? body.path : undefined;
-  const { sha256: sha, size, content } = body;
-  if (typeof sha !== "string" || !HEX64.test(sha) || !Number.isSafeInteger(size) || size < 0)
+  if (typeof body?.path !== "string" || !valid(body.path)) {
     return;
+  }
+  if ("removed" in body) {
+    return body.removed === true ? body.path : undefined;
+  }
+  const { sha256: sha, size, content } = body;
+
+  if (typeof sha !== "string" || !HEX64.test(sha) || !Number.isSafeInteger(size) || size < 0) {
+    return;
+  }
   if (
     content !== undefined &&
     (typeof content !== "string" ||
       Buffer.byteLength(content) !== size ||
       sha256(Buffer.from(content)) !== sha)
-  )
+  ) {
     return;
+  }
   return body.path;
 }
 

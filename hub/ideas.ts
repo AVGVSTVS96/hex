@@ -1,5 +1,5 @@
-import { appendFileSync, readFileSync } from "fs";
-import { join } from "path";
+import { appendFileSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { clip } from "./fit.ts";
 import type { Job } from "./schedule.ts";
@@ -26,6 +26,7 @@ const SCHEMA = {
 };
 
 export type Found = { news: boolean; finding: string; tokens?: number; cost?: number };
+
 export type Check = {
   at: string;
   schedule: string;
@@ -49,6 +50,7 @@ export async function look(input: string): Promise<Found> {
     CLAUDE_CODE_ENTRYPOINT: "hex",
     HEX_HELPER: "ideas",
   };
+
   const run = Bun.spawn(
     [
       "claude",
@@ -75,16 +77,20 @@ export async function look(input: string): Promise<Found> {
     ],
     { cwd: hexDir(), env, stdin: new Blob([input]), stdout: "pipe", stderr: "pipe", timeout: CALL },
   );
+
   const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
   const result = JSON.parse(out || "{}");
-  if (code !== 0 || result.is_error || !result.structured_output)
+
+  if (code !== 0 || result.is_error || !result.structured_output) {
     throw new Error(`claude exited ${code}: ${String(result.result ?? "").slice(0, 300)}`);
+  }
   const {
     input_tokens = 0,
     output_tokens = 0,
     cache_read_input_tokens = 0,
     cache_creation_input_tokens = 0,
   } = result.usage ?? {};
+
   return {
     ...result.structured_output,
     tokens: input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens,
@@ -94,7 +100,7 @@ export async function look(input: string): Promise<Found> {
 
 export function checks(state: string, idea?: string): Check[] {
   try {
-    return readFileSync(join(state, "ideas.jsonl"), "utf8")
+    return readFileSync(join(state, "ideas.jsonl"), "utf-8")
       .split("\n")
       .filter(Boolean)
       .map((line) => JSON.parse(line) as Check)
@@ -119,6 +125,7 @@ export async function research(
   const task = store.task(id);
   const to = job.thread ?? task?.owner ?? main;
   const record: Check = { at: new Date().toISOString(), schedule: name, idea: id };
+
   if (!task || task.status === "done" || task.status === "dropped") {
     record.ended = task?.status ?? "gone";
     const body = `[${name}] ${id} is ${record.ended}, so its check in schedules.json has nothing left to look into: take the job out.`;
@@ -141,23 +148,29 @@ export async function research(
         : "This is its first check.",
       `Today is ${new Date(minute * 60_000).toISOString().slice(0, 10)}.`,
     ].join("\n\n");
+
     try {
       Object.assign(record, await ask(record.input));
-      if (record.news)
+
+      if (record.news) {
         store.fire(name, minute, to, `[${name}] News for ${id} (${task.title}): ${record.finding}`);
+      }
     } catch (error) {
       record.error = String(error);
       // The second failure in a row is told once, so a check that stopped working isn't silent.
       const [last, before] = [all.at(-1), all.at(-2)];
-      if (last?.error && !before?.error)
+
+      if (last?.error && !before?.error) {
         store.fire(
           name,
           minute,
           to,
           `[${name}] ${id}'s idea check failed twice in a row, and tries again at its next slot: ${clip(record.error, 300)}`,
         );
+      }
     }
   }
+
   appendFileSync(join(state, "ideas.jsonl"), `${JSON.stringify(record)}\n`);
 }
 
@@ -171,8 +184,9 @@ export function study(state: string, name: string, job: Job, main: string, slot?
   if (
     busy.has(name) ||
     (slot === undefined && checks(state).some((check) => check.schedule === name))
-  )
+  ) {
     return;
+  }
   busy.add(name);
   line = line
     .then(() => research(state, name, job, main, slot ?? Math.floor(Date.now() / 60_000)))

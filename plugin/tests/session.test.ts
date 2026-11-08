@@ -9,9 +9,9 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { startHub } from "../../hub/hub.ts";
 
@@ -29,8 +29,10 @@ let listener: ReturnType<typeof Bun.serve>;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "session-"));
-  for (const dir of ["bin", "chat", "hub"])
+
+  for (const dir of ["bin", "chat", "hub"]) {
     cpSync(join(HEX, dir), join(home, ".hex", dir), { recursive: true });
+  }
   mkdirSync(join(home, ".claude"));
   mkdirSync(join(home, "state"));
   writeFileSync(
@@ -60,8 +62,10 @@ exit 0
 `,
   );
   chmodSync(join(home, "fake/claude"), 0o755);
-  for (const name of Object.keys(process.env))
+
+  for (const name of Object.keys(process.env)) {
     if (name.startsWith("HEX_") || name === "MEMORY_DIR") delete process.env[name];
+  }
   Object.assign(process.env, {
     HOME: home,
     PATH: `${join(home, "fake")}:${process.env.PATH}`,
@@ -79,7 +83,10 @@ exit 0
 afterEach(() => {
   hub?.close();
   listener.stop(true);
-  for (const name of Object.keys(process.env)) if (!(name in saved)) delete process.env[name];
+
+  for (const name of Object.keys(process.env)) {
+    if (!(name in saved)) delete process.env[name];
+  }
   Object.assign(process.env, saved);
   rmSync(home, { recursive: true, force: true });
 });
@@ -104,19 +111,27 @@ async function launch(
     },
     ...options,
   });
-  if (cwd) hub.open(thread, thread, "hi", cwd);
-  else hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
-  for (let i = 0; i < 200 && !existsSync(join(home, "launched")); i++) await Bun.sleep(25);
-  const args: string[] = JSON.parse(readFileSync(join(home, "launched"), "utf8"));
+
+  if (cwd) {
+    hub.open(thread, thread, "hi", cwd);
+  } else {
+    hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
+  }
+  for (let i = 0; i < 200 && !existsSync(join(home, "launched")); i++) {
+    await Bun.sleep(25);
+  }
+  const args: string[] = JSON.parse(readFileSync(join(home, "launched"), "utf-8"));
   const file = args[args.indexOf("--settings") + 1]!;
-  return { args, file, settings: JSON.parse(readFileSync(file, "utf8")) };
+
+  return { args, file, settings: JSON.parse(readFileSync(file, "utf-8")) };
 }
 
 test("a DM session the hub starts gets the chat prompt, its view's tail and wake through its settings, and its settings, token included, stay in an owner-only file", async () => {
   const { args, file, settings } = await launch("plugin:telegram@hex", "6296842341", {
     fresh: () => true,
   });
-  const system = readFileSync(args[args.indexOf("--system-prompt-file") + 1]!, "utf8");
+
+  const system = readFileSync(args[args.indexOf("--system-prompt-file") + 1]!, "utf-8");
   expect(system).toStartWith("You are hex");
   expect(system).not.toContain("#0 a memory");
   expect(settings.claudeMdExcludes).toContain(join(home, "AGENTS.md"));
@@ -136,18 +151,18 @@ test("a DM session the hub starts gets the chat prompt, its view's tail and wake
 test("a launch writes the wake only when there is none, and removes it once memory is off, not when settings do not parse", async () => {
   const wake = join(home, "state/wake/CLAUDE.md");
   await launch("plugin:telegram@hex", "-100:5");
-  expect(readFileSync(wake, "utf8")).toContain("#0 a memory");
+  expect(readFileSync(wake, "utf-8")).toContain("#0 a memory");
   writeFileSync(wake, "kept\n");
   rmSync(join(home, "launched"));
   hub.close();
   await launch("plugin:telegram@hex", "-100:6");
-  expect(readFileSync(wake, "utf8")).toBe("kept\n");
+  expect(readFileSync(wake, "utf-8")).toBe("kept\n");
   // Settings that don't parse say nothing about memory, so the wake stays.
   writeFileSync(join(home, ".claude/settings.json"), '{ "env": ');
   rmSync(join(home, "launched"));
   hub.close();
   await launch("plugin:telegram@hex", "-100:8");
-  expect(readFileSync(wake, "utf8")).toBe("kept\n");
+  expect(readFileSync(wake, "utf-8")).toBe("kept\n");
   writeFileSync(join(home, ".claude/settings.json"), "{}");
   rmSync(join(home, "launched"));
   hub.close();
@@ -167,6 +182,7 @@ test("a voice session, started by the hub, runs the fast model on the 1-hour cac
     fresh: () => true,
     limits: { capacity: 0 },
   });
+
   expect(settings).toMatchObject({
     model: "sonnet",
     effortLevel: "low",
@@ -190,24 +206,26 @@ test("a topic session loads its rules and wake from its own copy, which a resume
     join(home, "AGENTS.md"),
     wake,
   ]);
-  const copy = readFileSync(join(held, "CLAUDE.md"), "utf8");
+  const copy = readFileSync(join(held, "CLAUDE.md"), "utf-8");
   expect(copy).toContain(`Contents of ${join(home, "AGENTS.md")}`);
   expect(copy).toContain("- Keep it short.");
   expect(copy).toContain("#0 a memory");
   writeFileSync(wake, "a newer wake\n");
   writeFileSync(join(home, "AGENTS.md"), "- Keep it shorter.\n\n@state/wake/CLAUDE.md\n");
+
   const again = (...args: string[]) =>
     Bun.spawnSync([join(home, ".hex/bin/session"), "--bg", ...args, "--settings", file], {
       cwd: home,
       env: process.env,
     });
+
   writeFileSync(file, JSON.stringify({ env: settings.env }));
   again("--resume", "abc");
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf8")).toBe(copy);
+  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toBe(copy);
   writeFileSync(file, JSON.stringify({ env: settings.env }));
   again();
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf8")).toContain("a newer wake");
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf8")).toContain("- Keep it shorter.");
+  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toContain("a newer wake");
+  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toContain("- Keep it shorter.");
 });
 
 test("a session started in another project gets the hex folder's settings under the hub's, in its file", async () => {
@@ -240,9 +258,11 @@ test("every folder a background session starts in is trusted (a -p run never ask
   const project = join(home, "project");
   mkdirSync(project);
   chmodSync(join(home, "config/.claude.json"), 0o600);
-  for (const cwd of [project, home, "/"])
+
+  for (const cwd of [project, home, "/"]) {
     Bun.spawnSync([join(home, ".hex/bin/session"), "--bg", "build it"], { cwd, env: process.env });
-  expect(JSON.parse(readFileSync(join(home, "config/.claude.json"), "utf8"))).toEqual({
+  }
+  expect(JSON.parse(readFileSync(join(home, "config/.claude.json"), "utf-8"))).toEqual({
     numStartups: 3,
     projects: { [project]: { hasTrustDialogAccepted: true } },
   });
@@ -253,14 +273,14 @@ test("every folder a background session starts in is trusted (a -p run never ask
     env: process.env,
   });
   expect(
-    JSON.parse(readFileSync(join(home, "config/.claude.json"), "utf8")).projects[other],
+    JSON.parse(readFileSync(join(home, "config/.claude.json"), "utf-8")).projects[other],
   ).toBeUndefined();
   expect(statSync(join(home, "config/.claude.json")).mode & 0o777).toBe(0o600);
   Bun.spawnSync([join(home, ".hex/bin/session"), "-p", "build it"], {
     cwd: project,
     env: process.env,
   });
-  const args: string[] = JSON.parse(readFileSync(join(home, "launched"), "utf8"));
+  const args: string[] = JSON.parse(readFileSync(join(home, "launched"), "utf-8"));
   expect(JSON.parse(args[args.indexOf("--settings") + 1]!)).toMatchObject({
     model: "opus",
     permissions: { deny: [`Read(/${home}/.env)`] },
@@ -273,13 +293,16 @@ test("a run with no terminal says it is hex, over the label it inherited, and a 
     `#!/bin/sh\nprintf '%s' "\${CLAUDE_CODE_ENTRYPOINT:-unset}" > "${home}/entrypoint"\n`,
   );
   const env = { ...process.env, CLAUDE_CODE_ENTRYPOINT: "sdk-cli" };
+
   const launched = (...args: string[]) => {
     rmSync(join(home, "entrypoint"), { force: true });
     expect(
       Bun.spawnSync([join(home, ".hex/bin/session"), ...args], { cwd: home, env }).exitCode,
     ).toBe(0);
-    return readFileSync(join(home, "entrypoint"), "utf8");
+
+    return readFileSync(join(home, "entrypoint"), "utf-8");
   };
+
   expect(launched("-p", "build it")).toBe("hex");
   expect(launched("build it")).toBe("hex");
   expect(launched("-p", "--", "--bg")).toBe("hex");

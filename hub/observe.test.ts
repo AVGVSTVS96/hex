@@ -1,16 +1,20 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { clock, drain, nap, observe, within, type Answer } from "./observe.ts";
+import { clock, drain, nap, observe, within } from "./observe.ts";
+import type { Answer } from "./observe.ts";
 import { open } from "./store.ts";
 
 let dir: string;
 const none: Answer = { notes: [], profile: null };
 let memo: string;
+
 const noted = () =>
-  existsSync(join(dir, "noted")) ? readFileSync(join(dir, "noted"), "utf8").trim().split("\n") : [];
+  existsSync(join(dir, "noted"))
+    ? readFileSync(join(dir, "noted"), "utf-8").trim().split("\n")
+    : [];
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "observe-"));
@@ -49,8 +53,10 @@ beforeEach(() => {
     body: "[nightly] run the backup",
     meta: {},
   });
-  for (const key of ["telegram:-100:40", "telegram:-100:50", "schedule:nightly:1"])
+
+  for (const key of ["telegram:-100:40", "telegram:-100:50", "schedule:nightly:1"]) {
     store.take(key, "s");
+  }
 });
 
 afterEach(() => {
@@ -59,8 +65,10 @@ afterEach(() => {
 
 test("the turn's messages reach the pass, which writes notes for the owner's no note names yet", async () => {
   const seen: string[] = [];
+
   const ask = async (input: string) => {
     seen.push(input);
+
     return {
       notes: [
         'Oct 19 11:31pm: ships "on fridays only, my team reviews thursdays" [telegram:-100:50]',
@@ -68,6 +76,7 @@ test("the turn's messages reach the pass, which writes notes for the owner's no 
       profile: null,
     };
   };
+
   open(dir).deliver(
     {
       key: "telegram:-100:51",
@@ -105,6 +114,7 @@ test("a note that misquotes the owner, quotes without naming the message, or doe
       'Oct 19: answered "?" [telegram:-100:50]',
     ],
   });
+
   expect(await observe(dir, "s", { ask, memo })).toEqual([
     "Oct 19: the nightly backup ran",
     'Oct 19: "ship it on fridays only" [telegram:-100:50]',
@@ -116,6 +126,7 @@ test("a pass that fails hands its messages to the next one, and one that died do
   const fail = async (): Promise<Answer> => {
     throw new Error("limit");
   };
+
   expect(await observe(dir, "s", { ask: fail, memo })).toEqual([]);
   let asked = 0;
   const count = async () => (asked++, none);
@@ -167,6 +178,7 @@ test("a later session in the thread takes what an earlier one's pass left", asyn
   const fail = async (): Promise<Answer> => {
     throw new Error("limit");
   };
+
   await observe(dir, "s", { ask: fail, memo });
   const seen: string[] = [];
   await observe(dir, "t", {
@@ -185,12 +197,14 @@ test("a note may only name this pass's messages", async () => {
     ],
     profile: null,
   });
+
   expect(await observe(dir, "s", { ask, memo })).toEqual([]);
 });
 
 test("the profile is rewritten to the current truth, and one that misquotes the owner goes back to be fixed", async () => {
   const profile =
     '# Always\n- Ships "on fridays only" [telegram:-100:50]\n\n# Now\n- Login page first';
+
   const seen: string[] = [];
   await observe(dir, "s", {
     ask: async (input) => (seen.push(input), { notes: [], profile }),
@@ -209,10 +223,12 @@ test("the profile is rewritten to the current truth, and one that misquotes the 
     meta: { user_id: "1" },
   });
   store.take("telegram:-100:80", "s");
+
   const answers = [
     '# Always\n- Ships "whenever" [telegram:-100:80]',
     '# Always\n- Ships "any day now" [telegram:-100:80]',
   ];
+
   const asked: string[] = [];
   await observe(dir, "s", {
     ask: async (input) => (asked.push(input), { notes: [], profile: answers.shift()! }),
@@ -243,6 +259,7 @@ test("a profile line may only quote the owner, by the key of the message it quot
     '# Now\n- "run the backup" [schedule:nightly:1]',
     '# Always\n- Ships "on fridays only" [telegram:-100:50]',
   ];
+
   const asked: string[] = [];
   await observe(dir, "s", {
     ask: async (input) => (asked.push(input), { notes: [], profile: answers.shift()! }),
@@ -285,10 +302,12 @@ test("a turn that took no message still gets a pass from its reply, and a retry 
     "s",
   );
   let asked = 0;
+
   const ask = async (): Promise<Answer> => (
     asked++,
     { notes: ["Oct 20: deck redo shipped"], profile: '- Wants "whatever" [telegram:-100:50]' }
   );
+
   expect(await observe(dir, "s", { ask, memo })).toEqual(["Oct 20: deck redo shipped"]);
   expect(asked).toBe(3);
   expect(noted()).toEqual(["Oct 20: deck redo shipped"]);
@@ -330,6 +349,7 @@ test("the Stop hook keeps a T3 turn's answer as hex's reply in T3, whatever prom
       MEMORY_DIR: "",
     },
   });
+
   expect(await hook.exited).toBe(0);
   const [answer] = open(dir).said("t3-thread");
   expect(answer).toMatchObject({
@@ -375,7 +395,9 @@ test("a holder renews its own lease, and a turn that throws leaves the queue to 
   store.wait({ session: "good", by: "" });
   const seen: string[] = [];
   await drain(dir, async (pass) => {
-    if (pass.session === "bad") throw new Error("boom");
+    if (pass.session === "bad") {
+      throw new Error("boom");
+    }
     seen.push(pass.session);
   });
   expect(seen).toEqual(["good"]);
@@ -396,7 +418,7 @@ printf '%s %s\\n' "$2" "$3" > "${dir}/napped"
   const asked: string[] = [];
   const lines = ["a and b, said at far too much length", "a and b"];
   await nap(napper, async (prompt) => (asked.push(prompt), lines.shift()!));
-  expect(readFileSync(join(dir, "napped"), "utf8")).toBe("0-1 a and b\n");
+  expect(readFileSync(join(dir, "napped"), "utf-8")).toBe("0-1 a and b\n");
   expect(asked[0]).toStartWith("Compress memories #0-1");
   expect(asked[0]).not.toContain("Run:");
   expect(asked[1]).toContain("That line wasn't kept: Too long");

@@ -1,5 +1,5 @@
-import { readFileSync } from "fs";
-import { join } from "path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { study } from "./ideas.ts";
 import { open } from "./store.ts";
@@ -24,6 +24,7 @@ const FIELDS = [
   [1, 12],
   [0, 7],
 ] as const;
+
 const PART = /^(?:\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/;
 const AT = /^\d{4}-\d\d-\d\d[T ]\d\d:\d\d$/;
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -32,13 +33,18 @@ const MINUTE = 60_000;
 // A part of a cron field names values inside the field's bounds, low to high, every step of one or more.
 function fits(part: string, [min, max]: readonly [number, number]) {
   const match = PART.exec(part);
-  if (!match) return false;
+
+  if (!match) {
+    return false;
+  }
   const [, from = String(min), to = from, step = "1"] = match;
+
   return Number(from) >= min && Number(to) <= max && Number(from) <= Number(to) && Number(step) > 0;
 }
 
 function isCron(cron: unknown) {
   const fields = typeof cron === "string" ? cron.trim().split(/\s+/) : [];
+
   return (
     fields.length === 5 &&
     fields.every((field, index) => field.split(",").every((part) => fits(part, FIELDS[index]!)))
@@ -55,24 +61,33 @@ function isAt(at: unknown) {
 
 export function parse(text: string): Record<string, Job> {
   const jobs: Record<string, Job> = JSON.parse(text);
+
   for (const [name, job] of Object.entries(jobs)) {
-    if (typeof job?.prompt !== "string" || job.prompt === "")
+    if (typeof job?.prompt !== "string" || job.prompt === "") {
       throw new Error(`${name}: prompt is missing`);
-    if (job.cron === undefined && job.at === undefined)
+    }
+    if (job.cron === undefined && job.at === undefined) {
       throw new Error(`${name}: it needs a cron or an at`);
-    if (job.cron !== undefined && !isCron(job.cron))
+    }
+    if (job.cron !== undefined && !isCron(job.cron)) {
       throw new Error(`${name}: ${JSON.stringify(job.cron)} is not a five-field cron expression`);
-    if (![job.at ?? []].flat().every(isAt))
+    }
+    if (![job.at ?? []].flat().every(isAt)) {
       throw new Error(`${name}: at must be "YYYY-MM-DD HH:MM", or a list of them`);
-    if (job.thread !== undefined && typeof job.thread !== "string")
+    }
+    if (job.thread !== undefined && typeof job.thread !== "string") {
       throw new Error(`${name}: thread must be a thread's id`);
-    if (job.idea !== undefined && !/^t-\d+$/.test(String(job.idea)))
+    }
+    if (job.idea !== undefined && !/^t-\d+$/.test(String(job.idea))) {
       throw new Error(`${name}: idea must be an idea's id, like t-12`);
-    if (job.idea !== undefined && job.cron !== undefined && !/^\d+\s+\d+\s/.test(job.cron.trim()))
+    }
+    if (job.idea !== undefined && job.cron !== undefined && !/^\d+\s+\d+\s/.test(job.cron.trim())) {
       throw new Error(
         `${name}: an idea's check runs at most daily, so its cron names one minute and one hour`,
       );
+    }
   }
+
   return jobs;
 }
 
@@ -83,7 +98,8 @@ const clocks = new Map<string | undefined, Intl.DateTimeFormat>();
 
 function wall(minute: number, zone?: string): Wall {
   let clock = clocks.get(zone);
-  if (!clock)
+
+  if (!clock) {
     clocks.set(
       zone,
       (clock = new Intl.DateTimeFormat("en-US", {
@@ -96,9 +112,11 @@ function wall(minute: number, zone?: string): Wall {
         minute: "2-digit",
       })),
     );
+  }
   const part = Object.fromEntries(
     clock.formatToParts(minute * MINUTE).map(({ type, value }) => [type, value]),
   );
+
   return {
     minute: Number(part.minute),
     hour: Number(part.hour),
@@ -114,6 +132,7 @@ function inField(spec: string, [min, max]: readonly [number, number], value: num
     const [from, to] = range.split("-");
     const lo = range === "*" ? min : Number(from);
     const hi = range === "*" || (to === undefined && part.includes("/")) ? max : Number(to ?? from);
+
     return value >= lo && value <= hi && (value - lo) % Number(step) === 0;
   });
 }
@@ -122,11 +141,15 @@ function onCron(cron: string, at: Wall) {
   const [minute = "", hour = "", monthDay = "", month = "", weekDay = ""] = cron
     .trim()
     .split(/\s+/);
+
   const onMonthDay = inField(monthDay, FIELDS[2], at.day);
+
   const onWeekDay =
     inField(weekDay, FIELDS[4], at.weekday) || (at.weekday === 0 && inField(weekDay, FIELDS[4], 7));
+
   const onDay =
     monthDay !== "*" && weekDay !== "*" ? onMonthDay || onWeekDay : onMonthDay && onWeekDay;
+
   return (
     onDay &&
     inField(minute, FIELDS[0], at.minute) &&
@@ -155,12 +178,15 @@ export function check(
 ) {
   const store = open(storeDir);
   let text: string;
+
   try {
-    text = readFileSync(join(hexDir, "schedules.json"), "utf8");
+    text = readFileSync(join(hexDir, "schedules.json"), "utf-8");
   } catch {
     return;
   }
+
   let jobs: Record<string, Job>;
+
   try {
     jobs = parse(text);
   } catch (error) {
@@ -173,28 +199,39 @@ export function check(
       body,
       meta: { user: "schedule" },
     });
+
     return;
   }
+
   const zone = zoneOf(hexDir);
   const since = store.checked() ?? now;
   const slots = new Map<string, number>();
+
   const found = (name: string, minute: number) => {
-    if (minute > since && minute <= now && minute > (slots.get(name) ?? -Infinity))
+    if (minute > since && minute <= now && minute > (slots.get(name) ?? -Infinity)) {
       slots.set(name, minute);
+    }
   };
-  for (const [name, job] of Object.entries(jobs))
+
+  for (const [name, job] of Object.entries(jobs)) {
     for (const at of [job.at ?? []].flat()) found(name, minuteOf(at, zone));
+  }
   const left = new Map(Object.entries(jobs).filter(([, job]) => job.cron !== undefined));
+
   for (let minute = now; minute > since && left.size; minute--) {
     const at = wall(minute, zone);
+
     for (const [name, job] of left) {
-      if (!onCron(job.cron!, at)) continue;
+      if (!onCron(job.cron!, at)) {
+        continue;
+      }
       left.delete(name);
       found(name, minute);
     }
   }
+
   store.write(() => {
-    for (const [name, minute] of slots)
+    for (const [name, minute] of slots) {
       if (!jobs[name]!.idea)
         store.fire(
           name,
@@ -203,23 +240,32 @@ export function check(
           `[${name}] ${jobs[name]!.prompt}`,
           minute < now,
         );
+    }
     store.check(now);
   });
-  for (const [name, job] of Object.entries(jobs))
+
+  for (const [name, job] of Object.entries(jobs)) {
     if (job.idea) research(storeDir, name, job, main, slots.get(name));
+  }
 }
 
 // The hub's scheduler: a check at its start, then at the top of every minute.
 export function schedule(storeDir: string, hexDir: string, main: string): () => void {
   let timer: ReturnType<typeof setTimeout>;
+
   const tick = () => {
     try {
       check(storeDir, hexDir, main);
     } catch (error) {
       process.stderr.write(`hub: the scheduler couldn't check schedules.json: ${error}\n`);
     }
+
     timer = setTimeout(tick, MINUTE - (Date.now() % MINUTE));
   };
+
   tick();
-  return () => clearTimeout(timer);
+
+  return () => {
+    clearTimeout(timer);
+  };
 }

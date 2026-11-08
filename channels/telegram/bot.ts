@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from "fs";
-import { homedir } from "os";
-import { basename, join, extname, sep } from "path";
+import { readFileSync, writeFileSync, mkdirSync, statSync, realpathSync, chmodSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, extname, sep } from "node:path";
 
-import { Bot, GrammyError, InputFile, type Context } from "grammy";
+import { Bot, GrammyError, InputFile } from "grammy";
+import type { Context } from "grammy";
 import type { Chat, MessageEntity, MessageOrigin, ReactionTypeEmoji } from "grammy/types";
 
 import {
@@ -17,15 +18,15 @@ import {
   transcribe,
   EFFORTS,
   MODELS,
-  type Message,
-  type Permission,
-  type Turn,
 } from "../../hub/hub.ts";
-import { Ledger, waits, type Post } from "../../hub/ledger.ts";
+import type { Message, Permission, Turn } from "../../hub/hub.ts";
+import { Ledger, waits } from "../../hub/ledger.ts";
+import type { Post } from "../../hub/ledger.ts";
 import { server } from "./channel.ts";
 
 const STATE_DIR =
   process.env.TELEGRAM_STATE_DIR ?? join(homedir(), ".claude", "channels", "hex", "telegram");
+
 const ACCESS_FILE = join(STATE_DIR, "access.json");
 const ENV_FILE = join(STATE_DIR, ".env");
 const INBOX_DIR = join(STATE_DIR, "inbox");
@@ -33,13 +34,18 @@ const MAIN = process.env.HEX_MAIN_THREAD;
 
 try {
   chmodSync(ENV_FILE, 0o600);
-  for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
-    const m = line.match(/^(\w+)=(.*)$/);
-    if (m) process.env[m[1]] = m[2];
+
+  for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
+    const m = /^(\w+)=(.*)$/.exec(line);
+
+    if (m) {
+      process.env[m[1]] = m[2];
+    }
   }
 } catch {}
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
 if (!TOKEN) {
   process.stderr.write(`telegram hub: TELEGRAM_BOT_TOKEN required in ${ENV_FILE}\n`);
   process.exit(1);
@@ -48,6 +54,7 @@ if (!TOKEN) {
 process.on("unhandledRejection", (err) => {
   process.stderr.write(`telegram hub: unhandled rejection: ${err}\n`);
 });
+
 process.on("uncaughtException", (err) => {
   process.stderr.write(`telegram hub: uncaught exception: ${err}\n`);
 });
@@ -68,18 +75,19 @@ type Access = {
 
 function loadAccess(): Access {
   try {
-    return { allowFrom: [], ...JSON.parse(readFileSync(ACCESS_FILE, "utf8")) };
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT")
+    return { allowFrom: [], ...JSON.parse(readFileSync(ACCESS_FILE, "utf-8")) };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
       process.stderr.write(
-        `telegram hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${err}\n`,
+        `telegram hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${error}\n`,
       );
+
     return { allowFrom: [] };
   }
 }
 
 const MAX_CHUNK_LIMIT = 4096;
-const MAX_RICH_LIMIT = 32768;
+const MAX_RICH_LIMIT = 32_768;
 const MAX_CAPTION = 1024;
 const MAX_PHOTO_BYTES = 10 * 1024 * 1024;
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
@@ -88,36 +96,51 @@ const ALBUM_WAIT = 1000;
 // reply's files param takes any path, but channel state and .env files (tokens)
 // are the things Claude has no reason to ever send.
 function assertSendable(f: string): void {
-  let real, stateReal: string;
+  let real;
+  let stateReal: string;
+
   try {
     real = realpathSync(f);
     stateReal = realpathSync(STATE_DIR);
   } catch {
     return;
   }
+
   const inbox = join(stateReal, "inbox");
+
   if (real.startsWith(stateReal + sep) && !real.startsWith(inbox + sep)) {
     throw new Error(`refusing to send channel state: ${f}`);
   }
-  if (basename(real) === ".env") throw new Error(`refusing to send secrets: ${f}`);
+
+  if (basename(real) === ".env") {
+    throw new Error(`refusing to send secrets: ${f}`);
+  }
 }
 
 function chunk(text: string, limit: number, mode: "length" | "newline"): string[] {
-  if (text.length <= limit) return [text];
+  if (text.length <= limit) {
+    return [text];
+  }
   const out: string[] = [];
   let rest = text;
+
   while (rest.length > limit) {
     let cut = limit;
+
     if (mode === "newline") {
       const para = rest.lastIndexOf("\n\n", limit);
       const line = rest.lastIndexOf("\n", limit);
       const space = rest.lastIndexOf(" ", limit);
       cut = para > limit / 2 ? para : line > limit / 2 ? line : space > 0 ? space : limit;
     }
+
     out.push(rest.slice(0, cut));
     rest = rest.slice(cut).replace(/^\n+/, "");
   }
-  if (rest) out.push(rest);
+
+  if (rest) {
+    out.push(rest);
+  }
   return out;
 }
 
@@ -126,15 +149,24 @@ function chunk(text: string, limit: number, mode: "length" | "newline"): string[
 function fenced(text: string, limit: number, mode: "length" | "newline"): string[] {
   const out: string[] = [];
   let open = "";
+
   for (const part of chunk(text, limit - 16, mode)) {
     let body = open ? `${open}\n${part}` : part;
+
     for (const line of part.split("\n")) {
-      const fence = line.match(/^\s*```(\S*)/);
-      if (fence) open = open ? "" : "```" + fence[1];
+      const fence = /^\s*```(\S*)/.exec(line);
+
+      if (fence) {
+        open = open ? "" : "```" + fence[1];
+      }
     }
-    if (open) body += "\n```";
+
+    if (open) {
+      body += "\n```";
+    }
     out.push(body);
   }
+
   return out;
 }
 
@@ -142,24 +174,33 @@ function fenced(text: string, limit: number, mode: "length" | "newline"): string
 // is a new line, so each line that runs on into the next ends in a hard break: two spaces.
 function keepLines(markdown: string): string {
   let fence = "";
+
   return markdown
     .split("\n")
     .map((line, i, lines) => {
-      const mark = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+      const mark = /^\s*(`{3,}|~{3,})(.*)$/.exec(line);
+
       if (fence) {
-        if (mark?.[1].startsWith(fence) && !mark[2].trim()) fence = "";
+        if (mark?.[1].startsWith(fence) && !mark[2].trim()) {
+          fence = "";
+        }
         return line;
       }
+
       if (mark) {
         fence = mark[1];
+
         return line;
       }
+
       const next = lines[i + 1];
+
       const runsOn =
         line.trim() &&
         !line.endsWith("\\") &&
         next?.trim() &&
         !/^\s*([-*+]\s|\d+[.)]\s|#{1,6}(\s|$)|>|\||`{3}|~{3})/.test(next);
+
       return runsOn ? `${line}  ` : line;
     })
     .join("\n");
@@ -172,26 +213,34 @@ const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
 function asPhoto(f: string): boolean {
   assertSendable(f);
   const { size } = statSync(f);
-  if (size > MAX_ATTACHMENT_BYTES)
+
+  if (size > MAX_ATTACHMENT_BYTES) {
     throw new Error(`file too large: ${f} (${(size / 1024 / 1024).toFixed(1)}MB, max 50MB)`);
+  }
   return PHOTO_EXTS.has(extname(f).toLowerCase()) && size <= MAX_PHOTO_BYTES;
 }
 
 function threadOf(ctx: Context): string {
   const chat = String(ctx.chat!.id);
+
   return ctx.msg?.is_topic_message ? `${chat}:${ctx.msg.message_thread_id}` : chat;
 }
 
 function target(thread: string) {
   const [chat_id, topic] = thread.split(":");
+
   return { chat_id: chat_id!, extra: topic ? { message_thread_id: Number(topic) } : {} };
 }
 
 // A message by its id in this thread's chat, or in any chat by its hex.db key (telegram:<chat>:<id>) or link (t.me/c/<chat>/<id>).
 function located(thread: string, ref: string): { chat_id: string; message: number } {
-  const link = ref.match(/t\.me\/c\/(\d+)\/(?:\d+\/)?(\d+)/);
-  if (link) return { chat_id: `-100${link[1]}`, message: Number(link[2]) };
-  const key = ref.match(/^(?:telegram:)?(-?\d+)(?::\d+)?:(\d+)$/);
+  const link = /t\.me\/c\/(\d+)\/(?:\d+\/)?(\d+)/.exec(ref);
+
+  if (link) {
+    return { chat_id: `-100${link[1]}`, message: Number(link[2]) };
+  }
+  const key = /^(?:telegram:)?(-?\d+)(?::\d+)?:(\d+)$/.exec(ref);
+
   return key
     ? { chat_id: key[1]!, message: Number(key[2]) }
     : { chat_id: target(thread).chat_id, message: Number(ref) };
@@ -203,6 +252,7 @@ function questionAt({ chat_id, message }: { chat_id: string; message: number }) 
   const here = ledger.questions.filter(
     (question) => question.thread === chat_id || question.thread.startsWith(`${chat_id}:`),
   );
+
   return (
     here.find((question) => String(question.message) === String(message)) ??
     here.find(
@@ -222,19 +272,22 @@ const post: Post = {
   room: MAX_CHUNK_LIMIT,
   send: async (thread, text) => {
     const { chat_id, extra } = target(thread);
+
     const sent = await bot.api.sendRichMessage(
       chat_id,
       { markdown: keepLines(text) },
       { ...extra, link_preview_options: { is_disabled: true } },
     );
+
     said(thread, sent.message_id, text);
+
     return sent.message_id;
   },
   pin: (thread, message) => bot.api.pinChatMessage(target(thread).chat_id, Number(message)),
   // A message that's gone is unpinned already.
   unpin: async (thread, message) => {
-    await bot.api.unpinChatMessage(target(thread).chat_id, Number(message)).catch((err) => {
-      if (!/message to unpin not found|message not found/.test(String(err))) throw err;
+    await bot.api.unpinChatMessage(target(thread).chat_id, Number(message)).catch((error) => {
+      if (!/message to unpin not found|message not found/.test(String(error))) throw error;
     });
   },
   // Waits out Telegram's rate limit. A message hex may not edit, one that's gone, or a chat the
@@ -249,19 +302,20 @@ const post: Post = {
           { link_preview_options: { is_disabled: true } },
         ),
       );
-    } catch (err) {
-      if (/message is not modified/.test(String(err))) return;
+    } catch (error) {
+      if (String(error).includes("message is not modified")) return;
       if (
         /message can't be edited|message to edit not found|no text in the message|bot was kicked|chat not found/.test(
-          String(err),
+          String(error),
         )
       )
         return null;
-      throw err;
+      throw error;
     }
   },
   link: (thread, message) => {
     const [chat, topic] = thread.split(":");
+
     return chat!.startsWith("-100")
       ? `https://t.me/c/${[chat!.slice(4), topic, message].filter(Boolean).join("/")}`
       : undefined;
@@ -292,7 +346,10 @@ function retire(thread: string): Promise<string> {
 
 function nameOf(ctx: Context, thread: string): string {
   const created = ctx.msg?.reply_to_message?.forum_topic_created;
-  if (created) topicNames.set(thread, created.name);
+
+  if (created) {
+    topicNames.set(thread, created.name);
+  }
   return (
     topicNames.get(thread) ??
     (thread.includes(":")
@@ -305,15 +362,22 @@ function nameOf(ctx: Context, thread: string): string {
 
 async function download(file_id: string, uniqueId: string): Promise<string> {
   const file = await bot.api.getFile(file_id);
-  if (!file.file_path) throw new Error("Telegram returned no file_path — file may have expired");
+
+  if (!file.file_path) {
+    throw new Error("Telegram returned no file_path — file may have expired");
+  }
   const res = await fetch(`https://api.telegram.org/file/bot${TOKEN}/${file.file_path}`);
-  if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+
+  if (!res.ok) {
+    throw new Error(`download failed: HTTP ${res.status}`);
+  }
   const rawExt = file.file_path.includes(".") ? file.file_path.split(".").pop()! : "bin";
-  const ext = rawExt.replace(/[^a-zA-Z0-9]/g, "") || "bin";
-  const id = uniqueId.replace(/[^a-zA-Z0-9_-]/g, "") || "dl";
+  const ext = rawExt.replaceAll(/[^a-zA-Z0-9]/g, "") || "bin";
+  const id = uniqueId.replaceAll(/[^a-zA-Z0-9_-]/g, "") || "dl";
   const path = join(INBOX_DIR, `${Date.now()}-${id}.${ext}`);
   mkdirSync(INBOX_DIR, { recursive: true });
   writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+
   return path;
 }
 
@@ -324,8 +388,11 @@ const forums = new Map<string, Promise<boolean>>();
 // while messages sent with it fail ("message thread not found").
 async function typingTarget(thread: string) {
   const { chat_id, extra } = target(thread);
-  if (thread.includes(":")) return { chat_id, extra };
-  if (!forums.has(chat_id))
+
+  if (thread.includes(":")) {
+    return { chat_id, extra };
+  }
+  if (!forums.has(chat_id)) {
     forums.set(
       chat_id,
       bot.api.getChat(chat_id).then(
@@ -333,6 +400,7 @@ async function typingTarget(thread: string) {
         () => false,
       ),
     );
+  }
   return { chat_id, extra: (await forums.get(chat_id)) ? { message_thread_id: 1 } : {} };
 }
 
@@ -348,11 +416,16 @@ function showTyping(thread: string, busy: boolean): void {
   process.stderr.write(`telegram hub: ${thread} ${busy ? "busy" : "idle"}\n`);
   clearInterval(typing.get(thread));
   typing.delete(thread);
-  if (!busy) return;
+
+  if (!busy) {
+    return;
+  }
   sendTyping(thread);
   typing.set(
     thread,
-    setInterval(() => sendTyping(thread), 4000),
+    setInterval(() => {
+      sendTyping(thread);
+    }, 4000),
   );
 }
 
@@ -364,6 +437,7 @@ async function ask(thread: string, request: Permission): Promise<void> {
   const { request_id, tool_name, description } = request;
   const { chat_id, extra } = target(thread);
   const text = `🔐 ${tool_name}: ${description}\n\n${preview(request)}`.slice(0, MAX_CHUNK_LIMIT);
+
   const sent = await bot.api.sendMessage(chat_id, text, {
     ...extra,
     reply_markup: {
@@ -375,6 +449,7 @@ async function ask(thread: string, request: Permission): Promise<void> {
       ],
     },
   });
+
   said(thread, sent.message_id, text, { permission: request_id });
   asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.message_id));
 }
@@ -382,8 +457,12 @@ async function ask(thread: string, request: Permission): Promise<void> {
 // A turn that ends with background agents out may still have one of their prompts open.
 function settle(thread: string, busy: boolean, background: boolean): void {
   showTyping(thread, busy);
-  if (busy || background) return;
+
+  if (busy || background) {
+    return;
+  }
   const { chat_id } = target(thread);
+
   for (const id of asking.get(thread) ?? []) {
     void bot.api
       .editMessageReplyMarkup(chat_id, id, {
@@ -391,46 +470,57 @@ function settle(thread: string, busy: boolean, background: boolean): void {
       })
       .catch(() => {});
   }
+
   asking.delete(thread);
 }
 
 async function icons() {
   const stickers = await bot.api.getForumTopicIconStickers();
+
   return stickers.filter((sticker) => sticker.custom_emoji_id && sticker.emoji);
 }
 
 async function iconOf(emoji: string): Promise<string> {
   const all = await icons();
-  const plain = (e: string) => e.replace(/\uFE0F/g, "");
+  const plain = (e: string) => e.replaceAll("️", "");
   const icon = all.find((sticker) => plain(sticker.emoji!) === plain(emoji.trim()));
-  if (!icon)
+
+  if (!icon) {
     throw new Error(
       `Telegram has no topic icon ${emoji}; pick one of ${all.map((sticker) => sticker.emoji).join(" ")}`,
     );
+  }
   return icon.custom_emoji_id!;
 }
 
 async function place(name: string, _where?: string, about?: string) {
-  if (!MAIN) throw new Error("topics need HEX_MAIN_THREAD, the group they open in");
+  if (!MAIN) {
+    throw new Error("topics need HEX_MAIN_THREAD, the group they open in");
+  }
   const { chat_id } = target(MAIN);
+
   const icon = await icons().then(
     (all) => all[Math.floor(Math.random() * all.length)]?.custom_emoji_id,
-    () => undefined,
+    () => {},
   );
+
   const topic = await bot.api.createForumTopic(
     chat_id,
     name,
     icon ? { icon_custom_emoji_id: icon } : {},
   );
+
   const thread = `${chat_id}:${topic.message_thread_id}`;
   topicNames.set(thread, name);
-  if (about)
+
+  if (about) {
     said(
       thread,
       (await bot.api.sendMessage(chat_id, about, { message_thread_id: topic.message_thread_id }))
         .message_id,
       about,
     );
+  }
   return {
     thread,
     link: `https://t.me/c/${chat_id.replace(/^-100/, "")}/${topic.message_thread_id}`,
@@ -443,12 +533,12 @@ async function paced<T>(send: () => Promise<T>): Promise<T> {
   for (;;) {
     try {
       return await send();
-    } catch (err) {
+    } catch (error) {
       const wait =
-        err instanceof GrammyError && err.error_code === 429
-          ? err.parameters.retry_after
+        error instanceof GrammyError && error.error_code === 429
+          ? error.parameters.retry_after
           : undefined;
-      if (wait == null) throw err;
+      if (wait == null) throw error;
       await Bun.sleep(wait * 1000);
     }
   }
@@ -458,14 +548,17 @@ async function paced<T>(send: () => Promise<T>): Promise<T> {
 // own replies, all silently. hex.db keeps the originals, so the copies aren't kept again.
 async function backfill(thread: string, turns: Turn[]) {
   const { chat_id, extra } = target(thread);
+
   const owner = (await bot.api.getChatMember(chat_id, Number(loadAccess().allowFrom[0]))).user
     .first_name;
+
   const opts = { ...extra, disable_notification: true };
+
   for (const { from, text } of turns) {
     for (const part of from === "me"
       ? chunk(text, MAX_CHUNK_LIMIT - owner.length - 1, "newline")
       : fenced(text, MAX_RICH_LIMIT, "newline")) {
-      if (from === "me")
+      if (from === "me") {
         await paced(() =>
           bot.api.sendMessage(chat_id, `${owner}\n${part}`, {
             ...opts,
@@ -475,7 +568,9 @@ async function backfill(thread: string, turns: Turn[]) {
             ],
           }),
         );
-      else await paced(() => bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts));
+      } else {
+        await paced(() => bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts));
+      }
     }
   }
 }
@@ -484,36 +579,46 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
   const thread = args.thread ? hub.find(args.thread as string) : caller;
   const { chat_id, extra } = target(thread);
   const access = loadAccess();
+
   switch (tool) {
     case "reply": {
       const text = tappable((args.text as string | undefined) ?? "");
-      const quoted = args.reply_to != null ? located(thread, String(args.reply_to)) : undefined;
+      const quoted = args.reply_to == null ? undefined : located(thread, String(args.reply_to));
       const quotes = quoted && questionAt(quoted);
       const quoting = quotes && quoted ? { question: quotes, message: quoted.message } : undefined;
+
       const quote = quoted && {
         reply_parameters: {
           message_id: quoted.message,
           ...(quoted.chat_id !== chat_id && { chat_id: quoted.chat_id }),
         },
       };
+
       const files = (args.files as string[] | undefined) ?? [];
       const buttons = (args.buttons as string[] | undefined) ?? [];
       const markdown = args.format === "markdown";
       const parseMode = args.format === "markdownv2" ? { parse_mode: "MarkdownV2" as const } : {};
-      if (!text && !files.length) throw new Error("reply needs text or files");
-      if (buttons.length && !text) throw new Error("buttons need text to go with them");
+
+      if (!text && !files.length) {
+        throw new Error("reply needs text or files");
+      }
+      if (buttons.length && !text) {
+        throw new Error("buttons need text to go with them");
+      }
 
       const photos = files.map(asPhoto);
       const caption = files.length && !markdown && text.length <= MAX_CAPTION ? text : "";
       const cap = markdown ? MAX_RICH_LIMIT : MAX_CHUNK_LIMIT;
       const limit = Math.max(1, Math.min(access.textChunkLimit ?? cap, cap));
       const replyMode = access.replyToMode ?? "first";
+
       const chunks =
         !text || caption
           ? []
           : markdown
             ? fenced(text, limit, access.chunkMode ?? "length")
             : chunk(text, limit, access.chunkMode ?? "length");
+
       const silent = args.silent ? { disable_notification: true } : {};
       const keyboard = buttons.length ? { reply_markup: buttonsOf(buttons) } : {};
       const sentIds: number[] = [];
@@ -522,21 +627,27 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       try {
         for (let i = 0; i < chunks.length; i++) {
           const shouldReplyTo = quote && replyMode !== "off" && (replyMode === "all" || i === 0);
+
           const opts = {
             ...extra,
             ...(shouldReplyTo ? quote : {}),
             ...silent,
             ...(i === chunks.length - 1 ? keyboard : {}),
           };
+
           const sent = markdown
             ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(chunks[i]!) }, opts)
             : await bot.api.sendMessage(chat_id, chunks[i]!, { ...opts, ...parseMode });
+
           said(thread, sent.message_id, chunks[i]);
           sentIds.push(sent.message_id);
-          if (buttons.length && i === chunks.length - 1) asked = sent.message_id;
+
+          if (buttons.length && i === chunks.length - 1) {
+            asked = sent.message_id;
+          }
         }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
         said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
         throw new Error(
           `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
@@ -546,62 +657,84 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       for (let i = 0; i < files.length; i++) {
         const input = new InputFile(files[i]!);
         const captioned = i === 0 && caption;
+
         const opts = {
           ...extra,
           ...(quote && replyMode !== "off" ? quote : {}),
           ...silent,
           ...(captioned ? { caption, ...parseMode, ...keyboard } : {}),
         };
+
         const sent = photos[i]
           ? await bot.api.sendPhoto(chat_id, input, opts)
           : await bot.api.sendDocument(chat_id, input, opts);
+
         said(thread, sent.message_id, captioned ? caption : `(file: ${basename(files[i]!)})`, {
           file: basename(files[i]!),
         });
         sentIds.push(sent.message_id);
-        if (buttons.length && captioned) asked = sent.message_id;
+
+        if (buttons.length && captioned) {
+          asked = sent.message_id;
+        }
       }
-      if (asked) ledger.ask(thread, asked, text, buttons);
-      else if (text && sentIds.length) ledger.said(thread, sentIds.at(-1)!, text, quoting);
+
+      if (asked) {
+        ledger.ask(thread, asked, text, buttons);
+      } else if (text && sentIds.length) {
+        ledger.said(thread, sentIds.at(-1)!, text, quoting);
+      }
 
       return sentIds.length === 1
         ? `sent (id: ${sentIds[0]})`
         : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
     }
+
     case "react": {
       await react(
         chat_id,
         Number(args.message_id),
         args.remove ? [] : [{ type: "emoji", emoji: args.emoji as ReactionTypeEmoji["emoji"] }],
       );
+
       return args.remove ? "reaction removed" : "reacted";
     }
+
     case "edit_message": {
       const at = located(thread, String(args.message_id));
       const id = at.message;
       const question = questionAt(at);
       const home = question?.thread ?? (at.chat_id === chat_id ? thread : at.chat_id);
-      const text = args.text != null ? tappable(args.text as string) : undefined;
+      const text = args.text == null ? undefined : tappable(args.text as string);
       const file = args.file as string | undefined;
+
       if (home === thread && Number(ledger.pin(thread)?.message) === id && (text != null || file)) {
-        if (file || text == null)
+        if (file || text == null) {
           throw new Error("a status post is text: send the file in its own message");
+        }
         await ledger.rewrite(thread, post, text, id);
         said(thread, undefined, text, { edited: "true", message_id: String(id) });
+
         return `edited the status post's note (id: ${id}); hex keeps the questions and tasks under it current`;
       }
+
       const parseMode = args.format === "markdownv2" ? { parse_mode: "MarkdownV2" as const } : {};
+
       // A Telegram edit takes a message's buttons off unless it sends them again, and a question stays open until it's settled.
       if (question?.poll && (text != null || file)) {
-        if (!args.settled)
+        if (!args.settled) {
           throw new Error(
             "a poll's own text can't be edited: reply with what changed, or settle it with settled: true",
           );
-        if (question.answer)
+        }
+        if (question.answer) {
           return `the poll is already answered (${question.answer.label}), so it stays as it is; its own text can't be edited, so reply with what changed`;
+        }
         await settleQuestion(home, id, "✓ Settled");
+
         return `settled the poll (id: ${id}); its own text can't be edited, so reply with what changed`;
       }
+
       const keep =
         question?.options.length &&
         !question.poll &&
@@ -610,8 +743,9 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
         !args.settled
           ? { reply_markup: buttonsOf(question.options) }
           : {};
+
       if (file) {
-        const caption = text != null ? { caption: text, ...parseMode } : {};
+        const caption = text == null ? {} : { caption: text, ...parseMode };
         await bot.api.editMessageMedia(
           at.chat_id,
           id,
@@ -623,36 +757,46 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
           args.format === "markdown"
             ? bot.api.editMessageText(at.chat_id, id, { markdown: keepLines(text) }, keep)
             : bot.api.editMessageText(at.chat_id, id, text, { ...parseMode, ...keep });
-        await edit.catch((err) => {
-          if (!/no text in the message/.test(String(err))) throw err;
-          if (args.format === "markdown")
+
+        await edit.catch((error) => {
+          if (!String(error).includes("no text in the message")) throw error;
+
+          if (args.format === "markdown") {
             throw new Error(
               "a file's caption can't take format 'markdown'; use 'text' or 'markdownv2'",
             );
+          }
           return bot.api.editMessageCaption(at.chat_id, id, {
             caption: text,
             ...parseMode,
             ...keep,
           });
         });
-      } else if (!args.settled) throw new Error("edit_message needs text, a file, or settled");
+      } else if (!args.settled) {
+        throw new Error("edit_message needs text, a file, or settled");
+      }
       if (text != null) {
         said(home, undefined, text, { edited: "true", message_id: String(id) });
         ledger.edited(home, id, text);
       }
+
       if (
         args.settled &&
         !(await settleQuestion(home, Number(question?.message ?? id), "✓ Settled"))
-      )
+      ) {
         return `${text != null || file ? "edited, but " : ""}no question waits on message ${id}, so nothing was settled`;
+      }
       return `${args.settled ? "settled" : "edited"} (id: ${id})`;
     }
+
     case "delete_message": {
       const id = Number(args.message_id);
       await bot.api.deleteMessage(chat_id, id);
       await ledger.deleted(thread, id);
+
       return `deleted (id: ${id})`;
     }
+
     case "pin": {
       if (args.unpin) {
         const was = await ledger.unpin(
@@ -660,14 +804,18 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
           post,
           args.message_id === undefined ? undefined : Number(args.message_id),
         );
+
         return was === undefined
           ? "this thread has no status post"
           : `unpinned the status post (id: ${was})`;
       }
-      if (typeof args.note !== "string")
+
+      if (typeof args.note !== "string") {
         throw new Error("pin takes the status post's note, or unpin: true");
+      }
       return `posted and pinned the status post (id: ${await ledger.post(thread, tappable(args.note), post)}); hex keeps the questions and tasks under it current`;
     }
+
     case "forward": {
       const id = Number(args.message_id);
       const from = target(caller).chat_id;
@@ -675,93 +823,130 @@ async function call(caller: string, tool: string, args: Record<string, unknown>)
       said(thread, sent.message_id, hub.said(`${from}:${id}`)?.body ?? "(forwarded)", {
         forwarded: "true",
       });
+
       return `forwarded to "${topicNames.get(thread) ?? hub.name(thread) ?? thread}" (id: ${sent.message_id})`;
     }
+
     case "poll": {
       const question = args.question as string;
       const options = args.options as string[];
+
       const sent = await bot.api.sendPoll(chat_id, question, options, {
         ...extra,
         is_anonymous: false,
         allows_multiple_answers: !!args.multiple,
       });
+
       said(thread, sent.message_id, question, { poll: options.join(" / ") });
       ledger.ask(thread, sent.message_id, question, options, sent.poll.id);
+
       return `sent poll (id: ${sent.message_id})`;
     }
+
     case "rename_thread": {
-      if (!extra.message_thread_id) throw new Error("only topics can be renamed");
-      const name = args.title != null ? title(args.title as string) : undefined;
-      const icon = args.icon != null ? await iconOf(args.icon as string) : undefined;
-      if (!name && !icon) throw new Error("rename_thread needs a title or an icon");
+      if (!extra.message_thread_id) {
+        throw new Error("only topics can be renamed");
+      }
+      const name = args.title == null ? undefined : title(args.title as string);
+      const icon = args.icon == null ? undefined : await iconOf(args.icon as string);
+
+      if (!name && !icon) {
+        throw new Error("rename_thread needs a title or an icon");
+      }
       await bot.api.editForumTopic(chat_id, extra.message_thread_id, {
         ...(name ? { name } : {}),
         ...(icon ? { icon_custom_emoji_id: icon } : {}),
       });
+
       if (name) {
         topicNames.set(thread, name);
         hub.rename(thread, name);
       }
+
       return [name && `renamed to "${name}"`, icon && `icon set to ${args.icon}`]
         .filter(Boolean)
         .join(", ");
     }
+
     case "set_model": {
       const chosen = {
         model: MODELS.find(({ value }) => value === args.model),
         effort: EFFORTS.find(({ value }) => value === args.effort),
       };
-      if (!chosen.model && !chosen.effort)
+
+      if (!chosen.model && !chosen.effort) {
         throw new Error(
           `set_model takes a model (${MODELS.map(({ value }) => value).join(", ")}) or an effort (${EFFORTS.map(({ value }) => value).join(", ")})`,
         );
+      }
       hub.configure(thread, {
         ...(chosen.model && { model: chosen.model.value }),
         ...(chosen.effort && { effort: chosen.effort.value }),
       });
+
       return `${[chosen.model?.name, chosen.effort && `${chosen.effort.name} effort`].filter(Boolean).join(", ")}, from this thread's next message`;
     }
+
     case "download_attachment": {
-      return download(args.file_id as string, args.file_id as string);
+      return await download(args.file_id as string, args.file_id as string);
     }
+
     case "close_thread": {
       if (!extra.message_thread_id) {
-        if (thread === MAIN) throw new Error("only topics can be closed");
+        if (thread === MAIN) {
+          throw new Error("only topics can be closed");
+        }
         const name = hub.name(thread) ?? thread;
         void retire(thread);
+
         return `forgot "${name}": it isn't a topic, so there was nothing to close in Telegram`;
       }
+
       void retire(thread);
-      await bot.api.closeForumTopic(chat_id, extra.message_thread_id).catch((err) => {
-        if (!gone(err)) throw err;
+      await bot.api.closeForumTopic(chat_id, extra.message_thread_id).catch((error) => {
+        if (!gone(error)) throw error;
       });
+
       return `closed "${topicNames.get(thread) ?? thread}"; its session stops once it's idle`;
     }
+
     case "new_thread": {
       const name = title(args.title as string);
       const app = (args.app as string | undefined) ?? "telegram";
       const about = args.about as string | undefined;
-      if (app !== "telegram")
+
+      if (app !== "telegram") {
         return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt as string, { about, where: args.channel as string | undefined })).link}`;
+      }
       const opened = await place(name, undefined, about);
       hub.open(opened.thread, name, args.prompt as string);
+
       return `started thread "${name}" in telegram: ${opened.link}`;
     }
+
     case "handoff": {
       const to = args.to as string;
+
       const name =
-        args.title != null ? title(args.title as string) : (topicNames.get(thread) ?? title(""));
+        args.title == null ? (topicNames.get(thread) ?? title("")) : title(args.title as string);
+
       const link = await move(hub, thread, to, name, args.channel as string | undefined);
+
       if (thread === MAIN) {
         await bot.api.sendMessage(chat_id, `Continued in ${to}: ${link}`, extra);
+
         return `a copy of this conversation continues in ${to}: ${link}. You stay here.`;
       }
+
       await bot.api.sendMessage(chat_id, `Moved to ${to}: ${link}`, extra);
       await bot.api.closeForumTopic(chat_id, extra.message_thread_id!);
+
       return `moving to ${to}: ${link}. Your session stops here once this turn ends and resumes there.`;
     }
-    default:
+
+    default: {
       throw new Error(`unknown tool: ${tool}`);
+    }
   }
 }
 
@@ -777,9 +962,9 @@ async function callOrForget(
 ): Promise<string> {
   try {
     return await call(caller, tool, args);
-  } catch (err) {
+  } catch (error) {
     const thread = args.thread ? hub.find(args.thread as string) : caller;
-    if (thread === MAIN || !thread.includes(":") || !gone(err)) throw err;
+    if (thread === MAIN || !thread.includes(":") || !gone(error)) throw error;
     process.stderr.write(`telegram hub: topic ${thread} was deleted, forgetting it\n`);
     void retire(thread);
     throw new Error(`this topic was deleted in Telegram, so it's gone from the thread list now`);
@@ -807,12 +992,17 @@ const drawing = new Map<string, Promise<void>>();
 
 function draw(thread: string, message: number): Promise<void> {
   const at = `${thread}:${message}`;
+
   const drawn = (drawing.get(at) ?? Promise.resolve())
     .then(async () => {
       const question = ledger.find(thread, message);
-      if (!question?.options.length) return;
+
+      if (!question?.options.length) {
+        return;
+      }
       const { chat_id } = target(thread);
-      if (!question.poll)
+
+      if (!question.poll) {
         return void (await bot.api.editMessageReplyMarkup(chat_id, message, {
           reply_markup: question.answer
             ? only(answeredText(question.answer))
@@ -820,16 +1010,20 @@ function draw(thread: string, message: number): Promise<void> {
               ? only(question.settled.note)
               : buttonsOf(question.options),
         }));
-      if (question.settled || (question.answer && question.answer.via !== "telegram"))
+      }
+      if (question.settled || (question.answer && question.answer.via !== "telegram")) {
         await bot.api.stopPoll(chat_id, message);
+      }
     })
-    .catch((err) => {
+    .catch((error) => {
       process.stderr.write(
-        `telegram hub: couldn't draw the buttons on ${thread} ${message}: ${err}\n`,
+        `telegram hub: couldn't draw the buttons on ${thread} ${message}: ${error}\n`,
       );
     });
+
   drawing.set(at, drawn);
   void drawn.then(() => drawing.get(at) === drawn && drawing.delete(at));
+
   return drawn;
 }
 
@@ -839,8 +1033,12 @@ const answeredText = ({ label, via }: { label: string; via: string }) =>
 
 async function answerQuestion(thread: string, message: number, label: string, via: string) {
   const question = ledger.find(thread, message);
-  if (!question || question.answer) return;
+
+  if (!question || question.answer) {
+    return;
+  }
   const { chat_id } = target(thread);
+
   const answered = hub.deliver(
     thread,
     topicNames.get(thread) ?? hub.name(thread) ?? thread,
@@ -859,15 +1057,22 @@ async function answerQuestion(thread: string, message: number, label: string, vi
     },
     () => ledger.answered(thread, message, label, via),
   );
-  if (answered) await draw(thread, message);
+
+  if (answered) {
+    await draw(thread, message);
+  }
 }
 
 // Whether a question was waiting on the owner there to settle.
 async function settleQuestion(thread: string, message: number, note: string): Promise<boolean> {
   const question = ledger.find(thread, message);
-  if (!question || !waits(question)) return false;
+
+  if (!question || !waits(question)) {
+    return false;
+  }
   ledger.settled(thread, message, note);
   await draw(thread, message);
+
   return true;
 }
 
@@ -875,9 +1080,13 @@ async function settleQuestion(thread: string, message: number, note: string): Pr
 // that the answer it got no longer stands. A closed poll stays closed.
 async function reopenQuestion(thread: string, message: number, via: string) {
   const question = ledger.find(thread, message);
-  if (!question || !(question.answer || question.settled)) return;
+
+  if (!question || !(question.answer || question.settled)) {
+    return;
+  }
   const { chat_id } = target(thread);
   const taken = question.answer?.label;
+
   const reopened = taken
     ? hub.deliver(
         thread,
@@ -896,7 +1105,10 @@ async function reopenQuestion(thread: string, message: number, via: string) {
         () => ledger.reopened(thread, message),
       )
     : ledger.reopened(thread, message);
-  if (reopened) await draw(thread, message);
+
+  if (reopened) {
+    await draw(thread, message);
+  }
 }
 
 // Telegram shows a message read once the bot has it, so one that waits for its thread's session
@@ -906,8 +1118,10 @@ const ASLEEP: ReactionTypeEmoji = { type: "emoji", emoji: "😴" };
 
 function waiting(message: Message, still: boolean): void {
   const { chat_id, message_id, edited } = message.meta;
-  if (!chat_id || !message_id || edited || (!still && !asleep.has(`${chat_id}:${message_id}`)))
+
+  if (!chat_id || !message_id || edited || (!still && !asleep.has(`${chat_id}:${message_id}`))) {
     return;
+  }
   const ack = acked();
   void react(
     chat_id,
@@ -919,12 +1133,14 @@ function waiting(message: Message, still: boolean): void {
 
 function acked(): ReactionTypeEmoji[] {
   const { ackReaction } = loadAccess();
+
   return ackReaction ? [{ type: "emoji", emoji: ackReaction as ReactionTypeEmoji["emoji"] }] : [];
 }
 
 // Telegram may apply two reactions sent at once in either order, so each message's go one at a
 // time. otherwise: what to set in the same turn if Telegram refuses reaction, like an ack it won't take.
 const reacting = new Map<string, Promise<unknown>>();
+
 // The messages whose last reaction from the bot is 😴, so a session's own reaction is never cleared.
 const asleep = new Set<string>();
 
@@ -935,16 +1151,23 @@ function react(
   otherwise?: ReactionTypeEmoji[],
 ): Promise<unknown> {
   const key = `${chat_id}:${message_id}`;
-  if (reaction.length === 1 && reaction[0] === ASLEEP) asleep.add(key);
-  else asleep.delete(key);
+
+  if (reaction.length === 1 && reaction[0] === ASLEEP) {
+    asleep.add(key);
+  } else {
+    asleep.delete(key);
+  }
   const set = (to: ReactionTypeEmoji[]) =>
     steady(() => paced(() => bot.api.setMessageReaction(chat_id, message_id, to)));
+
   const done = (reacting.get(key) ?? Promise.resolve())
     .catch(() => {})
     .then(() => (otherwise ? set(reaction).catch(() => set(otherwise)) : set(reaction)));
+
   reacting.set(key, done);
   const settled = () => void (reacting.get(key) === done && reacting.delete(key));
   done.then(settled, settled);
+
   return done;
 }
 
@@ -953,8 +1176,8 @@ async function steady<T>(send: () => Promise<T>, tries = 3): Promise<T> {
   for (let tried = 1; ; tried++) {
     try {
       return await send();
-    } catch (err) {
-      if (tried === tries || (err instanceof GrammyError && err.error_code < 500)) throw err;
+    } catch (error) {
+      if (tried === tries || (error instanceof GrammyError && error.error_code < 500)) throw error;
       await Bun.sleep(1000 * tried);
     }
   }
@@ -982,9 +1205,9 @@ const hub = startHub({
   state: settle,
   fresh: (thread) => !thread.startsWith("-"),
   permission: (thread, request) =>
-    void ask(thread, request).catch((err) =>
+    void ask(thread, request).catch((error) =>
       process.stderr.write(
-        `telegram hub: couldn't relay a permission prompt to ${thread}: ${err}\n`,
+        `telegram hub: couldn't relay a permission prompt to ${thread}: ${error}\n`,
       ),
     ),
   questions: {
@@ -999,20 +1222,27 @@ const hub = startHub({
       .sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra)
       .catch(() => {});
   },
-  waits: (_, message, still) => waiting(message, still),
+  waits: (_, message, still) => {
+    waiting(message, still);
+  },
 });
 
 clients.set("telegram", { hub, place, backfill });
 
 bot.on(["message:forum_topic_created", "message:forum_topic_edited"], (ctx) => {
   const name = ctx.message.forum_topic_created?.name ?? ctx.message.forum_topic_edited?.name;
-  if (!name) return;
+
+  if (!name) {
+    return;
+  }
   topicNames.set(threadOf(ctx), name);
   hub.rename(threadOf(ctx), name);
 });
 
 bot.on("message:text", async (ctx) => {
-  if (allowed(ctx.from) && (await slash(threadOf(ctx), ctx.message.text))) return;
+  if (allowed(ctx.from) && (await slash(threadOf(ctx), ctx.message.text))) {
+    return;
+  }
   await handleInbound(ctx, ctx.message.text, undefined);
 });
 
@@ -1021,31 +1251,47 @@ bot.on("message:text", async (ctx) => {
 // new session for that, losing its conversation, so there it stays a message, like Telegram's own /start.
 async function slash(thread: string, text: string): Promise<boolean> {
   const [, command, to, rest = ""] =
-    text.match(/^\/([a-z][\w:-]*)(?:@(\w+))?(?:\s+([\s\S]*))?$/i) ?? [];
+    /^\/([a-z][\w:-]*)(?:@(\w+))?(?:\s+([\s\S]*))?$/i.exec(text) ?? [];
+
   const name = command?.toLowerCase();
-  if (!name || (to && to.toLowerCase() !== me().toLowerCase()) || !hub.name(thread)) return false;
+
+  if (!name || (to && to.toLowerCase() !== me().toLowerCase()) || !hub.name(thread)) {
+    return false;
+  }
   const { chat_id, extra } = target(thread);
   const answer = (reply: string) => bot.api.sendMessage(chat_id, reply, extra).then(() => true);
+
   if (name === "model" || name === "effort") {
     const choices = name === "model" ? MODELS : EFFORTS;
     const choice = choices.find(({ value }) => value === rest.trim().toLowerCase());
-    if (!choice)
-      return answer(`/${name} takes one of: ${choices.map(({ value }) => value).join(", ")}`);
+
+    if (!choice) {
+      return await answer(`/${name} takes one of: ${choices.map(({ value }) => value).join(", ")}`);
+    }
     hub.configure(thread, { [name]: choice.value });
-    return answer(
+
+    return await answer(
       `${name === "model" ? "Model" : "Effort"}: ${choice.name}, from this thread's next message.`,
     );
   }
-  if (name === "start" || !thread.startsWith("-")) return false;
-  if (typing.has(thread))
-    return answer(`This thread is working; send /${name} again once it's done.`);
+
+  if (name === "start" || !thread.startsWith("-")) {
+    return false;
+  }
+  if (typing.has(thread)) {
+    return await answer(`This thread is working; send /${name} again once it's done.`);
+  }
   void hub.command(thread, `/${name}${rest ? ` ${rest}` : ""}`);
-  return answer(`Running /${name} in this thread's session.`);
+
+  return await answer(`Running /${name} in this thread's session.`);
 }
 
 bot.on("edited_message", async (ctx) => {
   const text = ctx.editedMessage.text ?? ctx.editedMessage.caption;
-  if (text) await handleInbound(ctx, text, undefined);
+
+  if (text) {
+    await handleInbound(ctx, text, undefined);
+  }
 });
 
 bot.on("message:location", async (ctx) => {
@@ -1073,12 +1319,14 @@ bot.on("message:photo", async (ctx) => {
   // and we don't want to burn API quota or fill the inbox for dropped messages.
   await handleInbound(ctx, caption, async () => {
     // Largest size is last in the array.
-    const best = ctx.message.photo[ctx.message.photo.length - 1]!;
+    const best = ctx.message.photo.at(-1)!;
+
     try {
       return await download(best.file_id, best.file_unique_id);
-    } catch (err) {
-      process.stderr.write(`telegram hub: photo download failed: ${err}\n`);
-      return undefined;
+    } catch (error) {
+      process.stderr.write(`telegram hub: photo download failed: ${error}\n`);
+
+      return;
     }
   });
 });
@@ -1100,17 +1348,19 @@ bot.on("message:document", async (ctx) => {
 async function hear(file_id: string, uniqueId: string): Promise<string | undefined> {
   try {
     return await transcribe(() => download(file_id, uniqueId));
-  } catch (err) {
-    process.stderr.write(`telegram hub: voice transcription failed: ${err}\n`);
+  } catch (error) {
+    process.stderr.write(`telegram hub: voice transcription failed: ${error}\n`);
   }
 }
 
 bot.on("message:voice", async (ctx) => {
   const voice = ctx.message.voice;
   const heard = allowed(ctx.from) ? await hear(voice.file_id, voice.file_unique_id) : undefined;
+
   const said = heard
     ? `(voice message) ${heard}`
     : "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)";
+
   const text = ctx.message.caption ? `${ctx.message.caption}\n\n${said}` : said;
   await handleInbound(ctx, text, undefined, {
     kind: "voice",
@@ -1186,12 +1436,19 @@ bot.on("message:sticker", async (ctx) => {
 // names neither the topic nor the text, so both come from the message hex.db kept.
 bot.on("message_reaction", (ctx) => {
   const { chat, message_id, user, date } = ctx.messageReaction;
-  if (!allowed(user)) return;
+
+  if (!allowed(user)) {
+    return;
+  }
   const found = hub.said(`${chat.id}:${message_id}`);
   const known = found && hub.name(found.to) ? found : undefined;
   const thread = known?.to ?? plainThread(chat);
-  if (!thread) return;
+
+  if (!thread) {
+    return;
+  }
   const { emojiAdded, emojiRemoved } = ctx.reactions();
+
   const meta = {
     chat_id: String(chat.id),
     user: user.username ?? String(user.id),
@@ -1203,44 +1460,55 @@ bot.on("message_reaction", (ctx) => {
       : {}),
     ...(known?.body ? { reaction_to_text: known.body } : {}),
   };
+
   const key = `${chat.id}:${message_id}:${ctx.update.update_id}`;
-  for (const emoji of emojiAdded)
+
+  for (const emoji of emojiAdded) {
     hub.deliver(thread, nameOf(ctx, thread), {
       author: "owner",
       key: `${key}+${emoji}`,
       content: `(reaction: ${emoji})`,
       meta: { ...meta, reaction: emoji },
     });
-  for (const emoji of emojiRemoved)
+  }
+  for (const emoji of emojiRemoved) {
     hub.deliver(thread, nameOf(ctx, thread), {
       author: "owner",
       key: `${key}-${emoji}`,
       content: `(reaction removed: ${emoji})`,
       meta: { ...meta, reaction: emoji, reaction_removed: "true" },
     });
+  }
 });
 
 // Outside a forum a chat, a DM included, is one thread; a forum's topic is only
 // known from messages the hub has seen.
 function plainThread(chat: Chat): string | undefined {
-  if (!("is_forum" in chat && chat.is_forum)) return String(chat.id);
+  if (!("is_forum" in chat && chat.is_forum)) {
+    return String(chat.id);
+  }
 }
 
 bot.on("callback_query:data", async (ctx) => {
   await ctx.answerCallbackQuery().catch(() => {});
   const { data, message } = ctx.callbackQuery;
+
   const label =
     message && "reply_markup" in message
       ? message.reply_markup?.inline_keyboard
           .flat()
           .find((button) => "callback_data" in button && button.callback_data === data)?.text
       : undefined;
-  if (!message || !label || !allowed(ctx.from)) return;
+
+  if (!message || !label || !allowed(ctx.from)) {
+    return;
+  }
   const thread = threadOf(ctx);
-  const verdict = data.match(/^perm:(allow|deny):([a-km-z]{5})$/);
+  const verdict = /^perm:(allow|deny):([a-km-z]{5})$/.exec(data);
   // A question's buttons are drawn from where it stands once the tap is in; any others show the tap at once.
   const question = verdict ? undefined : ledger.find(thread, message.message_id);
-  if (!question)
+
+  if (!question) {
     await bot.api
       .editMessageReplyMarkup(message.chat.id, message.message_id, {
         reply_markup: { inline_keyboard: [[{ text: `✓ ${label}`, disabled: {} }]] },
@@ -1248,10 +1516,14 @@ bot.on("callback_query:data", async (ctx) => {
       .catch((err) =>
         process.stderr.write(`telegram hub: couldn't mark the tapped button: ${err}\n`),
       );
+  }
   if (verdict) {
     asking.get(thread)?.delete(message.message_id);
-    return hub.answer(thread, verdict[2]!, verdict[1] as "allow" | "deny");
+
+    hub.answer(thread, verdict[2]!, verdict[1] as "allow" | "deny");
+    return;
   }
+
   // Buttons hex didn't ask with still reach the thread; on a question, only the first answer does.
   hub.deliver(
     thread,
@@ -1271,13 +1543,19 @@ bot.on("callback_query:data", async (ctx) => {
     },
     question && (() => ledger.answered(thread, message.message_id, label, "telegram")),
   );
-  if (question) await draw(thread, message.message_id);
+
+  if (question) {
+    await draw(thread, message.message_id);
+  }
 });
 
 bot.on("poll_answer", (ctx) => {
   const { poll_id, user, option_ids } = ctx.pollAnswer;
   const question = ledger.byPoll(poll_id);
-  if (!allowed(user) || !question) return;
+
+  if (!allowed(user) || !question) {
+    return;
+  }
   const vote = option_ids.map((i) => question.options[i]).join("; ");
   hub.deliver(
     question.thread,
@@ -1297,8 +1575,11 @@ bot.on("poll_answer", (ctx) => {
       },
     },
     () => {
-      if (vote) ledger.answered(question.thread, question.message, vote, "telegram", true);
-      else ledger.reopened(question.thread, question.message);
+      if (vote) {
+        ledger.answered(question.thread, question.message, vote, "telegram", true);
+      } else {
+        ledger.reopened(question.thread, question.message);
+      }
       return true;
     },
   );
@@ -1320,33 +1601,37 @@ type AttachmentMeta = {
 // notification — delimiter chars would let the uploader break out of the tag
 // or forge a second meta entry.
 function safeName(s: string | undefined): string | undefined {
-  return s?.replace(/[<>\[\]\r\n;]/g, "_");
+  return s?.replaceAll(/[<>[\]\r\n;]/g, "_");
 }
 
 // A link's address lives in the message's entities, not in its text.
 function linked(text: string, entities: MessageEntity[] = []): string {
   return entities.reduceRight(
     (out, entity) =>
-      entity.type !== "text_link"
-        ? out
-        : `${out.slice(0, entity.offset)}[${out.slice(entity.offset, entity.offset + entity.length)}](${entity.url})${out.slice(entity.offset + entity.length)}`,
+      entity.type === "text_link"
+        ? `${out.slice(0, entity.offset)}[${out.slice(entity.offset, entity.offset + entity.length)}](${entity.url})${out.slice(entity.offset + entity.length)}`
+        : out,
     text,
   );
 }
 
 function senderOf(origin: MessageOrigin): string {
   switch (origin.type) {
-    case "user":
+    case "user": {
       return (
         origin.sender_user.username ??
         [origin.sender_user.first_name, origin.sender_user.last_name].filter(Boolean).join(" ")
       );
-    case "hidden_user":
+    }
+    case "hidden_user": {
       return origin.sender_user_name;
-    case "chat":
+    }
+    case "chat": {
       return origin.sender_chat.title ?? String(origin.sender_chat.id);
-    case "channel":
+    }
+    case "channel": {
       return origin.chat.title;
+    }
   }
 }
 
@@ -1367,25 +1652,34 @@ async function replyMeta(msg: Context["msg"]): Promise<Record<string, string>> {
   const external = msg?.external_reply;
   const replied = external ? undefined : msg?.reply_to_message;
   const source = external ?? replied;
-  if (!msg || !source || replied?.forum_topic_created) return {};
+
+  if (!msg || !source || replied?.forum_topic_created) {
+    return {};
+  }
   const id = replied?.message_id ?? external?.message_id;
-  const known = id != null ? hub.said(`${external?.chat?.id ?? msg.chat.id}:${id}`) : undefined;
+  const known = id == null ? undefined : hub.said(`${external?.chat?.id ?? msg.chat.id}:${id}`);
   const text = replied?.text ?? replied?.caption;
+
   const user = replied?.from
     ? (replied.from.username ?? String(replied.from.id))
     : external
       ? senderOf(external.origin)
       : undefined;
+
   const photo = source.photo?.at(-1);
+
   const imagePath =
     photo &&
-    (await download(photo.file_id, photo.file_unique_id).catch((err) => {
-      process.stderr.write(`telegram hub: replied-to photo download failed: ${err}\n`);
-      return undefined;
+    (await download(photo.file_id, photo.file_unique_id).catch((error) => {
+      process.stderr.write(`telegram hub: replied-to photo download failed: ${error}\n`);
+
+      return;
     }));
+
   const kind = REPLY_FILE_KINDS.find((k) => source[k]);
+
   return {
-    ...(id != null ? { reply_to_message_id: String(id) } : {}),
+    ...(id == null ? {} : { reply_to_message_id: String(id) }),
     ...(user ? { reply_to_user: user } : {}),
     ...(text
       ? { reply_to_text: linked(text, replied?.entities ?? replied?.caption_entities) }
@@ -1415,10 +1709,15 @@ async function handleInbound(
   downloadImage: (() => Promise<string | undefined>) | undefined,
   attachment?: AttachmentMeta,
 ): Promise<void> {
-  if (!allowed(ctx.from)) return;
+  if (!allowed(ctx.from)) {
+    return;
+  }
   const part = { ctx, text, downloadImage, attachment };
   const group = ctx.message?.media_group_id;
-  if (!group) return deliverInbound([part]);
+
+  if (!group) {
+    return await deliverInbound([part]);
+  }
   const album = albums.get(group) ?? { parts: [] };
   albums.set(group, album);
   album.parts.push(part);
@@ -1449,18 +1748,22 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   // Telegram only accepts a fixed emoji whitelist — if the user configures
   // something outside that set the API rejects it and we swallow.
-  if (access.ackReaction && msgId != null && !ctx.editedMessage)
+  if (access.ackReaction && msgId != null && !ctx.editedMessage) {
     void react(chat_id, msgId, acked()).catch(() => {});
+  }
 
   const imagePaths = (await Promise.all(parts.map((part) => part.downloadImage?.()))).filter(
     Boolean,
   ) as string[];
+
   const attachments = parts.flatMap((part) => part.attachment ?? []);
   const captioned = parts.find((part) => part.ctx.msg?.caption) ?? parts[0]!;
+
   const content =
     parts.length > 1 && captioned.ctx.msg?.caption == null
       ? `(album of ${parts.length})`
       : linked(captioned.text, captioned.ctx.msg?.entities ?? captioned.ctx.msg?.caption_entities);
+
   const user = from.username ?? String(from.id);
 
   // image_path goes in meta only — an in-content "[image attached — read: PATH]"
@@ -1473,7 +1776,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     content,
     meta: {
       chat_id,
-      ...(msgId != null ? { message_id: String(msgId) } : {}),
+      ...(msgId == null ? {} : { message_id: String(msgId) }),
       user,
       user_id: String(from.id),
       ts: new Date((ctx.msg?.date ?? 0) * 1000).toISOString(),
@@ -1503,22 +1806,25 @@ async function deliverInbound(parts: Part[]): Promise<void> {
       ...(ctx.msg?.forward_origin ? { forwarded_from: senderOf(ctx.msg.forward_origin) } : {}),
     },
   };
+
   hub.deliver(thread, nameOf(ctx, thread), message);
-  if (msgId != null)
+
+  if (msgId != null) {
     ledger.heard(
       thread,
       msgId,
       content,
       message.meta.reply_to_message_id ? Number(message.meta.reply_to_message_id) : undefined,
     );
+  }
 }
 
 let keeping: (() => void) | undefined;
 
 // Without this, any throw in a message handler stops polling permanently
 // (grammy's default error handler calls bot.stop() and rethrows).
-bot.catch((err) => {
-  process.stderr.write(`telegram hub: handler error (polling continues): ${err.error}\n`);
+bot.catch((error) => {
+  process.stderr.write(`telegram hub: handler error (polling continues): ${error.error}\n`);
 });
 
 // Retry polling with backoff on any error: a single ETIMEDOUT/ECONNRESET/DNS
@@ -1548,8 +1854,8 @@ for (let attempt = 1; ; attempt++) {
               description: `This thread's effort: ${EFFORTS.map(({ value }) => value).join(", ")}`,
             },
           ])
-          .catch((err) =>
-            process.stderr.write(`telegram hub: couldn't set the command menu: ${err}\n`),
+          .catch((error) =>
+            process.stderr.write(`telegram hub: couldn't set the command menu: ${error}\n`),
           );
         hub.save();
         keeping ??= ledger.keep(post, (thread, err) =>
@@ -1558,11 +1864,11 @@ for (let attempt = 1; ; attempt++) {
       },
     });
     break;
-  } catch (err) {
-    const is409 = err instanceof GrammyError && err.error_code === 409;
+  } catch (error) {
+    const is409 = error instanceof GrammyError && error.error_code === 409;
     const delay = Math.min(1000 * attempt, 15000);
     process.stderr.write(
-      `telegram hub: ${is409 ? "409 Conflict, another poller holds this token" : `polling error: ${err}`}, retrying in ${delay / 1000}s\n`,
+      `telegram hub: ${is409 ? "409 Conflict, another poller holds this token" : `polling error: ${error}`}, retrying in ${delay / 1000}s\n`,
     );
     await new Promise((r) => setTimeout(r, delay));
   }

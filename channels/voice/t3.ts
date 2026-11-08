@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite";
-import { createHash } from "crypto";
-import { existsSync, watch } from "fs";
-import { homedir } from "os";
-import { basename, dirname, join } from "path";
+import { createHash } from "node:crypto";
+import { existsSync, watch } from "node:fs";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 // app: where it's stuck, t3 or hex itself. request: what hex's General is asked to do about it; without one,
 // the action just puts it away.
@@ -16,6 +16,7 @@ export type Stuck = {
   at: string;
   request?: string;
 };
+
 // topic: the T3 project it finished in, or the thread's own title. Projects T3 Code makes for a thread with
 // none, rooted at the home folder or in its own scratch, are no project. where says the same as one line, for apps
 // that still read it.
@@ -37,6 +38,7 @@ type Thread = {
   limit: string | null;
   mine: boolean;
 };
+
 type Run = {
   thread: string;
   ordinal: number;
@@ -55,15 +57,17 @@ const QUEUED = 30 * 60_000;
 export class T3 {
   stuck: Stuck[] = [];
   fresh: Fresh[] = [];
-  private db?: Database;
+  private readonly db?: Database;
   private pending?: ReturnType<typeof setTimeout>;
-  private watcher?: ReturnType<typeof watch>;
+  private readonly watcher?: ReturnType<typeof watch>;
 
   constructor(
-    private changed: () => void,
-    private path = DATABASE,
+    private readonly changed: () => void,
+    private readonly path = DATABASE,
   ) {
-    if (!existsSync(path)) return;
+    if (!existsSync(path)) {
+      return;
+    }
     this.db = new Database(path, { readonly: true });
     this.watcher = watch(
       dirname(path),
@@ -80,17 +84,21 @@ export class T3 {
 
   private schedule() {
     clearTimeout(this.pending);
-    this.pending = setTimeout(() => this.read(), 500);
+    this.pending = setTimeout(() => {
+      this.read();
+    }, 500);
   }
 
   private read() {
     try {
       const { stuck, fresh } = this.query(Date.now());
+
       if (
         JSON.stringify({ stuck, fresh }) ===
         JSON.stringify({ stuck: this.stuck, fresh: this.fresh })
-      )
+      ) {
         return;
+      }
       this.stuck = stuck;
       this.fresh = fresh;
       this.changed();
@@ -101,6 +109,7 @@ export class T3 {
 
   query(now: number) {
     const db = this.db!;
+
     const threads = new Map(
       db
         .query<Thread, [string, string]>(
@@ -115,6 +124,7 @@ export class T3 {
         .all(homedir(), `${join(homedir(), ".t3")}/%`)
         .map((thread) => [thread.id, thread]),
     );
+
     const latest = db
       .query<Run, []>(
         `select r.thread_id thread, r.ordinal, r.status, r.requested_at requested, r.completed_at completed
@@ -122,16 +132,19 @@ export class T3 {
          join (select thread_id, max(ordinal) ordinal from orchestration_v2_projection_runs group by thread_id) m using (thread_id, ordinal)`,
       )
       .all();
+
     const queued = db
       .query<Run, []>(
         `select thread_id thread, min(requested_at) requested from orchestration_v2_projection_runs where status = 'queued' group by thread_id`,
       )
       .all();
+
     const iso = new Date(now).toISOString();
     const recent = new Date(now - RECENT).toISOString();
     const stuck: Stuck[] = [];
 
     const parked = [...threads.values()].filter((thread) => thread.limit && thread.limit > iso);
+
     if (parked.length) {
       const until = parked.map((thread) => thread.limit!).sort()[0]!;
       stuck.push({
@@ -145,14 +158,17 @@ export class T3 {
         request: `These T3 Code threads are parked on a usage limit until ${day(until)}: ${parked.map((thread) => `"${thread.title}"`).join(", ")}. Switch them to a plan with room so they carry on now.`,
       });
     }
+
     for (const run of queued) {
       const thread = threads.get(run.thread);
+
       if (
         !thread ||
         (thread.limit && thread.limit > iso) ||
         Date.parse(run.requested) > now - QUEUED
-      )
+      ) {
         continue;
+      }
       stuck.push({
         id: `t3-queued-${digest(`${run.thread}:${run.requested}`)}`,
         app: "t3",
@@ -164,8 +180,10 @@ export class T3 {
         request: `The T3 Code thread "${thread.title}" (${run.thread}) has had a run queued since ${run.requested} that never started. Get it going.`,
       });
     }
+
     const failed = latest.filter((run) => {
       const thread = threads.get(run.thread);
+
       return (
         thread &&
         run.status === "failed" &&
@@ -174,6 +192,7 @@ export class T3 {
         run.completed! > (thread.visited ?? "")
       );
     });
+
     if (failed.length) {
       const titles = failed.map((run) => threads.get(run.thread)!.title);
       stuck.push({
@@ -202,6 +221,7 @@ export class T3 {
     const fresh = latest
       .filter((run) => {
         const thread = threads.get(run.thread);
+
         return (
           thread?.mine &&
           run.status === "completed" &&
@@ -212,6 +232,7 @@ export class T3 {
       .sort((a, b) => b.completed!.localeCompare(a.completed!))
       .map((run): Fresh => {
         const thread = threads.get(run.thread)!;
+
         return {
           id: `t3-done-${digest(`${run.thread}:${run.ordinal}`)}`,
           app: "t3",
@@ -222,6 +243,7 @@ export class T3 {
           at: run.completed!,
         };
       });
+
     return { stuck, fresh };
   }
 
@@ -231,15 +253,17 @@ export class T3 {
       `select json_extract(payload_json, '$.text') text from orchestration_v2_projection_messages
          where thread_id = ? and role = 'assistant' order by created_at desc limit 1`,
     ).get(thread);
+
     const line = (row?.text ?? "")
       .split("\n")
       .map((line) =>
         line
           .replace(/^(#+|[-*>]|\d+\.)\s+/, "")
-          .replace(/\*\*|__|`/g, "")
+          .replaceAll(/\*\*|__|`/g, "")
           .trim(),
       )
       .find(Boolean);
+
     return line ? (line.length > 200 ? `${line.slice(0, 199)}…` : line) : "";
   }
 }

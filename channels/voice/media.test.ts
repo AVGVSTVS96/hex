@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { caption, line, Media, meta, typed } from "./media.ts";
 
@@ -15,14 +15,18 @@ beforeEach(() => {
   heard = [];
   media = new Media(join(dir, "media"), async (recording) => {
     heard.push(await recording());
+
     return "look at the crack here";
   });
 });
 
-afterEach(() => rmSync(dir, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(dir, { recursive: true, force: true });
+});
 
 async function clip(seconds: number, sound: boolean) {
   const file = join(dir, `clip-${sound}.mp4`);
+
   const input = [
     "-f",
     "lavfi",
@@ -30,15 +34,17 @@ async function clip(seconds: number, sound: boolean) {
     `testsrc=size=320x240:rate=10:duration=${seconds}`,
     ...(sound ? ["-f", "lavfi", "-i", `sine=duration=${seconds}`] : []),
   ];
+
   await Bun.spawn(["ffmpeg", "-v", "error", ...input, "-pix_fmt", "yuv420p", "-shortest", file])
     .exited;
+
   return Bun.file(file);
 }
 
 test("a photo is kept as it came, and found again by its id", async () => {
   const item = await media.add("image/png", new Blob(["png bytes"]));
   expect(item.kind).toBe("photo");
-  expect(item.images.map((image) => readFileSync(image, "utf8"))).toEqual(["png bytes"]);
+  expect(item.images.map((image) => readFileSync(image, "utf-8"))).toEqual(["png bytes"]);
   expect(media.get(item.id)).toEqual(item);
   expect(media.get("../media")).toBeUndefined();
   expect(media.get("nothing")).toBeUndefined();
@@ -85,12 +91,14 @@ test.skipIf(!ffmpeg)("a file that isn't the video it says leaves nothing behind"
 
 test("a message's words come first, a line for each item after them, and every image in its meta", () => {
   const photo = { id: "p1", kind: "photo" as const, images: ["/m/p1.jpg"] };
+
   const video = {
     id: "v1",
     kind: "video" as const,
     images: ["/m/v1-1.jpg", "/m/v1-2.jpg"],
     seconds: 75,
   };
+
   const body = caption("which one?\nthe left?", [photo, video]);
   expect(body).toBe(
     "which one?\nthe left?\n(photo)\n(video 1:15, 2 stills; no words came through from its sound)",

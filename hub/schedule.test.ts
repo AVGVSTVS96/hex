@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { check, parse } from "./schedule.ts";
 import { open } from "./store.ts";
@@ -36,7 +36,9 @@ function jobs(file: object | string) {
 
 // Checks every minute from one to another, and what it fired, oldest first, as keys.
 function run(from: number, to: number) {
-  for (let minute = from; minute <= to; minute++) check(dir, hexDir, "general", minute);
+  for (let minute = from; minute <= to; minute++) {
+    check(dir, hexDir, "general", minute);
+  }
   return fired();
 }
 
@@ -47,7 +49,9 @@ function fired() {
 }
 
 function takeAll() {
-  for (const row of open(dir).untaken()) open(dir).take(row.key, "session");
+  for (const row of open(dir).untaken()) {
+    open(dir).take(row.key, "session");
+  }
 }
 
 test("a job fires at its minute on the owner's clock, once, to the main thread", () => {
@@ -69,11 +73,13 @@ test("steps, ranges, lists and Sunday as 0 or 7 fire where cron does", () => {
     either: { cron: "0 10 1 * 0", prompt: "First or Sunday" },
   });
   const keys: string[] = [];
+
   for (let minute = at(18, 0); minute < at(19, 0); minute++) {
     check(dir, hexDir, "general", minute);
     keys.push(...fired());
     takeAll();
   }
+
   expect(keys.filter((key) => key.startsWith("schedule:leisure@"))).toHaveLength(8);
   expect(keys).toContain("schedule:sunday@2026-10-18T15:00Z");
   expect(keys).toContain("schedule:either@2026-10-18T17:00Z");
@@ -89,11 +95,13 @@ test("an at fires once at each time it lists, and never again after", () => {
     },
   });
   const keys: string[] = [];
+
   for (let minute = at(20, 15, 59); minute <= at(20, 18, 1); minute++) {
     check(dir, hexDir, "general", minute);
     keys.push(...fired());
     takeAll();
   }
+
   expect(keys).toEqual(["schedule:treat@2026-10-20T23:00Z", "schedule:treat@2026-10-21T01:00Z"]);
   expect(open(dir).message(keys[0]!)!.to).toBe("topic");
 });
@@ -104,8 +112,10 @@ test("an at fires once when clocks go back, and as far past the jump as it was s
     ahead: { at: "2027-03-14 02:30", prompt: "Ahead" },
   });
   const keys: string[] = [];
+
   const utc = (year: number, month: number, day: number, hour: number) =>
     Date.UTC(year, month - 1, day, hour) / 60_000;
+
   for (const [from, to] of [
     [utc(2026, 11, 1, 7), utc(2026, 11, 1, 11)],
     [utc(2027, 3, 14, 8), utc(2027, 3, 14, 12)],
@@ -116,6 +126,7 @@ test("an at fires once when clocks go back, and as far past the jump as it was s
       takeAll();
     }
   }
+
   expect(keys).toEqual(["schedule:back@2026-11-01T08:30Z", "schedule:ahead@2027-03-14T10:30Z"]);
 });
 
@@ -182,6 +193,7 @@ test("a job needs a prompt and a cron or an at it can read", () => {
   expect(() => parse(JSON.stringify({ a: { at: "2026-02-30 10:00", prompt: "x" } }))).toThrow(
     "at must be",
   );
+
   for (const cron of [
     ["* * * * *"],
     "60 * * * *",
@@ -190,10 +202,11 @@ test("a job needs a prompt and a cron or an at it can read", () => {
     "0 0 0 * *",
     "0 0 * 13 *",
     "0 0 * * 8",
-  ])
+  ]) {
     expect(() => parse(JSON.stringify({ a: { cron, prompt: "x" } }))).toThrow(
       `a: ${JSON.stringify(cron)} is not a five-field cron expression`,
     );
+  }
   expect(parse(JSON.stringify({ a: { cron: "5/15 0-23/2 1,15 */3 0-7", prompt: "x" } }))).toEqual({
     a: { cron: "5/15 0-23/2 1,15 */3 0-7", prompt: "x" },
   });
@@ -211,10 +224,12 @@ test("a job that names an idea is handed to its check every minute, with its slo
   ).toThrow("at most daily");
   jobs({ "gpt-live": { cron: "0 9 * * 1", idea: "t-4", prompt: "Is GPT Live 1.1 on the API?" } });
   const checked: [string, string | undefined, number | undefined][] = [];
-  for (let minute = at(19, 8, 59); minute <= at(19, 9, 1); minute++)
+
+  for (let minute = at(19, 8, 59); minute <= at(19, 9, 1); minute++) {
     check(dir, hexDir, "general", minute, (_, name, job, __, slot) =>
       checked.push([name, job.idea, slot]),
     );
+  }
   expect(checked).toEqual([
     ["gpt-live", "t-4", undefined],
     ["gpt-live", "t-4", at(19, 9)],

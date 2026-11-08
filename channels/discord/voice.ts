@@ -1,4 +1,4 @@
-import { PassThrough } from "stream";
+import { PassThrough } from "node:stream";
 
 import {
   joinVoiceChannel,
@@ -9,12 +9,13 @@ import {
   StreamType,
   AudioPlayerStatus,
   VoiceConnectionStatus,
-  type AudioPlayer,
 } from "@discordjs/voice";
+import type { AudioPlayer } from "@discordjs/voice";
 import type { Client, VoiceBasedChannel } from "discord.js";
 import OpusScript from "opusscript";
 
-import { engine, type Held } from "../../hub/hub.ts";
+import { engine } from "../../hub/hub.ts";
+import type { Held } from "../../hub/hub.ts";
 
 // Discord's audio is 48 kHz stereo in 20 ms Opus frames; the call engine's is 24 kHz mono PCM.
 const RATE = 48_000;
@@ -27,6 +28,7 @@ const QUIET = 64;
 // 48 kHz stereo to 24 kHz mono: each sample averages two frames of both channels.
 export function narrow(pcm: Buffer): Buffer {
   const out = Buffer.alloc(pcm.length >> 2);
+
   for (let i = 0, o = 0; o < out.length; i += 8, o += 2) {
     out.writeInt16LE(
       (pcm.readInt16LE(i) +
@@ -37,6 +39,7 @@ export function narrow(pcm: Buffer): Buffer {
       o,
     );
   }
+
   return out;
 }
 
@@ -44,6 +47,7 @@ export function narrow(pcm: Buffer): Buffer {
 export function widen(pcm: Buffer): Buffer {
   const samples = pcm.length >> 1;
   const out = Buffer.alloc(samples * 8);
+
   for (let i = 0; i < samples; i++) {
     const sample = pcm.readInt16LE(i * 2);
     const between = (sample + (i + 1 < samples ? pcm.readInt16LE(i * 2 + 2) : sample)) >> 1;
@@ -52,11 +56,14 @@ export function widen(pcm: Buffer): Buffer {
     out.writeInt16LE(between, i * 8 + 4);
     out.writeInt16LE(between, i * 8 + 6);
   }
+
   return out;
 }
 
 function silent(pcm: Buffer): boolean {
-  for (let i = 0; i < pcm.length; i += 2) if (Math.abs(pcm.readInt16LE(i)) > QUIET) return false;
+  for (let i = 0; i < pcm.length; i += 2) {
+    if (Math.abs(pcm.readInt16LE(i)) > QUIET) return false;
+  }
   return true;
 }
 
@@ -68,20 +75,27 @@ export function speaker(player: AudioPlayer) {
   let stretch: PassThrough | undefined;
   let quiet = 0;
   player.on(AudioPlayerStatus.Idle, () => (stretch = undefined));
+
   return (audio: string) => {
     const pcm = Buffer.from(audio, "base64");
     quiet = silent(pcm) ? quiet + pcm.length / 48 : 0;
+
     if (quiet > PAUSE) {
       stretch?.end();
       stretch = undefined;
+
       return;
     }
-    if (!stretch && quiet) return;
+
+    if (!stretch && quiet) {
+      return;
+    }
     if (!stretch) {
       stretch = new PassThrough();
       stretch.write(CUSHION);
       player.play(createAudioResource(stretch, { inputType: StreamType.Raw }));
     }
+
     stretch.write(widen(pcm));
   };
 }
@@ -91,18 +105,25 @@ export function speaker(player: AudioPlayer) {
 export function listener(hear: (audio: string) => void) {
   const decoder = new OpusScript(RATE, 2, OpusScript.Application.VOIP);
   let heard = Date.now();
+
   const quiet = setInterval(() => {
-    if (Date.now() - heard < TICK) return;
+    if (Date.now() - heard < TICK) {
+      return;
+    }
     heard = Date.now();
     hear(SILENCE.toString("base64"));
   }, TICK);
+
   return {
     packet(opus: Buffer) {
       heard = Date.now();
+
       try {
         hear(narrow(Buffer.from(decoder.decode(opus))).toString("base64"));
-      } catch (err) {
-        process.stderr.write(`discord hub: dropped a voice packet that wouldn't decode: ${err}\n`);
+      } catch (error) {
+        process.stderr.write(
+          `discord hub: dropped a voice packet that wouldn't decode: ${error}\n`,
+        );
       }
     },
     close() {
@@ -119,35 +140,48 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
 
   async function call(channel: VoiceBasedChannel, user: string) {
     const take = engine.take;
-    if (!take)
+
+    if (!take) {
       return void process.stderr.write(
         "discord hub: the voice app isn't running, so a voice channel takes no calls\n",
       );
+    }
     const connection = joinVoiceChannel({
       channelId: channel.id,
       guildId: channel.guild.id,
       adapterCreator: channel.guild.voiceAdapterCreator,
       selfDeaf: false,
     });
+
     let held: Held | undefined;
     let ear: ReturnType<typeof listener> | undefined;
     let voice: ReturnType<typeof connection.receiver.subscribe> | undefined;
     let over = false;
+
     const end = () => {
-      if (over) return;
+      if (over) {
+        return;
+      }
       over = true;
-      if (current?.end === end) current = undefined;
+
+      if (current?.end === end) {
+        current = undefined;
+      }
       held?.hangUp();
       voice?.destroy();
       ear?.close();
-      if (connection.state.status !== VoiceConnectionStatus.Destroyed) connection.destroy();
+
+      if (connection.state.status !== VoiceConnectionStatus.Destroyed) {
+        connection.destroy();
+      }
     };
+
     current = { channel: channel.id, end };
     // A disconnect that is only a move or a region change starts signalling again on its own.
     connection.on(VoiceConnectionStatus.Disconnected, () => {
       Promise.race([
-        entersState(connection, VoiceConnectionStatus.Signalling, 5_000),
-        entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
+        entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5000),
       ]).catch(end);
     });
     connection.on(VoiceConnectionStatus.Destroyed, end);
@@ -155,41 +189,58 @@ export function voiceCalls(client: Client, owner: (user: string) => boolean) {
       process.stderr.write(`discord hub: the voice connection failed: ${err}\n`);
       end();
     });
+
     try {
       await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-    } catch (err) {
-      process.stderr.write(`discord hub: couldn't join #${channel.name}: ${err}\n`);
-      return end();
+    } catch (error) {
+      process.stderr.write(`discord hub: couldn't join #${channel.name}: ${error}\n`);
+
+      end();
+      return;
     }
-    if (over) return;
+
+    if (over) {
+      return;
+    }
     const player = createAudioPlayer({ behaviors: { maxMissedFrames: 50 } });
     player.on("error", (err) =>
       process.stderr.write(`discord hub: the voice's audio failed: ${err}\n`),
     );
     connection.subscribe(player);
+
     try {
       held = take(
         "discord",
         `They joined you in the Discord voice channel ${channel.name}. Answer briefly, then listen.`,
         { play: speaker(player), end },
       );
-    } catch (err) {
-      process.stderr.write(`discord hub: ${err}\n`);
-      return end();
+    } catch (error) {
+      process.stderr.write(`discord hub: ${error}\n`);
+
+      end();
+      return;
     }
+
     ear = listener(held.hear);
     voice = connection.receiver.subscribe(user, { end: { behavior: EndBehaviorType.Manual } });
-    voice.on("data", (opus: Buffer) => ear?.packet(opus));
+    voice.on("data", (opus: Buffer) => {
+      ear?.packet(opus);
+    });
     voice.on("error", (err) => process.stderr.write(`discord hub: voice receive failed: ${err}\n`));
     process.stderr.write(`discord hub: on a call in #${channel.name}\n`);
   }
 
   client.on("voiceStateUpdate", (before, after) => {
-    if (!owner(after.id) || before.channelId === after.channelId) return;
-    if (current && current.channel === before.channelId) current.end();
-    if (after.channel && !current)
+    if (!owner(after.id) || before.channelId === after.channelId) {
+      return;
+    }
+    if (current && current.channel === before.channelId) {
+      current.end();
+    }
+    if (after.channel && !current) {
       void call(after.channel, after.id).catch((err) =>
         process.stderr.write(`discord hub: voice call failed: ${err}\n`),
       );
+    }
   });
 }

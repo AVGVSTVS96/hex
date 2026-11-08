@@ -1,6 +1,7 @@
 import { clock } from "./clock.ts";
 import { clip } from "./fit.ts";
-import { open, type Hold, type Store } from "./store.ts";
+import { open } from "./store.ts";
+import type { Hold, Store } from "./store.ts";
 
 // Threads a hold frees wake this many at a time, the next once a woken one's turn ends, or once it
 // has waited PATIENCE for one that never does, so a hold over a dozen threads doesn't end in a dozen
@@ -11,9 +12,11 @@ const PATIENCE = 15 * 60_000;
 // A time as the owner writes it: an instant with its offset, or else "YYYY-MM-DD HH:MM" on their clock.
 export function instant(text: string, zone = Temporal.Now.timeZoneId()): string {
   const iso = text.trim().replace(" ", "T");
+
   try {
     return Temporal.Instant.from(iso).toString({ smallestUnit: "millisecond" });
   } catch {}
+
   try {
     return Temporal.PlainDateTime.from(iso)
       .toZonedDateTime(zone)
@@ -45,7 +48,8 @@ export function place(
     const placed = store.hold(hold);
     const by = store.names()[placed.by] ?? placed.by;
     const ends = `${placed.until ? `at ${when(placed.until, zone)}, or ` : ""}when my word lifts it`;
-    for (const { thread } of placed.threads.filter(({ thread }) => working.has(thread)))
+
+    for (const { thread } of placed.threads.filter(({ thread }) => working.has(thread))) {
       store.deliver({
         key: `hold:${placed.id}@${thread}`,
         to: thread,
@@ -54,6 +58,7 @@ export function place(
         body: `[hold ${placed.id}] ${by} put this thread on hold: ${placed.why}. Finish the step you're on, commit it, and start nothing new until the hold ends; hex wakes this thread when it does, ${ends}.`,
         meta: { user: "hold" },
       });
+    }
     return placed;
   });
 }
@@ -65,9 +70,14 @@ export function wake(store: Store, at = new Date(clock.now()).toISOString()): st
     const waking = store.waking(PATIENCE, at);
     let room = AT_ONCE - waking.count;
     const woken = new Set<string>();
+
     for (const { id, thread, why, ending } of store.freed()) {
-      if (woken.has(thread)) continue;
-      if (room-- <= 0) break;
+      if (woken.has(thread)) {
+        continue;
+      }
+      if (room-- <= 0) {
+        break;
+      }
       woken.add(thread);
       const key = `hold:${id}@${thread}:ended`;
       store.deliver({
@@ -80,6 +90,7 @@ export function wake(store: Store, at = new Date(clock.now()).toISOString()): st
       });
       store.woke(thread, key);
     }
+
     return woken.size ? new Date(Date.parse(at) + PATIENCE).toISOString() : waking.until;
   });
 }
@@ -89,15 +100,20 @@ export function wake(store: Store, at = new Date(clock.now()).toISOString()): st
 // time, or a wake's patience, whichever comes first.
 export function holding(storeDir: string): () => void {
   let store: Store;
+
   try {
     store = open(storeDir);
   } catch (error) {
     process.stderr.write(`hub: holds can't move on until hex.db opens: ${error}\n`);
+
     return () => {};
   }
+
   let timer: ReturnType<typeof clock.setTimeout> | undefined;
+
   const step = () => {
     let next = Infinity;
+
     try {
       const at = new Date(clock.now()).toISOString();
       store.due(at);
@@ -111,12 +127,16 @@ export function holding(storeDir: string): () => void {
       next = clock.now() + 60_000;
     } finally {
       clock.clearTimeout(timer);
-      if (next < Infinity)
+
+      if (next < Infinity) {
         timer = clock.setTimeout(step, Math.min(2 ** 31 - 1, Math.max(0, next - clock.now())));
+      }
     }
   };
+
   const unwatch = store.watch(step);
   step();
+
   return () => {
     unwatch();
     clock.clearTimeout(timer);
@@ -131,6 +151,7 @@ export function line(hold: Hold, store: Store, zone?: string): string {
   const holding = hold.threads.filter((held) => !held.ended).map((held) => name(held.thread));
   const freed = hold.threads.filter((held) => held.ended).map((held) => name(held.thread));
   const said = hold.message && store.message(hold.message);
+
   return [
     holding.length
       ? `- ${hold.id} holds ${holding.join(", ")}`

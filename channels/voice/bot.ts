@@ -1,5 +1,5 @@
-import { mkdirSync } from "fs";
-import { join } from "path";
+import { mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 import { engine, startHub } from "../../hub/hub.ts";
 import { hexDir } from "../../hub/store.ts";
@@ -9,6 +9,7 @@ import { serve, take, tool } from "./server.ts";
 const STATE = join(hexDir(), "state");
 const THREAD = "voice";
 const stateDir = process.env.VOICE_STATE_DIR ?? join(STATE, THREAD);
+
 mkdirSync(stateDir, { recursive: true });
 
 // One session, always running, takes every call: it stays warm for the whole call and starts
@@ -38,7 +39,9 @@ serve(
         author: meta.callee ? "other" : meta.delegation_id || meta.ended ? "call" : "prompt",
       }),
     keep: () => hub.keep(THREAD),
-    renew: () => hub.renew(THREAD),
+    renew: () => {
+      hub.renew(THREAD);
+    },
     renewal: () => hub.renewal(THREAD),
     session: () => hub.session(THREAD),
   },

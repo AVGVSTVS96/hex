@@ -1,4 +1,5 @@
-import { spoken, type Row, type Store } from "./store.ts";
+import { spoken } from "./store.ts";
+import type { Row, Store } from "./store.ts";
 
 // A note about something the owner said keeps their words: the ones it rests on in double quotes,
 // copied from their message, and the message's key in brackets. hex.db keeps every message word
@@ -6,26 +7,44 @@ import { spoken, type Row, type Store } from "./store.ts";
 
 export const keysOf = (note: string) =>
   [...note.matchAll(/\[([a-z0-9]+:[^\]\s]+)\]/g)].map(([, key]) => key!);
+
 export const quotesOf = (note: string) =>
   [...note.matchAll(/["“]([^"“”]+)["”]/g)].map(([, words]) => words!);
 
 // Typing turns curly quotes straight and wraps lines, and a quote may leave words out with an ellipsis.
 const plain = (text: string) =>
-  text.toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/[“”]/g, '"').replace(/\s+/g, " ").trim();
+  text
+    .toLowerCase()
+    .replaceAll(/[‘’ʼ]/g, "'")
+    .replaceAll(/[“”]/g, '"')
+    .replaceAll(/\s+/g, " ")
+    .trim();
+
 // A quote has letters or digits: "👍" or "?" would match almost any message.
 const worded = (words: string) => /[\p{L}\p{N}]/u.test(words);
+
 function quotes(body: string, words: string) {
-  if (!worded(words)) return false;
+  if (!worded(words)) {
+    return false;
+  }
   const parts = plain(words)
     .split(/\s*(?:\.\.\.|…)\s*/)
     .filter(Boolean);
-  if (!parts.length) return false;
+
+  if (!parts.length) {
+    return false;
+  }
   let at = 0;
+
   for (const part of parts) {
     at = plain(body).indexOf(part, at);
-    if (at < 0) return false;
+
+    if (at < 0) {
+      return false;
+    }
     at += part.length;
   }
+
   return true;
 }
 
@@ -35,6 +54,7 @@ export function verdict(note: string, store: Store): Verdict {
   const keys = keysOf(note);
   const found = keys.map((key) => store.message(key)).filter((row): row is Row => !!row);
   const words = quotesOf(note);
+
   return {
     keys: found,
     unknown: keys.filter((key) => !found.some((row) => row.key === key)),
@@ -49,6 +69,7 @@ export const holds = (v: Verdict) =>
 // Why a keyed note doesn't hold, said so the session can fix it in its next call.
 export function problems(v: Verdict, withWords = true): string[] {
   const shown = v.keys.map((row) => `[${row.key}] says:\n${cut(row.body, 1500)}`);
+
   return [
     ...v.unknown.map(
       (key) =>

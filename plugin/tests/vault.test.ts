@@ -8,9 +8,9 @@ import {
   readFileSync,
   rmSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 let home: string;
 
@@ -19,8 +19,10 @@ beforeEach(() => {
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
   mkdirSync(join(home, ".claude"));
   mkdirSync(join(home, "fake"));
-  for (const script of ["vault", "settings"])
+
+  for (const script of ["vault", "settings"]) {
     copyFileSync(join(import.meta.dir, "../../bin", script), join(home, ".hex/bin", script));
+  }
   writeFileSync(
     join(home, ".env"),
     [
@@ -44,7 +46,9 @@ beforeEach(() => {
   fake("sprite", `cat > ${join(home, "typed")}`);
 });
 
-afterEach(() => rmSync(home, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 function fake(name: string, body: string) {
   writeFileSync(join(home, "fake", name), `#!/bin/sh\n${body}\n`);
@@ -54,6 +58,7 @@ function fake(name: string, body: string) {
 function vault(args: string[], caller: Record<string, string> = {}) {
   const env = { PATH: `${join(home, "fake")}:${process.env.PATH}`, HOME: home, ...caller };
   const run = Bun.spawnSync([join(home, ".hex/bin/vault"), ...args], { env });
+
   return { code: run.exitCode, out: run.stdout.toString(), err: run.stderr.toString() };
 }
 
@@ -63,8 +68,10 @@ test("vault run hands the command its caller's environment and enclave's setting
   expect(out).toContain("ENCLAVE_FROM=herald\n");
   expect(out).toContain("ENCLAVE_HOME=/vault home/it's $x\n");
   expect(out).toContain("LANG=C.UTF-8\n");
-  for (const kept of ["bot-secret", "speech-secret", "TRANSCRIBE_URL", "HEX_COMPUTER", "PRINTED"])
+
+  for (const kept of ["bot-secret", "speech-secret", "TRANSCRIBE_URL", "HEX_COMPUTER", "PRINTED"]) {
     expect(out).not.toContain(kept);
+  }
 });
 
 test("vault run keeps a setting exactly", () => {
@@ -73,9 +80,11 @@ test("vault run keeps a setting exactly", () => {
     JSON.stringify({ env: { HEX_NAME: "herald", ENCLAVE_RELAY: "https://relay`$(id)`\n" } }),
   );
   appendFileSync(join(home, ".env"), "ENCLAVE_HOME=$(printf '/v\\377\\303')\n");
+
   const run = Bun.spawnSync([join(home, ".hex/bin/vault"), "run", "GitHub", "--", "env"], {
     env: { PATH: `${join(home, "fake")}:${process.env.PATH}`, LANG: "en_US.UTF-8" },
   });
+
   const out = Buffer.from(run.stdout);
   expect(out.includes(Buffer.from("ENCLAVE_RELAY=https://relay`$(id)`\n\n"))).toBe(true);
   expect(out.includes(Buffer.from([...Buffer.from("ENCLAVE_HOME=/v"), 0o377, 0o303, 10]))).toBe(
@@ -91,9 +100,11 @@ test("vault run works without a .env", () => {
 test("vault run through bunx gets none of .env either", () => {
   rmSync(join(home, "fake/enclave"));
   fake("bunx", "env");
+
   const { out } = vault(["run", "GitHub", "--", "env"], {
     PATH: `${join(home, "fake")}:/usr/bin:/bin`,
   });
+
   expect(out).toContain("ENCLAVE_FROM=herald\n");
   expect(out).not.toContain("bot-secret");
 });
@@ -117,11 +128,13 @@ test("vault run stops on a .env that doesn't parse", () => {
 for (const line of ["exit 0", "false", "X=$(false)", ". ./missing"]) {
   test(`every vault command stops on a .env line \`${line}\``, () => {
     appendFileSync(join(home, ".env"), `${line}\n`);
+
     for (const args of [
       ["run", "GitHub", "--", "env"],
       ["get", "GitHub", "password"],
-    ])
+    ]) {
       expect(vault(args)).toMatchObject({ code: 1, out: "" });
+    }
   });
 }
 
@@ -136,5 +149,5 @@ test("vault fill still finds the computer in the settings", () => {
     out: "typed GitHub's password on box\n",
     err: "export PRINTED=1\n",
   });
-  expect(readFileSync(join(home, "typed"), "utf8")).toBe("hunter2");
+  expect(readFileSync(join(home, "typed"), "utf-8")).toBe("hunter2");
 });

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { createHash } from "crypto";
+import { createHash } from "node:crypto";
 import {
   readFileSync,
   writeFileSync,
@@ -8,24 +8,17 @@ import {
   realpathSync,
   chmodSync,
   renameSync,
-} from "fs";
-import { homedir } from "os";
-import { basename, join, sep } from "path";
+} from "node:fs";
+import { homedir } from "node:os";
+import { basename, join, sep } from "node:path";
 
 import { decode } from "nostr-tools/nip19";
-import { finalizeEvent, type Event } from "nostr-tools/pure";
+import { finalizeEvent } from "nostr-tools/pure";
+import type { Event } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 
-import {
-  startHub,
-  clients,
-  begin,
-  move,
-  tappable,
-  title,
-  type Message,
-  type Turn,
-} from "../../hub/hub.ts";
+import { startHub, clients, begin, move, tappable, title } from "../../hub/hub.ts";
+import type { Message, Turn } from "../../hub/hub.ts";
 import { startActivity } from "./activity.ts";
 import { server } from "./channel.ts";
 import { startMemory } from "./memory.ts";
@@ -33,6 +26,7 @@ import { connectRelay } from "./relay.ts";
 
 const STATE_DIR =
   process.env.BUZZ_STATE_DIR ?? join(homedir(), ".claude", "channels", "hex", "buzz");
+
 const ACCESS_FILE = join(STATE_DIR, "access.json");
 const ENV_FILE = join(STATE_DIR, ".env");
 const CURSOR_FILE = join(STATE_DIR, "cursor.json");
@@ -42,9 +36,13 @@ const INBOX_DIR = join(STATE_DIR, "inbox");
 
 try {
   chmodSync(ENV_FILE, 0o600);
-  for (const line of readFileSync(ENV_FILE, "utf8").split("\n")) {
-    const m = line.match(/^(\w+)=(.*)$/);
-    if (m) process.env[m[1]] = m[2];
+
+  for (const line of readFileSync(ENV_FILE, "utf-8").split("\n")) {
+    const m = /^(\w+)=(.*)$/.exec(line);
+
+    if (m) {
+      process.env[m[1]] = m[2];
+    }
   }
 } catch {}
 
@@ -79,56 +77,68 @@ type Access = {
 
 function loadAccess(): Access {
   try {
-    return JSON.parse(readFileSync(ACCESS_FILE, "utf8"));
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return {};
+    return JSON.parse(readFileSync(ACCESS_FILE, "utf-8"));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
     process.stderr.write(
-      `buzz hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${err}\n`,
+      `buzz hub: ${ACCESS_FILE} is unreadable, so every sender is dropped: ${error}\n`,
     );
+
     return { allowFrom: [] };
   }
 }
 
 function secretKeyOf(key: string): Uint8Array {
-  return key.startsWith("nsec1")
-    ? (decode(key as `nsec1${string}`).data as Uint8Array)
-    : hexToBytes(key);
+  return key.startsWith("nsec1") ? decode(key as `nsec1${string}`).data : hexToBytes(key);
 }
 
 // Buzz clients cap a message at 64 KiB, and a character takes at most 4 bytes.
 const MAX_CHUNK_LIMIT = 16 * 1024;
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
+
 // Chat messages, Buzz's older message kind, diffs, and forum posts and comments: what a channel's history is made of.
-const MESSAGES = [9, 40002, 40008, 45001, 45003];
-const POST = 45001;
-const COMMENT = 45003;
+const MESSAGES = [9, 40_002, 40_008, 45_001, 45_003];
+const POST = 45_001;
+const COMMENT = 45_003;
+
 // Messages, forum posts and comments, edits, reactions, and deletions (NIP-09, and NIP-29's admin delete): what reaches Hex live.
-const INBOUND = [9, POST, COMMENT, 40003, 7, 5, 9005];
-const CANVAS = 40100;
+const INBOUND = [9, POST, COMMENT, 40_003, 7, 5, 9005];
+const CANVAS = 40_100;
+
 // Buzz has no buttons, so choices are numbered with these and tapped as reactions.
 const KEYCAPS = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
 
 // reply's files param takes any path, but channel state and .env files (keys)
 // are the things Claude has no reason to ever send.
 function assertSendable(f: string): void {
-  let real, stateReal: string;
+  let real;
+  let stateReal: string;
+
   try {
     real = realpathSync(f);
     stateReal = realpathSync(STATE_DIR);
   } catch {
     return;
   }
+
   const inbox = join(stateReal, "inbox");
+
   if (real.startsWith(stateReal + sep) && !real.startsWith(inbox + sep)) {
     throw new Error(`refusing to send channel state: ${f}`);
   }
-  if (basename(real) === ".env") throw new Error(`refusing to send secrets: ${f}`);
+
+  if (basename(real) === ".env") {
+    throw new Error(`refusing to send secrets: ${f}`);
+  }
 }
 
 function chunk(text: string, limit: number): string[] {
-  if (text.length <= limit) return [text];
+  if (text.length <= limit) {
+    return [text];
+  }
   const out: string[] = [];
   let rest = text;
+
   while (rest.length > limit) {
     const para = rest.lastIndexOf("\n\n", limit);
     const line = rest.lastIndexOf("\n", limit);
@@ -137,7 +147,10 @@ function chunk(text: string, limit: number): string[] {
     out.push(rest.slice(0, cut));
     rest = rest.slice(cut).replace(/^\n+/, "");
   }
-  if (rest) out.push(rest);
+
+  if (rest) {
+    out.push(rest);
+  }
   return out;
 }
 
@@ -146,26 +159,35 @@ function chunk(text: string, limit: number): string[] {
 function fenced(text: string, limit: number): string[] {
   const out: string[] = [];
   let open = "";
+
   for (const part of chunk(text, limit - 16)) {
     let body = open ? `${open}\n${part}` : part;
+
     for (const line of part.split("\n")) {
-      const fence = line.match(/^\s*```(\S*)/);
-      if (fence) open = open ? "" : "```" + fence[1];
+      const fence = /^\s*```(\S*)/.exec(line);
+
+      if (fence) {
+        open = open ? "" : "```" + fence[1];
+      }
     }
-    if (open) body += "\n```";
+
+    if (open) {
+      body += "\n```";
+    }
     out.push(body);
   }
+
   return out;
 }
 
 function keep(path: string, value: unknown) {
-  writeFileSync(`${path}.tmp`, JSON.stringify(value) + "\n");
+  writeFileSync(`${path}.tmp`, `${JSON.stringify(value)}\n`);
   renameSync(`${path}.tmp`, path);
 }
 
 function load<T>(path: string, fallback: T): T {
   try {
-    return JSON.parse(readFileSync(path, "utf8"));
+    return JSON.parse(readFileSync(path, "utf-8"));
   } catch {
     return fallback;
   }
@@ -173,7 +195,7 @@ function load<T>(path: string, fallback: T): T {
 
 // Some clients send a keycap without its variation selector.
 const keycap = (emoji: string) =>
-  KEYCAPS.findIndex((choice) => choice.replace(/\uFE0F/g, "") === emoji.replace(/\uFE0F/g, ""));
+  KEYCAPS.findIndex((choice) => choice.replaceAll("️", "") === emoji.replaceAll("️", ""));
 
 function now() {
   return Math.floor(Date.now() / 1000);
@@ -201,6 +223,7 @@ function marked(event: Event, marker: string): string | undefined {
 
 function rootOf(event: Event): string | undefined {
   const reply = marked(event, "reply");
+
   return reply && (marked(event, "root") ?? reply);
 }
 
@@ -217,10 +240,12 @@ function filesOf(event: Event) {
             field.slice(field.indexOf(" ") + 1),
           ]),
       );
-      const name = (fields.filename ?? fields.url?.split("/").pop() ?? "file").replace(
-        /[<>\[\]\r\n;]/g,
+
+      const name = (fields.filename ?? fields.url?.split("/").pop() ?? "file").replaceAll(
+        /[<>[\]\r\n;]/g,
         "_",
       );
+
       return {
         url: fields.url as string,
         type: fields.m ?? "unknown",
@@ -249,10 +274,12 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   const triggers = new Map<string, string[]>();
   const acks = new Map<string, string[]>();
   const typing = new Map<string, ReturnType<typeof setInterval>>();
+
   const reactions = new Map<
     string,
     { thread: string; emoji: string; meta: Record<string, string> }
   >();
+
   // Messages Hex sent with buttons, its keycap reaction for each, and which one was tapped.
   const buttons = load<
     Record<
@@ -260,8 +287,10 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       { thread: string; choices: { label: string; reaction?: string }[]; chosen?: number }
     >
   >(BUTTONS_FILE, {});
+
   const access = loadAccess();
   const panels = access.panels !== false;
+
   const activity = panels
     ? startActivity({
         relay,
@@ -271,6 +300,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         cancel,
       })
     : undefined;
+
   const memory = panels
     ? startMemory({
         relay,
@@ -298,60 +328,80 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         relay.query([{ kinds: [0], authors: [pubkey], limit: 1 }]).then(
           ([profile]) => {
             const { display_name, name } = JSON.parse(profile?.content || "{}");
+
             return display_name || name || pubkey.slice(0, 8);
           },
           () => pubkey.slice(0, 8),
         ),
       );
     }
+
     return names.get(pubkey)!;
   }
 
   function home(thread: string, channel: string) {
-    if (homes.get(thread) === channel) return;
+    if (homes.get(thread) === channel) {
+      return;
+    }
     homes.set(thread, channel);
     keep(CHANNELS_FILE, Object.fromEntries(homes));
     hub.save();
   }
 
   async function channelOf(thread: string): Promise<string> {
-    if (isChannel(thread)) return thread;
+    if (isChannel(thread)) {
+      return thread;
+    }
     if (!homes.has(thread)) {
       const [root] = await relay.query([{ kinds: MESSAGES, ids: [thread] }]);
       const channel = root && tag(root, "h");
-      if (!channel) throw new Error(`can't find the channel of thread ${thread}`);
+
+      if (!channel) {
+        throw new Error(`can't find the channel of thread ${thread}`);
+      }
       home(thread, channel);
     }
+
     return homes.get(thread)!;
   }
 
   function channelNamed(where?: string): string {
     const wanted = where?.replace(/^#/, "").toLowerCase();
-    if (wanted && channels.has(wanted)) return wanted;
+
+    if (wanted && channels.has(wanted)) {
+      return wanted;
+    }
     const open = [...channels].filter(([, channel]) => !channel.dm);
+
     const found = wanted
       ? open.find(([, channel]) => channel.name.toLowerCase() === wanted)
       : (open.find(([, channel]) => channel.name.toLowerCase() === "general") ?? open[0]);
-    if (!found)
+
+    if (!found) {
       throw new Error(
         wanted ? `Hex is in no channel named #${wanted}` : "Hex is in no Buzz channel",
       );
+    }
     return found[0];
   }
 
   // The relay also serves open channels Hex isn't in; sessions read only Hex's own.
   function readable(caller: string, channel: string): string {
-    if (!channels.has(channel))
+    if (!channels.has(channel)) {
       throw new Error("Hex isn't in that channel; list_channels shows the ones it is in");
-    if (channels.get(channel)!.dm && channel !== caller)
+    }
+    if (channels.get(channel)!.dm && channel !== caller) {
       throw new Error("that is a direct message with someone else");
+    }
     return channel;
   }
 
   const link = (channel: string, id: string) => `buzz://message?channel=${channel}&id=${id}`;
 
   function threadTags(thread: string, parent?: string): string[][] {
-    if (isChannel(thread)) return parent ? [["e", parent, "", "reply"]] : [];
+    if (isChannel(thread)) {
+      return parent ? [["e", parent, "", "reply"]] : [];
+    }
     return parent && parent !== thread
       ? [
           ["e", thread, "", "root"],
@@ -368,7 +418,8 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     parent?: string,
   ): Promise<Event> {
     const channel = await channelOf(thread);
-    return relay.publish({
+
+    return await relay.publish({
       kind: channels.get(channel)?.forum ? COMMENT : 9,
       content,
       tags: [["h", channel], ...threadTags(thread, parent), ["p", owner], ...extra],
@@ -377,6 +428,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
 
   async function place(name: string, where?: string, about?: string) {
     const channel = channelNamed(where ?? loadAccess().channel);
+
     const root = await relay.publish({
       kind: channels.get(channel)!.forum ? POST : 9,
       content: [`**${name}**`, about].filter(Boolean).join("\n"),
@@ -385,7 +437,9 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         ["p", owner],
       ],
     });
+
     home(root.id, channel);
+
     return { thread: root.id, link: tappable(link(channel, root.id)) };
   }
 
@@ -393,16 +447,18 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   // chat goes in now, the owner's lines quoted under their name.
   async function backfill(thread: string, turns: Turn[]) {
     const name = await nameOf(owner);
+
     for (const { from, text } of turns) {
-      for (const part of fenced(text, MAX_CHUNK_LIMIT))
+      for (const part of fenced(text, MAX_CHUNK_LIMIT)) {
         await post(thread, from === "me" ? `> **${name}**\n${part.replace(/^/gm, "> ")}` : part);
+      }
     }
   }
 
   function blossom(action: "upload" | "get", sha256?: string) {
     const auth = finalizeEvent(
       {
-        kind: 24242,
+        kind: 24_242,
         content: action === "get" ? "Get buzz-media" : "Upload file",
         created_at: now(),
         tags: [
@@ -414,6 +470,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       },
       secretKey,
     );
+
     return {
       Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64url")}`,
       "x-auth-tag": JSON.stringify(authTag),
@@ -425,15 +482,22 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const body = readFileSync(path);
     const sha256 = createHash("sha256").update(body).digest("hex");
     const type = Bun.file(path).type.split(";")[0]!;
+
     const put = (endpoint: string) =>
       fetch(`${http}${endpoint}`, {
         method: "PUT",
         body,
         headers: { ...blossom("upload", sha256), "Content-Type": type, "X-SHA-256": sha256 },
       });
+
     let res = await put("/upload");
-    if (res.status === 404 || res.status === 405) res = await put("/media/upload");
-    if (!res.ok) throw new Error(`upload of ${path} failed: ${res.status} ${await res.text()}`);
+
+    if (res.status === 404 || res.status === 405) {
+      res = await put("/media/upload");
+    }
+    if (!res.ok) {
+      throw new Error(`upload of ${path} failed: ${res.status} ${await res.text()}`);
+    }
     const blob = (await res.json()) as {
       url: string;
       sha256: string;
@@ -441,12 +505,15 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       type: string;
       dim?: string;
     };
+
     const filename = basename(path);
+
     const line = blob.type.startsWith("video/")
       ? `![video](${blob.url})`
       : blob.type.startsWith("image/")
         ? `![image](${blob.url})`
-        : `[${filename.replace(/[\\[\]]/g, "\\$&")}](${blob.url})`;
+        : `[${filename.replaceAll(/[\\[\]]/g, "\\$&")}](${blob.url})`;
+
     const imeta = [
       "imeta",
       `url ${blob.url}`,
@@ -456,6 +523,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       ...(blob.dim ? [`dim ${blob.dim}`] : []),
       `filename ${filename}`,
     ];
+
     return { line, imeta };
   }
 
@@ -468,17 +536,23 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         `attachment too large: ${(file.size / 1024 / 1024).toFixed(1)}MB, max ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB`,
       );
     }
+
     const res = await fetch(file.url, {
       headers: new URL(file.url).host === new URL(http).host ? blossom("get") : {},
     });
-    if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`);
+
+    if (!res.ok) {
+      throw new Error(`download failed: HTTP ${res.status}`);
+    }
     const rawExt = file.name.includes(".")
       ? file.name.slice(file.name.lastIndexOf(".") + 1)
       : "bin";
-    const ext = rawExt.replace(/[^a-zA-Z0-9]/g, "") || "bin";
+
+    const ext = rawExt.replaceAll(/[^a-zA-Z0-9]/g, "") || "bin";
     const path = join(INBOX_DIR, `${Date.now()}-${id.slice(0, 8)}.${ext}`);
     mkdirSync(INBOX_DIR, { recursive: true });
     writeFileSync(path, Buffer.from(await res.arrayBuffer()));
+
     return path;
   }
 
@@ -486,7 +560,10 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const [found] = await relay.query([
       { kinds: MESSAGES, ids: [id], "#h": [await channelOf(thread)] },
     ]);
-    if (!found) throw new Error(`no message ${id} in this thread`);
+
+    if (!found) {
+      throw new Error(`no message ${id} in this thread`);
+    }
     return found;
   }
 
@@ -495,9 +572,10 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   async function bridge(filters: object[]): Promise<Event[]> {
     const url = `${http}/query`;
     const body = JSON.stringify(filters);
+
     const auth = finalizeEvent(
       {
-        kind: 27235,
+        kind: 27_235,
         content: "",
         created_at: now(),
         tags: [
@@ -509,28 +587,37 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       },
       secretKey,
     );
+
     const headers = {
       Authorization: `Nostr ${Buffer.from(JSON.stringify(auth)).toString("base64")}`,
       "x-auth-tag": JSON.stringify(authTag),
       "Content-Type": "application/json",
     };
+
     const res = await fetch(url, { method: "POST", body, headers });
-    if (!res.ok) throw new Error(`the relay refused the read: ${res.status} ${await res.text()}`);
+
+    if (!res.ok) {
+      throw new Error(`the relay refused the read: ${res.status} ${await res.text()}`);
+    }
     return (await res.json()) as Event[];
   }
 
   async function rows(events: Event[], note: (event: Event) => string = () => ""): Promise<string> {
-    if (events.length === 0) return "(no messages)";
+    if (events.length === 0) {
+      return "(no messages)";
+    }
     const lines = await Promise.all(
       events.map(async (m) => {
         const who = m.pubkey === me ? "me" : await nameOf(m.pubkey);
         const files = filesOf(m).length;
         const atts = files > 0 ? ` +${files}att` : "";
         // The result is newline-joined, so multi-line content would forge adjacent rows.
-        const text = m.content.replace(/[\r\n]+/g, " ⏎ ");
+        const text = m.content.replaceAll(/[\r\n]+/g, " ⏎ ");
+
         return `[${iso(m.created_at)}] ${who}: ${text}  (id: ${m.id}${atts}${note(m)})`;
       }),
     );
+
     return lines.join("\n");
   }
 
@@ -545,15 +632,19 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         ...(before ? { until: before.created_at, before_id: before.id } : {}),
       },
     ]);
-    if (!page.some((event) => event.kind === 39006))
+
+    if (!page.some((event) => event.kind === 39_006)) {
       throw new Error("the relay won't show Hex that channel");
+    }
     const threads = new Map(
       page
-        .filter((event) => event.kind === 39005)
+        .filter((event) => event.kind === 39_005)
         .map((event) => [tag(event, "d"), JSON.parse(event.content)]),
     );
-    return rows(page.filter((event) => MESSAGES.includes(event.kind)).reverse(), (event) => {
+
+    return await rows(page.filter((event) => MESSAGES.includes(event.kind)).reverse(), (event) => {
       const thread = threads.get(event.id);
+
       return thread
         ? `, ${thread.descendant_count} replies${thread.last_reply_at ? `, last reply ${iso(thread.last_reply_at)}` : ""}`
         : "";
@@ -563,6 +654,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   async function history(caller: string, args: Record<string, unknown>): Promise<string> {
     const limit = Math.min((args.limit as number) ?? 20, 100);
     const named = args.thread as string | undefined;
+
     const thread = named
       ? /^[0-9a-f]{64}$/.test(named)
         ? named
@@ -570,11 +662,19 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       : args.channel
         ? channelNamed(args.channel as string)
         : caller;
+
     const channel = await channelOf(thread);
-    if (thread !== caller) readable(caller, channel);
+
+    if (thread !== caller) {
+      readable(caller, channel);
+    }
     const before = args.before ? await message(channel, args.before as string) : undefined;
-    if (isChannel(thread) && !channels.get(thread)?.dm) return channelWindow(thread, limit, before);
+
+    if (isChannel(thread) && !channels.get(thread)?.dm) {
+      return await channelWindow(thread, limit, before);
+    }
     const page = before ? { until: before.created_at, limit: limit + 1 } : { limit };
+
     const events = await relay.query(
       isChannel(thread)
         ? [{ kinds: MESSAGES, "#h": [channel], ...page }]
@@ -583,7 +683,8 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
             { kinds: MESSAGES, "#h": [channel], "#e": [thread], ...page },
           ],
     );
-    return rows(
+
+    return await rows(
       events
         .filter((event) => !before || byTime(event, before) < 0)
         .sort(byTime)
@@ -593,16 +694,20 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
 
   async function search(caller: string, args: Record<string, unknown>): Promise<string> {
     const limit = Math.min((args.limit as number) ?? 20, 100);
+
     const scope = args.channel
       ? [readable(caller, channelNamed(args.channel as string))]
       : [...channels.keys()].filter((id) => !channels.get(id)!.dm || id === caller);
+
     const hits =
       scope.length > 0
         ? await relay.query([{ kinds: MESSAGES, search: args.query as string, "#h": scope, limit }])
         : [];
-    return rows(hits, (event) => {
+
+    return await rows(hits, (event) => {
       const channel = channels.get(tag(event, "h")!);
       const root = rootOf(event);
+
       return `, in ${channel?.dm ? "this direct message" : `#${channel?.name}`}${root ? `, thread ${root}` : ""}`;
     });
   }
@@ -610,12 +715,15 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   // Desktop shows an edit's attachments in place of the original's, so they carry over.
   function edit(target: Event, text: string) {
     const urls = filesOf(target).map((file) => `](${file.url})`);
+
     const media = target.content
       .split("\n")
       .filter((line) => urls.some((url) => line.endsWith(url)));
+
     const imeta = target.tags.filter((t) => t[0] === "imeta");
+
     return relay.publish({
-      kind: 40003,
+      kind: 40_003,
       content: [text, ...media].join("\n"),
       tags: [["h", tag(target, "h")!], ["e", target.id], ...imeta],
     });
@@ -625,16 +733,19 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   // past the head it read, so a new revision always sorts first.
   async function canvas(channel: string, text?: string, revision?: string): Promise<string> {
     const [head] = await relay.query([{ kinds: [CANVAS], "#h": [channel], limit: 1 }]);
-    if (text === undefined)
+
+    if (text === undefined) {
       return head
         ? `${head.content}\n\n(revision: ${head.id})`
         : "(this channel has no canvas yet)";
+    }
     const saved = await relay.publish({
       kind: CANVAS,
       content: text,
       tags: [["h", channel], ...(revision ? [["expected-revision", revision]] : [])],
       created_at: Math.max(now(), (head?.created_at ?? 0) + 1),
     });
+
     return `canvas saved (revision: ${saved.id})`;
   }
 
@@ -642,15 +753,18 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   // online or away; anyone missing is offline, as Desktop reads it.
   async function whoIsOnline(): Promise<string> {
     const people = loadAccess().allowFrom ?? [owner];
+
     const status = new Map(
-      (await bridge([{ kinds: [20001], authors: people }])).map((event) => [
+      (await bridge([{ kinds: [20_001], authors: people }])).map((event) => [
         tag(event, "p") ?? event.pubkey,
         event.content,
       ]),
     );
+
     const lines = await Promise.all(
       people.map(async (pubkey) => `${await nameOf(pubkey)}: ${status.get(pubkey) ?? "offline"}`),
     );
+
     return lines.join("\n");
   }
 
@@ -658,13 +772,17 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const lines = [...channels].map(([id, channel]) =>
       channel.dm ? `${channel.name}  (id: ${id}, direct message)` : `#${channel.name}  (id: ${id})`,
     );
+
     return lines.join("\n") || "(none)";
   }
 
   // NIP-29 create-group: Hex owns the channel it creates, and adds the owner so it shows up for them.
   async function createChannel(args: Record<string, unknown>): Promise<string> {
     const name = (args.name as string).trim().replace(/^#/, "");
-    if (!name) throw new Error("a channel needs a name");
+
+    if (!name) {
+      throw new Error("a channel needs a name");
+    }
     const id = crypto.randomUUID();
     const forum = args.type === "forum";
     await relay.publish({
@@ -688,6 +806,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     });
     channels.set(id, { name, dm: false, forum });
     listen();
+
     return `created #${name} (id: ${id}); new_thread can open threads in it`;
   }
 
@@ -701,15 +820,16 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   }
 
   function unack(thread: string) {
-    for (const id of acks.get(thread) ?? [])
+    for (const id of acks.get(thread) ?? []) {
       void relay.publish({ kind: 5, content: "", tags: [["e", id]] }).catch(() => {});
+    }
     acks.delete(thread);
   }
 
   function sendTyping(thread: string): void {
     void channelOf(thread)
       .then((channel) =>
-        relay.publish({ kind: 20002, content: "", tags: [["h", channel], ...threadTags(thread)] }),
+        relay.publish({ kind: 20_002, content: "", tags: [["h", channel], ...threadTags(thread)] }),
       )
       .catch(() => {});
   }
@@ -721,30 +841,41 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const started = busy && !typing.has(thread);
     clearInterval(typing.get(thread));
     typing.delete(thread);
+
     if (!busy) {
       triggers.delete(thread);
       unack(thread);
       activity?.idle(thread);
+
       return;
     }
+
     typing.set(
       thread,
-      setInterval(() => sendTyping(thread), 3000),
+      setInterval(() => {
+        sendTyping(thread);
+      }, 3000),
     );
     const latest = triggers.get(thread)?.at(-1);
+
     if (started) {
       sendTyping(thread);
-      if (latest) void ack(thread, latest, "💬").catch(() => {});
+
+      if (latest) {
+        void ack(thread, latest, "💬").catch(() => {});
+      }
     }
+
     void channelOf(thread)
       .then((channel) => {
-        if (typing.has(thread))
+        if (typing.has(thread)) {
           activity?.busy({
             thread,
             channel,
             session: hub.session(thread),
             triggers: triggers.get(thread) ?? [],
           });
+        }
       })
       .catch(() => {});
   }
@@ -764,9 +895,15 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         (!thread || busy === thread) &&
         (!session || hub.session(busy) === session),
     );
-    if (matches.length === 0) return "no_active_turn";
-    if (matches.length > 1) return "ambiguous_target";
+
+    if (matches.length === 0) {
+      return "no_active_turn";
+    }
+    if (matches.length > 1) {
+      return "ambiguous_target";
+    }
     stop(matches[0]!);
+
     return "sent";
   }
 
@@ -783,44 +920,71 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
       const name = title(args.title as string);
       const app = (args.app as string | undefined) ?? "buzz";
       const about = args.about as string | undefined;
-      if (app !== "buzz")
+
+      if (app !== "buzz") {
         return `started thread "${name}" in ${app}: ${(await begin(app, name, args.prompt as string, { about, where: args.channel as string | undefined })).link}`;
+      }
       const { thread } = await place(
         name,
         (args.channel as string | undefined) ?? (await channelOf(caller)),
         about,
       );
+
       hub.open(thread, name, args.prompt as string);
+
       return `started thread "${name}": ${link(homes.get(thread)!, thread)}`;
     }
-    if (tool === "fetch_messages") return history(caller, args);
-    if (tool === "search_messages") return search(caller, args);
-    if (tool === "list_channels") return listChannels();
-    if (tool === "create_channel") return createChannel(args);
-    if (tool === "presence") return whoIsOnline();
+
+    if (tool === "fetch_messages") {
+      return await history(caller, args);
+    }
+    if (tool === "search_messages") {
+      return await search(caller, args);
+    }
+    if (tool === "list_channels") {
+      return listChannels();
+    }
+    if (tool === "create_channel") {
+      return await createChannel(args);
+    }
+    if (tool === "presence") {
+      return await whoIsOnline();
+    }
     if (tool === "canvas") {
       const channel = args.channel
         ? readable(caller, channelNamed(args.channel as string))
         : await channelOf(caller);
-      return canvas(channel, args.text as string | undefined, args.revision as string | undefined);
+
+      return await canvas(
+        channel,
+        args.text as string | undefined,
+        args.revision as string | undefined,
+      );
     }
+
     const thread = args.thread ? hub.find(args.thread as string) : caller;
+
     switch (tool) {
       case "reply": {
         const choices = (args.buttons as string[] | undefined) ?? [];
-        if (choices.length > KEYCAPS.length) throw new Error(`at most ${KEYCAPS.length} buttons`);
+
+        if (choices.length > KEYCAPS.length) {
+          throw new Error(`at most ${KEYCAPS.length} buttons`);
+        }
         const text = [
           args.text as string,
           choices.map((label, i) => `${KEYCAPS[i]} ${label}`).join("\n"),
         ]
           .filter(Boolean)
           .join("\n\n");
+
         const reply_to = args.reply_to as string | undefined;
         const files = (args.files as string[] | undefined) ?? [];
 
         for (const f of files) {
           assertSendable(f);
           const st = statSync(f);
+
           if (st.size > MAX_ATTACHMENT_BYTES) {
             throw new Error(
               `file too large: ${f} (${(st.size / 1024 / 1024).toFixed(1)}MB, max 100MB)`,
@@ -835,20 +999,23 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         try {
           for (let i = 0; i < chunks.length; i++) {
             const last = i === chunks.length - 1;
+
             const content = last
               ? chunks[i] + uploads.map((u) => `\n${u.line}`).join("")
               : chunks[i]!;
+
             const sent = await post(
               thread,
               content,
               last ? uploads.map((u) => u.imeta) : [],
               i === 0 ? reply_to : undefined,
             );
+
             hub.sent(thread, { key: sent.id, content });
             sentIds.push(sent.id);
           }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
           hub.sent(thread, {
             content: chunks.slice(sentIds.length).join("\n"),
             meta: { failed: msg },
@@ -863,9 +1030,12 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
             thread,
             choices: choices.map((label) => ({ label })),
           });
+
           keep(BUTTONS_FILE, buttons);
-          for (const [i, choice] of asked.choices.entries())
+
+          for (const [i, choice] of asked.choices.entries()) {
             choice.reaction = (await react(sentIds.at(-1)!, KEYCAPS[i]!)).id;
+          }
           keep(BUTTONS_FILE, buttons);
         }
 
@@ -873,34 +1043,52 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
           ? `sent (id: ${sentIds[0]})`
           : `sent ${sentIds.length} parts (ids: ${sentIds.join(", ")})`;
       }
+
       case "react": {
         const target = await message(thread, args.message_id as string);
+
         if (!args.remove) {
           await react(target.id, args.emoji as string);
+
           return "reacted";
         }
+
         const mine = await relay.query([
           { kinds: [7], authors: [me], "#e": [target.id], "#h": [tag(target, "h")!] },
         ]);
+
         const reaction = mine.find((event) => event.content === args.emoji);
-        if (!reaction) throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
+
+        if (!reaction) {
+          throw new Error(`the bot hasn't reacted ${args.emoji} to that message`);
+        }
         await relay.publish({ kind: 5, content: "", tags: [["e", reaction.id]] });
+
         return "reaction removed";
       }
+
       case "edit_message": {
         const target = await message(thread, args.message_id as string);
-        if (target.pubkey !== me) throw new Error("only the bot's own messages can be edited");
+
+        if (target.pubkey !== me) {
+          throw new Error("only the bot's own messages can be edited");
+        }
         const edited = await edit(target, args.text as string);
         hub.sent(thread, {
           key: edited.id,
           content: args.text as string,
           meta: { edited: "true", message_id: target.id },
         });
+
         return `edited (id: ${edited.id})`;
       }
+
       case "delete_message": {
         const target = await message(thread, args.message_id as string);
-        if (target.pubkey !== me) throw new Error("only the bot's own messages can be deleted");
+
+        if (target.pubkey !== me) {
+          throw new Error("only the bot's own messages can be deleted");
+        }
         await relay.publish({
           kind: 5,
           content: "",
@@ -909,42 +1097,62 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
             ["e", target.id],
           ],
         });
+
         return "deleted";
       }
+
       case "download_attachment": {
         const msg = await message(thread, args.message_id as string);
         const files = filesOf(msg);
-        if (files.length === 0) return "message has no attachments";
+
+        if (files.length === 0) {
+          return "message has no attachments";
+        }
         const lines: string[] = [];
+
         for (const file of files) {
           const path = await download(file, msg.id);
           lines.push(`  ${path}  (${file.name}, ${file.type}, ${(file.size / 1024).toFixed(0)}KB)`);
         }
+
         return `downloaded ${lines.length} attachment(s):\n${lines.join("\n")}`;
       }
+
       case "rename_thread": {
         const name = title(args.title as string);
         hub.rename(thread, name);
         const head = isChannel(thread) ? undefined : await message(thread, thread);
-        if (head?.pubkey !== me) return `renamed to "${name}"`;
+
+        if (head?.pubkey !== me) {
+          return `renamed to "${name}"`;
+        }
         await edit(head, `**${name}**`);
+
         return `renamed to "${name}", and its first message in Buzz now says so`;
       }
+
       case "close_thread": {
-        if (isChannel(thread)) throw new Error("only threads can be closed");
+        if (isChannel(thread)) {
+          throw new Error("only threads can be closed");
+        }
         void hub.retire(thread);
         await react(thread, "✅");
+
         return `closed "${hub.name(thread) ?? thread}"; its session stops once it's idle`;
       }
+
       case "handoff": {
         const to = args.to as string;
         const name = args.title ? title(args.title as string) : (hub.name(thread) ?? "Buzz");
         const target = await move(hub, thread, to, name, args.channel as string | undefined);
         await post(thread, `Moved to ${to}: ${target}`);
+
         return `moving to ${to}: ${target}. Your session stops here once this turn ends and resumes there.`;
       }
-      default:
+
+      default: {
         throw new Error(`unknown tool: ${tool}`);
+      }
     }
   }
 
@@ -972,9 +1180,10 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
 
   // Desktop writes a mention as "@Name", or "@Name (pubkey)" when two members share a name.
   async function unmention(text: string): Promise<string> {
-    const label = (await nameOf(me)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const label = (await nameOf(me)).replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
     return text
-      .replace(new RegExp(`(^|\\s)@${label}(?: \\(${me}\\))?(?=[\\s,;.!?:)]|$)`, "gi"), "$1")
+      .replaceAll(new RegExp(`(^|\\s)@${label}(?: \\(${me}\\))?(?=[\\s,;.!?:)]|$)`, "gi"), "$1")
       .trim();
   }
 
@@ -984,10 +1193,18 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   // each top-level message is one thread and every reply under it reaches its session.
   function threadOf(event: Event, tagged: boolean): string | undefined {
     const head = rootOf(event) ?? event.id;
-    if (hub.name(head) !== undefined) return head;
+
+    if (hub.name(head) !== undefined) {
+      return head;
+    }
     const channel = tag(event, "h")!;
-    if (channels.get(channel)?.dm) return channel;
-    if (tagged) return head;
+
+    if (channels.get(channel)?.dm) {
+      return channel;
+    }
+    if (tagged) {
+      return head;
+    }
   }
 
   // A reply's reply marker is the thread head, unless it answers one message in
@@ -998,10 +1215,17 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     joined: boolean,
   ): Promise<{ meta: Record<string, string>; own?: string }> {
     const parent = marked(event, "reply");
-    if (!parent || (parent === thread && !joined)) return { meta: {} };
+
+    if (!parent || (parent === thread && !joined)) {
+      return { meta: {} };
+    }
     const [replied] = await relay.query([{ kinds: MESSAGES, ids: [parent] }]);
-    if (!replied) return { meta: { reply_to_message_id: parent } };
+
+    if (!replied) {
+      return { meta: { reply_to_message_id: parent } };
+    }
     const atts = listed(replied);
+
     return {
       meta: {
         reply_to_message_id: replied.id,
@@ -1015,9 +1239,12 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
 
   // An edit (kind 40003) names the message it replaces, which holds the thread and mention tags.
   async function originalOf(event: Event): Promise<Event | undefined> {
-    if (event.kind !== 40003) return event;
+    if (event.kind !== 40_003) {
+      return event;
+    }
     const id = tag(event, "e");
     const [original] = id ? await relay.query([{ kinds: MESSAGES, ids: [id] }]) : [];
+
     return original?.pubkey === event.pubkey ? original : undefined;
   }
 
@@ -1033,6 +1260,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     channel = tag(event, "h"),
   ): Promise<Record<string, string>> {
     const where = channels.get(channel ?? "");
+
     return {
       chat_id: thread,
       user: await nameOf(event.pubkey),
@@ -1043,10 +1271,16 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   }
 
   async function inbound(event: Event): Promise<void> {
-    if (event.pubkey === me || !allowed(event.pubkey)) return;
-    if (event.kind === 7) return handleReaction(event);
-    if (event.kind === 5 || event.kind === 9005) return handleDeletion(event);
-    return handleInbound(event);
+    if (event.pubkey === me || !allowed(event.pubkey)) {
+      return;
+    }
+    if (event.kind === 7) {
+      return await handleReaction(event);
+    }
+    if (event.kind === 5 || event.kind === 9005) {
+      return await handleDeletion(event);
+    }
+    return await handleInbound(event);
   }
 
   // A reaction reaches the thread the message it's on belongs to, if Hex is in it.
@@ -1055,16 +1289,22 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const id = event.tags.findLast((t) => t[0] === "e")?.[1];
     const asked = id ? buttons[id] : undefined;
     const index = keycap(event.content);
-    if (asked?.choices[index])
-      return asked.chosen === undefined ? tap(event, id!, index) : undefined;
+
+    if (asked?.choices[index]) {
+      return asked.chosen === undefined ? await tap(event, id!, index) : undefined;
+    }
     const [target] = id ? await relay.query([{ kinds: MESSAGES, ids: [id] }]) : [];
     const thread = target && threadOf(target, false);
-    if (!thread) return;
+
+    if (!thread) {
+      return;
+    }
     const meta = {
       reaction_to_message_id: target.id,
       reaction_to_user: target.pubkey === me ? "me" : await nameOf(target.pubkey),
       ...(target.content ? { reaction_to_text: target.content } : {}),
     };
+
     reactions.set(event.id, { thread, emoji: event.content, meta });
     hub.deliver(thread, hub.name(thread) ?? (await nameOf(event.pubkey)), {
       key: event.id,
@@ -1079,12 +1319,15 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const asked = buttons[id]!;
     asked.chosen = index;
     keep(BUTTONS_FILE, buttons);
+
     for (const [i, choice] of asked.choices.entries()) {
-      if (i !== index && choice.reaction)
+      if (i !== index && choice.reaction) {
         void relay
           .publish({ kind: 5, content: "", tags: [["e", choice.reaction]] })
           .catch(() => {});
+      }
     }
+
     const meta = await about(event, asked.thread, await channelOf(asked.thread));
     hub.deliver(asked.thread, hub.name(asked.thread) ?? meta.user!, {
       key: event.id,
@@ -1101,7 +1344,10 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     const found = hub.said(id);
     const said = found?.meta?.reaction || found?.meta?.button ? undefined : found;
     const thread = reaction?.thread ?? said?.to;
-    if (!thread || (hub.name(thread) === undefined && !channels.get(thread)?.dm)) return;
+
+    if (!thread || (hub.name(thread) === undefined && !channels.get(thread)?.dm)) {
+      return;
+    }
     reactions.delete(id);
     const meta = await about(event, thread);
     const author = authorOf(event);
@@ -1131,18 +1377,32 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
 
   async function handleInbound(event: Event): Promise<void> {
     const original = await originalOf(event);
-    if (!original) return;
+
+    if (!original) {
+      return;
+    }
     const edited = original !== event;
     const tagged = [original, event].some((e) => e.tags.some((t) => t[0] === "p" && t[1] === me));
     const thread = threadOf(original, tagged);
-    if (!thread) return;
+
+    if (!thread) {
+      return;
+    }
     const channel = tag(original, "h")!;
     const joined = !edited && !isChannel(thread) && hub.name(thread) === undefined;
-    if (!isChannel(thread)) home(thread, channel);
+
+    if (!isChannel(thread)) {
+      home(thread, channel);
+    }
     const text = await unmention(event.content);
 
-    if (!edited && event.pubkey === owner && tagged && text === "!shutdown") return shutdown();
-    if (!edited && event.pubkey === owner && tagged && text === "!cancel") return stop(thread);
+    if (!edited && event.pubkey === owner && tagged && text === "!shutdown") {
+      return await shutdown();
+    }
+    if (!edited && event.pubkey === owner && tagged && text === "!cancel") {
+      stop(thread);
+      return;
+    }
 
     triggers.set(thread, [...(triggers.get(thread) ?? []), original.id]);
     void ack(thread, original.id, "👀").catch(() => {});
@@ -1152,9 +1412,11 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     // only, since an in-content annotation is forgeable by the sender.
     const atts = listed(event);
     const { meta: reply, own } = await replyMeta(original, thread, joined);
+
     const words = (text || reply.reply_to_text || "")
       .split(/\s+/)
       .filter((word) => word && !word.startsWith("@"));
+
     const name = isChannel(thread) ? await nameOf(event.pubkey) : (words[0] ?? "Thread");
 
     // A bare tag on someone's message brings Hex in to read it: the message is reply_to_*.
@@ -1174,6 +1436,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
         ...(edited ? { edited: "true" } : {}),
       },
     };
+
     hub.deliver(thread, name, message);
   }
 
@@ -1182,7 +1445,9 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   let cursor = load<{ at: number; ids: string[] }>(CURSOR_FILE, { at: start, ids: [] });
 
   function handled(event: Event) {
-    if (event.created_at < cursor.at) return;
+    if (event.created_at < cursor.at) {
+      return;
+    }
     cursor =
       event.created_at === cursor.at
         ? { at: cursor.at, ids: [...cursor.ids, event.id] }
@@ -1198,6 +1463,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
   // The relay only sends channel messages live to a subscription naming its
   // channels, so membership changes swap it for one over the new set.
   let unlisten = () => {};
+
   function listen() {
     const previous = unlisten;
     unlisten =
@@ -1208,59 +1474,79 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
             (event) => {
               queue = queue
                 .then(async () => {
-                  if (off || (event.created_at === cursor.at && cursor.ids.includes(event.id)))
+                  if (off || (event.created_at === cursor.at && cursor.ids.includes(event.id))) {
                     return;
-                  await inbound(event).catch((e) => log(`handleInbound failed: ${e}`));
+                  }
+                  await inbound(event).catch((error) => {
+                    log(`handleInbound failed: ${error}`);
+                  });
                   handled(event);
                 })
-                .catch((e) => log(`couldn't save where Buzz left off: ${e}`));
+                .catch((error) => {
+                  log(`couldn't save where Buzz left off: ${error}`);
+                });
             },
           );
     previous();
   }
 
   async function enter(ids: string[]) {
-    const metas = ids.length > 0 ? await relay.query([{ kinds: [39000], "#d": ids }]) : [];
+    const metas = ids.length > 0 ? await relay.query([{ kinds: [39_000], "#d": ids }]) : [];
+
     for (const id of ids) {
       const meta = metas.find((meta) => tag(meta, "d") === id);
+
       const dm =
         meta?.tags.some((t) => (t[0] === "t" && t[1] === "dm") || t[0] === "hidden") ?? false;
+
       const forum = meta?.tags.some((t) => t[0] === "t" && t[1] === "forum") ?? false;
       channels.set(id, { name: (meta && tag(meta, "name")) ?? id, dm, forum });
     }
+
     listen();
   }
 
   async function discover() {
-    const members = await relay.query([{ kinds: [39002], "#p": [me] }]);
+    const members = await relay.query([{ kinds: [39_002], "#p": [me] }]);
     await enter(members.map((event) => tag(event, "d")!).filter(Boolean));
     log(`connected as ${me.slice(0, 8)}, in ${channels.size} channel(s)`);
   }
 
   const membership = relay.subscribe(
-    [{ kinds: [44100, 44101], "#p": [me], since: start }],
+    [{ kinds: [44_100, 44_101], "#p": [me], since: start }],
     (event) => {
       const id = tag(event, "h");
-      if (!id) return;
-      if (event.kind === 44100)
-        return void enter([id]).catch((e) => log(`joining ${id} failed: ${e}`));
+
+      if (!id) {
+        return;
+      }
+      if (event.kind === 44_100) {
+        return void enter([id]).catch((e) => {
+          log(`joining ${id} failed: ${e}`);
+        });
+      }
       channels.delete(id);
       listen();
     },
   );
 
   const presence = () =>
-    relay.publish({ kind: 20001, content: "online", tags: [] }).catch(() => {});
+    relay.publish({ kind: 20_001, content: "online", tags: [] }).catch(() => {});
+
   const heartbeat = setInterval(presence, 60_000);
   void presence();
+
   async function locate() {
-    for (const thread of hub.threads())
+    for (const thread of hub.threads()) {
       if (!isChannel(thread) && !homes.has(thread)) await channelOf(thread).catch(() => {});
+    }
   }
 
   discover()
     .then(locate)
-    .catch((e) => log(`channel discovery failed: ${e}`));
+    .catch((error) => {
+      log(`channel discovery failed: ${error}`);
+    });
 
   // !shutdown from the owner (Buzz Desktop's Shutdown button) takes Hex off
   // Buzz until the service restarts; the rest of the hub keeps running.
@@ -1268,12 +1554,15 @@ function serve(url: string, secretKey: Uint8Array, authTag: string[]) {
     log("shutting down");
     off = true;
     clearInterval(heartbeat);
-    for (const timer of typing.values()) clearInterval(timer);
+
+    for (const timer of typing.values()) {
+      clearInterval(timer);
+    }
     typing.clear();
     membership();
     unlisten();
     await Promise.race([
-      relay.publish({ kind: 20001, content: "offline", tags: [] }).catch(() => {}),
+      relay.publish({ kind: 20_001, content: "offline", tags: [] }).catch(() => {}),
       Bun.sleep(2000),
     ]);
     activity?.close();

@@ -1,7 +1,7 @@
-import { randomUUID } from "crypto";
-import { closeSync, fstatSync, openSync, readFileSync, readSync, statSync } from "fs";
-import { homedir } from "os";
-import { join, relative } from "path";
+import { randomUUID } from "node:crypto";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, relative } from "node:path";
 
 import {
   stripLocalCommandMetadata,
@@ -25,6 +25,7 @@ type Frame = {
   startedAt?: string;
   payload: unknown;
 };
+
 type Transcript = {
   path: string;
   offset: number;
@@ -34,6 +35,7 @@ type Transcript = {
   tasks: Map<any, any>;
   stopped: boolean;
 };
+
 type Turn = {
   id: string;
   thread: string;
@@ -45,9 +47,10 @@ type Turn = {
   ending?: boolean;
   cut?: boolean;
 };
+
 type Target = { channel: string; thread?: string; session?: string };
 
-const KIND = 24200;
+const KIND = 24_200;
 const LIMIT = 65_535;
 const TICK = 1000;
 const LIVENESS = 10_000;
@@ -60,6 +63,7 @@ const LOG_LEASE = 60_000;
 const client = { sessionUpdate: async () => {} } as unknown as Parameters<
   typeof toAcpNotifications
 >[4];
+
 const logger = {
   log: () => {},
   error: (...args: unknown[]) => process.stderr.write(`buzz hub: activity: ${args.join(" ")}\n`),
@@ -81,11 +85,13 @@ export function startActivity({
   cancel: (target: Target) => "sent" | "no_active_turn" | "ambiguous_target";
 }) {
   const key = getConversationKey(secretKey, owner);
+
   const projects = join(
     process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), ".claude"),
     "projects",
-    hexDir.replace(/[^a-zA-Z0-9]/g, "-"),
+    hexDir.replaceAll(/[^a-zA-Z0-9]/g, "-"),
   );
+
   const turns = new Map<string, Turn>();
   const announced = new Set<string>();
   const queue: { frame: Frame; bytes: number }[] = [];
@@ -109,11 +115,15 @@ export function startActivity({
       ...(turn && { startedAt: turn.startedAt }),
       payload,
     };
+
     fit(frame);
     const bytes = size(frame);
     queue.push({ frame, bytes });
     backlog += bytes;
-    while (backlog > BACKLOG) backlog -= queue.shift()!.bytes;
+
+    while (backlog > BACKLOG) {
+      backlog -= queue.shift()!.bytes;
+    }
   }
 
   function busy({
@@ -128,11 +138,16 @@ export function startActivity({
     triggers: string[];
   }) {
     const turn = turns.get(thread);
-    if (turn?.ending) finish(turn);
-    else if (turn) {
-      if (session && !turn.transcript) follow(turn, session, false);
+
+    if (turn?.ending) {
+      finish(turn);
+    } else if (turn) {
+      if (session && !turn.transcript) {
+        follow(turn, session, false);
+      }
       return;
     }
+
     const opened: Turn = {
       id: randomUUID(),
       thread,
@@ -141,13 +156,17 @@ export function startActivity({
       beat: Date.now(),
       session,
     };
+
     turns.set(thread, opened);
     push(
       "turn_started",
       { source: "channel", triggeringEventIds: triggers, ...root(opened) },
       opened,
     );
-    if (session) follow(opened, session, true);
+
+    if (session) {
+      follow(opened, session, true);
+    }
   }
 
   // Lines already in the transcript belong to earlier turns, unless the session
@@ -164,7 +183,10 @@ export function startActivity({
       tasks: new Map(),
       stopped: false,
     };
-    if (announced.has(session)) return;
+
+    if (announced.has(session)) {
+      return;
+    }
     announced.add(session);
     push(
       "acp_write",
@@ -180,24 +202,34 @@ export function startActivity({
 
   function read(turn: Turn) {
     const transcript = turn.transcript;
-    if (!transcript) return;
+
+    if (!transcript) {
+      return;
+    }
     let fd;
+
     try {
       fd = openSync(transcript.path, "r");
     } catch {
       return;
     }
+
     try {
       const end = fstatSync(fd).size;
-      if (end <= transcript.offset) return;
+
+      if (end <= transcript.offset) {
+        return;
+      }
       const chunk = Buffer.alloc(end - transcript.offset);
       readSync(fd, chunk, 0, chunk.length, transcript.offset);
       transcript.offset = end;
       const data = Buffer.concat([transcript.rest, chunk]);
       const last = data.lastIndexOf(10);
       transcript.rest = data.subarray(last + 1);
-      if (last >= 0)
+
+      if (last !== -1) {
         for (const line of data.subarray(0, last).toString("utf8").split("\n")) convert(turn, line);
+      }
     } finally {
       closeSync(fd);
     }
@@ -207,26 +239,42 @@ export function startActivity({
   // Buzz message that started the turn instead.
   function convert(turn: Turn, line: string) {
     let entry;
+
     try {
       entry = JSON.parse(line);
     } catch {
       return;
     }
-    if (!(Date.parse(entry.timestamp) >= turn.transcript!.since)) return;
-    if (entry.type === "system" && entry.subtype === "stop_hook_summary")
+
+    if (!(Date.parse(entry.timestamp) >= turn.transcript!.since)) {
+      return;
+    }
+    if (entry.type === "system" && entry.subtype === "stop_hook_summary") {
       turn.transcript!.stopped = true;
-    if (interrupted(entry)) turn.transcript!.stopped = true;
-    else if (entry.type === "assistant" && !entry.isSidechain) turn.transcript!.stopped = false;
-    if ((entry.type !== "assistant" && entry.type !== "user") || entry.isSidechain) return;
-    if (entry.type === "user" && (entry.isMeta || entry.origin)) return;
+    }
+    if (interrupted(entry)) {
+      turn.transcript!.stopped = true;
+    } else if (entry.type === "assistant" && !entry.isSidechain) {
+      turn.transcript!.stopped = false;
+    }
+    if ((entry.type !== "assistant" && entry.type !== "user") || entry.isSidechain) {
+      return;
+    }
+    if (entry.type === "user" && (entry.isMeta || entry.origin)) {
+      return;
+    }
     const content =
       entry.type === "user"
         ? stripLocalCommandMetadata(entry.message?.content)
         : entry.message?.content;
-    if (content == null) return;
+
+    if (content == null) {
+      return;
+    }
     const { tools, tasks } = turn.transcript!;
+
     const notifications = toAcpNotifications(
-      content as any,
+      content,
       entry.type,
       turn.session!,
       tools,
@@ -241,8 +289,10 @@ export function startActivity({
         toolUseResult: entry.toolUseResult,
       },
     );
-    for (const notification of notifications)
+
+    for (const notification of notifications) {
       push("acp_read", { jsonrpc: "2.0", method: "session/update", params: notification }, turn);
+    }
   }
 
   // The Stop hook reports a turn over before Claude Code has written its last
@@ -252,17 +302,29 @@ export function startActivity({
   // here, with whatever it wrote.
   function idle(thread: string) {
     const turn = turns.get(thread);
-    if (!turn) return;
+
+    if (!turn) {
+      return;
+    }
     turn.ending = true;
     read(turn);
-    if (turn.cut || !turn.transcript || turn.transcript.stopped) finish(turn);
+
+    if (turn.cut || !turn.transcript || turn.transcript.stopped) {
+      finish(turn);
+    }
   }
 
   function stopped(thread: string) {
     const turn = turns.get(thread);
-    if (!turn) return;
+
+    if (!turn) {
+      return;
+    }
     turn.cut = true;
-    if (turn.ending) finish(turn);
+
+    if (turn.ending) {
+      finish(turn);
+    }
   }
 
   function finish(turn: Turn) {
@@ -273,9 +335,11 @@ export function startActivity({
 
   function instructions() {
     const files = loaded(join(hexDir, "AGENTS.md"));
+
     const body = files
       .map(([path, text]) => `── ${relative(hexDir, path)} ──\n${text.trim()}`)
       .join("\n\n");
+
     return `<workspace>\n${hexDir}\n</workspace>\n\n<agent-instructions>\n${body}\n</agent-instructions>`;
   }
 
@@ -283,10 +347,14 @@ export function startActivity({
     if (
       event.pubkey !== owner ||
       !event.tags.some(([name, value]) => name === "frame" && value === "control")
-    )
+    ) {
       return;
-    if (Math.abs(event.created_at - Date.now() / 1000) > FRESH) return;
+    }
+    if (Math.abs(event.created_at - Date.now() / 1000) > FRESH) {
+      return;
+    }
     let request;
+
     try {
       request = JSON.parse(decrypt(event.content, key));
     } catch (error) {
@@ -294,6 +362,7 @@ export function startActivity({
         `buzz hub: dropped an unreadable activity control frame: ${error}\n`,
       );
     }
+
     if (request?.type === "cancel_turn" && typeof request.channelId === "string") {
       const status = cancel(target(request.channelId));
       push(
@@ -314,7 +383,10 @@ export function startActivity({
   // Desktop names only the channel; the open turn there, if it is the only one, says more.
   function target(channel: string): Target {
     const open = [...turns.values()].filter((turn) => turn.channel === channel);
-    if (open.length !== 1) return { channel };
+
+    if (open.length !== 1) {
+      return { channel };
+    }
     return {
       channel,
       thread: open[0]!.thread,
@@ -325,9 +397,15 @@ export function startActivity({
   function log(line: string) {
     line = clip(line, LOG_LINE_BYTES);
     logs.push(line);
-    if (logs.length > LOG_LINES) logs.shift();
-    if (Date.now() > following) return;
+
+    if (logs.length > LOG_LINES) {
+      logs.shift();
+    }
+    if (Date.now() > following) {
+      return;
+    }
     streamed.push(line);
+
     if (streamed.length > LOG_LINES) {
       streamed.shift();
       dropped++;
@@ -346,28 +424,43 @@ export function startActivity({
       turnId: null,
       payload: { lines: [], dropped: skipped + lines.length },
     });
+
     let total =
       base + lines.reduce((sum, line) => sum + Buffer.byteLength(JSON.stringify(line)) + 1, 0);
+
     let first = 0;
-    for (; total > LIMIT; first++) total -= Buffer.byteLength(JSON.stringify(lines[first])) + 1;
+
+    for (; total > LIMIT; first++) {
+      total -= Buffer.byteLength(JSON.stringify(lines[first])) + 1;
+    }
     return { lines: lines.slice(first), dropped: skipped + first };
   }
 
   function tick() {
     for (const turn of turns.values()) {
       read(turn);
+
       if (turn.ending && turn.transcript!.stopped) {
         finish(turn);
         continue;
       }
-      if (Date.now() - turn.beat < LIVENESS) continue;
+
+      if (Date.now() - turn.beat < LIVENESS) {
+        continue;
+      }
       turn.beat = Date.now();
       push("turn_liveness", root(turn), turn);
     }
-    if (streamed.length || dropped) push("log", bounded(streamed, dropped));
+
+    if (streamed.length || dropped) {
+      push("log", bounded(streamed, dropped));
+    }
     streamed = [];
     dropped = 0;
-    if (sending || !queue.length) return;
+
+    if (sending || !queue.length) {
+      return;
+    }
     sending = true;
     send(take()).finally(() => (sending = false));
   }
@@ -379,16 +472,23 @@ export function startActivity({
     const picked: Frame[] = [];
     let total = 0;
     let full = false;
+
     const kept = queue.filter(({ frame, bytes }) => {
-      if (full || frame.channelId !== channel) return true;
-      if (picked.length && size(batch([frame])) + total + picked.length > LIMIT)
+      if (full || frame.channelId !== channel) {
+        return true;
+      }
+      if (picked.length && size(batch([frame])) + total + picked.length > LIMIT) {
         return (full = true);
+      }
       picked.push(frame);
       total += bytes;
+
       return false;
     });
+
     queue.splice(0, queue.length, ...kept);
     backlog -= total;
+
     return picked.length === 1 ? picked[0]! : batch(picked);
   }
 
@@ -421,6 +521,7 @@ export function startActivity({
     ],
     control,
   );
+
   const timer = setInterval(tick, TICK);
 
   return {
@@ -442,6 +543,7 @@ function root(turn: Turn) {
 
 function batch(events: Frame[]): Frame {
   const { payload, ...last } = events.at(-1)!;
+
   return { ...last, kind: "batch", payload: { events } };
 }
 
@@ -458,9 +560,14 @@ function sizeOf(path: string) {
 }
 
 function clip(text: string, bytes: number) {
-  if (Buffer.byteLength(text) <= bytes) return text;
-  let clipped = Buffer.from(text).subarray(0, bytes).toString("utf8");
-  while (Buffer.byteLength(clipped) > bytes) clipped = clipped.slice(0, -1);
+  if (Buffer.byteLength(text) <= bytes) {
+    return text;
+  }
+  let clipped = Buffer.from(text).subarray(0, bytes).toString("utf-8");
+
+  while (Buffer.byteLength(clipped) > bytes) {
+    clipped = clipped.slice(0, -1);
+  }
   return clipped;
 }
 
@@ -469,10 +576,13 @@ function clip(text: string, bytes: number) {
 function fit(frame: Frame) {
   for (let over = size(frame) - LIMIT; over > 0; over = size(frame) - LIMIT) {
     const leaf = longest(frame, "payload");
+
     if (!leaf || leaf.text.length <= 64) {
       frame.payload = { elided: `${frame.kind} payload too large` };
+
       return;
     }
+
     const cut = Math.min(leaf.text.length, over + 64);
     const keep = leaf.text.length - cut;
     const tail = Math.min(1000, Math.floor(keep / 4));
@@ -486,12 +596,22 @@ function longest(
   key: string | number,
 ): { holder: any; key: string | number; text: string } | undefined {
   const value = holder[key];
-  if (typeof value === "string") return { holder, key, text: value };
-  if (!value || typeof value !== "object") return;
+
+  if (typeof value === "string") {
+    return { holder, key, text: value };
+  }
+  if (!value || typeof value !== "object") {
+    return;
+  }
   let best: ReturnType<typeof longest>;
+
   for (const inner of Object.keys(value)) {
     const found = longest(value, inner);
-    if (found && (!best || found.text.length > best.text.length)) best = found;
+
+    if (found && (!best || found.text.length > best.text.length)) {
+      best = found;
+    }
   }
+
   return best;
 }

@@ -2,6 +2,7 @@ export type Section = { header: string; items: string[][]; gap: string; rest?: s
 
 export function clip(text: string, length: number) {
   const first = text.trim().split("\n")[0]!;
+
   return first.length > length ? `${first.slice(0, length - 1)}…` : first;
 }
 
@@ -19,27 +20,37 @@ export function fit(sections: Section[], room: number): string {
       section.header.length +
       (section.items.length ? more(section, section.items.length).length : 0),
   );
+
   let text = "";
   sections.forEach((section, n) => {
     const after = least.slice(n + 1).reduce((sum, length) => sum + length, 0);
     const { header, items, gap } = section;
     text += `${text && "\n\n"}${header}`;
+
     const left = items.findIndex((forms, i) => {
       const owed = after + (i < items.length - 1 ? more(section, items.length - i - 1).length : 0);
       const form = forms.find((form) => text.length + gap.length + form.length + owed <= room);
-      if (form === undefined) return true;
+
+      if (form === undefined) {
+        return true;
+      }
       text += gap + form;
+
       return false;
     });
-    if (left >= 0) text += more(section, items.length - left);
+
+    if (left !== -1) {
+      text += more(section, items.length - left);
+    }
   });
+
   return text;
 }
 
 // Claude Code puts at most 10,000 characters of a hook's output into context and swaps the rest for
 // a path and a preview it doesn't ask Claude to read (https://code.claude.com/docs/en/hooks#json-output),
 // so a hook's output stays under ROOM, which leaves space for the lines around it.
-export const ROOM = 9_000;
+export const ROOM = 9000;
 
 // A status post's own headings, under its note.
 export const HEADINGS = ["Waiting on you", "Open", "Ideas", "Done"] as const;
@@ -48,10 +59,12 @@ export const HEADINGS = ["Waiting on you", "Open", "Ideas", "Done"] as const;
 // plain still lead with 🔴 Blocked on you, 🟡 Pending or 🟢 Done.
 export function above(text: string) {
   const lines = text.split("\n");
+
   const first = lines.findIndex(
     (line) =>
       /^\s*(#+\s*)?(\*\*)?(🔴|🟡|🟢)\s*(\*\*)?\s*(Blocked on you|Pending|Done)\b/u.test(line) ||
       HEADINGS.some((heading) => line.trim() === `**${heading}**`),
   );
-  return (first < 0 ? lines : lines.slice(0, first)).join("\n").trim();
+
+  return (first === -1 ? lines : lines.slice(0, first)).join("\n").trim();
 }

@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { connect, createServer } from "net";
+import type { Socket } from "net";
 import {
   appendFileSync,
   mkdtempSync,
@@ -12,10 +14,9 @@ import {
   existsSync,
   symlinkSync,
   watch,
-} from "fs";
-import { connect, createServer, type Socket } from "net";
-import { tmpdir } from "os";
-import { join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { settled } from "./claude.ts";
 import { clock, manual } from "./clock.ts";
@@ -30,23 +31,24 @@ import {
   startHub,
   tappable,
   transcribe,
-  type ChannelServer,
-  type Message,
-  type Permission,
 } from "./hub.ts";
-import { open, type Author } from "./store.ts";
+import type { ChannelServer, Message, Permission } from "./hub.ts";
+import { open } from "./store.ts";
+import type { Author } from "./store.ts";
 import { ATTACH, hangUpAll, http as line, port } from "./testing.ts";
 import { until } from "./until.ts";
 
 const CHANNEL = "plugin:telegram@hex";
 const SESSION = "0a1b2c3d-0000-4000-8000-000000000000";
 const message: Message = { content: "hi", author: "owner", meta: { chat_id: "1" } };
+
 const SERVER: ChannelServer = {
   title: "Telegram",
   instructions: 'Messages arrive as <channel source="telegram">.',
   tools: [{ name: "reply", description: "Reply.", inputSchema: { type: "object" } }],
   permission: true,
 };
+
 // Above Linux's highest pid, so a session's process is always already gone.
 const EXITED = 4_194_305;
 
@@ -92,8 +94,12 @@ exit 0
 });
 
 afterEach(() => {
-  for (const socket of sockets.splice(0)) socket.destroy();
-  for (const sleeper of sleepers.splice(0)) sleeper.kill();
+  for (const socket of sockets.splice(0)) {
+    socket.destroy();
+  }
+  for (const sleeper of sleepers.splice(0)) {
+    sleeper.kill();
+  }
   hangUpAll();
   hub?.close();
   time.restore();
@@ -113,7 +119,9 @@ function inbound(sent: Message) {
 
 // The session's hook taking each message it was given, as Claude Code adds it to the conversation.
 function fold(received: { meta: { key: string } }[]) {
-  for (const payload of received) open(dir).take(payload.meta.key, SESSION);
+  for (const payload of received) {
+    open(dir).take(payload.meta.key, SESSION);
+  }
 }
 
 // stale: the registry's sessions started with what the hub no longer gives a session, as after an update.
@@ -137,7 +145,8 @@ function start(
   } = {},
 ) {
   const { idleStop, cacheWarm, compactAbove, reconnect, connect = 0, capacity } = options;
-  if (options.registry)
+
+  if (options.registry) {
     open(dir).keepThreads(
       "telegram",
       Object.fromEntries(
@@ -146,7 +155,10 @@ function start(
         ),
       ),
     );
-  if (options.agents) writeFileSync(join(dir, "agents"), JSON.stringify(options.agents));
+  }
+  if (options.agents) {
+    writeFileSync(join(dir, "agents"), JSON.stringify(options.agents));
+  }
   const seen: [string, boolean][] = (states = []);
   const failedSeen: [string, string][] = (failures = []);
   const asked: [string, Permission][] = (prompts = []);
@@ -187,8 +199,10 @@ function before(registry: Record<string, any>) {
 }
 
 function calls(): string[][] {
-  if (!existsSync(join(dir, "calls"))) return [];
-  return readFileSync(join(dir, "calls"), "utf8")
+  if (!existsSync(join(dir, "calls"))) {
+    return [];
+  }
+  return readFileSync(join(dir, "calls"), "utf-8")
     .split("\n")
     .slice(0, -1)
     .map((line) => JSON.parse(line));
@@ -198,6 +212,7 @@ function calls(): string[][] {
 async function launched() {
   const args = await until(() => calls().find((args) => args[0] === "--bg"));
   await settled();
+
   return args;
 }
 
@@ -215,6 +230,7 @@ async function session(thread: string, id = SESSION) {
   await line.rpc("tools/list");
   await until(() => line.listed() === 2);
   await settled();
+
   return line;
 }
 
@@ -232,8 +248,13 @@ function http(thread?: string, extra: Record<string, string> = {}, deaf = 0) {
 function hook(payload: object) {
   const socket = connect(join(dir, "hub.sock"));
   sockets.push(socket);
-  socket.on("connect", () => socket.end(JSON.stringify(payload) + "\n"));
-  return new Promise<void>((resolve) => socket.on("close", () => resolve()));
+  socket.on("connect", () => socket.end(`${JSON.stringify(payload)}\n`));
+
+  return new Promise<void>((resolve) =>
+    socket.on("close", () => {
+      resolve();
+    }),
+  );
 }
 
 // Claude's record of a background job, with the flags it restarts with: they read the thread's
@@ -260,23 +281,27 @@ function bound(thread: string, id = SESSION, job = id.slice(0, 8), channel = CHA
 // Rewrites a job's record, resolving once a watch of the test's own has seen it, as the hub's watch would.
 function job(id: string, record: object) {
   const folder = join(dir, "jobs", id);
+
   const seen = new Promise<void>((resolve) => {
     const watcher = watch(folder, () => (watcher.close(), resolve()));
   });
+
   writeFileSync(join(folder, "state.json"), JSON.stringify(record));
+
   return seen.then(settled);
 }
 
 function saved(id = SESSION, folder = join(dir, "hex")) {
-  const project = join(dir, "projects", folder.replace(/[^a-zA-Z0-9]/g, "-"));
+  const project = join(dir, "projects", folder.replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(project, { recursive: true });
   writeFileSync(join(project, `${id}.jsonl`), "{}\n");
 }
 
 // A line of the session's transcript: a request that sent this much context, or a compaction down to it.
 function said(tokens: number, compacted = false, id = SESSION, at = clock.now()) {
-  const project = join(dir, "projects", join(dir, "hex").replace(/[^a-zA-Z0-9]/g, "-"));
+  const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(project, { recursive: true });
+
   const line = compacted
     ? {
         type: "system",
@@ -293,14 +318,15 @@ function said(tokens: number, compacted = false, id = SESSION, at = clock.now())
           },
         },
       };
+
   appendFileSync(
     join(project, `${id}.jsonl`),
-    JSON.stringify({ ...line, timestamp: new Date(at).toISOString() }) + "\n",
+    `${JSON.stringify({ ...line, timestamp: new Date(at).toISOString() })}\n`,
   );
 }
 
 function settingsOf(args: string[]) {
-  return JSON.parse(readFileSync(args[args.indexOf("--settings") + 1]!, "utf8"));
+  return JSON.parse(readFileSync(args[args.indexOf("--settings") + 1]!, "utf-8"));
 }
 
 // Without the digest of what each session started with, which only the renew tests look at.
@@ -336,7 +362,7 @@ test("a message for a new thread starts a session bound to that thread", async (
       HEX_THREAD: "chat:7",
       HEX_HUB: join(dir, "hub.sock"),
       HEX_PORT: String(listener.port),
-      HEX_TOKEN: readFileSync(join(dir, "token"), "utf8"),
+      HEX_TOKEN: readFileSync(join(dir, "token"), "utf-8"),
       HEX_STORE: dir,
       HEX_HELD: join(dir, "sessions", "chat%3A7"),
     },
@@ -346,9 +372,11 @@ test("a message for a new thread starts a session bound to that thread", async (
 
 test("a message carrying a change to hex's records is kept and told only with it: a failed or empty change sends nothing", () => {
   start();
+
   const fails = () => {
     throw new Error("the answer could not be saved");
   };
+
   expect(hub.deliver("chat:7", "Desk anchors", { ...message, key: "tap:1" }, fails)).toBe(false);
   expect(hub.deliver("chat:7", "Desk anchors", { ...message, key: "tap:2" }, () => false)).toBe(
     false,
@@ -435,9 +463,11 @@ test("a daemon left on an older claude is stopped with its sessions kept, so the
   writeFileSync(join(dir, "daemon"), "2.0.9");
   start({ main: "chat", general: true });
   await launched();
+
   const daemon = calls()
     .filter((args) => args[0] === "daemon" || args[0] === "--bg")
     .map((args) => args.slice(0, 4).join(" "));
+
   expect(daemon.slice(-2)).toEqual([
     "daemon stop --any --keep-workers",
     `--bg --channels ${CHANNEL} --name`,
@@ -582,6 +612,7 @@ test("a session that died while its background agents still worked (a reboot) gi
   });
   store.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   store.take("telegram:1:10", SESSION);
+
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "idle"], {
     env: { ...process.env, HEX_STORE: dir, MEMORY_DIR: "" },
     stdin: new Blob([
@@ -592,6 +623,7 @@ test("a session that died while its background agents still worked (a reboot) gi
       }),
     ]),
   });
+
   await hook.exited;
   expect(store.midTurn("chat:7")).toBe(true);
   start({ agents: [], reconnect: 50 });
@@ -688,12 +720,14 @@ test("a permission prompt reaches the client with its thread, and the answer goe
   start();
   const desk = await session("chat:9");
   const other = await session("chat:10");
+
   const request = {
     request_id: "abcde",
     tool_name: "Bash",
     description: "List files",
     input_preview: '{"command":"ls"}',
   };
+
   await desk.ask(request);
   const [thread, asked] = await until(() => prompts[0]);
   expect(thread).toBe("chat:9");
@@ -735,8 +769,8 @@ test("a session still running once its channel stays gone restarts in place, and
     SESSION.slice(0, 8),
   ]);
   expect(
-    JSON.parse(readFileSync(join(dir, "sessions", "chat%3A7.json"), "utf8")).env.HEX_TOKEN,
-  ).toBe(readFileSync(join(dir, "token"), "utf8"));
+    JSON.parse(readFileSync(join(dir, "sessions", "chat%3A7.json"), "utf-8")).env.HEX_TOKEN,
+  ).toBe(readFileSync(join(dir, "token"), "utf-8"));
   hub.deliver("chat:7", "Desk anchors", message);
   const back = await session("chat:7");
   await until(() => back.received.length);
@@ -814,14 +848,14 @@ test("a session that restarts in place keeps what its launcher added to its sett
   });
   await time.lapse(50);
   await until(() => calls().find((args) => args[0] === "respawn"));
-  const settings = JSON.parse(readFileSync(file, "utf8"));
+  const settings = JSON.parse(readFileSync(file, "utf-8"));
   expect(settings).toMatchObject({
     model: "claude-sonnet-5-5",
     claudeMdExcludes: ["/rules.md"],
     enabledPlugins: { "other@hex": true, "telegram@hex": true },
     env: { HEX_WAKE: "/wake.md", HEX_THREAD: "chat:7" },
   });
-  expect(settings.env.HEX_TOKEN).toBe(readFileSync(join(dir, "token"), "utf8"));
+  expect(settings.env.HEX_TOKEN).toBe(readFileSync(join(dir, "token"), "utf-8"));
 });
 
 test("a session that restarts in place and still gets no channel is reported, not restarted again", async () => {
@@ -918,11 +952,13 @@ test("a new session's channel opens once it lists the tools again after hearing 
     JSON.stringify({ state: "working", sessionId: SESSION }),
   );
   const line = http("chat:7");
+
   const { result } = await line.rpc("initialize", {
     protocolVersion: "2025-11-25",
     capabilities: {},
     clientInfo: { name: "test", version: "0" },
   });
+
   expect(result.capabilities.tools).toEqual({ listChanged: true });
   await line.initialize();
   await line.open();
@@ -980,12 +1016,14 @@ test("a stream back from before the hub restarted carries on under its old id, w
 test("the hub declines the newest protocol, whose sessions get no channel, and offers one that has it", async () => {
   start();
   const line = http("chat:7");
-  expect((await line.rpc("server/discover")).error.code).toBe(-32601);
+  expect((await line.rpc("server/discover")).error.code).toBe(-32_601);
+
   const { result } = await line.rpc("initialize", {
     protocolVersion: "2026-07-28",
     capabilities: {},
     clientInfo: { name: "test", version: "0" },
   });
+
   expect(result.protocolVersion).toBe("2025-11-25");
   expect(result.capabilities.experimental).toEqual({
     "claude/channel": {},
@@ -1041,10 +1079,12 @@ test("a session with no thread, or another channel's, gets no messages and acts 
     ],
     isError: true,
   });
+
   const other = http(undefined, {
     "x-hex-channel": "plugin:discord@hex",
     "x-hex-thread": "chat:7",
   });
+
   await other.initialize();
   await other.open();
   await other.rpc("tools/list");
@@ -1056,10 +1096,12 @@ test("a session with no thread, or another channel's, gets no messages and acts 
 test("busy and idle from session hooks reach the client, and a dropped session is idle", async () => {
   start();
   const { close } = await session("chat:9");
+
   const hook = (busy: boolean) =>
-    connect(join(dir, "hub.sock")).on("connect", function () {
-      this.end(JSON.stringify({ type: "state", thread: "chat:9", busy }) + "\n");
+    connect(join(dir, "hub.sock")).on("connect", function hook() {
+      this.end(`${JSON.stringify({ type: "state", thread: "chat:9", busy })}\n`);
     });
+
   hook(true);
   await until(() => states.length === 1);
   hook(false);
@@ -1145,7 +1187,7 @@ test("an idle thread with a big conversation compacts while its cache is warm, w
   const args = await launched();
   expect(args[args.indexOf("--resume") + 1]).toBe(SESSION);
   expect(args.at(-1)).toBe("/compact");
-  said(9_000, true);
+  said(9000, true);
   writeFileSync(
     join(dir, "agents"),
     JSON.stringify([
@@ -1211,17 +1253,19 @@ test("the main thread compacts a big conversation before its cache goes cold, an
 
 // The line Claude Code writes when /compact fails, like with every account of the pool out of usage.
 function failedCompaction(at = clock.now()) {
-  const project = join(dir, "projects", join(dir, "hex").replace(/[^a-zA-Z0-9]/g, "-"));
+  const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/g, "-"));
+
   const content =
     "<local-command-stderr>Error during compaction: API Error: rate_limit_error</local-command-stderr>";
+
   appendFileSync(
     join(project, `${SESSION}.jsonl`),
-    JSON.stringify({
+    `${JSON.stringify({
       type: "system",
       subtype: "local_command",
       content,
       timestamp: new Date(at).toISOString(),
-    }) + "\n",
+    })}\n`,
   );
 }
 
@@ -1277,7 +1321,7 @@ test("a thread whose compaction failed stops at its rest, and resumes to compact
   start({
     idleStop: 50,
     compactAbove: 150_000,
-    reconnect: 1_000,
+    reconnect: 1000,
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     agents: [{ sessionId: SESSION, pid: old.pid, status: "idle", startedAt: clock.now() + 60_000 }],
   });
@@ -1301,13 +1345,15 @@ test("a thread whose compaction failed stops at its rest, and resumes to compact
   await time.lapse(50);
   await until(() => calls().filter((args) => args[0] === "stop").length === 2);
   second.close();
-  await time.lapse(1_000);
+  await time.lapse(1000);
   expect(calls().filter((args) => args[0] === "--bg")).toHaveLength(1);
   await second.send({ type: "state", thread: "chat:9", busy: false });
   await until(() => calls().filter((args) => args[0] === "--bg").length === 2);
+
   const args = calls()
     .filter((args) => args[0] === "--bg")
     .at(-1)!;
+
   expect(args[args.indexOf("--resume") + 1]).toBe(SESSION);
   expect(args.at(-1)).toBe("/compact");
   expect(states.filter(([, busy]) => busy)).toEqual([]);
@@ -1320,9 +1366,12 @@ test("a bad line on hub.sock is dropped, and the lines after it still work", asy
   sockets.push(socket);
   socket.on("connect", () =>
     socket.end(
-      "not json\nnull\n" +
-        JSON.stringify({ type: "inbound", thread: "chat:9", content: "still here", meta: {} }) +
-        "\n",
+      `not json\nnull\n${JSON.stringify({
+        type: "inbound",
+        thread: "chat:9",
+        content: "still here",
+        meta: {},
+      })}\n`,
     ),
   );
   await until(() => received.length);
@@ -1344,8 +1393,12 @@ test("a local open request starts a session for an existing topic with its promp
   start();
   connect(join(dir, "hub.sock")).on("connect", function () {
     this.end(
-      JSON.stringify({ type: "open", thread: "chat:5", name: "Theo clips", prompt: "pick it up" }) +
-        "\n",
+      `${JSON.stringify({
+        type: "open",
+        thread: "chat:5",
+        name: "Theo clips",
+        prompt: "pick it up",
+      })}\n`,
     );
   });
   const args = await launched();
@@ -1361,7 +1414,7 @@ test("a local inbound request reaches the thread like a message from the app, by
   });
   const { received } = await session("chat:7");
   connect(join(dir, "hub.sock")).on("connect", function () {
-    this.end(JSON.stringify({ type: "inbound", thread: "telegram:chat:7", ...message }) + "\n");
+    this.end(`${JSON.stringify({ type: "inbound", thread: "telegram:chat:7", ...message })}\n`);
   });
   await until(() => received.length);
   expect(received).toEqual([inbound(message)]);
@@ -1376,7 +1429,7 @@ test("a local inbound request for a thread this hub doesn't have opens nothing",
         { type: "inbound", thread: "constructor", ...message },
         { type: "open", thread: "chat:5", name: "Theo clips" },
       ]
-        .map((line) => JSON.stringify(line) + "\n")
+        .map((line) => `${JSON.stringify(line)}\n`)
         .join(""),
     );
   });
@@ -1462,6 +1515,7 @@ exec claude "$@"
     join(dir, "jobs", "jobgone1", "state.json"),
     JSON.stringify({ state: "failed", detail: `source session ${SESSION} not found` }),
   );
+
   return launcher;
 }
 
@@ -1547,10 +1601,12 @@ test("a thread opened with a prompt, or as a fork, whose start failed starts aga
   await until(() => starts().length === 3);
   await session("chat:9", "1b2c3d4e-0000-4000-8000-000000000000");
   await until(() => starts().length === 5);
+
   const again = (thread: string) =>
     starts()
       .slice(3)
       .find((args) => settingsOf(args).env.HEX_THREAD === thread)!;
+
   expect(again("chat:8").at(-1)).toBe("find the latest model");
   expect(hub.cwd("chat:8")).toBe(join(dir, "work"));
   expect(again("chat:10").slice(5, 8)).toEqual(["--resume", SESSION, "--fork-session"]);
@@ -1565,10 +1621,12 @@ test("a thread whose starts keep failing says so in its chat with each message, 
     join(dir, "jobs", "job12345", "state.json"),
     JSON.stringify({ state: "failed", detail: "exit 1 before init" }),
   );
+
   for (const n of [1, 2, 3, 4]) {
     hub.deliver("chat:7", "Desk anchors", { ...message, content: `try ${n}` });
     await until(() => states.filter(([thread, busy]) => thread === "chat:7" && !busy).length === n);
   }
+
   expect(failures).toEqual(Array(4).fill(["chat:7", "exit 1 before init"]));
   await until(() => general.received.length);
   await Bun.sleep(50);
@@ -1583,13 +1641,17 @@ test("General hears of a thread that keeps failing once its hub is there, even w
     join(dir, "jobs", "job12345", "state.json"),
     JSON.stringify({ state: "failed", detail: "exit 1 before init" }),
   );
+
   const tries = (n: number) =>
     until(() => states.filter(([thread, busy]) => thread === "chat:7" && !busy).length === n);
+
   for (const n of [1, 2, 3]) {
     hub.deliver("chat:7", "Desk anchors", { ...message, content: `try ${n}` });
     await tries(n);
   }
+
   mkdirSync(join(dir, "general"));
+
   const general = startHub({
     stateDir: join(dir, "general"),
     storeDir: dir,
@@ -1603,6 +1665,7 @@ test("General hears of a thread that keeps failing once its hub is there, even w
     failed: () => {},
     hexDir: join(dir, "hex"),
   });
+
   try {
     hub.deliver("chat:7", "Desk anchors", { ...message, content: "try 4" });
     await tries(4);
@@ -1626,13 +1689,17 @@ test("General whose start failed starts again with each next message, as its hea
     join(dir, "jobs", "job12345", "state.json"),
     JSON.stringify({ state: "failed", detail: "exit 1 before init" }),
   );
+
   for (const n of [1, 2, 3]) {
-    if (n > 1) hub.deliver("general", "hex", { ...message, content: `try ${n}` });
+    if (n > 1) {
+      hub.deliver("general", "hex", { ...message, content: `try ${n}` });
+    }
     await until(
       () => states.filter(([thread, busy]) => thread === "general" && !busy).length === n,
     );
     expect(calls().filter((args) => args[0] === "--bg")).toHaveLength(n);
   }
+
   expect(failures).toEqual(Array(3).fill(["general", "exit 1 before init"]));
   expect(
     open(dir)
@@ -1652,10 +1719,12 @@ exec claude "$@"
   );
   chmodSync(launcher, 0o755);
   start({ launcher });
+
   const tries = () =>
     existsSync(join(dir, "tries"))
-      ? readFileSync(join(dir, "tries"), "utf8").split("\n").length - 1
+      ? readFileSync(join(dir, "tries"), "utf-8").split("\n").length - 1
       : 0;
+
   hub.deliver("chat:7", "Desk anchors", message);
   await until(() => failures.length);
   hub.open("chat:8", "OpenAI");
@@ -1687,12 +1756,15 @@ exec claude "$@"
   );
   chmodSync(launcher, 0o755);
   start({ launcher });
+
   const tries = () =>
     existsSync(join(dir, "tries"))
-      ? readFileSync(join(dir, "tries"), "utf8").split("\n").length - 1
+      ? readFileSync(join(dir, "tries"), "utf-8").split("\n").length - 1
       : 0;
+
   const desk = () =>
     calls().filter((args) => args[0] === "--bg" && args.join(" ").includes("chat%3A7"));
+
   hub.deliver("chat:7", "Desk anchors", message);
   await until(() => failures.length);
   hub.open("chat:8", "OpenAI");
@@ -1720,10 +1792,12 @@ exec claude "$@"
   );
   chmodSync(launcher, 0o755);
   start({ launcher });
+
   const tries = () =>
     existsSync(join(dir, "tries"))
-      ? readFileSync(join(dir, "tries"), "utf8").split("\n").length - 1
+      ? readFileSync(join(dir, "tries"), "utf-8").split("\n").length - 1
       : 0;
+
   hub.deliver("chat:7", "Desk anchors", message);
   await until(() => failures.length);
   hub.open("chat:8", "OpenAI");
@@ -1780,6 +1854,7 @@ test("a thread whose session runs without its channel is retried once, not each 
   await time.lapse(50);
   await time.lapse(50);
   expect(states.filter(([thread, busy]) => thread === "chat:10" && !busy)).toHaveLength(2);
+
   for (const [thread, id] of [
     ["chat:9", "3d4e5f60-0000-4000-8000-000000000000"],
     ["chat:11", "4e5f6071-0000-4000-8000-000000000000"],
@@ -1792,6 +1867,7 @@ test("a thread whose session runs without its channel is retried once, not each 
     );
     await session(thread, id);
   }
+
   await time.advance(300);
   expect(respawns()).toHaveLength(2);
   expect(failures).toHaveLength(1);
@@ -1849,18 +1925,21 @@ function conversation() {
   const file = join(
     dir,
     "projects",
-    join(dir, "hex").replace(/[^a-zA-Z0-9]/g, "-"),
+    join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/g, "-"),
     `${SESSION}.jsonl`,
   );
+
   mkdirSync(join(file, ".."), { recursive: true });
   writeFileSync(file, '{"type":"user","message":{"content":"run for a while"}}\n');
-  return () => readFileSync(file, "utf8");
+
+  return () => readFileSync(file, "utf-8");
 }
 
 // A session Claude's daemon lists as working, as it does through a turn and while background agents run.
 function working() {
   const process = Bun.spawn(["sleep", "60"]);
   sleepers.push(process);
+
   return [{ sessionId: SESSION, pid: process.pid, status: "busy" }];
 }
 
@@ -1904,7 +1983,7 @@ test("a Stop whose Esc lands in no turn leaves the session and its background wo
   await until(() => states.length);
   writeFileSync(join(dir, "idle"), "");
   const stopping = hub.interrupt("chat:7");
-  await time.lapse(5_000);
+  await time.lapse(5000);
   expect(await stopping).toBeUndefined();
   expect(calls().some((args) => args[0] === "stop")).toBe(false);
 });
@@ -1920,7 +1999,7 @@ test("a Stop leaves a turn alone that the hooks report over while its Esc goes i
   await until(() => transcript().includes("api-request-blob"));
   await send({ type: "state", thread: "chat:7", busy: false });
   await until(() => states.length === 2);
-  await time.lapse(5_000);
+  await time.lapse(5000);
   expect(await interrupting).toBeUndefined();
   expect(states).toEqual([
     ["chat:7", true],
@@ -2058,7 +2137,7 @@ test("a fresh thread with no capacity starts a new session instead of resuming i
     HEX_THREAD: "dm",
     HEX_HUB: join(dir, "hub.sock"),
     HEX_PORT: String(listener.port),
-    HEX_TOKEN: readFileSync(join(dir, "token"), "utf8"),
+    HEX_TOKEN: readFileSync(join(dir, "token"), "utf-8"),
     HEX_STORE: dir,
     HEX_FRESH: "1",
   });
@@ -2104,7 +2183,7 @@ test("a message to a fresh thread with no capacity steers its session while Clau
 test("a fresh thread keeps its session while it waits on a permission prompt or its turn is still running", async () => {
   start({
     registry: { dm: { name: "DM", session: SESSION } },
-    agents: [{ sessionId: SESSION, pid: 999999, state: "blocked" }],
+    agents: [{ sessionId: SESSION, pid: 999_999, state: "blocked" }],
     fresh: (thread) => thread === "dm",
   });
   const { received, send } = await session("dm");
@@ -2112,7 +2191,7 @@ test("a fresh thread keeps its session while it waits on a permission prompt or 
   await until(() => received.length);
   writeFileSync(
     join(dir, "agents"),
-    JSON.stringify([{ sessionId: SESSION, pid: 999999, status: "idle" }]),
+    JSON.stringify([{ sessionId: SESSION, pid: 999_999, status: "idle" }]),
   );
   await send({ type: "state", thread: "dm", busy: true });
   await until(() => states.length);
@@ -2122,6 +2201,7 @@ test("a fresh thread keeps its session while it waits on a permission prompt or 
 });
 
 const NEXT = "0a1b2c3d-0000-4000-8000-000000000001";
+
 const dm = (
   agents: object[],
   options: {
@@ -2132,7 +2212,7 @@ const dm = (
     reconnect?: number;
     stale?: boolean;
   } = {},
-) =>
+) => {
   start({
     registry: { dm: { name: "DM", session: SESSION } },
     agents,
@@ -2140,9 +2220,10 @@ const dm = (
     capacity: 1000,
     ...options,
   });
+};
 
 test("a fresh thread's warm session takes every message as it comes, and stays up while it rests", async () => {
-  dm([{ sessionId: SESSION, pid: 999999, status: "idle", startedAt: clock.now() + 60_000 }], {
+  dm([{ sessionId: SESSION, pid: 999_999, status: "idle", startedAt: clock.now() + 60_000 }], {
     idleStop: 10,
   });
   said(500);
@@ -2169,21 +2250,23 @@ test("a fresh thread's session on a five-minute cache hands over five minutes af
   dm([{ sessionId: SESSION, pid: old.pid, status: "idle", startedAt: clock.now() + 60_000 }], {
     cacheWarm: 60_000,
   });
-  const project = join(dir, "projects", join(dir, "hex").replace(/[^a-zA-Z0-9]/g, "-"));
+  const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/g, "-"));
   mkdirSync(project, { recursive: true });
+
   const usage = {
     input_tokens: 2,
     cache_creation_input_tokens: 100,
     cache_read_input_tokens: 398,
     cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 0 },
   };
+
   appendFileSync(
     join(project, `${SESSION}.jsonl`),
-    JSON.stringify({
+    `${JSON.stringify({
       type: "assistant",
       message: { usage },
       timestamp: new Date(clock.now() - 4800).toISOString(),
-    }) + "\n",
+    })}\n`,
   );
   const first = await session("dm");
   await first.send({ type: "state", thread: "dm", busy: false });
@@ -2260,7 +2343,7 @@ test("a message that finds a fresh thread's session gone cold goes to a new one"
 });
 
 test("a fresh thread never compacts or idles out, however big its session", async () => {
-  dm([{ sessionId: SESSION, pid: 999999, status: "idle", startedAt: clock.now() + 60_000 }], {
+  dm([{ sessionId: SESSION, pid: 999_999, status: "idle", startedAt: clock.now() + 60_000 }], {
     capacity: 400_000,
     compactAbove: 150_000,
     idleStop: 20,
@@ -2321,12 +2404,14 @@ test("a session with no capacity takes every message of a call, idle or not, and
   const { received, send } = await session("voice");
   said(20_000);
   await hub.keep("voice");
+
   for (const turn of ["one", "two", "three"]) {
     said(20_000);
     await send({ type: "state", thread: "voice", busy: false });
     hub.deliver("voice", "voice", { author: "owner", content: turn, meta: {} });
     await until(() => received.find((payload) => payload.content === turn));
   }
+
   expect(calls().some((args) => args[0] === "stop" || args[0] === "--bg")).toBe(false);
   hub.deliver("voice", "voice", { author: "owner", content: "the call ended", meta: {} });
   hub.renew("voice");
@@ -3008,6 +3093,7 @@ exec claude "$@"
   process.env.TELEGRAM_BOT_TOKEN = "secret";
   process.env.BUZZ_PRIVATE_KEY = "secret";
   process.env.HEX_DIR = join(dir, "somewhere");
+
   try {
     start({ launcher });
     hub.open("chat:7", "Desk anchors", "go");
@@ -3017,8 +3103,9 @@ exec claude "$@"
     delete process.env.BUZZ_PRIVATE_KEY;
     delete process.env.HEX_DIR;
   }
-  expect(readFileSync(join(dir, "cwd"), "utf8").trim()).toBe(join(dir, "hex"));
-  expect(readFileSync(join(dir, "leaked"), "utf8").trim()).toBe("0");
+
+  expect(readFileSync(join(dir, "cwd"), "utf-8").trim()).toBe(join(dir, "hex"));
+  expect(readFileSync(join(dir, "leaked"), "utf-8").trim()).toBe("0");
 });
 
 test("a thread opened in a project starts its session there, and keeps that folder when it resumes", async () => {
@@ -3044,8 +3131,8 @@ exec claude "$@"
   close();
   await until(() => states.some(([thread, busy]) => thread === "t3:1" && !busy));
   hub.deliver("t3:1", "project", message);
-  await until(() => readFileSync(join(dir, "cwd"), "utf8").split("\n").length > 2);
-  expect(readFileSync(join(dir, "cwd"), "utf8").trim().split("\n")).toEqual([project, project]);
+  await until(() => readFileSync(join(dir, "cwd"), "utf-8").split("\n").length > 2);
+  expect(readFileSync(join(dir, "cwd"), "utf-8").trim().split("\n")).toEqual([project, project]);
 });
 
 test("a thread in the hex folder keeps no folder of its own", async () => {
@@ -3146,16 +3233,20 @@ test("a buzz:// link becomes a web link that opens it, in plain text and in Mark
 test("a session's stop hook reports whether background agents are still working, which shells don't count as", async () => {
   const socket = join(dir, "state.sock");
   const received: object[] = [];
+
   const server = createServer((client) =>
     client.on("data", (chunk) => received.push(JSON.parse(String(chunk)))),
   ).listen(socket);
+
   const stop = async (tasks: object[]) => {
     const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "idle"], {
       env: { ...process.env, HEX_HUB: socket, HEX_THREAD: "t1" },
       stdin: new Blob([JSON.stringify({ hook_event_name: "Stop", background_tasks: tasks })]),
     });
+
     await hook.exited;
   };
+
   await stop([{ type: "subagent", status: "running" }]);
   await stop([{ type: "shell", status: "running" }]);
   await until(() => received.length === 2 || undefined);
@@ -3169,17 +3260,21 @@ test("a session's stop hook reports whether background agents are still working,
 test("a session's stop hook names its session, and says when the turn failed", async () => {
   const socket = join(dir, "state.sock");
   const received: object[] = [];
+
   const server = createServer((client) =>
     client.on("data", (chunk) => received.push(JSON.parse(String(chunk)))),
   ).listen(socket);
+
   for (const hook_event_name of ["Stop", "StopFailure"]) {
     const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "idle"], {
       env: { ...process.env, HEX_HUB: socket, HEX_THREAD: "t1", HEX_STORE: dir, MEMORY_DIR: "" },
       stdin: new Blob([JSON.stringify({ hook_event_name, session_id: SESSION })]),
     });
+
     await hook.exited;
     await until(() => received.length === (hook_event_name === "Stop" ? 1 : 2) || undefined);
   }
+
   server.close();
   expect(received).toEqual([
     { type: "state", thread: "t1", busy: false, session: SESSION },
@@ -3190,17 +3285,21 @@ test("a session's stop hook names its session, and says when the turn failed", a
 test("a turn's hook tells the hub and goes, without waiting for a stalled hub to hang up", async () => {
   const socket = join(dir, "state.sock");
   const received: object[] = [];
+
   const server = createServer({ allowHalfOpen: true }, (client) =>
     client.on("data", (chunk) => received.push(JSON.parse(String(chunk)))),
   ).listen(socket);
+
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "idle"], {
     env: { ...process.env, HEX_HUB: socket, HEX_THREAD: "t1" },
     stdin: new Blob([JSON.stringify({ hook_event_name: "Stop" })]),
   });
+
   const ended = await Promise.race([
     hook.exited.then(() => true),
     Bun.sleep(3000).then(() => false),
   ]);
+
   hook.kill();
   await until(() => received.length || undefined);
   server.close();
@@ -3261,6 +3360,7 @@ test("begin opens a thread on another client and starts its session on a prompt,
       { thread: `chat:${placed.length + 8}`, link: `https://chat/${placed.length + 8}` }
     ),
   });
+
   try {
     expect(
       await begin("elsewhere", "Anchors", "look at the anchors", {
@@ -3297,6 +3397,7 @@ test("a move that copies forks the session there and leaves the thread here", as
     hub: { fork: (...args: unknown[]) => forked.push(args) } as any,
     place: async () => ({ thread: "far:1", link: "https://far/1" }),
   });
+
   try {
     expect(await move(hub, "chat:7", "elsewhere", "Anchors", undefined, true)).toBe(
       "https://far/1",
@@ -3324,8 +3425,10 @@ function stored(
   session: string | undefined = SESSION,
 ) {
   const store = open(dir);
-  for (const [i, { from = "buzz", ...row }] of rows.entries())
+
+  for (const [i, { from = "buzz", ...row }] of rows.entries()) {
     store.deliver({ key: `${from}:${thread}-${i}`, to: thread, from, ...row }, session);
+  }
 }
 
 test("a thread's history is what the owner said and hex replied, headings and all, without the terminal, others, failed sends or what waits, and a session's is what it took", () => {
@@ -3395,6 +3498,7 @@ test("a move backfills the thread there with its chat before its session resumes
     place: async () => ({ thread: "far:1", link: "https://far/1" }),
     backfill: async (thread, turns) => void steps.push(["backfill", thread, turns]),
   });
+
   try {
     await move(hub, "chat:7", "elsewhere", "Anchors", undefined, true);
     await until(() => steps.length === 2);
@@ -3423,6 +3527,7 @@ test("a move to a client that shows only its own turns hands it the session to r
     place: async () => ({ thread: "far:1", link: "https://far/1" }),
     waits: true,
   });
+
   try {
     await move(hub, "chat:8", "elsewhere", "Bolts");
     await move(hub, "chat:7", "elsewhere", "Anchors", undefined, true);
@@ -3455,6 +3560,7 @@ test("a mirror opens a backfilled copy that follows the session, and leaves the 
     ),
     backfill: async (thread, turns) => void steps.push(["backfill", thread, turns]),
   });
+
   try {
     expect(await mirror(hub, "chat:7", "elsewhere", "open-source")).toBe("https://far/1");
     expect(steps).toEqual([
@@ -3479,6 +3585,7 @@ test("a mirror asked on hub.sock opens there, by the thread's name", async () =>
     hub: { follow: () => {} } as any,
     place: async (name) => (placed.push(name), { thread: "far:1", link: "https://far/1" }),
   });
+
   try {
     hook({ type: "mirror", thread: "Desk anchors", to: "elsewhere" });
     expect(await until(() => placed[0])).toBe("Desk anchors");
@@ -3566,14 +3673,17 @@ test("a session's hook takes what its prompt brings in, and drops a copy of one 
     author: "owner",
     body: "hi",
   });
+
   const prompt =
     '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>';
+
   const fold = () =>
     Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
       env: { ...process.env, HEX_STORE: dir },
       stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]),
       stderr: "pipe",
     });
+
   const first = fold();
   expect(await first.exited).toBe(0);
   expect(store.message("telegram:1:42")!.taken!.by).toBe(SESSION);
@@ -3591,12 +3701,15 @@ test("a hook with no session id lets its prompt through", async () => {
     author: "owner",
     body: "hi",
   });
+
   const prompt =
     '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>';
+
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
     env: { ...process.env, HEX_STORE: dir },
     stdin: new Blob([JSON.stringify({ prompt, session_id: "" })]),
   });
+
   expect(await hook.exited).toBe(0);
 });
 
@@ -3616,12 +3729,15 @@ test("a channel tag in a message's own words takes nothing", async () => {
     author: "prompt",
     body: "[heartbeat] Hourly check",
   });
+
   const prompt =
     '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-10-18T21:45Z">\n</channel>';
+
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
     env: { ...process.env, HEX_STORE: dir },
     stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]),
   });
+
   expect(await hook.exited).toBe(0);
   expect(store.message("telegram:1:42")!.taken!.by).toBe(SESSION);
   expect(store.message("schedule:heartbeat@2026-10-18T21:45Z")!.taken).toBeUndefined();
@@ -3629,6 +3745,7 @@ test("a channel tag in a message's own words takes nothing", async () => {
 
 test("a heartbeat that opens its session's turn is kept until that turn ends or another prompt comes, and one inside a turn isn't", async () => {
   const store = open(dir);
+
   const prompt = async (key: string, from: string, body: string, meta?: Record<string, string>) => {
     store.deliver({
       key,
@@ -3638,6 +3755,7 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
       body,
       ...(meta && { meta }),
     });
+
     const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
       env: { ...process.env, HEX_STORE: dir },
       stdin: new Blob([
@@ -3647,13 +3765,16 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
         }),
       ]),
     });
+
     expect(await hook.exited).toBe(0);
   };
+
   const beat = (slot: string) =>
     prompt(`schedule:heartbeat@${slot}`, "schedule", "[heartbeat] Hourly check", {
       user: "schedule",
       schedule: "heartbeat",
     });
+
   await beat("2026-11-03T12:45Z");
   const [first] = store.beats(SESSION);
   expect(first).toEqual({ began: expect.any(String) });
@@ -3679,8 +3800,10 @@ test("a heartbeat that opens its session's turn is kept until that turn ends or 
 
 test("hex.db counts a heartbeat from the busy flip after its turn's end, keeps a run's first beat a week on, and drops one a real prompt began before", () => {
   const store = open(dir);
+
   const at = (minutes: number) =>
     new Date(Date.parse("2026-11-01T00:00:00.000Z") + minutes * 60_000).toISOString();
+
   store.turned("beat-a", true, at(0));
   store.turned("beat-a", false, at(1));
   store.turned("beat-a", true, at(60), true, Date.parse(at(59.9)));
@@ -3702,17 +3825,21 @@ test("a task the heartbeat started reports back inside the heartbeat, and one st
   const claude = mkdtempSync(join(tmpdir(), "hex-claude-"));
   const jobs = join(claude, "jobs", "job99999");
   mkdirSync(jobs, { recursive: true });
+
   const hook = async (prompt: string) => {
     const run = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
       env: { ...process.env, HEX_STORE: dir, CLAUDE_CONFIG_DIR: claude },
       stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]),
     });
+
     expect(await run.exited).toBe(0);
   };
+
   const told = (task: string) =>
     hook(
       `<task-notification>\n<task-id>${task}</task-id>\n<status>completed</status>\n</task-notification>`,
     );
+
   store.deliver({
     key: "schedule:heartbeat@2026-11-03T12:45Z",
     to: "chat:7",
@@ -3777,13 +3904,17 @@ test("a session started before hex kept messages has the hub take them for it", 
     author: "owner",
     body: "hi",
   });
+
   const prompt =
     '<channel source="plugin:telegram:telegram" key="telegram:1:42" chat_id="1">\nhi\n</channel>';
+
   const { HEX_STORE, ...env } = process.env;
+
   const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
     env: { ...env, HEX_HUB: join(dir, "hub.sock"), HEX_THREAD: "chat:7" },
     stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]),
   });
+
   expect(await hook.exited).toBe(0);
   expect((await until(() => open(dir).message("telegram:1:42")!.taken)).by).toBe(SESSION);
   expect(states).toEqual([["chat:7", true]]);
@@ -3802,6 +3933,7 @@ test("a message another process keeps, like a job ending, reaches its thread as 
     author: "prompt",
     body: "nobody here",
   });
+
   const cli = Bun.spawn([
     "bun",
     join(import.meta.dir, "cli.ts"),
@@ -3814,6 +3946,7 @@ test("a message another process keeps, like a job ending, reaches its thread as 
     "build",
     "ended",
   ]);
+
   expect(await cli.exited).toBe(0);
   await until(() => received.length);
   await settled();
@@ -3893,9 +4026,14 @@ test("an operation keeps its result across Stop events regardless of elapsed tim
   start({
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     call: (_, tool, args) =>
-      new Promise((resolve) => waiting.push(() => resolve(`${tool} ${args.text}`))),
+      new Promise((resolve) =>
+        waiting.push(() => {
+          resolve(`${tool} ${args.text}`);
+        }),
+      ),
   });
   const line = await session("chat:7");
+
   const kept = async (text: string, stop: object) => {
     const slow = line.call("reply", { text }, text);
     await until(() => waiting.length);
@@ -3904,14 +4042,20 @@ test("an operation keeps its result across Stop events regardless of elapsed tim
     await slow;
     await line.send({ type: "state", thread: "chat:7", busy: false, ...stop });
     const repeat = line.call("reply", { text }, text);
+
     const ran = await Promise.race([
       until(() => waiting.length).then(() => true),
       repeat.then(() => false),
     ]);
-    if (ran) waiting.shift()!();
+
+    if (ran) {
+      waiting.shift()!();
+    }
     expect((await repeat).content[0].text).toBe(`reply ${text}`);
+
     return !ran;
   };
+
   expect(await kept("another session", { session: "ffffffff-0000-4000-8000-000000000000" })).toBe(
     true,
   );

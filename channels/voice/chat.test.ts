@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { clients, type Client } from "../../hub/hub.ts";
+import { clients } from "../../hub/hub.ts";
+import type { Client } from "../../hub/hub.ts";
 import { open } from "../../hub/store.ts";
 import { Chats } from "./chat.ts";
 
@@ -114,6 +115,7 @@ test("words typed in the app reach the thread as the owner, under the key the ap
 
 test("photos and clips go with the owner's words as images the session reads, and the chat shows them beside those words", () => {
   const photo = { id: "p1", kind: "photo" as const, images: ["/m/p1.jpg"] };
+
   const video = {
     id: "v1",
     kind: "video" as const,
@@ -121,6 +123,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     seconds: 4,
     mute: true as const,
   };
+
   chats.send(where, "", "app-00000002", [photo, video]);
   expect(calls).toMatchObject([
     [
@@ -134,12 +137,14 @@ test("photos and clips go with the owner's words as images the session reads, an
     ],
   ]);
   const store = open(state);
+
   const [, , , message] = calls[0] as [
     string,
     string,
     string,
     { content: string; meta: Record<string, string> },
   ];
+
   store.deliver({
     key: "telegram:app-00000002",
     to: DESK,
@@ -178,8 +183,10 @@ test("a stop goes through the app's own stop when it has one, and only where an 
   chats.stop(where);
   clients.get("telegram")!.stop = (thread) => calls.push(["own stop", thread]);
   chats.stop(where);
-  clients.get("telegram")!.hub.name = () => undefined;
-  expect(() => chats.stop(where)).toThrow();
+  clients.get("telegram")!.hub.name = () => {};
+  expect(() => {
+    chats.stop(where);
+  }).toThrow();
   expect(calls).toEqual([
     ["hub stop", DESK],
     ["own stop", DESK],
@@ -187,18 +194,22 @@ test("a stop goes through the app's own stop when it has one, and only where an 
 });
 
 test("an app that shows only turns it starts, doesn't hold the thread, or isn't here can't take words from here", () => {
-  clients.get("telegram")!.hub.name = () => undefined;
+  clients.get("telegram")!.hub.name = () => {};
   expect(chats.of(where).sends).toBe(false);
   clients.get("telegram")!.hub.name = () => "Desk";
   clients.get("telegram")!.waits = true;
   expect(chats.of(where).sends).toBe(false);
-  expect(() => chats.send(where, "hi", "app-0002")).toThrow();
-  expect(() => chats.send({ ...where, app: "claude" }, "hi", "app-0003")).toThrow();
+  expect(() => {
+    chats.send(where, "hi", "app-0002");
+  }).toThrow();
+  expect(() => {
+    chats.send({ ...where, app: "claude" }, "hi", "app-0003");
+  }).toThrow();
 });
 
 test("a wait for the chat ends when it changes, and not on a change elsewhere", async () => {
   const { version } = chats.of(where);
-  const waited = chats.next(() => where, version, 5_000);
+  const waited = chats.next(() => where, version, 5000);
   open(state).deliver({
     key: "telegram:5",
     to: "-1009:1",

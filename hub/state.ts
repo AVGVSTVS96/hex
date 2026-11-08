@@ -1,6 +1,6 @@
-import { readdirSync, readFileSync } from "fs";
-import { connect } from "net";
-import { join } from "path";
+import { readdirSync, readFileSync } from "node:fs";
+import { connect } from "node:net";
+import { join } from "node:path";
 
 import { CLAUDE } from "./running.ts";
 import { open, stateDir } from "./store.ts";
@@ -11,6 +11,7 @@ const busy = process.argv[2] === "busy";
 
 // Claude Code counts a session with these running as still working, and shells or monitors as not.
 const WORKING = new Set(["subagent", "workflow"]);
+
 // A message hex kept has its key first on its channel tag. Claude Code sends each channel message
 // as its own prompt, so only the opening tag is hex's: one further in is the message's own words.
 const KEY = /^<channel source="[^"]*" key="([^"]+)"/;
@@ -36,9 +37,10 @@ const {
   last_assistant_message,
   hook_event_name,
 } = await input();
+
 const fromChat = typeof prompt === "string" && prompt.startsWith("<channel source=");
 const background = !busy && !!background_tasks?.some((task) => WORKING.has(task.type ?? ""));
-const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined;
+const key = busy && fromChat ? KEY.exec(prompt)?.[1] : undefined;
 
 // The session takes the message its prompt brings in, in the store itself while it can reach it,
 // or else through the hub. One that was taken already is a second copy (the hub sends again what it
@@ -47,12 +49,14 @@ const key = busy && fromChat ? prompt.match(KEY)?.[1] : undefined;
 let untold = key;
 let recorded = false;
 let heartbeat = false;
+
 if (key) {
   try {
     const store = open(stateDir());
     heartbeat = store.message(key)?.meta?.schedule === "heartbeat";
     const flipped = heartbeat ? busySince(session_id) : undefined;
     let took: boolean;
+
     try {
       took = store.write(
         () =>
@@ -66,8 +70,10 @@ if (key) {
       took = mine || store.take(key, session_id);
       recorded = mine;
     }
-    if (took) untold = undefined;
-    else if (store.message(key)) {
+
+    if (took) {
+      untold = undefined;
+    } else if (store.message(key)) {
       console.error(`hex gave this session ${key} already`);
       process.exit(2);
     }
@@ -79,12 +85,17 @@ if (key) {
 function heartbeats(store: ReturnType<typeof open>, session: string) {
   const task =
     typeof prompt === "string" && prompt.startsWith("<task-notification")
-      ? prompt.match(/<task-id>([\w-]+)<\/task-id>/)?.[1]
+      ? /<task-id>([\w-]+)<\/task-id>/.exec(prompt)?.[1]
       : undefined;
+
   const beats = task ? store.beats(session) : [];
   const first = beats.slice(beats.findLastIndex((beat) => beat.after) + 1)[0];
-  if (!first) return false;
+
+  if (!first) {
+    return false;
+  }
   const fan: { id: string; startedAt?: number }[] = job(session)?.fan ?? [];
+
   return (fan.find((one) => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began);
 }
 
@@ -92,9 +103,11 @@ function heartbeats(store: ReturnType<typeof open>, session: string) {
 function busySince(session: string): number | undefined {
   try {
     const dir = join(CLAUDE, "sessions");
+
     const times = readdirSync(dir).flatMap((file) => {
       try {
-        const record = JSON.parse(readFileSync(join(dir, file), "utf8"));
+        const record = JSON.parse(readFileSync(join(dir, file), "utf-8"));
+
         return record.sessionId === session &&
           record.status === "busy" &&
           typeof record.statusUpdatedAt === "number"
@@ -104,6 +117,7 @@ function busySince(session: string): number | undefined {
         return [];
       }
     });
+
     return times.length ? Math.max(...times) : undefined;
   } catch {}
 }
@@ -114,15 +128,22 @@ function job(
 ): { sessionId?: string; fan?: { id: string; startedAt?: number }[] } | undefined {
   const read = (id: string) => {
     try {
-      return JSON.parse(readFileSync(join(CLAUDE, "jobs", id, "state.json"), "utf8"));
+      return JSON.parse(readFileSync(join(CLAUDE, "jobs", id, "state.json"), "utf-8"));
     } catch {}
   };
+
   const own = read(session.slice(0, 8));
-  if (own?.sessionId === session) return own;
+
+  if (own?.sessionId === session) {
+    return own;
+  }
   try {
     for (const id of readdirSync(join(CLAUDE, "jobs"))) {
       const record = read(id);
-      if (record?.sessionId === session) return record;
+
+      if (record?.sessionId === session) {
+        return record;
+      }
     }
   } catch {}
 }
@@ -134,10 +155,14 @@ if (session_id && !recorded) {
     const beat = heartbeat || (busy && heartbeats(store, session_id));
     store.write(() => {
       store.turned(session_id, busy, at, beat);
+
       // A turn that failed (StopFailure, an API error) answered nothing, and one whose background agents still work
       // isn't done with what it took.
-      if (hook_event_name === "Stop" && background) store.waitsOnAgents(session_id, at);
-      else if (hook_event_name === "Stop") store.handled(session_id, at);
+      if (hook_event_name === "Stop" && background) {
+        store.waitsOnAgents(session_id, at);
+      } else if (hook_event_name === "Stop") {
+        store.handled(session_id, at);
+      }
     });
   } catch (error) {
     console.error(`hex couldn't record this turn: ${error}`);
@@ -157,15 +182,18 @@ const said =
   )
     ? prompt
     : undefined;
+
 if (said && session_id) {
   try {
     const store = open(stateDir());
     const to = HEX_THREAD ?? session_id;
     const author = HEX_OWNER && !HEX_THREAD && !store.said(to, 1).length ? "prompt" : "owner";
+
     const started =
       author === "owner" &&
       store.said(to, 20).some((row) => row.from === "hub" && row.body.trim() === said.trim());
-    if (!started)
+
+    if (!started) {
       store.deliver(
         {
           key: `terminal:${crypto.randomUUID()}`,
@@ -177,6 +205,7 @@ if (said && session_id) {
         },
         session_id,
       );
+    }
   } catch {}
 }
 
@@ -196,7 +225,7 @@ if (HEX_HUB && HEX_THREAD && (!busy || fromChat)) {
   connect(HEX_HUB)
     .on("connect", function () {
       this.end(
-        JSON.stringify({
+        `${JSON.stringify({
           type: "state",
           thread: HEX_THREAD,
           busy,
@@ -204,7 +233,7 @@ if (HEX_HUB && HEX_THREAD && (!busy || fromChat)) {
           ...(hook_event_name === "StopFailure" && { failed: true }),
           ...(untold && { taken: [untold] }),
           ...(session_id && { session: session_id }),
-        }) + "\n",
+        })}\n`,
         () => this.destroy(),
       );
     })

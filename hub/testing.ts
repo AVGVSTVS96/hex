@@ -1,5 +1,5 @@
-import { readFileSync } from "fs";
-import { join } from "path";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { route } from "./hub.ts";
 
@@ -29,33 +29,44 @@ let listener: ReturnType<typeof Bun.serve> | undefined;
 // The one listener serve.ts opens, for a test's hubs.
 export function port() {
   listener ??= Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 0, fetch: route });
+
   return listener.port;
 }
 
 export function hangUpAll() {
-  for (const stream of streams.splice(0)) stream.abort();
+  for (const stream of streams.splice(0)) {
+    stream.abort();
+  }
 }
 
 // A client's bot.ts run in its own process the way serve.ts runs it, behind a listener on a free
 // port, which the hub reads from HEX_PORT as it loads.
 export async function service(bot: string, env: Record<string, string | undefined>) {
   const hub = JSON.stringify(join(import.meta.dir, "hub.ts"));
+
   const script = `const listener = Bun.serve({ hostname: '127.0.0.1', port: 0, idleTimeout: 0, fetch: request => route(request) })
 process.env.HEX_PORT = String(listener.port)
 const { route } = await import(${hub})
 console.log(listener.port)
 await import(${JSON.stringify(bot)})`;
+
   const child = Bun.spawn(["bun", "-e", script], { env, stdout: "pipe", stderr: "ignore" });
   const reader = child.stdout.getReader();
   let out = "";
+
   while (!out.includes("\n")) {
     const { value, done } = await reader.read();
-    if (done) throw new Error(`${bot} exited before it listened`);
+
+    if (done) {
+      throw new Error(`${bot} exited before it listened`);
+    }
     out += new TextDecoder().decode(value);
   }
+
   void (async () => {
-    while (!(await reader.read()).done);
+    while (!(await reader.read()).done) {}
   })();
+
   return { process: child, port: Number(out.split("\n")[0]) };
 }
 
@@ -78,30 +89,38 @@ export function http({
   at?: number;
 }) {
   const url = `http://127.0.0.1:${at}${path}`;
+
   const headers = {
     ...(thread && { "x-hex-channel": channel, "x-hex-thread": thread }),
-    authorization: `Bearer ${readFileSync(join(stateDir, "token"), "utf8")}`,
+    authorization: `Bearer ${readFileSync(join(stateDir, "token"), "utf-8")}`,
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
     ...extra,
   };
+
   const received: any[] = [];
   const stream = new AbortController();
   streams.push(stream);
   let mcp = "";
   let lists = 0;
+
   const post = (body: object) =>
     fetch(url, {
       method: "POST",
       headers: { ...headers, ...(mcp && { "mcp-session-id": mcp }) },
       body: JSON.stringify({ jsonrpc: "2.0", ...body }),
     });
+
   // A list counts once the hub has answered it, so whatever the list set off on its side is done.
   const rpc = async (method: string, params: object = {}) => {
     const reply = await (await post({ id: ++ids, method, params })).json();
-    if (method === "tools/list") lists++;
-    return reply as any;
+
+    if (method === "tools/list") {
+      lists++;
+    }
+    return reply;
   };
+
   return {
     received,
     listed: () => lists,
@@ -120,15 +139,21 @@ export function http({
         })
       ).headers.get("mcp-session-id")!),
     open: async (adopted?: string) => {
-      if (adopted) mcp = adopted;
+      if (adopted) {
+        mcp = adopted;
+      }
       const response = await fetch(url, {
         headers: { ...headers, "mcp-session-id": mcp },
         signal: stream.signal,
       });
+
       void listen(response, received, () => void (deaf-- > 0 || rpc("tools/list")));
+
       return response;
     },
-    close: () => stream.abort(),
+    close: () => {
+      stream.abort();
+    },
     call: async (tool: string, args: object = {}, toolUseId = crypto.randomUUID()) =>
       (
         await rpc("tools/call", {
@@ -149,14 +174,18 @@ export async function connect(options: Parameters<typeof http>[0]) {
   await line.initialize();
   await line.open();
   await line.rpc("tools/list");
-  for (const end = Date.now() + 3000; line.listed() < 2; await Bun.sleep(10))
+
+  for (const end = Date.now() + 3000; line.listed() < 2; await Bun.sleep(10)) {
     if (Date.now() > end) throw new Error("the hub never opened the channel");
+  }
   await Bun.sleep(10);
+
   return {
     ...line,
     call: async (tool: string, args: object = {}) => {
       const { content, isError } = await line.call(tool, args);
       const text: string = content[0].text;
+
       return isError ? { error: text.replace(`${tool} failed: `, "") } : { text };
     },
   };
@@ -164,23 +193,32 @@ export async function connect(options: Parameters<typeof http>[0]) {
 
 async function listen(response: Response, received: any[], changed: () => void) {
   let buffer = "";
+
   try {
     for await (const chunk of response.body!) {
       buffer += new TextDecoder().decode(chunk);
+
       for (let end = buffer.indexOf("\n\n"); end >= 0; end = buffer.indexOf("\n\n")) {
         const data = buffer
           .slice(0, end)
           .split("\n")
           .find((line) => line.startsWith("data: "));
+
         buffer = buffer.slice(end + 2);
-        if (!data) continue;
+
+        if (!data) {
+          continue;
+        }
         const { method, params } = JSON.parse(data.slice(6));
-        if (method === "notifications/tools/list_changed") changed();
-        else
+
+        if (method === "notifications/tools/list_changed") {
+          changed();
+        } else {
           received.push({
             type: method === "notifications/claude/channel" ? "inbound" : "permission",
             ...params,
           });
+        }
       }
     }
   } catch {}

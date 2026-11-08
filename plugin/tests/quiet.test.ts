@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 
@@ -10,23 +10,28 @@ const home = mkdtempSync(join(tmpdir(), "quiet-"));
 const sessions = join(home, "config/sessions");
 const state = join(home, "state");
 const store = open(state);
+
 const env = {
   ...process.env,
   CLAUDE_CONFIG_DIR: join(home, "config"),
   HEX_STORE: state,
   HEX_QUIET_MS: "100",
 };
-afterAll(() => rmSync(home, { recursive: true }));
+
+afterAll(() => {
+  rmSync(home, { recursive: true });
+});
 
 test("bin/quiet waits while a session hex started is mid-turn, and not on other sessions or one whose turn ended since Claude Code called it busy", async () => {
   mkdirSync(sessions, { recursive: true });
+
   const status = (
     file: string,
     name: string,
     kind: string,
     status: string,
     at = Date.now() - 1000,
-  ) =>
+  ) => {
     writeFileSync(
       join(sessions, file),
       JSON.stringify({
@@ -38,6 +43,8 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
         statusUpdatedAt: at,
       }),
     );
+  };
+
   status("1.json", "ours", "bg", "busy");
   status("2.json", "theirs", "interactive", "busy");
   writeFileSync(

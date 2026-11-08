@@ -1,8 +1,11 @@
 import { above, clip } from "./fit.ts";
-import { statusPost, type Link } from "./status.ts";
-import { open, stateDir, type MessageId, type Pin, type Question, type Store } from "./store.ts";
+import { statusPost } from "./status.ts";
+import type { Link } from "./status.ts";
+import { open, stateDir } from "./store.ts";
+import type { MessageId, Pin, Question, Store } from "./store.ts";
 
 export type { Answer, MessageId, Pin, Question } from "./store.ts";
+
 export { waits } from "./store.ts";
 
 // How an app shows a status post: the room one message has, where it shows a thread's message,
@@ -23,7 +26,7 @@ export type Post = {
 // sees the same ones. The client that sends and edits the messages keeps them.
 export class Ledger {
   private readonly store: Store;
-  private turns = new Map<string, Promise<unknown>>();
+  private readonly turns = new Map<string, Promise<unknown>>();
 
   // dir: the app's state folder, whose hex.db it is outside a hex.
   constructor(
@@ -52,7 +55,10 @@ export class Ledger {
       const message = await post.send(thread, text);
       await post.pin(thread, message);
       this.store.pinned({ app: this.app, thread, message, text, note: words });
-      if (was) await post.unpin(thread, was.message).catch(() => {});
+
+      if (was) {
+        await post.unpin(thread, was.message).catch(() => {});
+      }
       return message;
     });
   }
@@ -64,26 +70,41 @@ export class Ledger {
   rewrite(thread: string, post: Post, note?: string, message?: MessageId): Promise<void> {
     return this.turn(thread, async () => {
       const pin = this.pin(thread);
-      if (message !== undefined && String(pin?.message) !== String(message))
+
+      if (message !== undefined && String(pin?.message) !== String(message)) {
         throw new Error("that message is no longer the status post");
-      if (!pin) return;
+      }
+      if (!pin) {
+        return;
+      }
       const said = note === undefined ? pin.note : above(note);
       const text = await this.render(thread, said, post);
-      if (text === pin.text && said === pin.note) return;
+
+      if (text === pin.text && said === pin.note) {
+        return;
+      }
       const shown = text === pin.text || (await post.edit(thread, pin.message, text));
-      if (shown === null) this.store.unpinned(this.app, thread, pin.message);
+
+      if (shown === null) {
+        this.store.unpinned(this.app, thread, pin.message);
+      }
       if (shown === null || shown === false) {
-        if (note !== undefined)
+        if (note !== undefined) {
           throw new Error(
             shown === null
               ? "the status post is gone; post a new one with pin"
               : "the thread is closed, so its status post can't change now",
           );
+        }
         return;
       }
+
       this.store.write(() => {
         const still = this.pin(thread);
-        if (still?.message !== pin.message || still.note !== pin.note) return;
+
+        if (still?.message !== pin.message || still.note !== pin.note) {
+          return;
+        }
         this.store.pinned({ app: this.app, thread, message: pin.message, text, note: said });
       });
     });
@@ -93,27 +114,35 @@ export class Ledger {
   private turn<T>(thread: string, change: () => Promise<T>): Promise<T> {
     const next = (this.turns.get(thread) ?? Promise.resolve()).catch(() => {}).then(change);
     this.turns.set(thread, next);
+
     return next;
   }
 
   private async render(thread: string, note: string, post: Post) {
     await post.ready?.(thread);
+
     return statusPost(this.store, thread, note, post.room, post.link);
   }
 
   // Keeps every status post current: now, and after each change to hex.db from any process.
   keep(post: Post, failed: (thread: string, error: unknown) => void): () => void {
     const all = () => {
-      for (const { thread } of this.store.pins({ app: this.app }))
-        this.rewrite(thread, post).catch((error) => failed(thread, error));
+      for (const { thread } of this.store.pins({ app: this.app })) {
+        this.rewrite(thread, post).catch((error) => {
+          failed(thread, error);
+        });
+      }
     };
+
     const stop = this.store.watch(all);
+
     try {
       all();
     } catch (error) {
       stop();
       throw error;
     }
+
     return stop;
   }
 
@@ -155,15 +184,22 @@ export class Ledger {
   ) {
     const answer = { label: clip(text, 60), at: new Date().toISOString(), via: "hex", message };
     const { question: their } = quoted ?? {};
+
     if (
       their?.asker &&
       their.thread === thread &&
       String(their.message) === String(quoted!.message)
-    )
-      return this.store.replied(this.app, thread, answer, their.message);
+    ) {
+      this.store.replied(this.app, thread, answer, their.message);
+      return;
+    }
     const question = quoted ? undefined : asking(text);
-    if (question) this.ask(thread, message, question, []);
-    else this.store.replied(this.app, thread, answer);
+
+    if (question) {
+      this.ask(thread, message, question, []);
+    } else {
+      this.store.replied(this.app, thread, answer);
+    }
   }
 
   // The owner wrote in a thread: what hex answered them there stops moving; a quote-reply answers the
@@ -171,6 +207,7 @@ export class Ledger {
   // quotes; and a question they ask waits on hex's answer, then on them coming back to it.
   heard(thread: string, message: MessageId, text: string, replyTo?: MessageId) {
     this.store.returned(this.app, thread);
+
     const to =
       replyTo === undefined
         ? undefined
@@ -178,10 +215,15 @@ export class Ledger {
           this.store
             .questions({ app: this.app, thread, asker: "owner", waiting: true })
             .find((question) => String(question.answer!.message) === String(replyTo)));
-    if (to?.asker) this.settled(thread, to.message, "you replied");
-    else if (to && !to.options.length) this.answered(thread, replyTo!, clip(text, 60), "reply");
+
+    if (to?.asker) {
+      this.settled(thread, to.message, "you replied");
+    } else if (to && !to.options.length) {
+      this.answered(thread, replyTo!, clip(text, 60), "reply");
+    }
     const question = theirs(text);
-    if (question)
+
+    if (question) {
       this.store.ask({
         asker: "owner",
         app: this.app,
@@ -190,6 +232,7 @@ export class Ledger {
         text: question,
         options: [],
       });
+    }
   }
 
   answered(thread: string, message: MessageId, label: string, via: string, again = false) {
@@ -207,13 +250,15 @@ export class Ledger {
   // A question's latest words. A question stays open through an edit: it's settled only by saying so.
   edited(thread: string, message: MessageId, text: string) {
     const question = this.find(thread, message);
-    if (question)
+
+    if (question) {
       this.store.reworded(
         this.app,
         thread,
         message,
         question.options.length ? text : (asking(text) ?? text),
       );
+    }
   }
 
   // Unpins a message, by default the thread's status post, in the app and then in hex.db, in the
@@ -221,9 +266,13 @@ export class Ledger {
   unpin(thread: string, post: Post, message?: MessageId): Promise<MessageId | undefined> {
     return this.turn(thread, async () => {
       const target = message ?? this.pin(thread)?.message;
-      if (target === undefined) return;
+
+      if (target === undefined) {
+        return;
+      }
       await post.unpin(thread, target);
       this.store.unpinned(this.app, thread, target);
+
       return target;
     });
   }
@@ -235,7 +284,10 @@ export class Ledger {
       this.store.unask(this.app, thread, message);
       this.store.unpinned(this.app, thread, message);
     });
-    return this.turn(thread, async () => this.store.unpinned(this.app, thread, message));
+
+    return this.turn(thread, async () => {
+      this.store.unpinned(this.app, thread, message);
+    });
   }
 
   forget(thread: string): Promise<void> {
@@ -243,7 +295,10 @@ export class Ledger {
       this.store.unask(this.app, thread);
       this.store.unpinned(this.app, thread);
     });
-    return this.turn(thread, async () => this.store.unpinned(this.app, thread));
+
+    return this.turn(thread, async () => {
+      this.store.unpinned(this.app, thread);
+    });
   }
 }
 
@@ -262,5 +317,6 @@ export function asking(text: string): string | undefined {
     .split("\n")
     .at(-1)!
     .replace(/[\s*_]+$/, "");
+
   return last.endsWith("?") ? last.replace(/^[\s*_>#-]+/, "") : undefined;
 }

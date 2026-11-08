@@ -19,9 +19,15 @@ function ran(response: unknown): Ran | undefined {
       return;
     }
   }
-  if (Array.isArray(response)) return response.map((block) => ran(block?.text)).find(Boolean);
-  if (!response || typeof response !== "object") return;
+
+  if (Array.isArray(response)) {
+    return response.map((block) => ran(block?.text)).find(Boolean);
+  }
+  if (!response || typeof response !== "object") {
+    return;
+  }
   const { threadId, runId, structuredContent } = response as Record<string, unknown>;
+
   return typeof threadId === "string" && typeof runId === "string"
     ? { threadId, runId }
     : ran(structuredContent);
@@ -29,5 +35,8 @@ function ran(response: unknown): Ran | undefined {
 
 if (from) {
   const run = ran(JSON.parse((await Bun.stdin.text()) || "{}").tool_response);
-  if (run) open(stateDir()).relayed(from, run.threadId, run.runId, at);
+
+  if (run) {
+    open(stateDir()).relayed(from, run.threadId, run.runId, at);
+  }
 }

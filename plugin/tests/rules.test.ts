@@ -7,9 +7,9 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
-} from "fs";
-import { tmpdir } from "os";
-import { dirname, join } from "path";
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 import { open } from "../../hub/store.ts";
 
@@ -22,15 +22,19 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "rules-"));
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
   mkdirSync(join(home, ".claude"));
-  for (const script of ["rules", "identity", "instructions"])
+
+  for (const script of ["rules", "identity", "instructions"]) {
     copyFileSync(join(BIN, script), join(home, ".hex/bin", script));
+  }
   symlinkSync(join(BIN, "../hub"), join(home, ".hex/hub"));
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n\n- Keep it short.\n");
   writeFileSync(join(home, ".hex/HEX.md"), "# How you work\n\nAnswer in plain words.\n");
   writeFileSync(join(home, ".claude/CLAUDE.md"), "# Global\n");
 });
 
-afterEach(() => rmSync(home, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(home, { recursive: true, force: true });
+});
 
 function hook(
   event: "SessionStart" | "UserPromptSubmit" | "SessionEnd",
@@ -48,7 +52,9 @@ function hook(
       ...env,
     },
   });
+
   expect(run.exitCode).toBe(0);
+
   return run.stdout.toString();
 }
 
@@ -89,7 +95,7 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
   Bun.spawnSync([join(home, ".hex/bin/instructions"), "hold", held], {
     env: { ...process.env, HOME: home },
   });
-  const copy = readFileSync(join(held, "CLAUDE.md"), "utf8");
+  const copy = readFileSync(join(held, "CLAUDE.md"), "utf-8");
   expect(copy).toContain("Answer in plain words.");
   hook("SessionStart", "startup", env);
   writeFileSync(
@@ -97,7 +103,7 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
     "# How you work\n\nAnswer in plain words, with a link.\n",
   );
   expect(hook("SessionStart", "resume", env)).toBe("");
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf8")).toBe(copy);
+  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toBe(copy);
   expect(hook("UserPromptSubmit", undefined, env)).toContain(
     "+Answer in plain words, with a link.",
   );
@@ -106,13 +112,13 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
   expect(hook("SessionStart", "resume", env) + hook("UserPromptSubmit", undefined, env)).toBe("");
   writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n\n- Keep it shorter.\n");
   hook("SessionStart", "compact", env);
-  expect(readFileSync(join(held, "CLAUDE.md"), "utf8")).toContain("- Keep it shorter.");
+  expect(readFileSync(join(held, "CLAUDE.md"), "utf-8")).toContain("- Keep it shorter.");
   expect(hook("UserPromptSubmit", undefined, env)).toBe("");
 });
 
 test("a change too long to show points to the files instead", () => {
   hook("SessionStart");
-  writeFileSync(join(home, "AGENTS.md"), "@.hex/HEX.md\n\n" + "- A long rule.\n".repeat(1000));
+  writeFileSync(join(home, "AGENTS.md"), `@.hex/HEX.md\n\n${"- A long rule.\n".repeat(1000)}`);
   const out = hook("UserPromptSubmit");
   expect(out).toContain("read them again");
   expect(out.length).toBeLessThan(10_000);
@@ -161,6 +167,7 @@ function commit(at: number, path: string, text: string) {
         },
       },
     );
+
   mkdirSync(dirname(join(home, ".hex", path)), { recursive: true });
   writeFileSync(join(home, ".hex", path), text);
   git("add", path);
@@ -169,7 +176,10 @@ function commit(at: number, path: string, text: string) {
 
 function updates(started: number, ...changes: [at: number, path: string, text: string][]) {
   Bun.spawnSync(["git", "init", "-q", join(home, ".hex")]);
-  for (const change of changes) commit(...change);
+
+  for (const change of changes) {
+    commit(...change);
+  }
   mkdirSync(join(home, ".claude/sessions"), { recursive: true });
   writeFileSync(
     join(home, ".claude/sessions", `${process.pid}.json`),

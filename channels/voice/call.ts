@@ -51,9 +51,9 @@ const PAUSE = 2000;
 
 export class Call {
   private fragments: (Fragment & { sent?: true })[] = [];
-  private tasks = new Map<string, Task>();
-  private moments: Moment[] = [];
-  private lines = new Map<string, string>();
+  private readonly tasks = new Map<string, Task>();
+  private readonly moments: Moment[] = [];
+  private readonly lines = new Map<string, string>();
   private recent: string[] = [];
   private marks: Mark[] = [];
 
@@ -66,20 +66,30 @@ export class Call {
       end: at,
       sent: true,
     }));
-    for (const task of tasks) call.track(task, task.at);
+
+    for (const task of tasks) {
+      call.track(task, task.at);
+    }
     call.marks = [...moments];
+
     return call;
   }
 
   hear(fragment: Fragment) {
     let i = this.fragments.length;
-    while (i > 0 && this.fragments[i - 1].start > fragment.start) i--;
+
+    while (i > 0 && this.fragments[i - 1].start > fragment.start) {
+      i--;
+    }
     this.fragments.splice(i, 0, fragment);
   }
 
   handOff(): Turn[] {
     const due = this.fragments.filter((fragment) => !fragment.sent);
-    for (const fragment of due) fragment.sent = true;
+
+    for (const fragment of due) {
+      fragment.sent = true;
+    }
     return join(due).map(({ who, text, start }) => ({ who, text, start }));
   }
 
@@ -94,9 +104,12 @@ export class Call {
   }
 
   see(id: string, line: string) {
-    if (!this.tasks.has(id) || this.lines.get(id) === line) return false;
+    if (!this.tasks.has(id) || this.lines.get(id) === line) {
+      return false;
+    }
     this.lines.set(id, line);
     this.touch(id);
+
     return true;
   }
 
@@ -113,7 +126,9 @@ export class Call {
   }
 
   board(): string {
-    if (!this.tasks.size) return "Task board: nothing running or finished yet.";
+    if (!this.tasks.size) {
+      return "Task board: nothing running or finished yet.";
+    }
     return ["Task board:", ...[...this.tasks.values()].map(entry)].join("\n");
   }
 
@@ -123,6 +138,7 @@ export class Call {
 
   record() {
     const turns = join(this.fragments);
+
     return {
       turns: turns.map(({ who, start, text }) => ({ who, at: start, text })),
       tasks: [...this.moments],
@@ -139,13 +155,18 @@ function entry(task: Task) {
 // within a pause, even with the other speaker's words in between, as a backchannel over a sentence.
 function join(fragments: Fragment[]) {
   const turns: (Turn & { end: number })[] = [];
+
   for (const { who, text, start, end } of fragments) {
     const last = turns.findLast((turn) => turn.who === who);
+
     if (last && start - last.end <= PAUSE) {
       last.text += text;
       last.end = Math.max(last.end, end);
-    } else turns.push({ who, text, start, end });
+    } else {
+      turns.push({ who, text, start, end });
+    }
   }
+
   return tidy(turns.sort((a, b) => a.start - b.start));
 }
 

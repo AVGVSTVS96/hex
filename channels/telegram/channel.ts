@@ -1,4 +1,5 @@
-import { EFFORTS, MODELS, type ChannelServer } from "../../hub/hub.ts";
+import { EFFORTS, MODELS } from "../../hub/hub.ts";
+import type { ChannelServer } from "../../hub/hub.ts";
 
 const titleProperty = {
   type: "string",

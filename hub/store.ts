@@ -8,9 +8,9 @@ import {
   renameSync,
   statSync,
   watch,
-  type FSWatcher,
 } from "fs";
-import { basename, join } from "path";
+import type { FSWatcher } from "fs";
+import { basename, join } from "node:path";
 
 import { above } from "./fit.ts";
 
@@ -22,6 +22,7 @@ import { above } from "./fit.ts";
 // it in its conversation, which for hex's own words is the one that wrote them, so nothing wakes on
 // them. A message no session has taken is what wakes a thread.
 export type Author = "owner" | "hex" | "prompt" | "call" | "other";
+
 export type Row = {
   key: string;
   to: string;
@@ -32,7 +33,9 @@ export type Row = {
   meta?: Record<string, string>;
   taken?: { by: string; at: string };
 };
+
 export type NewRow = Omit<Row, "at" | "taken">;
+
 type Stored = {
   key: string;
   to: string;
@@ -50,7 +53,9 @@ type Stored = {
 // are only ever added. A task merged into another
 // is dropped, and its words live on in the one it went into.
 export type Status = "idea" | "open" | "done" | "dropped";
+
 export type Words = { message: string; text: string; who: Author; at: string };
+
 export type Task = {
   id: string;
   title: string;
@@ -64,6 +69,7 @@ export type Task = {
   mergedInto?: string;
   closed?: string;
 };
+
 export type NewTask = {
   title: string;
   message: string;
@@ -73,6 +79,7 @@ export type NewTask = {
   project?: string;
   doneWhen?: string;
 };
+
 export type TaskChange = {
   title?: string;
   status?: Status;
@@ -82,11 +89,13 @@ export type TaskChange = {
   owner?: string;
   doneIn?: string;
 };
+
 // Work one session put on hold, in hex.db so every session sees it: the threads it holds, the thread
 // that held them, why, the owner's message it came from, and when it ends by itself. Its hold on a
 // thread ends at until, or once the owner's word lifts it (ending says which), and then hex wakes
 // that thread (woke: the message it sent).
 export type Held = { thread: string; ended?: string; ending?: string; woke?: string };
+
 export type Hold = {
   id: string;
   by: string;
@@ -96,6 +105,7 @@ export type Hold = {
   at: string;
   threads: Held[];
 };
+
 // A call that's the owner's: a question a thread asked with buttons, a poll or in words, in one
 // app's thread, under that app's id for the message. via: where the answer came from (the chat app's
 // own buttons, hex's voice app, a call). A message id is Telegram's number or Discord's snowflake.
@@ -104,7 +114,9 @@ export type Hold = {
 // moving then), and it waits on them from that answer until they quote-reply to either or a
 // session settles it.
 export type MessageId = number | string;
+
 export type Answer = { label: string; at: string; via: string; message?: MessageId; kept?: true };
+
 export type Question = {
   asker?: "owner";
   app: string;
@@ -119,6 +131,7 @@ export type Question = {
   answer?: Answer;
   settled?: { note: string; at: string };
 };
+
 // A thread of one app, by that app's id for it: its name, the Claude Code session that serves it and
 // the folder it runs in, its settings, the hash of what its session started with (hub.ts stamp()),
 // the session a new thread forks from at its first start, and where its app opens it.
@@ -135,7 +148,9 @@ export type Thread = {
   fork?: string;
   link?: string;
 };
+
 export type Kept = Omit<Thread, "app" | "thread" | "open">;
+
 // A thread's pinned post in its app, as last written: its status post, which hex writes as the
 // session's note over the thread's questions and tasks (status.ts).
 export type Pin = {
@@ -146,10 +161,13 @@ export type Pin = {
   at: string;
   note: string;
 };
+
 export type NewQuestion = Omit<Question, "at"> & { at?: string };
+
 // Whether a question waits on the owner, as questions({ waiting: true }) tells.
 export const waits = (question: Question) =>
   !question.settled && (question.asker === "owner") === !!question.answer;
+
 type StoredQuestion = {
   asker: "hex" | "owner";
   app: string;
@@ -163,6 +181,7 @@ type StoredQuestion = {
   answer: string | null;
   settled: string | null;
 };
+
 type StoredTask = {
   n: number;
   title: string;
@@ -180,6 +199,7 @@ type StoredTask = {
 // SQL can do, run in the same transaction. Append; never edit one that has shipped. Times are UTC the way toISOString() writes them, so they sort as text. A key starts with
 // its sender, so a key hex makes for a schedule's slot or a job's end can't be one an app sent.
 const UTC = "glob '????-??-??T??:??:??.???Z'";
+
 // Who wrote each message kept before hex kept authors: one with a chat app's user_id is the owner's
 // (Telegram and Discord let only them in), and so is what they typed or tapped in the hex app; in Buzz,
 // which is shared, it's the sender's key; a call's transcript is a call; what hex itself sent a session
@@ -192,9 +212,11 @@ const AUTHOR = `case
     when "from" = 'voice' and json_extract(meta, '$.callee') is null and (json_extract(meta, '$.delegation_id') is not null or json_extract(meta, '$.ended') is not null) then 'call'
     when "from" = 't3' and json_extract(meta, '$.user') is null then 'owner'
     else coalesce(json_extract(meta, '$.user'), "from") end`;
+
 const authors = new Set<string>(["owner", "hex", "prompt", "call", "other"] satisfies Author[]);
 export const isAuthor = (value: unknown): value is Author => authors.has(value as string);
 const AUTHORS = `(${[...authors].map((author) => `'${author}'`).join(", ")})`;
+
 const migrations: (string | ((store: Store) => void))[] = [
   `create table messages (
     n integer primary key,
@@ -305,18 +327,25 @@ const migrations: (string | ((store: Store) => void))[] = [
       `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
       on conflict (app, thread) do update set name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model, effort = excluded.effort, launched = excluded.launched, fork = excluded.fork`,
     );
+
     const text = (value: unknown) => (typeof value === "string" ? value : null);
+
     for (const [app, folder] of apps(dir)) {
       const file = join(folder, "threads.json");
-      if (!existsSync(file)) continue;
+
+      if (!existsSync(file)) {
+        continue;
+      }
       let saved: Record<string, any>;
+
       try {
-        saved = JSON.parse(readFileSync(file, "utf8")) ?? {};
+        saved = JSON.parse(readFileSync(file, "utf-8")) ?? {};
       } catch (error) {
         process.stderr.write(`hex.db left out ${file}, which is unreadable: ${error}\n`);
         continue;
       }
-      for (const [thread, known] of Object.entries(saved))
+
+      for (const [thread, known] of Object.entries(saved)) {
         if (typeof known?.name === "string")
           keep.run(
             app,
@@ -329,6 +358,7 @@ const migrations: (string | ((store: Store) => void))[] = [
             text(known.launched),
             text(known.from),
           );
+      }
     }
   },
   `create table pins (
@@ -358,8 +388,9 @@ const migrations: (string | ((store: Store) => void))[] = [
   // two apps had anyway keeps its open, then newest, row.
   `delete from threads where exists (select 1 from threads other where other.thread = threads.thread and (other.open, other.rowid) > (threads.open, threads.rowid));
   create unique index if not exists threads_key on threads (thread);`,
-  ({ dir }: Store) =>
-    apps(dir).forEach(([app, folder]) => app === "telegram" && rename(join(folder, "bot.json"))),
+  ({ dir }: Store) => {
+    apps(dir).forEach(([app, folder]) => app === "telegram" && rename(join(folder, "bot.json")));
+  },
   // Every pin is its thread's status post. One written by hand keeps its words above its own
   // 🔴 🟡 🟢 lines as the note, under which hex writes its own. One hex can't rewrite is left
   // out: its words unknown, a question, or a message hex.db says someone else wrote (Telegram keys
@@ -368,18 +399,23 @@ const migrations: (string | ((store: Store) => void))[] = [
     const pins = store.db
       .query("select app, thread, message, text from pins where note is null")
       .all() as { app: string; thread: string; message: MessageId; text: string }[];
+
     for (const { app, thread, message, text } of pins) {
       const key = `${app}:${app === "telegram" ? `${thread.split(":")[0]}:` : ""}${message}`;
       const author = store.message(key)?.author;
+
       const kept =
         text !== "" &&
         !store.question(app, thread, message) &&
         (author === undefined || author === "hex");
-      if (kept)
+
+      if (kept) {
         store.db
           .query("update pins set note = ? where app = ? and thread = ?")
           .run(above(text), app, thread);
-      else store.db.query("delete from pins where app = ? and thread = ?").run(app, thread);
+      } else {
+        store.db.query("delete from pins where app = ? and thread = ?").run(app, thread);
+      }
     }
   },
   `create table if not exists beats (session text not null, began text not null check (began ${UTC}), until text check (until ${UTC}), after text check (after ${UTC}));
@@ -393,28 +429,34 @@ const migrations: (string | ((store: Store) => void))[] = [
   `create table if not exists task_agents (agent text primary key, task integer not null references tasks (n), at text not null check (at ${UTC}));`,
   // When a session last finished a turn: what it took before then is handled. Turns kept so far count as handled now.
   ({ db }: Store) => {
-    if (db.query("select 1 from pragma_table_info('turns') where name = 'handled'").get()) return;
+    if (db.query("select 1 from pragma_table_info('turns') where name = 'handled'").get()) {
+      return;
+    }
     db.run(`alter table turns add column handled text check (handled ${UTC})`);
     db.run("update turns set handled = strftime('%Y-%m-%dT%H:%M:%fZ')");
   },
   // Who asked: hex, which waits on the owner's answer, or the owner, who's waited on once hex answered.
   ({ db }: Store) => {
-    if (!db.query("select 1 from pragma_table_info('questions') where name = 'asker'").get())
+    if (!db.query("select 1 from pragma_table_info('questions') where name = 'asker'").get()) {
       db.run(
         `alter table questions add column asker text not null default 'hex' check (asker in ('hex', 'owner'))`,
       );
+    }
   },
   // When a session's turn ended with background agents still working for it, until it hands what it took over.
   ({ db }: Store) => {
-    if (!db.query("select 1 from pragma_table_info('turns') where name = 'waiting'").get())
+    if (!db.query("select 1 from pragma_table_info('turns') where name = 'waiting'").get()) {
       db.run(`alter table turns add column waiting text check (waiting ${UTC})`);
+    }
   },
   // The thread a task's work ran in: the one that closed it, and the one that linked each of its agents.
   ({ db }: Store) => {
-    if (!db.query("select 1 from pragma_table_info('tasks') where name = 'done_in'").get())
+    if (!db.query("select 1 from pragma_table_info('tasks') where name = 'done_in'").get()) {
       db.run("alter table tasks add column done_in text");
-    if (!db.query("select 1 from pragma_table_info('task_agents') where name = 'thread'").get())
+    }
+    if (!db.query("select 1 from pragma_table_info('task_agents') where name = 'thread'").get()) {
       db.run("alter table task_agents add column thread text");
+    }
   },
   // Work on hold, and each thread it holds: when its hold on that thread ended and why, the message that woke it, and when that wake settled.
   `create table if not exists holds (n integer primary key, by text not null, why text not null, message text, until text check (until ${UTC}), at text not null check (at ${UTC}));
@@ -447,18 +489,25 @@ function carryLedgers(store: Store) {
   for (const [app, folder] of apps(store.dir)) {
     rename(join(folder, "threads.json"));
     const file = either(join(folder, "ledger.json"));
-    if (!file) continue;
+
+    if (!file) {
+      continue;
+    }
     const before =
       (
         store.db.query("select body from files where name = ?").get(`${app}/ledger.json`) as {
           body: string;
         } | null
       )?.body ?? "{}";
-    const [book, was] = [() => readFileSync(file, "utf8"), () => before].map((text) =>
+
+    const [book, was] = [() => readFileSync(file, "utf-8"), () => before].map((text) =>
       bookOf(text, file),
     );
+
     // One that can't be read stays where it is, for whoever looks into why.
-    if (!book) continue;
+    if (!book) {
+      continue;
+    }
     const keep = (take: () => unknown, kept: unknown) => {
       try {
         take();
@@ -468,17 +517,32 @@ function carryLedgers(store: Store) {
         );
       }
     };
+
     for (const thread of new Set([...book.pins.keys(), ...(was?.pins.keys() ?? [])])) {
       const [pin, old] = [book.pins.get(thread), was?.pins.get(thread)];
-      if (JSON.stringify(pin) === JSON.stringify(old)) continue;
-      if (!pin) keep(() => store.unpinned(app, thread, old?.message), old);
-      else if (pin.message !== old?.message || store.pin(app, thread)?.message === old?.message)
-        keep(() => store.pinned({ ...pin, app, thread }), pin);
+
+      if (JSON.stringify(pin) === JSON.stringify(old)) {
+        continue;
+      }
+      if (!pin) {
+        keep(() => {
+          store.unpinned(app, thread, old?.message);
+        }, old);
+      } else if (pin.message !== old?.message || store.pin(app, thread)?.message === old?.message) {
+        keep(() => {
+          store.pinned({ ...pin, app, thread });
+        }, pin);
+      }
     }
+
     const asked = new Set((was?.asks ?? []).map((question) => JSON.stringify(question)));
-    for (const question of book.asks)
+
+    for (const question of book.asks) {
       if (!asked.has(JSON.stringify(question)))
-        keep(() => store.ask({ app, ...question }), question);
+        keep(() => {
+          store.ask({ app, ...question });
+        }, question);
+    }
     rename(join(folder, "ledger.json"));
   }
 }
@@ -487,14 +551,20 @@ function carryLedgers(store: Store) {
 function carryRelays(store: Store) {
   for (const [app, folder] of apps(store.dir)) {
     const file = either(join(folder, "relays.jsonl"));
-    if (!file) continue;
-    for (const line of readFileSync(file, "utf8").split("\n")) {
+
+    if (!file) {
+      continue;
+    }
+    for (const line of readFileSync(file, "utf-8").split("\n")) {
       try {
         const { at, from, thread, run } = JSON.parse(line);
-        if ([at, from, thread, run].every((word) => typeof word === "string" && word))
+
+        if ([at, from, thread, run].every((word) => typeof word === "string" && word)) {
           store.relayed(`${app}:${from}`, thread, run, at);
+        }
       } catch {}
     }
+
     rename(join(folder, "relays.jsonl"));
   }
 }
@@ -505,6 +575,7 @@ function bookOf(text: () => string, file: string): Book | undefined {
   try {
     const book = JSON.parse(text()) ?? {};
     const pinned = ([, pin]: [string, any]) => ["number", "string"].includes(typeof pin?.message);
+
     return {
       pins: new Map(
         book.pins && typeof book.pins === "object"
@@ -522,7 +593,10 @@ const now = () => new Date().toISOString();
 
 function holdNumber(id: string) {
   const n = /^h-(\d+)$/.exec(id)?.[1];
-  if (!n) throw new Error(`${id} isn't a hold's id, like h-3`);
+
+  if (!n) {
+    throw new Error(`${id} isn't a hold's id, like h-3`);
+  }
   return Number(n);
 }
 
@@ -538,31 +612,45 @@ const BEATS = 7 * 24 * 60 * 60 * 1000;
 function carryProfile(store: Store) {
   const [file, history] = ["profile.md", "profile.md.history"].map((name) => join(store.dir, name));
   const current = either(file!);
-  if (!current || !readFileSync(current, "utf8").trim()) return;
+
+  if (!current || !readFileSync(current, "utf-8").trim()) {
+    return;
+  }
   const before = either(history!);
+
   const when = (at: unknown) =>
     typeof at === "string" && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(at)
       ? at
       : statSync(before!).mtime.toISOString();
-  const replaced = (before ? readFileSync(before, "utf8").split("\n").filter(Boolean) : []).map(
+
+  const replaced = (before ? readFileSync(before, "utf-8").split("\n").filter(Boolean) : []).map(
     (line) => {
       try {
         const { at, profile } = JSON.parse(line);
+
         return { at: when(at), body: typeof profile === "string" ? profile.trim() : "" };
       } catch {
         return { at: when(undefined), body: "" };
       }
     },
   );
+
   const latest = [replaced.at(-1)?.at ?? "", statSync(current).mtime.toISOString()].sort().at(-1)!;
+
   const versions = [
     ...replaced.map(({ body }, n) => ({ at: replaced[n - 1]?.at ?? replaced[0]!.at, body })),
-    { at: latest, body: readFileSync(current, "utf8").trim() },
+    { at: latest, body: readFileSync(current, "utf-8").trim() },
   ];
+
   const keep = store.db.query("insert into profiles (at, body) values (?, ?)");
   let last = "";
-  for (const { at, body } of versions) if (body && body !== last) keep.run(at, (last = body));
-  for (const each of [file!, history!]) rename(each);
+
+  for (const { at, body } of versions) {
+    if (body && body !== last) keep.run(at, (last = body));
+  }
+  for (const each of [file!, history!]) {
+    rename(each);
+  }
 }
 
 // state/hex.db, the records every hex process shares: the hub, each session's hooks, the hex
@@ -586,13 +674,21 @@ export class Store {
     retry(() => this.db.run("pragma journal_mode = wal"));
     this.db.run("pragma synchronous = full");
     this.db.run("pragma foreign_keys = on");
+
     while (this.version() < migrations.length) {
       this.write(() => {
         const version = this.version();
-        if (version === migrations.length) return;
+
+        if (version === migrations.length) {
+          return;
+        }
         const step = migrations[version]!;
-        if (typeof step === "string") this.db.run(step);
-        else step(this);
+
+        if (typeof step === "string") {
+          this.db.run(step);
+        } else {
+          step(this);
+        }
         this.db.run(`pragma user_version = ${version + 1}`);
       });
     }
@@ -602,27 +698,40 @@ export class Store {
   // IMMEDIATE), so what fn reads can't change before it commits; a write() inside it joins it.
   // Keep fn short and local: every other process's writes wait for it.
   write<T>(fn: () => T): T {
-    if (this.writing) return fn();
+    if (this.writing) {
+      return fn();
+    }
     const before = this.changes();
+
     const result = retry(() => {
       this.writing = true;
+
       try {
         return this.db.transaction(fn).immediate();
       } finally {
         this.writing = false;
       }
     });
-    if (this.changes() !== before) appendFileSync(this.bell, ".");
+
+    if (this.changes() !== before) {
+      appendFileSync(this.bell, ".");
+    }
     return result;
   }
 
   // Calls back after each change any process commits, until the stop it returns is called.
   watch(listener: () => void): () => void {
     this.listeners.add(listener);
-    this.watcher ??= watch(this.bell, () => this.rang());
+    this.watcher ??= watch(this.bell, () => {
+      this.rang();
+    });
+
     return () => {
       this.listeners.delete(listener);
-      if (this.listeners.size) return;
+
+      if (this.listeners.size) {
+        return;
+      }
       this.watcher?.close();
       this.watcher = undefined;
     };
@@ -633,9 +742,11 @@ export class Store {
   // passed. Listeners run once for each time hex.db moved, however many rings that took.
   private rang(again = false) {
     const moved = this.moved();
+
     if (moved !== this.heard) {
       this.heard = moved;
-      for (const each of this.listeners)
+
+      for (const each of this.listeners) {
         try {
           each();
         } catch (error) {
@@ -643,18 +754,23 @@ export class Store {
             throw error;
           });
         }
-    } else if (again) return;
+      }
+    } else if (again) {
+      return;
+    }
     setTimeout(() => this.watcher && this.rang(true), 5);
   }
 
   // Keeps a new message. A key that's kept already is its sender sending it again: false. by: the
   // session that wrote it, which has it in its conversation already.
   deliver({ key, to, from, author, body, meta }: NewRow, by?: string): boolean {
-    if (!isAuthor(author))
+    if (!isAuthor(author)) {
       throw new Error(
         `${key}'s author is ${author || "missing"}: a message's author is owner, hex, prompt, call or other`,
       );
+    }
     const at = now();
+
     return this.write(
       () =>
         this.db
@@ -688,9 +804,11 @@ export class Store {
             "insert into operations (scope, id, input) values (?, ?, ?) on conflict do nothing",
           )
           .run(scope, id, input).changes > 0;
+
       const kept = this.db
         .query("select input, result from operations where scope = ? and id = ?")
         .get(scope, id) as { input: string; result: string | null };
+
       return { fresh, ...kept };
     });
   }
@@ -711,6 +829,7 @@ export class Store {
       const at = this.db.query(
         "update messages set at = ?2, taken_at = ?2, observed_at = ?2 where key = ?1",
       );
+
       return rows
         .filter(([row, when]) => this.deliver(row, by) && at.run(row.key, when))
         .map(([row]) => row.key);
@@ -731,6 +850,7 @@ export class Store {
 
   message(key: string): Row | null {
     const row = this.db.query("select * from messages where key = ?").get(key) as Stored | null;
+
     return row && toRow(row);
   }
 
@@ -754,13 +874,17 @@ export class Store {
     const prefix = key.slice(app.length + 1, Math.max(app.length + 1, key.lastIndexOf(":")));
     const chat = prefix || (of ? named!.to.split(":")[0] : "");
     const original = of ? this.message(`${app}:${prefix && `${prefix}:`}${id}`) : named;
+
     const edit = this.db
       .query(
         `select * from messages where "from" = ?1 and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ?2
            and (?3 = '' or "to" = ?3 or "to" like ?3 || ':%') order by at desc, n desc limit 1`,
       )
       .get(app, id, chat) as Stored | null;
-    if (!edit) return original ?? named;
+
+    if (!edit) {
+      return original ?? named;
+    }
     return original
       ? { ...original, body: edit.body, meta: { ...original.meta, edit: edit.key } }
       : toRow(edit);
@@ -784,6 +908,7 @@ export class Store {
         `select * from messages where "to" = ?1 and substr(key, -length(?2) - 1) = ':' || ?2 order by at desc, n desc limit 1`,
       )
       .get(thread, String(message)) as Stored | null;
+
     return row && toRow(row);
   }
 
@@ -805,6 +930,7 @@ export class Store {
         `select taken_by, taken_at from messages where "to" = ? and json_extract(meta, '$.' || ?) = ? and taken_by is not null order by n desc limit 1`,
       )
       .get(thread, key, value) as { taken_by: string; taken_at: string } | null;
+
     return row ? { by: row.taken_by, at: row.taken_at } : undefined;
   }
 
@@ -818,9 +944,11 @@ export class Store {
           'select * from messages where (taken_by = ? or "to" = ?) and taken_at <= ? and observed_at is null and (observing_at is null or observing_at < ?) order by taken_at',
         )
         .all(session, thread ?? null, by, new Date(Date.now() - lease).toISOString()) as Stored[];
+
       this.db
         .query("update messages set observing_at = ? where key in (select value from json_each(?))")
         .run(now(), JSON.stringify(rows.map((row) => row.key)));
+
       return rows.map(toRow);
     });
   }
@@ -850,6 +978,7 @@ export class Store {
               'select * from messages where taken_at is null and "to" in (select value from json_each(?)) order by n',
             )
             .all(JSON.stringify([thread].flat()));
+
     return (rows as Stored[]).map(toRow);
   }
 
@@ -860,11 +989,13 @@ export class Store {
     const { last } = this.db
       .query('select max(n) as last from messages where "to" = ?')
       .get(thread) as { last: number | null };
+
     const { untaken } = this.db
       .query(
         'select count(*) as untaken from messages indexed by untaken where taken_at is null and "to" = ?',
       )
       .get(thread) as { untaken: number };
+
     return `${last}:${untaken}`;
   }
 
@@ -878,6 +1009,7 @@ export class Store {
           "insert into leases (name, holder, until) values (?, ?, ?) on conflict (name) do update set until = excluded.until where holder = excluded.holder",
         )
         .run(name, holder, until);
+
       return (
         (this.db.query("select holder from leases where name = ?").get(name) as { holder: string })
           .holder === holder
@@ -903,6 +1035,7 @@ export class Store {
       n: number;
       pass: string;
     } | null;
+
     return row ? { n: row.n, pass: JSON.parse(row.pass) } : undefined;
   }
 
@@ -930,6 +1063,7 @@ export class Store {
   // yet: a job runs each time it comes due until the owner stops it.
   fire(schedule: string, minute: number, to: string, body: string, late = false): boolean {
     const slot = new Date(minute * 60_000).toISOString().slice(0, 16);
+
     return this.deliver({
       key: `schedule:${schedule}@${slot}Z`,
       to,
@@ -949,18 +1083,27 @@ export class Store {
   }: Omit<Hold, "id" | "at" | "threads"> & { threads: string[] }): Hold {
     why = why.trim();
     threads = [...new Set(threads)].filter((thread) => thread !== by);
-    if (!threads.length)
+
+    if (!threads.length) {
       throw new Error("a hold names the threads it holds, other than the one holding them");
-    if (!why) throw new Error("a hold says why");
-    if (message && !this.message(message)) throw new Error(`no message ${message}`);
-    if (until !== undefined && !(Date.parse(until) > Date.now()))
+    }
+    if (!why) {
+      throw new Error("a hold says why");
+    }
+    if (message && !this.message(message)) {
+      throw new Error(`no message ${message}`);
+    }
+    if (until !== undefined && !(Date.parse(until) > Date.now())) {
       throw new Error(`${until} has passed, so that hold would end as it starts`);
+    }
     return this.write(() => {
       const { lastInsertRowid } = this.db
         .query("insert into holds (by, why, message, until, at) values (?, ?, ?, ?, ?)")
         .run(by, why, message ?? null, until ?? null, now());
-      for (const thread of threads)
+
+      for (const thread of threads) {
         this.db.query("insert into held (hold, thread) values (?, ?)").run(lastInsertRowid, thread);
+      }
       return this.holdOf(`h-${lastInsertRowid}`)!;
     });
   }
@@ -983,6 +1126,7 @@ export class Store {
       until: string | null;
       at: string;
     }[];
+
     return rows.map(({ n, message, until, ...hold }) => ({
       id: `h-${n}`,
       ...hold,
@@ -1002,10 +1146,18 @@ export class Store {
   // Ends a hold on the threads named, or all it still holds, saying why; returns the threads it freed.
   unhold(id: string, ending: string, threads?: string[], at = now()): string[] {
     const hold = this.holdOf(id);
-    if (!hold) throw new Error(`no hold ${id}`);
-    if (!ending.trim()) throw new Error("say why the hold ends");
+
+    if (!hold) {
+      throw new Error(`no hold ${id}`);
+    }
+    if (!ending.trim()) {
+      throw new Error("say why the hold ends");
+    }
     const stray = threads?.filter((thread) => !hold.threads.some((held) => held.thread === thread));
-    if (stray?.length) throw new Error(`${id} doesn't hold ${stray.join(", ")}`);
+
+    if (stray?.length) {
+      throw new Error(`${id} doesn't hold ${stray.join(", ")}`);
+    }
     return this.write(() =>
       (
         this.db
@@ -1065,11 +1217,13 @@ export class Store {
           or exists (select 1 from messages m join turns t on t.session = m.taken_by where m.key = held.woke and t.ended >= m.taken_at)
           or exists (select 1 from messages m where m.key = held.woke and m.at < ?2))`)
         .run(at, new Date(Date.parse(at) - patience).toISOString());
+
       const { count, oldest } = this.db
         .query(
           "select count(distinct thread) as count, min(m.at) as oldest from held join messages m on m.key = held.woke where settled is null",
         )
         .get() as { count: number; oldest: string | null };
+
       return {
         count,
         ...(oldest && { until: new Date(Date.parse(oldest) + patience).toISOString() }),
@@ -1081,16 +1235,20 @@ export class Store {
   // in the message as written. A session points at what was said; it can't retype it.
   createTask({ title, message, quote, owner, status = "open", project, doneWhen }: NewTask): Task {
     title = oneLine(title ?? "");
-    if (!title)
+
+    if (!title) {
       throw new Error("a task needs a title: what the owner wants done, in a few plain words");
+    }
     return this.write(() => {
       const { lastInsertRowid } = this.db
         .query(
           "insert into tasks (title, owner, status, project, done_when, at) values (?, ?, ?, ?, ?, ?)",
         )
         .run(title, owner, status, project ?? null, doneWhen ?? null, now());
+
       const id = `t-${lastInsertRowid}`;
       this.quote(id, message, quote);
+
       return this.task(id)!;
     });
   }
@@ -1101,6 +1259,7 @@ export class Store {
     return this.write(() => {
       const live = this.live(id);
       this.quote(live, message, quote);
+
       return this.task(live)!;
     });
   }
@@ -1111,60 +1270,87 @@ export class Store {
     return this.write(() => {
       const live = this.live(id);
       const said = this.message(message);
-      if (!said) throw new Error(`no message ${message}`);
+
+      if (!said) {
+        throw new Error(`no message ${message}`);
+      }
       const rows = this.db
         .query("select rowid, text from words where task = ? and message = ? order by rowid")
         .all(number(live), message) as { rowid: number; text: string }[];
+
       const pieces = said.from === "t3" ? sent(said.body) : [];
+
       const whole =
         rows.find((row) => row.text === said.body) ??
         rows.find((row) => pieces.includes(row.text) && row.text.includes(quote));
+
       const held = rows.find((row) => row.text === quote);
+
       if (!whole) {
-        if (held) return this.task(live)!;
+        if (held) {
+          return this.task(live)!;
+        }
         throw new Error(`${live} holds no whole message ${message} to cut "${quote}" from`);
       }
-      if (whole === held) return this.task(live)!;
+
+      if (whole === held) {
+        return this.task(live)!;
+      }
       if (
         !whole.text.includes(quote) ||
         (said.from === "t3" && !pieces.some((piece) => piece.includes(quote)))
-      )
+      ) {
         throw new Error(`"${quote}" isn't in what ${live} holds from ${message}`);
-      if (held && whole.text !== said.body) return this.task(live)!;
+      }
+      if (held && whole.text !== said.body) {
+        return this.task(live)!;
+      }
       const others =
         whole.text === said.body
           ? rows.filter(
               (row) => row === held || (pieces.includes(row.text) && row.text.includes(quote)),
             )
           : [];
-      for (const row of others.filter((row) => row !== whole))
+
+      for (const row of others.filter((row) => row !== whole)) {
         this.db.query("delete from words where rowid = ?").run(row.rowid);
+      }
       this.db.query("update words set text = ? where rowid = ?").run(quote, whole.rowid);
+
       return this.task(live)!;
     });
   }
 
   editTask(id: string, change: TaskChange): Task {
     const title = change.title === undefined ? undefined : oneLine(change.title);
-    if (title === "") throw new Error("a task's title can't be empty");
+
+    if (title === "") {
+      throw new Error("a task's title can't be empty");
+    }
     return this.write(() => {
       const task = this.task(id);
-      if (!task) throw new Error(`no task ${id}`);
+
+      if (!task) {
+        throw new Error(`no task ${id}`);
+      }
       const next = {
         ...task,
         ...Object.fromEntries(
           Object.entries({ ...change, title }).filter(([, value]) => value !== undefined),
         ),
       };
+
       // A task that's live again isn't done, so the proof it was closed with goes.
-      if ((next.status === "open" || next.status === "idea") && change.proof === undefined)
+      if ((next.status === "open" || next.status === "idea") && change.proof === undefined) {
         delete next.proof;
+      }
       const closed =
         next.status === "done" || next.status === "dropped"
           ? next.status === task.status
             ? task.closed
             : now()
           : undefined;
+
       this.db
         .query(
           "update tasks set title = ?, owner = ?, status = ?, project = ?, done_when = ?, proof = ?, closed = ? where n = ?",
@@ -1179,8 +1365,10 @@ export class Store {
           closed ?? null,
           number(id),
         );
-      if (change.doneIn)
+
+      if (change.doneIn) {
         this.db.query("update tasks set done_in = ? where n = ?").run(change.doneIn, number(id));
+      }
       return this.task(id)!;
     });
   }
@@ -1189,15 +1377,21 @@ export class Store {
   addAgents(id: string, agents: string[], thread?: string): Task {
     return this.write(() => {
       const short = agents.find((agent) => !/^[\w-]{8,}$/.test(agent));
-      if (short)
+
+      if (short) {
         throw new Error(
           `"${short}" isn't an agent or session id: use the id it was started with, 8 characters or more`,
         );
+      }
       const live = this.live(id);
+
       const add = this.db.query(
         "insert into task_agents (agent, task, at, thread) values (?, ?, ?, ?) on conflict (agent) do update set task = excluded.task, at = excluded.at, thread = excluded.thread",
       );
-      for (const agent of agents) add.run(agent, number(live), now(), thread ?? null);
+
+      for (const agent of agents) {
+        add.run(agent, number(live), now(), thread ?? null);
+      }
       return this.task(live)!;
     });
   }
@@ -1207,11 +1401,13 @@ export class Store {
     const closed = this.db
       .query("select done_in from tasks where n = ? and done_in is not null")
       .all(number(id)) as { done_in: string }[];
+
     const linked = this.db
       .query(
         "select thread from task_agents where task = ? and thread is not null order by at desc",
       )
       .all(number(id)) as { thread: string }[];
+
     return [...closed.map((row) => row.done_in), ...linked.map((row) => row.thread)];
   }
 
@@ -1222,6 +1418,7 @@ export class Store {
         "select a.agent, t.n, t.owner, t.project from task_agents a join tasks t on t.n = a.task",
       )
       .all() as { agent: string; n: number; owner: string; project: string | null }[];
+
     return Object.fromEntries(
       rows.map((row) => [
         row.agent,
@@ -1233,13 +1430,20 @@ export class Store {
   // Folds a duplicate into the task it repeats: its words follow into's, and it's dropped.
   mergeTasks(into: string, from: string): Task {
     return this.write(() => {
-      if (number(into) === number(from)) throw new Error(`${into} can't be merged into itself`);
+      if (number(into) === number(from)) {
+        throw new Error(`${into} can't be merged into itself`);
+      }
       for (const id of [into, from]) {
         const status = this.task(id)?.status;
-        if (!status) throw new Error(`no task ${id}`);
-        if (status !== "idea" && status !== "open")
+
+        if (!status) {
+          throw new Error(`no task ${id}`);
+        }
+        if (status !== "idea" && status !== "open") {
           throw new Error(`${id} is ${status}; only idea and open tasks merge`);
+        }
       }
+
       this.db
         .query(
           "insert or ignore into words (task, message, text) select ?, message, text from words where task = ? order by rowid",
@@ -1251,6 +1455,7 @@ export class Store {
       this.db
         .query("update task_agents set task = ? where task = ?")
         .run(number(into), number(from));
+
       return this.task(into)!;
     });
   }
@@ -1259,6 +1464,7 @@ export class Store {
     const row = this.db
       .query("select * from tasks where n = ?")
       .get(number(id)) as StoredTask | null;
+
     return row && this.toTask(row);
   }
 
@@ -1275,9 +1481,11 @@ export class Store {
       owner !== undefined && ["owner = ?", owner],
       status && ["status in (select value from json_each(?))", JSON.stringify(status)],
     ]);
+
     const rows = this.db
       .query(`select * from tasks ${where} order by at desc, n desc`)
       .all(...params) as StoredTask[];
+
     return rows.map((row) => (words ? this.toTask(row) : toLine(row)));
   }
 
@@ -1288,6 +1496,7 @@ export class Store {
         "select * from tasks where owner = ? and status = 'done' order by closed desc, n desc limit ?",
       )
       .all(owner, count) as StoredTask[];
+
     return rows.map(toLine);
   }
 
@@ -1298,6 +1507,7 @@ export class Store {
         "select * from tasks where status = 'done' and closed >= ? order by closed desc, n desc",
       )
       .all(since) as StoredTask[];
+
     return rows.map(toLine);
   }
 
@@ -1311,6 +1521,7 @@ export class Store {
           "update threads set open = 0 where app = ? and open = 1 and thread not in (select value from json_each(?))",
         )
         .run(app, JSON.stringify(Object.keys(open)));
+
       const keep = this.db.query(
         `insert into threads (app, thread, name, open, session, cwd, model, effort, launched, fork, link) values (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?)
         on conflict (thread) do update set app = excluded.app, name = excluded.name, open = 1, session = excluded.session, cwd = excluded.cwd, model = excluded.model,
@@ -1318,10 +1529,11 @@ export class Store {
         where (app, name, open, session, cwd, model, effort, launched, fork) is not (excluded.app, excluded.name, 1, excluded.session, excluded.cwd, excluded.model, excluded.effort, excluded.launched, excluded.fork)
           or coalesce(excluded.link, link) is not link`,
       );
+
       for (const [
         thread,
         { name, session, cwd, model, effort, launched, fork, link },
-      ] of Object.entries(open))
+      ] of Object.entries(open)) {
         keep.run(
           app,
           thread,
@@ -1334,6 +1546,7 @@ export class Store {
           fork ?? null,
           link ?? null,
         );
+      }
     });
   }
 
@@ -1347,6 +1560,7 @@ export class Store {
       string,
       string | null
     > & { open: number })[];
+
     return rows.map(({ open, ...row }) => ({
       ...(Object.fromEntries(Object.entries(row).filter(([, value]) => value !== null)) as Omit<
         Thread,
@@ -1375,6 +1589,7 @@ export class Store {
   // A thread's key from its id, <app>:<key>, or from the key itself.
   key(id: string): string {
     const split = id.indexOf(":");
+
     return split > 0 &&
       this.db.query("select 1 from threads where app = ? limit 1").get(id.slice(0, split))
       ? id.slice(split + 1)
@@ -1421,6 +1636,7 @@ export class Store {
     const row = this.db
       .query("select * from questions where app = ? and thread = ? and message = ?")
       .get(app, thread, message) as StoredQuestion | null;
+
     return row && toQuestion(row);
   }
 
@@ -1428,6 +1644,7 @@ export class Store {
     const row = this.db
       .query("select * from questions where app = ? and poll = ?")
       .get(app, poll) as StoredQuestion | null;
+
     return row && toQuestion(row);
   }
 
@@ -1452,6 +1669,7 @@ export class Store {
         `settled is null and (asker = 'hex' and answer is null or asker = 'owner' and answer is not null)`,
       ],
     ]);
+
     return (
       this.db
         .query(`select * from questions ${where} order by n`)
@@ -1572,9 +1790,14 @@ export class Store {
   // over the one they read. The one it replaced stays, as history.
   profiled(before: string, body: string, at = now()): boolean {
     return this.write(() => {
-      if (this.profile() !== before.trim()) return false;
-      if (body.trim() === before.trim()) return true;
+      if (this.profile() !== before.trim()) {
+        return false;
+      }
+      if (body.trim() === before.trim()) {
+        return true;
+      }
       this.db.query("insert into profiles (at, body) values (?, ?)").run(at, body.trim());
+
       return true;
     });
   }
@@ -1662,6 +1885,7 @@ export class Store {
     this.write(() => {
       const { began, ended } = this.turn(session);
       const opens = heartbeat && (!began || !!ended);
+
       const from =
         opens &&
         flipped !== undefined &&
@@ -1669,35 +1893,42 @@ export class Store {
         (!ended || flipped > Date.parse(ended))
           ? new Date(flipped).toISOString()
           : at;
-      if (busy && !heartbeat)
+
+      if (busy && !heartbeat) {
         this.db.query("delete from beats where session = ? and began > ?").run(session, at);
-      if ((!heartbeat && (busy || !began || at >= began)) || opens)
+      }
+      if ((!heartbeat && (busy || !began || at >= began)) || opens) {
         this.db
           .query("update beats set until = ? where session = ? and until is null and began <= ?")
           .run(at, session, at);
-      if (busy && !heartbeat)
+      }
+      if (busy && !heartbeat) {
         this.db
           .query("update beats set after = ? where session = ? and after is null")
           .run(at, session);
-      if (opens)
+      }
+      if (opens) {
         this.db.query("insert into beats (session, began) values (?, ?)").run(session, from);
+      }
       this.db
         .query(
           "delete from beats where coalesce(after, until, began) < ? and (after is not null or rowid > (select min(rowid) from beats run where run.session = beats.session and run.after is null))",
         )
         .run(new Date(Date.parse(at) - BEATS).toISOString());
-      if (busy)
+
+      if (busy) {
         this.db
           .query(
             "insert into turns (session, began, handled) values (?1, ?2, ?2) on conflict (session) do update set began = excluded.began, ended = null, handled = coalesce(handled, excluded.began)",
           )
           .run(session, at);
-      else
+      } else {
         this.db
           .query(
             "insert into turns (session, ended) values (?, ?) on conflict (session) do update set ended = iif(began is null or excluded.ended >= began, excluded.ended, ended)",
           )
           .run(session, at);
+      }
       this.db
         .query("delete from turns where coalesce(ended, began) < ?")
         .run(new Date(Date.parse(at) - TURNS).toISOString());
@@ -1711,6 +1942,7 @@ export class Store {
   // Each session's heartbeats, oldest first.
   everyBeat(): Map<string, { began: string; until?: string; after?: string }[]> {
     const beats = new Map<string, { began: string; until?: string; after?: string }[]>();
+
     for (const { session, ...row } of this.db
       .query("select session, began, until, after from beats order by began")
       .all() as Record<string, string | null>[]) {
@@ -1719,8 +1951,10 @@ export class Store {
         until?: string;
         after?: string;
       };
+
       beats.set(session!, [...(beats.get(session!) ?? []), beat]);
     }
+
     return beats;
   }
 
@@ -1739,7 +1973,10 @@ export class Store {
   handled(session: string, at = now()) {
     this.write(() => {
       const { began, ended } = this.turn(session);
-      if (began && !ended) this.turned(session, false, at);
+
+      if (began && !ended) {
+        this.turned(session, false, at);
+      }
       this.db
         .query(
           "insert into turns (session, ended, handled) values (?1, ?2, ?2) on conflict (session) do update set handled = max(coalesce(handled, ?2), ?2), waiting = null",
@@ -1767,14 +2004,17 @@ export class Store {
           `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null))`,
         )
         .all(thread, session ?? null) as { session: string; handled: string | null }[];
+
       return open.flatMap(({ session, handled }) => {
         this.turned(session, false, at);
         this.db.query("update turns set waiting = null where session = ?").run(session);
+
         const given = this.db
           .query(
             `update messages set taken_by = null, taken_at = null where taken_by = ? and author <> 'hex' and "from" <> 'terminal' and taken_at > ? returning key`,
           )
           .values(session, handled) as [string][];
+
         return given.map(([key]) => key);
       });
     });
@@ -1802,6 +2042,7 @@ export class Store {
     const row = this.db
       .query("select began, ended, handled from turns where session = ?")
       .get(session) as Record<string, string | null> | null;
+
     return Object.fromEntries(Object.entries(row ?? {}).filter(([, value]) => value));
   }
 
@@ -1827,43 +2068,56 @@ export class Store {
 
   private quote(task: string, message: string, quote?: string) {
     const said = this.message(message);
-    if (!said) throw new Error(`no message ${message}`);
+
+    if (!said) {
+      throw new Error(`no message ${message}`);
+    }
     const pieces = quote === undefined && said.from === "t3" ? sent(said.body) : [];
+
     if (
       quote === undefined &&
       this.db.query("select 1 from words where task = ? and message = ?").get(number(task), message)
-    )
+    ) {
       return;
+    }
     const texts =
-      quote !== undefined
-        ? [quote]
-        : said.from === "t3"
+      quote === undefined
+        ? said.from === "t3"
           ? pieces
           : said.author === "call"
             ? spoken(said).split("\n")
-            : [said.body];
-    if (!texts.length) throw new Error(`${message} has no words to quote`);
-    if (!spoken(said))
+            : [said.body]
+        : [quote];
+
+    if (!texts.length) {
+      throw new Error(`${message} has no words to quote`);
+    }
+    if (!spoken(said)) {
       throw new Error(
         `${message} is ${said.author}'s, not the owner's; a task holds the owner's words`,
       );
+    }
     for (const text of texts) {
-      if (!text)
+      if (!text) {
         throw new Error(
           quote === undefined
             ? `${message} has no words to quote`
             : "a quote needs words from the message",
         );
+      }
       if (!spoken(said).includes(text)) {
         const now = this.latest(message);
-        if (now?.meta?.edit && spoken(now).includes(text))
+
+        if (now?.meta?.edit && spoken(now).includes(text)) {
           throw new Error(
             `"${text}" is in ${now.meta.edit}, the owner's edit of ${message}: quote it under that key`,
           );
+        }
         throw new Error(
           `"${text}" isn't in ${message} as written; quote it character for character, or leave the quote out for all it asks`,
         );
       }
+
       this.db
         .query(
           "insert into words (task, message, text) values (?, ?, ?) on conflict (task, message, text) do nothing",
@@ -1883,7 +2137,10 @@ export class Store {
          select n from chain where next is null`,
       )
       .get(number(id)) as { n: number } | null;
-    if (!row) throw new Error(`no task ${id}`);
+
+    if (!row) {
+      throw new Error(`no task ${id}`);
+    }
     return `t-${row.n}`;
   }
 
@@ -1894,6 +2151,7 @@ export class Store {
          from words join messages on messages.key = words.message where words.task = ? order by words.rowid`,
       )
       .all(row.n) as Words[];
+
     return { ...toLine(row), words };
   }
 
@@ -1916,23 +2174,32 @@ const stores = new Map<string, Store>();
 // hex's folder, and the state folder hex.db is in. A hub's (own: its app's folder) is its hex's, or
 // outside a hex its own; it names it in HEX_STORE for its sessions, whose hooks and commands read it.
 export const hexDir = () => process.env.HEX_DIR || join(import.meta.dir, "..", "..");
+
 export function stateDir(own?: string) {
-  if (own) return process.env.HEX_DIR ? join(process.env.HEX_DIR, "state") : own;
+  if (own) {
+    return process.env.HEX_DIR ? join(process.env.HEX_DIR, "state") : own;
+  }
   return process.env.HEX_STORE || join(hexDir(), "state");
 }
 
 // The store in dir (a hex's state/), one per process.
 export function open(dir: string): Store {
   let store = stores.get(dir);
-  if (!store) stores.set(dir, (store = new Store(dir)));
+
+  if (!store) {
+    stores.set(dir, (store = new Store(dir)));
+  }
   return store;
 }
 
-const oneLine = (text: string) => text.replace(/\s+/g, " ").trim();
+const oneLine = (text: string) => text.replaceAll(/\s+/g, " ").trim();
 
 function number(id: string): number {
   const n = Number(id.replace(/^t-/, ""));
-  if (!Number.isInteger(n)) throw new Error(`${id} isn't a task id, like t-12`);
+
+  if (!Number.isInteger(n)) {
+    throw new Error(`${id} isn't a task id, like t-12`);
+  }
   return n;
 }
 
@@ -1954,6 +2221,7 @@ function toLine(row: StoredTask): Omit<Task, "words"> {
 // A where clause from the terms that apply, each with the value it binds, if any.
 function clause(terms: (false | undefined | [string, ...string[]])[]): [string, string[]] {
   const kept = terms.filter((term) => !!term);
+
   return [
     kept.length ? `where ${kept.map(([sql]) => sql).join(" and ")}` : "",
     kept.flatMap(([, ...values]) => values),
@@ -1980,19 +2248,21 @@ function toQuestion(row: StoredQuestion): Question {
 // or what's left without T3's blocks.
 export function asked(text: string) {
   return (
-    text.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/)?.[1] ??
-    text.replace(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, "")
+    /<user_request>\n?([\s\S]*?)\n?<\/user_request>/.exec(text)?.[1] ??
+    text.replaceAll(/^<([a-z0-9_]+)>[\s\S]*?<\/\1>$/gm, "")
   ).trim();
 }
 
 // What the owner sent in a T3 prompt, piece by piece: the prompt without T3's own blocks, with the
 // request unwrapped, and anything sent with it, like an attachment, as a piece of its own.
 export function sent(body: string) {
-  const request = body.match(/<user_request>\n?([\s\S]*?)\n?<\/user_request>/);
+  const request = /<user_request>\n?([\s\S]*?)\n?<\/user_request>/.exec(body);
+
   const around = (text: string) =>
     text
       .split(/^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/m)
       .filter((_, i) => i % 2 === 0);
+
   const pieces = request
     ? [
         ...around(body.slice(0, request.index)),
@@ -2000,25 +2270,30 @@ export function sent(body: string) {
         ...around(body.slice(request.index! + request[0].length)),
       ]
     : around(body);
+
   return pieces.map((piece) => piece.trim()).filter(Boolean);
 }
 
 // The owner's own words in a message: all of it when they wrote it, less the context T3 Code sends
 // around a prompt; their lines of a call's transcript; and nothing of anyone else's.
 export function spoken(row: Row): string {
-  if (row.author === "owner")
+  if (row.author === "owner") {
     return row.from === "t3"
       ? row.body.replace(
           /^<(t3_code_instructions|runtime_info|pull_request_linking)>[\s\S]*?<\/\1>$/gm,
           "",
         )
       : row.body;
-  if (row.author !== "call") return "";
+  }
+  if (row.author !== "call") {
+    return "";
+  }
   return [...row.body.matchAll(/^\[[\d.]+s\] you: (.*)$/gm)].map(([, line]) => line).join("\n");
 }
 
 // hex's own words, as it sent them: a reply, a post, a terminal's answer. What hex tells a session is a prompt.
 export const replied = (row: Row) => row.author === "hex";
+
 // A row of the conversation: not a reply of hex's that failed, was an edit, or asked a permission.
 export const shown = (row: Row) =>
   !replied(row) || !(row.meta?.failed || row.meta?.edited || row.meta?.permission);
@@ -2043,8 +2318,9 @@ function retry<T>(fn: () => T): T {
     try {
       return fn();
     } catch (error: any) {
-      if (!String(error?.code ?? error?.message).includes("SQLITE_BUSY") || attempt === 5)
+      if (!String(error?.code ?? error?.message).includes("SQLITE_BUSY") || attempt === 5) {
         throw error;
+      }
       Bun.sleepSync(20 * attempt);
     }
   }
