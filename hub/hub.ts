@@ -577,6 +577,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     clock.clearTimeout(run.rest)
     runs.delete(thread)
     rmSync(settingsOf(thread), { force: true })
+    rmSync(heldOf(thread), { recursive: true, force: true })
     run.leaving!(session)
   }
 
@@ -675,6 +676,11 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
     return join(sessionsDir, `${encodeURIComponent(thread)}.json`)
   }
 
+  // Where the thread's session keeps the copy of its instruction files it loads (bin/instructions hold).
+  function heldOf(thread: string) {
+    return join(sessionsDir, encodeURIComponent(thread))
+  }
+
   // A respawn reads the same file, so it gets the hub's current token too. It runs without the
   // launcher, so the file keeps what the launcher added and renews only the hub's keys.
   function writeSettings(thread: string, launched: ReturnType<typeof claude.settingsOf> = {}) {
@@ -687,7 +693,7 @@ export function startHub({ stateDir, storeDir = storeOf(stateDir), channel, serv
       HEX_STORE: storeDir,
       ...(connect ? { MCP_TIMEOUT: String(connect) } : {}),
       ...(general && thread === main ? { HEX_MAIN: '1' } : {}),
-      ...(fresh(thread) ? { HEX_FRESH: '1' } : {}),
+      ...(fresh(thread) ? { HEX_FRESH: '1' } : { HEX_HELD: heldOf(thread) }),
     }
     writeFileSync(settingsOf(thread), JSON.stringify({ ...launched, enabledPlugins: { ...launched?.enabledPlugins, [plugin]: true }, env: { ...launched?.env, ...env } }), { mode: 0o600 })
   }
