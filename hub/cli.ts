@@ -501,9 +501,9 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
           message: id,
           owner: flags.owner ?? thread ?? said.to,
           status: flags.idea === true ? "idea" : "open",
-          ...(flags.quote !== undefined && { quote: flags.quote }),
-          ...(flags.project !== undefined && { project: flags.project }),
-          ...(flags["done-when"] !== undefined && { doneWhen: flags["done-when"] }),
+          quote: flags.quote,
+          project: flags.project,
+          doneWhen: flags["done-when"],
         }),
       ]);
 
@@ -539,7 +539,7 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
         store.editTask(id, {
           status: "done",
           proof: flags.proof,
-          ...(thread !== undefined && { doneIn: thread }),
+          doneIn: thread,
         }),
       ]);
 
@@ -577,10 +577,10 @@ function runTask(verb: string, id: string | undefined, key: string | undefined, 
 
       show([
         store.editTask(id, {
-          ...(flags.title !== undefined && { title: flags.title }),
-          ...(flags.owner !== undefined && { owner: flags.owner }),
-          ...(flags.project !== undefined && { project: flags.project }),
-          ...(flags["done-when"] !== undefined && { doneWhen: flags["done-when"] }),
+          title: flags.title,
+          owner: flags.owner,
+          project: flags.project,
+          doneWhen: flags["done-when"],
         }),
       ]);
 
@@ -718,8 +718,8 @@ function hold(words: string[]) {
       threads: holdable(words),
       by,
       why: flags.why,
-      ...(flags.key !== undefined && { message: flags.key }),
-      ...(filled(flags.until) && { until: instant(flags.until, zone) }),
+      message: flags.key,
+      until: filled(flags.until) ? instant(flags.until, zone) : undefined,
     },
     { working: working(), ...(zone !== undefined && { zone }) },
   );
@@ -780,7 +780,7 @@ try {
       show(
         store.tasks({
           status: flags.status?.split(",").filter(isStatus) ?? ["open"],
-          ...(owner !== undefined && { owner }),
+          owner,
         }),
         false,
       );
@@ -792,7 +792,7 @@ try {
 
       const questions = store.questions({
         waiting: true,
-        ...(thread !== undefined && { thread }),
+        thread,
       });
 
       if (flags.json === true) {
@@ -818,7 +818,7 @@ try {
 
     case "pins": {
       const thread = flags.thread ?? ownThread;
-      const pins = store.pins(thread === undefined ? {} : { thread });
+      const pins = store.pins({ thread });
       const names = store.names();
 
       if (flags.json === true) {
