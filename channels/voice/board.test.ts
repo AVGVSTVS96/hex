@@ -1115,3 +1115,16 @@ test("each task closed in the last day is finished under the run it was done for
   await until(() => board.finished.length === 1)
   expect(board.finished[0]!.id).toBe(launch.id)
 })
+
+test("a task General owns with no project is finished in the topic its proof was posted in", async () => {
+  const store = open(state)
+  store.deliver({ key: 'telegram:-1001234567890:9010', to: '-1001234567890', from: 'telegram', author: 'owner', body: 'turn off the mic' })
+  store.deliver({ key: 'telegram:-1001234567890:9011', to: '-1001234567890:2583', from: 'telegram', author: 'hex', body: 'the mic is off' })
+  const mic = store.createTask({ title: 'Mic off', message: 'telegram:-1001234567890:9010', owner: '-1001234567890' })
+  const chat = store.createTask({ title: 'Chat', message: 'telegram:-1001234567890:9010', owner: '-1001234567890' })
+  store.editTask(mic.id, { status: 'done', proof: 'telegram:-1001234567890:9011 build 9' })
+  store.editTask(chat.id, { status: 'done', proof: 'telegram:-1001234567890:9010' })
+  await until(() => board.finished.filter(task => [mic.id, chat.id].includes(task.id)).length === 2)
+  expect(board.finished.find(task => task.id === mic.id)).toMatchObject({ topic: 'voiceapp', run: 'telegram:-1001234567890:2583' })
+  expect(board.finished.find(task => task.id === chat.id)).toMatchObject({ topic: 'General' })
+})
