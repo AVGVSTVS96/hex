@@ -2633,13 +2633,13 @@ function runRoutes(request: Request, url: URL) {
 
   const [, id, verb] = /^\/tasks\/([^/]+)(?:\/(talk|chat|stop))?$/u.exec(url.pathname) ?? [];
   const key = filled(id) ? decodeURIComponent(id) : "";
-  const pageToRead = filled(key) && request.method === "GET" ? runs.find(key) : undefined;
+  const thread = filled(key) ? runs.find(key) : undefined;
 
-  if (pageToRead && verb === "chat") {
-    const offTheBoard = !runs.get(key);
-
-    return showChat(url, pageToRead, offTheBoard);
+  if (thread && verb === "chat") {
+    return request.method === "POST" ? sendChat(request, thread) : showChat(url, thread);
   }
+
+  const pageToRead = request.method === "GET" ? thread : undefined;
 
   if (pageToRead && !filled(verb)) {
     return Response.json({ ...pageToRead, ...yours.of(pageToRead.id) });
@@ -2655,10 +2655,6 @@ function runRoutes(request: Request, url: URL) {
     return talkAbout(runTopic(run));
   }
 
-  if (verb === "chat" && request.method === "POST") {
-    return sendChat(request, run);
-  }
-
   if (verb === "stop" && request.method === "POST") {
     return done(() => {
       chats.stop(run);
@@ -2666,7 +2662,7 @@ function runRoutes(request: Request, url: URL) {
   }
 }
 
-async function showChat(url: URL, run: Run | Page, readOnly = false) {
+async function showChat(url: URL, run: Run | Page) {
   const where = (): Where => {
     const serving = board.session(run.id);
 
@@ -2680,7 +2676,7 @@ async function showChat(url: URL, run: Run | Page, readOnly = false) {
       ? await chats.next(where, Number(after), 25_000)
       : chats.of(where());
 
-  return Response.json(readOnly ? { ...chat, sends: false } : chat);
+  return Response.json(chat);
 }
 
 const CHAT_FIELD_PROBLEMS = {
@@ -2689,7 +2685,7 @@ const CHAT_FIELD_PROBLEMS = {
   key: "Name the message with a key starting app-",
 };
 
-async function sendChat(request: Request, run: Run) {
+async function sendChat(request: Request, run: Run | Page) {
   const raw: unknown = await request.json().catch(() => null);
   const parsed = ChatBody.safeParse(raw ?? {});
 
