@@ -91,11 +91,8 @@ test("a new session streams from its start, once its transcript appears", async 
   expect(ended).toBe(0);
   write(done);
   await until(() => ended);
-  expect(updates).toEqual([
-    expect.objectContaining({
-      sessionUpdate: "agent_message_chunk",
-      content: { type: "text", text: "hello" },
-    }),
+  expect(updates).toMatchObject([
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "hello" } },
   ]);
 });
 
@@ -113,9 +110,7 @@ test("a forked session streams from its start without the conversation it copied
     done,
   );
   await until(() => ended);
-  expect(updates).toEqual([
-    expect.objectContaining({ content: { type: "text", text: "I said anchors are in" } }),
-  ]);
+  expect(updates).toMatchObject([{ content: { type: "text", text: "I said anchors are in" } }]);
 });
 
 test("a turn_duration before the prompt is an earlier turn ending, not this one", async () => {
