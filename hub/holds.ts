@@ -1,22 +1,22 @@
 import { clock } from "./clock.ts";
 import { clip } from "./fit.ts";
 import { open } from "./store.ts";
-import type { Hold, Store } from "./store.ts";
+import type { Held, Hold, Store } from "./store.ts";
 
-// Threads a hold frees wake this many at a time, the next once a woken one's turn ends, or once it
-// has waited PATIENCE for one that never does, so a hold over a dozen threads doesn't end in a dozen
-// sessions starting work together.
-const AT_ONCE = 2;
-const PATIENCE = 15 * 60_000;
+const FREED_THREADS_WOKEN_AT_ONCE = 2;
+const PATIENCE_FOR_A_WOKEN_TURN_TO_END = 15 * 60_000;
 
-// A time as the owner writes it: an instant with its offset, or else "YYYY-MM-DD HH:MM" on their clock.
 export function instant(text: string, zone = Temporal.Now.timeZoneId()): string {
   const iso = text.trim().replace(" ", "T");
 
   try {
     return Temporal.Instant.from(iso).toString({ smallestUnit: "millisecond" });
-  } catch {}
+  } catch {
+    return onOwnersClock(text, iso, zone);
+  }
+}
 
+function onOwnersClock(text: string, iso: string, zone: string): string {
   try {
     return Temporal.PlainDateTime.from(iso)
       .toZonedDateTime(zone)
@@ -37,8 +37,6 @@ export function when(at: string, zone?: string) {
   });
 }
 
-// Puts the threads on hold, and tells each one that's at work now (working: their keys) to stop
-// starting more. One at rest isn't woken just to hear it: its next prompt shows the hold.
 export function place(
   store: Store,
   hold: Parameters<Store["hold"]>[0],
@@ -47,9 +45,9 @@ export function place(
   return store.write(() => {
     const placed = store.hold(hold);
     const by = store.names()[placed.by] ?? placed.by;
-    const ends = `${placed.until ? `at ${when(placed.until, zone)}, or ` : ""}when my word lifts it`;
+    const ends = `${placed.until !== undefined && placed.until !== "" ? `at ${when(placed.until, zone)}, or ` : ""}when my word lifts it`;
 
-    for (const { thread } of placed.threads.filter(({ thread }) => working.has(thread))) {
+    for (const { thread } of placed.threads.filter((held) => working.has(held.thread))) {
       store.deliver({
         key: `hold:${placed.id}@${thread}`,
         to: thread,
@@ -59,26 +57,28 @@ export function place(
         meta: { user: "hold" },
       });
     }
+
     return placed;
   });
 }
 
-// Wakes the threads holds have freed, as many as there's room for; returns when the oldest wake
-// still counted runs out of patience.
 export function wake(store: Store, at = new Date(clock.now()).toISOString()): string | undefined {
   return store.write(() => {
-    const waking = store.waking(PATIENCE, at);
-    let room = AT_ONCE - waking.count;
+    const waking = store.waking(PATIENCE_FOR_A_WOKEN_TURN_TO_END, at);
+    let room = FREED_THREADS_WOKEN_AT_ONCE - waking.count;
     const woken = new Set<string>();
 
     for (const { id, thread, why, ending } of store.freed()) {
       if (woken.has(thread)) {
         continue;
       }
+
       if (room-- <= 0) {
         break;
       }
+
       woken.add(thread);
+
       const key = `hold:${id}@${thread}:ended`;
       store.deliver({
         key,
@@ -91,21 +91,21 @@ export function wake(store: Store, at = new Date(clock.now()).toISOString()): st
       store.woke(thread, key);
     }
 
-    return woken.size ? new Date(Date.parse(at) + PATIENCE).toISOString() : waking.until;
+    return woken.size > 0
+      ? new Date(Date.parse(at) + PATIENCE_FOR_A_WOKEN_TURN_TO_END).toISOString()
+      : waking.until;
   });
 }
 
-// The hub's part, in the hex that runs General: each hold ends as its time comes, and at every
-// change to hex.db the threads freed so far wake as room allows. A timer waits for the next hold's
-// time, or a wake's patience, whichever comes first.
 export function holding(storeDir: string): () => void {
   let store: Store;
 
   try {
     store = open(storeDir);
   } catch (error) {
-    process.stderr.write(`hub: holds can't move on until hex.db opens: ${error}\n`);
+    process.stderr.write(`hub: holds can't move on until hex.db opens: ${String(error)}\n`);
 
+    // oxlint-disable-next-line eslint/no-empty-function -- nothing started, so there is nothing to stop
     return () => {};
   }
 
@@ -118,12 +118,17 @@ export function holding(storeDir: string): () => void {
       const at = new Date(clock.now()).toISOString();
       store.due(at);
       const patience = wake(store, at);
+
       next = Math.min(
-        patience ? Date.parse(patience) : Infinity,
-        ...store.holds().flatMap((hold) => (hold.until ? [Date.parse(hold.until)] : [])),
+        patience !== undefined && patience !== "" ? Date.parse(patience) : Infinity,
+        ...store
+          .holds()
+          .flatMap((hold) =>
+            hold.until !== undefined && hold.until !== "" ? [Date.parse(hold.until)] : [],
+          ),
       );
     } catch (error) {
-      process.stderr.write(`hub: holds couldn't move on: ${error}\n`);
+      process.stderr.write(`hub: holds couldn't move on: ${String(error)}\n`);
       next = clock.now() + 60_000;
     } finally {
       clock.clearTimeout(timer);
@@ -135,6 +140,7 @@ export function holding(storeDir: string): () => void {
   };
 
   const unwatch = store.watch(step);
+
   step();
 
   return () => {
@@ -143,25 +149,31 @@ export function holding(storeDir: string): () => void {
   };
 }
 
-// A hold as every session's prompt shows it: the threads it still holds, those it freed, who held
-// them and when, when it ends by itself, why, and the owner's words it came from.
+function ended(held: Held) {
+  return held.ended !== undefined && held.ended !== "";
+}
+
 export function line(hold: Hold, store: Store, zone?: string): string {
   const names = store.names();
   const name = (thread: string) => names[thread] ?? thread;
-  const holding = hold.threads.filter((held) => !held.ended).map((held) => name(held.thread));
-  const freed = hold.threads.filter((held) => held.ended).map((held) => name(held.thread));
-  const said = hold.message && store.message(hold.message);
+  const stillHeld = hold.threads.filter((held) => !ended(held)).map((held) => name(held.thread));
+  const freed = hold.threads.filter((held) => ended(held)).map((held) => name(held.thread));
+
+  const said =
+    hold.message !== undefined && hold.message !== "" ? store.message(hold.message) : null;
 
   return [
-    holding.length
-      ? `- ${hold.id} holds ${holding.join(", ")}`
+    stillHeld.length > 0
+      ? `- ${hold.id} holds ${stillHeld.join(", ")}`
       : `- ${hold.id} held ${freed.join(", ")}, all freed now`,
-    holding.length && freed.length && `freed ${freed.join(", ")}`,
+    stillHeld.length > 0 && freed.length > 0 && `freed ${freed.join(", ")}`,
     `by ${name(hold.by)}, ${when(hold.at, zone)}`,
-    hold.until ? `until ${when(hold.until, zone)} or my word` : "until my word",
+    hold.until !== undefined && hold.until !== ""
+      ? `until ${when(hold.until, zone)} or my word`
+      : "until my word",
     `why: ${clip(hold.why, 200)}`,
-    said && `my words [${hold.message}]: "${clip(said.body, 160)}"`,
+    said !== null && `my words [${hold.message}]: "${clip(said.body, 160)}"`,
   ]
-    .filter(Boolean)
+    .filter((part) => part !== false)
     .join(" · ");
 }
