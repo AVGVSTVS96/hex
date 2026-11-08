@@ -1,52 +1,62 @@
-import { Database } from 'bun:sqlite'
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'fs'
-import { join } from 'path'
-import { zoneOf } from './zone.ts'
-import { open } from './store.ts'
+import { Database } from "bun:sqlite";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
+import { join } from "path";
+
+import { open } from "./store.ts";
+import { zoneOf } from "./zone.ts";
 
 // Each night at 3:00 on the owner's clock, while hex is quietest.
-const HOUR = 3
-const KEEP = 7
+const HOUR = 3;
+const KEEP = 7;
 // A day's copy reaches the computer in about a second; one that can't answer in five minutes isn't there.
-const SEND_LIMIT = 5 * 60_000
+const SEND_LIMIT = 5 * 60_000;
 
 // The day's copy of hex.db, made with VACUUM INTO and checked by SQLite, goes to state/backups and,
 // when hex has a computer (a Sprite), to ~/hex-backups there, off this machine's disk. Each place
 // keeps the last seven. The computer checks the copy's hash before it takes the day's name, so a copy
 // that arrived broken or cut off fails and never pushes a good one out of the seven.
 export async function backup(storeDir: string, day: string, computer?: string, limit = SEND_LIMIT) {
-  const dir = join(storeDir, 'backups')
-  const name = `hex-${day}.db`
-  const part = join(dir, `${name}.part`)
-  mkdirSync(dir, { recursive: true })
-  rmSync(part, { force: true })
-  open(storeDir).db.run('vacuum into ?', [part])
-  const copy = new Database(part, { readonly: true })
-  const { quick_check } = copy.query('pragma quick_check').get() as { quick_check: string }
-  copy.close()
-  if (quick_check !== 'ok') throw new Error(`its copy fails SQLite's check: ${quick_check}`)
-  renameSync(part, join(dir, name))
-  for (const old of readdirSync(dir).filter(file => /^hex-.*\.db$/.test(file)).sort().slice(0, -KEEP)) rmSync(join(dir, old))
-  if (!computer) return
-  const hash = new Bun.CryptoHasher('sha256').update(await Bun.file(join(dir, name)).arrayBuffer()).digest('hex')
-  const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; find . -name 'hex-*.db.part' -mmin +${Math.ceil(limit / 60_000) + 1} -delete; cat > "$1.part"; echo "$2  $1.part" | sha256sum -c --quiet; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`
-  const late = AbortSignal.timeout(limit)
-  const sent = Bun.spawn(['sprite', 'exec', '-s', computer, '--', 'sh', '-c', keep, 'sh', name, hash], {
-    env: process.env,
-    stdin: Bun.file(join(dir, name)),
-    stdout: 'pipe',
-    stderr: 'pipe',
-    signal: late,
-    killSignal: 'SIGKILL',
-  })
+  const dir = join(storeDir, "backups");
+  const name = `hex-${day}.db`;
+  const part = join(dir, `${name}.part`);
+  mkdirSync(dir, { recursive: true });
+  rmSync(part, { force: true });
+  open(storeDir).db.run("vacuum into ?", [part]);
+  const copy = new Database(part, { readonly: true });
+  const { quick_check } = copy.query("pragma quick_check").get() as { quick_check: string };
+  copy.close();
+  if (quick_check !== "ok") throw new Error(`its copy fails SQLite's check: ${quick_check}`);
+  renameSync(part, join(dir, name));
+  for (const old of readdirSync(dir)
+    .filter((file) => /^hex-.*\.db$/.test(file))
+    .sort()
+    .slice(0, -KEEP))
+    rmSync(join(dir, old));
+  if (!computer) return;
+  const hash = new Bun.CryptoHasher("sha256")
+    .update(await Bun.file(join(dir, name)).arrayBuffer())
+    .digest("hex");
+  const keep = `set -e; mkdir -p ~/hex-backups; cd ~/hex-backups; find . -name 'hex-*.db.part' -mmin +${Math.ceil(limit / 60_000) + 1} -delete; cat > "$1.part"; echo "$2  $1.part" | sha256sum -c --quiet; mv "$1.part" "$1"; ls hex-*.db | head -n -${KEEP} | xargs -r rm --; sha256sum "$1"`;
+  const late = AbortSignal.timeout(limit);
+  const sent = Bun.spawn(
+    ["sprite", "exec", "-s", computer, "--", "sh", "-c", keep, "sh", name, hash],
+    {
+      env: process.env,
+      stdin: Bun.file(join(dir, name)),
+      stdout: "pipe",
+      stderr: "pipe",
+      signal: late,
+      killSignal: "SIGKILL",
+    },
+  );
   const answer = await Promise.race([
     Promise.all([sent.exited, new Response(sent.stdout).text(), new Response(sent.stderr).text()]),
-    new Promise<undefined>(resolve => late.addEventListener('abort', () => resolve(undefined))),
-  ])
-  if (!answer) throw new Error(`${computer} didn't answer in ${limit / 60_000} minutes`)
-  const [exit, out, err] = answer
-  if (exit !== 0) throw new Error(`${computer} didn't take it: ${err.trim() || `exit ${exit}`}`)
-  if (!out.startsWith(hash)) throw new Error(`the copy on ${computer} doesn't match hex.db's`)
+    new Promise<undefined>((resolve) => late.addEventListener("abort", () => resolve(undefined))),
+  ]);
+  if (!answer) throw new Error(`${computer} didn't answer in ${limit / 60_000} minutes`);
+  const [exit, out, err] = answer;
+  if (exit !== 0) throw new Error(`${computer} didn't take it: ${err.trim() || `exit ${exit}`}`);
+  if (!out.startsWith(hash)) throw new Error(`the copy on ${computer} doesn't match hex.db's`);
 }
 
 // The hub that serves General backs up each night, and at its start when the last 3:00 passed
@@ -54,26 +64,37 @@ export async function backup(storeDir: string, day: string, computer?: string, l
 // so a backup that hangs never stops the nights after it. A backup that fails tells the main thread;
 // its copy stays in state/backups when only the computer failed.
 export function nightly(storeDir: string, hexDir: string, main: string): () => void {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let stopped = false
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
   const run = async () => {
-    const now = Temporal.Now.zonedDateTimeISO(zoneOf(hexDir) ?? Temporal.Now.timeZoneId())
-    const today = now.round({ smallestUnit: 'hour', roundingMode: 'floor' }).with({ hour: HOUR })
-    const passed = Temporal.ZonedDateTime.compare(today, now) <= 0
-    const day = (passed ? today : today.subtract({ days: 1 })).toPlainDate().toString()
-    if (!stopped) timer = setTimeout(run, (passed ? today.add({ days: 1 }) : today).epochMilliseconds - Date.now())
-    if (!existsSync(join(storeDir, 'backups', `hex-${day}.db`))) {
+    const now = Temporal.Now.zonedDateTimeISO(zoneOf(hexDir) ?? Temporal.Now.timeZoneId());
+    const today = now.round({ smallestUnit: "hour", roundingMode: "floor" }).with({ hour: HOUR });
+    const passed = Temporal.ZonedDateTime.compare(today, now) <= 0;
+    const day = (passed ? today : today.subtract({ days: 1 })).toPlainDate().toString();
+    if (!stopped)
+      timer = setTimeout(
+        run,
+        (passed ? today.add({ days: 1 }) : today).epochMilliseconds - Date.now(),
+      );
+    if (!existsSync(join(storeDir, "backups", `hex-${day}.db`))) {
       try {
-        await backup(storeDir, day, process.env.HEX_COMPUTER || undefined)
+        await backup(storeDir, day, process.env.HEX_COMPUTER || undefined);
       } catch (error) {
-        const body = `[backup] hex couldn't back up state/hex.db for ${day}: ${(error as Error).message}. The next try is at 3:00.`
-        open(storeDir).deliver({ key: `backup:failed@${day}`, to: main, from: 'backup', author: 'prompt', body, meta: { user: 'backup' } })
+        const body = `[backup] hex couldn't back up state/hex.db for ${day}: ${(error as Error).message}. The next try is at 3:00.`;
+        open(storeDir).deliver({
+          key: `backup:failed@${day}`,
+          to: main,
+          from: "backup",
+          author: "prompt",
+          body,
+          meta: { user: "backup" },
+        });
       }
     }
-  }
-  void run()
+  };
+  void run();
   return () => {
-    stopped = true
-    clearTimeout(timer)
-  }
+    stopped = true;
+    clearTimeout(timer);
+  };
 }

@@ -1,15 +1,16 @@
-import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from 'fs'
-import { dirname, join, resolve } from 'path'
-import { parseArgs } from 'util'
-import { history } from './loaded.ts'
-import { holds, keysOf, problems, verdict } from './notes.ts'
-import { record, settingsOf } from './claude.ts'
-import { busy, running, served, serving, type Session } from './running.ts'
-import { instant, line, place } from './holds.ts'
-import { checks } from './ideas.ts'
-import { entry, render, waiting } from './tasks.ts'
-import { zoneOf } from './zone.ts'
-import { asked, open, sent, type Row, type Status, type Task } from './store.ts'
+import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from "fs";
+import { dirname, join, resolve } from "path";
+import { parseArgs } from "util";
+
+import { record, settingsOf } from "./claude.ts";
+import { instant, line, place } from "./holds.ts";
+import { checks } from "./ideas.ts";
+import { history } from "./loaded.ts";
+import { holds, keysOf, problems, verdict } from "./notes.ts";
+import { busy, running, served, serving, type Session } from "./running.ts";
+import { asked, open, sent, type Row, type Status, type Task } from "./store.ts";
+import { entry, render, waiting } from "./tasks.ts";
+import { zoneOf } from "./zone.ts";
 
 const USAGE = `usage:
   hex deliver <from>[:<id>] --to <thread> [--user <name>] <words…>
@@ -34,97 +35,142 @@ const USAGE = `usage:
   hex profile [--all] [--json]
   hex log [<thread, by name or id, or a terminal session's id>] [--since <date>] [--last <n>] [--taken] [--room <characters>] [--json]
   hex recall <regex, in any case>
-  hex watch`
+  hex watch`;
 
 const { values: flags, positionals } = parseArgs({
   allowPositionals: true,
   options: {
-    to: { type: 'string' },
-    user: { type: 'string' },
-    title: { type: 'string' },
-    quote: { type: 'string' },
-    owner: { type: 'string' },
-    thread: { type: 'string' },
-    project: { type: 'string' },
-    'done-when': { type: 'string' },
-    idea: { type: 'boolean' },
-    proof: { type: 'string' },
-    into: { type: 'string' },
-    why: { type: 'string' },
-    until: { type: 'string' },
-    key: { type: 'string' },
-    status: { type: 'string' },
-    all: { type: 'boolean' },
-    json: { type: 'boolean' },
-    since: { type: 'string' },
-    last: { type: 'string' },
-    taken: { type: 'boolean' },
-    room: { type: 'string' },
+    to: { type: "string" },
+    user: { type: "string" },
+    title: { type: "string" },
+    quote: { type: "string" },
+    owner: { type: "string" },
+    thread: { type: "string" },
+    project: { type: "string" },
+    "done-when": { type: "string" },
+    idea: { type: "boolean" },
+    proof: { type: "string" },
+    into: { type: "string" },
+    why: { type: "string" },
+    until: { type: "string" },
+    key: { type: "string" },
+    status: { type: "string" },
+    all: { type: "boolean" },
+    json: { type: "boolean" },
+    since: { type: "string" },
+    last: { type: "string" },
+    taken: { type: "boolean" },
+    room: { type: "string" },
     // recall reads in any case already, so rg's -i changes nothing.
-    'ignore-case': { type: 'boolean', short: 'i' },
+    "ignore-case": { type: "boolean", short: "i" },
   },
-})
-const [state, command, ...args] = positionals
-if (!state || !command) usage()
-if (flags['ignore-case'] && command !== 'recall') {
-  console.error("hex: -i is only for recall")
-  process.exit(2)
+});
+const [state, command, ...args] = positionals;
+if (!state || !command) usage();
+if (flags["ignore-case"] && command !== "recall") {
+  console.error("hex: -i is only for recall");
+  process.exit(2);
 }
 // How many words each command takes before its flags; a word past them is a flag's value left
 // unquoted, which would otherwise be cut short without a word.
-const takes = command === 'hold' ? Infinity : command === 'task' ? ({ add: 3, quote: 3, new: 2, done: 2, drop: 2, open: 2, edit: 2, agent: Infinity } as Record<string, number>)[args[0] ?? ''] ?? 1 : ({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[command] ?? 0
+const takes =
+  command === "hold"
+    ? Infinity
+    : command === "task"
+      ? ((
+          {
+            add: 3,
+            quote: 3,
+            new: 2,
+            done: 2,
+            drop: 2,
+            open: 2,
+            edit: 2,
+            agent: Infinity,
+          } as Record<string, number>
+        )[args[0] ?? ""] ?? 1)
+      : (({ deliver: Infinity, message: 1, recall: 1, log: 1 } as Record<string, number>)[
+          command
+        ] ?? 0);
 if (args.length > takes) {
-  console.error(`hex: ${stray(args[takes]!)}`)
-  process.exit(1)
+  console.error(`hex: ${stray(args[takes]!)}`);
+  process.exit(1);
 }
 // hex watch never opens hex.db, so a restore can replace it underneath.
-if (command === 'watch') await follow(join(state, 'hex.bell'))
-const store = open(state)
-for (const flag of ['owner', 'thread'] as const) flags[flag] &&= store.key(flags[flag])
+if (command === "watch") await follow(join(state, "hex.bell"));
+const store = open(state);
+for (const flag of ["owner", "thread"] as const) flags[flag] &&= store.key(flags[flag]);
 
 function usage(): never {
-  console.error(USAGE)
-  process.exit(2)
+  console.error(USAGE);
+  process.exit(2);
 }
 
 // One task in full, with the owner's words and what its idea checks last found; a list as one
 // clean entry per task.
 function show(tasks: Task[], full = true) {
-  if (flags.json) return json(withThread(tasks, task => task.owner))
-  const named = store.names()
-  const found = (task: Task) => checks(state, task.id).filter(check => check.finding).slice(-5).map(check => `  checked ${check.at.slice(0, 10)}${check.news ? ', news' : ''}: ${check.finding}`)
-  console.log(tasks.map(task => (full ? [render(task, named), ...found(task)].join('\n') : entry(task, named))).join(full ? '\n\n' : '\n') || 'no tasks')
+  if (flags.json) return json(withThread(tasks, (task) => task.owner));
+  const named = store.names();
+  const found = (task: Task) =>
+    checks(state, task.id)
+      .filter((check) => check.finding)
+      .slice(-5)
+      .map(
+        (check) =>
+          `  checked ${check.at.slice(0, 10)}${check.news ? ", news" : ""}: ${check.finding}`,
+      );
+  console.log(
+    tasks
+      .map((task) => (full ? [render(task, named), ...found(task)].join("\n") : entry(task, named)))
+      .join(full ? "\n\n" : "\n") || "no tasks",
+  );
 }
 
 // Every line memo recalls, with the words of each message a note names by its [key] under it, what
 // doesn't hold when the note misquotes them, and a count of how many notes keep the owner's words.
 async function recall(pattern: string) {
-  const memo = Bun.spawn([join(dirname(import.meta.dir), 'vendor', 'memo'), 'recall', pattern], { stdout: 'pipe', stderr: 'inherit' })
-  let notes = 0, keyed = 0, kept = 0
-  for (const line of (await new Response(memo.stdout).text()).split('\n')) {
-    console.log(line)
-    if (!/^#\d+ /.test(line)) continue
-    notes++
-    const v = verdict(line, store)
-    if (!keysOf(line).length) continue
-    keyed++
-    if (holds(v)) kept++
-    else console.log(problems(v, false).map(why => `    ✗ ${why}`).join('\n'))
-    for (const said of v.keys) console.log(said.body.split('\n').map(words => `    ${words}`).join('\n'))
+  const memo = Bun.spawn([join(dirname(import.meta.dir), "vendor", "memo"), "recall", pattern], {
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  let notes = 0,
+    keyed = 0,
+    kept = 0;
+  for (const line of (await new Response(memo.stdout).text()).split("\n")) {
+    console.log(line);
+    if (!/^#\d+ /.test(line)) continue;
+    notes++;
+    const v = verdict(line, store);
+    if (!keysOf(line).length) continue;
+    keyed++;
+    if (holds(v)) kept++;
+    else
+      console.log(
+        problems(v, false)
+          .map((why) => `    ✗ ${why}`)
+          .join("\n"),
+      );
+    for (const said of v.keys)
+      console.log(
+        said.body
+          .split("\n")
+          .map((words) => `    ${words}`)
+          .join("\n"),
+      );
   }
-  if (notes) console.log(`${notes} notes: ${keyed} name a message, ${kept} quote it as written.`)
-  process.exitCode = await memo.exited
+  if (notes) console.log(`${notes} notes: ${keyed} name a message, ${kept} quote it as written.`);
+  process.exitCode = await memo.exited;
 }
 
 // Every --json output names a thread one way, as <app>:<key>: a thread's id, and the threadId of what
 // belongs to one (a task's owner, a message's thread, a question, a pin).
 function json(value: unknown) {
-  console.log(JSON.stringify(value, null, 1))
+  console.log(JSON.stringify(value, null, 1));
 }
 
 function withThread<T>(rows: T[], key: (row: T) => string) {
-  const ids = store.ids()
-  return rows.map(row => ({ ...row, ...(ids[key(row)] && { threadId: ids[key(row)] }) }))
+  const ids = store.ids();
+  return rows.map((row) => ({ ...row, ...(ids[key(row)] && { threadId: ids[key(row)] }) }));
 }
 
 // A line once it's listening, then one within 50ms of each time hex.bell grows, as every commit to
@@ -133,85 +179,110 @@ function withThread<T>(rows: T[], key: (row: T) => string) {
 // last one (https://github.com/oven-sh/bun/issues/45954) still gets its own. Once the app is gone,
 // the next line ends the watch.
 function follow(bell: string): Promise<never> {
-  mkdirSync(dirname(bell), { recursive: true })
-  appendFileSync(bell, '')
-  let size = -1
-  let timer: Timer | undefined
+  mkdirSync(dirname(bell), { recursive: true });
+  appendFileSync(bell, "");
+  let size = -1;
+  let timer: Timer | undefined;
   const check = () => {
-    timer = undefined
-    const now = statSync(bell).size
-    if (now === size) return
-    size = now
-    process.stdout.write(`${new Date().toISOString()}\n`, error => error && process.exit((error as NodeJS.ErrnoException).code === 'EPIPE' ? 0 : 1))
-    timer = setTimeout(check, 50)
-  }
-  watch(bell, () => (timer ??= setTimeout(check, 50)))
-  check()
-  return new Promise(() => {})
+    timer = undefined;
+    const now = statSync(bell).size;
+    if (now === size) return;
+    size = now;
+    process.stdout.write(
+      `${new Date().toISOString()}\n`,
+      (error) => error && process.exit((error as NodeJS.ErrnoException).code === "EPIPE" ? 0 : 1),
+    );
+    timer = setTimeout(check, 50);
+  };
+  watch(bell, () => (timer ??= setTimeout(check, 50)));
+  check();
+  return new Promise(() => {});
 }
 
 function stray(word: string) {
-  return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`
+  return `"${word}" isn't a flag's value: quote every value that has spaces, like --title 'Fix the login page'`;
 }
 
 // The threads a name or id means: the one with that key or id, or else every thread by that name, in
 // any case.
 function named(given: string) {
-  const key = store.key(given)
-  const threads = store.threads()
-  const keyed = threads.find(({ thread }) => thread === key)
-  if (keyed) return [keyed]
-  const wanted = given.trim().toLowerCase()
-  const all = threads.filter(({ name }) => name.toLowerCase() === wanted)
-  return all.length ? all : threads.filter(({ thread }) => thread === key.toLowerCase())
+  const key = store.key(given);
+  const threads = store.threads();
+  const keyed = threads.find(({ thread }) => thread === key);
+  if (keyed) return [keyed];
+  const wanted = given.trim().toLowerCase();
+  const all = threads.filter(({ name }) => name.toLowerCase() === wanted);
+  return all.length ? all : threads.filter(({ thread }) => thread === key.toLowerCase());
 }
 
 // What a log reads: every thread the name means, since each message's heading says which it's from,
 // or a terminal session's messages.
 function threadsOf(given: string) {
-  const threads = named(given).map(({ thread }) => thread)
-  if (threads.length) return threads
-  if (store.said(given, 1).length) return [given]
-  throw new Error(`no thread named "${given}"`)
+  const threads = named(given).map(({ thread }) => thread);
+  if (threads.length) return threads;
+  if (store.said(given, 1).length) return [given];
+  throw new Error(`no thread named "${given}"`);
 }
 
 // Where a delivery goes: a thread hex has, since only a thread's session takes messages, and only
 // one, an open one before any closed. A closed thread takes it once it opens again.
 function recipient(to: string): string {
-  const all = named(to)
-  const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all
-  if (matches.length > 1) throw new Error(`more than one thread is named "${to}", so send to one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(', ')}`)
-  const thread = matches[0] ?? workingFor(to)
-  if (!thread.open) console.error(`hex: the thread ${thread.thread} is closed, so this waits until it opens again`)
-  return thread.thread
+  const all = named(to);
+  const matches = all.some(({ open }) => open) ? all.filter(({ open }) => open) : all;
+  if (matches.length > 1)
+    throw new Error(
+      `more than one thread is named "${to}", so send to one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(", ")}`,
+    );
+  const thread = matches[0] ?? workingFor(to);
+  if (!thread.open)
+    console.error(`hex: the thread ${thread.thread} is closed, so this waits until it opens again`);
+  return thread.thread;
 }
 
 // The thread a session works for, by the session's id or the 8 characters of it `hex running`
 // prints: the thread that holds it, or the one this hex started it for and hasn't saved yet.
 function workingFor(given: string) {
-  if (!/^[0-9a-f]{8}(-[0-9a-f-]*)?$/i.test(given)) throw new Error(`no thread is "${given}" (hex threads lists them)`)
-  const to = given.toLowerCase()
-  const threads = store.threads()
-  const held = new Map(threads.filter(({ session }) => session).sort((a, b) => Number(a.open) - Number(b.open)).map(thread => [thread.session!, thread]))
-  const live = running(store)
-  const named = (id: string) => (live.get(id)?.name ? `${id} (${live.get(id)!.name})` : id)
-  const matches = [...new Set([...held.keys(), ...live.keys()])].filter(id => id.startsWith(to)).sort()
-  if (matches.length > 1) throw new Error(`${given} starts more than one session's id: ${matches.map(named).join(', ')}`)
-  const [id] = matches
-  if (!id) throw new Error(`no thread or running session is ${given} (hex threads and hex running list them)`)
-  const job = live.get(id)?.job
-  const short = live.has(id) && !job && record(id.slice(0, 8)).sessionId === id
-  const bound = job || short ? settingsOf({ sessionId: id, id: job, pid: 0 })?.env : undefined
-  const thread = held.get(id) ?? (bound?.HEX_STORE && real(bound.HEX_STORE) === real(state!) ? threads.find(({ thread }) => thread === bound.HEX_THREAD) : undefined)
-  if (thread) return thread
-  throw new Error(`${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ''}`)
+  if (!/^[0-9a-f]{8}(-[0-9a-f-]*)?$/i.test(given))
+    throw new Error(`no thread is "${given}" (hex threads lists them)`);
+  const to = given.toLowerCase();
+  const threads = store.threads();
+  const held = new Map(
+    threads
+      .filter(({ session }) => session)
+      .sort((a, b) => Number(a.open) - Number(b.open))
+      .map((thread) => [thread.session!, thread]),
+  );
+  const live = running(store);
+  const named = (id: string) => (live.get(id)?.name ? `${id} (${live.get(id)!.name})` : id);
+  const matches = [...new Set([...held.keys(), ...live.keys()])]
+    .filter((id) => id.startsWith(to))
+    .sort();
+  if (matches.length > 1)
+    throw new Error(`${given} starts more than one session's id: ${matches.map(named).join(", ")}`);
+  const [id] = matches;
+  if (!id)
+    throw new Error(
+      `no thread or running session is ${given} (hex threads and hex running list them)`,
+    );
+  const job = live.get(id)?.job;
+  const short = live.has(id) && !job && record(id.slice(0, 8)).sessionId === id;
+  const bound = job || short ? settingsOf({ sessionId: id, id: job, pid: 0 })?.env : undefined;
+  const thread =
+    held.get(id) ??
+    (bound?.HEX_STORE && real(bound.HEX_STORE) === real(state!)
+      ? threads.find(({ thread }) => thread === bound.HEX_THREAD)
+      : undefined);
+  if (thread) return thread;
+  throw new Error(
+    `${named(id)} is a session no thread holds, so it would never take this message${live.get(id)?.name ? `: message it with Claude Code's SendMessage to "${live.get(id)!.name}"` : ""}`,
+  );
 }
 
 function real(path: string) {
   try {
-    return realpathSync(path)
+    return realpathSync(path);
   } catch {
-    return resolve(path)
+    return resolve(path);
   }
 }
 
@@ -219,66 +290,111 @@ function real(path: string) {
 // the newest whole messages that fit, or the newest's heading and the end of its words when none does.
 // A T3 prompt of the owner's shows only what they asked, without T3's context around it.
 function log(rows: Row[]) {
-  const room = flags.room === undefined ? Infinity : Number(flags.room)
-  if (!(room === Infinity || (Number.isInteger(room) && room > 0)) || (flags.room !== undefined && flags.json)) usage()
-  rows = rows.map(row => (row.from === 't3' && row.author === 'owner' ? { ...row, body: asked(row.body) } : row))
-  if (flags.json) return json(withThread(rows, row => row.to))
-  const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
-  const named = store.names()
-  const entries = rows.map(row => {
-    const at = Temporal.Instant.from(row.at).toZonedDateTimeISO(zone).toPlainDateTime().toString().slice(0, 16).replace('T', ' ')
-    const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : ''
-    const name = named[row.to]
-    const thread = name ? `${name} (${row.to})` : row.to
-    const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : ''
-    const who = row.meta?.user && (row.author === 'prompt' || row.author === 'other') ? `${row.author} (${row.meta.user})` : row.author
-    return `## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${row.body}\n`
-  })
-  let start = entries.length
-  for (let size = 0; start && (size += entries[start - 1]!.length + 1) <= room; ) start--
-  for (const entry of start < entries.length || !entries.length ? entries.slice(start) : [end(entries.at(-1)!, room)]) console.log(entry)
+  const room = flags.room === undefined ? Infinity : Number(flags.room);
+  if (
+    !(room === Infinity || (Number.isInteger(room) && room > 0)) ||
+    (flags.room !== undefined && flags.json)
+  )
+    usage();
+  rows = rows.map((row) =>
+    row.from === "t3" && row.author === "owner" ? { ...row, body: asked(row.body) } : row,
+  );
+  if (flags.json) return json(withThread(rows, (row) => row.to));
+  const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId();
+  const named = store.names();
+  const entries = rows.map((row) => {
+    const at = Temporal.Instant.from(row.at)
+      .toZonedDateTimeISO(zone)
+      .toPlainDateTime()
+      .toString()
+      .slice(0, 16)
+      .replace("T", " ");
+    const failed = row.meta?.failed ? ` · failed: ${row.meta.failed}` : "";
+    const name = named[row.to];
+    const thread = name ? `${name} (${row.to})` : row.to;
+    const id = row.meta?.message_id ? ` · message ${row.meta.message_id}` : "";
+    const who =
+      row.meta?.user && (row.author === "prompt" || row.author === "other")
+        ? `${row.author} (${row.meta.user})`
+        : row.author;
+    return `## ${who} · ${row.from} · ${thread} · ${at} · [${row.key}]${id}${failed}\n\n${row.body}\n`;
+  });
+  let start = entries.length;
+  for (let size = 0; start && (size += entries[start - 1]!.length + 1) <= room;) start--;
+  for (const entry of start < entries.length || !entries.length
+    ? entries.slice(start)
+    : [end(entries.at(-1)!, room)])
+    console.log(entry);
 }
 
 function end(entry: string, room: number) {
-  const head = entry.slice(0, entry.indexOf('\n\n') + 2)
-  let from = Math.max(head.length, entry.length - Math.max(0, room - head.length - 2))
-  if (/[\uDC00-\uDFFF]/.test(entry[from] ?? '')) from++
-  return `${head}…${entry.slice(from)}`
+  const head = entry.slice(0, entry.indexOf("\n\n") + 2);
+  let from = Math.max(head.length, entry.length - Math.max(0, room - head.length - 2));
+  if (/[\uDC00-\uDFFF]/.test(entry[from] ?? "")) from++;
+  return `${head}…${entry.slice(from)}`;
 }
 
-function task(verb: string | undefined, id: string | undefined, key: string | undefined, more: string[]) {
-  const thread = process.env.HEX_THREAD
+function task(
+  verb: string | undefined,
+  id: string | undefined,
+  key: string | undefined,
+  more: string[],
+) {
+  const thread = process.env.HEX_THREAD;
   switch (verb) {
-    case 'new': {
-      const said = id && store.message(id)
-      if (!said) throw new Error(id ? `no message ${id}` : 'name the message the task comes from by its key')
-      return show([store.createTask({ title: flags.title!, message: id!, quote: flags.quote, owner: flags.owner ?? thread ?? said.to, project: flags.project, doneWhen: flags['done-when'], status: flags.idea ? 'idea' : 'open' })])
+    case "new": {
+      const said = id && store.message(id);
+      if (!said)
+        throw new Error(
+          id ? `no message ${id}` : "name the message the task comes from by its key",
+        );
+      return show([
+        store.createTask({
+          title: flags.title!,
+          message: id!,
+          quote: flags.quote,
+          owner: flags.owner ?? thread ?? said.to,
+          project: flags.project,
+          doneWhen: flags["done-when"],
+          status: flags.idea ? "idea" : "open",
+        }),
+      ]);
     }
-    case 'add':
-      if (!id || !key) usage()
-      return show([store.addWords(id, key, flags.quote)])
-    case 'quote':
-      if (!id || !key || !flags.quote) usage()
-      return show([store.requote(id, key, flags.quote)])
-    case 'done':
-      if (!id || !flags.proof) throw new Error('a task is done with --proof: a link or a fact that shows it')
-      return show([store.editTask(id, { status: 'done', proof: flags.proof, doneIn: thread })])
-    case 'drop':
-      if (!id) usage()
-      return show([flags.into ? store.mergeTasks(flags.into, id) : store.editTask(id, { status: 'dropped' })])
-    case 'open':
-      if (!id) usage()
-      return show([store.editTask(id, { status: 'open' })])
-    case 'edit':
-      if (!id) usage()
-      return show([store.editTask(id, { title: flags.title, owner: flags.owner, project: flags.project, doneWhen: flags['done-when'] })])
-    case 'agent':
-      if (!id || !more.length) usage()
-      return show([store.addAgents(id, more, thread)])
+    case "add":
+      if (!id || !key) usage();
+      return show([store.addWords(id, key, flags.quote)]);
+    case "quote":
+      if (!id || !key || !flags.quote) usage();
+      return show([store.requote(id, key, flags.quote)]);
+    case "done":
+      if (!id || !flags.proof)
+        throw new Error("a task is done with --proof: a link or a fact that shows it");
+      return show([store.editTask(id, { status: "done", proof: flags.proof, doneIn: thread })]);
+    case "drop":
+      if (!id) usage();
+      return show([
+        flags.into ? store.mergeTasks(flags.into, id) : store.editTask(id, { status: "dropped" }),
+      ]);
+    case "open":
+      if (!id) usage();
+      return show([store.editTask(id, { status: "open" })]);
+    case "edit":
+      if (!id) usage();
+      return show([
+        store.editTask(id, {
+          title: flags.title,
+          owner: flags.owner,
+          project: flags.project,
+          doneWhen: flags["done-when"],
+        }),
+      ]);
+    case "agent":
+      if (!id || !more.length) usage();
+      return show([store.addAgents(id, more, thread)]);
     default: {
-      const found = verb && store.task(verb)
-      if (!found) throw new Error(verb ? `no task ${verb}` : USAGE)
-      return show([found])
+      const found = verb && store.task(verb);
+      if (!found) throw new Error(verb ? `no task ${verb}` : USAGE);
+      return show([found]);
     }
   }
 }
@@ -286,149 +402,275 @@ function task(verb: string | undefined, id: string | undefined, key: string | un
 // The threads a hold names, each by its key: a name means the one thread of it, an open one before
 // any closed, and to end a hold, the one of that name it holds.
 function holdable(names: string[], among?: string[]) {
-  return names.map(given => {
-    const all = named(given)
-    const matches = among ? all.filter(({ thread }) => among.includes(thread)) : all.some(({ open }) => open) ? all.filter(({ open }) => open) : all
-    if (matches.length === 1) return matches[0]!.thread
-    if (matches.length) throw new Error(`more than one thread is named "${given}", so name one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(', ')}`)
-    throw new Error(all.length ? `that hold doesn't hold "${given}"` : `no thread is "${given}" (hex threads lists them; quote every value that has spaces)`)
-  })
+  return names.map((given) => {
+    const all = named(given);
+    const matches = among
+      ? all.filter(({ thread }) => among.includes(thread))
+      : all.some(({ open }) => open)
+        ? all.filter(({ open }) => open)
+        : all;
+    if (matches.length === 1) return matches[0]!.thread;
+    if (matches.length)
+      throw new Error(
+        `more than one thread is named "${given}", so name one by its id: ${matches.map(({ app, thread }) => `${app}:${thread}`).join(", ")}`,
+      );
+    throw new Error(
+      all.length
+        ? `that hold doesn't hold "${given}"`
+        : `no thread is "${given}" (hex threads lists them; quote every value that has spaces)`,
+    );
+  });
 }
 
 // The threads at work now: a session working for one is mid-turn, or its turn ended with background
 // agents still working for it.
 function working() {
-  const threads = store.threads({ open: true })
-  const held = new Map(threads.flatMap(({ app, thread, session }) => (session ? [[session, `${app}:${thread}`] as [string, string]] : [])))
-  const sessions = running(store)
-  const busyNow = [...sessions.values()].filter(session => busy(session) || session.state === 'working').flatMap(session => serving(session, held, sessions) ?? [])
-  return new Set([...busyNow.map(thread => store.key(thread)), ...threads.filter(({ session }) => session && store.atWork(session)).map(({ thread }) => thread)])
+  const threads = store.threads({ open: true });
+  const held = new Map(
+    threads.flatMap(({ app, thread, session }) =>
+      session ? [[session, `${app}:${thread}`] as [string, string]] : [],
+    ),
+  );
+  const sessions = running(store);
+  const busyNow = [...sessions.values()]
+    .filter((session) => busy(session) || session.state === "working")
+    .flatMap((session) => serving(session, held, sessions) ?? []);
+  return new Set([
+    ...busyNow.map((thread) => store.key(thread)),
+    ...threads
+      .filter(({ session }) => session && store.atWork(session))
+      .map(({ thread }) => thread),
+  ]);
 }
 
 // Holds the threads named, or with end, ends a hold on them, or on every thread it holds.
 function hold(words: string[]) {
-  const zone = zoneOf(dirname(state!))
-  if (flags.key && !store.message(flags.key)) throw new Error(`no message ${flags.key}`)
-  if (words[0] === 'end') {
-    const [, id, ...threads] = words
-    if (!id || !flags.why) usage()
-    const hold = store.holdOf(id)
-    if (!hold) throw new Error(`no hold ${id}`)
-    const freed = store.unhold(id, `${flags.why}${flags.key ? ` [${flags.key}]` : ''}`, threads.length ? holdable(threads, hold.threads.map(({ thread }) => thread)) : undefined)
-    const names = store.names()
-    console.log(freed.length ? `${id} freed ${freed.map(thread => names[thread] ?? thread).join(', ')}; hex wakes each that worked while held, a couple at a time` : `${id} held none of them any more`)
-    return
+  const zone = zoneOf(dirname(state!));
+  if (flags.key && !store.message(flags.key)) throw new Error(`no message ${flags.key}`);
+  if (words[0] === "end") {
+    const [, id, ...threads] = words;
+    if (!id || !flags.why) usage();
+    const hold = store.holdOf(id);
+    if (!hold) throw new Error(`no hold ${id}`);
+    const freed = store.unhold(
+      id,
+      `${flags.why}${flags.key ? ` [${flags.key}]` : ""}`,
+      threads.length
+        ? holdable(
+            threads,
+            hold.threads.map(({ thread }) => thread),
+          )
+        : undefined,
+    );
+    const names = store.names();
+    console.log(
+      freed.length
+        ? `${id} freed ${freed.map((thread) => names[thread] ?? thread).join(", ")}; hex wakes each that worked while held, a couple at a time`
+        : `${id} held none of them any more`,
+    );
+    return;
   }
-  if (!words.length || !flags.why) usage()
-  const by = store.key(process.env.HEX_THREAD || served() || 'terminal')
-  const placed = place(store, { threads: holdable(words), by, why: flags.why, message: flags.key, until: flags.until ? instant(flags.until, zone) : undefined }, { zone, working: working() })
-  console.log(line(placed, store, zone))
+  if (!words.length || !flags.why) usage();
+  const by = store.key(process.env.HEX_THREAD || served() || "terminal");
+  const placed = place(
+    store,
+    {
+      threads: holdable(words),
+      by,
+      why: flags.why,
+      message: flags.key,
+      until: flags.until ? instant(flags.until, zone) : undefined,
+    },
+    { zone, working: working() },
+  );
+  console.log(line(placed, store, zone));
 }
 
 try {
   switch (command) {
-    case 'hold':
-      hold(args)
-      break
-    case 'holds': {
-      const holds = store.holds({ all: flags.all })
-      if (flags.json) json(holds)
-      else console.log(holds.map(each => line(each, store, zoneOf(dirname(state!)))).join('\n') || 'nothing on hold')
-      break
+    case "hold":
+      hold(args);
+      break;
+    case "holds": {
+      const holds = store.holds({ all: flags.all });
+      if (flags.json) json(holds);
+      else
+        console.log(
+          holds.map((each) => line(each, store, zoneOf(dirname(state!)))).join("\n") ||
+            "nothing on hold",
+        );
+      break;
     }
-    case 'deliver': {
-      const [given, ...words] = args
-      const from = given?.split(':')[0]
-      if (!from || !flags.to || !words.length) usage()
-      const key = from === given ? `${from}:${crypto.randomUUID()}` : given!
-      store.deliver({ key, to: recipient(flags.to), from, author: 'prompt', body: words.join(' '), meta: { user: flags.user ?? from } })
-      break
+    case "deliver": {
+      const [given, ...words] = args;
+      const from = given?.split(":")[0];
+      if (!from || !flags.to || !words.length) usage();
+      const key = from === given ? `${from}:${crypto.randomUUID()}` : given!;
+      store.deliver({
+        key,
+        to: recipient(flags.to),
+        from,
+        author: "prompt",
+        body: words.join(" "),
+        meta: { user: flags.user ?? from },
+      });
+      break;
     }
-    case 'task':
-      task(args[0], args[1], args[2], args.slice(2))
-      break
-    case 'tasks':
-      show(store.tasks({ owner: flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), status: (flags.status?.split(',') ?? ['open']) as Status[] }), false)
-      break
-    case 'questions': {
-      const questions = store.questions({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD), waiting: true })
-      if (flags.json) json(questions.map(question => ({ ...question, threadId: `${question.app}:${question.thread}` })))
-      else console.log(questions.map(question => waiting(question, store.names())).join('\n') || 'no questions waiting')
-      break
+    case "task":
+      task(args[0], args[1], args[2], args.slice(2));
+      break;
+    case "tasks":
+      show(
+        store.tasks({
+          owner:
+            flags.owner ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD),
+          status: (flags.status?.split(",") ?? ["open"]) as Status[],
+        }),
+        false,
+      );
+      break;
+    case "questions": {
+      const questions = store.questions({
+        thread:
+          flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD),
+        waiting: true,
+      });
+      if (flags.json)
+        json(
+          questions.map((question) => ({
+            ...question,
+            threadId: `${question.app}:${question.thread}`,
+          })),
+        );
+      else
+        console.log(
+          questions.map((question) => waiting(question, store.names())).join("\n") ||
+            "no questions waiting",
+        );
+      break;
     }
-    case 'pins': {
-      const pins = store.pins({ thread: flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD) })
-      const names = store.names()
-      if (flags.json) json(pins.map(pin => ({ ...pin, threadId: `${pin.app}:${pin.thread}` })))
-      else console.log(pins.map(pin => `${pin.app} · ${names[pin.thread] ?? pin.thread} · message ${pin.message} · ${(pin.note || pin.text).trim().split('\n')[0]}`).join('\n') || 'no pins')
-      break
+    case "pins": {
+      const pins = store.pins({
+        thread:
+          flags.thread ?? (flags.all || process.env.HEX_MAIN ? undefined : process.env.HEX_THREAD),
+      });
+      const names = store.names();
+      if (flags.json) json(pins.map((pin) => ({ ...pin, threadId: `${pin.app}:${pin.thread}` })));
+      else
+        console.log(
+          pins
+            .map(
+              (pin) =>
+                `${pin.app} · ${names[pin.thread] ?? pin.thread} · message ${pin.message} · ${(pin.note || pin.text).trim().split("\n")[0]}`,
+            )
+            .join("\n") || "no pins",
+        );
+      break;
     }
-    case 'threads': {
-      const threads = store.threads()
-      if (flags.json) json(threads.map(thread => ({ id: `${thread.app}:${thread.thread}`, ...thread })))
-      else console.log(threads.map(({ app, thread, name, open }) => `${app} ${thread} ${name}${open ? '' : ' (closed)'}`).join('\n'))
-      break
+    case "threads": {
+      const threads = store.threads();
+      if (flags.json)
+        json(threads.map((thread) => ({ id: `${thread.app}:${thread.thread}`, ...thread })));
+      else
+        console.log(
+          threads
+            .map(
+              ({ app, thread, name, open }) => `${app} ${thread} ${name}${open ? "" : " (closed)"}`,
+            )
+            .join("\n"),
+        );
+      break;
     }
-    case 'profile': {
+    case "profile": {
       // The owner's profile as it is now, or with --all every version, newest first.
-      const versions = flags.all ? store.profiles() : store.profiles().slice(0, 1)
-      if (flags.json) console.log(JSON.stringify(flags.all ? versions : (versions[0] ?? null), null, 1))
-      else console.log(versions.map(({ at, body }) => (flags.all ? `--- ${at}\n${body}\n` : body)).join('\n') || 'no profile yet')
-      break
+      const versions = flags.all ? store.profiles() : store.profiles().slice(0, 1);
+      if (flags.json)
+        console.log(JSON.stringify(flags.all ? versions : (versions[0] ?? null), null, 1));
+      else
+        console.log(
+          versions.map(({ at, body }) => (flags.all ? `--- ${at}\n${body}\n` : body)).join("\n") ||
+            "no profile yet",
+        );
+      break;
     }
-    case 'running': {
-      const threads = store.threads({ open: true })
-      const held = new Map(threads.flatMap(({ app, thread, session }) => (session ? [[session, `${app}:${thread}`] as [string, string]] : [])))
-      const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]))
-      const home = realpathSync(dirname(state!))
-      const sessions = running(store)
-      const updates = history(resolve(import.meta.dir, '..'))
+    case "running": {
+      const threads = store.threads({ open: true });
+      const held = new Map(
+        threads.flatMap(({ app, thread, session }) =>
+          session ? [[session, `${app}:${thread}`] as [string, string]] : [],
+        ),
+      );
+      const names = new Map(threads.map(({ app, thread, name }) => [`${app}:${thread}`, name]));
+      const home = realpathSync(dirname(state!));
+      const sessions = running(store);
+      const updates = history(resolve(import.meta.dir, ".."));
       // Only a session working for a thread, or one of hex's helpers, runs hex.
       const behind = (session: Session, thread?: string) => {
-        const from = thread || session.helper ? updates.on(session.started) : undefined
-        const changed = from ? updates.changed(from) : []
-        return changed.length ? { from, changed } : undefined
-      }
-      const rows = [...sessions.values()].map(session => {
-        const thread = serving(session, held, sessions)
-        return { ...session, thread, behind: behind(session, thread) }
-      })
-      if (flags.json) console.log(JSON.stringify(rows, null, 1))
-      else console.log(rows.map(({ id, status, name, cwd, thread, state, detail, needs, behind: old }) => {
-        const now = (state === 'blocked' && needs) || detail
-        return `${status} ${id.slice(0, 8)} ${name ?? ''}${cwd && cwd !== home ? ` in ${cwd}` : ''}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ''}${old ? ` · started on an older hex (${old.from!.slice(0, 7)}), ${old.changed.join(', ')} changed since` : ''}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, ' ')}` : ''}` : ''}`
-      }).join('\n') || 'nothing running')
-      break
+        const from = thread || session.helper ? updates.on(session.started) : undefined;
+        const changed = from ? updates.changed(from) : [];
+        return changed.length ? { from, changed } : undefined;
+      };
+      const rows = [...sessions.values()].map((session) => {
+        const thread = serving(session, held, sessions);
+        return { ...session, thread, behind: behind(session, thread) };
+      });
+      if (flags.json) console.log(JSON.stringify(rows, null, 1));
+      else
+        console.log(
+          rows
+            .map(({ id, status, name, cwd, thread, state, detail, needs, behind: old }) => {
+              const now = (state === "blocked" && needs) || detail;
+              return `${status} ${id.slice(0, 8)} ${name ?? ""}${cwd && cwd !== home ? ` in ${cwd}` : ""}${thread ? ` · ${names.get(thread) ?? thread} (${thread})` : ""}${old ? ` · started on an older hex (${old.from!.slice(0, 7)}), ${old.changed.join(", ")} changed since` : ""}${state ? ` · ${state}${now ? `: ${now.replace(/\s+/g, " ")}` : ""}` : ""}`;
+            })
+            .join("\n") || "nothing running",
+        );
+      break;
     }
-    case 'message': {
-      const said = args[0] && store.latest(args[0])
-      if (!said) throw new Error(`no message ${args[0] ?? ''}`)
-      console.log(flags.json ? JSON.stringify(said, null, 1) : said.from === 't3' && said.author === 'owner' ? sent(said.body).join('\n\n') : said.body)
-      const under = said.meta?.edit ?? (said.key !== args[0] ? said.key : undefined)
-      if (under && !flags.json) console.error(`(edited: these are the words of ${under}, the key to quote them under)`)
-      break
+    case "message": {
+      const said = args[0] && store.latest(args[0]);
+      if (!said) throw new Error(`no message ${args[0] ?? ""}`);
+      console.log(
+        flags.json
+          ? JSON.stringify(said, null, 1)
+          : said.from === "t3" && said.author === "owner"
+            ? sent(said.body).join("\n\n")
+            : said.body,
+      );
+      const under = said.meta?.edit ?? (said.key !== args[0] ? said.key : undefined);
+      if (under && !flags.json)
+        console.error(`(edited: these are the words of ${under}, the key to quote them under)`);
+      break;
     }
-    case 'log': {
-      const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId()
-      const since = flags.since ? new Date(Temporal.PlainDateTime.from(flags.since).toZonedDateTime(zone).epochMilliseconds).toISOString() : ''
+    case "log": {
+      const zone = zoneOf(dirname(state!)) ?? Temporal.Now.timeZoneId();
+      const since = flags.since
+        ? new Date(
+            Temporal.PlainDateTime.from(flags.since).toZonedDateTime(zone).epochMilliseconds,
+          ).toISOString()
+        : "";
       if (args.length && !args[0]) {
-        console.error("hex log: name the thread, by its name or id")
-        process.exit(2)
+        console.error("hex log: name the thread, by its name or id");
+        process.exit(2);
       }
-      const last = flags.last ? Number(flags.last) : -1
-      const threads = args[0] ? threadsOf(args[0]) : []
-      const rows = threads.length ? threads.flatMap(thread => store.said(thread, last)).sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0)).slice(last < 0 ? 0 : -last) : store.since(since)
-      log(rows.filter(row => row.at > since && (!flags.taken || row.taken)))
-      break
+      const last = flags.last ? Number(flags.last) : -1;
+      const threads = args[0] ? threadsOf(args[0]) : [];
+      const rows = threads.length
+        ? threads
+            .flatMap((thread) => store.said(thread, last))
+            .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0))
+            .slice(last < 0 ? 0 : -last)
+        : store.since(since);
+      log(rows.filter((row) => row.at > since && (!flags.taken || row.taken)));
+      break;
     }
-    case 'recall':
-      if (!args[0]) usage()
-      await recall(args[0])
-      break
+    case "recall":
+      if (!args[0]) usage();
+      await recall(args[0]);
+      break;
     default:
-      usage()
+      usage();
   }
 } catch (error) {
-  console.error(`hex: ${error instanceof Error ? error.message : error}`)
-  process.exit(1)
+  console.error(`hex: ${error instanceof Error ? error.message : error}`);
+  process.exit(1);
 }

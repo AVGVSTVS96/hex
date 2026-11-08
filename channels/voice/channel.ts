@@ -1,10 +1,10 @@
-import type { ChannelServer } from '../../hub/hub.ts'
-import { PORT } from './env.ts'
+import type { ChannelServer } from "../../hub/hub.ts";
+import { PORT } from "./env.ts";
 
 // What the voice session's channel says and offers; the hub serves it over HTTP, and the call
 // engine (server.ts) answers its tools.
 export const server: ChannelServer = {
-  title: 'voice',
+  title: "voice",
   instructions: `This channel is a live voice call. A fast voice model (OpenAI gpt-live-1) talks with the caller in real time and hands work to you; you do the real work with your tools. The caller hears only the voice model, never your transcript output.
 
 When a call starts you get a "call started" message, whose from says where the caller is: app or web (hex's voice app or page), phone-in or phone-out (a phone call), or discord (a Discord voice channel they joined). Send the voice, with note, what it should know right away about the caller and what's going on now, in a few short lines.
@@ -33,112 +33,158 @@ If hex's service restarts or the voice's connection drops during a call, the cal
 A result too long to speak goes wherever the caller reads, if this session has another channel to reach them; say where you sent it. Voice page: http://localhost:${PORT}.`,
   tools: [
     {
-      name: 'say',
-      _meta: { 'anthropic/alwaysLoad': true },
-      description: 'Give the voice model a result to say aloud for a handoff. It paraphrases, so write one or two plain spoken sentences.',
+      name: "say",
+      _meta: { "anthropic/alwaysLoad": true },
+      description:
+        "Give the voice model a result to say aloud for a handoff. It paraphrases, so write one or two plain spoken sentences.",
       inputSchema: {
-        type: 'object',
-        properties: { delegation_id: { type: 'string' }, text: { type: 'string' } },
-        required: ['delegation_id', 'text'],
+        type: "object",
+        properties: { delegation_id: { type: "string" }, text: { type: "string" } },
+        required: ["delegation_id", "text"],
       },
     },
     {
-      name: 'note',
-      _meta: { 'anthropic/alwaysLoad': true },
-      description: 'Give the voice model a fact to know without saying it now. Pass delegation_id when it belongs to a handoff. While a call you placed is ringing, it waits and reaches the voice when the call connects.',
+      name: "note",
+      _meta: { "anthropic/alwaysLoad": true },
+      description:
+        "Give the voice model a fact to know without saying it now. Pass delegation_id when it belongs to a handoff. While a call you placed is ringing, it waits and reaches the voice when the call connects.",
       inputSchema: {
-        type: 'object',
-        properties: { text: { type: 'string' }, delegation_id: { type: 'string' } },
-        required: ['text'],
+        type: "object",
+        properties: { text: { type: "string" }, delegation_id: { type: "string" } },
+        required: ["text"],
       },
     },
     {
-      name: 'task',
-      _meta: { 'anthropic/alwaysLoad': true },
+      name: "task",
+      _meta: { "anthropic/alwaysLoad": true },
       description:
         "Put a task on the board the voice model reads to answer status questions: running when it starts, then done or failed. After its call ends, pass that call's id to update its record.",
       inputSchema: {
-        type: 'object',
+        type: "object",
         properties: {
-          id: { type: 'string', description: 'A short name that stays the same across updates' },
-          call: { type: 'string', description: 'The call the task belongs to, once that call has ended; the live call by default' },
-          state: { type: 'string', enum: ['running', 'done', 'failed'] },
-          text: { type: 'string', description: 'What it is, and the result once it has one' },
-          agent: { type: 'string', description: 'The agentId the Agent tool returned for the background subagent doing it, so the caller sees its steps live' },
+          id: { type: "string", description: "A short name that stays the same across updates" },
+          call: {
+            type: "string",
+            description:
+              "The call the task belongs to, once that call has ended; the live call by default",
+          },
+          state: { type: "string", enum: ["running", "done", "failed"] },
+          text: { type: "string", description: "What it is, and the result once it has one" },
+          agent: {
+            type: "string",
+            description:
+              "The agentId the Agent tool returned for the background subagent doing it, so the caller sees its steps live",
+          },
         },
-        required: ['id', 'state', 'text'],
+        required: ["id", "state", "text"],
       },
     },
     {
-      name: 'running',
-      _meta: { 'anthropic/alwaysLoad': true },
+      name: "running",
+      _meta: { "anthropic/alwaysLoad": true },
       description:
         "Everything hex is running right now, read live: what waits on the caller, each thread at work with its newest step and agents (T3 Code threads on other machines included), each job, and busy sessions outside any thread. One short line each, for answering what's running.",
-      inputSchema: { type: 'object', properties: {} },
+      inputSchema: { type: "object", properties: {} },
     },
     {
-      name: 'ask',
+      name: "ask",
       description:
         "Put one of the caller's open asks on their screen as a card in the call's transcript, by its id from the list you were given: they can tap a choice there or say it.",
-      inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
     },
     {
-      name: 'answer',
-      description: "Answer one of the caller's asks with the choice they said aloud: it reaches the thread that asked as their own tap would, and its buttons in Telegram or Discord say it was answered on a call.",
+      name: "answer",
+      description:
+        "Answer one of the caller's asks with the choice they said aloud: it reaches the thread that asked as their own tap would, and its buttons in Telegram or Discord say it was answered on a call.",
       inputSchema: {
-        type: 'object',
-        properties: { id: { type: 'string' }, label: { type: 'string', description: "The option's label, or their own words when none fits" } },
-        required: ['id', 'label'],
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          label: {
+            type: "string",
+            description: "The option's label, or their own words when none fits",
+          },
+        },
+        required: ["id", "label"],
       },
     },
     {
-      name: 'send',
-      _meta: { 'anthropic/alwaysLoad': true },
+      name: "send",
+      _meta: { "anthropic/alwaysLoad": true },
       description:
         "Hand work to a hex thread, by its name or id: your message reaches that thread's session from hex voice, the work goes on the board as running, the caller sees each step the thread takes on it, and the board shows it done or failed once the thread's work is, its background agents and workflows included.",
       inputSchema: {
-        type: 'object',
+        type: "object",
         properties: {
-          thread: { type: 'string', description: "The thread's name (like voiceapp) or id; with app, the one-word name of the new thread" },
-          about: { type: 'string', description: "A few words for what you sent, shown to the caller, like 'your orb-bounce feedback'" },
-          text: { type: 'string', description: "The message, with the caller's own words" },
-          app: { type: 'string', enum: ['discord', 'telegram', 'buzz'], description: 'Open a new thread there for work that has none yet, instead of sending to one' },
-          channel: { type: 'string', description: 'With app discord or buzz: the channel to open it in, by name' },
+          thread: {
+            type: "string",
+            description:
+              "The thread's name (like voiceapp) or id; with app, the one-word name of the new thread",
+          },
+          about: {
+            type: "string",
+            description:
+              "A few words for what you sent, shown to the caller, like 'your orb-bounce feedback'",
+          },
+          text: { type: "string", description: "The message, with the caller's own words" },
+          app: {
+            type: "string",
+            enum: ["discord", "telegram", "buzz"],
+            description:
+              "Open a new thread there for work that has none yet, instead of sending to one",
+          },
+          channel: {
+            type: "string",
+            description: "With app discord or buzz: the channel to open it in, by name",
+          },
         },
-        required: ['thread', 'about', 'text'],
+        required: ["thread", "about", "text"],
       },
     },
     {
-      name: 'title',
+      name: "title",
       description:
         "Name a call in the caller's list of past calls, and once its work has settled, wrap it up: summary is what happened and what you sent where, waiting is what's left for the caller. Each field you pass replaces the call's last one.",
       inputSchema: {
-        type: 'object',
+        type: "object",
         properties: {
-          call: { type: 'string', description: 'The call id from the call ended message' },
-          title: { type: 'string', description: 'A few plain words for what the call was about' },
-          summary: { type: 'string', description: 'Two or three plain sentences' },
-          waiting: { type: 'array', items: { type: 'string' }, description: 'What the caller still has to do or decide, one short line each' },
+          call: { type: "string", description: "The call id from the call ended message" },
+          title: { type: "string", description: "A few plain words for what the call was about" },
+          summary: { type: "string", description: "Two or three plain sentences" },
+          waiting: {
+            type: "array",
+            items: { type: "string" },
+            description: "What the caller still has to do or decide, one short line each",
+          },
         },
-        required: ['call'],
+        required: ["call"],
       },
     },
     {
-      name: 'phone',
-      description: "Ring a phone and hold the call there: the caller's own number unless to is given (E.164, like +14155550123).",
+      name: "phone",
+      description:
+        "Ring a phone and hold the call there: the caller's own number unless to is given (E.164, like +14155550123).",
       inputSchema: {
-        type: 'object',
+        type: "object",
         properties: {
-          to: { type: 'string' },
-          why: { type: 'string', description: "Why you're calling, one plain sentence; the voice opens with it" },
-          move: { type: 'boolean', description: "The caller asked to move the live call to their phone; it ends once the phone picks up" },
+          to: { type: "string" },
+          why: {
+            type: "string",
+            description: "Why you're calling, one plain sentence; the voice opens with it",
+          },
+          move: {
+            type: "boolean",
+            description:
+              "The caller asked to move the live call to their phone; it ends once the phone picks up",
+          },
         },
       },
     },
     {
-      name: 'hang_up',
-      description: 'End the live call once the voice finishes speaking. Say goodbye with say first.',
-      inputSchema: { type: 'object', properties: {} },
+      name: "hang_up",
+      description:
+        "End the live call once the voice finishes speaking. Say goodbye with say first.",
+      inputSchema: { type: "object", properties: {} },
     },
   ],
-}
+};

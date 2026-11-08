@@ -1,20 +1,21 @@
-import { mkdirSync } from 'fs'
-import { join } from 'path'
-import { engine, startHub } from '../../hub/hub.ts'
-import { hexDir } from '../../hub/store.ts'
-import { server } from './channel.ts'
-import { serve, take, tool } from './server.ts'
+import { mkdirSync } from "fs";
+import { join } from "path";
 
-const STATE = join(hexDir(), 'state')
-const THREAD = 'voice'
-const stateDir = process.env.VOICE_STATE_DIR ?? join(STATE, THREAD)
-mkdirSync(stateDir, { recursive: true })
+import { engine, startHub } from "../../hub/hub.ts";
+import { hexDir } from "../../hub/store.ts";
+import { server } from "./channel.ts";
+import { serve, take, tool } from "./server.ts";
+
+const STATE = join(hexDir(), "state");
+const THREAD = "voice";
+const stateDir = process.env.VOICE_STATE_DIR ?? join(STATE, THREAD);
+mkdirSync(stateDir, { recursive: true });
 
 // One session, always running, takes every call: it stays warm for the whole call and starts
 // over once the call ends, so each call gets a new session that reads the call chat.
 const hub = startHub({
   stateDir,
-  channel: process.env.VOICE_CHANNEL ?? 'plugin:voice@hex',
+  channel: process.env.VOICE_CHANNEL ?? "plugin:voice@hex",
   server,
   main: THREAD,
   mainName: THREAD,
@@ -24,18 +25,24 @@ const hub = startHub({
   launcher: process.env.HEX_LAUNCHER,
   call: (_, name, args) => tool(name, args),
   state: () => {},
-  failed: (_, reason) => process.stderr.write(`voice hub: the voice session couldn't start: ${reason}\n`),
-})
+  failed: (_, reason) =>
+    process.stderr.write(`voice hub: the voice session couldn't start: ${reason}\n`),
+});
 
 serve(
   {
-    deliver: (content, meta) => hub.deliver(THREAD, THREAD, { content, meta, author: meta.callee ? 'other' : meta.delegation_id || meta.ended ? 'call' : 'prompt' }),
+    deliver: (content, meta) =>
+      hub.deliver(THREAD, THREAD, {
+        content,
+        meta,
+        author: meta.callee ? "other" : meta.delegation_id || meta.ended ? "call" : "prompt",
+      }),
     keep: () => hub.keep(THREAD),
     renew: () => hub.renew(THREAD),
     renewal: () => hub.renewal(THREAD),
     session: () => hub.session(THREAD),
   },
   STATE,
-)
+);
 
-engine.take = take
+engine.take = take;

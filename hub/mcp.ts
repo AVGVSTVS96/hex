@@ -1,32 +1,47 @@
-import { clock } from './clock.ts'
-import { isDeepStrictEqual } from 'node:util'
-import type { Store } from './store.ts'
+import { isDeepStrictEqual } from "node:util";
+
+import { clock } from "./clock.ts";
+import type { Store } from "./store.ts";
 
 // reads: for a tool that reads or writes by its arguments, whether a call only reads. It stays here: a
 // function never reaches the session's tool list.
-export type Tool = { name: string; description: string; inputSchema: object; annotations?: { readOnlyHint?: boolean }; reads?: (args: Record<string, unknown>) => boolean; _meta?: object }
+export type Tool = {
+  name: string;
+  description: string;
+  inputSchema: object;
+  annotations?: { readOnlyHint?: boolean };
+  reads?: (args: Record<string, unknown>) => boolean;
+  _meta?: object;
+};
 // What a chat app's channel says to each session: how to read its messages, and the tools that act in its thread.
-export type ChannelServer = { title: string; instructions: string; tools: Tool[]; permission?: boolean }
-export type Payload = { type: 'inbound'; content: string; meta: Record<string, string> } | { type: 'permission'; request_id: string; behavior: string }
-export type Line = { send: (payload: Payload) => void }
+export type ChannelServer = {
+  title: string;
+  instructions: string;
+  tools: Tool[];
+  permission?: boolean;
+};
+export type Payload =
+  | { type: "inbound"; content: string; meta: Record<string, string> }
+  | { type: "permission"; request_id: string; behavior: string };
+export type Line = { send: (payload: Payload) => void };
 
 type Hooks = {
-  call: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>
-  permission: (thread: string, request: any) => void
-  open: (thread: string, line: Line) => void
-  close: (thread: string, line: Line) => void
-}
+  call: (thread: string, tool: string, args: Record<string, unknown>) => Promise<string>;
+  permission: (thread: string, request: any) => void;
+  open: (thread: string, line: Line) => void;
+  close: (thread: string, line: Line) => void;
+};
 
 // The revisions whose standalone GET stream carries server notifications. Claude Code first probes
 // `server/discover` for 2026-07-28, where it registers no channel ("no unsolicited notification
 // path"), and falls back to `initialize` when that's declined.
-const REVISIONS = ['2025-11-25', '2025-06-18', '2025-03-26']
-const encoder = new TextEncoder()
-const NUDGE = 250
+const REVISIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
+const encoder = new TextEncoder();
+const NUDGE = 250;
 // Bun notices a disconnected request on the next event-loop tick.
-const tick = () => new Promise(resolve => setTimeout(resolve, 0))
-type Result = { content: { type: 'text'; text: string }[]; isError?: true }
-const failure = (text: string): Result => ({ content: [{ type: 'text', text }], isError: true })
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+type Result = { content: { type: "text"; text: string }[]; isError?: true };
+const failure = (text: string): Result => ({ content: [{ type: "text", text }], isError: true });
 
 // How far a session initialized here is from listening. Claude Code drops channel messages that come
 // before it listens and says nothing when it starts, but it registers its channel handler in the same
@@ -34,175 +49,271 @@ const failure = (text: string): Result => ({ content: [{ type: 'text', text }], 
 // told they changed, and the list that answers is the sign it listens. A session starting cold
 // registers them a while after it lists the tools and drops what came before, so it's told again
 // until it answers.
-type Handshake = { is: 'initialized' } | { is: 'listed' } | { is: 'streaming'; nudge: () => void; open: () => void } | { is: 'nudged'; open: () => void }
+type Handshake =
+  | { is: "initialized" }
+  | { is: "listed" }
+  | { is: "streaming"; nudge: () => void; open: () => void }
+  | { is: "nudged"; open: () => void };
 
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here
 // with their binding and the hub's token in headers. Every session id is taken as it comes, so a
 // session that connected before the hub restarted carries on where it was without initializing again.
-export function endpoint(name: string, channel: string, token: string, server: ChannelServer, hooks: Hooks, store: Store, zone = () => Temporal.Now.timeZoneId()) {
-  const starting = new Map<string, Handshake>()
+export function endpoint(
+  name: string,
+  channel: string,
+  token: string,
+  server: ChannelServer,
+  hooks: Hooks,
+  store: Store,
+  zone = () => Temporal.Now.timeZoneId(),
+) {
+  const starting = new Map<string, Handshake>();
 
   function threadOf(request: Request) {
-    const thread = request.headers.get('x-hex-thread')
-    return request.headers.get('x-hex-channel') === channel && thread ? thread : undefined
+    const thread = request.headers.get("x-hex-thread");
+    return request.headers.get("x-hex-channel") === channel && thread ? thread : undefined;
   }
 
   function result(id: unknown, value: object) {
-    return Response.json({ jsonrpc: '2.0', id, result: value })
+    return Response.json({ jsonrpc: "2.0", id, result: value });
   }
 
-  const active = new Map<string, Promise<Result>>()
-  const tools = new Map(server.tools.map(tool => [tool.name, tool]))
-  const reads = (tool: string, args: Record<string, unknown>) => !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args))
-  async function once(thread: string | undefined, tool: string, args: Record<string, unknown>, gone: AbortSignal, id: string): Promise<Result> {
-    if (gone.aborted) return failure(`${tool} didn't run: you stopped waiting before the hub read it`)
-    if (reads(tool, args)) return call(thread, tool, args)
-    if (!thread) return call(thread, tool, args)
-    const scope = `${channel}:${thread}`
-    const key = JSON.stringify([scope, id])
-    const value = [tool, args]
-    const kept = store.operation(scope, id, JSON.stringify(value))
-    if (!isDeepStrictEqual(JSON.parse(kept.input), value)) return failure(`${tool} didn't run: identity ${id} already identifies a different call`)
+  const active = new Map<string, Promise<Result>>();
+  const tools = new Map(server.tools.map((tool) => [tool.name, tool]));
+  const reads = (tool: string, args: Record<string, unknown>) =>
+    !!(tools.get(tool)?.annotations?.readOnlyHint || tools.get(tool)?.reads?.(args));
+  async function once(
+    thread: string | undefined,
+    tool: string,
+    args: Record<string, unknown>,
+    gone: AbortSignal,
+    id: string,
+  ): Promise<Result> {
+    if (gone.aborted)
+      return failure(`${tool} didn't run: you stopped waiting before the hub read it`);
+    if (reads(tool, args)) return call(thread, tool, args);
+    if (!thread) return call(thread, tool, args);
+    const scope = `${channel}:${thread}`;
+    const key = JSON.stringify([scope, id]);
+    const value = [tool, args];
+    const kept = store.operation(scope, id, JSON.stringify(value));
+    if (!isDeepStrictEqual(JSON.parse(kept.input), value))
+      return failure(`${tool} didn't run: identity ${id} already identifies a different call`);
     if (!kept.fresh) {
-      if (kept.result !== null) return JSON.parse(kept.result)
-      return active.get(key) ?? failure(`${tool} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`)
+      if (kept.result !== null) return JSON.parse(kept.result);
+      return (
+        active.get(key) ??
+        failure(
+          `${tool} operation ${id} has an uncertain outcome after an interruption. Reconcile its effect before starting another operation.`,
+        )
+      );
     }
-    const answer = call(thread, tool, args).then(result => {
-      store.finishOperation(scope, id, JSON.stringify(result))
-      return result
-    }).finally(() => active.delete(key))
-    active.set(key, answer)
-    return answer
+    const answer = call(thread, tool, args)
+      .then((result) => {
+        store.finishOperation(scope, id, JSON.stringify(result));
+        return result;
+      })
+      .finally(() => active.delete(key));
+    active.set(key, answer);
+    return answer;
   }
 
-  async function call(thread: string | undefined, tool: string, args: Record<string, unknown>): Promise<Result> {
+  async function call(
+    thread: string | undefined,
+    tool: string,
+    args: Record<string, unknown>,
+  ): Promise<Result> {
     try {
-      if (!thread) throw new Error(`this session is not bound to a ${server.title} thread (HEX_THREAD is unset)`)
-      return { content: [{ type: 'text', text: await hooks.call(thread, tool, args) }] }
+      if (!thread)
+        throw new Error(
+          `this session is not bound to a ${server.title} thread (HEX_THREAD is unset)`,
+        );
+      return { content: [{ type: "text", text: await hooks.call(thread, tool, args) }] };
     } catch (error) {
-      return { content: [{ type: 'text', text: `${tool} failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true }
+      return {
+        content: [
+          {
+            type: "text",
+            text: `${tool} failed: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
     }
   }
 
   function listed(session: string | null) {
-    const step = session ? starting.get(session) : undefined
-    if (step?.is === 'initialized') starting.set(session!, { is: 'listed' })
-    if (step?.is === 'streaming') {
-      starting.set(session!, { is: 'nudged', open: step.open })
-      step.nudge()
+    const step = session ? starting.get(session) : undefined;
+    if (step?.is === "initialized") starting.set(session!, { is: "listed" });
+    if (step?.is === "streaming") {
+      starting.set(session!, { is: "nudged", open: step.open });
+      step.nudge();
     }
-    if (step?.is === 'nudged') {
-      starting.delete(session!)
-      step.open()
+    if (step?.is === "nudged") {
+      starting.delete(session!);
+      step.open();
     }
   }
 
   // Bun starts a response's body only once it sends it, so writes wait for that.
   function stream(thread: string | undefined, session: string | null) {
-    let controller: ReadableStreamDefaultController<Uint8Array> | undefined
-    let line: Line | undefined
-    let keepAlive: ReturnType<typeof setInterval> | undefined
-    const waiting = [': open\n\n']
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    let line: Line | undefined;
+    let keepAlive: ReturnType<typeof setInterval> | undefined;
+    const waiting = [": open\n\n"];
     const write = (text: string) => {
-      if (!controller) return void waiting.push(text)
+      if (!controller) return void waiting.push(text);
       try {
-        controller.enqueue(encoder.encode(text))
+        controller.enqueue(encoder.encode(text));
       } catch {
-        gone()
+        gone();
       }
-    }
-    const event = (message: object) => write(`event: message\ndata: ${JSON.stringify({ jsonrpc: '2.0', ...message })}\n\n`)
+    };
+    const event = (message: object) =>
+      write(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", ...message })}\n\n`);
     function gone() {
-      clearInterval(keepAlive)
-      if (session) starting.delete(session)
-      if (thread && line) hooks.close(thread, line)
-      line = undefined
+      clearInterval(keepAlive);
+      if (session) starting.delete(session);
+      if (thread && line) hooks.close(thread, line);
+      line = undefined;
     }
     const body = new ReadableStream<Uint8Array>({
       start(started) {
-        controller = started
-        for (const text of waiting.splice(0)) write(text)
+        controller = started;
+        for (const text of waiting.splice(0)) write(text);
       },
       cancel: gone,
-    })
+    });
     if (thread) {
-      line = { send: payload => event(notification(payload, zone())) }
-      keepAlive = setInterval(write, 15_000, ': keepalive\n\n')
-      const open = () => line && hooks.open(thread, line)
+      line = { send: (payload) => event(notification(payload, zone())) };
+      keepAlive = setInterval(write, 15_000, ": keepalive\n\n");
+      const open = () => line && hooks.open(thread, line);
       const nudge = () => {
-        event({ method: 'notifications/tools/list_changed' })
-        clock.setTimeout(() => line && starting.get(session!)?.is === 'nudged' && nudge(), NUDGE)
-      }
-      const step = session ? starting.get(session) : undefined
-      if (!step) open()
-      else if (step.is === 'listed') {
-        starting.set(session!, { is: 'nudged', open })
-        nudge()
-      } else starting.set(session!, { is: 'streaming', nudge, open })
+        event({ method: "notifications/tools/list_changed" });
+        clock.setTimeout(() => line && starting.get(session!)?.is === "nudged" && nudge(), NUDGE);
+      };
+      const step = session ? starting.get(session) : undefined;
+      if (!step) open();
+      else if (step.is === "listed") {
+        starting.set(session!, { is: "nudged", open });
+        nudge();
+      } else starting.set(session!, { is: "streaming", nudge, open });
     }
-    return new Response(body, { headers: { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', ...(session && { 'mcp-session-id': session }) } })
+    return new Response(body, {
+      headers: {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        ...(session && { "mcp-session-id": session }),
+      },
+    });
   }
 
   const handle = async (request: Request): Promise<Response> => {
     // The token comes as Authorization: Claude Code then takes a refusal as a failed connection,
     // where with any other header it marks the server as needing a login for 15 minutes.
-    if (request.headers.has('origin') || !['127.0.0.1', 'localhost'].includes(new URL(request.url).hostname) || request.headers.get('authorization') !== `Bearer ${token}`) return new Response('Forbidden', { status: 403 })
-    const thread = threadOf(request)
-    const session = request.headers.get('mcp-session-id')
-    if (request.method === 'GET') return stream(thread, session)
-    if (request.method === 'DELETE') return new Response(null, { status: 204 })
-    if (request.method !== 'POST') return new Response('Method Not Allowed', { status: 405 })
-    let message: any
+    if (
+      request.headers.has("origin") ||
+      !["127.0.0.1", "localhost"].includes(new URL(request.url).hostname) ||
+      request.headers.get("authorization") !== `Bearer ${token}`
+    )
+      return new Response("Forbidden", { status: 403 });
+    const thread = threadOf(request);
+    const session = request.headers.get("mcp-session-id");
+    if (request.method === "GET") return stream(thread, session);
+    if (request.method === "DELETE") return new Response(null, { status: 204 });
+    if (request.method !== "POST") return new Response("Method Not Allowed", { status: 405 });
+    let message: any;
     try {
-      message = await request.json()
+      message = await request.json();
     } catch {
-      return Response.json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }, { status: 400 })
+      return Response.json(
+        { jsonrpc: "2.0", id: null, error: { code: -32700, message: "Parse error" } },
+        { status: 400 },
+      );
     }
-    const { id, method, params } = message ?? {}
+    const { id, method, params } = message ?? {};
     if (id === undefined || !method) {
-      if (method === 'notifications/claude/channel/permission_request' && thread) hooks.permission(thread, params)
-      return new Response(null, { status: 202 })
+      if (method === "notifications/claude/channel/permission_request" && thread)
+        hooks.permission(thread, params);
+      return new Response(null, { status: 202 });
     }
-    if (method === 'initialize') {
-      const opened = crypto.randomUUID()
-      starting.set(opened, { is: 'initialized' })
-      const capabilities = { tools: { listChanged: true }, experimental: { 'claude/channel': {}, ...(server.permission && { 'claude/channel/permission': {} }) } }
-      const revision = REVISIONS.includes(params?.protocolVersion) ? params.protocolVersion : REVISIONS[0]
-      const response = result(id, { protocolVersion: revision, capabilities, serverInfo: { name, version: '1.0.0' }, instructions: server.instructions })
-      response.headers.set('mcp-session-id', opened)
-      return response
+    if (method === "initialize") {
+      const opened = crypto.randomUUID();
+      starting.set(opened, { is: "initialized" });
+      const capabilities = {
+        tools: { listChanged: true },
+        experimental: {
+          "claude/channel": {},
+          ...(server.permission && { "claude/channel/permission": {} }),
+        },
+      };
+      const revision = REVISIONS.includes(params?.protocolVersion)
+        ? params.protocolVersion
+        : REVISIONS[0];
+      const response = result(id, {
+        protocolVersion: revision,
+        capabilities,
+        serverInfo: { name, version: "1.0.0" },
+        instructions: server.instructions,
+      });
+      response.headers.set("mcp-session-id", opened);
+      return response;
     }
-    if (method === 'tools/list') {
-      listed(session)
-      return result(id, { tools: server.tools })
+    if (method === "tools/list") {
+      listed(session);
+      return result(id, { tools: server.tools });
     }
-    if (method === 'tools/call') {
-      await tick()
+    if (method === "tools/call") {
+      await tick();
       // Stock Claude Code sends its tool-use identity outside the model's arguments.
-      const toolUse = params?._meta?.['claudecode/toolUseId']
-      const operation = typeof toolUse === 'string' && toolUse ? JSON.stringify(['tool', toolUse]) : session ? JSON.stringify(['mcp', session, id]) : crypto.randomUUID()
-      return result(id, await once(thread, params?.name, params?.arguments ?? {}, request.signal, operation))
+      const toolUse = params?._meta?.["claudecode/toolUseId"];
+      const operation =
+        typeof toolUse === "string" && toolUse
+          ? JSON.stringify(["tool", toolUse])
+          : session
+            ? JSON.stringify(["mcp", session, id])
+            : crypto.randomUUID();
+      return result(
+        id,
+        await once(thread, params?.name, params?.arguments ?? {}, request.signal, operation),
+      );
     }
-    if (method === 'ping') return result(id, {})
-    return Response.json({ jsonrpc: '2.0', id, error: { code: -32601, message: `Method not found: ${method}` } })
-  }
+    if (method === "ping") return result(id, {});
+    return Response.json({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `Method not found: ${method}` },
+    });
+  };
 
-  return handle
+  return handle;
 }
 
 function notification(payload: Payload, zone: string) {
-  if (payload.type === 'inbound') return { method: 'notifications/claude/channel', params: { content: payload.content, meta: local(payload.meta, zone) } }
-  return { method: 'notifications/claude/channel/permission', params: { request_id: payload.request_id, behavior: payload.behavior } }
+  if (payload.type === "inbound")
+    return {
+      method: "notifications/claude/channel",
+      params: { content: payload.content, meta: local(payload.meta, zone) },
+    };
+  return {
+    method: "notifications/claude/channel/permission",
+    params: { request_id: payload.request_id, behavior: payload.behavior },
+  };
 }
 
 // The apps stamp a message in UTC, and a session that reads 06:31Z writes it down as 6:31am, so the
 // tag carries the owner's clock time with its offset instead.
 export function local(meta: Record<string, string>, zone: string): Record<string, string> {
-  const at = meta.ts ? Date.parse(meta.ts) : NaN
-  if (Number.isNaN(at)) return meta
+  const at = meta.ts ? Date.parse(meta.ts) : NaN;
+  if (Number.isNaN(at)) return meta;
   try {
-    return { ...meta, ts: Temporal.Instant.fromEpochMilliseconds(at).toZonedDateTimeISO(zone).toString({ timeZoneName: 'never', smallestUnit: 'second' }) }
+    return {
+      ...meta,
+      ts: Temporal.Instant.fromEpochMilliseconds(at)
+        .toZonedDateTimeISO(zone)
+        .toString({ timeZoneName: "never", smallestUnit: "second" }),
+    };
   } catch {
-    return meta
+    return meta;
   }
 }

@@ -1,49 +1,113 @@
 {
   "hooks": {
     "SessionStart": [
-      { "matcher": "startup|resume|clear", "hooks": [
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat begin" }
-      ] },
-      { "matcher": "compact", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted" }] },
-      { "hooks": [
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" },
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
-      ] },
-      { "matcher": "startup", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/origin.ts", "timeout": 10 }] }
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/live-status" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat begin" }
+        ]
+      },
+      {
+        "matcher": "compact",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted" }]
+      },
+      {
+        "hooks": [
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" },
+          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
+        ]
+      },
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/origin.ts",
+            "timeout": 10
+          }
+        ]
+      }
     ],
     "SubagentStart": [
-      { "hooks": [
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/origin.ts", "timeout": 10 },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 1" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 2" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 3 last" }
-      ] }
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/origin.ts",
+            "timeout": 10
+          },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 1" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 2" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/instructions 3 last" }
+        ]
+      }
     ],
     "PreToolUse": [
-      { "matcher": "mcp__claude_ai_.*", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }] },
-      { "matcher": "^(Edit|Write|MultiEdit)$", "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
-      { "matcher": "^(Bash|Agent|SendMessage|mcp__.*__new_thread|mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads))$", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/intent.ts", "timeout": 120 }] }
+      {
+        "matcher": "mcp__claude_ai_.*",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }]
+      },
+      {
+        "matcher": "^(Edit|Write|MultiEdit)$",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }]
+      },
+      {
+        "matcher": "^(Bash|Agent|SendMessage|mcp__.*__new_thread|mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads))$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/intent.ts",
+            "timeout": 120
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "^Bash$", "hooks": [{ "type": "command", "if": "Bash(*.md*)", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }] },
-      { "matcher": "mcp__t3.code__t3_thread_(send|launch)", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/relayed.ts", "async": true }] }
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(*.md*)",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget"
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__t3.code__t3_thread_(send|launch)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/relayed.ts",
+            "async": true
+          }
+        ]
+      }
     ],
     "UserPromptSubmit": [
-      { "hooks": [
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts busy" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" },
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
-      ] }
+      {
+        "hooks": [
+          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts busy" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" },
+          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
+        ]
+      }
     ],
     "Stop": [
-      { "hooks": [
-        { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts idle" },
-        { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat log" }
-      ] }
+      {
+        "hooks": [
+          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts idle" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/chat log" }
+        ]
+      }
     ],
     "StopFailure": [
-      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts idle" }] }
+      {
+        "hooks": [
+          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts idle" }
+        ]
+      }
     ],
     "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" }] }
