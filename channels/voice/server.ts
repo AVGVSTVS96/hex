@@ -147,7 +147,11 @@ const ErrorDetail = z.looseObject({
   event_id: z.string().exactOptional(),
 });
 
-const Transcript = z.object({ delta: z.string(), start_ms: z.number(), end_ms: z.number() });
+const Transcript = z.object({
+  delta: z.string(),
+  start_ms: z.number(),
+  end_ms: z.number().exactOptional(),
+});
 
 const SessionUsage = z.object({ seconds: z.number() });
 
@@ -157,7 +161,7 @@ const VoiceEvent = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("session.delegation.created"),
     delegation: z.object({ target: z.string().exactOptional(), id: z.string() }).exactOptional(),
-    offset_ms: z.number(),
+    offset_ms: z.number().exactOptional(),
   }),
   z.object({
     type: z.enum([
@@ -170,7 +174,7 @@ const VoiceEvent = z.discriminatedUnion("type", [
   z.looseObject({
     type: z.literal("error"),
     client_event_id: z.string().exactOptional(),
-    error: ErrorDetail.exactOptional(),
+    error: ErrorDetail.optional().catch(undefined),
   }),
   z.object({ type: z.literal("session.output_audio.delta"), delta: z.string() }),
   z.object({
@@ -187,7 +191,7 @@ const VoiceEvent = z.discriminatedUnion("type", [
 ]);
 
 const SessionEvent = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("error"), error: ErrorDetail.exactOptional() }),
+  z.object({ type: z.literal("error"), error: ErrorDetail.optional().catch(undefined) }),
   z.object({
     type: z.literal("session.started"),
     session: z.object({ id: z.string(), expires_at: z.number().exactOptional() }),
@@ -881,12 +885,9 @@ function ring(call: Live, { delegation, offset }: Ring) {
   save(call);
 }
 
-function hear(
-  call: Live,
-  who: Speaker,
-  event: { delta: string; start_ms: number; end_ms: number },
-) {
-  call.call.hear({ who, text: event.delta, start: event.start_ms, end: event.end_ms });
+function hear(call: Live, who: Speaker, event: z.output<typeof Transcript>) {
+  const end = event.end_ms ?? event.start_ms;
+  call.call.hear({ who, text: event.delta, start: event.start_ms, end });
   call.heard?.(who, event.start_ms, event.delta);
   call.changes.changed();
 
@@ -1235,7 +1236,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
           return;
         }
 
-        const pending = { delegation: event.delegation.id, offset: event.offset_ms };
+        const pending = { delegation: event.delegation.id, offset: event.offset_ms ?? Number.NaN };
         call.rings.push(pending);
 
         const goesWithoutTheWordsAfterIt = () => {
