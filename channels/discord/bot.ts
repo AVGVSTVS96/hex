@@ -263,7 +263,7 @@ function readCursor(): string {
 
 type Listened = TextChannel | NewsChannel | AnyThreadChannel | DMChannel;
 
-async function after(ch: Listened, from: string): Promise<DiscordMessage[]> {
+async function messagesAfter(ch: Listened, from: string): Promise<DiscordMessage[]> {
   const found: DiscordMessage[] = [];
 
   for (let since = from; ;) {
@@ -314,6 +314,29 @@ const ANSWERED_IN = new Map([
 ]);
 
 const answeredIn = (via: string) => ANSWERED_IN.get(via) ?? via;
+
+const answeredText = ({ label, via }: { label: string; via: string }) =>
+  `✓ Answered ${answeredIn(via)}: ${label}`;
+
+function controls({ options, multiple, answer, settled }: Question) {
+  if (settled) {
+    return only(settled.note);
+  }
+
+  if (!answer) {
+    return choices(options, multiple === true);
+  }
+
+  if (answer.via !== "discord") {
+    return only(answeredText(answer));
+  }
+
+  return multiple === true
+    ? menu(options, answer.label.split("; "))
+    : buttons(options, options.indexOf(answer.label));
+}
+
+const oneRow = (content: string) => content.replaceAll(/[\r\n]+/gu, " ⏎ ");
 
 const isPoll = (question: Question) => question.poll !== undefined && question.poll !== "";
 
@@ -650,7 +673,7 @@ function serve(token: string) {
     edit: async (thread, id, text) => {
       const ch = await threadChannel(thread);
 
-      if (ch.isThread() && ch.archived) {
+      if (ch.isThread() && ch.archived === true) {
         return false;
       }
 
@@ -686,7 +709,7 @@ function serve(token: string) {
   function shown(thread: string) {
     const channel = client.channels.cache.get(thread);
 
-    if (channel?.isDMBased()) {
+    if (channel?.isDMBased() === true) {
       return `https://discord.com/channels/@me/${thread}`;
     }
 
@@ -750,8 +773,6 @@ function serve(token: string) {
 
     return text;
   }
-
-  const oneRow = (content: string) => content.replaceAll(/[\r\n]+/gu, " ⏎ ");
 
   function row(
     sentAt: Date,
@@ -1028,27 +1049,6 @@ function serve(token: string) {
     asking.delete(thread);
   }
 
-  const answeredText = ({ label, via }: { label: string; via: string }) =>
-    `✓ Answered ${answeredIn(via)}: ${label}`;
-
-  function controls({ options, multiple, answer, settled }: Question) {
-    if (settled) {
-      return only(settled.note);
-    }
-
-    if (!answer) {
-      return choices(options, multiple === true);
-    }
-
-    if (answer.via !== "discord") {
-      return only(answeredText(answer));
-    }
-
-    return multiple === true
-      ? menu(options, answer.label.split("; "))
-      : buttons(options, options.indexOf(answer.label));
-  }
-
   // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Ledger.find is not an array method
   const questionAt = (thread: string, message: MessageId) => ledger.find(thread, message);
 
@@ -1201,10 +1201,10 @@ function serve(token: string) {
 
       const here = await threadChannel(caller);
       const parent = where ?? (here.isThread() ? here.parent?.name : undefined);
-      const { thread, link } = await place(name, parent, about, args.tags);
+      const { thread, link: opened } = await place(name, parent, about, args.tags);
       hub.open(thread, name, args.prompt);
 
-      return `started thread "${name}": ${link}`;
+      return `started thread "${name}": ${opened}`;
     },
 
     fetch_messages: history,
@@ -1492,9 +1492,7 @@ function serve(token: string) {
     fresh: (thread) => dms.has(thread),
     failed: (thread, reason) => {
       void threadChannel(thread)
-        .then(async (ch) => {
-          await ch.send(`Couldn't start this thread's session: ${reason}`);
-        })
+        .then(async (ch) => await ch.send(`Couldn't start this thread's session: ${reason}`))
         .catch(() => null);
     },
     permission: (thread, request) =>
@@ -1537,11 +1535,11 @@ function serve(token: string) {
       return;
     }
 
-    const words = withoutMentions(msg.content)
+    const firstWord = withoutMentions(msg.content)
       .split(/\s+/u)
-      .filter((word) => word !== "");
+      .find((word) => word !== "");
 
-    return await (msg.thread ?? msg.startThread({ name: words[0] ?? "Thread" }));
+    return await (msg.thread ?? msg.startThread({ name: firstWord ?? "Thread" }));
   }
 
   async function handleInbound(
@@ -1589,7 +1587,7 @@ function serve(token: string) {
     const voiced = source.flags.has(MessageFlags.IsVoiceMessage);
     const heard = voiced ? await hear(source.attachments.first()) : undefined;
     const shots = edited || voiced ? [] : await images(source.attachments);
-    const said = withoutMentions(source.content);
+    const typed = withoutMentions(source.content);
 
     const placeholder =
       atts.length > 0 ? "(attachment)" : stickers.length > 0 ? "(sticker)" : poll ? "(poll)" : "";
@@ -1601,9 +1599,9 @@ function serve(token: string) {
         ? `(voice message) ${heard}`
         : voiced
           ? "(voice message that didn't transcribe: fetch it with download_attachment and run .hex/bin/transcribe on the file)"
-          : said === ""
+          : typed === ""
             ? placeholder
-            : said,
+            : typed,
       meta: {
         chat_id: ch.id,
         message_id: msg.id,
@@ -1811,9 +1809,9 @@ function serve(token: string) {
       return;
     }
 
-    const labels = tap.message.components.flatMap((row) =>
-      row.type === ComponentType.ActionRow
-        ? row.components.flatMap((each) =>
+    const labels = tap.message.components.flatMap((actionRow) =>
+      actionRow.type === ComponentType.ActionRow
+        ? actionRow.components.flatMap((each) =>
             each.type === ComponentType.Button ? [each.label ?? ""] : [],
           )
         : [],
@@ -1977,7 +1975,7 @@ function serve(token: string) {
     const from = cursor;
     const g = client.guilds.cache.first();
 
-    const [channels, active, dms] = await Promise.all([
+    const [channels, active, ownerDms] = await Promise.all([
       g ? g.channels.fetch().then((found) => [...found.values()]) : [],
       g ? g.channels.fetchActiveThreads().then((found) => [...found.threads.values()]) : [],
       Promise.all(
@@ -2007,7 +2005,7 @@ function serve(token: string) {
       }),
     );
 
-    const places = [...channels, ...active, ...archived.flat(), ...dms]
+    const places = [...channels, ...active, ...archived.flat(), ...ownerDms]
       .filter(listensIn)
       .filter((ch) => filled(ch.lastMessageId) && BigInt(ch.lastMessageId) > BigInt(from));
 
@@ -2015,7 +2013,7 @@ function serve(token: string) {
       await Promise.all(
         places.map(async (ch) => {
           try {
-            return await after(ch, from);
+            return await messagesAfter(ch, from);
           } catch (error) {
             failure(`catching up on ${ch.id}`)(error);
 
