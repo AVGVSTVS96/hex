@@ -129,6 +129,8 @@ export class Chats {
   }
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// T3 Code shows only turns it starts (waits), and a session no app holds has no chat to send through.
 const sendsThrough = ({ app, thread }: Where) => {
   const client = clients.get(app);
   const name = client?.hub.name(thread);

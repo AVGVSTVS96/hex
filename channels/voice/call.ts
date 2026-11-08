@@ -16,27 +16,12 @@ export type Moment = Task & { at: number };
 
 type AppColonThread = string;
 
-type ThreadName = string;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// settled: open copies of the question an answer or settle reached; missed: copies or threads whose hub was down, left as they were.
+export type Sent = { thread: AppColonThread; topic: string; settled: number; missed: number };
 
-type OpenCopiesAnAnswerOrSettleReached = number;
-
-type CopiesOrThreadsWhoseHubWasDownLeftAsTheyWere = number;
-
-export type Sent = {
-  thread: AppColonThread;
-  topic: ThreadName;
-  settled: OpenCopiesAnAnswerOrSettleReached;
-  missed: CopiesOrThreadsWhoseHubWasDownLeftAsTheyWere;
-};
-
-type QuestionIdPutOnTheCallersScreen = string;
-
-type WhatSendingTheAnswerDid = Sent;
-
-type MediaIdTheCallerSentFromTheApp = string;
-
-type AnswerTakenBack = "undone";
-
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// ask: a question put on the caller's screen by its id; answered carries what sending it did; undone: that answer taken back; photo and video: what the caller sent from the app, by media id.
 export type Mark = {
   at: number;
   kind:
@@ -47,13 +32,13 @@ export type Mark = {
     | "warned"
     | "ask"
     | "answered"
-    | AnswerTakenBack
+    | "undone"
     | "photo"
     | "video";
   text: string;
-  ask?: QuestionIdPutOnTheCallersScreen;
-  sent?: WhatSendingTheAnswerDid;
-  media?: MediaIdTheCallerSentFromTheApp;
+  ask?: string;
+  sent?: Sent;
+  media?: string;
 };
 
 export type Saved = {

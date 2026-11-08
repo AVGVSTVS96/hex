@@ -64,14 +64,9 @@ export type Did = {
 
 export type Names = (id: string) => string | undefined;
 
-export type CodexTurnItemAsT3CodeKeepsIt = {
-  id: string;
-  type: string;
-  status: string;
-  payload: unknown;
-};
-
-export type Item = CodexTurnItemAsT3CodeKeepsIt;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// One of T3 Code's turn items: a provider's own record of one thing in its turn, as Codex keeps them.
+export type Item = { id: string; type: string; status: string; payload: unknown };
 
 const loose = <T extends z.ZodType>(schema: T) => schema.optional().catch(undefined);
 
