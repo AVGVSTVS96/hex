@@ -97,7 +97,7 @@ function updates(started: number, ...changes: [at: number, path: string, text: s
   Bun.spawnSync(['git', 'init', '-q', join(home, '.hex')])
   for (const change of changes) commit(...change)
   mkdirSync(join(home, '.claude/sessions'), { recursive: true })
-  writeFileSync(join(home, '.claude/sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: SESSION, startedAt: started * 1000 }))
+  writeFileSync(join(home, '.claude/sessions', `${process.pid}.json`), JSON.stringify({ pid: process.pid, sessionId: SESSION, startedAt: started * 1000, cwd: home }))
 }
 
 test('a session started before an update to its hooks hears so once, and its owner is shown how to load them', () => {
@@ -139,5 +139,18 @@ test('an update that leaves what a session loads at start alone says nothing', (
 
 test('a session started after the update says nothing', () => {
   updates(4000, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'plugin/hooks/hooks.json', '{"hooks":{"Stop":[]}}'])
+  expect(hook('UserPromptSubmit')).toBe('')
+})
+
+test('a launcher change tells the owner to quit and resume through bin/session, in the folder the session started in', () => {
+  updates(2000, [1000, 'bin/session', 'exec claude'], [3000, 'bin/session', 'exec claude "$@"'])
+  const out = JSON.parse(hook('UserPromptSubmit'))
+  expect(out.systemMessage).toContain(`quit it and run '${home}/.hex/bin/session' --resume ${SESSION} in '${home}' for its new launch flags`)
+})
+
+test('a session told two days ago still hears nothing more of the same update', () => {
+  updates(2000, [1000, 'plugin/hooks/hooks.json', '{"hooks":{}}'], [3000, 'plugin/hooks/hooks.json', '{"hooks":{"Stop":[]}}'])
+  hook('UserPromptSubmit')
+  open(join(home, 'state')).show('another', 'tasks', 'x', new Date(Date.now() + 3 * 86_400_000).toISOString())
   expect(hook('UserPromptSubmit')).toBe('')
 })

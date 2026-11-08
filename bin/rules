@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'os'
 import { join, relative, resolve } from 'path'
 import { ROOM } from '../hub/fit.ts'
 import { history, type Startup } from '../hub/loaded.ts'
-import { startedAt } from '../hub/running.ts'
+import { own } from '../hub/running.ts'
 import { open, stateDir } from '../hub/store.ts'
 import { files } from './instructions'
 
@@ -19,7 +19,8 @@ import { files } from './instructions'
 const hex = resolve(import.meta.dir, '..')
 const home = resolve(hex, '..')
 const WHAT: Record<Startup, string> = { hooks: 'hooks', skills: 'skills', launcher: 'launch flags' }
-const { session_id, hook_event_name, cwd } = JSON.parse(await Bun.stdin.text())
+const { session_id, hook_event_name } = JSON.parse(await Bun.stdin.text())
+const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`
 
 try {
   const store = open(stateDir())
@@ -61,7 +62,8 @@ try {
     try {
       const updates = history(hex)
       const told = store.seen(session_id, 'hex')
-      const from = updates.head && told !== updates.head ? updates.on(startedAt()) : undefined
+      const self = own(session_id)
+      const from = updates.head && told !== updates.head ? updates.on(self?.started) : undefined
       const changed = from ? updates.changed(from) : []
       if (from && changed.length && (!told || updates.changed(told).length)) {
         store.show(session_id, 'hex', updates.head)
@@ -70,7 +72,7 @@ try {
         const after = hub ? 'hex resumes it on the new hex at its next rest, once its work here is done' : 'It takes the new ones when it restarts'
         out = [out, `hex was updated (${from.slice(0, 7)} to ${updates.head.slice(0, 7)}) after this session started, and Claude Code reads hex's ${names(changed)} only at start, so this session may still run the old ones. ${after}. Tell me so in a line when you next write to me.`].filter(Boolean).join('\n\n')
         const reload = changed.filter(key => key !== 'launcher')
-        const steps = [...(reload.length ? [`run /reload-plugins for its new ${names(reload)}`] : []), ...(changed.includes('launcher') ? [`quit it and run '${hex}/bin/session' --resume ${session_id} in ${cwd} for its new launch flags`] : [])]
+        const steps = [...(reload.length ? [`run /reload-plugins for its new ${names(reload)}`] : []), ...(changed.includes('launcher') ? [`quit it and run ${quote(`${hex}/bin/session`)} --resume ${session_id} in ${quote(self?.cwd ?? home)} for its new launch flags`] : [])]
         // Nobody reads a hub thread's screen, and its hub renews it.
         if (!hub) shown = `hex was updated after this session started: ${steps.join(', and ')}.`
       }

@@ -49,12 +49,14 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
   return sessions
 }
 
-// When the Claude Code process this one runs under started, as Claude Code records it: a background
-// session's when its job took a spare process, since that's when it loads the session's plugins.
-export function startedAt(claude = CLAUDE, pid = process.ppid): number | undefined {
+// The Claude Code process this one runs under, as Claude Code records it while it lives: when it
+// started (a background session's when its job took a spare process, since that's when it loads the
+// session's plugins) and the folder it started in. A /clear keeps the process and gives the record
+// the new session's id.
+export function own(session: string, claude = CLAUDE, pid = process.ppid): { started: number; cwd?: string } | undefined {
   for (let above = pid; above > 1; above = parentOf(above)) {
     const record = readJson(join(claude, 'sessions', `${above}.json`))
-    if (typeof record?.startedAt === 'number') return record.startedAt
+    if (record?.sessionId === session && record.pid === above && typeof record.startedAt === 'number' && alive(above, record.procStart)) return { started: record.startedAt, cwd: record.cwd }
   }
 }
 
