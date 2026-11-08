@@ -11,6 +11,7 @@ import type { Filter } from "nostr-tools/filter";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import { finalizeEvent, getEventHash, getPublicKey } from "nostr-tools/pure";
 import type { Event } from "nostr-tools/pure";
+import { z } from "zod";
 
 import { until } from "../../hub/until.ts";
 import { startMemory } from "./memory.ts";
@@ -30,7 +31,23 @@ const OWNER = getPublicKey(OWNER_KEY);
 const KEY = getConversationKey(OWNER_KEY, AGENT);
 
 let dir: string;
-const running: { close(): void }[] = [];
+const running: { close: () => void }[] = [];
+
+const Body = z.record(z.string(), z.unknown());
+
+function nth<Item>(items: Item[], index: number): Item {
+  const item = items.at(index);
+
+  if (item === undefined) {
+    throw new Error(`nothing at ${index} of ${items.length}`);
+  }
+
+  return item;
+}
+
+const note = (n: number, day: string, text: string) => `${`#${n} ${day} ${text}`.padEnd(80)}\n`;
+
+const notShared = (path: string) => ({ status: "declined", path, reason: "file is not shared" });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "memory-"));
@@ -40,10 +57,10 @@ afterEach(() => {
   for (const memory of running.splice(0)) {
     memory.close();
   }
+
   rmSync(dir, { recursive: true, force: true });
 });
 
-// Stores what's published and serves it back to queries and subscriptions, like the relay does.
 function fakeRelay(refuse?: (kind: number) => string | undefined) {
   const events: Event[] = [];
   const attempts: number[] = [];
@@ -53,7 +70,9 @@ function fakeRelay(refuse?: (kind: number) => string | undefined) {
     events.push(event);
 
     for (const sub of subs) {
-      if (matchFilters(sub.filters, event)) sub.onEvent(event);
+      if (matchFilters(sub.filters, event)) {
+        sub.onEvent(event);
+      }
     }
   }
 
@@ -64,18 +83,14 @@ function fakeRelay(refuse?: (kind: number) => string | undefined) {
     feed: add,
     relay: {
       pubkey: AGENT,
-      async publish(template: {
-        kind: number;
-        content: string;
-        tags: string[][];
-        created_at?: number;
-      }) {
+      publish(template: { kind: number; content: string; tags: string[][]; created_at?: number }) {
         attempts.push(template.kind);
         const reason = refuse?.(template.kind);
 
-        if (reason) {
-          throw new Error(reason);
+        if (reason !== undefined) {
+          return Promise.reject(new Error(reason));
         }
+
         const event = finalizeEvent(
           { created_at: Math.floor(Date.now() / 1000), ...template },
           AGENT_KEY,
@@ -83,7 +98,7 @@ function fakeRelay(refuse?: (kind: number) => string | undefined) {
 
         add(event);
 
-        return event;
+        return Promise.resolve(event);
       },
       subscribe(filters: Filter[], onEvent: (event: Event) => void) {
         const sub = { filters, onEvent };
@@ -94,10 +109,12 @@ function fakeRelay(refuse?: (kind: number) => string | undefined) {
 
         return () => void subs.delete(sub);
       },
-      async query(filters: Filter[]) {
-        return events.filter((event) => matchFilters(filters, event));
+      query(filters: Filter[]) {
+        return Promise.resolve(events.filter((event) => matchFilters(filters, event)));
       },
-      close() {},
+      close() {
+        subs.clear();
+      },
     },
   };
 }
@@ -127,7 +144,7 @@ function opened(relay: ReturnType<typeof fakeRelay>, kind: number) {
     .map((event) => ({
       event,
       text: decrypt(event.content, KEY),
-      body: JSON.parse(decrypt(event.content, KEY)),
+      body: Body.parse(JSON.parse(decrypt(event.content, KEY))),
     }));
 }
 
@@ -136,7 +153,7 @@ const sha256 = (data: string | Uint8Array) => createHash("sha256").update(data).
 const fileTag = (path: string) =>
   createHmac("sha256", KEY).update(`agent-files/v1/d-tag\0${path}`).digest("hex");
 
-function request(relay: ReturnType<typeof fakeRelay>, body: object) {
+function request(relay: ReturnType<typeof fakeRelay>, body: Record<string, string>) {
   const event = finalizeEvent(
     {
       kind: 4180,
@@ -153,7 +170,7 @@ function request(relay: ReturnType<typeof fakeRelay>, body: object) {
 }
 
 function results(relay: ReturnType<typeof fakeRelay>) {
-  return opened(relay, 4181).map(({ event, body }) => ({ tags: event.tags, ...body }));
+  return opened(relay, 4181).map(({ event, body }) => Body.parse({ tags: event.tags, ...body }));
 }
 
 const VECTORS = {
@@ -185,8 +202,6 @@ const VECTORS = {
   },
 };
 
-// Seals what memory.ts published with the vector's pinned nonce, time and aux,
-// which must give back the published NIP-AE event byte for byte.
 function expectVector(published: { event: Event; text: string }, vector: (typeof VECTORS)["core"]) {
   expect(published.event.tags).toEqual([
     ["d", vector.d],
@@ -232,14 +247,14 @@ test("SOUL.md reproduces the NIP-AE core vector, and a memory gone from disk is 
   });
   start(relay, []);
   await until(() => relay.events.length === 3);
-  const [example, core, tombstone] = opened(relay, 30_174);
-  expectVector(core!, VECTORS.core);
-  expectVector(tombstone!, VECTORS.tombstone);
-  expect(tombstone!.event.created_at).toBeGreaterThan(example!.event.created_at);
+  const published = opened(relay, 30_174);
+  const tombstone = nth(published, 2);
+  expectVector(nth(published, 1), VECTORS.core);
+  expectVector(tombstone, VECTORS.tombstone);
+  expect(tombstone.event.created_at).toBeGreaterThan(nth(published, 0).event.created_at);
 });
 
 test("OptMem's notes become one memory per day, a new note updates only its day, and a restart publishes nothing new", async () => {
-  const note = (n: number, day: string, text: string) => `${`#${n} ${day} ${text}`.padEnd(80)}\n`;
   write(
     "memory/LOG.txt",
     note(0, "2026-10-07", "set up the server") + note(1, "2026-10-08", "joined Buzz"),
@@ -259,12 +274,12 @@ test("OptMem's notes become one memory per day, a new note updates only its day,
       note(2, "2026-10-08", "read the whole channel"),
   );
   await until(() => relay.events.length === 3);
-  expect(opened(relay, 30_174)[2]!.body).toEqual({
+  expect(nth(opened(relay, 30_174), 2).body).toEqual({
     slug: "mem/notes/2026-10-08",
     value: "- joined Buzz\n- read the whole channel",
   });
 
-  running.pop()!.close();
+  running.pop()?.close();
   start(relay, []);
   await Bun.sleep(300);
   expect(relay.events.length).toBe(3);
@@ -284,10 +299,13 @@ test("shared files are published with their content, listed when it cannot be in
   await until(() => opened(relay, 30_180).length === 6);
 
   const records = Object.fromEntries(
-    opened(relay, 30_180).map(({ event, body }) => [body.path, { d: event.tags, ...body }]),
+    opened(relay, 30_180).map(({ event, body }) => [
+      String(body.path),
+      Body.parse({ d: event.tags, ...body }),
+    ]),
   );
 
-  expect(Object.keys(records).sort()).toEqual([
+  expect(Object.keys(records).toSorted()).toEqual([
     "AGENTS.md",
     "SOUL.md",
     "notes/big.txt",
@@ -305,8 +323,8 @@ test("shared files are published with their content, listed when it cannot be in
     size: 9,
     content: "@SOUL.md\n",
   });
-  expect(records["notes/bom.md"].content).toBe("﻿with a BOM\n");
-  expect(records["notes/bom.md"].sha256).toBe(sha256(readFileSync(join(dir, "notes/bom.md"))));
+  expect(records["notes/bom.md"]?.content).toBe("﻿with a BOM\n");
+  expect(records["notes/bom.md"]?.sha256).toBe(sha256(readFileSync(join(dir, "notes/bom.md"))));
   expect(records["notes/big.txt"]).toMatchObject({
     size: 70_000,
     sha256: sha256("x".repeat(70_000)),
@@ -314,23 +332,23 @@ test("shared files are published with their content, listed when it cannot be in
   expect(records["notes/big.txt"]).not.toHaveProperty("content");
   expect(records["notes/photo.bin"]).not.toHaveProperty("content");
 
-  running.pop()!.close();
+  running.pop()?.close();
   start(relay, ["AGENTS.md", "SOUL.md", "schedules.json", "notes"]);
   await Bun.sleep(300);
   expect(opened(relay, 30_180).length).toBe(6);
 
   rmSync(join(dir, "AGENTS.md"));
   await until(() => opened(relay, 30_180).length === 7);
-  expect(opened(relay, 30_180)[6]!.text).toBe('{"path":"AGENTS.md","removed":true}');
+  expect(nth(opened(relay, 30_180), 6).text).toBe('{"path":"AGENTS.md","removed":true}');
 
-  running.pop()!.close();
+  running.pop()?.close();
   start(relay, ["SOUL.md"]);
   await until(() => opened(relay, 30_180).length === 11);
   expect(
     opened(relay, 30_180)
       .slice(7)
-      .map(({ body }) => body.removed && body.path)
-      .sort(),
+      .map(({ body }) => (body.removed === true ? String(body.path) : ""))
+      .toSorted(),
   ).toEqual(["notes/big.txt", "notes/bom.md", "notes/photo.bin", "notes/plan.md"]);
 });
 
@@ -363,7 +381,7 @@ test("an edit request is written, committed, republished and answered", async ()
     content: "# My rules for you\n- be brief\n",
   });
 
-  const [result] = await until(() => results(relay).length && results(relay));
+  const result = await until(() => results(relay)[0]);
   expect(result).toEqual({
     tags: [
       ["p", OWNER],
@@ -374,12 +392,12 @@ test("an edit request is written, committed, republished and answered", async ()
     sha256: sha256("# My rules for you\n- be brief\n"),
   });
   expect(readFileSync(join(dir, "AGENTS.md"), "utf-8")).toBe("# My rules for you\n- be brief\n");
-  expect(opened(relay, 30_180).at(-1)!.body).toMatchObject({
+  expect(nth(opened(relay, 30_180), -1).body).toMatchObject({
     path: "AGENTS.md",
     content: "# My rules for you\n- be brief\n",
   });
   expect(relay.events.findIndex((event) => event.kind === 4181)).toBeGreaterThan(
-    relay.events.indexOf(opened(relay, 30_180).at(-1)!.event),
+    relay.events.indexOf(nth(opened(relay, 30_180), -1).event),
   );
   expect(
     execFileSync("git", ["-C", dir, "log", "-1", "--format=%s", "--name-only"], {
@@ -413,8 +431,7 @@ test("the file on disk decides: stale edits conflict, unshared, hidden, linked a
   request(relay, { path: "AGENTS.md", base_sha256: sha256("now\n"), content: "next\n" });
   await until(() => results(relay).length === 8);
   await Bun.sleep(100);
-  const notShared = (path: string) => ({ status: "declined", path, reason: "file is not shared" });
-  expect(results(relay).map(({ tags, ...result }) => result)).toEqual([
+  expect(results(relay).map(({ tags: _tags, ...result }) => result)).toEqual([
     { status: "conflict", path: "AGENTS.md", sha256: sha256("now\n") },
     notShared("notes/.env"),
     notShared("state/access.json"),
@@ -437,7 +454,7 @@ test("after a restart, answered requests are not applied again and ones sent whi
   await until(() => relay.subs.size);
   request(relay, { path: "AGENTS.md", base_sha256: sha256("one\n"), content: "two\n" });
   await until(() => results(relay).length === 1);
-  running.pop()!.close();
+  running.pop()?.close();
 
   write("AGENTS.md", "three\n");
 
@@ -533,7 +550,7 @@ const FILES = {
   },
 };
 
-// NIP-AF's Event 5, the owner's edit request, exactly as published.
+// NIP-AF's Event 5, the owner's edit request, exactly as published: https://github.com/AVGVSTVS96/buzz/blob/8f9e4593dbaf029beed0490b3ca2e6464e536732/docs/nips/NIP-AF.md#reference-test-vectors
 const EDIT_REQUEST: Event = {
   kind: 4180,
   pubkey: OWNER,
@@ -559,12 +576,13 @@ function expectFileVector(
 ) {
   expect(published.text).toBe(vector.body);
 
-  if (vector.d) {
+  if (vector.d !== undefined) {
     expect(published.event.tags).toEqual([
       ["d", vector.d],
       ["p", OWNER],
     ]);
   }
+
   const content = encrypt(
     published.text,
     KEY,
@@ -593,19 +611,24 @@ test("shared files reproduce the NIP-AF test vectors: records, a tombstone for a
   const relay = fakeRelay();
   start(relay, ["notes.md", "PLANS", "logs"]);
   await until(() => opened(relay, 30_180).length === 3);
+
   const byPath = (path: string) =>
-    opened(relay, 30_180).findLast(({ body }) => body.path === path)!;
+    nth(
+      opened(relay, 30_180).filter(({ body }) => body.path === path),
+      -1,
+    );
+
   expectFileVector(byPath("notes.md"), FILES.notes);
   expectFileVector(byPath("PLANS/agent files.md"), FILES.plan);
   expectFileVector(byPath("logs/big.log"), FILES.big);
 
-  running.pop()!.close();
+  running.pop()?.close();
   rmSync(join(dir, "notes.md"));
   start(relay, ["notes.md", "PLANS", "logs"]);
   await until(() => opened(relay, 30_180).length === 4);
-  expectFileVector(opened(relay, 30_180)[3]!, FILES.removed);
-  expect(opened(relay, 30_180)[3]!.event.created_at).toBeGreaterThan(
-    opened(relay, 30_180)[0]!.event.created_at,
+  expectFileVector(nth(opened(relay, 30_180), 3), FILES.removed);
+  expect(nth(opened(relay, 30_180), 3).event.created_at).toBeGreaterThan(
+    nth(opened(relay, 30_180), 0).event.created_at,
   );
 
   relay.feed(EDIT_REQUEST);
@@ -629,7 +652,7 @@ test("heads that break NIP-AF are not heads, and a new record lands after the ne
   const relay = fakeRelay();
   const future = Math.floor(Date.now() / 1000) + 600;
 
-  const forged = (body: object, created_at: number) => {
+  const forged = (body: Record<string, string | number>, created_at: number) => {
     relay.feed(
       finalizeEvent(
         {
@@ -665,5 +688,5 @@ test("heads that break NIP-AF are not heads, and a new record lands after the ne
 
   write("notes.md", "changed\n");
   await until(() => opened(relay, 30_180).length === 3);
-  expect(opened(relay, 30_180)[2]!.event.created_at).toBe(future + 1);
+  expect(nth(opened(relay, 30_180), 2).event.created_at).toBe(future + 1);
 });
