@@ -59,6 +59,8 @@ case "${1:-}" in
     printf . >> "$home/state/hex.bell"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
+    # Jobs the machine going down stopped carry on.
+    (. "$hex/bin/settings"; bun "$hex/bin/job" --resume) || :
     first= second= third=
     while :; do
       for dir in channels/telegram channels/discord channels/buzz channels/t3 channels/voice; do
