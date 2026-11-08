@@ -570,7 +570,7 @@ test("a turn whose T3 connection closes stops its session, and a reconnected T3 
   expect(fresh.inbound()[0]).toMatchObject({ type: "inbound", content: "hi" });
 });
 
-test("a thread offers T3 model and effort pickers, and its session starts again with what was picked", async () => {
+test("a thread offers T3 model and effort pickers, its session starts again with what was picked, and a full model id T3 kept from before hex offered aliases is picked as its family's alias", async () => {
   writeFileSync(
     join(dir, "hex", ".claude", "settings.json"),
     JSON.stringify({ model: "opus", effortLevel: "medium" }),
@@ -816,7 +816,7 @@ test("what T3 picked for a thread it hasn't prompted yet still holds after a hub
   expect(flag(launched(0), "--effort")).toBe("xhigh");
 });
 
-test("a prompt a hub restart lost before its session took it reaches the session once hex is back", async () => {
+test("a prompt a hub restart lost before its session took it reaches the session once hex is back, kept once, with hex's reply left to the Stop hook", async () => {
   const { agent } = await t3OverAcp();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });
 
@@ -1283,7 +1283,7 @@ async function mirrored(turns: [string, string][]) {
   return { server, agent, thread: server.requests[0]?.payload.sessionId ?? "" };
 }
 
-test("a thread mirrored into T3 is imported as a hex session in its project, with its chat sent in as turns its replies answer", async () => {
+test("a thread mirrored into T3 is imported as a hex session in its project, with its chat sent in as turns its replies answer, and each T3 token revoked once its call is done", async () => {
   const { server, agent, thread } = await mirrored([
     ["hex", "Anchors are in."],
     ["owner", "how full is your context?"],

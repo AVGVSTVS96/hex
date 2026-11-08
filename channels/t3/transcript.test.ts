@@ -130,3 +130,11 @@ test("a line written in two pieces is read once it is whole", async () => {
   await until(() => updates.length);
   expect(updates[0]).toMatchObject({ content: { text: "whole" } });
 });
+
+test("a Stop hook that runs before the watch sees the turn's last batch still streams it and ends the turn", () => {
+  start(0);
+  write(prompt, text("m1", "the last reply"), done);
+  reader?.settle();
+  expect(updates).toMatchObject([{ content: { text: "the last reply" } }]);
+  expect(ended).toBe(1);
+});

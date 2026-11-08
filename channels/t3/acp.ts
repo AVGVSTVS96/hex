@@ -17,7 +17,7 @@ const path = given;
 
 const LONGER_THAN_A_HUB_RESTART = 120_000;
 
-const OWN_REQUEST_ID = "hex-acp:";
+const OWN_REQUEST_ID_T3_NEVER_ASKED_FOR = "hex-acp:";
 
 const PROMPT_KEY = "hex/key";
 
@@ -60,7 +60,7 @@ const sessions = new Map<
 
 const picked = new Map<string, Map<string, unknown>>();
 const waiting = new Map<string | number, Waiting>();
-const STREAMS = new Set(["session/prompt", "session/load"]);
+const STREAMING_UNTIL_ANSWERED = new Set(["session/prompt", "session/load"]);
 const shown = new Map<string, Counts>();
 const skip = new Map<string, Counts>();
 
@@ -162,7 +162,7 @@ function fromT3(received: string) {
       sessions.set(asked.sessionId, { cwd: asked.cwd, mcpServers: asked.mcpServers });
     }
 
-    if (STREAMS.has(method) && asked.sessionId !== undefined) {
+    if (STREAMING_UNTIL_ANSWERED.has(method) && asked.sessionId !== undefined) {
       shown.set(asked.sessionId, new Map());
     }
   }
@@ -187,7 +187,7 @@ function fromHex(line: string) {
   const message = parse(line);
   const id = message?.id;
 
-  if (z.string().safeParse(id).data?.startsWith(OWN_REQUEST_ID) === true) {
+  if (z.string().safeParse(id).data?.startsWith(OWN_REQUEST_ID_T3_NEVER_ASKED_FOR) === true) {
     return;
   }
 
@@ -228,7 +228,7 @@ function answered(id: string | number, response: Message | undefined) {
     }
   }
 
-  if (asked && STREAMS.has(asked.method) && asked.params.sessionId !== undefined) {
+  if (asked && STREAMING_UNTIL_ANSWERED.has(asked.method) && asked.params.sessionId !== undefined) {
     shown.delete(asked.params.sessionId);
     skip.delete(asked.params.sessionId);
   }
@@ -258,19 +258,23 @@ function reopen(next: Socket) {
   };
 
   if (initialize) {
-    send({ id: `${OWN_REQUEST_ID}initialize`, method: "initialize", params: initialize });
+    send({
+      id: `${OWN_REQUEST_ID_T3_NEVER_ASKED_FOR}initialize`,
+      method: "initialize",
+      params: initialize,
+    });
   }
 
   for (const [sessionId, { cwd, mcpServers }] of sessions) {
     send({
-      id: `${OWN_REQUEST_ID}${sessionId}`,
+      id: `${OWN_REQUEST_ID_T3_NEVER_ASKED_FOR}${sessionId}`,
       method: "session/resume",
       params: { sessionId, cwd, mcpServers },
     });
 
     for (const [configId, value] of picked.get(sessionId) ?? []) {
       send({
-        id: `${OWN_REQUEST_ID}${sessionId}:${configId}`,
+        id: `${OWN_REQUEST_ID_T3_NEVER_ASKED_FOR}${sessionId}:${configId}`,
         method: "session/set_config_option",
         params: { sessionId, configId, value },
       });
@@ -280,7 +284,7 @@ function reopen(next: Socket) {
   for (const [id, { line, request, at }] of waiting) {
     const { sessionId } = request.params;
 
-    if (STREAMS.has(request.method) && sessionId !== undefined) {
+    if (STREAMING_UNTIL_ANSWERED.has(request.method) && sessionId !== undefined) {
       skip.set(sessionId, new Map(shown.get(sessionId)));
     }
 

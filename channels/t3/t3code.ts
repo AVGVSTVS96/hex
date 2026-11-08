@@ -69,6 +69,7 @@ async function revoke(session: string) {
   }
 }
 
+// hex calls T3 Code's server as T3's app does: a bearer token its CLI issues (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/cli/auth.ts#L169-L184), a websocket ticket for it (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/environmentHttp.ts#L580), then Effect RPC over /ws (https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/rpc.ts#L525).
 export async function withT3<T>(
   work: (call: (tag: string, payload: Json) => Promise<Answer>) => Promise<T>,
 ): Promise<T> {
@@ -206,6 +207,7 @@ export function projectAt(root: string): string | undefined {
   }
 }
 
+// Before T3 cancels a turn to steer it, it records the run as starting again on a steering_restart attempt: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/orchestration-v2/Orchestrator.ts#L5430-L5452
 export function steering(session: string) {
   const file = join(USERDATA, "statev2.sqlite");
 
@@ -235,6 +237,7 @@ export function steering(session: string) {
   }
 }
 
+// T3's createdBy and creationSource for a message: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/orchestrationV2.ts#L89-L98
 const AUTHORS = new Map<string, Author>([
   ["user/web", "owner"],
   ["user/mobile", "owner"],
@@ -243,6 +246,8 @@ const AUTHORS = new Map<string, Author>([
   ["agent/server", "other"],
   ["agent/provider", "other"],
 ]);
+
+const PROMPT_IS_AMONG_LAST_USER_MESSAGES = 5;
 
 export function promptedBy(session: string, asked: string): Author {
   const file = join(USERDATA, "statev2.sqlite");
@@ -259,12 +264,12 @@ export function promptedBy(session: string, asked: string): Author {
     const recent = db
       .query<
         { by: string | null; text: string | null },
-        [string]
+        [string, number]
       >(`select json_extract(message.payload_json, '$.createdBy') || '/' || json_extract(message.payload_json, '$.creationSource') as by, json_extract(message.payload_json, '$.text') as text
         from orchestration_v2_projection_messages message
         join orchestration_v2_projection_provider_threads thread on thread.thread_id = message.thread_id
-        where json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ? and message.role = 'user' order by message.created_at desc limit 5`)
-      .all(session);
+        where json_extract(thread.payload_json, '$.nativeThreadRef.nativeId') = ? and message.role = 'user' order by message.created_at desc limit ?`)
+      .all(session, PROMPT_IS_AMONG_LAST_USER_MESSAGES);
 
     const by = recent.find((prompt) => prompt.text?.trim() === asked.trim())?.by;
 
@@ -315,6 +320,7 @@ export function appThreads():
 export function linkTo(thread: string) {
   const environment = readFileSync(join(USERDATA, "environment-id"), "utf-8").trim();
 
+  // T3_APP_SCHEME is the T3 Code app's URL scheme: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/mobile/app.config.ts#L83-L99
   const scheme = process.env.T3_APP_SCHEME ?? "";
 
   return `${scheme === "" ? "t3code" : scheme}://threads/${environment}/${encodeURIComponent(thread)}`;

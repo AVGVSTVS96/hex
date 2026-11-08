@@ -45,6 +45,7 @@ const INBOX_DIR = join(STATE_DIR, "inbox");
 const SOCKET = join(STATE_DIR, "acp.sock");
 const PLACED_FILE = join(STATE_DIR, "placed.json");
 
+// The provider instance T3 Code runs hex as, a key of providerInstances in its settings: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/contracts/src/settings.ts#L1438
 const PROVIDER_INSTANCE = process.env.T3_INSTANCE ?? "hex";
 const HEX_DIR = process.env.HEX_DIR ?? process.cwd();
 const HOME = homedir();
@@ -67,6 +68,7 @@ type Turn = {
 
 const turns = new Map<string, Turn>();
 
+// T3's provider check opens a session it never prompts, so an unprompted thread lasts only as long as its connection: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp-registry/src/server/probe.ts#L417-L438
 type Unprompted = { cwd: string; settings: Settings; socket: Socket };
 
 const opened = new Map<string, Unprompted>();
@@ -304,7 +306,7 @@ function compaction(turn: Turn, thread: string, status: string, error?: string) 
   });
 }
 
-function cut(thread: string) {
+function cutShortWithNoStopHook(thread: string) {
   hub.turned(thread);
   finish(thread, "cancelled");
 }
@@ -405,7 +407,7 @@ function prompt(
   }
 
   const session = hub.session(thread);
-  const compact = compacting(blocks);
+  const compact = startsWithCompact(blocks);
 
   if (compact && session === undefined) {
     throw RequestError.invalidRequest(undefined, "this thread has nothing to compact yet");
@@ -427,7 +429,8 @@ function prompt(
   });
 }
 
-function compacting(blocks: ContentBlock[]) {
+// T3 follows the user's text with its own context block, which a command doesn't take: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/packages/provider-acp/src/server/adapter.ts#L723-L727
+function startsWithCompact(blocks: ContentBlock[]) {
   return blocks[0]?.type === "text" && blocks[0].text.trim() === "/compact";
 }
 
@@ -451,6 +454,7 @@ function track(
   };
 
   turns.set(thread, turn);
+  // T3 keeps each session's MCP token only in its running server, so a prompt T3 aborts leaves the session's T3 tools dead: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/mcp/McpSessionRegistry.ts#L122-L135
   signal.addEventListener(
     "abort",
     () => {
@@ -458,7 +462,7 @@ function track(
         return;
       }
 
-      cut(thread);
+      cutShortWithNoStopHook(thread);
       void hub.stop(thread);
     },
     { once: true },
@@ -513,10 +517,11 @@ async function rejoin(
     }
 
     const promptSeen = turn.reader?.asked() === true;
+    const compactEndedWhileHexWasDown = !working && !promptSeen;
 
-    if (!compacting(blocks)) {
+    if (!startsWithCompact(blocks)) {
       hub.deliver(thread, name, message(thread, blocks, since, _meta));
-    } else if (!working && !promptSeen) {
+    } else if (compactEndedWhileHexWasDown) {
       finish(thread, "end_turn");
 
       return;
@@ -600,7 +605,8 @@ function configure(thread: string, id: string, raw: SetSessionConfigOptionReques
   }
 
   const text = z.string().safeParse(raw);
-  const value = id === "model" && text.success ? family(text.data) : raw;
+  const fullIdT3KeptFromBeforeAliases = id === "model" && text.success;
+  const value = fullIdT3KeptFromBeforeAliases ? family(text.data) : raw;
   const choice = (id === "model" ? MODELS : EFFORTS).find((each) => each.value === value);
 
   if (choice === undefined) {
@@ -618,7 +624,7 @@ function configure(thread: string, id: string, raw: SetSessionConfigOptionReques
   return { configOptions: options(thread) };
 }
 
-function advertise(client: AgentContext, sessionId: string) {
+function advertiseOnceAnswered(client: AgentContext, sessionId: string) {
   setImmediate(() => {
     void Promise.allSettled([
       client.notify("session/update", {
@@ -629,6 +635,7 @@ function advertise(client: AgentContext, sessionId: string) {
   });
 }
 
+// ACP's session/cancel can't say whether T3 is steering or stopping (https://agentclientprotocol.com/protocol/v1/prompt-turn#cancellation), so T3's records of a steering_restart tell: https://github.com/pingdotgg/t3code/blob/8e6a7323050ea8d2891f745f7e624e84f9fd8d9a/apps/server/src/orchestration-v2/Orchestrator.ts#L5430-L5452
 function cancel(thread: string) {
   const turn = turns.get(thread);
 
@@ -642,14 +649,14 @@ function cancel(thread: string) {
     return;
   }
 
-  stop(thread);
+  interruptEvenWhileSteering(thread);
 }
 
-function stop(thread: string) {
+function interruptEvenWhileSteering(thread: string) {
   const turn = turns.get(thread);
   void hub.interrupt(thread).finally(() => {
     if (turns.get(thread) === turn) {
-      cut(thread);
+      cutShortWithNoStopHook(thread);
     }
   });
 }
@@ -817,13 +824,13 @@ function serve(socket: Socket) {
     .onRequest("session/new", ({ params, client }) => {
       const thread = reopen(randomUUID(), params.cwd, socket);
       remember(thread, params.mcpServers);
-      advertise(client, thread);
+      advertiseOnceAnswered(client, thread);
 
       return { sessionId: thread, configOptions: options(thread) };
     })
     .onRequest("session/resume", ({ params, client }) => {
       remember(reopen(params.sessionId, params.cwd, socket), params.mcpServers);
-      advertise(client, params.sessionId);
+      advertiseOnceAnswered(client, params.sessionId);
 
       return { configOptions: options(params.sessionId) };
     })
@@ -852,7 +859,7 @@ function serve(socket: Socket) {
         });
       }
 
-      advertise(client, params.sessionId);
+      advertiseOnceAnswered(client, params.sessionId);
 
       return { configOptions: options(params.sessionId) };
     })
@@ -899,7 +906,7 @@ clients.set("t3", {
   place,
   backfill,
   waits: true,
-  stop,
+  stop: interruptEvenWhileSteering,
 });
 
 rmSync(SOCKET, { force: true });
