@@ -12,12 +12,10 @@ import {
 import type { FSWatcher } from "node:fs";
 import { join } from "node:path";
 
+import { busy, CLAUDE, running, ownership, open } from "@hex/hub";
+import type { Session, Thread as Stored } from "@hex/hub";
 import { z } from "zod";
 
-import { busy, CLAUDE, running, ownership } from "../../hub/running.ts";
-import type { Session } from "../../hub/running.ts";
-import { open } from "../../hub/store.ts";
-import type { Thread as Stored } from "../../hub/store.ts";
 import {
   backOf,
   firstLine,

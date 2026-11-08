@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "catalog:",
+    "@hex/hub": "workspace:*",
     "@noble/curves": "2.0.1",
     "nostr-tools": "2.25.2",
     "zod": "catalog:"

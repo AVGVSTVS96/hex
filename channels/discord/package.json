@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@discordjs/voice": "0.19.2",
+    "@hex/hub": "workspace:*",
     "discord.js": "14.27.0",
     "opusscript": "0.1.1",
     "zod": "catalog:"

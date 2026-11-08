@@ -1,9 +1,9 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
-import { dispatch, engine, startHub } from "../../hub/hub.ts";
-import type { Handlers } from "../../hub/hub.ts";
-import { hexDir } from "../../hub/store.ts";
+import { dispatch, engine, startHub, hexDir } from "@hex/hub";
+import type { Handlers } from "@hex/hub";
+
 import { server, tools } from "./channel.ts";
 import { serve, take, tool } from "./server.ts";
 

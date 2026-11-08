@@ -4,9 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { until } from "@hex/hub/testing";
 import { z } from "zod";
-
-import { until } from "../../hub/until.ts";
 
 const CALLER = "+15550001111";
 const TWILIO_TOKEN = "twilio-secret";

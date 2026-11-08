@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { SessionNotification } from "@agentclientprotocol/sdk";
+import { until } from "@hex/hub/testing";
 
-import { until } from "../../hub/until.ts";
 import { follow } from "./transcript.ts";
 
 let dir: string;

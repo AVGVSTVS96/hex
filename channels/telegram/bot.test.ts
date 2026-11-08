@@ -4,15 +4,12 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { clients, open } from "@hex/hub";
+import { connect as connectSession, noClaude, until } from "@hex/hub/testing";
 import * as grammy from "grammy";
 import type { PollingOptions } from "grammy";
 import type { Message, ReactionTypeEmoji, Update, User, UserFromGetMe } from "grammy/types";
 import { z } from "zod";
-
-import { clients } from "../../hub/hub.ts";
-import { open } from "../../hub/store.ts";
-import { connect as connectSession, noClaude } from "../../hub/testing.ts";
-import { until } from "../../hub/until.ts";
 
 const CHANNEL = "plugin:telegram@hex";
 const OWNER = 2000;

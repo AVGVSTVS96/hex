@@ -1,10 +1,10 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { basename, join } from "node:path";
 
+import { CLAUDE } from "@hex/hub";
+import type { Session } from "@hex/hub";
 import { z } from "zod";
 
-import { CLAUDE } from "../../hub/running.ts";
-import type { Session } from "../../hub/running.ts";
 import type { Run } from "./board.ts";
 import { clip } from "./questions.ts";
 import type { Question } from "./questions.ts";

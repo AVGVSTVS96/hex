@@ -13,6 +13,7 @@ bun install --silent
 bunx tsc
 jq -e 'all(.plugins[]; .source == "./\(.name)")' channels/.claude-plugin/marketplace.json >/dev/null
 for plugin in $(jq -r '.plugins[].name' channels/.claude-plugin/marketplace.json); do
+  bunx tsc -p "channels/$plugin"
   $build "channels/$plugin/bot.ts" --outdir "$out/$plugin" >/dev/null
   jq -e --arg plugin "$plugin" '.mcpServers[$plugin].type == "http"' "channels/$plugin/.mcp.json" >/dev/null
 done

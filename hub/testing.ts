@@ -6,6 +6,8 @@ import { z } from "zod";
 import { route } from "./hub.ts";
 import type { ToolArguments } from "./hub.ts";
 
+export { until } from "./until.ts";
+
 type RpcBody = { id?: number; method: string; params?: object };
 
 const ToolCallReply = z.object({

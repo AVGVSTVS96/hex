@@ -1,7 +1,6 @@
+import { EFFORTS, MODELS, tool } from "@hex/hub";
+import type { ChannelServer } from "@hex/hub";
 import { z } from "zod";
-
-import { EFFORTS, MODELS, tool } from "../../hub/hub.ts";
-import type { ChannelServer } from "../../hub/hub.ts";
 
 const titleField = z.string().describe('One word, like a chat name ("Anchors", "Frontier").');
 

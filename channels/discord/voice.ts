@@ -11,11 +11,10 @@ import {
   VoiceConnectionStatus,
 } from "@discordjs/voice";
 import type { AudioPlayer, AudioReceiveStream } from "@discordjs/voice";
+import { engine } from "@hex/hub";
+import type { Held } from "@hex/hub";
 import type { Client, VoiceBasedChannel } from "discord.js";
 import OpusScript from "opusscript";
-
-import { engine } from "../../hub/hub.ts";
-import type { Held } from "../../hub/hub.ts";
 
 const DISCORD_STEREO_RATE = 48_000;
 const ENGINE_MONO_RATE = 24_000;

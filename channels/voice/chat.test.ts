@@ -3,9 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { clients } from "../../hub/hub.ts";
-import type { Client, Hub } from "../../hub/hub.ts";
-import { open } from "../../hub/store.ts";
+import { clients, open } from "@hex/hub";
+import type { Client, Hub } from "@hex/hub";
+
 import { Chats } from "./chat.ts";
 
 const DESK = "-1001234:5";

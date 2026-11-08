@@ -15,6 +15,8 @@ import type { Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { open } from "@hex/hub";
+import { ATTACH, connect as connectSession, service, until } from "@hex/hub/testing";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import type { ServerWebSocket, Subprocess } from "bun";
 import { matchFilter } from "nostr-tools/filter";
@@ -24,9 +26,6 @@ import type { Event } from "nostr-tools/pure";
 import { bytesToHex } from "nostr-tools/utils";
 import { z } from "zod";
 
-import { open } from "../../hub/store.ts";
-import { ATTACH, connect as connectSession, service } from "../../hub/testing.ts";
-import { until } from "../../hub/until.ts";
 import { connectRelay } from "./relay.ts";
 
 type Peer = { challenge: string; pubkey?: string; subs: Map<string, Filter[]> };

@@ -4,12 +4,11 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 
 import * as real from "@discordjs/voice";
+import { engine } from "@hex/hub";
+import type { VoiceLine } from "@hex/hub";
+import { until } from "@hex/hub/testing";
 import { Client } from "discord.js";
 import OpusScript from "opusscript";
-
-import { engine } from "../../hub/hub.ts";
-import type { VoiceLine } from "../../hub/hub.ts";
-import { until } from "../../hub/until.ts";
 
 const OWNER = "2000";
 

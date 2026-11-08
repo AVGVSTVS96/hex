@@ -3,10 +3,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { open as store } from "@hex/hub";
+import { until } from "@hex/hub/testing";
 import { z } from "zod";
-
-import { open as store } from "../../hub/store.ts";
-import { until } from "../../hub/until.ts";
 
 const ID = "sess_app";
 

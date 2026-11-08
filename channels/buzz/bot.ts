@@ -12,14 +12,14 @@ import {
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 
+import { startHub, clients, begin, move, tappable, title, dispatch } from "@hex/hub";
+import type { Handlers, Message, Turn } from "@hex/hub";
 import { decode } from "nostr-tools/nip19";
 import { finalizeEvent } from "nostr-tools/pure";
 import type { Event } from "nostr-tools/pure";
 import { hexToBytes } from "nostr-tools/utils";
 import { z } from "zod";
 
-import { startHub, clients, begin, move, tappable, title, dispatch } from "../../hub/hub.ts";
-import type { Handlers, Message, Turn } from "../../hub/hub.ts";
 import { startActivity } from "./activity.ts";
 import { server, tools } from "./channel.ts";
 import { startMemory } from "./memory.ts";

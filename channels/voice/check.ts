@@ -14,12 +14,10 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { above, open as openStore, shown } from "@hex/hub";
+import type { Question as Asked, MessageId, Row, Store } from "@hex/hub";
 import { z } from "zod";
 
-import { above } from "../../hub/fit.ts";
-import type { Question as Asked, MessageId } from "../../hub/ledger.ts";
-import { open as openStore, shown } from "../../hub/store.ts";
-import type { Row, Store } from "../../hub/store.ts";
 import { generalOf, nameOf } from "./activity.ts";
 import { savedCall } from "./calls.ts";
 import type { Answer, CheckResult, Curated, Ref, Source } from "./questions.ts";

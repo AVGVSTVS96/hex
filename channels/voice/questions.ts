@@ -2,12 +2,10 @@ import { readFileSync, renameSync, statSync, watch, writeFileSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { statusPost, open as store } from "@hex/hub";
+import type { Question as Asked, MessageId, Pin, Thread } from "@hex/hub";
 import { z } from "zod";
 
-import type { Question as Asked, MessageId, Pin } from "../../hub/ledger.ts";
-import { statusPost } from "../../hub/status.ts";
-import { open as store } from "../../hub/store.ts";
-import type { Thread } from "../../hub/store.ts";
 import { generalOf, nameOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";

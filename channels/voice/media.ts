@@ -1,9 +1,8 @@
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { transcribe } from "@hex/hub";
 import { z } from "zod";
-
-import { transcribe } from "../../hub/hub.ts";
 
 export type Kind = "photo" | "video";
 

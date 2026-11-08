@@ -20,8 +20,6 @@ import type {
   SessionNotification,
   StopReason,
 } from "@agentclientprotocol/sdk";
-import { z } from "zod";
-
 import {
   startHub,
   clients,
@@ -32,9 +30,13 @@ import {
   family,
   MODELS,
   EFFORTS,
-} from "../../hub/hub.ts";
-import type { Handlers, Message, Settings, Turn as Said } from "../../hub/hub.ts";
-import { asked, open, stateDir as storeOf } from "../../hub/store.ts";
+  asked,
+  open,
+  stateDir as storeOf,
+} from "@hex/hub";
+import type { Handlers, Message, Settings, Turn as Said } from "@hex/hub";
+import { z } from "zod";
+
 import { server, tools } from "./channel.ts";
 import { version } from "./package.json";
 import { withT3, projectAt, linkTo, promptedBy, steering, appThreads } from "./t3code.ts";

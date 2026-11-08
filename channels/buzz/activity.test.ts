@@ -4,13 +4,13 @@ import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { until } from "@hex/hub/testing";
 import type { Filter } from "nostr-tools/filter";
 import { decrypt, encrypt, getConversationKey } from "nostr-tools/nip44";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools/pure";
 import type { Event } from "nostr-tools/pure";
 import { z } from "zod";
 
-import { until } from "../../hub/until.ts";
 import { startActivity } from "./activity.ts";
 import type { Relay } from "./relay.ts";
 

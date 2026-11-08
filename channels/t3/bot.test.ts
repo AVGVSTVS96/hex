@@ -18,12 +18,10 @@ import { Readable, Writable } from "node:stream";
 
 import { client, ndJsonStream } from "@agentclientprotocol/sdk";
 import type { McpServer, SessionNotification } from "@agentclientprotocol/sdk";
+import { open as hexdb } from "@hex/hub";
+import { ATTACH, connect as channel, service, until } from "@hex/hub/testing";
 import type { Subprocess } from "bun";
 import { z } from "zod";
-
-import { open as hexdb } from "../../hub/store.ts";
-import { ATTACH, connect as channel, service } from "../../hub/testing.ts";
-import { until } from "../../hub/until.ts";
 
 const SESSION = "0a1b2c3d-0000-4000-8000-000000000000";
 let PORT = 0;
