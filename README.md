@@ -108,7 +108,7 @@ You need a machine that stays on and runs Claude Code, and a Claude subscription
 Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTALL.md in that repo.
 ```
 
-Your agent does the setup. You only do the parts nobody else can: create a bot with @BotFather, make a Telegram group with Topics turned on, and say hi. The full steps are in [INSTALL.md](INSTALL.md).
+Your agent does the setup. You only do the parts nobody else can: create a bot with @BotFather, make a Telegram group with Topics turned on, and say hi. The full steps are in [INSTALL.md](INSTALL.md). Anytime after, `~/hex/.hex/bin/hex doctor` checks the setup and says how to fix what's off.
 
 ## What's inside
 
