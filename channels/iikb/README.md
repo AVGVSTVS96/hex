@@ -8,7 +8,7 @@ iikb keyboard ── https (your tailnet) ──► hub: channels/iikb ──►
 
 - `GET /` lists every thread a running app can take words for: the DM and General first, then the rest by their latest message, each with its last line.
 - `GET /<app>:<thread>?after=<version>` is the chat: what was said, then the owner's words its session hasn't taken yet, marked pending. With `after`, the answer waits up to 25 seconds for the next message.
-- `POST /<app>:<thread> { text, id }` hands your words to the thread's app as the owner's, from `iikb`, keyed by `id`, so a retry delivers once.
+- `POST /<app>:<thread> { text, id }` hands your words to the thread's app as the owner's, from `iikb`, keyed by `id`, so a retry delivers once. The app shows them in the thread, as Telegram does in a topic: your name over your words.
 
 The chats are other apps' threads, so iikb holds none of its own and starts no session. Set `IIKB_TOKEN` in `~/hex/.env` to require `Authorization: Bearer <token>`.
 

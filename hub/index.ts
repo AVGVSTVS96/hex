@@ -14,11 +14,13 @@ export {
   history,
   move,
   preview,
+  say,
   startHub,
   tappable,
   title,
   tool,
   transcribe,
+  writable,
 } from "./hub.ts";
 
 export type {

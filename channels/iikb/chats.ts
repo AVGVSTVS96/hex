@@ -1,4 +1,4 @@
-import { clients, history, owners } from "@hex/hub";
+import { clients, history, owners, say } from "@hex/hub";
 import type { Store } from "@hex/hub";
 import { z } from "zod";
 
@@ -15,16 +15,6 @@ const placeOf = (chat: string) => {
   const colon = chat.indexOf(":");
 
   return { app: chat.slice(0, colon), thread: chat.slice(colon + 1) };
-};
-
-const writable = (chat: string) => {
-  const { app, thread } = placeOf(chat);
-  const client = clients.get(app);
-  const name = client?.hub.name(thread);
-
-  return client && client.waits !== true && name !== undefined && name !== ""
-    ? { hub: client.hub, thread, name }
-    : undefined;
 };
 
 const firstLine = (text: string) => text.trim().split("\n", 1)[0] ?? "";
@@ -110,18 +100,17 @@ export async function read(store: Store, chat: string, after?: string) {
 }
 
 export function send(chat: string, text: string, id: string) {
-  const to = writable(chat);
+  const { app, thread } = placeOf(chat);
 
-  if (!to) {
-    throw new Error("This chat's app isn't running, so words typed here can't reach it.");
-  }
-
-  to.hub.deliver(to.thread, to.name, {
+  const taken = say(app, thread, {
     content: text,
     key: `iikb-${id}`,
-    author: "owner",
     meta: { user: "iikb", ts: new Date().toISOString() },
   });
+
+  if (!taken) {
+    throw new Error("This chat's app isn't running, so words typed here can't reach it.");
+  }
 }
 
 const status = (code: number, said?: string) => new Response(said ?? null, { status: code });
