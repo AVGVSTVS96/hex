@@ -19,4 +19,5 @@ for plugin in $(jq -r '.plugins[].name' channels/.claude-plugin/marketplace.json
 done
 $build channels/buzz/provider.ts --outdir "$out/provider" >/dev/null
 $build hub/serve.ts --outdir "$out/hub" >/dev/null
-bun test --isolate plugin/tests hub channels
+# A test's time limit is there to catch a hang: on a busy server, tests that take 4 s pass bun's default 5 s.
+bun test --isolate --timeout 30000 plugin/tests hub channels
