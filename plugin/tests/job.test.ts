@@ -178,7 +178,7 @@ test("a job a job session starts is its owner's too", () => {
   );
 });
 
-test("a job session's prompt is hex's words in hex.db, its answer too, what the owner types in a terminal or into the job is theirs, and an app session's terminal words are kept as unsent", () => {
+test("a job session's prompts are hex's words in hex.db, the first and every later one, its answer too, what the owner types in a terminal is theirs, and an app session's terminal words are kept as unsent", () => {
   const state = join(home, "state");
 
   const hook = (step: string, input: Record<string, string>, extra: Record<string, string> = {}) =>
@@ -223,7 +223,7 @@ test("a job session's prompt is hex's words in hex.db, its answer too, what the 
   expect(rows).toEqual([
     { to: "job-1", from: "terminal", author: "prompt", body: "Build the deck tab.", by: "job-1" },
     { to: "job-1", from: "terminal", author: "hex", body: "Built.", by: "job-1" },
-    { to: "job-1", from: "terminal", author: "owner", body: "make the tab blue", by: "job-1" },
+    { to: "job-1", from: "terminal", author: "prompt", body: "make the tab blue", by: "job-1" },
     { to: "mine-1", from: "terminal", author: "owner", body: "what is up", by: "mine-1" },
     { to: "-100:1", from: "terminal", author: "hex", body: "narration", by: "chat-1" },
   ]);

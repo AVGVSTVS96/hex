@@ -246,6 +246,8 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
       );
     }
   },
+  sql(`update messages set author = 'prompt' where "from" = 'terminal' and author = 'owner' and "to" = json_extract(meta, '$.session')
+    and exists (select 1 from messages opener where opener."to" = messages."to" and opener."from" = 'terminal' and opener.author = 'prompt' and opener.n < messages.n)`),
 ];
 
 function apps(dir: string): [string, string][] {

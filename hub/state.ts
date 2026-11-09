@@ -243,10 +243,7 @@ if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id)
     const store = open(stateDir());
     const to = HEX_THREAD ?? session_id;
 
-    const opensAJob =
-      given(HEX_OWNER) && !given(HEX_THREAD) && store.messages.said(to, 1).length === 0;
-
-    const author = opensAJob ? "prompt" : "owner";
+    const author = given(HEX_OWNER) && !given(HEX_THREAD) ? "prompt" : "owner";
 
     const theHubStartedTheSessionWithIt =
       author === "owner" &&
