@@ -1,4 +1,4 @@
-import { carried, clients, history, owners, open as store } from "@hex/hub";
+import { carried, clients, history, owners, say, open as store, writable } from "@hex/hub";
 import type { Turn } from "@hex/hub";
 
 import { Changes } from "./changes.ts";
@@ -36,7 +36,7 @@ export class Chats {
 
   of(where: Where): Chat {
     const kept = store(this.state);
-    const sends = sendsThrough(where) !== undefined;
+    const sends = writable(where.app, where.thread);
     const mark = `${kept.messages.mark(where.thread)}:${sends}`;
     const id = `${where.app}:${where.thread}`;
     const seen = this.seen.get(id);
@@ -93,19 +93,15 @@ export class Chats {
 
   // oxlint-disable-next-line eslint/class-methods-use-this -- the app server sends through its Chats, beside the chat it reads
   send(where: Where, text: string, keyTheAppNamedSoARetryDeliversOnce: string, media: Item[] = []) {
-    const client = sendsThrough(where);
-    const name = client?.hub.name(where.thread);
-
-    if (!client || name === undefined || name === "") {
-      throw new Error(`Words typed here can't reach this thread; write to it in its own app.`);
-    }
-
-    client.hub.deliver(where.thread, name, {
+    const taken = say(where.app, where.thread, {
       content: caption(text, media),
       key: keyTheAppNamedSoARetryDeliversOnce,
-      author: "owner",
       meta: { user: "hex app", ts: new Date().toISOString(), ...mediaMeta(media) },
     });
+
+    if (!taken) {
+      throw new Error(`Words typed here can't reach this thread; write to it in its own app.`);
+    }
   }
 
   // oxlint-disable-next-line eslint/class-methods-use-this -- the app server stops through its Chats, beside the chat it reads
@@ -127,12 +123,3 @@ export class Chats {
     }
   }
 }
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// T3 Code shows only turns it starts (waits), and a session no app holds has no chat to send through.
-const sendsThrough = ({ app, thread }: Where) => {
-  const client = clients.get(app);
-  const name = client?.hub.name(thread);
-
-  return client && client.waits !== true && name !== undefined && name !== "" ? client : undefined;
-};

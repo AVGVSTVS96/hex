@@ -2432,6 +2432,43 @@ function client(app: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The app that takes the owner's words for a thread when they're written in another client: it holds the thread, and shows more than the turns it starts itself, as T3 Code does (waits).
+function taking(app: string, thread: string) {
+  const there = clients.get(app);
+  const name = there?.hub.name(thread);
+
+  return there && there.waits !== true && present(name) ? { there, name } : undefined;
+}
+
+export const writable = (app: string, thread: string) => taking(app, thread) !== undefined;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The owner's words for a thread, written in another client: the thread's app takes them as it does its own messages, then shows them where the thread lives, so its chat there holds everything said in it. A key sent again changes nothing. Whether the thread can take them.
+export function say(app: string, thread: string, message: Omit<Message, "author">): boolean {
+  const home = taking(app, thread);
+
+  if (!home) {
+    return false;
+  }
+
+  const { there, name } = home;
+
+  if (there.hub.deliver(thread, name, { ...message, author: "owner" })) {
+    void (async () => {
+      try {
+        await there.backfill?.(thread, [{ from: "me", text: message.content }]);
+      } catch (error) {
+        process.stderr.write(
+          `hub: couldn't show the owner's words in ${app} thread ${thread}: ${String(error)}\n`,
+        );
+      }
+    })();
+  }
+
+  return true;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Opens a thread on any client and starts its session: on a prompt, its first message as the session starts, or on a message that reaches it the way the app's own messages do.
 export async function begin(
   app: string,

@@ -29,11 +29,13 @@ import {
   history,
   mirror,
   move,
+  say,
   stamp,
   startHub,
   tappable,
   tool,
   transcribe,
+  writable,
 } from "./hub.ts";
 import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
 import { open } from "./store.ts";
@@ -3817,6 +3819,58 @@ test("a message is in hex.db once deliver returns, its key first on the tag, and
   });
   expect(heard(received)[1]?.content).toBe("after");
   expect(Object.keys(heard(received)[0]?.meta ?? {})[0]).toBe("key");
+});
+
+test("the owner's words written in another client reach the thread's session and show where it lives, once however often they're sent", async () => {
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+  });
+  const { received } = await session("chat:7");
+  const shown: unknown[][] = [];
+  clients.set("telegram", {
+    hub,
+    place: () => Promise.resolve({ thread: "", link: "" }),
+    backfill: (thread, turns) => {
+      shown.push([thread, turns]);
+
+      return Promise.resolve();
+    },
+  });
+
+  try {
+    const words = { content: "anchors?", key: "kb-1", meta: { user: "keyboard" } };
+    expect(say("telegram", "chat:7", words)).toBe(true);
+    expect(say("telegram", "chat:7", words)).toBe(true);
+    await until(() => received.length);
+    expect(heard(received).map((each) => each.content)).toEqual(["anchors?"]);
+    expect(open(dir).messages.get("telegram:kb-1")).toMatchObject({ author: "owner" });
+    expect(shown).toEqual([["chat:7", [{ from: "me", text: "anchors?" }]]]);
+  } finally {
+    clients.delete("telegram");
+  }
+});
+
+test("words written in another client can't reach a thread no app holds, or one whose app shows only its own turns", () => {
+  start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
+  clients.set("telegram", {
+    hub,
+    place: () => Promise.resolve({ thread: "", link: "" }),
+    waits: true,
+  });
+
+  try {
+    const words = { content: "anchors?", key: "kb-1", meta: {} };
+    expect(writable("telegram", "chat:7")).toBe(false);
+    expect(say("telegram", "chat:7", words)).toBe(false);
+    expect(say("nowhere", "chat:7", words)).toBe(false);
+    clients.set("telegram", { hub, place: () => Promise.resolve({ thread: "", link: "" }) });
+    expect(writable("telegram", "chat:7")).toBe(true);
+    expect(writable("telegram", "chat:8")).toBe(false);
+    expect(open(dir).messages.get("telegram:kb-1")).toBeNull();
+  } finally {
+    clients.delete("telegram");
+  }
 });
 
 test("after the hub restarts, a session gets again what it was given but never took, and not what it took", async () => {
