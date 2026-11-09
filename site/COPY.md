@@ -7,7 +7,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 ## Page
 
 - `<title>`: hex · The best personal assistant is already on your machine
-- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 1,400 lines plus its connectors, on the Claude plan you already pay for.
+- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 16,000 lines plus its connectors, on the Claude plan you already pay for.
 
 ## Hero
 
@@ -23,7 +23,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 ## Stats
 
-- ~1,400 · lines of hex, plus ~4,200 in connectors. Claude Code does the rest.
+- ~16,000 · lines of hex, plus ~21,000 in connectors. Claude Code does the rest.
 - $0 · extra, on the Claude plan you already pay for.
 - Any · client: Telegram, Discord, Buzz, or one you build.
 - 0 · frameworks, 0 databases. Just plain files you own.
@@ -32,7 +32,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 *(og.html beside og.png, 1200×630, rendered with brand-it's shoot.mjs. The hero as on the page, then four stat blocks. No competitor names here.)*
 
-- ~1,400 · lines of hex itself
+- ~16,000 · lines of hex itself
 - $0 · extra on your Claude plan
 - Any · client, or build yours
 - 0 · frameworks, plain files
@@ -79,10 +79,12 @@ Label: Lines of source
 
 - OpenClaw · 4 million+
 - Hermes Agent · 1.5 million
-- NanoClaw (the minimal one) · 47,000
-- hex · ~1,400*
+- NanoClaw (the minimal one) · 49,500
+- hex · ~16,000*
 
-Fine print: * Plus ~4,200 lines of connectors for Telegram, Discord and Buzz, left out like NanoClaw's chat adapters. Tests, docs and generated code excluded. Counted Oct 2026. Even the minimal one is 33x bigger.
+Fine print: * Plus ~21,000 lines of connectors for Telegram, Discord, Buzz, T3 Code and voice, left out like NanoClaw's chat adapters. Tests, docs and generated code excluded. Counted Nov 2026. Even the minimal one is 3x bigger.
+
+*(Recounted Nov 9 2026 the same way: hex main at 706b579 is 15,819 (bin 4,002, hub 11,603, plugin 116, computer 68, defaults 30); its connectors are 20,879 (Telegram 2,354, Discord 2,624, Buzz 3,747, T3 Code 1,864, voice 10,290); NanoClaw src/ and container/ at bdfb2f1 are 49,560. 49,560 / 15,819 = 3.1, shown as 3x. The Oct 10 count follows.)*
 
 *(Both are counted the same way: every line (`wc -l`, comments and blanks included) of what it runs, without tests, Markdown, lockfiles or this site. hex is the files in bin/, plugin/, mods/, computer/ and vault/, the JSON in defaults/, and the hub; on Oct 10 2026 (main at ffccf30, channels at 5db7131) that's 1,394: 707 in bin/plugin/mods/computer/defaults, 327 in vault/, 360 in the hub. Its connectors are the Telegram, Discord and Buzz TS files: 4,165 (Telegram 1,123, Discord 982, Buzz 2,060). NanoClaw is src/ and container/ at commit af699e7 (Oct 9): 47,198 lines in 313 files. Its chat adapters copy in from a separate `channels` branch and its setup/ wizard (19,495) isn't counted either, so its number is rounded down and generous. hex's is rounded up. 47,000 / 1,400 = 33.6, shown as 33x. Bar widths keep the old scale (a full bar is 4.39 million lines). OpenClaw (5,300,069 at e09de504) and Hermes Agent (1,597,845 at f925b017) were recounted the same way on Oct 10; the page keeps the lower 4 million+ and 1.5 million.)*
 
@@ -100,7 +102,7 @@ Fine print: * Plus ~4,200 lines of connectors for Telegram, Discord and Buzz, le
 
 *(Three stacked layers: a thin one on top, a thick one in the middle, the model at the bottom. Three points beside it.)*
 
-- hex · ~1,400 lines · phone · computer · memory · vault · hub
+- hex · ~16,000 lines · phone · computer · memory · vault · hub
 - Claude Code · the best agent harness · reasoning, tools, MCP, skills, subagents, computer use
 - Opus 5.5 · the best agent model
 
@@ -192,7 +194,7 @@ Table stakes too: an hourly check that stays quiet unless something needs you, s
 *(The theme of the page: hex is modifiable, extensible and yours, the way pi is the coding agent that's yours.)*
 
 Section title: There are many assistants. This one is yours. *("yours." highlighted)*
-Line: About 1,400 lines you can read in an afternoon, in a folder you own. Change it, extend it, fork it.
+Line: About 16,000 lines in a folder you own. Change it, extend it, fork it.
 
 1. **Ask it to change itself**: It edits its own rules, schedules and memory, and commits every change. *(Terminal: you "no check-ins on weekends" → hex "edited schedules.json" → committed ✓)*
 2. **Extend it with anything**: Whatever Claude Code can load, hex can use. *(Chips: skills, MCP, plugins, hooks, channels, + yours dashed)*

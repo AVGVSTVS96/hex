@@ -177,7 +177,7 @@ this repo ─────────────────▶ your fork ─�
 - **Don't interrupt.** Scheduled jobs wait their turn. The heartbeat only messages you when something needs you. Idle sessions stop and come back when you write.
 - **Plain files over infrastructure.** Everything hex knows lives in markdown you can open, edit and grep, and every message in one SQLite file that `hex log` prints as markdown.
 - **Your machine, your account.** hex runs on your machine with your Claude subscription. Its memory and messages are files in your folder, and only you can talk to it.
-- **Yours to change.** About 1,400 lines you can read in an afternoon. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, have your agent build your own client, or fork the whole thing.
+- **Yours to change.** About 16,000 lines, in plain files. Ask hex to change itself, add any skill, MCP server or plugin Claude Code can load, have your agent build your own client, or fork the whole thing.
 
 ## License
 
