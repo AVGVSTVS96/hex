@@ -6,11 +6,11 @@ import { z } from "zod";
 
 export type Chat = { id: string; name: string; line?: string; pinned?: boolean };
 
-export type File = { name: string; url: string; type?: string };
+export type File = { name: string; url: string; type?: string; width?: number; height?: number };
 
 export type Message = { from: "me" | "hex"; text: string; pending?: true; files?: File[] };
 
-type Held = { name: string; type?: string; path?: string; telegram?: string };
+type Held = { name: string; type?: string; path?: string; telegram?: string; dimensions?: string };
 
 const APP = "telegram";
 const LATEST_MESSAGES = 40;
@@ -44,6 +44,8 @@ export function held(row: Row): Held[] {
   const kinds = each(meta.attachment_kind);
   const names = each(meta.attachment_name);
   const mimes = each(meta.attachment_mime);
+  const attachmentSizes = each(meta.attachment_dimensions);
+  const imageSizes = each(meta.image_dimensions);
 
   const attachments = each(meta.attachment_file_id).flatMap((telegram, at): Held[] => {
     const kind = kinds[at] ?? "";
@@ -56,12 +58,18 @@ export function held(row: Row): Held[] {
             name: [names[at], meta.file, kind].find(filled) ?? "file",
             telegram,
             ...(mime !== "" && { type: mime }),
+            ...(filled(attachmentSizes[at]) && { dimensions: attachmentSizes[at] }),
           },
         ];
   });
 
   return [
-    ...images.map((path) => ({ name: basename(path), path, type: imageType(path) })),
+    ...images.map((path, at) => ({
+      name: basename(path),
+      path,
+      type: imageType(path),
+      ...(filled(imageSizes[at]) && { dimensions: imageSizes[at] }),
+    })),
     ...attachments,
   ];
 }
@@ -71,7 +79,7 @@ const pollText = (question: string, options: string) =>
 
 const fileOnly = (row: Row) =>
   (row.author === "hex" && row.body === `(file: ${row.meta?.file ?? ""})`) ||
-  (row.author === "owner" && row.body === "(photo)");
+  (row.author === "owner" && (row.body === "(photo)" || /^\(album of \d+\)$/u.test(row.body)));
 
 function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
   const meta = row.meta ?? {};
@@ -84,11 +92,16 @@ function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
     return [];
   }
 
-  const files = held(row).map(({ name, type }, at) => ({
-    name,
-    url: `files/${encodeURIComponent(row.key)}/${String(at)}`,
-    ...(type !== undefined && { type }),
-  }));
+  const files = held(row).map(({ name, type, dimensions }, at): File => {
+    const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
+
+    return {
+      name,
+      url: `files/${encodeURIComponent(row.key)}/${String(at)}`,
+      ...(type !== undefined && { type }),
+      ...(width > 0 && height > 0 && { width, height }),
+    };
+  });
 
   const body = edits.get(telegramIdOf(row)) ?? row.body;
   const text = filled(meta.poll) && row.author === "hex" ? pollText(body, meta.poll) : body;

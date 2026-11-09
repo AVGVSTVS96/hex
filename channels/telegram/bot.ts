@@ -743,9 +743,15 @@ const handlers: Handlers<typeof tools> = {
           ? await bot.api.sendPhoto(chat_id, input, opts)
           : await bot.api.sendDocument(chat_id, input, opts);
 
+      const largest = "photo" in sent ? sent.photo.at(-1) : undefined;
+
       const held =
         "photo" in sent
-          ? { attachment_kind: "photo", attachment_file_id: sent.photo.at(-1)?.file_id ?? "" }
+          ? {
+              attachment_kind: "photo",
+              attachment_file_id: largest?.file_id ?? "",
+              ...(largest && { attachment_dimensions: `${largest.width}x${largest.height}` }),
+            }
           : {
               attachment_kind: "document",
               attachment_file_id: sent.document.file_id,
@@ -2021,9 +2027,14 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   const downloaded = await Promise.all(parts.map(async (part) => await part.downloadImage?.()));
 
-  const imagePaths = downloaded.flatMap((path) =>
-    path === undefined || path === "" ? [] : [path],
-  );
+  const images = parts.flatMap((part, index) => {
+    const path = downloaded[index];
+    const largest = part.ctx.msg?.photo?.at(-1);
+
+    return path === undefined || path === ""
+      ? []
+      : [{ path, dimensions: largest ? `${largest.width}x${largest.height}` : "" }];
+  });
 
   const attachments = parts.flatMap((part) => part.attachment ?? []);
   const captioned = parts.find((part) => (part.ctx.msg?.caption ?? "") !== "") ?? first;
@@ -2047,7 +2058,10 @@ async function deliverInbound(parts: Part[]): Promise<void> {
       user,
       user_id: String(from.id),
       ts: new Date((msg?.date ?? 0) * 1000).toISOString(),
-      ...(imagePaths.length > 0 && { image_path: imagePaths.join("; ") }),
+      ...(images.length > 0 && { image_path: images.map(({ path }) => path).join("; ") }),
+      ...(images.some(({ dimensions }) => dimensions !== "") && {
+        image_dimensions: images.map(({ dimensions }) => dimensions).join("; "),
+      }),
       ...listed(
         "attachment_kind",
         attachments.map((a) => a.kind),
