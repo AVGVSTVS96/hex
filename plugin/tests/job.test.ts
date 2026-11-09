@@ -165,6 +165,34 @@ test("an agent job goes to a machine with room, from the folder it was started f
   );
 });
 
+async function launchedOverASocket(write?: string) {
+  rmSync(ran, { force: true });
+
+  const child = Bun.spawn(["bun", job, "deck", "claude", "-p"], {
+    cwd: home,
+    stdin: "pipe",
+    env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, ...session },
+  });
+
+  if (write !== undefined) {
+    void child.stdin.write(write);
+    void child.stdin.end();
+  }
+
+  await child.exited;
+  void child.stdin.end();
+
+  return Args.parse(JSON.parse(readFileSync(ran, "utf-8")));
+}
+
+test("an agent job starts whether its parent's stdin socket stays silent, or carries the prompt", async () => {
+  expect(value(await launchedOverASocket(), "StandardInputData")).toBeUndefined();
+  const piped = await launchedOverASocket("Build it.\n");
+  expect(Buffer.from(value(piped, "StandardInputData") ?? "", "base64").toString()).toBe(
+    "Build it.\n",
+  );
+});
+
 test("a shell that would run Claude is told how to start it as a hex session", () => {
   expect(run(["deck", "sh", "-c", "cd deck && claude -p go"], session).error).toContain(
     'job deck claude -p "<prompt>"',

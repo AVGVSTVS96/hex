@@ -1,5 +1,13 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 
 import { $ } from "bun";
@@ -24,6 +32,41 @@ const WhatAJobNeedsToRunAgain = z.object({
 type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 
 const isSet = (value?: string): value is string => value !== undefined && value !== "";
+
+const momentASocketGetsToStartSinceNodeParentsLikeClaudeCodesBashLeaveItOpenAndSilent = 1000;
+
+async function stdinThatEnds(): Promise<string> {
+  const stdin = fstatSync(0);
+
+  if (stdin.isFIFO() || stdin.isFile()) {
+    return await Bun.stdin.text();
+  }
+
+  if (!stdin.isSocket()) {
+    return "";
+  }
+
+  const reader = Bun.stdin.stream().getReader();
+
+  const first = await Promise.race([
+    reader.read(),
+    Bun.sleep(momentASocketGetsToStartSinceNodeParentsLikeClaudeCodesBashLeaveItOpenAndSilent),
+  ]);
+
+  if (first === undefined) {
+    await reader.cancel();
+
+    return "";
+  }
+
+  const chunks = [];
+
+  for (let read = first; !read.done; read = await reader.read()) {
+    chunks.push(read.value);
+  }
+
+  return Buffer.concat(chunks).toString();
+}
 
 function openThreadIdByKeyOrId(word: string): string | undefined {
   const key = store.threads.key(word);
@@ -169,8 +212,7 @@ if (mode === "--ended") {
     console.error(`job: only a claude job's session can be linked to ${task}`);
   }
 
-  const stdinAfterThePromptAsClaudePReadsIt =
-    agent && !process.stdin.isTTY ? await Bun.stdin.text() : "";
+  const stdinAfterThePromptAsClaudePReadsIt = agent ? await stdinThatEnds() : "";
 
   const input = isSet(stdinAfterThePromptAsClaudePReadsIt)
     ? [
