@@ -142,7 +142,7 @@ test("photos and files come as files the keyboard fetches with its token, the ow
     "telegram",
     telegram((id) => Promise.resolve(id === "doc1" ? report : "")),
   );
-  say(DESK, 1, "owner", "(photo)", { image_path: photo });
+  say(DESK, 1, "owner", "(photo)", { image_path: photo, image_dimensions: "1280x960" });
   say(DESK, 2, "hex", "(file: report.pdf)", {
     file: "report.pdf",
     attachment_kind: "document",
@@ -156,7 +156,15 @@ test("photos and files come as files the keyboard fetches with its token, the ow
     {
       from: "me",
       text: "",
-      files: [{ name: "photo.jpg", url: "files/telegram%3A-100%3A5%3A1/0", type: "image/jpeg" }],
+      files: [
+        {
+          name: "photo.jpg",
+          url: "files/telegram%3A-100%3A5%3A1/0",
+          type: "image/jpeg",
+          width: 1280,
+          height: 960,
+        },
+      ],
     },
     {
       from: "hex",
