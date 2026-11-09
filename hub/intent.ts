@@ -1,9 +1,10 @@
-import { appendFileSync, readFileSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
+import { files } from "../bin/instructions";
 import { served } from "./running.ts";
 import { hexDir, open, replied, spoken, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
@@ -22,6 +23,12 @@ A session works on what hex hands it too: a request from General or another sess
 The agent that gets it is as capable as you, loads my rules itself, and gets a link to my conversation. Every wall a brief puts up costs it performance: a plan for how to do the work, a guess or lead handed over as where to look, a limit or caution I didn't give for this ask. Those steer a smarter agent away from solving what I asked, even when worded as something to check. So the brief that works carries every part of what I asked, my words where the wording matters, the facts it has checked, and where the result goes, and leaves the how to the agent.
 
 Answer ok when it does, or when it only reports or answers and hands over no work; wording, order and a stray wrong detail are the session's call. Answer revise when the brief drops or changes part of my ask, steers the how, or goes against my rules or a decision in memory: a note per problem, a line or two each, quoting my words where they settle it.`;
+
+const RULES = `One of my hex sessions is about to change one of my rule files: the instructions every session of mine loads, or my own words gathered in the instructions folder of my hex workspace. You read the change before it lands, next to my newest words that session got, the work hex handed it, and my rules below.
+
+My rules change when I ask for a change, and then the edit carries my intent into the line it belongs to, editing or cutting what's there before adding. When I point out a mistake, I expect it fixed and hex to reflect on why it happened; that alone doesn't call for a new rule.
+
+Answer ok when my words ask for this change, or it carries out one I asked for, like taking back an edit I objected to. Answer revise when the change is the session's own idea or goes past what I asked: a note per problem, a line or two each, quoting my words where they settle it.`;
 
 const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
@@ -42,7 +49,20 @@ const ToolHook = z.object({
   session_id: z.string().optional(),
   cwd: z.string().optional(),
   tool_name: z.string().optional(),
-  tool_input: z.looseObject({ command: textOrNothing, prompt: textOrNothing }).optional(),
+  tool_input: z
+    .looseObject({
+      command: textOrNothing,
+      prompt: textOrNothing,
+      file_path: textOrNothing,
+      content: textOrNothing,
+      old_string: textOrNothing,
+      new_string: textOrNothing,
+      edits: z
+        .array(z.looseObject({ old_string: z.string(), new_string: z.string() }))
+        .optional()
+        .catch(undefined),
+    })
+    .optional(),
 });
 
 type Hook = z.infer<typeof ToolHook>;
@@ -83,6 +103,80 @@ export function brief({
   if (HANDOFF_TOOL.test(tool)) {
     return JSON.stringify(input, null, 1);
   }
+}
+
+const real = (path: string) => {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+};
+
+export function ruleFiles(): string[] {
+  const words = join(hexDir(), "instructions");
+
+  const gathered = (() => {
+    try {
+      return readdirSync(words, { recursive: true, encoding: "utf-8" })
+        .filter((file) => file.endsWith(".md"))
+        .map((file) => join(words, file));
+    } catch {
+      return [];
+    }
+  })();
+
+  return [...files().map(({ path }) => path), ...gathered].map(real);
+}
+
+const IN_PLACE =
+  /\bchattr\s+-i\b|\b(?:sed|perl)\b[^|;&\n]*\s-\w*i|\b(?:cp|mv|install|truncate)\s|\bgit\s+(?:checkout|restore|apply|revert)\b|\bwrite_text\b|\bopen\([^)]*['"][wa]/u;
+
+const INTO = /(?:>>?|\btee\s+(?:-a\s+)?)\s*['"]?([\w.~/-]+\.md)\b/gu;
+
+export function ruleEdit(
+  { tool_name: tool = "", tool_input: input = {}, cwd = process.cwd() }: Hook,
+  rules = ruleFiles(),
+): string | undefined {
+  const isRule = (path: string, dirs = [cwd]) =>
+    dirs.some((dir) => rules.includes(real(resolve(dir, path.replace(/^~(?=\/)/u, homedir())))));
+
+  if (/^(Edit|Write|MultiEdit)$/u.test(tool)) {
+    const path = input.file_path ?? "";
+
+    if (!isRule(path)) {
+      return;
+    }
+
+    const edits = input.edits ?? [
+      { old_string: input.old_string ?? "", new_string: input.new_string ?? "" },
+    ];
+
+    return tool === "Write"
+      ? `${tool} ${path}, all of it:\n\n${input.content ?? ""}`
+      : `${tool} ${path}:\n\n${edits.map((edit) => `replacing:\n${edit.old_string}\n\nwith:\n${edit.new_string}`).join("\n\n")}`;
+  }
+
+  if (tool !== "Bash") {
+    return;
+  }
+
+  const command = input.command ?? "";
+
+  const dirs = [
+    cwd,
+    ...[...command.matchAll(/\bcd\s+['"]?([^\s'";&|]+)/gu)].map(([, dir = ""]) =>
+      resolve(cwd, dir.replace(/^~(?=\/|$)/u, homedir())),
+    ),
+  ];
+
+  const mentioned = [...new Set(command.match(/[\w.~/-]+\.md\b/gu))].some((path) =>
+    isRule(path, dirs),
+  );
+
+  const written = [...command.matchAll(INTO)].some(([, path = ""]) => isRule(path, dirs));
+
+  return written || (mentioned && IN_PLACE.test(command)) ? command : undefined;
 }
 
 function promptFilesNow(command: string, cwd: string): [string, string][] {
@@ -187,7 +281,7 @@ function deliveredTo(store: Store, text: string): string | undefined {
   )?.thread;
 }
 
-export async function judge(input: string): Promise<Verdict> {
+export async function judge(input: string, kind: Kind = "brief"): Promise<Verdict> {
   const rules = Bun.spawnSync([join(import.meta.dir, "../bin/instructions")], {
     stdout: "pipe",
     stderr: "ignore",
@@ -217,7 +311,7 @@ export async function judge(input: string): Promise<Verdict> {
       "--json-schema",
       JSON.stringify(VERDICT_JSON_SCHEMA),
       "--system-prompt",
-      `${SYSTEM}\n\n${rules}`,
+      `${kind === "rules" ? RULES : SYSTEM}\n\n${rules}`,
       "--output-format",
       "json",
       "--no-session-persistence",
@@ -251,7 +345,10 @@ const SentBack = z.object({
 
 type Sent = z.infer<typeof SentBack>;
 
+export type Kind = "brief" | "rules";
+
 export type Checked = {
+  kind: Kind;
   verdict: Verdict | "failed";
   text: string;
   round: number;
@@ -263,15 +360,19 @@ export async function check(
   hook: Hook,
   store: Store,
   decide = judge,
+  rules?: string[],
 ): Promise<Checked | undefined> {
-  const text = brief(hook);
+  const edit = ruleEdit(hook, rules);
+  const kind: Kind = edit === undefined ? "brief" : "rules";
+  const text = edit ?? brief(hook);
 
   if (text === undefined || text === "") {
     return;
   }
 
   const session = hook.session_id ?? "";
-  const sent = SentBack.safeParse(JSON.parse(store.seen.get(session, "intent") || "null")).data;
+  const key = kind === "rules" ? "intent:rules" : "intent";
+  const sent = SentBack.safeParse(JSON.parse(store.seen.get(session, key) || "null")).data;
 
   const last =
     sent !== undefined && sent.rounds > 0 && Date.now() - sent.at < REWRITE_WINDOW_MS
@@ -282,17 +383,20 @@ export async function check(
 
   const before =
     last !== undefined &&
-    `This session's last brief, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That brief:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
+    `This session's last ${kind === "rules" ? "change to my rules" : "brief"}, ${Math.round((Date.now() - last.at) / 60_000)} min ago, went back with your notes, and this one may be its rewrite. That one:\n\n${last.brief}\n\nYour notes on it:\n\n${last.notes}`;
 
   const words =
     asked(store, session, text) ||
-    "No task or message of mine was found for this brief; judge it by my rules and memory.";
+    "No task or message of mine was found for this session; judge it by my rules and memory.";
+
+  const what = kind === "rules" ? "The change to my rules" : "The brief";
 
   try {
     const verdict = await decide(
-      [words, before, `The brief (${hook.tool_name}):\n\n${text.slice(0, 40_000)}`]
+      [words, before, `${what} (${hook.tool_name}):\n\n${text.slice(0, 40_000)}`]
         .filter(Boolean)
         .join("\n\n"),
+      kind,
     );
 
     const through = verdict.verdict === "revise" && round > SENDBACKS_BEFORE_IT_GOES_THROUGH;
@@ -300,7 +404,7 @@ export async function check(
     if (verdict.verdict === "revise" && !through) {
       store.seen.show(
         session,
-        "intent",
+        key,
         JSON.stringify({
           at: Date.now(),
           rounds: round,
@@ -309,12 +413,12 @@ export async function check(
         } satisfies Sent),
       );
     } else {
-      store.seen.unshow(session, "intent");
+      store.seen.unshow(session, key);
     }
 
-    return { verdict, text, round, ...(through && { through }) };
+    return { kind, verdict, text, round, ...(through && { through }) };
   } catch (error) {
-    return { verdict: "failed", text, round, error: String(error) };
+    return { kind, verdict: "failed", text, round, error: String(error) };
   }
 }
 
@@ -331,7 +435,7 @@ if (import.meta.main) {
     const result = await check(hook, open(stateDir()));
 
     if (result) {
-      const { verdict, text, round, through, error } = result;
+      const { kind, verdict, text, round, through, error } = result;
 
       const record = {
         at: new Date().toISOString(),
@@ -339,6 +443,7 @@ if (import.meta.main) {
         session: hook.session_id,
         thread,
         tool: hook.tool_name,
+        kind,
         tasks: named(text),
         round,
         verdict: verdict === "failed" ? verdict : verdict.verdict,
@@ -355,7 +460,11 @@ if (import.meta.main) {
             ? "The check reads your rewrite next to these notes."
             : "This is its last sendback: your next version goes through whatever the check says, so weigh these notes yourself.";
 
-        const reason = `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`;
+        const reason =
+          kind === "rules"
+            ? `Intent check: the owner didn't ask for this change to their rules.\n\n${verdict.notes}\n\nWhere their words do ask for it, make the change again. ${next}`
+            : `Intent check: this brief drifts from what the owner asked.\n\n${verdict.notes}\n\nRewrite the brief and start it again. ${next}`;
+
         console.log(
           JSON.stringify({
             hookSpecificOutput: {

@@ -61,7 +61,7 @@
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/budget" }]
       },
       {
-        "matcher": "^(Bash|Agent|SendMessage|mcp__.*__new_thread|mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads))$",
+        "matcher": "^(Bash|Edit|Write|MultiEdit|Agent|SendMessage|mcp__.*__new_thread|mcp__t3.code__(t3_thread_launch|t3_thread_send|delegate_task|create_threads))$",
         "hooks": [
           {
             "type": "command",
