@@ -2443,6 +2443,10 @@ function taking(app: string, thread: string) {
 export const writable = (app: string, thread: string) => taking(app, thread) !== undefined;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Each thread's last showing of the owner's words, so the next waits for it and they show in the order they were written.
+const showing = new Map<string, Promise<void>>();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The owner's words for a thread, written in another client: the thread's app takes them as it does its own messages, then shows them where the thread lives, so its chat there holds everything said in it. A key sent again changes nothing. Whether the thread can take them.
 export function say(app: string, thread: string, message: Omit<Message, "author">): boolean {
   const home = taking(app, thread);
@@ -2454,15 +2458,23 @@ export function say(app: string, thread: string, message: Omit<Message, "author"
   const { there, name } = home;
 
   if (there.hub.deliver(thread, name, { ...message, author: "owner" })) {
-    void (async () => {
-      try {
-        await there.backfill?.(thread, [{ from: "me", text: message.content }]);
-      } catch (error) {
-        process.stderr.write(
-          `hub: couldn't show the owner's words in ${app} thread ${thread}: ${String(error)}\n`,
-        );
-      }
-    })();
+    const id = `${app}:${thread}`;
+    const earlier = showing.get(id);
+
+    showing.set(
+      id,
+      (async () => {
+        await earlier;
+
+        try {
+          await there.backfill?.(thread, [{ from: "me", text: message.content }]);
+        } catch (error) {
+          process.stderr.write(
+            `hub: couldn't show the owner's words in ${app} thread ${thread}: ${String(error)}\n`,
+          );
+        }
+      })(),
+    );
   }
 
   return true;
