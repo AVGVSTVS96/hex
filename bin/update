@@ -23,7 +23,7 @@ tell() {
   while read -r who owner want; do
     if [ -z "$every" ] && ! git merge-base --is-ancestor "$want" HEAD 2>/dev/null; then
       echo "$who $owner $want" >> "$askers.left"
-    elif ! printf '%s\n' "$told" | grep -qxF "$owner"; then
+    elif ! printf '%s\n' "$told" | grep -qxFe "$owner"; then
       told="$told
 $owner"
       "$hex/bin/job" --tell hex-update "$owner" "$1" || :
