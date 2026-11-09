@@ -83,10 +83,11 @@ hex's sessions run in `~/hex`, and Claude Code only runs there once the folder i
 
 ```sh
 ~/hex/.hex/bin/hex start
+~/hex/.hex/bin/hex doctor
 ~/hex/.hex/bin/hex status
 ```
 
-`status` should show the hub running and a session named `hex`. The hub keeps General running and starts a session for every other thread when it's needed.
+`doctor` checks every step above and prints a `fix` line, with the step to redo, for each one that isn't right; run it again until it says hex looks healthy. `status` should show the hub running and a session named `hex`. The hub keeps General running and starts a session for every other thread when it's needed.
 
 To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex run` (it stays in the foreground) with whatever it uses for that. With systemd, use the units hex ships, which also keep its sessions in a memory slice apart from the hub: `~/hex/.hex/bin/hex stop`, then `systemctl --user link ~/hex/.hex/systemd/hex.service ~/hex/.hex/systemd/hex-sessions.slice && systemctl --user enable --now hex`, plus `loginctl enable-linger "$USER"` (may need `sudo`; ask first). Elsewhere: a launchd agent with `KeepAlive` on macOS, a Sprite service on a Fly.io Sprite, or a crontab line `@reboot ~/hex/.hex/bin/hex start`.
 

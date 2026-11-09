@@ -125,8 +125,48 @@ case "${1:-}" in
         END { done() }'
     fi
     ;;
+  doctor)
+    shell_path
+    problems=0
+    ok() { echo "ok   $1"; }
+    fix() { echo "fix  $1"; problems=$((problems + 1)); }
+    for tool in git curl jq bun claude; do
+      command -v "$tool" >/dev/null && ok "$tool" || fix "$tool isn't on PATH (INSTALL.md step 1)"
+    done
+    if command -v claude >/dev/null && command -v jq >/dev/null; then
+      days=$(claude auth status 2>/dev/null | jq -r 'select(.loggedIn) | (.loginExpiresAt // empty | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 - now) / 86400 | floor') || days=
+      if ! claude auth status 2>/dev/null | jq -e .loggedIn >/dev/null; then
+        fix "Claude Code isn't signed in: run \`claude auth login\`"
+      elif [ -n "$days" ] && [ "$days" -lt 3 ]; then
+        fix "Claude sign-in ends in $days days: run \`claude auth login\` before then"
+      else
+        ok "Claude signed in${days:+, for $days more days}"
+      fi
+      [ "$(jq -r --arg home "$home" '.projects[$home].hasTrustDialogAccepted' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null)" = true ] \
+        && ok "$home is trusted" || fix "$home isn't trusted: run \`cd $home && claude\`, trust it, /exit (INSTALL.md step 6)"
+      plugins=$(claude plugin list --json 2>/dev/null) || plugins='[]'
+    fi
+    (. "$hex/bin/settings"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && curl -sf -m 10 "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe" >/dev/null) \
+      && ok "Telegram bot token works" || fix "TELEGRAM_BOT_TOKEN in $home/.env is missing or Telegram rejects it (INSTALL.md steps 3-4)"
+    (. "$hex/bin/settings"; [ -n "${HEX_MAIN_THREAD:-}" ]) && ok "HEX_MAIN_THREAD is set" || fix "HEX_MAIN_THREAD isn't set in $home/.env (INSTALL.md step 4)"
+    jq -e '.allowFrom | length > 0' "$home/state/telegram/access.json" >/dev/null 2>&1 \
+      && ok "Telegram access list" || fix "nobody may talk to hex: write $home/state/telegram/access.json (INSTALL.md step 4)"
+    managed=/etc/claude-code/managed-settings.json
+    [ "$(uname)" = Darwin ] && managed="/Library/Application Support/ClaudeCode/managed-settings.json"
+    for channel in telegram discord buzz t3; do
+      printf '%s\n' "${plugins:-[]}" | jq -e --arg id "$channel@hex" 'any(.[]; .id == $id)' >/dev/null || continue
+      jq -e --arg plugin "$channel" '.channelsEnabled == true and any(.allowedChannelPlugins[]?; .plugin == $plugin and .marketplace == "hex")' "$managed" >/dev/null 2>&1 \
+        && ok "$channel channel installed and allowed" || fix "$managed doesn't allow the $channel@hex channel (INSTALL.md step 5)"
+    done
+    printf '%s\n' "${plugins:-[]}" | jq -e 'any(.[]; .id == "telegram@hex")' >/dev/null || fix "the Telegram channel isn't installed: \`claude plugin install telegram@hex\` (INSTALL.md step 5)"
+    [ -d "$home/memory" ] && ok "memory in $home/memory" || fix "no memory folder: run \`$hex/bin/hex init\`"
+    running && ok "hub running (pid $(cat "$pidfile"))" || fix "the hub isn't running: \`$hex/bin/hex start\` (INSTALL.md step 7)"
+    free=$(df -Pk "$home" | awk 'NR == 2 { print int($4 / 1048576) }')
+    [ "${free:-0}" -ge 5 ] && ok "$free GB free on disk" || fix "only ${free:-0} GB free on disk: sessions and backups need room"
+    [ "$problems" -eq 0 ] && echo "hex looks healthy" || { echo "$problems to fix"; exit 1; }
+    ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|run|acp|deliver|task|tasks|hold|holds|questions|pins|threads|running|message|profile|log|recall|watch" >&2
+    echo "usage: hex init|start|stop|restart|status|doctor|run|acp|deliver|task|tasks|hold|holds|questions|pins|threads|running|message|profile|log|recall|watch" >&2
     exit 2
     ;;
 esac
