@@ -743,8 +743,20 @@ const handlers: Handlers<typeof tools> = {
           ? await bot.api.sendPhoto(chat_id, input, opts)
           : await bot.api.sendDocument(chat_id, input, opts);
 
+      const held =
+        "photo" in sent
+          ? { attachment_kind: "photo", attachment_file_id: sent.photo.at(-1)?.file_id ?? "" }
+          : {
+              attachment_kind: "document",
+              attachment_file_id: sent.document.file_id,
+              ...(sent.document.mime_type !== undefined && {
+                attachment_mime: sent.document.mime_type,
+              }),
+            };
+
       said(thread, sent.message_id, captioned ? caption : `(file: ${basename(file)})`, {
         file: basename(file),
+        ...held,
       });
       sentIds.push(sent.message_id);
 
@@ -1441,7 +1453,18 @@ const hub = startHub({
   },
 });
 
-clients.set("telegram", { hub, place, backfill });
+const downloads = new Map<string, Promise<string>>();
+
+const file = (id: string) => {
+  const kept = downloads.get(id) ?? download(id, id);
+
+  downloads.set(id, kept);
+  kept.catch(() => downloads.delete(id));
+
+  return kept;
+};
+
+clients.set("telegram", { hub, place, backfill, file });
 
 bot.on(["message:forum_topic_created", "message:forum_topic_edited"], (ctx) => {
   const name = ctx.message.forum_topic_created?.name ?? ctx.message.forum_topic_edited?.name ?? "";

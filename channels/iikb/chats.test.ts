@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -24,7 +24,7 @@ let hexDir: string;
 let store: Store;
 let delivered: unknown[][];
 
-function telegram(): Client {
+function telegram(file?: Client["file"]): Client {
   const hub: Pick<Hub, "name" | "deliver" | "threads" | "fresh" | "main"> = {
     name: (thread) => NAMES.get(thread),
     deliver: (...args) => {
@@ -38,19 +38,32 @@ function telegram(): Client {
   };
 
   // SAFETY: the iikb channel reaches a client's hub only through these five.
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a fake of the five the channel uses
-  return { hub: hub as Hub, place: () => Promise.resolve({ thread: "", link: "" }) };
+  return {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- a fake of the five the channel uses
+    hub: hub as Hub,
+    place: () => Promise.resolve({ thread: "", link: "" }),
+    ...(file && { file }),
+  };
 }
 
-const say = (thread: string, n: number, author: "owner" | "hex", body: string) => {
+const say = (
+  thread: string,
+  n: number | string,
+  author: "owner" | "hex",
+  body: string,
+  meta?: Record<string, string>,
+) => {
+  const key = `telegram:${thread}:${String(n)}`;
+
   store.messages.deliver({
-    key: `telegram:${thread}:${n}`,
+    key,
     to: thread,
     from: "telegram",
     author,
     body,
+    ...(meta && { meta }),
   });
-  store.messages.take(`telegram:${thread}:${n}`, "s1");
+  store.messages.take(key, "s1");
 };
 
 const ask = (path: string, init?: RequestInit) =>
@@ -89,6 +102,86 @@ test("the DM and General come first, then threads by their latest message, each 
     { id: "telegram:-100:5", name: "Desk", line: "Shipped." },
     { id: "telegram:-100:6", name: "Quiet", line: "old news" },
   ]);
+});
+
+test("only Telegram's threads are chats, since Chats is the owner's Telegram", () => {
+  clients.set("discord", telegram());
+
+  expect(list(store).map(({ id }) => id)).toEqual([
+    "telegram:1",
+    "telegram:-100",
+    "telegram:-100:5",
+    "telegram:-100:6",
+  ]);
+});
+
+test("a chat reads as Telegram shows it: edits in place, a poll's options, and no reactions, taps or votes", async () => {
+  say(DESK, 1, "hex", "Status: building");
+  say(DESK, "e1", "hex", "Status: shipped", { edited: "true", message_id: "1" });
+  say(DESK, 2, "hex", "Which one?", { poll: "A, the quick one / B" });
+  say(DESK, 3, "owner", "(vote: B)", { vote: "B", poll_message_id: "2" });
+  say(DESK, 4, "owner", "(reaction: 👍)", { reaction: "👍", reaction_to_message_id: "1" });
+  say(DESK, 5, "owner", "Run now", { button: "true", button_message_id: "2" });
+  say(DESK, 6, "owner", "typo", { message_id: "6" });
+  say(DESK, "6@9", "owner", "fixed", { message_id: "6", edited: "true" });
+
+  expect((await read(store, "telegram:-100:5")).messages).toEqual([
+    { from: "hex", text: "Status: shipped" },
+    { from: "hex", text: "Which one?\n\n• A, the quick one\n• B" },
+    { from: "me", text: "fixed" },
+  ]);
+});
+
+test("photos and files come as files the keyboard fetches with its token, the owner's from disk and hex's from Telegram", async () => {
+  const photo = join(hexDir, "state", "photo.jpg");
+  const report = join(hexDir, "state", "report.pdf");
+
+  writeFileSync(photo, "jpeg bytes");
+  writeFileSync(report, "pdf bytes");
+  clients.set(
+    "telegram",
+    telegram((id) => Promise.resolve(id === "doc1" ? report : "")),
+  );
+  say(DESK, 1, "owner", "(photo)", { image_path: photo });
+  say(DESK, 2, "hex", "(file: report.pdf)", {
+    file: "report.pdf",
+    attachment_kind: "document",
+    attachment_file_id: "doc1",
+    attachment_mime: "application/pdf",
+  });
+
+  const { messages } = await read(store, "telegram:-100:5");
+
+  expect(messages).toEqual([
+    {
+      from: "me",
+      text: "",
+      files: [{ name: "photo.jpg", url: "files/telegram%3A-100%3A5%3A1/0", type: "image/jpeg" }],
+    },
+    {
+      from: "hex",
+      text: "",
+      files: [
+        { name: "report.pdf", url: "files/telegram%3A-100%3A5%3A2/0", type: "application/pdf" },
+      ],
+    },
+  ]);
+
+  const fetched = await Promise.all(
+    messages.map((message) =>
+      ask(`/${message.files?.[0]?.url ?? ""}`, { headers: { authorization: "Bearer secret" } }),
+    ),
+  );
+
+  expect(await Promise.all(fetched.map(async (response) => await response.text()))).toEqual([
+    "jpeg bytes",
+    "pdf bytes",
+  ]);
+  expect(fetched[1]?.headers.get("content-type")).toBe("application/pdf");
+  expect(
+    (await ask("/files/telegram%3A-100%3A5%3A9/0", { headers: { authorization: "Bearer secret" } }))
+      .status,
+  ).toBe(404);
 });
 
 test("a chat is what was said in it, then the owner's words its session hasn't taken yet", async () => {

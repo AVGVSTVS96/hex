@@ -270,6 +270,9 @@ export type Client = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The owner's stop as the client's own Stop does it, when it keeps state of its own about a turn.
   stop?: (thread: string) => void;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A local copy of a file the app holds by its own id, such as one a message carried.
+  file?: (id: string) => Promise<string>;
 };
 
 export const clients = new Map<string, Client>();

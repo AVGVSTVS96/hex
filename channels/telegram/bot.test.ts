@@ -119,6 +119,18 @@ function answer(call: Call): object | boolean {
       return { ...sent, poll: { id: `poll-${sent.message_id}` } };
     }
 
+    case "sendPhoto": {
+      const sent = sentMessage(call);
+
+      return { ...sent, photo: [{ file_id: `photo-${sent.message_id}` }] };
+    }
+
+    case "sendDocument": {
+      const sent = sentMessage(call);
+
+      return { ...sent, document: { file_id: `document-${sent.message_id}` } };
+    }
+
     case "sendMediaGroup": {
       return Array.isArray(payload.media) ? payload.media.map(() => sentMessage(call)) : [];
     }
