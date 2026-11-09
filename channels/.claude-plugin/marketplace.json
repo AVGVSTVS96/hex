@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "hex",
-  "description": "hex's channels: Telegram, Discord, Buzz, T3 Code and voice, all served by the hex hub",
+  "description": "hex's channels: Telegram, Discord, Buzz, T3 Code, voice and iikb, all served by the hex hub",
   "owner": {
     "name": "AVGVSTVS96"
   },
@@ -35,6 +35,12 @@
       "description": "Live voice calls for Claude Code: OpenAI's gpt-live-1 talks with you in real time and hands the real work to your Claude Code session.",
       "category": "productivity",
       "source": "./voice"
+    },
+    {
+      "name": "iikb",
+      "description": "iikb channel: your hex threads as chats in the iikb keyboard, in any app.",
+      "category": "productivity",
+      "source": "./iikb"
     }
   ]
 }

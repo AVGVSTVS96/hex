@@ -39,6 +39,14 @@
         "zod": "catalog:",
       },
     },
+    "channels/iikb": {
+      "name": "claude-channel-iikb",
+      "version": "0.1.0",
+      "dependencies": {
+        "@hex/hub": "workspace:*",
+        "zod": "catalog:",
+      },
+    },
     "channels/t3": {
       "name": "claude-channel-t3",
       "version": "0.1.0",
@@ -407,6 +415,8 @@
     "claude-channel-buzz": ["claude-channel-buzz@workspace:channels/buzz"],
 
     "claude-channel-discord": ["claude-channel-discord@workspace:channels/discord"],
+
+    "claude-channel-iikb": ["claude-channel-iikb@workspace:channels/iikb"],
 
     "claude-channel-t3": ["claude-channel-t3@workspace:channels/t3"],
 
