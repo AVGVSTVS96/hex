@@ -92,6 +92,10 @@ Pick a client that's ready, or tell your agent to build yours. Use one for every
 - T3 shows its work as it happens: every command, edit and answer, with T3's own diffs and checkpoints.
 - hex reaches T3 over [ACP](https://agentclientprotocol.com): `hex acp` connects T3 to the hex that's already running.
 
+**iikb: hex in your keyboard.** Built and running today.
+- [iikb](https://github.com/AVGVSTVS96/iikb) is an iOS keyboard. Its Chats open your hex threads in any app: read them and dictate or type back without leaving what you're in.
+- Your words reach the thread's own session, the same as typing them in its app ([channels/iikb](channels/iikb/README.md)).
+
 **Your own: tell your agent.** Buzz was built this way. Swap in any app:
 
 ```
@@ -139,7 +143,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     ├── defaults/                   what `hex init` starts your folder with
     ├── hub/                        gives every thread its own session, keeps every message, runs schedules.json
     ├── systemd/                    units for running hex under systemd
-    └── channels/                   the Telegram, Discord, Buzz, T3 Code and voice channels
+    └── channels/                   the Telegram, Discord, Buzz, T3 Code, voice and iikb channels
 ```
 
 hex doesn't need systemd or any service manager. `hex start` runs the hub in the background, and the hub keeps General running. To have it come back after a reboot, point whatever your machine uses at `hex run`: the systemd units in `systemd/`, which also keep sessions in a memory slice apart from the hub, a launchd agent, a Sprite service, or an `@reboot` cron line.

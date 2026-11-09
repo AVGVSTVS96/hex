@@ -2344,6 +2344,7 @@ export function startHub({
     fork: (thread: string, name: string, session: string, prompt: string, cwd?: string) =>
       void launch(thread, name, { prompt, fork: session, cwd }),
     main,
+    fresh,
     renewal,
     keep,
     renew: renewAsked,

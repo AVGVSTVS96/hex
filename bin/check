@@ -15,7 +15,7 @@ jq -e 'all(.plugins[]; .source == "./\(.name)")' channels/.claude-plugin/marketp
 for plugin in $(jq -r '.plugins[].name' channels/.claude-plugin/marketplace.json); do
   bunx tsc -p "channels/$plugin"
   $build "channels/$plugin/bot.ts" --outdir "$out/$plugin" >/dev/null
-  jq -e --arg plugin "$plugin" '.mcpServers[$plugin].type == "http"' "channels/$plugin/.mcp.json" >/dev/null
+  [ ! -e "channels/$plugin/.mcp.json" ] || jq -e --arg plugin "$plugin" '.mcpServers[$plugin].type == "http"' "channels/$plugin/.mcp.json" >/dev/null
 done
 $build channels/buzz/provider.ts --outdir "$out/provider" >/dev/null
 $build hub/serve.ts --outdir "$out/hub" >/dev/null
