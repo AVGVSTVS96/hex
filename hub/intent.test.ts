@@ -150,6 +150,36 @@ test("work hex handed a session is read next to his words, newest last", () => {
   expect(job).toContain("which that thread's own session answers:\n\n[telegram:-100:50");
 });
 
+test("what a session said since its newest ask shows where that work stands", () => {
+  store.messages.deliver(
+    {
+      key: "terminal:resume",
+      to: "-100:7",
+      from: "terminal",
+      body: "Give the builder its go on the webrtc update.",
+      author: "prompt",
+      meta: { session: "orch" },
+    },
+    "orch",
+  );
+
+  for (const [key, body] of [
+    ["terminal:r1", "I gave the builder the go on webrtc."],
+    ["terminal:r2", "webrtc is on main and on his phone."],
+  ] as const) {
+    store.messages.deliver({ key, to: "-100:7", from: "terminal", body, author: "hex" }, "orch");
+  }
+
+  const words = asked(store, "orch", "SendMessage to its builder: fix the crash on launch.");
+  expect(words.indexOf("Give the builder its go")).toBeLessThan(
+    words.indexOf("What this session has said since, newest last:"),
+  );
+  expect(words.indexOf("I gave the builder the go")).toBeLessThan(
+    words.indexOf("webrtc is on main"),
+  );
+  expect(asked(store, "main", "claude -p 'Make login fast.'")).not.toContain("said since");
+});
+
 test("a job is held to its own task, not to what the owner said to its thread since", () => {
   const task = store.tasks.create({
     title: "Fast login",
