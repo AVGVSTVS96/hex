@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 
 import { served } from "./running.ts";
-import { hexDir, open, spoken, stateDir } from "./store.ts";
+import { hexDir, open, replied, spoken, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
 import { render } from "./tasks.ts";
 
@@ -17,7 +17,7 @@ const CHECKER_AUDIT_LOG = "intent.jsonl";
 
 const SYSTEM = `One of my hex sessions wrote this brief to hand my work to another agent, and you read it before that agent gets it, so the work hex proposes is the work I asked for: my words for the task, the newest of mine this session got and the work hex handed it, my rules below, and what hex's memory says was decided.
 
-A session works on what hex hands it too: a request from General or another session, or a job's own prompt, each carrying work of mine. A brief for that work answers to it, even when my newest words there are about something else.
+A session works on what hex hands it too: a request from General or another session, or a job's own prompt, each carrying work of mine. A brief for that work answers to it, even when my newest words there are about something else. What the session has said since shows where that work stands now: an ask it already settled there is done, and its newer facts replace older ones.
 
 The agent that gets it is as capable as you, loads my rules itself, and gets a link to my conversation. Every wall a brief puts up costs it performance: a plan for how to do the work, a guess or lead handed over as where to look, a limit or caution I didn't give for this ask. Those steer a smarter agent away from solving what I asked, even when worded as something to check. So the brief that works carries every part of what I asked, my words where the wording matters, the facts it has checked, and where the result goes, and leaves the how to the agent.
 
@@ -117,6 +117,12 @@ const handed = (rows: Row[], shown: Row[]) =>
     .filter((row) => row.author === "prompt")
     .slice(-3);
 
+const saidSince = (rows: Row[]) =>
+  rows
+    .slice(rows.findLastIndex((row) => spoken(row) !== "" || row.author === "prompt") + 1)
+    .filter(replied)
+    .slice(-6);
+
 const said = (row: Row) =>
   row.author === "prompt"
     ? `${row.from === "terminal" ? "the prompt it started with" : `handed to it by ${row.meta?.user ?? row.from}`}:\n${row.body.slice(0, 4000)}`
@@ -141,6 +147,7 @@ export function asked(store: Store, session: string, text: string): string {
   const taken = store.messages.taken(session, 40);
   const picked = new Set([...newest(taken, cited), ...handed(taken, cited)]);
   const given = taken.filter((row) => picked.has(row));
+  const since = saidSince(taken);
   const to = deliveredTo(store, text);
 
   const toNewest =
@@ -153,6 +160,9 @@ export function asked(store: Store, session: string, text: string): string {
     cited.length > 0 ? `His messages it cites:\n\n${quote(cited)}` : "",
     given.length > 0
       ? `The newest words this session got, oldest first, his and the work hex handed it:\n\n${got(given)}`
+      : "",
+    since.length > 0
+      ? `What this session has said since, newest last:\n\n${since.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${row.body.slice(0, 1000)}`).join("\n\n")}`
       : "",
     toNewest.length > 0
       ? `His newest messages in the thread it goes to, which that thread's own session answers:\n\n${quote(toNewest)}`
