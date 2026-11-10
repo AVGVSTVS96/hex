@@ -311,6 +311,29 @@ export function past(text: string) {
   return done !== undefined && done !== "" && text.includes(" ") ? `${done}${rest}` : text;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Siri's Live Activity cut its one step line after 29 characters on the open Duo.
+const BRIEF = 28;
+
+const GENERAL: Record<Kind, [doing: string, did: string]> = {
+  think: ["Thinking", "Thought it over"],
+  say: ["Writing", "Wrote"],
+  plan: ["Planning", "Planned"],
+  run: ["Running a command", "Ran a command"],
+  read: ["Reading a file", "Read a file"],
+  edit: ["Editing a file", "Edited a file"],
+  search: ["Searching files", "Searched files"],
+  web: ["Looking on the web", "Looked on the web"],
+  agent: ["Starting an agent", "Started an agent"],
+  tool: ["Using a tool", "Used a tool"],
+};
+
+export function brief({ kind, text, state }: Pick<Did, "kind" | "text" | "state">) {
+  return text.length <= BRIEF
+    ? text
+    : GENERAL[kind][state === "done" || state === "failed" ? 1 : 0];
+}
+
 export function headline(update: Update): string | undefined {
   const did = stepOf(update);
 
