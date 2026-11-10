@@ -1835,3 +1835,21 @@ test("if its sync thread ends, a store waits for the disk on every write again a
   );
   await store.synced();
 });
+
+test("a process that writes and exits leaves the WAL to the processes still using it", () => {
+  const store = new Store(dir);
+  store.messages.deliver(message);
+
+  const child = Bun.spawnSync([
+    process.execPath,
+    "-e",
+    `const { Store } = await import(${JSON.stringify(join(import.meta.dir, "store.ts"))});
+    new Store(${JSON.stringify(dir)}).messages.deliver(${JSON.stringify({ ...message, key: "telegram:-100:5:2" })});`,
+  ]);
+
+  expect(child.exitCode).toBe(0);
+  expect(
+    new DataView(readFileSync(join(dir, "hex.db-shm")).buffer).getUint32(16, true),
+  ).toBeGreaterThan(0);
+  expect(store.messages.get("telegram:-100:5:2")).not.toBeNull();
+});
