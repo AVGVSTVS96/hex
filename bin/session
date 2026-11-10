@@ -37,6 +37,8 @@ for arg; do
     main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
     chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
     voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
+    # A call's session starts long before the call; without the chat view, Claude Code reads the memory and rules when the call's first message arrives, and the engine hands it the last calls.
+    [ -n "${voice:-}" ] && chat=
     thread=$(printf '%s' "$arg" | jq -r '.env.HEX_THREAD // empty')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
     [ -n "${away:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg home "$home" --argjson hex "$(cat "$home/.claude/settings.json" 2>/dev/null || echo '{}')" '. as $hub | $hex | .permissions.deny |= (. // [] | map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/"))) | . * $hub')

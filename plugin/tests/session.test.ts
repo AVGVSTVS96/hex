@@ -214,8 +214,8 @@ test("a topic session orchestrates on its own model, its agents run the folder's
   expect(picked[picked.lastIndexOf("--model") + 1]).toBe("haiku");
 });
 
-test("a voice session, started by the hub, runs HEX_VOICE_MODEL on the 1-hour cache", async () => {
-  const { settings } = await launch("plugin:voice@hex", "voice", {
+test("a voice session, started by the hub, runs HEX_VOICE_MODEL on the 1-hour cache, and reads the rules and memory itself instead of a chat view", async () => {
+  const { args, settings } = await launch("plugin:voice@hex", "voice", {
     main: "voice",
     fresh: () => true,
     limits: { capacity: 0 },
@@ -224,8 +224,10 @@ test("a voice session, started by the hub, runs HEX_VOICE_MODEL on the 1-hour ca
   expect(settings).toMatchObject({
     model: "haiku",
     effortLevel: "low",
-    env: { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" },
+    env: { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", HEX_FRESH: "1" },
   });
+  expect(args).not.toContain("--system-prompt-file");
+  expect(settings.claudeMdExcludes ?? []).toEqual([]);
 });
 
 test("a topic session, started by the hub, gets none of the chat or main additions", async () => {
