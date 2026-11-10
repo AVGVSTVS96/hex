@@ -45,6 +45,10 @@
     ],
     "PreToolUse": [
       {
+        "matcher": "^Bash$",
+        "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/pkill-guard" }]
+      },
+      {
         "matcher": "mcp__claude_ai_.*",
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/send-gate" }]
       },

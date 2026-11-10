@@ -1,0 +1,9 @@
+#!/bin/sh
+# A PreToolUse hook on Bash: refuses `pkill -f` and `pkill --full` anywhere in a command, behind sudo or ssh and in
+# quoted scripts too.
+command=$(jq -r '.tool_input.command // empty')
+if printf '%s\n' "$command" |
+  grep -Eq '(^|[^[:alnum:]_.-])pkill([[:space:]]+-[^[:space:]]+)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)([[:space:]]|$)'; then
+  echo "pkill -f matches whole command lines, including the shell running this command, so it kills itself. Kill by the PID you started or looked up; killing by name (pkill -x bun) also kills every other session's processes with that name." >&2
+  exit 2
+fi
