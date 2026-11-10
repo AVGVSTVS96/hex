@@ -1328,7 +1328,7 @@ test("a key two apps had before keys were global keeps its open, then newest, ro
   ]);
 });
 
-test("what a session was shown is kept per kind until its context loses it, and a tasks record unchanged for 2 days goes, since a session's end leaves it behind and one still there just gets its whole list again", () => {
+test("what a session was shown is kept per kind until its context loses it, and a tasks record unchanged for 2 days goes, a rules one after a week, since a session's end leaves it behind and one still there just gets its whole list again", () => {
   const store = new Store(dir);
   expect(store.seen.get("session-a", "tasks")).toBe("");
   store.seen.show("session-a", "tasks", "one");
@@ -1352,6 +1352,18 @@ test("what a session was shown is kept per kind until its context loses it, and 
     store.seen.get("session-b", "tasks"),
     store.seen.get("session-c", "tasks"),
   ]).toEqual(["{}", "", "three"]);
+  store.seen.show("session-a", "rules 2", "{}");
+  store.seen.show(
+    "session-d",
+    "rules",
+    "{}",
+    new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toISOString(),
+  );
+  expect([
+    store.seen.get("session-a", "rules"),
+    store.seen.get("session-a", "rules 2"),
+    store.seen.get("session-d", "rules"),
+  ]).toEqual(["", "", "{}"]);
 });
 
 test("hex task makes a task from a message by its key, and the owner is the thread asking", async () => {

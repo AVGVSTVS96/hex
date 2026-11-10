@@ -49,8 +49,9 @@ function hook(
   event: "SessionStart" | "UserPromptSubmit" | "SessionEnd",
   source?: string,
   env: Record<string, string> = {},
+  args: string[] = [],
 ) {
-  const run = Bun.spawnSync([join(home, ".hex/bin/rules")], {
+  const run = Bun.spawnSync([join(home, ".hex/bin/rules"), ...args], {
     stdin: Buffer.from(JSON.stringify({ session_id: SESSION, hook_event_name: event, source })),
     env: {
       ...process.env,
@@ -128,11 +129,70 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
   expect(hook("UserPromptSubmit", undefined, env)).toBe("");
 });
 
-test("a change too long to show points to the files instead", () => {
+function prompt(env: Record<string, string> = {}) {
+  const [fourth, first, third, second] = [["4", "last"], ["1"], ["3"], ["2"]].map((args) =>
+    hook("UserPromptSubmit", undefined, env, args),
+  );
+
+  return [first, second, third, fourth];
+}
+
+const rulesUpTo = (count: number) =>
+  `@.hex/HEX.md\n\n${Array.from({ length: count }, (_, i) => `- Rule ${i}.\n`).join("")}`;
+
+test("a small change reaches the session once, as a diff from the first part", () => {
   hook("SessionStart");
-  writeFileSync(join(home, "AGENTS.md"), `@.hex/HEX.md\n\n${"- A long rule.\n".repeat(1000)}`);
+  writeFileSync(
+    join(home, ".hex/HEX.md"),
+    "# How you work\n\nAnswer in plain words, with a link.\n",
+  );
+  const [first, ...rest] = prompt();
+  expect(first).toContain("+Answer in plain words, with a link.");
+  expect(rest).toEqual(["", "", ""]);
+  expect(prompt()).toEqual(["", "", "", ""]);
+});
+
+test("a change too long for a diff arrives whole across the parts, each one hook's size, once", () => {
+  hook("SessionStart");
+  writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1000));
+  const [first = "", second = "", third, fourth] = prompt();
+  expect(first).toContain("so here they are whole, part 1 of 2");
+  expect(second).toContain("part 2 of 2");
+  expect([third, fourth]).toEqual(["", ""]);
+  expect(`${first}${second}`).toContain("- Rule 0.");
+  expect(`${first}${second}`).toContain("- Rule 999.");
+  expect(`${first}${second}`).toContain("Answer in plain words.");
+  expect(Math.max(first.length, second.length)).toBeLessThan(10_000);
+  expect(prompt()).toEqual(["", "", "", ""]);
+});
+
+test("a held session gets a big change whole too, and a compaction starts its parts over", () => {
+  const env = holding();
+  hook("SessionStart", "resume", env);
+  writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1000));
+  expect(prompt(env)[1]).toContain("part 2 of 2");
+  expect(prompt(env)).toEqual(["", "", "", ""]);
+  hook("SessionStart", "compact", env);
+  writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1001));
+  const [first] = prompt(env);
+  expect(first).toContain("+- Rule 1000.");
+});
+
+test("rules longer than the parts can carry end with where to read the rest", () => {
+  hook("SessionStart");
+  writeFileSync(join(home, "AGENTS.md"), rulesUpTo(4000));
+  const fourth = prompt()[3];
+  expect(fourth).toContain("part 4 of ");
+  expect(fourth).toContain("That's all the hooks can show. Read the rest in the files themselves:");
+  expect(fourth).toContain(join(home, "AGENTS.md"));
+});
+
+test("a session on the older hooks, which run the rules once, gets the first part and where to read the rest", () => {
+  hook("SessionStart");
+  writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1000));
   const out = hook("UserPromptSubmit");
-  expect(out).toContain("read them again");
+  expect(out).toContain("part 1 of 2");
+  expect(out).toContain("Read the rest in the files themselves");
   expect(out.length).toBeLessThan(10_000);
 });
 
@@ -141,6 +201,7 @@ test("a session's end forgets what it loaded", () => {
   expect(open(join(home, "state")).seen.get(SESSION, "rules")).toContain("Answer in plain words.");
   hook("SessionEnd");
   expect(open(join(home, "state")).seen.get(SESSION, "rules")).toBe("");
+  expect(open(join(home, "state")).seen.get(SESSION, "rules 1")).toBe("");
 });
 
 test("a memory pass rewriting the wake HEX.md imports is no change to the rules", () => {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -45,12 +45,13 @@ export function hold(dir: string) {
     : [];
 
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  rmSync(join(dir, "seen"), { recursive: true, force: true });
   writeFileSync(join(dir, "CLAUDE.md"), `${[...files(), ...memory].map(section).join("\n\n")}\n`);
   writeFileSync(join(dir, "rules.json"), JSON.stringify(rules()));
   writeFileSync(join(dir, "wake.md"), memory[0]?.text ?? "");
 }
 
-function hookSizedPartsSplitAtLineEnds(text: string) {
+export function hookSizedPartsSplitAtLineEnds(text: string) {
   const parts = [""];
 
   for (const line of text.split("\n")) {

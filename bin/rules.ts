@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 
 import { spawnSync } from "bun";
 import { z } from "zod";
@@ -11,7 +11,7 @@ import { MEMORY, PROFILE, WAKE, history } from "../hub/loaded.ts";
 import type { Startup } from "../hub/loaded.ts";
 import { own } from "../hub/running.ts";
 import { open, stateDir } from "../hub/store.ts";
-import { hold, rules } from "./instructions";
+import { hold, hookSizedPartsSplitAtLineEnds, rendered, rules } from "./instructions";
 
 const hex = resolve(import.meta.dir, "..");
 const home = resolve(hex, "..");
@@ -31,6 +31,10 @@ const Hook = z.object({
 const Rules = z.record(z.string(), z.string());
 
 const { session_id, hook_event_name, source } = Hook.parse(JSON.parse(await Bun.stdin.text()));
+const [part = "1", flag] = process.argv.slice(2);
+const thisPart = Number(part);
+const anOlderHookRunsItAloneSoItsTheLastPart = process.argv.length <= 2;
+const lastPart = flag === "last" || anOlderHookRunsItAloneSoItsTheLastPart;
 const isSet = (value?: string): value is string => value !== undefined && value !== "";
 
 const held =
@@ -178,7 +182,7 @@ try {
   const store = open(stateDir());
 
   if (hook_event_name === "SessionEnd") {
-    store.seen.unshow(session_id, "rules");
+    store.seen.unshowAll(session_id, "rules");
     store.seen.unshow(session_id, "hex");
     process.exit(0);
   }
@@ -193,14 +197,20 @@ try {
 
   const now = rules();
 
+  const seenByThisPart =
+    held === undefined ? `rules ${thisPart}` : join(held, "seen", `rules.${thisPart}.json`);
+
   const kept =
     held === undefined
-      ? store.seen.get(session_id, "rules")
-      : readFileSync(join(held, "rules.json"), "utf-8");
+      ? store.seen.get(session_id, seenByThisPart) || store.seen.get(session_id, "rules")
+      : readFileSync(
+          existsSync(seenByThisPart) ? seenByThisPart : join(held, "rules.json"),
+          "utf-8",
+        );
 
   let out = "";
 
-  if (hook_event_name !== "SessionStart" && kept !== "") {
+  if (hook_event_name === "UserPromptSubmit" && kept !== "") {
     const before = Rules.parse(JSON.parse(kept));
 
     const changed = [...new Set([...Object.keys(before), ...Object.keys(now)])].filter(
@@ -216,8 +226,6 @@ try {
         })),
       );
 
-      const names = changed.map((file) => file.replace(homedir(), "~"));
-
       const lead =
         "Your instruction files changed since this session loaded them. From now on, follow their new wording";
 
@@ -225,22 +233,47 @@ try {
         isSet(process.env.HEX_FRESH) && isSet(process.env.HEX_THREAD);
 
       if (body.length <= ROOM) {
-        out = `${lead}; this is what changed:\n\n${body}`;
+        if (thisPart === 1) {
+          out = `${lead}; this is what changed:\n\n${body}`;
+        }
       } else if (!aChatsNextSessionStartsFromTheNewFiles) {
-        out = `${lead}. The change is too long to show here, so read them again: ${names.join(", ")}`;
+        const all = hookSizedPartsSplitAtLineEnds(rendered());
+        const mine = all[thisPart - 1] ?? "";
+
+        const which =
+          all.length > 1 ? `, part ${thisPart} of ${all.length}; read the parts in order` : "";
+
+        const more =
+          lastPart && all.length > thisPart
+            ? `\nThat's all the hooks can show. Read the rest in the files themselves: ${Object.keys(now).join(", ")}.\n`
+            : "";
+
+        if (mine.trim() !== "") {
+          out = `${lead}. The change is too long for a diff, so here they are whole${which}.\n\n${mine}${more}`;
+        }
       }
     }
   }
 
   const keepBeforeSayingSoAKeepThatFailsSaysNothing = () => {
+    if (hook_event_name === "SessionStart") {
+      if (held === undefined) {
+        store.seen.unshowAll(session_id, "rules");
+        store.seen.show(session_id, "rules", JSON.stringify(now));
+      }
+
+      return;
+    }
+
     if (JSON.stringify(now) === kept) {
       return;
     }
 
     if (held === undefined) {
-      store.seen.show(session_id, "rules", JSON.stringify(now));
-    } else if (hook_event_name !== "SessionStart") {
-      writeFileSync(join(held, "rules.json"), JSON.stringify(now));
+      store.seen.show(session_id, seenByThisPart, JSON.stringify(now));
+    } else {
+      mkdirSync(dirname(seenByThisPart), { recursive: true });
+      writeFileSync(seenByThisPart, JSON.stringify(now));
     }
   };
 
@@ -248,7 +281,7 @@ try {
 
   let shown = "";
 
-  if (hook_event_name === "UserPromptSubmit") {
+  if (hook_event_name === "UserPromptSubmit" && thisPart === 1) {
     try {
       const updates = history(hex);
       const told = store.seen.get(session_id, "hex");
@@ -305,7 +338,7 @@ try {
     }
   }
 
-  if (hook_event_name === "UserPromptSubmit" && held !== undefined) {
+  if (hook_event_name === "UserPromptSubmit" && thisPart === 1 && held !== undefined) {
     try {
       out = [out, memoryWrittenSinceItLoaded(held, ROOM - out.length)].filter(Boolean).join("\n\n");
     } catch (error) {
