@@ -6,7 +6,7 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 done="$home/state/migrated"
 
-steps=3
+steps=4
 
 step1() {
   [ -f "$home/schedules.json" ] || return 0
@@ -24,6 +24,10 @@ step2() {
 
 step3() {
   bun "$hex/hub/past.ts" "$home"
+}
+
+step4() {
+  [ -e "$home/PROACTIVE.md" ] || cp "$hex/defaults/PROACTIVE.md" "$home/PROACTIVE.md"
 }
 
 n=$(cat "$done" 2>/dev/null) || n=0

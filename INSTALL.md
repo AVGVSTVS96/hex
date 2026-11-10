@@ -21,7 +21,7 @@ git clone https://github.com/AVGVSTVS96/hex ~/hex/.hex   # or their fork
 ~/hex/.hex/bin/hex init
 ```
 
-`init` writes their `AGENTS.md`, `SOUL.md`, `schedules.json`, `.env` and `.claude/settings.json`, sets `skipDangerousModePermissionPrompt` in their Claude Code user settings, since hex's background sessions run in bypass permissions mode (that setting applies to all their Claude Code sessions, so tell them), sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
+`init` writes their `AGENTS.md`, `SOUL.md`, `PROACTIVE.md`, `schedules.json`, `.env` and `.claude/settings.json`, sets `skipDangerousModePermissionPrompt` in their Claude Code user settings, since hex's background sessions run in bypass permissions mode (that setting applies to all their Claude Code sessions, so tell them), sets up their memory in `memory/` with [OptMem](https://github.com/VictorTaelin/OptMem), and makes the folder a private git repo. Updates only ever touch `.hex/`.
 
 ## 3. Make the Telegram bot and group (you)
 
@@ -94,7 +94,8 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
 ## 8. Make it theirs
 
 - Ask their name, what they do, and anything they want hex to know from day one, and save each fact as a memory: `MEMORY_DIR=~/hex/memory ~/hex/.hex/vendor/memo note "<fact>"`. Then run `MEMORY_DIR=~/hex/memory ~/hex/.hex/bin/wake`, so the next session starts with them.
-- Ask what time zone they're in. If `date` here shows another one, set `env.TZ` in `~/hex/.claude/settings.json` to theirs (like `America/New_York`), so schedules fire on their clock. The hourly check runs from 8:45 to 22:45; if they keep other hours, change the heartbeat's `cron` in `~/hex/schedules.json`.
+- Ask what time zone they're in. If `date` here shows another one, set `env.TZ` in `~/hex/.claude/settings.json` to theirs (like `America/New_York`), so schedules fire on their clock.
+- Ask what they want hex to bring up on its own, what never, and their hours. Write each answer in their words under "Tell me about", "Never tell me about", "When" or "How" in `~/hex/PROACTIVE.md`, which hex reads before it messages them unprompted. The hourly check runs from 8:45 to 22:45; set the heartbeat's `cron` in `~/hex/schedules.json` to their hours.
 - **Voice notes (optional):** `.hex/bin/transcribe` works with any OpenAI-compatible `/v1/audio/transcriptions` endpoint: a hosted API, or a local speech-to-text server. Search the web for the current best option, suggest one, and if they agree, set `TRANSCRIBE_URL` (the full endpoint URL), `TRANSCRIBE_MODEL` and, if needed, `TRANSCRIBE_API_KEY` in `.env`.
 - **Connectors (optional):** every connector on their Claude account works in every hex session, nothing to set up on this machine. They add them at claude.ai → Settings → Connectors **(you)**. Mail lets the hourly check read their inbox. Some that suit hex: [Executor](https://executor.sh) puts many accounts behind one connector (`https://executor.sh/mcp`), and [AgentMail](https://agentmail.to) gives hex an inbox of its own (`https://mcp.agentmail.to/mcp`).
 - **A computer of its own (optional):** a [Fly.io Sprite](https://sprites.dev) with a desktop and Chrome, for anything that needs a real browser. Install the `sprite` CLI (`curl -fsSL https://sprites.dev/install.sh | sh`) and ask them to run `sprite login` **(you)**. Then:
