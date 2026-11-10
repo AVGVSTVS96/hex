@@ -504,7 +504,7 @@ test("buttons come back as a tap with the label, and the message keeps only the 
   expect(tap.meta.button_message_id).toBe(String(id));
 });
 
-test("a widget Telegram refuses in a topic goes to the owner's DM with a button back, and its requests reach the topic, answered at once", async () => {
+test("a widget Telegram refuses in a topic goes to the owner's DM with a button back, and its requests reach the topic, answered at once, taking state sent as an object as its JSON", async () => {
   const file = join(outbox, "board.html");
   writeFileSync(file, "<b>board</b>");
 
@@ -558,6 +558,12 @@ test("a widget Telegram refuses in a topic goes to the owner's DM with a button 
   expect((await call("edit_message", { message_id: ref, chat_data: "same" })).text).toBe(
     `changed the widget's state (id: ${id})`,
   );
+  expect(
+    (await call("edit_message", { message_id: ref, chat_data: { n: 3, i: [["a", 1]] } })).text,
+  ).toBe(`changed the widget's state (id: ${id})`);
+  expect(
+    await called("editMessageWidgetData", (p) => p.chat_data === '{"n":3,"i":[["a",1]]}'),
+  ).toMatchObject({ message_id: id });
 });
 
 test("a widget too big for Telegram says how big it is", async () => {
