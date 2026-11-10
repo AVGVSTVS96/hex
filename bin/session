@@ -26,8 +26,10 @@ done
 untrusted && echo "hex couldn't mark $here trusted in $config" >&2
 # Memory passes keep the wake current; a launch writes it only when there's none yet, and removes it once memory is off.
 (. "$hex/bin/settings"; { [ -n "${MEMORY_DIR:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ]; } || wake)
-# Outside the hex folder, hex's settings come only through --settings.
-[ -n "${away:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
+# A job works from its prompt, as a subagent does, so it starts without the wake, and the agents it starts inherit that.
+[ -n "${HEX_OWNER:-}" ] && [ -z "${HEX_THREAD:-}" ] && job=1
+# Outside the hex folder, hex's settings come only through --settings, and so does what a job leaves out.
+[ -n "${away:-}${job:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 for arg; do
   shift
   if [ "${flag:-}" = --settings ]; then
@@ -52,6 +54,7 @@ for arg; do
     else
       held=
     fi
+    [ -n "${job:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg wake "$home/state/wake/CLAUDE.md" '.claudeMdExcludes += [$wake]')
     # The caller waits on every turn, so a call runs a fast model, HEX_VOICE_MODEL's or Sonnet. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
     [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg model "$(jq -r '.env.HEX_VOICE_MODEL // "sonnet"' "$home/.claude/settings.json" 2>/dev/null || echo sonnet)" '{model: $model, effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
     # A thread's session orchestrates on its own model, and the agents it starts run the hex folder's, not that one.
@@ -79,7 +82,7 @@ if [ -n "${chat:-}" ]; then
 fi
 [ -n "${away:-}" ] && set -- --add-dir "$home" --append-system-prompt "$("$hex/bin/identity" "$home")" "$@"
 # A DM turn skips the instruction files and a session away from the hex folder never reads them, so HEX.md's import of the wake reaches neither: it goes as a file Claude Code loads at start and after compacting.
-[ -n "${away:-}${chat:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ] && set -- --add-dir "$home/state/wake" "$@"
+[ -n "${away:-}${chat:-}" ] && [ -z "${job:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ] && set -- --add-dir "$home/state/wake" "$@"
 [ -n "${held:-}" ] && set -- --add-dir "$held" "$@"
 # With several Claude accounts pooled by tokenmaxxing (github.com/anaclumos/tokenmaxxing), each session starts on the one with the most headroom left.
 [ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
