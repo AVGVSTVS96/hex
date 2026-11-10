@@ -284,7 +284,7 @@ test("a question comes with hex's last two messages in the hour before it in its
   ]);
 });
 
-test("a question asked in General or a DM comes with none of hex's messages before it, which are about any project, and its ask's words are its own message", () => {
+test("a question asked in General or a DM comes with none of hex's messages before it, which are about any project, and its ask's words are its own message, and a note on it goes where it was asked", async () => {
   const DM = "6001";
   open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex" },
@@ -350,6 +350,14 @@ test("a question asked in General or a DM comes with none of hex's messages befo
     text: "Portfolio: add the panel row?",
   });
   expect(questions.words(`telegram:${GROUP}:9`)).toBeUndefined();
+  expect(await questions.note("check:panel-row", "which row?", "app")).toEqual({
+    thread: `telegram:${DM}`,
+    topic: "DM",
+    settled: 0,
+    missed: 0,
+  });
+  await until(() => lines.length === 1);
+  expect(lines[0]).toMatchObject({ type: "inbound", thread: DM });
 });
 
 test("a question the check hasn't rewritten yet keeps its own words on the card and hex's messages before it, whole, as its words", () => {

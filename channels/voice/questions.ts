@@ -458,13 +458,16 @@ export class Questions extends Changes {
       throw new Error("an answer to that is on its way; try again in a moment");
     }
 
+    const [asked] = this.left(key, undefined);
+    const thread = asked ? place(asked) : question.task;
+
     await this.tell(
-      question.task,
+      thread,
       `(note written ${WHERE.get(via) ?? via}) ${question.question}: ${text}`,
       via,
     );
 
-    return { ...this.sent(question.task, 0), missed: 0 };
+    return { ...this.sent(thread, 0), missed: 0 };
   }
 
   dismiss(id: string, via: string): Promise<Sent> {
