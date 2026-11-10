@@ -518,6 +518,18 @@ test("a message for a new thread starts a session bound to that thread, which co
   expect(states).toEqual([["chat:7", true]]);
 });
 
+test("a thread's session leaves the auto-compact window to the hex folder when the folder's is smaller, for every model or one", async () => {
+  mkdirSync(join(dir, "hex", ".claude"), { recursive: true });
+  writeFileSync(join(dir, "hex", ".claude", "settings.json"), '{"autoCompactWindow":500000}');
+  writeFileSync(
+    join(dir, "hex", ".claude", "settings.local.json"),
+    '{"modelSettings":{"opus":{"autoCompactWindow":120000}}}',
+  );
+  start();
+  hub.deliver("chat:7", "Desk anchors", message);
+  expect(settingsOf(await launched()).autoCompactWindow).toBeUndefined();
+});
+
 test("a message carrying a change to hex's records is kept and told only with it: a failed or empty change sends nothing", () => {
   start();
 
