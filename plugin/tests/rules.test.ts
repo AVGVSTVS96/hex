@@ -58,6 +58,9 @@ function hook(
       TMPDIR: home,
       HEX_STORE: join(home, "state"),
       CLAUDE_CONFIG_DIR: undefined,
+      HEX_HELD: undefined,
+      HEX_THREAD: undefined,
+      HEX_FRESH: undefined,
       ...env,
     },
   });
@@ -153,7 +156,7 @@ function remember(profile: string, ...notes: string[]) {
   mkdirSync(join(home, "state/wake"), { recursive: true });
   writeFileSync(
     join(home, "state/wake/CLAUDE.md"),
-    `What you know.\n\n\`\`\`\n${PROFILE}\n\n${profile}\n\n${MEMORY}\n\n${notes.join("\n")}\nYou are awake.\n\`\`\`\n`,
+    `What you know.\n\n\`\`\`\n${profile && `${PROFILE}\n\n${profile}\n\n`}${MEMORY}\n\n${notes.join("\n")}\nYou are awake.\n\`\`\`\n`,
   );
 }
 
@@ -208,7 +211,7 @@ test("a held session hears its profile change as a diff, or whole when that's sh
   );
 });
 
-test("a long way behind, a held session gets the newest notes that fit and where to find the rest", () => {
+test("a long way behind, a held session gets the newest notes that fit, and the rest at the next prompts", () => {
   remember("- Lives in a test town.", "#0 A note.");
   const env = holding();
   remember(
@@ -222,6 +225,29 @@ test("a long way behind, a held session gets the newest notes that fit and where
   expect(out).toContain("#300 ");
   expect(out).not.toContain("#1 ");
   expect(out.length).toBeLessThan(10_000);
+  const next = hook("UserPromptSubmit", undefined, env);
+  expect(next).toContain("Your memory has 198 notes newer");
+  expect(next).not.toContain("#300 ");
+  expect(hook("UserPromptSubmit", undefined, env)).toContain("#1 ");
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
+});
+
+test("a compression mixing notes a held session has seen with ones it hasn't is sent", () => {
+  remember("- Lives in a test town.", "#4 Seen.", "#5 Seen too.");
+  const env = holding();
+  remember("- Lives in a test town.", "#4-7 Four notes, compressed.", "#8 New.");
+  const out = hook("UserPromptSubmit", undefined, env);
+  expect(out).toContain("#4-7 Four notes, compressed.\n#8 New.");
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
+});
+
+test("a wake written without the profile says nothing of it, and the profile isn't sent again after", () => {
+  remember("- Lives in a test town.", "#0 A note.");
+  const env = holding();
+  remember("", "#0 A note.", "#1 Another.");
+  expect(hook("UserPromptSubmit", undefined, env)).not.toContain("profile");
+  remember("- Lives in a test town.", "#0 A note.", "#1 Another.");
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
 });
 
 test("a compaction loads the memory again, so the notes before it aren't sent", () => {

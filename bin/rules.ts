@@ -71,7 +71,7 @@ function unified(changes: { name: string; before: string; after: string }[]) {
 
 const NOTE = /^#(?<first>\d+)(?:-(?<last>\d+))? /u;
 
-const notes = (wake: string) =>
+const notes = (wake: string): Note[] =>
   wake
     .slice(Math.max(0, wake.indexOf(MEMORY)))
     .split("\n")
@@ -80,6 +80,11 @@ const notes = (wake: string) =>
 
       return first === undefined ? [] : [{ line, first: Number(first), last: Number(last) }];
     });
+
+type Note = { line: string; first: number; last: number };
+
+const ids = ({ first, last }: Note) =>
+  Array.from({ length: last - first + 1 }, (_, i) => first + i);
 
 const profileOf = (wake: string) => {
   const start = wake.indexOf(PROFILE);
@@ -91,24 +96,18 @@ const profileOf = (wake: string) => {
 function memoryWrittenSinceItLoaded(dir: string, room: number) {
   const live = join(home, WAKE);
 
-  if (!existsSync(live)) {
+  if (!existsSync(live) || room <= 0) {
     return "";
   }
 
   const now = readFileSync(live, "utf-8");
   const kept = join(dir, "wake.md");
   const before = readFileSync(existsSync(kept) ? kept : join(dir, "CLAUDE.md"), "utf-8");
-
-  if (now === before) {
-    return "";
-  }
-
-  writeFileSync(kept, now);
-
   const said: string[] = [];
   const [was, is] = [profileOf(before), profileOf(now)];
+  let profile = was;
 
-  if (was !== is) {
+  if (was !== is && is !== "") {
     const diff = unified([{ name: "profile", before: was, after: is }]);
 
     const change =
@@ -116,15 +115,22 @@ function memoryWrittenSinceItLoaded(dir: string, room: number) {
         ? `Your profile changed since this session loaded it:\n\n${diff}`
         : `Your profile changed since this session loaded it; now it reads:\n\n${is}`;
 
+    const fits = change.length <= room;
+
     said.push(
-      change.length <= room
+      fits
         ? change
         : "Your profile changed since this session loaded it; `.hex/bin/hex profile` prints it.",
     );
+
+    profile = fits || change.length > ROOM ? is : was;
   }
 
-  const seenUpTo = Math.max(-1, ...notes(before).map((note) => note.last));
-  const unseen = notes(now).filter((note) => note.first > seenUpTo);
+  const seen = new Set(notes(before).flatMap(ids));
+  const covered = (note: Note) => ids(note).every((id) => seen.has(id));
+
+  const unseen = notes(now).filter((note) => !covered(note));
+  const shown: typeof unseen = [];
 
   if (unseen.length) {
     const count = `Your memory has ${unseen.length} ${unseen.length === 1 ? "note" : "notes"} newer than the copy this session loaded`;
@@ -133,26 +139,36 @@ function memoryWrittenSinceItLoaded(dir: string, room: number) {
     const head = (n: number) =>
       n === unseen.length
         ? `${count}, oldest first:`
-        : `${count}. The newest ${n}, oldest first (${recall} the rest):`;
+        : `${count}. The newest ${n}, oldest first (${recall} the rest; they come again at the next prompt):`;
 
     let left = room - said.join("\n\n").length - head(0).length - "\n\n\n\n".length;
-    const shown: string[] = [];
 
-    for (const { line } of unseen.toReversed()) {
-      left -= line.length + 1;
+    for (const note of unseen.toReversed()) {
+      left -= note.line.length + 1;
 
       if (left < 0) {
         break;
       }
 
-      shown.unshift(line);
+      shown.unshift(note);
     }
 
     said.push(
       shown.length === 0
-        ? `${count}; ${recall} them.`
-        : `${head(shown.length)}\n\n${shown.join("\n")}`,
+        ? `${count}; ${recall} them, and they come again at the next prompt.`
+        : `${head(shown.length)}\n\n${shown.map((note) => note.line).join("\n")}`,
     );
+  }
+
+  for (const id of shown.flatMap(ids)) {
+    seen.add(id);
+  }
+
+  const known = notes(now).filter(covered);
+  const record = `${PROFILE}\n\n${profile}\n\n${MEMORY}\n\n${known.map((note) => note.line).join("\n")}\n`;
+
+  if (!existsSync(kept) || readFileSync(kept, "utf-8") !== record) {
+    writeFileSync(kept, record);
   }
 
   return said.join("\n\n");
