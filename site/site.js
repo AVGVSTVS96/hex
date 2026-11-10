@@ -128,7 +128,7 @@ if (cells) {
   cells.append(svg);
   const light = (hex) => {
     hex.classList.add('lit');
-    requestAnimationFrame(() => requestAnimationFrame(() => hex.classList.remove('lit')));
+    setTimeout(() => hex.classList.remove('lit'), 80);
   };
   if (!calm) {
     seen(cells, () => list.forEach(({ hex, x }) => setTimeout(() => light(hex), x * 0.45)), '0px 0px -25% 0px');

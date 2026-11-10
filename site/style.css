@@ -762,6 +762,7 @@ code { font-size: .86em; }
 .cells { position: relative; width: 100%; aspect-ratio: 2167 / 737; padding: clamp(14px, 2.4vw, 32px); border: 1px solid var(--line); border-radius: clamp(14px, 2vw, 24px); background: var(--bg-2); }
 .cells svg { width: 100%; height: 100%; overflow: visible; }
 .cells polygon { fill: var(--surface); stroke: var(--line-2); stroke-width: 1; transition: fill .5s ease, stroke .5s ease; }
+@media (prefers-color-scheme: dark) { .cells polygon { fill: #1C1C20; stroke: #2A2A30; } }
 .cells polygon.lit { fill: var(--accent); stroke: var(--accent); transition: none; }
 .foot-line { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); color: var(--faint); font: 400 11.5px/1.6 var(--mono); }
 @media (hover: hover) { .foot-line a:hover { color: var(--ink); } }
