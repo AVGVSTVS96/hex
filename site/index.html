@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>hex · The best personal assistant is already on your machine</title>
-<meta name="description" content="hex turns Claude Code into your personal assistant. It runs on your own machine, on the Claude plan you already pay for, and you reach it from Telegram, Discord, Buzz, T3 Code, your keyboard or a phone call.">
+<meta name="description" content="hex turns Claude Code into your personal assistant. It runs on your own machine, on the Claude plan you already pay for, and you reach it from Telegram, Discord, Buzz, T3 Code, iikb or a call.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#FAFAF9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#09090A" media="(prefers-color-scheme: dark)">
@@ -100,7 +100,6 @@
             <span class="glass tg-ava"><svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg></span>
           </div>
           <div class="tg-chat">
-            <p class="tg-day"><span>Today</span></p>
             <div class="bub out voice-note"><span class="vn-play"></span><span class="vn-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="vn-len">0:07</span><time>6:10</time></div>
             <div class="bub in">Done. Your 9am is at 10 now.<time>6:10</time></div>
             <div class="bub out">find 3 ramen spots open tonight near me, make a page comparing them and deploy it<time>6:12</time></div>
@@ -118,10 +117,10 @@
       </figure>
       <figure class="device device-call" aria-hidden="true">
         <div class="call">
+          <span class="island"></span>
           <div class="orb"><i></i><i></i><i></i></div>
           <div class="call-rail">
             <b>9:41</b>
-            <span class="call-sig"></span>
             <span class="cbtn"><svg viewBox="0 0 16 16"><use href="#i-history"/></svg></span>
             <span class="cpill"><span class="cbtn on"><svg viewBox="0 0 16 16"><use href="#i-list"/></svg></span><span class="cbtn"><svg viewBox="0 0 16 16"><use href="#i-sliders"/></svg></span></span>
             <span class="call-spacer"></span>
@@ -136,10 +135,9 @@
 
   <div class="wrap">
     <dl class="stats">
-      <div><dt>lines of hex</dt><dd>~16,000</dd><p>Claude Code does the rest.</p></div>
-      <div><dt>clients</dt><dd>6</dd><p>Ready to use, or have your agent build yours.</p></div>
-      <div><dt>tests</dt><dd>800+</dd><p>Run on every update before it ships.</p></div>
-      <div><dt>folder</dt><dd>1</dd><p>Everything it knows, in a private repo you own.</p></div>
+      <div><dt>lines in hex's core</dt><dd>~16,000</dd></div>
+      <div><dt>clients ready to use</dt><dd>6</dd></div>
+      <div><dt>tests before every update</dt><dd>840+</dd></div>
     </dl>
   </div>
 </section>
@@ -253,7 +251,7 @@
     <header class="sec-head">
       <p class="eyebrow">clients</p>
       <h2 id="clients-title">Works with your client.</h2>
-      <p class="sub">Pick one that's ready, or tell your agent to build yours. Use one for everything, or a different one for each part of your life.</p>
+      <p class="sub">Pick one that's ready, or tell your agent to build yours.</p>
     </header>
 
     <div class="bento clients">
@@ -267,7 +265,7 @@
           </ul>
         </div>
         <h3><svg aria-hidden="true"><use href="#i-tg"/></svg>Telegram</h3>
-        <p>A group with topics. Every topic is its own session, and voice notes work.</p>
+        <p>A group with topics. Every topic is its own session, and voice notes work with any speech-to-text service.</p>
       </article>
 
       <article class="card c-dc">
@@ -319,14 +317,14 @@
           </div>
         </div>
         <h3><svg aria-hidden="true"><use href="#i-kb"/></svg>iikb</h3>
-        <p>An iOS keyboard. Its Chats open your hex threads from inside any app.</p>
+        <p>An iOS keyboard. Its Chats open your Telegram threads with hex from inside any app.</p>
       </article>
 
       <article class="card c-own">
         <div class="own">
           <div class="own-text">
             <h3><svg aria-hidden="true"><use href="#i-plus"/></svg>Your own</h3>
-            <p>Have your agent build one. Buzz was built this way.</p>
+            <p>Have your agent build one. hex's Buzz client was built this way.</p>
             <div class="chips" role="group" aria-label="Pick an app">
               <button type="button" data-app data-name="Slack" data-unit="thread" aria-pressed="true">Slack</button>
               <button type="button" data-app data-name="WhatsApp" data-unit="chat" aria-pressed="false">WhatsApp</button>
@@ -335,7 +333,7 @@
             </div>
           </div>
           <div class="prompt">
-            <p id="own-prompt">Build me a <span data-slot="name">Slack</span> channel on your hub, modeled on your Discord one, so every <span data-slot="name">Slack</span> <span data-slot="unit">thread</span> is its own session.</p>
+            <p id="own-prompt">Build me a <span data-slot="name">Slack</span> client on your hub, modeled on your Discord one, so every <span data-slot="name">Slack</span> <span data-slot="unit">thread</span> is its own session.</p>
             <button type="button" class="copy" data-copy="own-prompt"><svg aria-hidden="true"><use href="#i-copy"/></svg><span>Copy</span></button>
           </div>
         </div>
@@ -349,7 +347,7 @@
     <header class="sec-head">
       <p class="eyebrow">voice</p>
       <h2 id="voice-title">Call it.</h2>
-      <p class="sub">Talk to hex live, in the browser, the iPhone app or over a real phone line. It can call you, too.</p>
+      <p class="sub">Talk to hex live, and it can call you too. Calls need an OpenAI key.</p>
     </header>
 
     <div class="voice">
@@ -360,21 +358,22 @@
         <div class="vp-wire"><i></i><span>hands off what you asked</span></div>
         <div class="vp-node vp-cc"><span class="vp-ico cc"><svg viewBox="0 0 16 16"><use href="#i-claude"/></svg></span><div><b>Claude Code</b><small>does the work, then tells the voice what to say</small></div></div>
         <ul class="vp-ways">
-          <li>Browser</li><li>iPhone app</li><li>Phone calls, both ways</li><li>Discord voice</li>
+          <li>Browser</li><li>hex voice for iPhone</li><li>Phone calls, both ways</li><li>Discord voice</li>
         </ul>
       </div>
 
       <div class="voice-app">
-        <figure class="device device-board" aria-label="The Tasks board in the hex voice app">
+        <figure class="device device-board" aria-label="The Tasks board in hex voice">
           <div class="board">
+            <span class="island"></span>
             <div class="board-head"><span class="cbtn sm">‹</span><b>Tasks</b></div>
             <div class="board-tabs"><span class="on">Needs you <em>6</em></span><span>Working <em>3</em></span><span>Done <em>14</em></span></div>
             <div class="board-pick"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg>hex has a pick for 4<b>Take 4</b></div>
             <ul class="board-rows">
-              <li><div><b>site</b><span class="dash" style="--w:68"></span><em>3</em></div><small>Which hero shot goes live?</small></li>
-              <li><div><b>trip</b><span class="dash" style="--w:40"></span><em>1</em></div><small>Two flights fit. Which one?</small></li>
-              <li><div><b>taxes</b><span class="dash" style="--w:22"></span><em>1</em></div><small>Sign the form it filled in</small></li>
-              <li><div><b>dev</b><span class="dash" style="--w:30"></span><em>1</em></div><small>Merge PR #214?</small></li>
+              <li><div><b>site</b><span class="dash" style="--w:60"></span><em>3</em></div><small>Which hero shot goes live?</small></li>
+              <li><div><b>trip</b><span class="dash" style="--w:44"></span><em>1</em></div><small>Two flights fit. Which one?</small></li>
+              <li><div><b>taxes</b><span class="dash" style="--w:28"></span><em>1</em></div><small>Sign the form it filled in</small></li>
+              <li><div><b>dev</b><span class="dash" style="--w:28"></span><em>1</em></div><small>Merge PR #214?</small></li>
             </ul>
             <div class="board-go"><span class="wave"><i></i><i></i><i></i><i></i><i></i></span>Go through 6 with hex</div>
           </div>
@@ -382,9 +381,9 @@
         <ul class="voice-feats">
           <li><b>A Tasks board</b>of what waits on you, per project</li>
           <li><b>Answer in place</b>polls and questions, without opening the thread</li>
-          <li><b>On your Lock Screen</b>the call lives in the Dynamic Island</li>
+          <li><b>Lock Screen and Dynamic Island</b>the call stays one tap away</li>
         </ul>
-        <a class="link" href="https://github.com/AVGVSTVS96/hex-voice">hex voice for iPhone <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+        <a class="link" href="https://github.com/AVGVSTVS96/hex-voice">hex voice on GitHub <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
       </div>
     </div>
   </div>
@@ -425,7 +424,7 @@
             </dl>
           </div>
         </div>
-        <h3>Tasks, ideas and questions</h3>
+        <h3>Tasks and questions</h3>
         <p>What you ask is saved in your words and closed with proof. Questions wait for your answer, and you're reminded of the ones you missed.</p>
       </article>
 
@@ -450,7 +449,7 @@
           </div>
         </div>
         <h3>Asks before it sends</h3>
-        <p>Sending, replying or deleting waits for your yes. Secrets come by one-time link and never pass through the model.</p>
+        <p>Sending, replying or deleting through a connector waits for your yes. Secrets come by one-time link and never pass through the model.</p>
       </article>
 
       <article class="card i-update">
@@ -464,17 +463,20 @@
           </ol>
         </div>
         <h3>Keeps itself up to date</h3>
-        <p>Updates ship only after the tests pass. <code>hex doctor</code> checks your setup and says how to fix what's off, and <code>hex.db</code> is backed up nightly.</p>
+        <p>An update ships only after its tests pass and no session is busy, and rolls back if hex won't start on it.</p>
       </article>
 
       <article class="card i-more">
         <ul class="more" aria-label="Also included">
-          <li><b>Schedules</b>a cron line and a prompt each</li>
-          <li><b>Jobs</b>long work that wakes its thread when done</li>
-          <li><b>Holds</b>pause threads until a time</li>
-          <li><b>Connectors</b>every one on your Claude account</li>
-          <li><b>A computer</b>optional cloud desktop with Chrome</li>
-          <li><b>Any model</b>pick one per role</li>
+          <li><b>Ideas</b><span>researched on a schedule, back only with news</span></li>
+          <li><b>Schedules</b><span>a cron line and a prompt each</span></li>
+          <li><b>Jobs</b><span>long work that wakes its thread when done</span></li>
+          <li><b>Holds</b><span>pause threads until a time</span></li>
+          <li><b>Connectors</b><span>every one on your Claude account</span></li>
+          <li><b>A computer</b><span>optional cloud desktop with Chrome</span></li>
+          <li><b>Any Claude model</b><span>pick one per role</span></li>
+          <li><b><code>hex doctor</code></b><span>checks your setup, says how to fix it</span></li>
+          <li><b>Backups</b><span>of <code>hex.db</code>, every night</span></li>
         </ul>
       </article>
     </div>
@@ -492,19 +494,19 @@
     <figure class="size">
       <figcaption class="size-k">lines of source</figcaption>
       <ul class="bars">
-        <li><b>OpenClaw</b><span class="bar"><i style="--v:4000000"></i></span><em>4 million+</em></li>
-        <li><b>Hermes Agent</b><span class="bar"><i style="--v:1500000"></i></span><em>1.5 million</em></li>
+        <li><b>OpenClaw</b><span class="bar"><i style="--v:5300069"></i></span><em>5.3 million</em></li>
+        <li><b>Hermes Agent</b><span class="bar"><i style="--v:1597845"></i></span><em>1.6 million</em></li>
         <li><b>NanoClaw</b><span class="bar"><i style="--v:49560"></i></span><em>49,560</em></li>
-        <li class="us"><b>hex</b><span class="bar"><i style="--v:16291"></i></span><em>~16,000</em></li>
+        <li class="us"><b>hex</b><span class="bar"><i style="--v:16291"></i></span><em>16,291</em></li>
       </ul>
       <div class="zoom">
         <p class="size-k">zoomed in</p>
         <ul class="bars z">
           <li><b>NanoClaw</b><span class="bar"><i style="--v:49560"></i></span><em>49,560</em></li>
-          <li class="us"><b>hex</b><span class="bar"><i style="--v:16291"></i><i class="conn" style="--v:22005"></i></span><em>16,291 <small>+ 22,005 in connectors</small></em></li>
+          <li class="us"><b>hex</b><span class="bar"><i style="--v:16291"></i><i class="conn" style="--v:22117"></i></span><em>16,291 <small>+ 22,117 in clients</small></em></li>
         </ul>
       </div>
-      <p class="fine">Lines of what runs, without tests or docs, counted Nov 2026. NanoClaw's count leaves out its chat adapters, so hex's leaves out its connectors.</p>
+      <p class="fine">Lines of what runs, without tests or docs. hex and NanoClaw counted Nov 2026, OpenClaw and Hermes Agent Oct 2026. NanoClaw's count leaves out its chat adapters, so hex's leaves out its clients.</p>
     </figure>
 
     <div class="own-grid">
@@ -521,7 +523,7 @@
             <li class="hex"><code>.hex/</code><small>hex itself, updated every morning</small></li>
           </ul>
         </div>
-        <figcaption><b>A folder you own.</b> Updates only touch <code>.hex/</code>. Everything else is yours.</figcaption>
+        <figcaption><b>A folder you own.</b> hex lives in <code>.hex/</code>. Everything else is yours.</figcaption>
       </figure>
       <figure class="tile">
         <div class="askit" aria-hidden="true">
@@ -543,7 +545,7 @@
     </div>
 
     <ul class="extend" aria-label="Extend it with">
-      <li>skills</li><li>MCP servers</li><li>plugins</li><li>hooks</li><li>connectors</li><li>channels</li><li class="dashed">+ yours</li>
+      <li>skills</li><li>MCP servers</li><li>plugins</li><li>hooks</li><li>connectors</li><li>clients</li><li class="dashed">+ yours</li>
     </ul>
   </div>
 </section>
@@ -553,7 +555,7 @@
     <header class="sec-head center">
       <p class="eyebrow">install</p>
       <h2 id="install-title">Install with one prompt.</h2>
-      <p class="sub">Paste this into Claude Code on a machine that stays on. It asks when it needs you.</p>
+      <p class="sub">Paste this into Claude Code. It asks when it needs you.</p>
     </header>
 
     <div class="term">
