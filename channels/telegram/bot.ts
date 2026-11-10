@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import {
+  existsSync,
   readFileSync,
   writeFileSync,
   mkdirSync,
@@ -21,6 +22,7 @@ import {
   tappable,
   title,
   transcribe,
+  typed,
   EFFORTS,
   MODELS,
   Ledger,
@@ -29,7 +31,14 @@ import {
 import type { Call, Handlers, Message, Permission, Turn, Post } from "@hex/hub";
 import { Bot, GrammyError, InputFile } from "grammy";
 import type { Context } from "grammy";
-import type { Chat, MessageEntity, MessageOrigin, ReactionTypeEmoji } from "grammy/types";
+import type {
+  Chat,
+  InputMediaPhoto,
+  InputMediaVideo,
+  MessageEntity,
+  MessageOrigin,
+  ReactionTypeEmoji,
+} from "grammy/types";
 import { z } from "zod";
 
 import { server, tools } from "./channel.ts";
@@ -611,6 +620,75 @@ async function paced<T>(send: () => Promise<T>): Promise<T> {
   }
 }
 
+const VIDEO_EXTS = new Set([".mp4", ".mov", ".m4v"]);
+
+const ALBUM_MAX = 10;
+
+function signed(owner: string, words: string) {
+  return {
+    text: words === "" ? owner : `${owner}\n${words}`,
+    entities: [
+      { type: "bold" as const, offset: 0, length: owner.length },
+      ...(words === ""
+        ? []
+        : [{ type: "blockquote" as const, offset: owner.length + 1, length: words.length }]),
+    ],
+  };
+}
+
+// The owner's photos and clips as Telegram shows them: albums of up to ten photos and videos, the first under the caption, and anything else (a photo over 10MB) as a document, since an album takes documents only with documents. https://core.telegram.org/bots/api#sendmediagroup
+async function postMedia(
+  thread: string,
+  files: string[],
+  caption: { text: string; entities: MessageEntity[] } | undefined,
+) {
+  const { chat_id, extra } = target(thread);
+  const opts = { ...extra, disable_notification: true };
+
+  const shown = files.flatMap((file): (InputMediaPhoto | InputMediaVideo)[] => {
+    const media = new InputFile(file);
+
+    return asPhoto(file)
+      ? [{ type: "photo", media }]
+      : VIDEO_EXTS.has(extname(file).toLowerCase())
+        ? [{ type: "video", media, supports_streaming: true }]
+        : [];
+  });
+
+  const documents = files.filter(
+    (file) => !asPhoto(file) && !VIDEO_EXTS.has(extname(file).toLowerCase()),
+  );
+
+  let first = caption && { caption: caption.text, caption_entities: caption.entities };
+
+  for (let i = 0; i < shown.length; i += ALBUM_MAX) {
+    const items = shown.slice(i, i + ALBUM_MAX);
+    const [head] = items;
+    const lead = first;
+    const more = { ...opts, ...lead };
+
+    if (items.length === 1 && head) {
+      await paced<unknown>(() =>
+        head.type === "photo"
+          ? bot.api.sendPhoto(chat_id, head.media, more)
+          : bot.api.sendVideo(chat_id, head.media, { ...more, supports_streaming: true }),
+      );
+    } else if (head) {
+      await paced(() =>
+        bot.api.sendMediaGroup(chat_id, [{ ...head, ...lead }, ...items.slice(1)], opts),
+      );
+    }
+
+    first = undefined;
+  }
+
+  for (const file of documents) {
+    const more = { ...opts, ...first };
+    await paced(() => bot.api.sendDocument(chat_id, new InputFile(file), more));
+    first = undefined;
+  }
+}
+
 async function backfill(thread: string, turns: Turn[]) {
   const { chat_id, extra } = target(thread);
 
@@ -619,22 +697,31 @@ async function backfill(thread: string, turns: Turn[]) {
 
   const opts = { ...extra, disable_notification: true };
 
-  for (const { from, text } of turns) {
-    for (const part of from === "me"
-      ? chunk(text, MAX_CHUNK_LIMIT - owner.length - 1, "newline")
-      : chunkClosingCodeBlocks(text, MAX_RICH_LIMIT, "newline")) {
+  for (const { from, text, media = [] } of turns) {
+    const files =
+      from === "me"
+        ? media.flatMap(({ file }) => (file !== undefined && existsSync(file) ? [file] : []))
+        : [];
+
+    const words = files.length > 0 ? typed(text, media.length) : text;
+    const captioned = files.length > 0 && owner.length + 1 + words.length <= MAX_CAPTION;
+
+    const parts = captioned
+      ? []
+      : from === "me"
+        ? chunk(words, MAX_CHUNK_LIMIT - owner.length - 1, "newline")
+        : chunkClosingCodeBlocks(words, MAX_RICH_LIMIT, "newline");
+
+    for (const part of parts) {
+      const { text: quoted, entities } = signed(owner, part);
       await paced<unknown>(() =>
         from === "me"
-          ? bot.api.sendMessage(chat_id, `${owner}\n${part}`, {
-              ...opts,
-              entities: [
-                { type: "bold", offset: 0, length: owner.length },
-                { type: "blockquote", offset: owner.length + 1, length: part.length },
-              ],
-            })
+          ? bot.api.sendMessage(chat_id, quoted, { ...opts, entities })
           : bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts),
       );
     }
+
+    await postMedia(thread, files, captioned ? signed(owner, words) : undefined);
   }
 }
 

@@ -248,7 +248,11 @@ export type CallEngine = {
 
 export const engine: CallEngine = {};
 
-export type Turn = { from: "me" | "hex"; text: string; media?: { id: string; kind: string }[] };
+export type Turn = {
+  from: "me" | "hex";
+  text: string;
+  media?: { id: string; kind: string; file?: string }[];
+};
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Every client running in this process, so a thread can move between them. place() opens a thread on the client, led by its about line if given, for a session working in cwd, and returns its id and a link to it. backfill() posts a thread's chat so far into a thread it placed, in order.
@@ -369,13 +373,22 @@ export function history(store: Store, thread: string, session?: string): Turn[] 
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The hex app's photos and clips a message carried, listed in its meta as "<kind> <id>; ...".
+// The hex app's photos and clips a message carried, listed in its meta as "<kind> <id>; ...", with their files, where kept, in the same order in "files".
 export function carried(meta?: Record<string, string>): Turn["media"] {
-  return meta?.media?.split("; ").map((entry) => {
-    const [kind = "", id = ""] = entry.split(" ");
+  const files = meta?.files?.split("; ") ?? [];
 
-    return { id, kind };
+  return meta?.media?.split("; ").map((entry, i) => {
+    const [kind = "", id = ""] = entry.split(" ");
+    const file = files[i];
+
+    return { id, kind, ...(present(file) && { file }) };
   });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A message's words without the line it ends with for each photo or clip it carried.
+export function typed(body: string, items: number) {
+  return items ? body.split("\n").slice(0, -items).join("\n") : body;
 }
 
 const Transcript = z.object({ text: z.string().optional() });
@@ -2470,7 +2483,10 @@ export function say(app: string, thread: string, message: Omit<Message, "author"
         await earlier;
 
         try {
-          await there.backfill?.(thread, [{ from: "me", text: message.content }]);
+          const media = carried(message.meta);
+          await there.backfill?.(thread, [
+            { from: "me", text: message.content, ...(media && { media }) },
+          ]);
         } catch (error) {
           process.stderr.write(
             `hub: couldn't show the owner's words in ${app} thread ${thread}: ${String(error)}\n`,

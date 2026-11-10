@@ -3,7 +3,9 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { caption, counted, line, Media, meta, typed } from "./media.ts";
+import { typed } from "@hex/hub";
+
+import { caption, counted, line, Media, meta } from "./media.ts";
 
 const ffmpeg = Bun.which("ffmpeg") !== null;
 let dir: string;
@@ -135,6 +137,7 @@ test("a message's words come first, a line for each item after them, and every i
     id: "v1",
     kind: "video" as const,
     images: ["/m/v1-1.jpg", "/m/v1-2.jpg"],
+    file: "/m/v1.mov",
     seconds: 75,
   };
 
@@ -147,6 +150,7 @@ test("a message's words come first, a line for each item after them, and every i
   expect(meta([photo, video])).toEqual({
     image_path: "/m/p1.jpg; /m/v1-1.jpg; /m/v1-2.jpg",
     media: "photo p1; video v1",
+    files: "/m/p1.jpg; /m/v1.mov",
   });
   expect(meta([])).toEqual({});
 });

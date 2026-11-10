@@ -3848,9 +3848,27 @@ test("the owner's words written in another client reach the thread's session and
     await until(() => received.length === 2 && shown.length === 2);
     expect(heard(received).map((each) => each.content)).toEqual(["anchors?", "and the docs"]);
     expect(open(dir).messages.get("telegram:kb-1")).toMatchObject({ author: "owner" });
+    expect(
+      say("telegram", "chat:7", {
+        content: "this one\n(photo)",
+        key: "app-1",
+        meta: { media: "photo p1", files: "/m/p1.jpg" },
+      }),
+    ).toBe(true);
+    await until(() => shown.length === 3);
     expect(shown).toEqual([
       ["chat:7", [{ from: "me", text: "anchors?" }]],
       ["chat:7", [{ from: "me", text: "and the docs" }]],
+      [
+        "chat:7",
+        [
+          {
+            from: "me",
+            text: "this one\n(photo)",
+            media: [{ id: "p1", kind: "photo", file: "/m/p1.jpg" }],
+          },
+        ],
+      ],
     ]);
   } finally {
     clients.delete("telegram");
