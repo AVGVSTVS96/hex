@@ -157,7 +157,7 @@ export function asked(store: Store, session: string, text: string): string {
     tasks.length > 0
       ? `The tasks it names or this session works on, with my words:\n\n${tasks.map((task) => render(task, store.threads.names())).join("\n\n")}`
       : "",
-    cited.length > 0 ? `His messages it cites:\n\n${quote(cited)}` : "",
+    cited.length > 0 ? `My messages it cites:\n\n${quote(cited)}` : "",
     given.length > 0
       ? `The newest words this session got, oldest first, mine and the work hex handed it:\n\n${got(given)}`
       : "",
@@ -165,7 +165,7 @@ export function asked(store: Store, session: string, text: string): string {
       ? `What this session has said since, newest last:\n\n${since.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${row.body.slice(0, 1000)}`).join("\n\n")}`
       : "",
     toNewest.length > 0
-      ? `His newest messages in the thread it goes to, which that thread's own session answers:\n\n${quote(toNewest)}`
+      ? `My newest messages in the thread it goes to, which that thread's own session answers:\n\n${quote(toNewest)}`
       : "",
   ]
     .filter(Boolean)
