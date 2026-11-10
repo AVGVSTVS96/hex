@@ -6,7 +6,7 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 done="$home/state/migrated"
 
-steps=6
+steps=7
 
 step1() {
   [ -f "$home/schedules.json" ] || return 0
@@ -46,6 +46,12 @@ step6() {
   [ -f "$home/SOUL.md" ] || return 0
   [ "$(git hash-object --no-filters "$home/SOUL.md")" = 4ab4ff6c6026d57bd091f0eb3a7f810203b33529 ] || return 0
   cp "$hex/defaults/SOUL.md" "$home/SOUL.md.new" && mv "$home/SOUL.md.new" "$home/SOUL.md"
+}
+
+step7() {
+  [ -f "$home/.gitignore" ] || return 0
+  grep -qx 'scratch/' "$home/.gitignore" && return 0
+  { [ ! -s "$home/.gitignore" ] || [ -z "$(tail -c 1 "$home/.gitignore")" ] || echo; echo 'scratch/'; } >> "$home/.gitignore"
 }
 
 n=$(cat "$done" 2>/dev/null) || n=0

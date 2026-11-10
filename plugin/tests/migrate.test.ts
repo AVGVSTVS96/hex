@@ -113,3 +113,19 @@ test("migrate gives SOUL.md the new default only where it is still exactly the o
   migrate();
   expect(read("SOUL.md")).toBe(mine);
 });
+
+test("migrate adds scratch/ to .gitignore once, after a last line that has no newline too", () => {
+  wrote(".gitignore", ".hex\n.env\nstate/");
+  migrate();
+  expect(read(".gitignore")).toBe(".hex\n.env\nstate/\nscratch/\n");
+
+  wrote("state/migrated", "6\n");
+  migrate();
+  expect(read(".gitignore")).toBe(".hex\n.env\nstate/\nscratch/\n");
+
+  const has = "scratch/\nstate/\n";
+  wrote(".gitignore", has);
+  wrote("state/migrated", "6\n");
+  migrate();
+  expect(read(".gitignore")).toBe(has);
+});
