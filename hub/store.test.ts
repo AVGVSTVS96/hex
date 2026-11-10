@@ -1303,7 +1303,9 @@ test("bin/hex hands hex's cli every command its usage lists", async () => {
     Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir], { stderr: "pipe" }).stderr,
   ).text();
 
-  const commands = [...new Set(usage.matchAll(/^ {2}hex (\w+)/gmu).map(([, command]) => command))];
+  const commands = [
+    ...new Set([...usage.matchAll(/^ {2}hex (\w+)/gmu)].flatMap(([, command]) => command ?? [])),
+  ];
 
   const handed = /^ {2}([a-z|]+)\)\n {4}export MEMORY_DIR/mu
     .exec(readFileSync(join(import.meta.dir, "../bin/hex"), "utf-8"))?.[1]
