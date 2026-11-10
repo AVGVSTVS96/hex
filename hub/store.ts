@@ -45,6 +45,16 @@ const UserVersionRow = z.object({ user_version: z.number() });
 const DataVersionRow = z.object({ data_version: z.number() });
 const ChangesRow = z.object({ n: z.number() });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A Bun process that exits with a database still open checkpoints it and empties its WAL, even while other processes have it open, so the next write elsewhere starts the WAL over and fsyncs; one closed first leaves the WAL as it is.
+const openDatabases = new Set<Database>();
+
+process.once("exit", () => {
+  for (const db of openDatabases) {
+    db.close();
+  }
+});
+
 export class Store {
   readonly dir: string;
   readonly db: Database;
@@ -78,6 +88,7 @@ export class Store {
     this.bell = join(dir, "hex.bell");
     appendFileSync(this.bell, "");
     this.db = new Database(join(dir, "hex.db"), { create: true, strict: true });
+    openDatabases.add(this.db);
     this.db.run("pragma busy_timeout = 30000");
     retryWhileBusy(() => this.db.run("pragma journal_mode = wal"));
     this.db.run("pragma synchronous = full");
