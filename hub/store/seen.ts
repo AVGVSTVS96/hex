@@ -7,6 +7,8 @@ import type { Core, Write } from "./db.ts";
 
 const RecordRow = z.object({ record: z.string() }).nullable();
 
+const RecordAtRow = z.object({ record: z.string(), at: z.string() }).nullable();
+
 const TASKS_RECORD_KEPT_UNCHANGED = 2 * 24 * 60 * 60 * 1000;
 
 const RULES_RECORD_OF_A_SESSION_THAT_ENDED_WITHOUT_SESSION_END = 7 * 24 * 60 * 60 * 1000;
@@ -25,6 +27,14 @@ export class Seen {
       RecordRow.parse(
         this.db.query("select record from seen where session = ? and kind = ?").get(session, kind),
       )?.record ?? ""
+    );
+  }
+
+  getWithTime(session: string, kind: string) {
+    return RecordAtRow.parse(
+      this.db
+        .query("select record, at from seen where session = ? and kind = ?")
+        .get(session, kind),
     );
   }
 
