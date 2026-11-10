@@ -1310,7 +1310,7 @@ test("bin/hex hands hex's cli every command its usage lists", async () => {
     ?.split("|");
 
   expect(commands).toContain("thread");
-  expect(handed).toEqual(expect.arrayContaining(commands));
+  expect(commands.filter((command) => handed?.includes(command) !== true)).toEqual([]);
 });
 
 test("a key two apps had before keys were global keeps its open, then newest, row", () => {
