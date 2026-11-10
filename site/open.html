@@ -10,14 +10,16 @@
 <link rel="stylesheet" href="/style.css">
 <style>
   body { min-height: 100svh; display: grid; place-items: center; }
-  main { display: grid; gap: 24px; justify-items: center; padding: 24px; text-align: center; }
-  main p { color: var(--muted); max-width: 32ch; }
+  main { display: grid; gap: 20px; justify-items: center; padding: 24px; text-align: center; }
+  main svg { width: 72px; height: 25px; color: var(--ink); }
+  main h1 { font-size: 28px; }
+  main p { color: var(--muted); font-size: 15px; max-width: 32ch; }
 </style>
 </head>
 <body>
 <main>
   <h1>Opening in Buzz</h1>
-  <a class="button" id="open" href="/">Open in Buzz</a>
+  <a class="btn btn-accent" id="open" href="/">Open in Buzz</a>
   <p>If Buzz didn't open, tap the button. This page only opens buzz:// links.</p>
 </main>
 <script>

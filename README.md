@@ -28,11 +28,11 @@
   </picture>
 </p>
 
-<p align="center">Claude Code as your personal assistant. It runs on your own machine, and you talk to it in Telegram, Discord, Buzz and T3 Code.<br><a href="https://hex-sand.vercel.app">hex-sand.vercel.app</a></p>
+<p align="center">Claude Code as your personal assistant. It runs on your own machine, and you talk to it in Telegram, Discord, Buzz, T3 Code, iikb or a call.<br><a href="https://hex-sand.vercel.app">hex-sand.vercel.app</a></p>
 
 ---
 
-hex runs wherever Claude Code does, on a machine that stays on (a home server, a Mac that doesn't sleep, a cloud VM), with your own Claude subscription, and Opus 5.5 does the thinking. It's a handful of plain files around Claude Code: no framework, no database, no service manager required. One small hub process holds the bot connections and starts a Claude Code session for each conversation.
+hex runs wherever Claude Code does, on a machine that stays on (a home server, a Mac that doesn't sleep, a cloud VM), with your own Claude subscription; you pick the model for each role. It's a handful of plain files around Claude Code, plus one SQLite file for its messages and tasks: no framework, no service manager required. One small hub process holds the app connections and starts a Claude Code session for each conversation.
 
 ## How it works
 
@@ -46,8 +46,8 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 ┌──────────────┐               │    ├──▶ claude  (bg)       trip             │
 │ Discord      │               │    ├──▶ claude  (bg)       #dev › ci        │
 │  └ #dev      │◀─────────────▶│    ├──▶ claude  (bg)       #ops › backups   │
-│    └ ci      │               │    └──▶ claude  (bg)       ~/code/app       │
-└──────────────┘               │                                             │
+│    └ ci      │               │    ├──▶ claude  (bg)       ~/code/app       │
+└──────────────┘               │    └──▶ claude  (bg)       voice            │
 ┌──────────────┐               │                                             │
 │ Buzz         │               │                                             │
 │  └ #ops      │◀─────────────▶│  SOUL.md  AGENTS.md  memory/  state/        │
@@ -56,18 +56,24 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 ┌──────────────┐               │                                             │
 │ T3 Code      │               │                                             │
 │  └ ~/code/app│◀─────────────▶│                                             │
+└──────────────┘               │                                             │
+┌──────────────┐               │                                             │
+│ Voice, phone │◀─────────────▶│                                             │
 └──────────────┘               └─────────────────────────────────────────────┘
 ```
 
 - **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for about an hour, the life of its prompt cache, stops, and starts again with its conversation when you write.
 - **A DM is one chat that never ends.** Your DMs to hex work like Taelin's [OptChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449): every message is logged word for word in `chat/`, Haiku compresses the log into a tree of one-line summaries in the background, and each message starts a fresh session that sees those summaries instead of a history, opening any line back up to the words it came from. Nothing is compacted and nothing is lost. A message sent while hex is still working reaches that same session.
-- **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), your own rules in `AGENTS.md`, `schedules.json`, its memory, and every message it heard and sent in `state/hex.db` (`hex log` prints them as markdown). It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo that updates never mix with your files.
+- **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), your own rules in `AGENTS.md`, what it brings up on its own in `PROACTIVE.md`, `schedules.json`, its memory, and every message it heard and sent in `state/hex.db` (`hex log` prints them as markdown). It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo. Updates pull there, and `bin/migrate` adds new default files to your folder and updates the ones you never edited.
 - **One memory, with a timeline.** After every turn, a memory agent records what you said and what happened in [OptMem](https://github.com/VictorTaelin/OptMem): plain text files, read back at the start of each session, with older memories summarized and still searchable word for word. It also keeps a short profile of who you are, which each session reads first; what you want done is in tasks. Your rules live in `AGENTS.md`; everything else hex knows is in OptMem.
+- **It keeps track.** Each thing you ask becomes a task with your words, what done means, the agents on it and proof when it closes. Questions it asks you wait for your answer, and you're reminded of the ones you missed. An idea you park gets researched on a schedule and only comes back with news. Holds pause threads until a time.
+- **Briefs checked against your words.** Before a subagent, job or message to another session starts, its brief is checked against what you asked, your rules and memory, and one that drifts goes back.
 - **Works with any Claude connector.** Every connector on your Claude account works in every hex session, with nothing to set up on the machine: Gmail, your calendar, [Executor](https://executor.sh) for many accounts behind one sign-in, [AgentMail](https://agentmail.to) for an inbox of its own. Sending, replying or deleting through any of them waits for your yes.
 - **It speaks up when it matters.** Every hour while you're up it checks your mail, the work it started, threads waiting on you, and anything it said it would follow up on, and only messages you if something's worth it. Other jobs are lines in `schedules.json`, a cron line and a prompt each.
 - **A computer of its own (optional).** A cloud desktop with Chrome that hex drives with [cua-driver](https://cua.ai), for anything that needs a real browser, on whatever provider you like. You can watch its screen. `computer/setup` builds one on a [Fly.io Sprite](https://sprites.dev) in one command.
 - **A vault of its own.** hex's vault is [enclave](https://github.com/AVGVSTVS96/enclave). When hex needs a password, it sends you a link. What you type there is encrypted in your browser and only hex can open it, so it never passes through chat or the model. hex signs in with it on its computer without ever seeing it, 2FA codes and passkeys included, and it can copy in your whole Proton Pass vault.
 - **Voice notes** work with any OpenAI-compatible speech-to-text endpoint, hosted or local.
+- **Live calls.** Talk to hex in the browser, the [hex voice](https://github.com/AVGVSTVS96/hex-voice) iPhone app, a Discord voice channel or a real phone line, and it can call you. A realtime voice model talks with you while your Claude Code session does the work and tells it what to say ([channels/voice](channels/voice/README.md)). Calls need an OpenAI key, and phone calls a Twilio number.
 
 ## Works with your client
 
@@ -93,10 +99,14 @@ Pick a client that's ready, or tell your agent to build yours. Use one for every
 - hex reaches T3 over [ACP](https://agentclientprotocol.com): `hex acp` connects T3 to the hex that's already running.
 
 **iikb: hex in your keyboard.** Built and running today.
-- [iikb](https://github.com/AVGVSTVS96/iikb) is an iOS keyboard. Its Chats open your hex threads in any app: read them and dictate or type back without leaving what you're in.
+- [iikb](https://github.com/AVGVSTVS96/iikb) is an iOS keyboard. Its Chats open your Telegram threads with hex in any app: read them and dictate or type back without leaving what you're in.
 - Your words reach the thread's own session, the same as typing them in its app ([channels/iikb](channels/iikb/README.md)).
 
-**Your own: tell your agent.** Buzz was built this way. Swap in any app:
+**Voice: call it.** Built and running today.
+- Call from the browser or the [hex voice](https://github.com/AVGVSTVS96/hex-voice) iPhone app, which also has a Tasks board of what waits on you in each project, chats with every thread and answers to questions in place. Phone calls work both ways through Twilio.
+- Calls reach hex's voice session, and work started on a call keeps going after you hang up.
+
+**Your own: tell your agent.** hex's Buzz client was built this way. Swap in any app:
 
 ```
 Build me a Slack channel on your hub, modeled on your Discord one, so every Slack thread is its own session.
@@ -120,14 +130,16 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 ~/hex/                              yours: a private git repo
 ├── AGENTS.md                       your rules; imports SOUL.md and .hex/HEX.md
 ├── SOUL.md                         who it is
+├── PROACTIVE.md                    what it brings up on its own, and when
 ├── schedules.json                  recurring jobs, the hourly check included
 ├── memory/                         its OptMem memory
 ├── chat/                           each DM's chat that never ends: its log, summary tree and view
-├── .env  state/                    bot tokens, thread lists, hex.db with every message (never committed)
+├── .env  state/                    bot tokens, thread lists, hex.db with every message and task (never committed)
+├── scratch/                        throwaway work (never committed)
 └── .hex/                           hex itself: this repo
     ├── HEX.md                      how it works
     ├── bin/
-    │   ├── hex                     init, start, stop, restart, status; run keeps the hub up; acp connects T3 Code; deliver wakes a thread; log prints every message
+    │   ├── hex                     init, start, stop, restart, status, doctor; run keeps the hub up; acp connects T3 Code; deliver wakes a thread; task, hold and log
     │   ├── session                 how the hub starts each session
     │   ├── chat                        logs a DM, compresses it, and builds what its next session sees
     │   ├── wake                    loads your profile and its memory as each session starts and after a compaction
@@ -136,7 +148,12 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── send-gate               holds sends and deletes until you say yes
     │   ├── transcribe              voice notes → text
     │   ├── vault                   asks you for secrets by link, signs in with them
-    │   └── update                  pulls updates, verified before they go live
+    │   ├── job                     long work as its own unit, waking its thread when it ends
+    │   ├── place, room             runs an agent job on whichever of your machines has room
+    │   ├── worktree-trash          clears away worktrees whose work is merged
+    │   ├── t3-relink               renews a T3 Code link to another machine
+    │   ├── pkill-guard             stops a `pkill -f` that would kill its own shell
+    │   └── update                  pulls updates, tests them, ships when no session is busy
     ├── chat/prompt.md              Taelin's OptChat prompt, for DM sessions and their compactions
     ├── plugin/                     the hooks every session loads, and skills it reads when needed
     ├── computer/setup              turns a Sprite into its computer
@@ -169,7 +186,7 @@ this repo ─────────────────▶ your fork ─�
 ## What's next
 
 - **A ready-made iMessage client.**
-- **Check on any thread from any app**, and keep it going from your phone.
+- **Every thread from every app**: hex voice already opens every thread and iikb your Telegram ones; more clients to come.
 - **More modular, more portable.**
 
 ## Known issues
