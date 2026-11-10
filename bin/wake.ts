@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 
+import { MEMORY, PROFILE } from "../hub/loaded.ts";
 import { open, stateDir } from "../hub/store.ts";
 import type { Store } from "../hub/store.ts";
 
@@ -50,7 +51,7 @@ function joinedMemoWake(env: Record<string, string | undefined>): Wake {
       args = ["wake", next.groups.from, next.groups.to];
     } else if (awake(part)) {
       return {
-        awake: `Your memory, oldest first:\n\n${text}${part.replace(noMemoriesYet, "No memories yet: the memory agent records them after each turn.").replace(/^(You are awake\.)$[\s\S]*/mu, "$1\n")}`,
+        awake: `${MEMORY}\n\n${text}${part.replace(noMemoriesYet, "No memories yet: the memory agent records them after each turn.").replace(/^(You are awake\.)$[\s\S]*/mu, "$1\n")}`,
       };
     } else {
       const firstLine = part.trim().split("\n")[0] ?? "";
@@ -92,7 +93,7 @@ function rewriteOrKeepTheLastSayingWhy(store?: Store) {
   if ("awake" in wakeNow) {
     const text = wakeNow.awake;
     const profile = profileOrNothingKeepingTheMemory(store);
-    const body = `${profile && `My profile, the current truth about me, kept by hex's memory agent from my own words:\n\n${profile}\n\n`}${text.trimEnd()}`;
+    const body = `${profile && `${PROFILE}\n\n${profile}\n\n`}${text.trimEnd()}`;
 
     const fenceSoNoPathReadsAsAnImport = "`".repeat(
       Math.max(3, 1 + Math.max(0, ...(body.match(/`+/gu) ?? []).map((run) => run.length))),
