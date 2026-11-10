@@ -2883,10 +2883,8 @@ function runRoutes(request: Request, url: URL) {
     return request.method === "POST" ? sendChat(request, thread) : showChat(url, thread);
   }
 
-  const pageToRead = request.method === "GET" ? thread : undefined;
-
-  if (pageToRead && !filled(verb)) {
-    return Response.json({ ...pageToRead, ...yours.of(pageToRead.id) });
+  if (thread && !filled(verb) && request.method === "GET") {
+    return showPage(url, runs, key);
   }
 
   const run = filled(key) ? runs.get(key) : undefined;
@@ -2904,6 +2902,31 @@ function runRoutes(request: Request, url: URL) {
       chats.stop(run);
     });
   }
+}
+
+async function showPage(url: URL, runs: Board, key: string) {
+  const read = () => {
+    const found = runs.find(key);
+
+    return found && { ...found, ...yours.of(found.id) };
+  };
+
+  const after = url.searchParams.get("after");
+
+  if (after !== null && after !== "" && Number(after) === runs.version) {
+    const end = Date.now() + 25_000;
+    const before = JSON.stringify(read());
+
+    while (Date.now() < end && JSON.stringify(read()) === before) {
+      await runs.changes(runs.version, end - Date.now());
+    }
+  }
+
+  const shown = read();
+
+  return shown
+    ? Response.json({ version: runs.version, ...shown })
+    : new Response("404", { status: 404 });
 }
 
 async function showChat(url: URL, run: Run | Page) {
