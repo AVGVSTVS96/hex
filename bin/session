@@ -50,8 +50,8 @@ for arg; do
     else
       held=
     fi
-    # The caller waits on every turn, so a call runs a fast model. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
-    [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c '{model: "sonnet", effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
+    # The caller waits on every turn, so a call runs a fast model, HEX_VOICE_MODEL's or Sonnet. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
+    [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg model "$(jq -r '.env.HEX_VOICE_MODEL // "sonnet"' "$home/.claude/settings.json" 2>/dev/null || echo sonnet)" '{model: $model, effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
     # A thread's session orchestrates on its own model, and the agents it starts run the hex folder's, not that one.
     folder_model=$(jq -r '.model // empty' "$home/.claude/settings.json" 2>/dev/null)
     [ -n "${thread:-}" ] && [ -z "${voice:-}" ] && [ -n "$folder_model" ] && arg=$(printf '%s' "$arg" | jq -c --arg model "$folder_model" '.env.CLAUDE_CODE_SUBAGENT_MODEL //= $model')
