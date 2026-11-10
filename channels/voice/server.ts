@@ -42,7 +42,8 @@ const BunWebSocket = WebSocket as new (
 const KEY = env.OPENAI_API_KEY;
 const VOICE = env.VOICE;
 const MODEL = env.VOICE_MODEL ?? "gpt-live-1";
-const API = `${env.OPENAI_BASE_URL ?? "https://api.openai.com/v1"}/live/sessions`;
+const OPENAI = env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+const API = `${OPENAI}/live/sessions`;
 const TWILIO_SID = env.TWILIO_ACCOUNT_SID;
 const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN;
 const TWILIO_NUMBER = env.TWILIO_NUMBER;
@@ -76,7 +77,7 @@ const IDENTITY = (() => {
 
 const VOICE_PROMPT = `${IDENTITY}
 
-Backchannel policy: Use moderate backchannels. Acknowledge naturally without competing with the main response.
+Backchannel policy: Do not produce any backchannel interjections while the caller is speaking. Backchanneling is entirely disallowed: stay silent until it is your turn to respond.
 
 Interruption policy: Stop speaking when the caller interrupts. Listen to what they say.
 
@@ -177,7 +178,11 @@ const VoiceEvent = z.discriminatedUnion("type", [
     client_event_id: z.string().exactOptional(),
     error: ErrorDetail.optional().catch(undefined),
   }),
-  z.object({ type: z.literal("session.output_audio.delta"), delta: z.string() }),
+  z.object({
+    type: z.literal("session.output_audio.delta"),
+    delta: z.string(),
+    end_ms: z.number().exactOptional(),
+  }),
   z.object({
     type: z.literal("session.usage.updated"),
     usage: SessionUsage,
@@ -217,7 +222,7 @@ const fineIfUnconfirmed = () => null;
 
 type Pending = { resolve: () => void; reject: (error: Error) => void };
 
-type Ring = { delegation: string; offset: number };
+type Ring = { delegation: string; offset: number; asked: number; caughtUp?: true };
 
 type Heard = (who: Speaker, startOnSessionTimeline: number, text: string) => void;
 
@@ -229,10 +234,15 @@ type Live = {
   record: Omit<CallRecord, "turns" | "tasks" | "moments">;
   pending: Map<string, Pending>;
   rings: Ring[];
+  ringing?: ReturnType<typeof setInterval> | undefined;
   changes: Changes;
   spoke: number;
+  callerSpoke: number;
+  clock?: { session: number; wall: number };
+  away?: { told: boolean; settling?: ReturnType<typeof setTimeout> };
   warning?: ReturnType<typeof setTimeout>;
   speak?: ((audio: string) => void) | undefined;
+  muLaw?: boolean | undefined;
   heard?: Heard | undefined;
   closing?: string;
   closed?: true;
@@ -298,8 +308,13 @@ const dials = new Map<string, Dial>();
 const placed = new Map<string, Placed>();
 const RETRIES = [250, 1000, 2000, 4000, 8000];
 const WARN_BEFORE = 120_000;
+const CALLER_PAUSE = 1000;
 const HANDOFF_WAIT = 3000;
+const HANDOFF_MOST = 8000;
 const ACK_WAIT = 10_000;
+const QUIET_BEFORE_HANG_UP = 2000;
+const HANG_UP_MOST = 10_000;
+const SETTLE = 1500;
 
 export async function tool(...[name, args]: ToolCall): Promise<string> {
   if (name === "running") {
@@ -423,8 +438,22 @@ async function tell(call: Live, kind: "say" | "note", text: string, delegation?:
   remember(call, kind, text);
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* Turns are timed on the session's own timeline, which falls behind the wall clock when audio
+   stalls (70s on one phone call), so moments go on it too: the newest point OpenAI timed, plus the
+   time since it came in. */
 function since(call: Live) {
-  return Date.now() - Date.parse(call.record.started);
+  const now = Date.now();
+
+  return call.clock
+    ? call.clock.session + now - call.clock.wall
+    : now - Date.parse(call.record.started);
+}
+
+function timed(call: Live, at: number | undefined) {
+  if (at !== undefined && at > (call.clock?.session ?? -1)) {
+    call.clock = { session: at, wall: Date.now() };
+  }
 }
 
 function remember(
@@ -699,7 +728,7 @@ function current(call: string, id: string): Task | undefined {
    the voice has heard of it, on a live call. */
 function mark(call: string, change: Task): Promise<string> {
   if (live?.id === call) {
-    live.call.track(change, Date.now() - Date.parse(live.record.started));
+    live.call.track(change, since(live));
     save(live);
     activity.changed();
 
@@ -802,10 +831,10 @@ function past(id: string) {
 async function hangUpCall(call: Live) {
   const asked = Date.now();
   const stillLive = () => live === call;
-  const voiceSpokeLately = () => Date.now() - Math.max(asked, call.spoke) < 2000;
+  const voiceSpokeLately = () => Date.now() - Math.max(asked, call.spoke) < QUIET_BEFORE_HANG_UP;
 
-  while (stillLive() && Date.now() - asked < 20_000 && voiceSpokeLately()) {
-    await Bun.sleep(250);
+  while (stillLive() && Date.now() - asked < HANG_UP_MOST && voiceSpokeLately()) {
+    await Bun.sleep(100);
   }
 
   if (live !== call) {
@@ -907,11 +936,43 @@ function hear(call: Live, who: Speaker, event: z.output<typeof Transcript>) {
   call.call.hear({ who, text: event.delta, start: event.start_ms, end });
   call.heard?.(who, event.start_ms, event.delta);
   call.changes.changed();
+  timed(call, end);
 
-  for (let due = call.rings[0]; due && due.offset <= event.start_ms; due = call.rings[0]) {
-    call.rings.shift();
-    ring(call, due);
+  if (who === "you") {
+    call.callerSpoke = Date.now();
   }
+
+  for (const due of call.rings) {
+    if (due.offset <= event.start_ms) {
+      due.caughtUp = true;
+    }
+  }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* gpt-live-1 can hand off while the caller is still mid-sentence, so a handoff waits for the words
+   after it to come in and for the caller to pause, and goes without them after a while. */
+function ringOnceTheCallerPauses(call: Live) {
+  call.ringing ??= setInterval(() => {
+    const now = Date.now();
+    const paused = now - call.callerSpoke >= CALLER_PAUSE;
+
+    for (const due of live === call ? [...call.rings] : []) {
+      const waited = now - due.asked;
+
+      if (waited < HANDOFF_MOST && !(paused && (due.caughtUp === true || waited >= HANDOFF_WAIT))) {
+        break;
+      }
+
+      call.rings.shift();
+      ring(call, due);
+    }
+
+    if (!call.rings.length || live !== call) {
+      clearInterval(call.ringing);
+      call.ringing = undefined;
+    }
+  }, 100);
 }
 
 const ENDINGS: Record<Ending, string> = {
@@ -932,6 +993,8 @@ function finish(call: Live, reason: string, by?: string) {
   live = undefined;
   ended = call.id;
   clearTimeout(call.warning);
+  clearInterval(call.ringing);
+  clearTimeout(call.away?.settling);
   const end = ending(reason, by);
 
   for (const pending of call.pending.values()) {
@@ -967,6 +1030,7 @@ function finish(call: Live, reason: string, by?: string) {
     },
   );
   toHub(hub.renew);
+  void checkCredit();
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- clears the reconnect handler listen() set
   call.socket.onclose = null;
   call.socket.close();
@@ -1004,6 +1068,7 @@ function follow(
   {
     call = new Call(),
     speak,
+    muLaw,
     heard,
     notes = [],
     hello,
@@ -1011,6 +1076,7 @@ function follow(
   }: {
     call?: Call;
     speak?: Live["speak"];
+    muLaw?: boolean;
     heard?: Live["heard"];
     notes?: string[] | undefined;
     hello?: string;
@@ -1041,7 +1107,9 @@ function follow(
     rings: [],
     changes: new Changes(),
     spoke: 0,
+    callerSpoke: 0,
     speak,
+    muLaw,
     heard,
   };
 
@@ -1084,8 +1152,22 @@ function runTopic(run: Run): Topic {
   return {
     id: run.id,
     claude: `The caller started it with Talk it through on a task. ${opener(run)}`,
-    voice: `The caller tapped Talk it through on a task, so bring it up now in a sentence or two, then listen. ${opener(run)}`,
+    voice: `The caller tapped Talk it through on a task, so name it now in a sentence, with its last update and how old that is, then listen: Assistant checks what's new. ${opener(run)} Its last update came ${ago(run.at)}.`,
   };
+}
+
+function ago(at: string) {
+  const minutes = Math.round((Date.now() - Date.parse(at)) / 60_000);
+
+  if (!Number.isFinite(minutes)) {
+    return "at a time hex doesn't know";
+  }
+
+  if (minutes < 2) {
+    return "just now";
+  }
+
+  return minutes < 90 ? `${minutes} minutes ago` : `${Math.round(minutes / 60)} hours ago`;
 }
 
 function halfDone({ partly, undoing }: Question) {
@@ -1259,18 +1341,13 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
           return;
         }
 
-        const pending = { delegation: event.delegation.id, offset: event.offset_ms ?? Number.NaN };
-        call.rings.push(pending);
-
-        const goesWithoutTheWordsAfterIt = () => {
-          const i = live === call ? call.rings.indexOf(pending) : -1;
-
-          for (const due of i < 0 ? [] : call.rings.splice(0, i + 1)) {
-            ring(call, due);
-          }
-        };
-
-        setTimeout(goesWithoutTheWordsAfterIt, HANDOFF_WAIT);
+        call.rings.push({
+          delegation: event.delegation.id,
+          offset: event.offset_ms ?? Number.NaN,
+          asked: Date.now(),
+        });
+        timed(call, event.offset_ms);
+        ringOnceTheCallerPauses(call);
 
         return;
       }
@@ -1304,7 +1381,11 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
       }
 
       case "session.output_audio.delta": {
-        call.spoke = Date.now();
+        if (audible(event.delta, call.muLaw === true)) {
+          call.spoke = Date.now();
+        }
+
+        timed(call, event.end_ms);
         call.speak?.(event.delta);
 
         return;
@@ -1835,7 +1916,7 @@ function passThrough({
         ...(callee !== undefined && { callee }),
         ...(expires !== undefined && { expires }),
       }),
-      { speak: play, heard, notes },
+      { speak: play, muLaw: format.type === "audio/pcmu", heard, notes },
     );
   });
   openai.addEventListener("close", ({ code, reason }) => {
@@ -1988,6 +2069,30 @@ const LISTENING = new Set([
   "sure",
 ]);
 
+const SILENT = 100;
+
+function fromMuLaw(byte: number) {
+  const bits = 255 - byte;
+  const magnitude = ((bits % 16) * 8 + 132) * 2 ** Math.floor((bits % 128) / 16) - 132;
+
+  return bits >= 128 ? -magnitude : magnitude;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* gpt-live-1 streams audio the whole call, silence included, so only what's loud is the voice
+   talking. Phone audio is 8-bit μ-law, the rest 16-bit PCM. */
+export function audible(base64: string, muLaw: boolean) {
+  const bytes = Buffer.from(base64, "base64");
+  const samples = muLaw ? bytes.length : Math.floor(bytes.length / 2);
+  let sum = 0;
+
+  for (let i = 0; i < samples; i++) {
+    sum += Math.abs(muLaw ? fromMuLaw(bytes[i] ?? 255) : bytes.readInt16LE(i * 2));
+  }
+
+  return samples > 0 && sum / samples > SILENT;
+}
+
 function backchannel(text: string) {
   return text
     .toLowerCase()
@@ -2026,6 +2131,49 @@ function problem(text: string) {
     return (said ?? text).slice(0, 300);
   } catch {
     return text.slice(0, 300);
+  }
+}
+
+const NO_CREDIT = /no credits|insufficient_quota|exceeded your current quota/iu;
+const BILLING = "https://platform.openai.com/settings/organization/billing";
+let credit: "ok" | "out" | undefined;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* OpenAI shows an API key no balance, so the cheapest request there is, a one-token embedding,
+   says whether the key has credit left. It's asked as hex starts, after each call and daily, so
+   running out reaches the caller before their next call fails. */
+async function checkCredit() {
+  if (!filled(KEY)) {
+    return;
+  }
+
+  let reason: string | undefined;
+
+  try {
+    const response = await fetch(`${OPENAI}/embeddings`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "text-embedding-3-small", input: "a" }),
+    });
+
+    const text = response.status === 429 ? await response.text() : "";
+    reason = NO_CREDIT.test(text) ? problem(text) : undefined;
+  } catch {
+    return;
+  }
+
+  outOfCredit(reason);
+}
+
+function outOfCredit(reason: string | undefined) {
+  const was = credit;
+  credit = reason === undefined ? "ok" : "out";
+
+  if (credit === "out" && was !== "out") {
+    deliver(
+      `OpenAI says the voice's API key has no credit left (${reason}), so the next call will fail before it starts. Tell the caller now with send to General, with where to add credit: ${BILLING}`,
+      { credit: "out" },
+    );
   }
 }
 
@@ -2203,7 +2351,7 @@ async function start(request: Request) {
               },
             },
           },
-          topic?.voice,
+          topic?.voice ?? "Greet the caller in a few words, then listen.",
         ),
         transport: { type: "webrtc", sdp },
       }),
@@ -2217,6 +2365,11 @@ async function start(request: Request) {
 
   if (!response.ok) {
     const text = await response.text();
+
+    if (response.status === 429 && NO_CREDIT.test(text)) {
+      credit = "out";
+    }
+
     failed({
       from,
       end: "no-connect",
@@ -2246,8 +2399,11 @@ const PAUSED =
   "The caller's phone took over their audio, a phone call or Siri: they can't hear you or talk. Stay quiet until they're back.";
 
 const RESUMED =
-  "The caller is back. If you were in the middle of something, pick it back up in a sentence.";
+  "The caller can hear you and talk again. Carry on where you were, without greeting them again: if you were cut off mid-answer, finish it in a sentence; if not, just listen.";
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* iOS can flap the audio session many times a second (8 times in 12s on one call), so the voice
+   hears only where it settled: a blink tells it nothing. */
 async function interruption(request: Request, id: string) {
   const body = await bodyOf(request, InterruptionBody);
 
@@ -2261,14 +2417,27 @@ async function interruption(request: Request, id: string) {
     return new Response("That call is not live", { status: 409 });
   }
 
-  remember(
-    live,
-    kind,
-    filled(text) ? text : kind === "paused" ? "Your phone took over the audio" : "Back on the call",
-  );
-  void send(live, "session.instructions.append", kind === "paused" ? PAUSED : RESUMED).catch(
-    fineIfUnconfirmed,
-  );
+  const call = live;
+  call.away ??= { told: false };
+  const { away } = call;
+  clearTimeout(away.settling);
+  away.settling = setTimeout(() => {
+    const gone = kind === "paused";
+
+    if (live !== call || away.told === gone) {
+      return;
+    }
+
+    away.told = gone;
+    remember(
+      call,
+      kind,
+      filled(text) ? text : gone ? "Your phone took over the audio" : "Back on the call",
+    );
+    void send(call, "session.instructions.append", gone ? PAUSED : RESUMED).catch(
+      fineIfUnconfirmed,
+    );
+  }, SETTLE);
 
   return new Response(null, { status: 204 });
 }
@@ -2845,6 +3014,8 @@ export function serve(voiceHub: Hub, state: string) {
   yours = new Questions(state);
   recover();
   followWorkPastCallsSentOut();
+  void checkCredit();
+  setInterval(() => void checkCredit(), 24 * 60 * 60_000);
 
   return Bun.serve<Phone>({
     port: PORT,

@@ -24,7 +24,8 @@ every message is logged word for word, Haiku compresses the log into a binary tr
 of one-line summaries, and each session sees the view of that tree instead of a history.
 
   chat begin            SessionStart hook: remember this session's transcript
-  chat log              Stop hook: log the transcript's new messages, then compact
+  chat stop             Stop hook: chat log in the background, so the next turn starts at once
+  chat log              log the transcript's new messages, then compact
   chat turn             before a session starts: log, compact, print the system prompt file
   chat compact          build every node that's ready
   chat mcp <dir>        the zoom and date tools
@@ -925,8 +926,9 @@ function parsedOrUndefined(line: string) {
   }
 }
 
-function log(chat: Chat) {
-  for (const [path, start] of Object.entries(chat.transcripts)) {
+function log(chat: Chat, paths = Object.keys(chat.transcripts)) {
+  for (const path of paths) {
+    const start = chat.transcripts[path] ?? 0;
     const text = readIfThere(path);
 
     if (text === undefined) {
@@ -984,7 +986,7 @@ function stop(hook: z.infer<typeof Hook>) {
   chat.locked(() => {
     chat.load();
     chat.transcripts[hook.transcript_path] ??= 0;
-    log(chat);
+    log(chat, [hook.transcript_path]);
     chat.save();
   });
   background(chat.root);
@@ -1195,7 +1197,20 @@ async function mcp(root: string) {
 async function main() {
   const [command = "", ...args] = process.argv.slice(2);
 
-  if (command === "begin" || command === "log") {
+  if (command === "stop") {
+    const hook = await Bun.stdin.text();
+
+    if (isFresh()) {
+      const later = spawn(process.execPath, [import.meta.path, "log"], {
+        detached: true,
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+
+      later.stdin?.end(hook, () => {
+        later.unref();
+      });
+    }
+  } else if (command === "begin" || command === "log") {
     const hook: unknown = JSON.parse(await Bun.stdin.text());
 
     if (isFresh()) {

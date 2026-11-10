@@ -287,6 +287,14 @@ test("a turn logs the user, replies, tool calls and results, and agents' reports
   expect(messages()).toHaveLength(7);
 });
 
+test("the Stop hook returns at once and the turn is logged behind it", async () => {
+  write([{ type: "user", message: { content: "is the build green?" } }]);
+  run(["begin"], hook());
+  run(["stop"], hook());
+  await until(() => messages().length === 1);
+  expect(messages().map((m) => m.text)).toEqual(["is the build green?"]);
+});
+
 test("outside a fresh thread the hooks do nothing", () => {
   write([{ type: "user", message: { content: "hi" } }]);
 

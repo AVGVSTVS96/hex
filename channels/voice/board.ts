@@ -1490,7 +1490,7 @@ export function opener(run: Run) {
     return `The task is ${run.name}, work hex's agents do for it, with no thread of its own. ${state}`;
   }
 
-  return `The task is the hex thread ${run.place} (${run.where}, thread id ${run.thread})${run.place === run.name ? "" : `, part of the project ${run.name}`}. ${state}`;
+  return `The task is the thread ${run.place} (${run.where}, thread id ${run.thread})${run.place === run.name ? "" : `, part of the project ${run.name}`}. ${state}`;
 }
 
 function threadOf(row: Stored, general?: Stored): Thread {
