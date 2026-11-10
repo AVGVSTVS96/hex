@@ -934,7 +934,9 @@ test("an app call whose connection stays down past every retry goes on, and the 
 
 const Created = z.object({
   session: z.object({
-    input: z.array(z.object({ content: z.array(z.object({ text: z.string() })) })),
+    input: z.array(
+      z.object({ role: z.string(), content: z.array(z.object({ text: z.string() })) }),
+    ),
   }),
 });
 
@@ -983,10 +985,18 @@ test("an app call whose session OpenAI ends carries on in the one the app opens 
   const response = await carryOn(engine);
   expect(response.status).toBe(201);
   expect(await response.json()).toMatchObject({ session: { id: ID } });
-  const opening = Created.parse(engine.created[1]).session.input[0]?.content[0]?.text;
-  expect(opening).toContain("you're back");
-  expect(opening).toContain("is the build green?");
-  expect(opening).toContain("It is.");
+
+  const opening = Created.parse(engine.created[1]).session.input.map(({ role, content }) => [
+    role,
+    content[0]?.text,
+  ]);
+
+  expect(opening.slice(0, 2)).toEqual([
+    ["user", "is the build green?"],
+    ["assistant", "It is."],
+  ]);
+  expect(opening[2]?.[0]).toBe("developer");
+  expect(opening[2]?.[1]).toContain("you're back");
 
   await engine.attached();
   engine.send({ type: "session.input_transcript.delta", delta: "and the tests?", start_ms: 100 });

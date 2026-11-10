@@ -234,7 +234,7 @@ type Live = {
   lost?: { reason: string; at: string; giveUp: ReturnType<typeof setTimeout> };
   shift?: number;
   usedBefore?: number;
-  reopen?: ((call: Live, opening: string) => void) | undefined;
+  reopen?: ((call: Live, opening: Said[]) => void) | undefined;
   end?: (() => void) | undefined;
   speak?: ((audio: string) => void) | undefined;
   muLaw?: boolean | undefined;
@@ -1855,19 +1855,29 @@ function carried(call: Live, socket: WebSocket, next: string, expires: string | 
   );
 }
 
-function carryOnWith(call: Live, reason: string) {
-  const so = call.call
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* gpt-live-1 stays silent when the call so far comes as one developer message, and says it's back when it comes as the call's own turns. */
+function carryOnWith(call: Live, reason: string): Said[] {
+  const turns = call.call
     .record()
     .turns.slice(-40)
-    .map(({ who, at, text }) => ({ who, text, start: at }));
+    .map(({ who, text }): Said =>
+      who === "you"
+        ? { type: "message", role: "user", content: [{ type: "input_text", text }] }
+        : { type: "message", role: "assistant", content: [{ type: "output_text", text }] },
+    );
 
   return [
-    reason === "expired"
-      ? "This call carries on from a session that hit its time limit; the caller heard only a short pause. Don't mention it: finish anything you were cut off saying, otherwise listen."
-      : "The caller's connection dropped for a moment and this call carries on. Say in a few words that you're back, then finish anything you were cut off saying, or ask what they said while you were gone.",
-    ...(so.length ? ["The call so far:", transcript(so)] : []),
-    ...(call.mute?.muted === true ? [MUTED] : []),
-  ].join("\n");
+    ...turns,
+    developer(
+      [
+        reason === "expired"
+          ? "This call carries on from a session that hit its time limit; the caller heard only a short pause. Don't mention it: finish anything you were cut off saying, otherwise listen."
+          : "The caller's connection dropped for a moment and this call carries on. Say in a few words that you're back, then finish anything you were cut off saying, or ask what they said while you were gone.",
+        ...(call.mute?.muted === true ? [MUTED] : []),
+      ].join("\n"),
+    ),
+  ];
 }
 
 function letGo(call: Live, why: string) {
@@ -2252,7 +2262,7 @@ function passThrough({
     refused(reason);
   };
 
-  const connect = (opening: string, carrying?: Live) => {
+  const connect = (opening: Said[], carrying?: Live) => {
     const openai = voiceSocket(API);
     let begun = false;
 
@@ -2378,7 +2388,7 @@ function passThrough({
     return openai;
   };
 
-  return connect(greeting);
+  return connect([developer(greeting)]);
 }
 
 function answer(twilio: Bun.ServerWebSocket<Phone>) {
@@ -2774,16 +2784,22 @@ const APP_HEARS = [
   "session.closed",
 ].map((type) => ({ type }));
 
-function session(extra: SessionExtra = {}, opening?: string) {
+type Said = {
+  type: "message";
+  role: "developer" | "user" | "assistant";
+  content: { type: "input_text" | "output_text"; text: string }[];
+};
+
+function developer(text: string): Said {
+  return { type: "message", role: "developer", content: [{ type: "input_text", text }] };
+}
+
+function session(extra: SessionExtra = {}, opening: Said[] = []) {
   return {
     model: MODEL,
     instructions: voicePrompt(IDENTITY, readStyle(STATE_DIR), clock(), JEV !== undefined),
     delegation: { type: "client" },
-    ...(filled(opening) && {
-      input: [
-        { type: "message", role: "developer", content: [{ type: "input_text", text: opening }] },
-      ],
-    }),
+    ...(opening.length > 0 && { input: opening }),
     ...extra,
   };
 }
@@ -2816,11 +2832,9 @@ async function start(request: Request) {
   let response: Response;
 
   try {
-    response = await openSession(
-      sdp,
-      voice,
-      topic?.voice ?? "Greet the caller in a few words, then listen.",
-    );
+    response = await openSession(sdp, voice, [
+      developer(topic?.voice ?? "Greet the caller in a few words, then listen."),
+    ]);
   } catch (error) {
     const reason = `couldn't reach OpenAI: ${messageOf(error)}`;
     failed({ from, end: "no-connect", reason, ...(voice !== undefined && { voice }) });
@@ -2855,7 +2869,7 @@ async function start(request: Request) {
   return Response.json(result, { status: 201 });
 }
 
-async function openSession(sdp: string, voice: string | undefined, opening: string) {
+async function openSession(sdp: string, voice: string | undefined, opening: Said[]) {
   return await fetch(API, {
     method: "POST",
     headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
