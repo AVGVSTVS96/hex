@@ -38,24 +38,22 @@ function fsyncFile(file: string) {
   }
 }
 
+let shm: number | undefined;
+
 // The wal-index header's mxFrame, the frames now in the WAL: https://www.sqlite.org/walformat.html#the_wal_index_file_format
+// Closing any descriptor of a file cancels every lock the process holds on it, and SQLite's WAL locks are on this file, so the one descriptor stays open: https://www.sqlite.org/howtocorrupt.html#_posix_advisory_locks_canceled_by_a_separate_thread_doing_close_
 function framesInWal() {
   const header = new Uint8Array(20);
-  let fd: number;
 
   try {
-    fd = openSync(`${path}-shm`, "r");
+    shm ??= openSync(`${path}-shm`, "r");
   } catch {
     return 0;
   }
 
-  try {
-    return readSync(fd, header, 0, 20, 0) === 20
-      ? new DataView(header.buffer).getUint32(16, true)
-      : 0;
-  } finally {
-    closeSync(fd);
-  }
+  return readSync(shm, header, 0, 20, 0) === 20
+    ? new DataView(header.buffer).getUint32(16, true)
+    : 0;
 }
 
 const Checkpoint = z.object({ busy: z.number(), log: z.number(), checkpointed: z.number() });
