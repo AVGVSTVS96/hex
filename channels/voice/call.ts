@@ -21,7 +21,7 @@ type AppColonThread = string;
 export type Sent = { thread: AppColonThread; topic: string; settled: number; missed: number };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// ask: a question put on the caller's screen by its id; answered carries what sending it did; undone: that answer taken back; photo and video: what the caller sent from the app, by media id; muted and unmuted: the caller muting the voice by saying so, as Jev heard it; checked: what a say's answer rests on, in Claude's words.
+// ask: a question put on the caller's screen by its id; answered carries what sending it did; undone: that answer taken back; photo and video: what the caller sent from the app, by media id; muted and unmuted: the caller muting the voice by saying so, as Jev heard it; stopped: hex's turn stopped because the caller called off a handoff, as Jev heard it; checked: what a say's answer rests on, in Claude's words.
 export type Mark = {
   at: number;
   kind:
@@ -36,7 +36,8 @@ export type Mark = {
     | "photo"
     | "video"
     | "muted"
-    | "unmuted";
+    | "unmuted"
+    | "stopped";
   text: string;
   ask?: string;
   sent?: Sent;

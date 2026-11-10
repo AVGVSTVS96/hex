@@ -99,6 +99,25 @@ caller ── "mute yourself" ──► gpt-live-1 ── transcript ──► e
 - Muting tells the voice to stop; nothing cuts its audio, so a voice that ignored it would still be
   heard. On the rig it never did.
 
+## Calling off a handoff
+
+While Claude works on a handoff, until it `say`s the answer, each sentence the caller says goes
+to Jev with what they handed off: are they calling it off ("never mind", "you don't have to do
+that")? On the first sure yes the engine stops Claude's turn at once, as Esc would
+(`hub.interrupt`), then hands Claude the caller's words, so it stops what it started for the
+handoff and says what had already happened. Words said while nothing is handed off don't go to
+Jev.
+
+```
+caller ── "start a Brim topic" ──► handoff ──► Claude working
+caller ── "you don't have to do that" ──► Jev: calling it off?  yes
+                                            └─► interrupt Claude's turn ─► Claude: the caller's words
+```
+
+The record gets a `stopped` moment. A stop goes on half a sentence when Jev is sure, since a
+late one lets the work happen; Claude reads the words before acting on them, so a wrong one
+costs a few seconds.
+
 ## Call history
 
 Every call is saved as one JSON file in `~/.claude/channels/voice/calls/`,
@@ -422,7 +441,7 @@ them with hex) gets Claude walking the list in order.
    VOICE_PORT=8790    # the call page's local port
    VOICE_TOKEN=...    # if set, /session, /calls and /phone need "Authorization: Bearer <token>"
    OPENAI_BASE_URL=... # another endpoint that speaks OpenAI's live API; https://api.openai.com/v1 if unset
-   OPENROUTER_API_KEY=... # lets the caller mute the voice by saying so (see Muting); off if unset
+   OPENROUTER_API_KEY=... # lets the caller mute the voice, or call off a handoff, by saying so (see Muting); off if unset
    ```
 
    Who the voice is goes in `~/.claude/channels/voice/instructions.md`, the
