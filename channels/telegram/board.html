@@ -1,0 +1,52 @@
+<style>
+:root{color-scheme:light dark;--bg:light-dark(#fafafa,#0d0d0d);--fg:light-dark(#0f0f0f,#f2f2f2);--mu:light-dark(#636363,#989898);--ln:light-dark(#e1e1e1,#2e2e2e);--w:light-dark(#0086d8,#54b3fd);--n:light-dark(#de6200,#f68c36);--d:light-dark(#1c8742,#3fc168)}
+body{margin:0;padding:14px 16px 16px;background:var(--bg);color:var(--fg);font-family:system-ui;letter-spacing:-.01em}
+.h{display:flex;justify-content:space-between;align-items:center;font-size:.8em;color:var(--mu)}
+.h b{display:flex;align-items:center;gap:7px;color:var(--fg);font-weight:600}
+.k{display:flex;margin:10px 0 4px;border-bottom:1px solid var(--ln)}
+.k div{flex:1;padding:0 0 9px 12px;border-left:1px solid var(--ln);position:relative}
+.k div:first-child{padding-left:0;border-left:0}
+.k span{display:block;font-size:.78em;color:var(--mu)}
+.k b{display:block;font-size:2.2em;font-weight:400;letter-spacing:-.04em;line-height:1.1;font-variant-numeric:tabular-nums}
+.k div:after{content:"";position:absolute;left:12px;right:12px;bottom:-1px;height:2px;border-radius:1px}
+.k div:first-child:after{left:0}
+.k .on span{color:var(--fg)}
+.k .on:after,.r i{background:var(--c)}
+.k b{color:var(--c)}
+.k .z b{color:var(--mu)}
+.r{display:flex;align-items:center;gap:10px;height:46px;border-bottom:1px solid var(--ln)}
+.r:last-child{border:0}
+.r i{flex:0 0 7px;height:7px;border-radius:50%;position:relative}
+.p i:after{content:"";position:absolute;inset:-4px;border:1.5px solid var(--c);border-radius:50%;animation:p 1.8s ease-out infinite}
+@keyframes p{0%{transform:scale(.4)}70%,to{transform:scale(1.2);border-color:transparent}}
+@media (prefers-reduced-motion:reduce){.p i:after{animation:none;border-color:transparent}}
+.t{flex:1;min-width:0;font-size:.9em}
+.t b,.t small{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500}
+.t small{color:var(--mu);font-size:.86em;font-weight:400;margin-top:1px}
+.a{font-size:.78em;color:var(--mu);font-variant-numeric:tabular-nums;text-align:right}
+.a u{text-decoration:none;display:block;color:var(--c);font-weight:600}
+.r em{font-style:normal;color:var(--mu);width:8px}
+.e{display:flex;align-items:center;font-size:.86em;color:var(--mu)}
+</style>
+<div class="h"><b>hex right now</b><span id="u"></span></div>
+<div class="k" id="k"></div><div id="l"></div>
+<script>
+var W=window.TelegramWidget||{},$=function(i){return document.getElementById(i)},T=[["w","Working","Nothing running"],["n","Needs you","Nothing waits on you"],["d","Done","Nothing done today"]],D,c,H=W.HapticFeedback;
+try{c=localStorage.tab}catch(e){}c=c||"w";
+function j(s){try{return JSON.parse(s)||{}}catch(e){return{}}}
+function ago(m){m=Math.max(0,Math.round(Date.now()/6e4-m));return m<1?"now":m<60?m+"m":m<1440?(m/60|0)+"h":(m/1440|0)+"d"}
+function go(x){var u=x[0]=="/"?"https://t.me/c/"+D.c+x:/^https:/.test(x)?x:"https://t.me/c/"+x;if(H)H.impactOccurred("light");try{/^https:\/\/t\.me\//.test(u)?W.openTelegramLink(u):W.openLink(u)}catch(e){}}
+function el(t,k,h){var e=document.createElement(t);if(k)e.className=k;if(h!=null)e.textContent=h;return e}
+function at(S,l){return(l||[]).map(function(x){x=x.slice();x[3]+=S.b||0;return x})}
+function draw(){var C=j(W.chatData),P=j(W.publicData);D={t:C.t||P.t||Date.now()/6e4,c:C.c||P.c,w:at(C,C.w),n:at(C,C.n),d:at(P,P.d)};D.k=C.k||[0,0,D.d.length];
+var k=$("k"),l=$("l"),most=0;k.innerHTML=l.innerHTML="";
+$("u").textContent=(W.isForward?"As of ":"Updated ")+new Date(D.t*6e4).toLocaleTimeString([],{hour:"numeric",minute:"2-digit"});
+T.forEach(function(x,i){var r=D[x[0]],v=el("div",(x[0]==c?"on":"")+(D.k[i]?"":" z"));most=Math.max(most,r.length+(D.k[i]>r.length));v.style.setProperty("--c","var(--"+x[0]+")");
+v.appendChild(el("span","",x[1]));v.appendChild(el("b","",D.k[i]));v.onclick=function(){c=x[0];try{localStorage.tab=c}catch(e){}if(H)H.selectionChanged();draw()};k.appendChild(v)});
+var i=T.findIndex(function(x){return x[0]==c}),r=D[c],left=D.k[i]-r.length;l.style.minHeight=46*Math.max(1,most)+"px";l.style.setProperty("--c","var(--"+c+")");
+if(!r.length)l.appendChild(el("div","r e",T[i][2]));
+r.forEach(function(x){var o=el("div","r"+(c=="w"?" p":"")),t=el("div","t"),a=el("div","a",ago(x[3]));o.appendChild(el("i"));t.appendChild(el("b","",x[0]));t.appendChild(el("small","",x[1]||T[i][1]));o.appendChild(t);
+if(x[4]>1)a.appendChild(el("u","",x[4]));o.appendChild(a);o.appendChild(el("em","",x[2]?"›":""));if(x[2])o.onclick=function(){go(x[2])};l.appendChild(o)});
+if(left>0)l.appendChild(el("div","r e","and "+left+" more"))}
+draw();setInterval(draw,6e4);if(W.onEvent){W.onEvent("chatDataChanged",draw);W.onEvent("publicDataChanged",draw)}if(W.ready)W.ready();
+</script>

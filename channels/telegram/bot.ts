@@ -28,6 +28,8 @@ import {
   EFFORTS,
   MODELS,
   Ledger,
+  open as openStore,
+  stateDir,
   waits,
 } from "@hex/hub";
 import type { Call, Handlers, Message, Permission, Turn, Post } from "@hex/hub";
@@ -46,6 +48,8 @@ import type {
 } from "grammy/types";
 import { z } from "zod";
 
+import { HTML, Keeper } from "./board.ts";
+import type { State } from "./board.ts";
 import { server, tools } from "./channel.ts";
 
 // grammY 1.46 predates Bot API 10.4's widgets: https://core.telegram.org/bots/api#sendwidget
@@ -1798,6 +1802,12 @@ async function slash(thread: string, text: string): Promise<boolean> {
   const { chat_id, extra } = target(thread);
   const answer = (reply: string) => bot.api.sendMessage(chat_id, reply, extra).then(() => true);
 
+  if (name === "board" && board !== undefined) {
+    await board.again();
+
+    return thread.startsWith("-") ? await answer("Your board is at the bottom of your DM.") : true;
+  }
+
   if (name === "model" || name === "effort") {
     const choices = name === "model" ? MODELS : EFFORTS;
     const choice = choices.find(({ value }) => value === rest.trim().toLowerCase());
@@ -2429,6 +2439,63 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 }
 
 let keeping: (() => void) | undefined;
+let boarding: Promise<void> | undefined;
+
+const BOARD = "hex right now";
+
+const board = (() => {
+  const owner = loadAccess().allowFrom[0];
+
+  if (owner === undefined) {
+    return;
+  }
+
+  return new Keeper(openStore(stateDir(STATE_DIR)), join(STATE_DIR, "board.json"), {
+    send: async (state: State) => {
+      const sent = await paced(() =>
+        widgets.sendWidget({
+          chat_id: owner,
+          html: readFileSync(HTML, "utf-8"),
+          caption: BOARD,
+          allow_queries: false,
+          ...state,
+        }),
+      );
+
+      await bot.api
+        .pinChatMessage(owner, sent.message_id, { disable_notification: true })
+        .catch(ignore);
+
+      return sent.message_id;
+    },
+    edit: async (message, state) => {
+      try {
+        await paced(() =>
+          widgets.editMessageWidgetData({ chat_id: owner, message_id: message, ...state }),
+        );
+      } catch (error) {
+        const why = String(error);
+
+        if (
+          /message to edit not found|message not found|MESSAGE_ID_INVALID|chat not found|bot was blocked/u.test(
+            why,
+          )
+        ) {
+          return "gone";
+        }
+
+        if (!why.includes("message is not modified")) {
+          throw error;
+        }
+      }
+
+      return "shown";
+    },
+    remove: async (message) => {
+      await bot.api.deleteMessage(owner, message);
+    },
+  });
+})();
 
 // grammY's default error handler stops the bot and rethrows, so any throw in a handler would stop polling for good. https://grammy.dev/guide/errors
 const logInsteadOfStoppingThePolling: Parameters<typeof bot.catch>[0] = (error) => {
@@ -2448,6 +2515,7 @@ async function setCommandMenu() {
         command: "effort",
         description: `This thread's effort: ${EFFORTS.map(({ value }) => value).join(", ")}`,
       },
+      { command: "board", description: `A new "${BOARD}" board at the bottom of your DM` },
     ]);
   } catch (error) {
     process.stderr.write(`telegram hub: couldn't set the command menu: ${String(error)}\n`);
@@ -2468,6 +2536,7 @@ const onStart = (info: { username: string }) => {
       `telegram hub: couldn't rewrite ${thread}'s status post: ${String(error)}\n`,
     );
   });
+  boarding ??= board?.start().catch(ignore);
 };
 
 for (;;) {
