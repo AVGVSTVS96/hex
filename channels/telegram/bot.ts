@@ -252,6 +252,52 @@ function keepLines(markdown: string): string {
     .join("\n");
 }
 
+type Outgoing = { text: string; card?: true };
+
+// Telegram never previews a link in a rich message, and sendRichMessage takes no link_preview_options (https://core.telegram.org/bots/api#inputrichmessage), so a link alone on its line goes out as its own plain message, where Telegram shows its card.
+function withCards(markdown: string): Outgoing[] {
+  const parts: Outgoing[] = [];
+  let rich: string[] = [];
+  let fence = "";
+
+  const flush = () => {
+    const text = rich.join("\n").trim();
+
+    if (text !== "") {
+      parts.push({ text });
+    }
+
+    rich = [];
+  };
+
+  for (const line of markdown.split("\n")) {
+    const [, marker, after] = /^\s*(`{3,}|~{3,})(.*)$/u.exec(line) ?? [];
+
+    const link =
+      fence === "" && marker === undefined
+        ? /^\s*<?(https?:\/\/[^\s<>]+?)>?\s*$/u.exec(line)?.[1]
+        : undefined;
+
+    if (link !== undefined) {
+      flush();
+      parts.push({ text: link, card: true });
+      continue;
+    }
+
+    if (fence === "") {
+      fence = marker ?? "";
+    } else if (marker?.startsWith(fence) === true && after?.trim() === "") {
+      fence = "";
+    }
+
+    rich.push(line);
+  }
+
+  flush();
+
+  return parts;
+}
+
 // Telegram compresses these and shows them inline, up to its 10MB photo cap (https://core.telegram.org/bots/api#sendphoto); anything else, or bigger, goes as a document.
 const PHOTO_EXTS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
 
@@ -770,12 +816,18 @@ const handlers: Handlers<typeof tools> = {
     const limit = Math.max(1, Math.min(access.textChunkLimit ?? cap, cap));
     const replyMode = access.replyToMode ?? "first";
 
-    const chunks =
+    const mode = access.chunkMode ?? "length";
+
+    const chunks: Outgoing[] =
       text === "" || caption !== ""
         ? []
         : markdown
-          ? chunkClosingCodeBlocks(text, limit, access.chunkMode ?? "length")
-          : chunk(text, limit, access.chunkMode ?? "length");
+          ? withCards(text).flatMap((part) =>
+              part.card
+                ? [part]
+                : chunkClosingCodeBlocks(part.text, limit, mode).map((t) => ({ text: t })),
+            )
+          : chunk(text, limit, mode).map((t) => ({ text: t }));
 
     const silent = args.silent === true ? { disable_notification: true } : {};
     const keyboard = buttons.length > 0 ? { reply_markup: buttonsOf(buttons) } : {};
@@ -783,7 +835,7 @@ const handlers: Handlers<typeof tools> = {
     let asked: number | undefined;
 
     try {
-      for (const [i, part] of chunks.entries()) {
+      for (const [i, { text: part, card }] of chunks.entries()) {
         const last = i === chunks.length - 1;
         const shouldReplyTo = replyMode !== "off" && (replyMode === "all" || i === 0);
 
@@ -794,9 +846,10 @@ const handlers: Handlers<typeof tools> = {
           ...(last && keyboard),
         };
 
-        const sent = markdown
-          ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts)
-          : await bot.api.sendMessage(chat_id, part, { ...opts, ...parseMode });
+        const sent =
+          markdown && card !== true
+            ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts)
+            : await bot.api.sendMessage(chat_id, part, { ...opts, ...parseMode });
 
         said(thread, sent.message_id, part);
         sentIds.push(sent.message_id);
@@ -807,7 +860,17 @@ const handlers: Handlers<typeof tools> = {
       }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      said(thread, undefined, chunks.slice(sentIds.length).join("\n"), { failed: msg });
+      said(
+        thread,
+        undefined,
+        chunks
+          .slice(sentIds.length)
+          .map((c) => c.text)
+          .join("\n"),
+        {
+          failed: msg,
+        },
+      );
       throw new Error(
         `reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`,
         { cause: error },
