@@ -97,6 +97,7 @@ export function overall(
       run.state === "working" || run.state === "needs"
         ? [
             run.name,
+            run.place,
             ...run.agents.filter((agent) => agent.state === "working").map((agent) => agent.label),
           ]
         : [],
@@ -188,7 +189,9 @@ export function overall(
 }
 
 function place(run: Run) {
-  return run.where === run.name || run.app === "claude" ? run.name : `${run.name} (${run.where})`;
+  const own = run.place === run.name ? run.name : `${run.place}, part of ${run.name}`;
+
+  return run.where === run.name || run.app === "claude" ? own : `${own} (${run.where})`;
 }
 
 function agentsOf(labels: string[]) {

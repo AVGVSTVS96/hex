@@ -24,6 +24,7 @@ import {
   isDm,
   itemStep,
   nameOf,
+  projectOf,
   past,
   sizeOf,
   stepOf,
@@ -103,6 +104,7 @@ type Thread = {
   app: string;
   id: string;
   name: string;
+  project: string;
   session?: string | undefined;
   cwd?: string | undefined;
   link?: string;
@@ -369,7 +371,7 @@ export class Board extends Changes {
       id,
       app: thread.app,
       thread: thread.id,
-      name: thread.name,
+      name: thread.project,
       where: where(thread),
       place: this.place(thread),
       ...(hasText(at) && { at }),
@@ -639,6 +641,7 @@ export class Board extends Changes {
       app: "claude",
       id: short(session.id),
       name: session.name ?? short(session.id),
+      project: session.name ?? short(session.id),
       session: session.id,
       cwd: session.cwd,
     }));
@@ -864,7 +867,7 @@ export class Board extends Changes {
       id: `${thread.app}:${thread.id}`,
       app: thread.app,
       thread: thread.id,
-      name: thread.name,
+      name: thread.project,
       where: where(thread),
       place: this.place(thread),
       state,
@@ -1004,7 +1007,7 @@ export class Board extends Changes {
 
       const id = home({ ...task, owner: thread?.thread ?? task.owner }, runs);
       const run = runs.find((one) => one.id === id);
-      const topic = run?.name ?? task.project ?? (thread ? nameOf(thread, general) : "hex");
+      const topic = run?.name ?? task.project ?? (thread ? projectOf(thread, general) : "hex");
 
       return {
         id: task.id,
@@ -1432,9 +1435,10 @@ function home(task: { owner: string; project?: string }, runs: Run[], workedIn?:
       : owner?.id;
   }
 
+  const parts = runs.filter((run) => run.name === task.project && ofOneProject(run));
+
   return (
-    runs.find((run) => run.name === task.project && ofOneProject(run))?.id ??
-    `project:${task.project}`
+    (parts.find((run) => run.place === task.project) ?? parts[0])?.id ?? `project:${task.project}`
   );
 }
 
@@ -1486,7 +1490,7 @@ export function opener(run: Run) {
     return `The task is ${run.name}, work hex's agents do for it, with no thread of its own. ${state}`;
   }
 
-  return `The task is the hex thread ${run.name} (${run.where}, thread id ${run.thread}). ${state}`;
+  return `The task is the hex thread ${run.place} (${run.where}, thread id ${run.thread})${run.place === run.name ? "" : `, part of the project ${run.name}`}. ${state}`;
 }
 
 function threadOf(row: Stored, general?: Stored): Thread {
@@ -1496,6 +1500,7 @@ function threadOf(row: Stored, general?: Stored): Thread {
     app,
     id: thread,
     name: nameOf(row, general),
+    project: projectOf(row, general),
     session,
     cwd,
     ...(hasText(link) && { link }),

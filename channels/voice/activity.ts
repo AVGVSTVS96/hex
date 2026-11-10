@@ -958,7 +958,7 @@ export function followAgent(
   return undefined;
 }
 
-type Named = { app: string; thread: string; name: string; open?: boolean };
+type Named = { app: string; thread: string; name: string; open?: boolean; project?: string };
 
 export function generalOf<T extends Named>(
   threads: Iterable<T>,
@@ -982,6 +982,12 @@ export function holdsEveryProject(thread: Pick<Named, "app" | "thread">, general
     isDm(thread) ||
     (general !== undefined && thread.app === general.app && thread.thread === general.thread)
   );
+}
+
+export function projectOf(thread: Named, general?: Named) {
+  return holdsEveryProject(thread, general)
+    ? nameOf(thread, general)
+    : (thread.project ?? thread.name);
 }
 
 export function nameOf({ app, thread, name }: Named, general?: Named) {

@@ -32,6 +32,7 @@ const USAGE = `usage:
   hex questions [--thread <thread> | --all] [--json]
   hex pins [--thread <thread> | --all] [--json]
   hex threads [--json]
+  hex thread <thread> --project <the project it's part of, or '' for its own>
   hex running [--json]
   hex message <key>
   hex profile [--all] [--json]
@@ -96,6 +97,7 @@ const wordsBeforeFlags = new Map([
   ["message", 1],
   ["recall", 1],
   ["log", 1],
+  ["thread", 1],
 ]);
 
 const takes =
@@ -866,12 +868,29 @@ try {
         console.log(
           threads
             .map(
-              ({ app, thread, name, open }) => `${app} ${thread} ${name}${open ? "" : " (closed)"}`,
+              ({ app, thread, name, open, project }) =>
+                `${app} ${thread} ${name}${filled(project) ? ` (project ${project})` : ""}${open ? "" : " (closed)"}`,
             )
             .join("\n"),
         );
       }
 
+      break;
+    }
+
+    case "thread": {
+      const [given] = args;
+      const [thread, another] = filled(given) ? named(given) : [];
+
+      if (another) {
+        throw new Error(`more than one thread goes by ${given}: pass its id, from hex threads`);
+      }
+
+      if (!thread || flags.project === undefined) {
+        throw new Error(USAGE);
+      }
+
+      store.threads.file(thread.thread, filled(flags.project) ? flags.project : undefined);
       break;
     }
 

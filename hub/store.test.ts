@@ -1274,6 +1274,30 @@ test("a thread's key names it in every app, and its id is <app>:<key>", async ()
   ).toEqual(["buzz:abc", "discord:1561", "discord:1562", "telegram:-100:7"]);
 });
 
+test("hex thread files a thread under the project it's part of, kept as its app updates it, until it's filed under its own again", async () => {
+  const store = open(dir);
+  const telegram = { "-100:7": { name: "Chats" }, "-100:8": { name: "Android" } };
+  store.threads.keep("telegram", telegram);
+
+  const hex = async (...args: string[]) =>
+    await Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir, ...args], { stderr: "pipe" })
+      .exited;
+
+  const projects = () => store.threads.list().map(({ name, project }) => [name, project]);
+  expect(await hex("thread", "Chats", "--project", "iikb")).toBe(0);
+  store.threads.keep("telegram", { ...telegram, "-100:7": { name: "Chats", session: "s1" } });
+  expect(projects()).toEqual([
+    ["Chats", "iikb"],
+    ["Android", undefined],
+  ]);
+  expect(await hex("thread", "Chats", "--project", "")).toBe(0);
+  expect(projects()).toEqual([
+    ["Chats", undefined],
+    ["Android", undefined],
+  ]);
+  expect(await hex("thread", "Nowhere", "--project", "iikb")).not.toBe(0);
+});
+
 test("a key two apps had before keys were global keeps its open, then newest, row", () => {
   const store = new Store(dir);
   store.db.run("drop index threads_key; pragma user_version = 23");

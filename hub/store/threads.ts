@@ -19,9 +19,10 @@ export type Thread = {
   launched?: LaunchStamp;
   fork?: string;
   link?: string;
+  project?: string;
 };
 
-export type Kept = Omit<Thread, "app" | "thread" | "open">;
+export type Kept = Omit<Thread, "app" | "thread" | "open" | "project">;
 
 const ThreadRows = z.array(
   z
@@ -37,6 +38,7 @@ const ThreadRows = z.array(
       launched: TextOrNull,
       fork: TextOrNull,
       link: TextOrNull,
+      project: TextOrNull,
     })
     .transform(
       ({
@@ -51,6 +53,7 @@ const ThreadRows = z.array(
         launched,
         fork,
         link,
+        project,
       }): Thread => ({
         app,
         thread,
@@ -62,6 +65,7 @@ const ThreadRows = z.array(
         ...(launched !== null && { launched }),
         ...(fork !== null && { fork }),
         ...(link !== null && { link }),
+        ...(project !== null && { project }),
         open: isOpen !== 0,
       }),
     ),
@@ -109,6 +113,12 @@ export class Threads {
           link ?? null,
         );
       }
+    });
+  }
+
+  file(thread: string, project: string | undefined) {
+    this.write(() => {
+      this.db.query("update threads set project = ? where thread = ?").run(project ?? null, thread);
     });
   }
 
