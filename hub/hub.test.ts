@@ -496,13 +496,14 @@ test("without a transcriber set up, a recording is never fetched or sent anywher
   expect(fetched).toBe(false);
 });
 
-test("a message for a new thread starts a session bound to that thread", async () => {
+test("a message for a new thread starts a session bound to that thread, which compacts at the hub's window", async () => {
   start();
   hub.deliver("chat:7", "Desk anchors", message);
   const args = await launched();
   expect(args.slice(0, 5)).toEqual(["--bg", "--channels", CHANNEL, "--name", "Desk anchors"]);
   expect(args).not.toContain("--resume");
   expect(settingsOf(args)).toEqual({
+    autoCompactWindow: 200_000,
     enabledPlugins: { "telegram@hex": true },
     env: {
       HEX_CHANNEL: CHANNEL,
@@ -515,6 +516,18 @@ test("a message for a new thread starts a session bound to that thread", async (
     },
   });
   expect(states).toEqual([["chat:7", true]]);
+});
+
+test("a thread's session leaves the auto-compact window to the hex folder when the folder's is smaller, for every model or one", async () => {
+  mkdirSync(join(dir, "hex", ".claude"), { recursive: true });
+  writeFileSync(join(dir, "hex", ".claude", "settings.json"), '{"autoCompactWindow":500000}');
+  writeFileSync(
+    join(dir, "hex", ".claude", "settings.local.json"),
+    '{"modelSettings":{"opus":{"autoCompactWindow":120000}}}',
+  );
+  start();
+  hub.deliver("chat:7", "Desk anchors", message);
+  expect(settingsOf(await launched()).autoCompactWindow).toBeUndefined();
 });
 
 test("a message carrying a change to hex's records is kept and told only with it: a failed or empty change sends nothing", () => {
@@ -2270,7 +2283,7 @@ test("a thread saved with a full model id runs its family's alias, so it gets th
   expect(args[args.indexOf("--model") + 1]).toBe("opus");
 });
 
-test("a fresh thread with no capacity starts a new session instead of resuming its last, and says so in its env", async () => {
+test("a fresh thread with no capacity starts a new session instead of resuming its last, and says so in its env, leaving the auto-compact window alone", async () => {
   start({
     registry: { dm: { name: "DM", session: SESSION } },
     agents: [],
@@ -2281,6 +2294,7 @@ test("a fresh thread with no capacity starts a new session instead of resuming i
   const args = await launched();
   expect(args).not.toContain("--resume");
   expect(calls().some((each) => each[0] === "rm")).toBe(false);
+  expect(settingsOf(args).autoCompactWindow).toBeUndefined();
   expect(settingsOf(args).env).toEqual({
     HEX_CHANNEL: CHANNEL,
     HEX_THREAD: "dm",

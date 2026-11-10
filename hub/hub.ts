@@ -144,11 +144,12 @@ export type HubLine = z.input<typeof HubRequestLine>;
 
 export type Hub = ReturnType<typeof startHub>;
 
-// idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main thread rests before it compacts, while its cache is still warm. Both sit just inside Claude Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above which a session compacts before it rests. reconnect: how long a running session's channel may be gone before the session restarts to get it back. connect: how long a starting session waits for the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a hub running behind still gets its sessions' channels. Claude Code waits that long for each of a session's MCP servers, but a background session doesn't hold its turn for them. capacity: how much context a fresh thread's session holds before a new one takes over; with 0, every message that finds it done goes to a new one. (see https://docs.claude.com/en/docs/build-with-claude/prompt-caching and https://code.claude.com/docs/en/mcp)
+// idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main thread rests before it compacts, while its cache is still warm. Both sit just inside Claude Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above which a session compacts before it rests. compactWindow: the auto-compact window a thread's session runs with, a fresh thread's aside, which hands off at capacity. Claude Code compacts about 15-35k tokens under it, mid-turn, so a session in steady use, which never rests long enough to compact, stays small; the hex folder's own setting still holds for its terminal sessions, and for its threads too when it's smaller. HEX_COMPACT_WINDOW changes it. reconnect: how long a running session's channel may be gone before the session restarts to get it back. connect: how long a starting session waits for the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a hub running behind still gets its sessions' channels. Claude Code waits that long for each of a session's MCP servers, but a background session doesn't hold its turn for them. capacity: how much context a fresh thread's session holds before a new one takes over; with 0, every message that finds it done goes to a new one, and HEX_CHAT_CAPACITY changes it. (see https://docs.claude.com/en/docs/build-with-claude/prompt-caching and https://code.claude.com/docs/en/mcp)
 export type Limits = {
   idleStop: number;
   cacheWarm: number;
   compactAbove: number;
+  compactWindow: number;
   reconnect: number;
   connect: number;
   capacity: number;
@@ -469,21 +470,52 @@ const LIMITS: Limits = {
   idleStop: 54 * 60_000,
   cacheWarm: 54 * 60_000,
   compactAbove: 150_000,
+  compactWindow: tokensFrom("HEX_COMPACT_WINDOW", 200_000),
   reconnect: 20_000,
   connect: 300_000,
-  capacity: capacityFrom(process.env.HEX_CHAT_CAPACITY),
+  capacity: tokensFrom("HEX_CHAT_CAPACITY", 350_000),
 };
 
-function capacityFrom(tokens?: string) {
+function tokensFrom(name: string, fallback: number) {
+  const tokens = process.env[name];
+
   if (!present(tokens)) {
-    return 350_000;
+    return fallback;
   }
 
   if (!/^\d+$/u.test(tokens)) {
-    throw new Error(`HEX_CHAT_CAPACITY must be a number of tokens, got "${tokens}"`);
+    throw new Error(`${name} must be a number of tokens, got "${tokens}"`);
   }
 
   return Number(tokens);
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A window is a number of tokens or "auto", the model's own, which is larger than any the hub sets.
+const Window = z.number().optional().catch(undefined);
+
+const Windows = z.looseObject({
+  autoCompactWindow: Window,
+  modelSettings: z.record(z.string(), z.looseObject({ autoCompactWindow: Window })).optional(),
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The smallest auto-compact window the hex folder's settings set, for every model or one. A thread's settings override the folder's, so the hub sets its window only when it's the smaller.
+function folderWindow(hexDir: string) {
+  const windows = [".claude/settings.json", ".claude/settings.local.json"].flatMap((file) => {
+    try {
+      const settings = Windows.parse(JSON.parse(readFileSync(join(hexDir, file), "utf-8")));
+
+      return [
+        settings.autoCompactWindow,
+        ...Object.values(settings.modelSettings ?? {}).map((model) => model.autoCompactWindow),
+      ];
+    } catch {
+      return [];
+    }
+  });
+
+  return Math.min(...windows.filter((window) => window !== undefined));
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -635,7 +667,7 @@ export function startHub({
   // Where the app opens a thread, which hex.db keeps with it.
   link?: ((thread: string) => string | undefined) | undefined;
 }) {
-  const { idleStop, cacheWarm, compactAbove, reconnect, connect, capacity } = {
+  const { idleStop, cacheWarm, compactAbove, compactWindow, reconnect, connect, capacity } = {
     ...LIMITS,
     ...limits,
   };
@@ -1304,6 +1336,8 @@ export function startHub({
     writeFileSync(
       settingsOf(thread),
       JSON.stringify({
+        ...(!fresh(thread) &&
+          compactWindow < folderWindow(hexDir) && { autoCompactWindow: compactWindow }),
         ...launched,
         enabledPlugins: { ...launched?.enabledPlugins, [plugin]: true },
         env: { ...launched?.env, ...env },
