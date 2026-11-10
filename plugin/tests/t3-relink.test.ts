@@ -32,6 +32,12 @@ beforeEach(() => {
     join(other, ".t3-hex/runtime/versions/1.0/t3"),
     `echo "$@" > "${root}/paired"; echo "Pair with this code"; echo "Token: c0de"`,
   );
+  mkdirSync(join(other, ".t3-hex/runtime/versions/2.0"));
+  script(join(other, ".t3-hex/runtime/versions/2.0/t3"), `echo "Token: not-the-service"`);
+  writeFileSync(
+    join(other, ".t3-hex/runtime/service-state.json"),
+    JSON.stringify({ protocol: 3, activeVersion: "1.0" }, null, 2),
+  );
   script(
     join(bin, "t3"),
     `case "$1 $2" in
@@ -61,7 +67,7 @@ const links = (environmentId: string) => {
 const relink = () =>
   Bun.spawnSync([RELINK, "other"], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
 
-test("t3-relink links again to the other machine's hex T3 Code with a fresh pairing code and says when it ends", () => {
+test("t3-relink links again to the other machine's hex T3 Code with a pairing code from the t3 its service runs, and says when it ends", () => {
   links(ID);
   const run = relink();
 

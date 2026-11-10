@@ -11,10 +11,12 @@ id=$(remote 'cat ~/.t3-hex/userdata/environment-id')
 url=$(linked '.urls[0] // empty')
 [ -n "$url" ] || { echo "t3-relink: no link to $machine's hex T3 Code here" >&2; exit 1; }
 
-# The remote side runs as sh whatever its login shell, with the t3 its service runs.
+# The remote side runs as sh whatever its login shell, with the t3 its service runs, or the one on its PATH.
 code=$(remote sh -s <<EOF | awk '/^Token:/ { print $2 }'
-t3=\$(ls -td ~/.t3-hex/runtime/versions/*/t3 2>/dev/null | head -n 1)
-"\${t3:-t3}" pair --base-dir ~/.t3-hex --label '${host%%.*}'
+version=\$(sed -n 's/.*"activeVersion": *"\([^"]*\)".*/\1/p' "\$HOME/.t3-hex/runtime/service-state.json" 2>/dev/null)
+t3="\$HOME/.t3-hex/runtime/versions/\$version/t3"
+[ -n "\$version" ] && [ -x "\$t3" ] || t3=t3
+"\$t3" pair --base-dir "\$HOME/.t3-hex" --label '${host%%.*}'
 EOF
 )
 [ -n "$code" ] || { echo "t3-relink: $machine's hex T3 Code gave no pairing code" >&2; exit 1; }
