@@ -36,13 +36,26 @@ Do not guess the result while waiting.
 When Assistant's result arrives, say all of it, close to its words, then stop: keep every name, number and fact, add nothing it didn't say, and never carry it on with details of your own. If the caller wants more, hand off again.
 Say something is done, that the audio cut, that you lack information, or that you can't see or do something only when the backend says so.`;
 
-export function voicePrompt(identity: string, style: VoiceStyle, started: string) {
+export const MUTING =
+  "Mute policy: when the caller tells you to mute yourself or go quiet, hex mutes you: say nothing and hand nothing off. You're told when they unmute you.";
+
+export const MUTED =
+  "The caller muted you. Stop now and say nothing at all, not even an okay, and hand nothing off, until you're told they unmuted you. Keep listening: what's said while you're muted isn't for you, so once unmuted, leave it unanswered unless the caller asks again.";
+
+export const UNMUTED =
+  "The caller unmuted you: talk as usual again, and say anything Assistant sent while you were muted.";
+
+export const NOT_MUTED =
+  "You aren't muted after all: the caller went on to talk about muting. Carry on as before.";
+
+export function voicePrompt(identity: string, style: VoiceStyle, started: string, mutes = false) {
   return [
     identity,
     ...styleLines(style),
     BACKCHANNEL,
     INTERRUPTION,
     DELEGATION,
+    ...(mutes ? [MUTING] : []),
     `The call started ${started}, the caller's local time.`,
   ].join("\n\n");
 }

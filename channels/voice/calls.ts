@@ -71,6 +71,8 @@ const mark: z.ZodType<Mark> = z.object({
     "undone",
     "photo",
     "video",
+    "muted",
+    "unmuted",
   ]),
   text: z.string(),
   ask: z.string().exactOptional(),

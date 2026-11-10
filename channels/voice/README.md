@@ -74,6 +74,31 @@ other apps:
 6. When the call ends, Claude gets the last words and a "call ended" message,
    and names the call with `title`.
 
+## Muting
+
+Saying "mute yourself" (or "be quiet", "shh") quiets the voice at once, and "unmute" brings it
+back, without a handoff. [Jev](https://docs.typesafe.ai), TypeSafe's fast judge model on
+OpenRouter, decides it: the engine asks it about each sentence of the caller's as speech
+recognition hands it over, which takes about 0.2s, so the voice is told to stop about half a
+second after the caller does, before it would answer.
+
+```
+caller ── "mute yourself" ──► gpt-live-1 ── transcript ──► engine ── said ──► Jev: a command to mute?
+                                   ▲                                              │ yes
+                                   └──── session.instructions.append: muted ◄─────┘
+```
+
+- Only sentences with a word like mute, quiet, talk or back go to Jev; the rest of the call
+  doesn't.
+- "Can we make it so you mute yourself..." reads as a command until the rest of it arrives, so
+  each answer stands only until Jev has read more of the same sentence, and a mute taken back
+  that way tells the voice to carry on. A mute reaches the voice as an instruction, which cuts it
+  off; an unmute as a quiet note, since the voice answers "unmute" itself.
+- While muted the voice listens, and a `say` from Claude reaches it silently, to say once the
+  caller unmutes it. The call's record keeps a `muted` and an `unmuted` moment.
+- Muting tells the voice to stop; nothing cuts its audio, so a voice that ignored it would still be
+  heard. On the rig it never did.
+
 ## Call history
 
 Every call is saved as one JSON file in `~/.claude/channels/voice/calls/`,
@@ -397,6 +422,7 @@ them with hex) gets Claude walking the list in order.
    VOICE_PORT=8790    # the call page's local port
    VOICE_TOKEN=...    # if set, /session, /calls and /phone need "Authorization: Bearer <token>"
    OPENAI_BASE_URL=... # another endpoint that speaks OpenAI's live API; https://api.openai.com/v1 if unset
+   OPENROUTER_API_KEY=... # lets the caller mute the voice by saying so (see Muting); off if unset
    ```
 
    Who the voice is goes in `~/.claude/channels/voice/instructions.md`, the

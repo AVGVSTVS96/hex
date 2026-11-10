@@ -125,7 +125,7 @@ async function lineCall({
 
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
-      ([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_|^CLAUDE_CONFIG_DIR$/u.test(key),
+      ([key]) => !/^(VOICE|TWILIO|OPENAI|OPENROUTER|CALLER|HEX)_|^CLAUDE_CONFIG_DIR$/u.test(key),
     ),
   );
 

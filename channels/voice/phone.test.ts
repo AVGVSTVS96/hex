@@ -176,7 +176,9 @@ async function phoneCall({ openaiHoldsEachStart = false } = {}) {
   );
 
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/u.test(key)),
+    Object.entries(process.env).filter(
+      ([key]) => !/^(VOICE|TWILIO|OPENAI|OPENROUTER|CALLER|HEX)_/u.test(key),
+    ),
   );
 
   const hex = join(home, "hex", "state");
