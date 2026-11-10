@@ -23,11 +23,20 @@ test.each([
   "ssh other 'pkill -f x'",
   'bash -c "pkill -f x"',
   "echo start\npkill -f x",
+  "pkill -u someone -f x",
+  "pkill -s 9 -f x",
+  "pkill -P 1 -f x",
+  "pkill -t pts/1 -f x",
+  "pkill -G wheel -f x",
+  "pkill --signal KILL -f x",
+  "pkill x -f",
+  'git commit -m "docs: pkill -f kills its own shell"',
 ])("pkill-guard refuses %p and says why", (command) => {
   const run = guard(command);
 
   expect(run.exitCode).toBe(2);
   expect(run.stderr.toString()).toContain("Kill by the PID you started or looked up");
+  expect(run.stderr.toString()).toContain("git commit -F");
 });
 
 test.each([
@@ -38,6 +47,11 @@ test.each([
   "pgrep -f x",
   "rg 'pkill -f' bin",
   "mypkill -f x",
+  "pkill -x node; tail -f log",
+  "pkill firefox; rm -f x",
+  "pkill -x node && tail -f log",
+  "pkill -x node | tee -f",
+  'git commit -m "docs: the -f flag of pkill kills its own shell"',
 ])("pkill-guard lets %p through", (command) => {
   const run = guard(command);
 
