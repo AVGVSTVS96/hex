@@ -489,7 +489,12 @@ export class Questions extends Changes {
         return;
       }
 
-      await this.inform(taken, thread, `(not needed from me, said ${where}: decide or do it yourself) ${question.question}`, via);
+      await this.inform(
+        taken,
+        thread,
+        `(not needed from me, said ${where}: decide or do it yourself) ${question.question}`,
+        via,
+      );
       told.add(thread);
     };
 
