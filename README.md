@@ -62,7 +62,7 @@ hex runs wherever Claude Code does, on a machine that stays on (a home server, a
 └──────────────┘               └─────────────────────────────────────────────┘
 ```
 
-- **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for about an hour, the life of its prompt cache, stops, and starts again with its conversation when you write.
+- **Every topic is its own Claude Code session.** General is the main assistant. When it starts work you'll want to follow, it opens a new topic with a fresh session working there, and closes the topic when the work is done. A session that sits idle for about an hour, the life of its prompt cache, stops, and starts again with its conversation when you write; a big one is taken over by a new session that reads back only what your message needs, instead of paying to cache the whole conversation again.
 - **A DM is one chat that never ends.** Your DMs to hex work like Taelin's [OptChat](https://gist.github.com/VictorTaelin/91837951a5ce5b38f341ec1ba1df6449): every message is logged word for word in `chat/`, Haiku compresses the log into a tree of one-line summaries in the background, and each message starts a fresh session that sees those summaries instead of a history, opening any line back up to the words it came from. Nothing is compacted and nothing is lost. A message sent while hex is still working reaches that same session.
 - **Your hex is your own folder.** `~/hex` holds everything that's yours: `SOUL.md` (who it is), your own rules in `AGENTS.md`, what it brings up on its own in `PROACTIVE.md`, `schedules.json`, its memory, and every message it heard and sent in `state/hex.db` (`hex log` prints them as markdown). It's a private git repo, and hex commits its own edits. hex itself lives in `~/hex/.hex`, a clone of this repo. Updates pull there, and `bin/migrate` adds new default files to your folder and updates the ones you never edited.
 - **One memory, with a timeline.** After every turn, a memory agent records what you said and what happened in [OptMem](https://github.com/VictorTaelin/OptMem): plain text files, read back at the start of each session, with older memories summarized and still searchable word for word. It also keeps a short profile of who you are, which each session reads first; what you want done is in tasks. Your rules live in `AGENTS.md`; everything else hex knows is in OptMem.
@@ -144,7 +144,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── chat                        logs a DM, compresses it, and builds what its next session sees
     │   ├── wake                    loads your profile and its memory as each session starts and after a compaction
     │   ├── live-status             shows its branches, upcoming jobs, sessions and each active thread's last message as each session starts
-    │   ├── compacted               puts the last turns back after a compaction
+    │   ├── compacted               puts the last turns back after a compaction, or a handoff
     │   ├── send-gate               holds sends and deletes until you say yes
     │   ├── transcribe              voice notes → text
     │   ├── vault                   asks you for secrets by link, signs in with them

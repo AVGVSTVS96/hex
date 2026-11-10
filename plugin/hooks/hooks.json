@@ -9,7 +9,7 @@
         ]
       },
       {
-        "matcher": "compact",
+        "matcher": "compact|startup",
         "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/compacted" }]
       },
       {
