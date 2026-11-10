@@ -312,8 +312,8 @@ export function past(text: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Siri's Live Activity shows the step on one line that fits about 28 characters on the open Duo.
-const BRIEF = 24;
+// Siri's Live Activity cut its one step line after 29 characters on the open Duo.
+const BRIEF = 28;
 
 const GENERAL: Record<Kind, [doing: string, did: string]> = {
   think: ["Thinking", "Thought it over"],
