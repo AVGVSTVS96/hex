@@ -39,6 +39,15 @@ const Media = z.object({ id: z.string(), kind: z.string() });
 
 type AttachData = { id: string | undefined };
 
+type FromOpenAI = {
+  type: string;
+  delta?: string;
+  start_ms?: number;
+  end_ms?: number;
+  offset_ms?: number;
+  delegation?: { id: string; target: "client" };
+};
+
 const withImage = (told: Line) => told.meta?.image_path !== undefined;
 
 async function appCall({ callStillGoingAtStart = false } = {}) {
@@ -66,11 +75,24 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   let acking = true;
   let held = false;
   let made = 0;
+  let probes = 0;
+  let credit = true;
   const waiting: (() => void)[] = [];
 
   const openai = Bun.serve<AttachData>({
     port: 0,
     async fetch(request, server) {
+      if (new URL(request.url).pathname.endsWith("/embeddings")) {
+        probes++;
+
+        return credit
+          ? Response.json({ data: [] })
+          : Response.json(
+              { error: { message: "You have no credits remaining.", code: "insufficient_quota" } },
+              { status: 429 },
+            );
+      }
+
       if (request.method === "POST") {
         return Response.json(
           {
@@ -240,6 +262,9 @@ for await (const line of console) {
         resolve();
       }
     },
+    probes: () => probes,
+    spend: () => void (credit = false),
+    send: (event: FromOpenAI) => voice?.send(JSON.stringify(event)),
     hangUp: () =>
       fetch(`${base}/session`, { method: "DELETE", body: JSON.stringify({ sessionId: ID }) }),
     [Symbol.asyncDispose]: async () => {
@@ -597,4 +622,116 @@ test("a photo sent during the call shows in its transcript, reaches hex to look 
   );
   await until(() => engine.instructed.length === 2);
   expect(engine.instructed[1]).toContain("just sent 2 photos");
+}, 20_000);
+
+const SILENCE = Buffer.alloc(4800).toString("base64");
+const SPEECH = Buffer.alloc(4800, 0x10).toString("base64");
+
+function stream(engine: Engine, audio: () => string) {
+  const timer = setInterval(() => {
+    engine.send({ type: "session.output_audio.delta", delta: audio() });
+  }, 100);
+
+  return {
+    [Symbol.dispose]: () => {
+      clearInterval(timer);
+    },
+  };
+}
+
+test("hex hangs up a moment after the voice goes quiet, though its audio streams silence the whole call", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  let talking = true;
+  using _audio = stream(engine, () => (talking ? SPEECH : SILENCE));
+  const asked = Date.now();
+  const hungUp = engine.tool("hang_up");
+  await Bun.sleep(1500);
+  talking = false;
+  expect(await hungUp).toEqual({ result: "hanging up" });
+  expect(Date.now() - asked).toBeGreaterThanOrEqual(3400);
+  expect(Date.now() - asked).toBeLessThan(5000);
+}, 20_000);
+
+test("a handoff the caller keeps talking past waits for their pause and carries all of it", async () => {
+  await using engine = await appCall();
+  await started(engine);
+
+  const words = (who: "you" | "voice", delta: string, start_ms: number) => {
+    engine.send({
+      type: `session.${who === "you" ? "input" : "output"}_transcript.delta`,
+      delta,
+      start_ms,
+      end_ms: start_ms + 300,
+    });
+  };
+
+  const handoffs = () => engine.told.filter((told) => told.meta?.delegation_id === "d1");
+  words("you", "who's on Opus right now", 1000);
+  engine.send({
+    type: "session.delegation.created",
+    delegation: { id: "d1", target: "client" },
+    offset_ms: 1500,
+  });
+  words("voice", "Checking.", 1600);
+  await Bun.sleep(500);
+  words("you", " hold on, I mean orchestrators", 2000);
+  await Bun.sleep(500);
+  expect(handoffs()).toEqual([]);
+  await until(() => handoffs().length);
+  expect(handoffs()[0]?.content).toContain("I mean orchestrators");
+}, 20_000);
+
+test("the phone's audio blinking tells the voice nothing, and a pause that holds tells it once each way", async () => {
+  await using engine = await appCall();
+  await started(engine);
+
+  const moment = (kind: string) =>
+    fetch(`${engine.base}/calls/${ID}/moments`, { method: "POST", body: JSON.stringify({ kind }) });
+
+  for (let i = 0; i < 4; i++) {
+    await moment("paused");
+    await moment("resumed");
+  }
+
+  await Bun.sleep(2000);
+  expect(engine.instructed).toEqual([]);
+  await moment("paused");
+  await moment("resumed");
+  await moment("paused");
+  await until(() => engine.instructed.length);
+  await moment("resumed");
+  await until(() => engine.instructed.length === 2);
+  await Bun.sleep(2000);
+  expect(engine.instructed.map((text) => text.split(":")[0])).toEqual([
+    "The caller's phone took over their audio, a phone call or Siri",
+    "The caller can hear you and talk again. Carry on where you were, without greeting them again",
+  ]);
+  expect(
+    (await engine.call()).moments?.map((each) => z.object({ kind: z.string() }).parse(each).kind),
+  ).toEqual(["paused", "resumed"]);
+}, 20_000);
+
+test("a call that spends the last of OpenAI's credit warns hex once, before the next call fails", async () => {
+  await using engine = await appCall();
+  await until(() => engine.probes());
+  await started(engine);
+  engine.spend();
+  expect((await engine.hangUp()).status).toBe(204);
+  await until(() => engine.probes() >= 2);
+  const warned = () => engine.told.filter((told) => told.meta?.credit === "out");
+  await until(() => warned().length);
+  expect(warned()[0]?.content).toContain("no credit left");
+  await fetch(`${engine.base}/session`, {
+    method: "POST",
+    body: JSON.stringify({ sdp: "offer", from: "app" }),
+  });
+  const second = await until(() => engine.live());
+  await fetch(`${engine.base}/session`, {
+    method: "DELETE",
+    body: JSON.stringify({ sessionId: second }),
+  });
+  await until(() => engine.probes() >= 3);
+  await Bun.sleep(200);
+  expect(warned()).toHaveLength(1);
 }, 20_000);

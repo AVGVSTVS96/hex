@@ -2564,6 +2564,35 @@ test("a session with no capacity takes every message of a call, idle or not, and
   expect(await launched()).not.toContain("--resume");
 });
 
+test("a call's end that reaches the session as its last turn ends gets its turn before the session renews", async () => {
+  const old = Bun.spawn(["sleep", "30"]);
+  start({
+    main: "voice",
+    registry: { voice: { name: "voice", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: old.pid, status: "idle" }],
+    reconnect: 60_000,
+    fresh: () => true,
+    capacity: 0,
+  });
+  const { received, send } = await session("voice");
+  said(20_000);
+  await hub.keep("voice");
+  await send({ type: "state", thread: "voice", busy: true });
+  hub.deliver("voice", "voice", { author: "call", content: "the call ended", meta: {} });
+  await until(() => heard(received).find((payload) => payload.content === "the call ended"));
+  hub.renew("voice");
+  await send({ type: "state", thread: "voice", busy: false });
+  await time.advance(100);
+  expect(calls().some((each) => each[0] === "stop")).toBe(false);
+  await send({ type: "state", thread: "voice", busy: true });
+  await send({ type: "state", thread: "voice", busy: false });
+  expect(await until(() => calls().find((each) => each[0] === "stop"))).toEqual([
+    "stop",
+    SESSION.slice(0, 8),
+  ]);
+  old.kill();
+});
+
 test("a call that finds its session still waiting for its first message starts it over, and keeps the call until the new one connects", async () => {
   const old = Bun.spawn(["sleep", "30"]);
   start({

@@ -125,7 +125,9 @@ export const tools = [
   }),
   tool({
     name: "hang_up",
-    description: "End the live call once the voice finishes speaking. Say goodbye with say first.",
+    _meta: { "anthropic/alwaysLoad": true },
+    description:
+      "End the live call once the voice finishes speaking. Say goodbye with say first, and call this before any other work.",
     input: z.object({}),
   }),
 ] as const;
@@ -149,7 +151,7 @@ Work that belongs to a hex thread (a Telegram topic, or a Discord, Buzz or T3 Co
 
 phone rings the caller's phone and holds the same kind of call there, for when you're asked to call them or have something worth a call. Give why, the reason you're calling in a plain sentence: the voice opens with it and the call's record keeps it. Notes you send while it rings reach the voice when the call connects. If nobody answers, the line is busy or the call fails, a message tells you. While a call is live phone refuses, unless the caller asks to move this call to their phone: then give move, and the live call ends once the phone picks up.
 
-hang_up ends the live call once the voice finishes speaking. When the caller asks you to hang up, do it first in that turn: a short goodbye with say, then hang_up, then any other work. Also hang up when a call you placed has done its job and the caller is done.
+hang_up ends the live call once the voice finishes speaking. When the caller asks you to hang up, do it first in that turn: a short goodbye with say, then hang_up, then any other work. Also hang up when a call you placed has done its job and the caller has said goodbye; a question, even "can I go?", gets its answer first.
 
 When a call ends, name it with title: a few plain words for what it was about, shown in the caller's list of past calls. Once the call's work has settled, call title again for that call with summary (what happened and what you sent where, in two or three plain sentences) and waiting (each thing left for the caller to do or decide, a short line each; an empty list when nothing is).
 

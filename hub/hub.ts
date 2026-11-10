@@ -205,6 +205,9 @@ type Run = {
   // From the session's hooks; background: its turn ended with agents still working.
   turn: "busy" | "background" | "done";
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A message went to the running session after its last turn began: until a turn begins that takes it, a rest reported meanwhile is the turn before it ending.
+  untaken?: boolean | undefined;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // asked: the session asked to start over (a call ended). stale: it started with what the hub no longer gives a session. underway: it's starting over, and its renewal waits for the new session.
   renew?: "asked" | "stale" | "underway" | undefined;
   rest?: Timer | undefined;
@@ -732,6 +735,10 @@ export function startHub({
     claim(thread);
     run.turn = working ? "busy" : background ? "background" : "done";
 
+    if (working) {
+      run.untaken = undefined;
+    }
+
     if (run.turn === "done" && (run.renew === "asked" || run.renew === "stale")) {
       void renew(thread, run.renew === "asked");
     }
@@ -755,6 +762,7 @@ export function startHub({
     if (
       !(run.renew === "asked" || run.renew === "stale") ||
       run.turn === "busy" ||
+      run.untaken === true ||
       onCall.has(run) ||
       (!rested && running?.status === "busy")
     ) {
@@ -1592,6 +1600,7 @@ export function startHub({
       if ((stale(thread) && !onCall.has(run)) || spent(thread)) {
         void refresh(thread, message);
       } else {
+        run.untaken = true;
         run.phase.line.send({ type: "inbound", ...message });
       }
 
@@ -1751,6 +1760,7 @@ export function startHub({
       : running?.status === "busy";
 
     if (working && run.queue.length === 0) {
+      run.untaken = true;
       phase.line.send({ type: "inbound", ...message });
 
       return;
@@ -1819,6 +1829,7 @@ export function startHub({
     }
 
     run.handed = new Set(given.flatMap((message) => message.meta.key ?? []));
+    run.untaken = given.length > 0;
     run.queue.length = 0;
     run.awaited = run.held.length > 0;
     rest(thread);
