@@ -4,6 +4,11 @@ import { dirname, join, resolve } from "node:path";
 
 export const WAKE = "state/wake/CLAUDE.md";
 
+export const PROFILE =
+  "My profile, the current truth about me, kept by hex's memory agent from my own words:";
+
+export const MEMORY = "Your memory, oldest first:";
+
 const IMPORT_HOPS = 5;
 
 // https://code.claude.com/docs/en/memory#import-additional-files

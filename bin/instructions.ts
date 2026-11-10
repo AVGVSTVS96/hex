@@ -47,6 +47,7 @@ export function hold(dir: string) {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   writeFileSync(join(dir, "CLAUDE.md"), `${[...files(), ...memory].map(section).join("\n\n")}\n`);
   writeFileSync(join(dir, "rules.json"), JSON.stringify(rules()));
+  writeFileSync(join(dir, "wake.md"), memory[0]?.text ?? "");
 }
 
 function hookSizedPartsSplitAtLineEnds(text: string) {

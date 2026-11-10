@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 
 import { z } from "zod";
 
+import { MEMORY, PROFILE } from "../../hub/loaded.ts";
 import { open } from "../../hub/store.ts";
 
 const BIN = join(import.meta.dir, "../../bin");
@@ -57,6 +58,9 @@ function hook(
       TMPDIR: home,
       HEX_STORE: join(home, "state"),
       CLAUDE_CONFIG_DIR: undefined,
+      HEX_HELD: undefined,
+      HEX_THREAD: undefined,
+      HEX_FRESH: undefined,
       ...env,
     },
   });
@@ -146,6 +150,122 @@ test("a memory pass rewriting the wake HEX.md imports is no change to the rules"
   hook("SessionStart");
   writeFileSync(join(home, "state/wake/CLAUDE.md"), "#0 a memory\n#1 another\n");
   expect(hook("UserPromptSubmit")).toBe("");
+});
+
+function remember(profile: string, ...notes: string[]) {
+  mkdirSync(join(home, "state/wake"), { recursive: true });
+  writeFileSync(
+    join(home, "state/wake/CLAUDE.md"),
+    `What you know.\n\n\`\`\`\n${profile && `${PROFILE}\n\n${profile}\n\n`}${MEMORY}\n\n${notes.join("\n")}\nYou are awake.\n\`\`\`\n`,
+  );
+}
+
+function holding() {
+  const dir = join(home, "held");
+  Bun.spawnSync([join(home, ".hex/bin/instructions"), "hold", dir], {
+    env: { ...process.env, HOME: home },
+  });
+
+  return { HEX_HELD: dir };
+}
+
+test("a held session hears the memory notes written since it loaded its copy, once, and not their compressions", () => {
+  remember("- Lives in a test town.", "#0-1 Two old notes, compressed.", "#2 A third note.");
+  const env = holding();
+  hook("SessionStart", "resume", env);
+  remember(
+    "- Lives in a test town.",
+    "#0-2 Three old notes, compressed.",
+    "#3 A fourth note.",
+    "#4 A fifth note.",
+  );
+  const out = hook("UserPromptSubmit", undefined, env);
+  expect(out).toContain("Your memory has 2 notes newer than the copy this session loaded");
+  expect(out).toContain("#3 A fourth note.\n#4 A fifth note.");
+  expect(out).not.toContain("compressed");
+  expect(out).not.toContain("profile");
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
+  remember(
+    "- Lives in a test town.",
+    "#0-2 Three old notes, compressed.",
+    "#3-4 Two more, compressed.",
+    "#5 A sixth.",
+  );
+  expect(hook("UserPromptSubmit", undefined, env)).toContain("Your memory has 1 note newer");
+});
+
+test("a held session hears its profile change as a diff, or whole when that's shorter", () => {
+  const rest = Array.from({ length: 20 }, (_, i) => `- Fact ${i} about them.`).join("\n");
+  remember(`- Lives in a test town.\n${rest}`, "#0 A note.");
+  const env = holding();
+  remember(`- Lives in another town.\n${rest}`, "#0 A note.");
+  const out = hook("UserPromptSubmit", undefined, env);
+  expect(out).toContain("Your profile changed since this session loaded it:");
+  expect(out).toContain("-- Lives in a test town.");
+  expect(out).toContain("+- Lives in another town.");
+  expect(out).not.toContain("Fact 10");
+  expect(out).not.toContain("Your memory has");
+  remember("- Lives in a third town.", "#0 A note.");
+  expect(hook("UserPromptSubmit", undefined, env)).toContain(
+    "Your profile changed since this session loaded it; now it reads:\n\n- Lives in a third town.",
+  );
+});
+
+test("a long way behind, a held session gets the newest notes that fit, and the rest at the next prompts", () => {
+  remember("- Lives in a test town.", "#0 A note.");
+  const env = holding();
+  remember(
+    "- Lives in a test town.",
+    "#0 A note.",
+    ...Array.from({ length: 300 }, (_, i) => `#${i + 1} ${"Something happened. ".repeat(4)}`),
+  );
+  const out = hook("UserPromptSubmit", undefined, env);
+  expect(out).toContain("Your memory has 300 notes newer");
+  expect(out).toContain("memo recall <regex>` finds the rest");
+  expect(out).toContain("#300 ");
+  expect(out).not.toContain("#1 ");
+  expect(out.length).toBeLessThan(10_000);
+  const next = hook("UserPromptSubmit", undefined, env);
+  expect(next).toContain("Your memory has 198 notes newer");
+  expect(next).not.toContain("#300 ");
+  expect(hook("UserPromptSubmit", undefined, env)).toContain("#1 ");
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
+});
+
+test("a compression mixing notes a held session has seen with ones it hasn't is sent", () => {
+  remember("- Lives in a test town.", "#4 Seen.", "#5 Seen too.");
+  const env = holding();
+  remember("- Lives in a test town.", "#4-7 Four notes, compressed.", "#8 New.");
+  const out = hook("UserPromptSubmit", undefined, env);
+  expect(out).toContain("#4-7 Four notes, compressed.\n#8 New.");
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
+});
+
+test("a wake written without the profile says nothing of it, and the profile isn't sent again after", () => {
+  remember("- Lives in a test town.", "#0 A note.");
+  const env = holding();
+  remember("", "#0 A note.", "#1 Another.");
+  expect(hook("UserPromptSubmit", undefined, env)).not.toContain("profile");
+  remember("- Lives in a test town.", "#0 A note.", "#1 Another.");
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
+});
+
+test("a compaction loads the memory again, so the notes before it aren't sent", () => {
+  remember("- Lives in a test town.", "#0 A note.");
+  const env = holding();
+  remember("- Lives in a test town.", "#0 A note.", "#1 Another.");
+  hook("SessionStart", "compact", env);
+  expect(hook("UserPromptSubmit", undefined, env)).toBe("");
+});
+
+test("a held copy from before hex kept its memory apart is read for what the session has seen", () => {
+  remember("- Lives in a test town.", "#0 A note.");
+  const env = holding();
+  rmSync(join(env.HEX_HELD, "wake.md"));
+  remember("- Lives in a test town.", "#0 A note.", "#1 Another.");
+  const out = hook("UserPromptSubmit", undefined, env);
+  expect(out).toContain("Your memory has 1 note newer");
+  expect(out).toContain("#1 Another.");
 });
 
 function commit(atSeconds: number, path: string, text: string) {
