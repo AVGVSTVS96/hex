@@ -126,7 +126,7 @@ const saidSince = (rows: Row[]) =>
 const said = (row: Row) =>
   row.author === "prompt"
     ? `${row.from === "terminal" ? "the prompt it started with" : `handed to it by ${row.meta?.user ?? row.from}`}:\n${row.body.slice(0, 4000)}`
-    : `his:\n${spoken(row)}`;
+    : `me:\n${spoken(row)}`;
 
 const got = (rows: Row[]) =>
   rows.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z] ${said(row)}`).join("\n\n");
@@ -155,11 +155,11 @@ export function asked(store: Store, session: string, text: string): string {
 
   return [
     tasks.length > 0
-      ? `The tasks it names or this session works on, with his words:\n\n${tasks.map((task) => render(task, store.threads.names())).join("\n\n")}`
+      ? `The tasks it names or this session works on, with my words:\n\n${tasks.map((task) => render(task, store.threads.names())).join("\n\n")}`
       : "",
     cited.length > 0 ? `His messages it cites:\n\n${quote(cited)}` : "",
     given.length > 0
-      ? `The newest words this session got, oldest first, his and the work hex handed it:\n\n${got(given)}`
+      ? `The newest words this session got, oldest first, mine and the work hex handed it:\n\n${got(given)}`
       : "",
     since.length > 0
       ? `What this session has said since, newest last:\n\n${since.map((row) => `[${row.key} · ${row.at.slice(0, 16)}Z]\n${row.body.slice(0, 1000)}`).join("\n\n")}`
@@ -286,7 +286,7 @@ export async function check(
 
   const words =
     asked(store, session, text) ||
-    "No task or message of his was found for this brief; judge it by his rules and memory.";
+    "No task or message of mine was found for this brief; judge it by my rules and memory.";
 
   try {
     const verdict = await decide(
