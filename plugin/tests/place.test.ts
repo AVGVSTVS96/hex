@@ -67,7 +67,7 @@ function place(settings: Record<string, string> = {}, wait = 10_000) {
   rmSync(join(fake, "told"), { force: true });
 
   const ran = Bun.spawnSync(
-    ["timeout", `${wait / 1000}`, join(home, ".hex/bin/place"), "hex/deck", "-p", "build it"],
+    ["timeout", `${wait / 1000}`, join(home, ".hex/bin/place"), "hex/atrium", "-p", "build it"],
     {
       cwd: home,
       stdin: Buffer.from("the log"),
@@ -90,7 +90,7 @@ function place(settings: Record<string, string> = {}, wait = 10_000) {
 test("a job runs here as a hex session while this machine has room, with what came on its stdin", () => {
   machine(here, "cpu 3% busy", 0);
   expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
-    `hex/deck runs on ${here}\nsession -n hex/deck -p build it the log\n`,
+    `hex/atrium runs on ${here}\nsession -n hex/atrium -p build it the log\n`,
   );
 });
 
@@ -104,7 +104,7 @@ test("a job goes to the next machine with room, as a T3 Code thread on that mach
   machine(here, "cpu 80% busy", 1);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
   expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
-    "hex/deck runs on mac\naway mac env-mac hex/deck -p build it the log\n",
+    "hex/atrium runs on mac\naway mac env-mac hex/atrium -p build it the log\n",
   );
 });
 
@@ -119,7 +119,7 @@ test("held slots, a machine without a hex T3 Code, and one where the job could n
   const { out, code } = place({ HEX_SLOTS: "1", HEX_MACHINES: "cloud:1 mini mac:3" });
   held.kill();
   expect(out).toBe(
-    "hex/deck runs on mini\naway mini env-mini hex/deck -p build it the log\nhex/deck runs on mac\naway mac env-mac hex/deck -p build it the log\n",
+    "hex/atrium runs on mini\naway mini env-mini hex/atrium -p build it the log\nhex/atrium runs on mac\naway mac env-mac hex/atrium -p build it the log\n",
   );
   expect(code).toBe(0);
 });
@@ -129,7 +129,7 @@ test("a machine whose T3 Code doesn't answer is passed over for that round only"
   machine("mini", "cpu 1% busy\nt3 env-mini", 0, 77);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
   expect(place({ HEX_MACHINES: "mini:1 mac:3" }).out).toBe(
-    "hex/deck runs on mini\naway mini env-mini hex/deck -p build it the log\nhex/deck runs on mac\naway mac env-mac hex/deck -p build it the log\n",
+    "hex/atrium runs on mini\naway mini env-mini hex/atrium -p build it the log\nhex/atrium runs on mac\naway mac env-mac hex/atrium -p build it the log\n",
   );
 });
 
@@ -137,9 +137,9 @@ test("with no room anywhere a job waits, and its owner hears it once, with every
   machine(here, "cpu 80% busy", 1);
   machine("mac", "", 255);
   const { out, told } = place({ HEX_MACHINES: "mac:3" }, 3000);
-  expect(out).toBe(`hex/deck waits for room:\n${here}: cpu 80% busy\nmac: no answer\n`);
+  expect(out).toBe(`hex/atrium waits for room:\n${here}: cpu 80% busy\nmac: no answer\n`);
   expect(told).toBe(
-    `--waiting deck telegram:-100123:101 \n${here}: cpu 80% busy\nmac: no answer\n`,
+    `--waiting atrium telegram:-100123:101 \n${here}: cpu 80% busy\nmac: no answer\n`,
   );
 });
 
@@ -163,7 +163,7 @@ test("a stopped job keeps its slot until it has stopped, as systemd's stop reach
     `trap 'sleep 2; echo stopped >> "${fake}/stops"; exit 143' TERM; echo started > "${fake}/started"; sleep 30 & wait`,
   );
 
-  const unit = Bun.spawn(["setsid", join(home, ".hex/bin/place"), "hex/deck", "-p", "build it"], {
+  const unit = Bun.spawn(["setsid", join(home, ".hex/bin/place"), "hex/atrium", "-p", "build it"], {
     cwd: home,
     stdin: Buffer.from(""),
     env: {

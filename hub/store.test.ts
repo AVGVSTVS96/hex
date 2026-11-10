@@ -348,7 +348,7 @@ test("hex deliver says how to call it when something is missing", async () => {
 });
 
 test("hex deliver reaches a thread by its id, and a sender alone gets a key of its own", async () => {
-  open(dir).threads.keep("discord", { "1561": { name: "Fixhex" } });
+  open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
 
   const cli = Bun.spawn([
     "bun",
@@ -422,18 +422,18 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
 
   session("4c1d9f07-82da-46a4-8a80-802ddb4fbec5", "hex/garden-plugins2");
   session("4c1d9f07-ffff-4000-8000-000000000000", "hex/garden-import2");
-  session("9762845b-0000-4000-8000-000000000000", "hex notes", "-100:4803");
-  session("5cc4f530-0000-4000-8000-000000000000", "Watchdog", "-100:4801");
-  session("7ac61e5d-0000-4000-8000-000000000000", "Video clips", "-100:103", dir, "");
+  session("d4e6f9c5-0000-4000-8000-000000000000", "hex notes", "-100:4803");
+  session("b2e4d7a3-0000-4000-8000-000000000000", "Watchdog", "-100:4801");
+  session("c3d5e8b4-0000-4000-8000-000000000000", "Video clips", "-100:103", dir, "");
   session(
-    "e3bbf1d4-0000-4000-8000-000000000000",
+    "e5f7a0d6-0000-4000-8000-000000000000",
     "another hex",
     "-100:4716",
     join(dir, "elsewhere"),
   );
   open(dir).threads.keep("telegram", {
     "-100:4801": { name: "Watchdog" },
-    "-100:4802": { name: "website", session: "3d599dd0-0000-4000-8000-000000000000" },
+    "-100:4802": { name: "website", session: "a1f3c6d2-0000-4000-8000-000000000000" },
   });
   open(dir).turns.turned("d4365c34-312f-4a52-9704-36fcf657e5b9", true);
   open(dir).threads.keep("telegram", {
@@ -464,23 +464,23 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     "b7e2c5a9",
     "B7E2C5A9",
     "b7e2c5a9-11f6-4698-9b9e-c80b1d5aebdf",
-    "9762845b",
-    "7ac61e5d",
+    "d4e6f9c5",
+    "c3d5e8b4",
   ]) {
     expect(await deliver(to)).toEqual({ code: 0, said: "" });
   }
 
-  for (const to of ["5cc4f530", "3d599dd0"]) {
+  for (const to of ["b2e4d7a3", "a1f3c6d2"]) {
     expect(await deliver(to)).toEqual({
       code: 0,
       said: containing("is closed, so this waits until it opens"),
     });
   }
 
-  expect(await deliver("e3bbf1d4")).toEqual({
+  expect(await deliver("e5f7a0d6")).toEqual({
     code: 1,
     said: containing(
-      "e3bbf1d4-0000-4000-8000-000000000000 (another hex) is a session no thread holds",
+      "e5f7a0d6-0000-4000-8000-000000000000 (another hex) is a session no thread holds",
     ),
   });
   expect(await deliver("d4365c34-312f-4a52-9704-36fcf657e5b9")).toEqual({
@@ -1203,24 +1203,24 @@ test("a session that only posted in a thread, as General does opening a topic, i
 test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
   const store = new Store(dir);
   store.threads.keep("telegram", {
-    "-100:7": { name: "tokenhub", session: "s-1", cwd: "/w" },
+    "-100:7": { name: "pricehub", session: "s-1", cwd: "/w" },
     "-100:8": { name: "website" },
   });
   store.threads.keep("telegram", {
     "-100:7": {
-      name: "tokenhub and deck",
+      name: "pricehub and stage",
       session: "s-2",
       model: "opus",
       link: "https://t.me/c/100/7",
     },
   });
-  store.threads.keep("discord", { "1561": { name: "Fixhex" } });
+  store.threads.keep("discord", { "1561": { name: "Repair" } });
   expect(store.threads.list()).toEqual([
-    { app: "discord", thread: "1561", name: "Fixhex", open: true },
+    { app: "discord", thread: "1561", name: "Repair", open: true },
     {
       app: "telegram",
       thread: "-100:7",
-      name: "tokenhub and deck",
+      name: "pricehub and stage",
       session: "s-2",
       model: "opus",
       link: "https://t.me/c/100/7",
@@ -1235,16 +1235,16 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
 
 test("a thread's key names it in every app, and its id is <app>:<key>", async () => {
   const store = new Store(dir);
-  store.threads.keep("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
-  store.threads.keep("telegram", { "-100:7": { name: "Lab" } });
-  store.threads.keep("buzz", { "1561": { name: "Lab" }, abc: { name: "Buzz lab" } });
+  store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
+  store.threads.keep("telegram", { "-100:7": { name: "Shop" } });
+  store.threads.keep("buzz", { "1561": { name: "Shop" }, abc: { name: "Buzz shop" } });
   expect(store.threads.list({ app: "buzz" }).map(({ thread }) => thread)).toEqual(["1561", "abc"]);
-  store.threads.keep("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
+  store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
   expect(store.threads.names()).toEqual({
-    "1561": "Fixhex",
-    "1562": "Deck",
-    "-100:7": "Lab",
-    abc: "Buzz lab",
+    "1561": "Repair",
+    "1562": "Stage",
+    "-100:7": "Shop",
+    abc: "Buzz shop",
   });
   expect(store.threads.ids()).toEqual({
     "1561": "discord:1561",
@@ -1464,7 +1464,7 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
       threadId: "discord:1561",
     },
   ]);
-  open(dir).threads.keep("discord", { "1561": { name: "Fixhex" } });
+  open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
   expect(await hex("--thread", "discord:1561", "--json")).toBe(
     await hex("--thread", "1561", "--json"),
   );

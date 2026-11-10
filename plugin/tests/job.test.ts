@@ -121,16 +121,16 @@ test("a job a hex session starts is its thread's, in that session's own app, and
 });
 
 test("an agent job goes to a machine with room, from the folder it was started from", () => {
-  const priced = run(["deck", "claude", "-p", "cost $5 in $HOME"], session).args;
+  const priced = run(["atrium", "claude", "-p", "cost $5 in $HOME"], session).args;
   expect(priced.at(-1)).toBe("cost $$5 in $$HOME");
-  const project = mkdtempSync(join(home, "deck-"));
-  const away = run(["deck", "claude", "-p", "build it", "--model", "opus"], session, project);
+  const project = mkdtempSync(join(home, "atrium-"));
+  const away = run(["atrium", "claude", "-p", "build it", "--model", "opus"], session, project);
   expect(away.args).toContain(`--working-directory=${project}`);
   const placed: unknown[] = away.args.slice(away.args.indexOf("--"));
   expect(placed).toEqual([
     "--",
     join(home, ".hex/bin/place"),
-    "hex/deck",
+    "hex/atrium",
     "--session-id",
     matching(/^[0-9a-f-]{36}$/u),
     "-p",
@@ -138,28 +138,28 @@ test("an agent job goes to a machine with room, from the folder it was started f
     "--model",
     "opus",
   ]);
-  const chosen = run(["deck", "claude", "--session-id", "abc", "-p", "go"], session).args;
+  const chosen = run(["atrium", "claude", "--session-id", "abc", "-p", "go"], session).args;
   expect(chosen.slice(chosen.indexOf("--"))).toEqual([
     "--",
     join(home, ".hex/bin/place"),
-    "hex/deck",
+    "hex/atrium",
     "--session-id",
     "abc",
     "-p",
     "go",
   ]);
-  const resumed = run(["deck", "claude", "--resume", "abc", "-p", "go on"], session).args;
+  const resumed = run(["atrium", "claude", "--resume", "abc", "-p", "go on"], session).args;
   expect(resumed.slice(resumed.indexOf("--"))).toEqual([
     "--",
     join(home, ".hex/bin/place"),
-    "hex/deck",
+    "hex/atrium",
     "--resume",
     "abc",
     "-p",
     "go on",
   ]);
   expect(value(away.args, "StandardInputData")).toBeUndefined();
-  const piped = run(["deck", "claude", "-p"], session, home, "Build the Usage tab.\n");
+  const piped = run(["atrium", "claude", "-p"], session, home, "Build the Usage tab.\n");
   expect(Buffer.from(value(piped.args, "StandardInputData") ?? "", "base64").toString()).toBe(
     "Build the Usage tab.\n",
   );
@@ -168,7 +168,7 @@ test("an agent job goes to a machine with room, from the folder it was started f
 async function launchedOverASocket(write?: string) {
   rmSync(ran, { force: true });
 
-  const child = Bun.spawn(["bun", job, "deck", "claude", "-p"], {
+  const child = Bun.spawn(["bun", job, "atrium", "claude", "-p"], {
     cwd: home,
     stdin: "pipe",
     env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, ...session },
@@ -194,8 +194,8 @@ test("an agent job starts whether its parent's stdin socket stays silent, or car
 });
 
 test("a shell that would run Claude is told how to start it as a hex session", () => {
-  expect(run(["deck", "sh", "-c", "cd deck && claude -p go"], session).error).toContain(
-    'job deck claude -p "<prompt>"',
+  expect(run(["atrium", "sh", "-c", "cd atrium && claude -p go"], session).error).toContain(
+    'job atrium claude -p "<prompt>"',
   );
   expect(run(["build", "rm", "-rf", ".claude/worktrees/old"], session).error).toBe("");
 });
@@ -217,7 +217,7 @@ test("a job session's prompts are hex's words in hex.db, the first and every lat
 
   hook(
     "busy",
-    { session_id: "job-1", prompt: "Build the deck tab." },
+    { session_id: "job-1", prompt: "Build the atrium tab." },
     { HEX_OWNER: "t3:stray-key" },
   );
   hook(
@@ -249,7 +249,7 @@ test("a job session's prompts are hex's words in hex.db, the first and every lat
     .map(({ to, from, author, body, taken }) => ({ to, from, author, body, by: taken?.by }));
 
   expect(rows).toEqual([
-    { to: "job-1", from: "terminal", author: "prompt", body: "Build the deck tab.", by: "job-1" },
+    { to: "job-1", from: "terminal", author: "prompt", body: "Build the atrium tab.", by: "job-1" },
     { to: "job-1", from: "terminal", author: "hex", body: "Built.", by: "job-1" },
     { to: "job-1", from: "terminal", author: "prompt", body: "make the tab blue", by: "job-1" },
     { to: "mine-1", from: "terminal", author: "owner", body: "what is up", by: "mine-1" },
@@ -351,10 +351,10 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   const jobs = join(home, "state/jobs");
   rmSync(jobs, { recursive: true, force: true });
   const config = join(home, "claude");
-  mkdirSync(join(config, "projects/-deck"), { recursive: true });
-  writeFileSync(join(config, "projects/-deck/s-1.jsonl"), "{}\n");
+  mkdirSync(join(config, "projects/-atrium"), { recursive: true });
+  writeFileSync(join(config, "projects/-atrium/s-1.jsonl"), "{}\n");
   run(
-    ["deck", "claude", "--session-id", "s-1", "-p", "build the deck", "--model", "opus"],
+    ["atrium", "claude", "--session-id", "s-1", "-p", "build the atrium", "--model", "opus"],
     session,
   );
   run(["early", "claude", "--session-id", "s-2", "-p", "never saved"], session);
@@ -385,11 +385,11 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
 
   expect(resumed.exitCode).toBe(0);
   const args = Args.parse(JSON.parse(readFileSync(ran, "utf-8")));
-  expect(args).toContain("--unit=deck");
+  expect(args).toContain("--unit=atrium");
   expect(args.slice(args.indexOf("--"), -1)).toEqual([
     "--",
     join(home, ".hex/bin/place"),
-    "hex/deck",
+    "hex/atrium",
     "-p",
     "--model",
     "opus",
@@ -397,7 +397,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     "s-1",
   ]);
   expect(args.at(-1)).toContain("carry on");
-  expect(readdirSync(jobs).toSorted()).toEqual(["deck.json", "live.json"]);
+  expect(readdirSync(jobs).toSorted()).toEqual(["atrium.json", "live.json"]);
 
   const told: unknown[] = z
     .array(z.string())
@@ -412,7 +412,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     .toSorted();
 
   expect(told).toEqual([
-    containing("[job] deck stopped when the machine went down, and resumed"),
+    containing("[job] atrium stopped when the machine went down, and resumed"),
     containing("[job] early stopped"),
     containing("[job] make stopped"),
   ]);

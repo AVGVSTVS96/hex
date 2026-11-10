@@ -660,7 +660,7 @@ test("a new thread shows up when its app keeps it in hex.db, once its session ha
 test("a T3 Code thread is placed by T3's own title for it, where T3 has one", async () => {
   threads("t3", {
     mapped: {
-      name: "Voice app",
+      name: "Phone app",
       session: "d3000001-mapped",
       link: "t3code://threads/env-1/4a1e7c52",
     },
@@ -671,11 +671,11 @@ test("a T3 Code thread is placed by T3's own title for it, where T3 has one", as
     job(session, { state: "done", detail: "ok", updatedAt: ago(1) });
   }
 
-  mapped("mapped", "4a1e7c52", { title: "Voice app restyle" });
-  await until(() => board.get("t3:mapped")?.place === "Voice app restyle");
+  mapped("mapped", "4a1e7c52", { title: "Phone app restyle" });
+  await until(() => board.get("t3:mapped")?.place === "Phone app restyle");
   expect(board.get("t3:mapped")).toMatchObject({
     link: "t3code://threads/env-1/4a1e7c52",
-    name: "Voice app",
+    name: "Phone app",
   });
   expect(found(board.get("t3:unmapped")).place).toBe("Unmapped");
 });
@@ -1354,32 +1354,32 @@ test("a thread stays working while a session it started runs, that session one o
   });
   threads("telegram", {
     ...telegram,
-    "-1001234567890:106": { name: "lab", session: "32753275-lab" },
+    "-1001234567890:106": { name: "shop", session: "32753275-shop" },
   });
-  job("32753275-lab", { state: "done", detail: "started the build", updatedAt: ago(1) });
-  running("32753275-lab", "idle");
-  const lab = () => board.get("telegram:-1001234567890:106");
-  await until(() => lab()?.state === "done");
+  job("32753275-shop", { state: "done", detail: "started the build", updatedAt: ago(1) });
+  running("32753275-shop", "idle");
+  const shop = () => board.get("telegram:-1001234567890:106");
+  await until(() => shop()?.state === "done");
   running("78787878-build", "busy", build.pid, {
     kind: "interactive",
-    name: "lab-build-c0",
+    name: "shop-build-c0",
     cwd: "/scratch/build",
     startedAt: Date.now(),
   });
-  await until(() => lab()?.state === "working");
-  expect(found(lab()).agents.map((agent) => [agent.id, agent.label, agent.state])).toEqual([
-    ["78787878-build", "lab-build-c0", "working"],
+  await until(() => shop()?.state === "working");
+  expect(found(shop()).agents.map((agent) => [agent.id, agent.label, agent.state])).toEqual([
+    ["78787878-build", "shop-build-c0", "working"],
   ]);
   expect(board.get("claude:78787878")).toBeUndefined();
   toolUse(join(claude, "projects", "-scratch-build", "78787878-build.jsonl"), "Read", {
     file_path: "/scratch/build/plan.md",
   });
-  await until(() => lab()?.agents[0]?.line === "Reading plan.md");
+  await until(() => shop()?.agents[0]?.line === "Reading plan.md");
   rmSync(join(claude, "sessions", "78787878.json"));
-  await until(() => lab()?.state === "done");
-  running("32753275-lab", "shell");
-  await until(() => lab()?.state === "working");
-  expect(found(lab()).running).toBe(false);
+  await until(() => shop()?.state === "done");
+  running("32753275-shop", "shell");
+  await until(() => shop()?.state === "working");
+  expect(found(shop()).running).toBe(false);
 });
 
 test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a run of its own, with what it launched", async () => {
@@ -1621,7 +1621,7 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
   job("f1f1f1f1-fix", { state: "done", detail: "sent it on", updatedAt: ago(3) });
   job("f2f2f2f2-prims", { state: "working", detail: "building", updatedAt: ago(1) });
   running("f1f1f1f1-fix", "idle");
-  mapped("prims", "thread-prims", { title: "hex primitives + durability" });
+  mapped("prims", "thread-prims", { title: "shared parts + durability" });
   mapped("codex", "thread-codex", { driver: "codex", title: "sol: a second look" });
   const first = t3Run("thread-prims", 1, { status: "completed", since: ago(60), end: ago(50) });
   const relayed = t3Run("thread-prims", 2, { since: ago(2) });
@@ -1642,7 +1642,7 @@ test("a T3 thread another hex thread sent work to shows under the sender while t
   expect(
     found(fix()).agents.map((agent) => [agent.label, agent.state, agent.via, agent.line]),
   ).toEqual([
-    ["hex primitives + durability", "working", "t3", undefined],
+    ["shared parts + durability", "working", "t3", undefined],
     ["sol: a second look", "done", "t3", "Looks sound."],
   ]);
   expect(board.get("t3:prims")).toBeUndefined();
@@ -1697,7 +1697,7 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
   });
   threads("discord", {
     gone: {
-      name: "Data kit",
+      name: "Asset pack",
       session: "abababab-gone",
       link: "https://discord.com/channels/1/gone",
     },
@@ -1714,9 +1714,9 @@ test("a thread off the board, quiet for a week or closed, is a page of what was 
     id: "discord:gone",
     app: "discord",
     thread: "gone",
-    name: "Data kit",
+    name: "Asset pack",
     where: "Discord",
-    place: "Data kit",
+    place: "Asset pack",
     at: updatedAt("abababab"),
     link: "https://discord.com/channels/1/gone",
   });
@@ -2441,11 +2441,11 @@ test("agents a topic starts for a task General owns with no project stay under t
     to: "-1001234567890",
     from: "telegram",
     author: "owner",
-    body: "tidy the voice app",
+    body: "tidy the phone app",
   });
 
   const tidy = store.tasks.create({
-    title: "Tidy the voice app",
+    title: "Tidy the phone app",
     message: "telegram:-1001234567890:9005",
     owner: "-1001234567890",
   });

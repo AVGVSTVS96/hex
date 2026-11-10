@@ -30,7 +30,7 @@ Every section is one headline, one short line and a visual. Let the visuals expl
 
 ## Link preview
 
-*(og.html beside og.png, 1200×630, rendered with brand-it's shoot.mjs. The hero as on the page, then four stat blocks. No competitor names here.)*
+*(og.html beside og.png, 1200×630, rendered with a screenshot script. The hero as on the page, then four stat blocks. No competitor names here.)*
 
 - ~16,000 · lines of hex itself
 - $0 · extra on your Claude plan

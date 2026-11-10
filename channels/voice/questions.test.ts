@@ -302,7 +302,7 @@ test("a question asked in General or a DM comes with none of hex's messages befo
     at: "2026-10-13T19:00:00.000Z",
   });
 
-  const row = asked(8, "Portfolio: add the panel row?", ["Add it", "Skip"], {
+  const row = asked(8, "Website: add the panel row?", ["Add it", "Skip"], {
     thread: DM,
     at: "2026-10-13T19:00:00.000Z",
   });
@@ -325,7 +325,7 @@ test("a question asked in General or a DM comes with none of hex's messages befo
           kind: "yesno",
           task: `telegram:${DESK}`,
           at: "2026-10-13T19:00:00.000Z",
-          question: "Portfolio: add the panel row?",
+          question: "Website: add the panel row?",
           options: [{ label: "Add it" }, { label: "Skip" }],
           from: [{ app: "telegram", thread: DM, message: 8 }],
           refs: [{ app: "telegram", thread: DM, message: 8 }],
@@ -349,7 +349,7 @@ test("a question asked in General or a DM comes with none of hex's messages befo
   expect(questions.words("check:panel-row")).toEqual({
     place: "DM",
     at: "2026-10-13T19:00:00.000Z",
-    text: "Portfolio: add the panel row?",
+    text: "Website: add the panel row?",
   });
   expect(questions.words(`telegram:${GROUP}:9`)).toBeUndefined();
   expect(await questions.note("check:panel-row", "which row?", "app")).toEqual({

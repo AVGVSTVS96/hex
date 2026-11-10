@@ -148,7 +148,7 @@ const server = Bun.serve({
             ? [
                 {
                   threadId: "t1",
-                  title: "hex/deck · inv1",
+                  title: "hex/atrium · inv1",
                   latestRunId: "r1",
                   link: "<t3-thread://v2/env-mac/t1>",
                 },
@@ -225,7 +225,7 @@ afterAll(() => {
 
 const away = (args: string[], stdin = "") => {
   const run = Bun.spawn(
-    ["bun", join(home, ".hex/bin/away"), "mac", "env-mac", "hex/deck", ...args],
+    ["bun", join(home, ".hex/bin/away"), "mac", "env-mac", "hex/atrium", ...args],
     {
       cwd: home,
       stdin: Buffer.from(stdin),
@@ -273,15 +273,15 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
 
   expect(await run.exited).toBe(0);
   expect(await out()).toBe(
-    "hex/deck runs on mac as T3 Code thread <t3-thread://v2/env-mac/t1>\nBuilt the Usage tab.\n",
+    "hex/atrium runs on mac as T3 Code thread <t3-thread://v2/env-mac/t1>\nBuilt the Usage tab.\n",
   );
   const launch = calls.find(({ name }) => name === "t3_thread_launch")?.arguments ?? {};
   expect(launch).toMatchObject({
     environmentId: "env-mac",
     scratch: true,
     runtimeMode: "full-access",
-    title: "hex/deck · inv1",
-    clientRequestId: "hex-job-hex/deck-mac-inv1",
+    title: "hex/atrium · inv1",
+    clientRequestId: "hex-job-hex/atrium-mac-inv1",
   });
   expect(launch.modelSelection).toEqual({
     provider: "claudeAgent",
@@ -317,7 +317,7 @@ test("a job whose thread stops at a question ends there, with the question as it
   const { run, out } = away(["-p", "Build it."]);
   expect(await run.exited).toBe(1);
   expect(await out()).toEndWith(
-    "hex/deck stopped on mac at a question, which a job can't answer: Which branch should I push to?\n",
+    "hex/atrium stopped on mac at a question, which a job can't answer: Which branch should I push to?\n",
   );
   expect(calls.find(({ name }) => name === "t3_thread_interrupt")).toMatchObject({
     name: "t3_thread_interrupt",
@@ -386,7 +386,7 @@ test("a job stopped while its launch may have reached the other machine finds th
   expect(
     calls.some(
       ({ name, arguments: input }) =>
-        name === "t3_thread_list" && input.titleContains === "hex/deck · inv1",
+        name === "t3_thread_list" && input.titleContains === "hex/atrium · inv1",
     ),
   ).toBe(true);
   expect(calls.find(({ name }) => name === "t3_thread_interrupt")).toMatchObject({
@@ -421,7 +421,7 @@ test("a launch that was tried and refused fails the job there, rather than movin
   refuse = "t3_thread_launch";
   const launch = away(["-p", "Build it."]);
   expect(await launch.run.exited).toBe(1);
-  expect(await launch.error()).toContain("hex/deck couldn't start on mac");
+  expect(await launch.error()).toContain("hex/atrium couldn't start on mac");
 });
 
 test("a stop that can't reach the thread tells the job's owner where it may still be running", async () => {
@@ -433,7 +433,7 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
   );
 
   const run = Bun.spawn(
-    ["bun", join(home, ".hex/bin/away"), "mac", "env-mac", "hex/deck", "-p", "Build it."],
+    ["bun", join(home, ".hex/bin/away"), "mac", "env-mac", "hex/atrium", "-p", "Build it."],
     {
       cwd: home,
       stdin: Buffer.from(""),
@@ -451,7 +451,7 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
   expect(readFileSync(join(home, "told"), "utf-8")).toBe(
-    '--tell|deck|telegram:-100123:101|couldn\'t stop on mac (t3_thread_interrupt: {"code":"capability_denied","message":"no link"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|',
+    '--tell|atrium|telegram:-100123:101|couldn\'t stop on mac (t3_thread_interrupt: {"code":"capability_denied","message":"no link"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|',
   );
 }, 20_000);
 

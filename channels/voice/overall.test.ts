@@ -85,7 +85,7 @@ test("everything hex runs, one line each: what waits on the caller first, then t
       ],
     }),
     run("orchard", { state: "needs", needs: "Pick a music style" }),
-    run("lab", { where: "Discord", since: ago(150) }),
+    run("shop", { where: "Discord", since: ago(150) }),
     run("voice", { app: "voice", where: "Voice", agents: [agent("mail lookup")] }),
     run("hex/clips", { app: "claude", where: "Claude Code", line: "cutting clips", since: ago(1) }),
   ];
@@ -116,7 +116,7 @@ test("everything hex runs, one line each: what waits on the caller first, then t
       "Everything hex is running, 2 threads working, 1 waiting on you:",
       "- orchard (Telegram) waits on you: Pick a music style",
       "- phoneapp (Telegram), working for 10 minutes: Editing board.ts; 2 agents: Build the Tasks view, review-build",
-      "- lab (Discord), working for 3 hours",
+      "- shop (Discord), working for 3 hours",
       "- This call's agents: mail lookup",
       "- hex/clips, working for 1 minute: cutting clips",
       "- The job backup for hex, running for 3 days",
@@ -163,7 +163,7 @@ test("the questions hex keeps for the caller wait on them too, past those of a t
 test("a job shows while the session it ran has stopped, even though its thread's last stretch still lists it", () => {
   const runs = [
     run("hex", { state: "idle", agents: [agent("hex/build")] }),
-    run("lab", { agents: [agent("lab/check", "done")] }),
+    run("shop", { agents: [agent("shop/check", "done")] }),
   ];
 
   const units = [
@@ -172,10 +172,10 @@ test("a job shows while the session it ran has stopped, even though its thread's
   ];
 
   expect(
-    overall(runs, [], units, { "-100:42": "hex", "-100:43": "lab" }, now).split("\n").slice(2),
+    overall(runs, [], units, { "-100:42": "hex", "-100:43": "shop" }, now).split("\n").slice(2),
   ).toEqual([
     "- The job build for hex, running for 20 minutes",
-    "- The job check for lab, running for 5 minutes",
+    "- The job check for shop, running for 5 minutes",
   ]);
 });
 
@@ -229,7 +229,7 @@ esac
 
 test("a job is on the board only under the name bin/job gave it, never under another thread’s session of the same unit", () => {
   const runs = [
-    run("lab", { agents: [agent("lab/build")] }),
+    run("shop", { agents: [agent("shop/build")] }),
     run("hex", { agents: [agent("hex/deploy")] }),
   ];
 
@@ -330,7 +330,7 @@ test("a job is at work when a busy Claude Code session runs in its unit's cgroup
 });
 
 test("a session outside any thread counts as no thread in what the call hears first", () => {
-  const runs = [run("lab"), run("hex/clips", { app: "claude", where: "Claude Code" })];
+  const runs = [run("shop"), run("hex/clips", { app: "claude", where: "Claude Code" })];
   expect(overall(runs, [], [], {}, now).split("\n")[0]).toBe(
     "Everything hex is running, 1 thread working:",
   );

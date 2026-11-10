@@ -82,7 +82,7 @@ export const tools = [
       thread: z
         .string()
         .describe(
-          "The thread's name (like voiceapp) or id; with app, the one-word name of the new thread",
+          "The thread's name (like phoneapp) or id; with app, the one-word name of the new thread",
         ),
       about: z
         .string()

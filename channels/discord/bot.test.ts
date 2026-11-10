@@ -1004,7 +1004,7 @@ test("a thread the owner opens on his message starts from that message, kept in 
   emit("messageCreate", { ...asked });
 
   const thread = channel(asked.id, {
-    name: "audit hex workers, keep on track",
+    name: "audit the workers",
     type: ChannelType.PublicThread,
     parent: general,
     ownerId: OWNER,
@@ -1644,7 +1644,7 @@ test("a backfill posts each line through one webhook of the channel, as the owne
   });
 
   const thread = channel("4101", {
-    name: "Context check",
+    name: "Status check",
     type: ChannelType.PublicThread,
     parent: repo,
     guild: { members: { me: { displayName: "hex" } } },
