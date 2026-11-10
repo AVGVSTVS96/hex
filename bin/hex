@@ -110,7 +110,7 @@ case "${1:-}" in
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
     ;;
-  deliver|task|tasks|hold|holds|questions|pins|threads|running|message|profile|log|recall|watch)
+  deliver|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
@@ -166,7 +166,7 @@ case "${1:-}" in
     [ "$problems" -eq 0 ] && echo "hex looks healthy" || { echo "$problems to fix"; exit 1; }
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|doctor|run|acp|deliver|task|tasks|hold|holds|questions|pins|threads|running|message|profile|log|recall|watch" >&2
+    echo "usage: hex init|start|stop|restart|status|doctor|run|acp|deliver|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch" >&2
     exit 2
     ;;
 esac

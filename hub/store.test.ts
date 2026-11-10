@@ -1298,6 +1298,23 @@ test("hex thread files a thread under the project it's part of, kept as its app 
   expect(await hex("thread", "Nowhere", "--project", "iikb")).not.toBe(0);
 });
 
+test("bin/hex hands hex's cli every command its usage lists", async () => {
+  const usage = await new Response(
+    Bun.spawn(["bun", join(import.meta.dir, "cli.ts"), dir], { stderr: "pipe" }).stderr,
+  ).text();
+
+  const commands = [
+    ...new Set([...usage.matchAll(/^ {2}hex (\w+)/gmu)].flatMap(([, command]) => command ?? [])),
+  ];
+
+  const handed = /^ {2}([a-z|]+)\)\n {4}export MEMORY_DIR/mu
+    .exec(readFileSync(join(import.meta.dir, "../bin/hex"), "utf-8"))?.[1]
+    ?.split("|");
+
+  expect(commands).toContain("thread");
+  expect(commands.filter((command) => handed?.includes(command) !== true)).toEqual([]);
+});
+
 test("a key two apps had before keys were global keeps its open, then newest, row", () => {
   const store = new Store(dir);
   store.db.run("drop index threads_key; pragma user_version = 23");
