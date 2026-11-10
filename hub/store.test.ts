@@ -1812,6 +1812,11 @@ test("a store that syncs in the background shows a write at once, says when it's
   expect(other.query("select count(*) as n from messages").get()).toEqual({ n: 1500 });
   await store.synced();
   await until(() => Bun.file(join(dir, "hex.db")).size > 4_000_000);
+
+  const framesInWal = () =>
+    new DataView(readFileSync(join(dir, "hex.db-shm")).buffer).getUint32(16, true);
+
+  await until(() => framesInWal() < 1000);
   other.close();
 });
 
