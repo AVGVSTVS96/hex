@@ -54,7 +54,14 @@ case "${1:-}" in
     MEMORY_DIR="$home/memory" "$hex/vendor/memo" init >/dev/null
     (. "$hex/bin/settings"; export HEX_STORE="$home/state"; wake) || :
     chmod 700 "$home" "$home/state"
-    [ -d "$home/.git" ] || { git -C "$home" init -q && git -C "$home" add -A && git -C "$home" commit -qm "chore: a new hex"; }
+    if ! git -C "$home" rev-parse -q --verify HEAD >/dev/null 2>&1; then
+      git -C "$home" init -q
+      git -C "$home" add -A
+      # A fresh machine has no git identity, which would fail the first commit.
+      identity=
+      { git -C "$home" var GIT_AUTHOR_IDENT && git -C "$home" var GIT_COMMITTER_IDENT; } >/dev/null 2>&1 || identity="-c user.name=hex -c user.email=hex@localhost"
+      git -C "$home" $identity commit -qm "chore: a new hex"
+    fi
     echo "hex is set up in $home"
     ;;
   run)
