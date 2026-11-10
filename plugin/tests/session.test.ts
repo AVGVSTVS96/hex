@@ -155,7 +155,7 @@ async function launch(
 }
 
 test("a DM session the hub starts gets the chat prompt, its view's tail and wake through its settings, since Claude's daemon starts a --bg session with the daemon's environment rather than the launcher's, and its settings, token included, stay in an owner-only file", async () => {
-  const { args, file, settings } = await launch("plugin:telegram@hex", "6296842341", {
+  const { args, file, settings } = await launch("plugin:telegram@hex", "1000001", {
     fresh: () => true,
   });
 
@@ -167,7 +167,7 @@ test("a DM session the hub starts gets the chat prompt, its view's tail and wake
   expect(args[args.indexOf("--add-dir") + 1]).toBe(join(home, "state/wake"));
   expect(settings.env).toMatchObject({
     HEX_FRESH: "1",
-    HEX_THREAD: "6296842341",
+    HEX_THREAD: "1000001",
     CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1",
   });
   expect(settings.env.HEX_TOKEN).toBeString();

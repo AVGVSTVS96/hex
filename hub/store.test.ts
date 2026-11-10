@@ -32,9 +32,9 @@ const message = {
   key: "telegram:-100:42",
   to: "-100:7",
   from: "telegram",
-  body: "remind me to buy Cheryl a salty treat",
+  body: "remind me to water the plants",
   author: "owner",
-  meta: { user: "bassim" },
+  meta: { user: "victor" },
 } satisfies NewRow;
 
 function said(out: string) {
@@ -348,7 +348,7 @@ test("hex deliver says how to call it when something is missing", async () => {
 });
 
 test("hex deliver reaches a thread by its id, and a sender alone gets a key of its own", async () => {
-  open(dir).threads.keep("discord", { "1561": { name: "Fixhex" } });
+  open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
 
   const cli = Bun.spawn([
     "bun",
@@ -420,26 +420,26 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     );
   };
 
-  session("38b69086-82da-46a4-8a80-802ddb4fbec5", "hex/seqno-plugins2");
-  session("38b69086-ffff-4000-8000-000000000000", "hex/seqno-import2");
-  session("9762845b-0000-4000-8000-000000000000", "hex keyboard", "-100:452");
-  session("5cc4f530-0000-4000-8000-000000000000", "Selfheal", "-100:4715");
-  session("7ac61e5d-0000-4000-8000-000000000000", "Theo clips", "-100:65", dir, "");
+  session("4c1d9f07-82da-46a4-8a80-802ddb4fbec5", "hex/garden-plugins2");
+  session("4c1d9f07-ffff-4000-8000-000000000000", "hex/garden-import2");
+  session("d4e6f9c5-0000-4000-8000-000000000000", "hex notes", "-100:4803");
+  session("b2e4d7a3-0000-4000-8000-000000000000", "Watchdog", "-100:4801");
+  session("c3d5e8b4-0000-4000-8000-000000000000", "Video clips", "-100:103", dir, "");
   session(
-    "e3bbf1d4-0000-4000-8000-000000000000",
+    "e5f7a0d6-0000-4000-8000-000000000000",
     "another hex",
     "-100:4716",
     join(dir, "elsewhere"),
   );
   open(dir).threads.keep("telegram", {
-    "-100:4715": { name: "Selfheal" },
-    "-100:3655": { name: "portfolio", session: "3d599dd0-0000-4000-8000-000000000000" },
+    "-100:4801": { name: "Watchdog" },
+    "-100:4802": { name: "website", session: "a1f3c6d2-0000-4000-8000-000000000000" },
   });
   open(dir).turns.turned("d4365c34-312f-4a52-9704-36fcf657e5b9", true);
   open(dir).threads.keep("telegram", {
-    "-100:7": { name: "General", session: "addfa113-11f6-4698-9b9e-c80b1d5aebdf" },
-    "-100:452": { name: "hex keyboard" },
-    "-100:65": { name: "Theo clips" },
+    "-100:7": { name: "General", session: "b7e2c5a9-11f6-4698-9b9e-c80b1d5aebdf" },
+    "-100:4803": { name: "hex notes" },
+    "-100:103": { name: "Video clips" },
   });
 
   const deliver = async (to: string) => {
@@ -461,42 +461,42 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
   };
 
   for (const to of [
-    "addfa113",
-    "ADDFA113",
-    "addfa113-11f6-4698-9b9e-c80b1d5aebdf",
-    "9762845b",
-    "7ac61e5d",
+    "b7e2c5a9",
+    "B7E2C5A9",
+    "b7e2c5a9-11f6-4698-9b9e-c80b1d5aebdf",
+    "d4e6f9c5",
+    "c3d5e8b4",
   ]) {
     expect(await deliver(to)).toEqual({ code: 0, said: "" });
   }
 
-  for (const to of ["5cc4f530", "3d599dd0"]) {
+  for (const to of ["b2e4d7a3", "a1f3c6d2"]) {
     expect(await deliver(to)).toEqual({
       code: 0,
       said: containing("is closed, so this waits until it opens"),
     });
   }
 
-  expect(await deliver("e3bbf1d4")).toEqual({
+  expect(await deliver("e5f7a0d6")).toEqual({
     code: 1,
     said: containing(
-      "e3bbf1d4-0000-4000-8000-000000000000 (another hex) is a session no thread holds",
+      "e5f7a0d6-0000-4000-8000-000000000000 (another hex) is a session no thread holds",
     ),
   });
   expect(await deliver("d4365c34-312f-4a52-9704-36fcf657e5b9")).toEqual({
     code: 1,
     said: containing("no thread or running session is d4365c34-312f-4a52-9704-36fcf657e5b9"),
   });
-  expect(await deliver("38b69086-82")).toEqual({
+  expect(await deliver("4c1d9f07-82")).toEqual({
     code: 1,
     said: containing(
-      '38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2) is a session no thread holds, so it would never take this message: message it with Claude Code\'s SendMessage to "hex/seqno-plugins2"',
+      '4c1d9f07-82da-46a4-8a80-802ddb4fbec5 (hex/garden-plugins2) is a session no thread holds, so it would never take this message: message it with Claude Code\'s SendMessage to "hex/garden-plugins2"',
     ),
   });
-  expect(await deliver("38b69086")).toEqual({
+  expect(await deliver("4c1d9f07")).toEqual({
     code: 1,
     said: containing(
-      "38b69086 starts more than one session's id: 38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2), 38b69086-ffff-4000-8000-000000000000 (hex/seqno-import2)",
+      "4c1d9f07 starts more than one session's id: 4c1d9f07-82da-46a4-8a80-802ddb4fbec5 (hex/garden-plugins2), 4c1d9f07-ffff-4000-8000-000000000000 (hex/garden-import2)",
     ),
   });
   expect(await deliver("d4365c34")).toEqual({
@@ -507,7 +507,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     open(dir)
       .messages.since()
       .map((row) => row.to),
-  ).toEqual(["-100:7", "-100:7", "-100:7", "-100:452", "-100:65", "-100:4715", "-100:3655"]);
+  ).toEqual(["-100:7", "-100:7", "-100:7", "-100:4803", "-100:103", "-100:4801", "-100:4802"]);
 }, 20_000);
 
 test("hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has", async () => {
@@ -517,9 +517,9 @@ test("hex deliver finds a thread by its name too, keeps one for a closed thread 
   open(dir).threads.keep("t3", { "5b0e7d2a-0000-4000-8000-000000000000": { name: "t3: notes" } });
   open(dir).threads.keep("telegram", { "-100:1": { name: "hex" } });
   open(dir).threads.keep("telegram", {
-    "-100:4715": { name: "Selfheal" },
+    "-100:4801": { name: "Watchdog" },
     "-100:2": { name: "hex" },
-    selfheal: { name: "Old notes" },
+    watchdog: { name: "Old notes" },
   });
 
   const deliver = async (to: string) => {
@@ -531,7 +531,7 @@ test("hex deliver finds a thread by its name too, keeps one for a closed thread 
     return { code: await cli.exited, said: await new Response(cli.stderr).text() };
   };
 
-  for (const to of ["SelfHeal", "HEX", "T3: notes"]) {
+  for (const to of ["Watchdog", "HEX", "T3: notes"]) {
     expect(await deliver(to)).toEqual({ code: 0, said: "" });
   }
 
@@ -554,7 +554,7 @@ test("hex deliver finds a thread by its name too, keeps one for a closed thread 
       .messages.since()
       .map((row) => row.to),
   ).toEqual([
-    "-100:4715",
+    "-100:4801",
     "-100:2",
     "5b0e7d2a-0000-4000-8000-000000000000",
     "0f3a9c1e-0000-4000-8000-000000000000",
@@ -1203,30 +1203,30 @@ test("a session that only posted in a thread, as General does opening a topic, i
 test("a thread keeps its row after it closes, and takes a new name when renamed", () => {
   const store = new Store(dir);
   store.threads.keep("telegram", {
-    "-100:7": { name: "tokenhub", session: "s-1", cwd: "/w" },
-    "-100:8": { name: "portfolio" },
+    "-100:7": { name: "pricehub", session: "s-1", cwd: "/w" },
+    "-100:8": { name: "website" },
   });
   store.threads.keep("telegram", {
     "-100:7": {
-      name: "tokenhub and deck",
+      name: "pricehub and stage",
       session: "s-2",
       model: "opus",
       link: "https://t.me/c/100/7",
     },
   });
-  store.threads.keep("discord", { "1561": { name: "Fixhex" } });
+  store.threads.keep("discord", { "1561": { name: "Repair" } });
   expect(store.threads.list()).toEqual([
-    { app: "discord", thread: "1561", name: "Fixhex", open: true },
+    { app: "discord", thread: "1561", name: "Repair", open: true },
     {
       app: "telegram",
       thread: "-100:7",
-      name: "tokenhub and deck",
+      name: "pricehub and stage",
       session: "s-2",
       model: "opus",
       link: "https://t.me/c/100/7",
       open: true,
     },
-    { app: "telegram", thread: "-100:8", name: "portfolio", open: false },
+    { app: "telegram", thread: "-100:8", name: "website", open: false },
   ]);
   expect(
     store.threads.list({ app: "telegram", open: true }).map((thread) => thread.thread),
@@ -1235,16 +1235,16 @@ test("a thread keeps its row after it closes, and takes a new name when renamed"
 
 test("a thread's key names it in every app, and its id is <app>:<key>", async () => {
   const store = new Store(dir);
-  store.threads.keep("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
-  store.threads.keep("telegram", { "-100:7": { name: "Lab" } });
-  store.threads.keep("buzz", { "1561": { name: "Lab" }, abc: { name: "Buzz lab" } });
+  store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
+  store.threads.keep("telegram", { "-100:7": { name: "Shop" } });
+  store.threads.keep("buzz", { "1561": { name: "Shop" }, abc: { name: "Buzz shop" } });
   expect(store.threads.list({ app: "buzz" }).map(({ thread }) => thread)).toEqual(["1561", "abc"]);
-  store.threads.keep("discord", { "1561": { name: "Fixhex" }, "1562": { name: "Deck" } });
+  store.threads.keep("discord", { "1561": { name: "Repair" }, "1562": { name: "Stage" } });
   expect(store.threads.names()).toEqual({
-    "1561": "Fixhex",
-    "1562": "Deck",
-    "-100:7": "Lab",
-    abc: "Buzz lab",
+    "1561": "Repair",
+    "1562": "Stage",
+    "-100:7": "Shop",
+    abc: "Buzz shop",
   });
   expect(store.threads.ids()).toEqual({
     "1561": "discord:1561",
@@ -1284,10 +1284,10 @@ test("hex thread files a thread under the project it's part of, kept as its app 
       .exited;
 
   const projects = () => store.threads.list().map(({ name, project }) => [name, project]);
-  expect(await hex("thread", "Chats", "--project", "iikb")).toBe(0);
+  expect(await hex("thread", "Chats", "--project", "keyboard")).toBe(0);
   store.threads.keep("telegram", { ...telegram, "-100:7": { name: "Chats", session: "s1" } });
   expect(projects()).toEqual([
-    ["Chats", "iikb"],
+    ["Chats", "keyboard"],
     ["Android", undefined],
   ]);
   expect(await hex("thread", "Chats", "--project", "")).toBe(0);
@@ -1295,7 +1295,7 @@ test("hex thread files a thread under the project it's part of, kept as its app 
     ["Chats", undefined],
     ["Android", undefined],
   ]);
-  expect(await hex("thread", "Nowhere", "--project", "iikb")).not.toBe(0);
+  expect(await hex("thread", "Nowhere", "--project", "keyboard")).not.toBe(0);
 });
 
 test("bin/hex hands hex's cli every command its usage lists", async () => {
@@ -1464,7 +1464,7 @@ test("hex pins lists the asking thread's pinned post, or every thread's with --a
       threadId: "discord:1561",
     },
   ]);
-  open(dir).threads.keep("discord", { "1561": { name: "Fixhex" } });
+  open(dir).threads.keep("discord", { "1561": { name: "Repair" } });
   expect(await hex("--thread", "discord:1561", "--json")).toBe(
     await hex("--thread", "1561", "--json"),
   );
@@ -1684,14 +1684,14 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     to: "-100:7",
     from: "telegram",
     author: "owner",
-    body: "Tell selfheal, so it can be fixed next run",
+    body: "Tell watchdog, so it can be fixed next run",
   });
   store.messages.deliver({
     key: "telegram:-100:52@1",
     to: "-100:7",
     from: "telegram",
     author: "owner",
-    body: "Tell selfheal, so it can be fixed properly at the root next run",
+    body: "Tell watchdog, so it can be fixed properly at the root next run",
     meta: { edited: "true", message_id: "52" },
   });
 
@@ -1710,7 +1710,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
   };
 
   expect(await hexMessage("telegram:-100:52")).toBe(
-    "Tell selfheal, so it can be fixed properly at the root next run (edited: these are the words of telegram:-100:52@1, the key to quote them under)",
+    "Tell watchdog, so it can be fixed properly at the root next run (edited: these are the words of telegram:-100:52@1, the key to quote them under)",
   );
   expect(JSON.parse(await hexMessage("telegram:-100:52", "--json"))).toMatchObject({
     key: "telegram:-100:52",
@@ -1720,7 +1720,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
   const task = store.tasks.create({
     title: "Fix it at the root",
     message: "telegram:-100:52",
-    quote: "Tell selfheal",
+    quote: "Tell watchdog",
     owner: "-100:7",
   });
 
@@ -1732,7 +1732,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
   expect(
     store.tasks.addWords(task.id, "telegram:-100:52@1", "fixed properly at the root").words,
   ).toMatchObject([
-    { text: "Tell selfheal" },
+    { text: "Tell watchdog" },
     { message: "telegram:-100:52@1", text: "fixed properly at the root" },
   ]);
   expect(() => store.tasks.addWords(task.id, "telegram:-100:52", "tonight")).toThrow(
@@ -1743,7 +1743,7 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     to: "-100:7",
     from: "telegram",
     author: "owner",
-    body: "Tell selfheal, so it can be fixed properly at the root tonight",
+    body: "Tell watchdog, so it can be fixed properly at the root tonight",
     meta: { edited: "true", message_id: "52" },
   });
   store.messages.deliver({
@@ -1755,10 +1755,10 @@ test("hex message gives the owner's words as he last edited them, and a task quo
     meta: { edited: "true", message_id: "52" },
   });
   expect(await hexMessage("telegram:-100:52@1")).toBe(
-    "Tell selfheal, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
+    "Tell watchdog, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
   );
   expect(await hexMessage("telegram:-100:52@2")).toBe(
-    "Tell selfheal, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
+    "Tell watchdog, so it can be fixed properly at the root tonight (edited: these are the words of telegram:-100:52@2, the key to quote them under)",
   );
   store.messages.deliver({
     key: "buzz:e2",

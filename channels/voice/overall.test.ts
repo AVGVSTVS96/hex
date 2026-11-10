@@ -76,7 +76,7 @@ test("nothing running says so", () => {
 
 test("everything hex runs, one line each: what waits on the caller first, then threads, jobs and sessions outside any thread", () => {
   const runs = [
-    run("voiceapp", {
+    run("phoneapp", {
       line: "building",
       agents: [
         agent("Build the Tasks view", "working", "Editing board.ts"),
@@ -84,8 +84,8 @@ test("everything hex runs, one line each: what waits on the caller first, then t
         agent("review-build"),
       ],
     }),
-    run("autofork", { state: "needs", needs: "Pick a music style" }),
-    run("lab", { where: "Discord", since: ago(150) }),
+    run("orchard", { state: "needs", needs: "Pick a music style" }),
+    run("shop", { where: "Discord", since: ago(150) }),
     run("voice", { app: "voice", where: "Voice", agents: [agent("mail lookup")] }),
     run("hex/clips", { app: "claude", where: "Claude Code", line: "cutting clips", since: ago(1) }),
   ];
@@ -95,7 +95,7 @@ test("everything hex runs, one line each: what waits on the caller first, then t
       id: "56565656-terminal",
       pid: 1,
       status: "busy",
-      name: "bassim-1",
+      name: "victor-1",
       started: now - 5 * 60_000,
     },
   ];
@@ -107,21 +107,21 @@ test("everything hex runs, one line each: what waits on the caller first, then t
       since: now - 3 * 24 * 60 * 60_000,
       working: false,
     },
-    { unit: "clips", owner: "telegram:-100:65", since: now - 60_000, working: false },
+    { unit: "clips", owner: "telegram:-100:103", since: now - 60_000, working: false },
     { unit: "nightly", owner: "discord:9", since: 0, working: false },
   ];
 
-  expect(overall(runs, strays, units, { "-100:42": "hex", "-100:65": "hex" }, now)).toBe(
+  expect(overall(runs, strays, units, { "-100:42": "hex", "-100:103": "hex" }, now)).toBe(
     [
       "Everything hex is running, 2 threads working, 1 waiting on you:",
-      "- autofork (Telegram) waits on you: Pick a music style",
-      "- voiceapp (Telegram), working for 10 minutes: Editing board.ts; 2 agents: Build the Tasks view, review-build",
-      "- lab (Discord), working for 3 hours",
+      "- orchard (Telegram) waits on you: Pick a music style",
+      "- phoneapp (Telegram), working for 10 minutes: Editing board.ts; 2 agents: Build the Tasks view, review-build",
+      "- shop (Discord), working for 3 hours",
       "- This call's agents: mail lookup",
       "- hex/clips, working for 1 minute: cutting clips",
       "- The job backup for hex, running for 3 days",
       "- The job nightly, running for a while",
-      "- bassim-1, a Claude Code session outside any thread, busy for 5 minutes",
+      "- victor-1, a Claude Code session outside any thread, busy for 5 minutes",
     ].join("\n"),
   );
 });
@@ -142,17 +142,17 @@ test("how long, as said aloud", () => {
 });
 
 test("the questions hex keeps for the caller wait on them too, past those of a thread already blocked on them", () => {
-  const runs = [run("autofork", { state: "needs", needs: "Pick a music style" })];
+  const runs = [run("orchard", { state: "needs", needs: "Pick a music style" })];
 
   const asks = [
-    { task: "telegram:autofork", question: "Pick a music style" },
+    { task: "telegram:orchard", question: "Pick a music style" },
     { task: "discord:9", question: "Ship the  release\nnow?" },
     { task: "buzz:b1", question: "Renew the domain?" },
   ];
 
   expect(overall(runs, [], [], {}, now, asks).split("\n")).toEqual([
     "Everything hex is running, 3 waiting on you:",
-    "- autofork (Telegram) waits on you: Pick a music style",
+    "- orchard (Telegram) waits on you: Pick a music style",
     "- 2 questions wait on you, the first: Ship the release now?",
   ]);
   expect(overall([], [], [], {}, now, asks.slice(2))).toBe(
@@ -163,7 +163,7 @@ test("the questions hex keeps for the caller wait on them too, past those of a t
 test("a job shows while the session it ran has stopped, even though its thread's last stretch still lists it", () => {
   const runs = [
     run("hex", { state: "idle", agents: [agent("hex/build")] }),
-    run("lab", { agents: [agent("lab/check", "done")] }),
+    run("shop", { agents: [agent("shop/check", "done")] }),
   ];
 
   const units = [
@@ -172,10 +172,10 @@ test("a job shows while the session it ran has stopped, even though its thread's
   ];
 
   expect(
-    overall(runs, [], units, { "-100:42": "hex", "-100:43": "lab" }, now).split("\n").slice(2),
+    overall(runs, [], units, { "-100:42": "hex", "-100:43": "shop" }, now).split("\n").slice(2),
   ).toEqual([
     "- The job build for hex, running for 20 minutes",
-    "- The job check for lab, running for 5 minutes",
+    "- The job check for shop, running for 5 minutes",
   ]);
 });
 
@@ -229,7 +229,7 @@ esac
 
 test("a job is on the board only under the name bin/job gave it, never under another thread’s session of the same unit", () => {
   const runs = [
-    run("lab", { agents: [agent("lab/build")] }),
+    run("shop", { agents: [agent("shop/build")] }),
     run("hex", { agents: [agent("hex/deploy")] }),
   ];
 
@@ -330,7 +330,7 @@ test("a job is at work when a busy Claude Code session runs in its unit's cgroup
 });
 
 test("a session outside any thread counts as no thread in what the call hears first", () => {
-  const runs = [run("lab"), run("hex/clips", { app: "claude", where: "Claude Code" })];
+  const runs = [run("shop"), run("hex/clips", { app: "claude", where: "Claude Code" })];
   expect(overall(runs, [], [], {}, now).split("\n")[0]).toBe(
     "Everything hex is running, 1 thread working:",
   );

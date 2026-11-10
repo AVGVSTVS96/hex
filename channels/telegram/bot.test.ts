@@ -15,7 +15,7 @@ const CHANNEL = "plugin:telegram@hex";
 const OWNER = 2000;
 const FORUM = -1_001_234;
 const DESK = `${FORUM}:5`;
-const owner = { id: OWNER, is_bot: false, first_name: "Bassim", username: "bassim" };
+const owner = { id: OWNER, is_bot: false, first_name: "Victor", username: "victor" };
 
 const hex: UserFromGetMe = {
   id: 1000,
@@ -310,7 +310,7 @@ beforeAll(async () => {
   writeFileSync(join(state, "access.json"), JSON.stringify({ allowFrom: [String(OWNER)] }));
   open(state).threads.keep("telegram", {
     [DESK]: { name: "desk" },
-    [String(OWNER)]: { name: "Bassim" },
+    [String(OWNER)]: { name: "Victor" },
     [`${FORUM}:6`]: { name: "notes" },
     "stray-key": { name: "stray" },
   });
@@ -973,7 +973,7 @@ test("a DM is its own thread: it reaches the DM session, not the group, and repl
     message: {
       message_id: ++nextMessage,
       date: 1_760_000_000,
-      chat: { id: OWNER, type: "private", first_name: "Bassim" },
+      chat: { id: OWNER, type: "private", first_name: "Victor" },
       from: owner,
       text: "quick one",
     },
@@ -1415,7 +1415,7 @@ test("a backfill quotes the owner under their name and posts hex as itself, sile
     ["sendMessage", 9, true],
   ]);
   expect(sent[1]?.payload).toMatchObject({
-    text: "Bassim\nhow full is your context?",
+    text: "Victor\nhow full is your context?",
     entities: [
       { type: "bold", offset: 0, length: 6 },
       { type: "blockquote", offset: 7, length: 25 },
@@ -1456,7 +1456,7 @@ test("a backfill shows the owner's photos and clips themselves, an album under t
     ["sendMessage", 9, true],
   ]);
   expect(sent[0]?.payload).toMatchObject({
-    caption: "Bassim\nthis one?",
+    caption: "Victor\nthis one?",
     caption_entities: [
       { type: "bold", offset: 0, length: 6 },
       { type: "blockquote", offset: 7, length: 9 },
@@ -1465,12 +1465,12 @@ test("a backfill shows the owner's photos and clips themselves, an album under t
   expect(sent[1]?.payload.media).toMatchObject([
     {
       type: "photo",
-      caption: "Bassim",
+      caption: "Victor",
       caption_entities: [{ type: "bold", offset: 0, length: 6 }],
     },
     { type: "video" },
   ]);
-  expect(sent[2]?.payload.text).toBe("Bassim\ngone\n(photo)");
+  expect(sent[2]?.payload.text).toBe("Victor\ngone\n(photo)");
 });
 
 test("/effort and /model set what the thread's next message starts with, and never reach its session, unlike a path", async () => {

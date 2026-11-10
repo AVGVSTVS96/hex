@@ -111,9 +111,9 @@ test("the words a brief is checked against: its tasks and the newest this sessio
   const words = asked(store, "main", `Task ${task.id}: make login fast.`);
   expect(words).toContain(`${task.id} (open`);
   expect(words).toContain(
-    "this session got, oldest first, his and the work hex handed it:\n\n[telegram:-100:50 · ",
+    "this session got, oldest first, mine and the work hex handed it:\n\n[telegram:-100:50 · ",
   );
-  expect(words).toContain("Z] his:\nMake the login page load fast.");
+  expect(words).toContain("Z] me:\nMake the login page load fast.");
   expect(words).not.toContain("On it.");
 });
 
@@ -165,7 +165,7 @@ test("what a session said since its newest ask shows where that work stands", ()
 
   for (const [key, body] of [
     ["terminal:r1", "I gave the builder the go on webrtc."],
-    ["terminal:r2", "webrtc is on main and on his phone."],
+    ["terminal:r2", "webrtc is on main and on the phone."],
   ] as const) {
     store.messages.deliver({ key, to: "-100:7", from: "terminal", body, author: "hex" }, "orch");
   }
@@ -220,7 +220,7 @@ test("a delivery is checked against the words it cites and the thread it goes to
     ".hex/bin/hex deliver hex --to=Website 'Add dark mode (telegram:-100:90).'",
   );
 
-  expect(words).toContain("His messages it cites:\n\n[telegram:-100:90");
+  expect(words).toContain("My messages it cites:\n\n[telegram:-100:90");
   expect(words).toContain("session answers:\n\n[telegram:-100:50");
   expect(words).not.toContain("this session got");
 });

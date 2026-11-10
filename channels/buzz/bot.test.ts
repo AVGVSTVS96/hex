@@ -497,7 +497,7 @@ exit 0
   const forum = crypto.randomUUID();
   const host = generateSecretKey();
   relay.inject(signed(key, 0, JSON.stringify({ name: "Hex" })));
-  relay.inject(signed(ownerKey, 0, JSON.stringify({ display_name: "Bassim" })));
+  relay.inject(signed(ownerKey, 0, JSON.stringify({ display_name: "Victor" })));
 
   for (const id of [channel, openSource, dm, forum]) {
     relay.inject(
@@ -674,7 +674,7 @@ test("Hex goes online, and a tag in a channel starts a thread on that message, n
   expect(inbound.meta).toMatchObject({
     chat_id: root.id,
     message_id: root.id,
-    user: "Bassim",
+    user: "Victor",
     user_id: owner,
     channel: "general",
     new_thread: "true",
@@ -705,7 +705,7 @@ test("a direct message reaches the DM's own thread without a tag", async () => {
   const bot = await startBot();
   const sent = bot.say("are you there?", [], ownerKey, bot.dm);
   const args = await until(() => bot.launches()[0]);
-  expect(args[args.indexOf("--name") + 1]).toBe("Bassim");
+  expect(args[args.indexOf("--name") + 1]).toBe("Victor");
   const inbound = nth(await (await bot.session(bot.dm)).inbound(1), 0);
   expect(inbound.content).toBe("are you there?");
   expect(inbound.meta).toMatchObject({ chat_id: bot.dm, message_id: sent.id });
@@ -724,7 +724,7 @@ test("a reply to one message in a thread says which, with its text; one to the t
   expect(nth(inbound, 1).meta.reply_to_message_id).toBeUndefined();
   expect(nth(inbound, 2).meta).toMatchObject({
     reply_to_message_id: shelf.id,
-    reply_to_user: "Bassim",
+    reply_to_user: "Victor",
     reply_to_text: "the shelf too",
   });
 });
@@ -761,7 +761,7 @@ test("a bare tag on the owner's own message brings Hex into its thread with thos
     chat_id: post.id,
     new_thread: "true",
     reply_to_message_id: post.id,
-    reply_to_user: "Bassim",
+    reply_to_user: "Victor",
     reply_to_text: "gpt-live-1 can i use custom voices",
   });
 });
@@ -798,7 +798,7 @@ test("a reaction on a message in Hex's thread reaches it, and so does taking it 
     reaction_to_message_id: sent,
     reaction_to_user: "me",
     reaction_to_text: "on it",
-    user: "Bassim",
+    user: "Victor",
     channel: "general",
   });
   expect(removed.content).toBe("(reaction removed: 👍)");
@@ -1023,7 +1023,7 @@ test("a mirror backfills the new thread with the chat, the owner's lines quoted 
   });
 
   expect(posts.map((event) => event.content)).toEqual([
-    "> **Bassim**\n> how full is\n> your context?",
+    "> **Victor**\n> how full is\n> your context?",
     "Roomy.",
   ]);
   expect(nth(posts, 0).tags).toEqual([
@@ -1062,7 +1062,7 @@ test("reply with buttons lists them numbered and reacts with each keycap; the fi
   expect(tapped.meta).toMatchObject({
     button: "true",
     button_message_id: id,
-    user: "Bassim",
+    user: "Victor",
     channel: "general",
   });
   expect(
@@ -1216,9 +1216,9 @@ test("presence says whether the owner is online, away or offline", async () => {
   const bot = await startBot();
   const { session } = await threadStarted(bot);
   bot.relay.online.set(owner, "away");
-  expect((await session.call("presence", {})).text).toBe("Bassim: away");
+  expect((await session.call("presence", {})).text).toBe("Victor: away");
   bot.relay.online.delete(owner);
-  expect((await session.call("presence", {})).text).toBe("Bassim: offline");
+  expect((await session.call("presence", {})).text).toBe("Victor: offline");
 });
 
 test("download_attachment saves a message's files to the inbox, fetched with Blossom auth", async () => {
@@ -1260,13 +1260,13 @@ test("fetch_messages reads a channel's top-level messages oldest-first, with eac
   const page = await session.call("fetch_messages", { channel: "#open-source", limit: 2 });
   expect(page.text).toBe(
     [
-      `[${iso(t + 1)}] Bassim: merged the docs fix  (id: ${docs.id})`,
-      `[${iso(t + 4)}] Bassim: release tomorrow  (id: ${release.id})`,
+      `[${iso(t + 1)}] Victor: merged the docs fix  (id: ${docs.id})`,
+      `[${iso(t + 4)}] Victor: release tomorrow  (id: ${release.id})`,
     ].join("\n"),
   );
   const older = await session.call("fetch_messages", { channel: bot.openSource, before: docs.id });
   expect(older.text).toBe(
-    `[${iso(t)}] Bassim: flaky CI on the relay PR  (id: ${ci.id}, 2 replies, last reply ${iso(t + 3)})`,
+    `[${iso(t)}] Victor: flaky CI on the relay PR  (id: ${ci.id}, 2 replies, last reply ${iso(t + 3)})`,
   );
 });
 
@@ -1277,13 +1277,13 @@ test("fetch_messages drills into any thread in a channel by its message id, and 
   const thread = await session.call("fetch_messages", { thread: ci.id });
   expect(thread.text).toBe(
     [
-      `[${iso(t)}] Bassim: flaky CI on the relay PR  (id: ${ci.id})`,
-      `[${iso(t + 2)}] Bassim: rebased it  (id: ${rebased.id})`,
-      `[${iso(t + 3)}] Bassim: rebased again ⏎ and pushed  (id: ${pushed.id})`,
+      `[${iso(t)}] Victor: flaky CI on the relay PR  (id: ${ci.id})`,
+      `[${iso(t + 2)}] Victor: rebased it  (id: ${rebased.id})`,
+      `[${iso(t + 3)}] Victor: rebased again ⏎ and pushed  (id: ${pushed.id})`,
     ].join("\n"),
   );
   const back = await session.call("fetch_messages", { thread: ci.id, before: pushed.id, limit: 1 });
-  expect(back.text).toBe(`[${iso(t + 2)}] Bassim: rebased it  (id: ${rebased.id})`);
+  expect(back.text).toBe(`[${iso(t + 2)}] Victor: rebased it  (id: ${rebased.id})`);
 });
 
 test("sessions read only channels Hex is in, and no direct message but their own", async () => {
@@ -1308,7 +1308,7 @@ test("sessions read only channels Hex is in, and no direct message but their own
   ).toBe("Hex is in no channel named #secret");
   const own = await bot.session(bot.dm);
   expect((await own.call("fetch_messages", { channel: bot.dm })).text).toContain(
-    "Bassim: just between us",
+    "Victor: just between us",
   );
 });
 
@@ -1324,12 +1324,12 @@ test("search_messages finds words in Hex's channels, naming each hit's channel a
   expect(hits).toEqual([
     expect.stringMatching(
       new RegExp(
-        `Bassim: the flaky test is back  \\(id: ${reply.id}, in #general, thread ${root.id}\\)$`,
+        `Victor: the flaky test is back  \\(id: ${reply.id}, in #general, thread ${root.id}\\)$`,
         "u",
       ),
     ),
     expect.stringMatching(
-      new RegExp(`Bassim: flaky CI on the relay PR  \\(id: ${ci.id}, in #open-source\\)$`, "u"),
+      new RegExp(`Victor: flaky CI on the relay PR  \\(id: ${ci.id}, in #open-source\\)$`, "u"),
     ),
   ]);
   const scoped = await session.call("search_messages", { query: "flaky", channel: "open-source" });
@@ -1462,7 +1462,7 @@ test("the channel of every thread is kept in channels.json for the voice app: th
     relay.inject(known);
     open(join(dirname(state), "hex", "state")).threads.keep("buzz", {
       [known.id]: { name: "Old" },
-      [crypto.randomUUID()]: { name: "bassim" },
+      [crypto.randomUUID()]: { name: "victor" },
     });
   });
 

@@ -309,20 +309,20 @@ test("a turn that took no message still gets a pass from its reply, and a retry 
       to: "s",
       from: "terminal",
       author: "hex",
-      body: "The deck redo is live.",
+      body: "The page redo is live.",
     },
     "s",
   );
   const asked: string[] = [];
 
   const ask = answering(asked, () => ({
-    notes: ["Oct 20: deck redo shipped"],
+    notes: ["Oct 20: page redo shipped"],
     profile: '- Wants "whatever" [telegram:-100:50]',
   }));
 
-  expect(await observe(dir, "s", { ask, memo })).toEqual(["Oct 20: deck redo shipped"]);
+  expect(await observe(dir, "s", { ask, memo })).toEqual(["Oct 20: page redo shipped"]);
   expect(asked).toHaveLength(3);
-  expect(noted()).toEqual(["Oct 20: deck redo shipped"]);
+  expect(noted()).toEqual(["Oct 20: page redo shipped"]);
 });
 
 test("an app session's last words in its terminal reach the pass as what the owner doesn't see", async () => {

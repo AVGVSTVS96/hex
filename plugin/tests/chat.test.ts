@@ -18,7 +18,7 @@ import { z } from "zod";
 import { until } from "../../hub/until.ts";
 
 const HEX = join(import.meta.dir, "../..");
-const THREAD = "6296842341";
+const THREAD = "1000001";
 const CHANNEL = "plugin:telegram@hex";
 
 const Message = z.object({ i: z.number(), kind: z.string(), text: z.string(), date: z.string() });
@@ -226,7 +226,7 @@ test("a turn logs the user, replies, tool calls and results, and agents' reports
     {
       type: "user",
       message: {
-        content: `<channel source="telegram" chat_id="${THREAD}" message_id="9" user="bassim" user_id="1" ts="x" reply_to_text="earlier">is the fly credit still there?</channel>`,
+        content: `<channel source="telegram" chat_id="${THREAD}" message_id="9" user="victor" user_id="1" ts="x" reply_to_text="earlier">is the fly credit still there?</channel>`,
       },
     },
     {
@@ -251,7 +251,7 @@ test("a turn logs the user, replies, tool calls and results, and agents' reports
       type: "attachment",
       attachment: {
         type: "queued_command",
-        prompt: `<channel source="telegram" chat_id="${THREAD}" message_id="10" user="bassim">and the PR?</channel>`,
+        prompt: `<channel source="telegram" chat_id="${THREAD}" message_id="10" user="victor">and the PR?</channel>`,
       },
     },
     {

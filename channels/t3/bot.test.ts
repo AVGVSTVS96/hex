@@ -1046,7 +1046,7 @@ test("a thread T3 deleted or never recorded closes in hex once T3 has had time t
     });
     recorded([
       [gone, "old work", true],
-      [live, "voice: one line per file"],
+      [live, "docs: one line per file"],
     ]);
   });
   expect(Object.keys(registered()).toSorted()).toEqual([gone, live, never].toSorted());
@@ -1058,7 +1058,7 @@ test("a thread T3 deleted or never recorded closes in hex once T3 has had time t
     .catch(() => {});
   await until(() => registered()[gone] === undefined && registered()[never] === undefined);
   expect(registered()[live]).toMatchObject({
-    name: "voice: one line per file",
+    name: "docs: one line per file",
     link: `t3code://threads/env-1/thread%3A${live}`,
   });
   expect(
@@ -1072,7 +1072,7 @@ test("a thread hex just kept stays open while T3 has yet to record it", async ()
   const live = "live-000-0000-4000-8000-000000000000";
   await restart(() => {
     hexdb(join(dir, "hex", "state")).threads.keep("t3", { [live]: { name: "project" } });
-    recorded([[live, "voice: one line per file"]]);
+    recorded([[live, "docs: one line per file"]]);
   });
   const { agent } = await t3();
   const { sessionId } = await agent.request("session/new", { cwd: project, mcpServers: [] });

@@ -19,9 +19,9 @@ beforeEach(() => {
   store = open(dir);
   store.threads.keep("telegram", {
     "-100:1": { name: "General" },
-    "-100:2": { name: "Machines" },
-    "-100:3": { name: "Extensions" },
-    "-100:4": { name: "Cloth" },
+    "-100:2": { name: "Maps" },
+    "-100:3": { name: "Plugins" },
+    "-100:4": { name: "Quilts" },
     "-100:5": { name: "DM" },
   });
   store.messages.deliver({
@@ -74,7 +74,7 @@ test("a hold tells each thread it holds that is at work, and every session sees 
 
   for (const thread of ["-100:5", "-100:3", undefined]) {
     const { text } = pending(dir, thread);
-    expect(text).toContain("- h-1 holds Machines, Extensions, Cloth · by General");
+    expect(text).toContain("- h-1 holds Maps, Plugins, Quilts · by General");
     expect(text).toContain('my words [telegram:-100:70]: "lots happening wait"');
   }
 });
@@ -167,7 +167,7 @@ test("the owner's word lifts a hold on some threads; one another hold still hold
   takeAllAndFinishTurn("-100:3", "s3");
   wake(store);
   expect(told("-100:3")).toEqual([]);
-  expect(pending(dir).text).toContain("- h-1 holds Machines · freed Extensions");
+  expect(pending(dir).text).toContain("- h-1 holds Maps · freed Plugins");
   store.holds.unhold("h-2", "the build finished");
   wake(store);
   expect(told("-100:3").map((row) => row.body)).toEqual([
