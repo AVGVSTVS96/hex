@@ -37,6 +37,7 @@ for arg; do
     main=$(printf '%s' "$arg" | jq -r '.env.HEX_MAIN // empty')
     chat=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_FRESH) | .env | "HEX_FRESH=1 HEX_CHANNEL=\(.HEX_CHANNEL) HEX_THREAD=\(.HEX_THREAD)"')
     voice=$(printf '%s' "$arg" | jq -r 'select(.env.HEX_CHANNEL // "" | startswith("plugin:voice@")) | 1')
+    thread=$(printf '%s' "$arg" | jq -r '.env.HEX_THREAD // empty')
     # Outside the hex folder its settings don't load, and Claude Code keeps only the last --settings.
     [ -n "${away:-}" ] && arg=$(printf '%s' "$arg" | jq -c --arg home "$home" --argjson hex "$(cat "$home/.claude/settings.json" 2>/dev/null || echo '{}')" '. as $hub | $hex | .permissions.deny |= (. // [] | map(sub("^(?<rule>\\w+)\\(\\./"; "\(.rule)(/\($home)/"))) | . * $hub')
     # A chat turn's system prompt ends with the instruction files, where the cache reads them, so Claude Code skips its own copy.
@@ -51,6 +52,9 @@ for arg; do
     fi
     # The caller waits on every turn, so a call runs a fast model. Calls pause mid-call often enough that the 1-hour cache cost less than 5 minutes over past calls.
     [ -n "${voice:-}" ] && arg=$(printf '%s' "$arg" | jq -c '{model: "sonnet", effortLevel: "low"} + . | .env += {CLAUDE_CODE_PROMPT_CACHE_TTL: "1h", CLAUDE_CODE_SILENT_TURN_REMINDER_TEXT: "The caller has heard nothing from you in a while. If there is something to tell them, a finding or a change of plan, tell them in a few words with say."}')
+    # A thread's session orchestrates on its own model, and the agents it starts run the hex folder's, not that one.
+    folder_model=$(jq -r '.model // empty' "$home/.claude/settings.json" 2>/dev/null)
+    [ -n "${thread:-}" ] && [ -z "${voice:-}" ] && [ -n "$folder_model" ] && arg=$(printf '%s' "$arg" | jq -c --arg model "$folder_model" '.env.CLAUDE_CODE_SUBAGENT_MODEL //= $model')
     # Claude's daemon runs a --bg session in a spare process it started earlier, which keeps the daemon's environment, not this one, so the flag goes in the settings too.
     flagged=$(printf '%s' "$arg" | jq -c '.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = "1"' 2>/dev/null) && arg=$flagged
     # Only hex's own settings files are written back; anyone else's goes in as the merged text.
@@ -62,9 +66,10 @@ done
 # Claude Code takes auto and bypassPermissions only from user, managed or flag settings, so the hex folder's mode goes as a flag.
 mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "$mode" ] && set -- --permission-mode "$mode" "$@"
-# The main session can run a stronger model than the topics and agents it hands work to.
-main_model=$(jq -r '.env.HEX_MAIN_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
-[ -n "${main:-}" ] && [ -n "$main_model" ] && set -- --model "$main_model" "$@"
+# A thread's session, and the main one above it, can run a stronger model than the hex folder's; a model the thread picked comes later and wins.
+[ -n "${main:-}" ] && model=$(jq -r '.env.HEX_MAIN_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
+[ -z "${model:-}" ] && [ -n "${thread:-}" ] && [ -z "${voice:-}" ] && model=$(jq -r '.env.HEX_ORCHESTRATOR_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
+[ -n "${model:-}" ] && set -- --model "$model" "$@"
 if [ -n "${chat:-}" ]; then
   # The chat's prompt replaces Claude Code's, which names each background job's own folder and so would end the cache before the view.
   system=$(env $chat "$hex/bin/chat" turn) || exit
