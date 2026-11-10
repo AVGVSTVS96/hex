@@ -402,9 +402,10 @@ them with hex) gets Claude walking the list in order.
 2. Run [hex](https://github.com/AVGVSTVS96/hex)'s hub service. It runs
    `bot.ts`, which keeps a session named `voice` running with this channel.
    Each call gets a new session: when a call ends, the engine asks the hub to
-   renew, and once that turn is done the hub starts `voice` over fresh, with
-   its own OptChat chat of past calls instead of one context that grows with
-   every call.
+   renew, and once that turn is done the hub starts `voice` over fresh. It
+   reads the memory and rules when the call's first message arrives, and
+   "call started" brings the last five calls' titles, summaries and what they
+   left waiting, instead of one context that grows with every call.
 
 3. Open the call page. The browser only allows the microphone on `localhost`
    or HTTPS:

@@ -43,10 +43,12 @@ async function lineCall({
   openaiNeverStarts = false,
   openaiRefuses = false,
   readyHexStateBeforeTheEngine = (_hex: string) => {},
+  readyVoiceStateBeforeTheEngine = (_state: string) => {},
 } = {}) {
   const home = mkdtempSync(join(tmpdir(), "line-"));
   const state = join(home, ".claude", "channels", "voice");
-  mkdirSync(state, { recursive: true });
+  mkdirSync(join(state, "calls"), { recursive: true });
+  readyVoiceStateBeforeTheEngine(state);
   const heard: string[] = [];
   const started: unknown[] = [];
   let voice: Bun.ServerWebSocket<unknown> | undefined;
@@ -467,3 +469,36 @@ test("on a call, running answers from every thread hex has at work, not only wha
   expect(text).toStartWith("Everything hex is running, 1 thread working:");
   expect(text).toContain("\n- desk (Telegram), working for 1 minute");
 }, 20_000);
+
+test("a call opens with the caller's last calls: what each was about and what it left waiting", async () => {
+  await using call = await lineCall({
+    readyVoiceStateBeforeTheEngine: (state) => {
+      writeFileSync(
+        join(state, "calls", "sess_before.json"),
+        JSON.stringify({
+          id: "sess_before",
+          started: "2026-11-09T18:00:00.000Z",
+          ended: "2026-11-09T18:05:00.000Z",
+          end: "you",
+          from: "app",
+          title: "Company name",
+          summary: "Talked through names for the company.",
+          waiting: ["Pick a name"],
+          turns: [],
+          tasks: [],
+        }),
+      );
+    },
+  });
+
+  const started = await until(() =>
+    call.steps.find(
+      (step) => step.step === "deliver" && step.content?.startsWith("A call started") === true,
+    ),
+  );
+
+  expect(started.content).toContain("Your last calls with the caller, newest last:");
+  expect(started.content).toContain(
+    "5 min: Company name. Talked through names for the company. Left waiting: Pick a name.",
+  );
+});

@@ -134,7 +134,7 @@ export const server: ChannelServer = {
   title: "voice",
   instructions: `This channel is a live voice call. A fast voice model (OpenAI gpt-live-1) talks with the caller in real time and hands work to you; you do the real work with your tools. The caller hears only the voice model, never your transcript output.
 
-When a call starts you get a "call started" message, whose from says where the caller is: app or web (hex's voice app or page), phone-in or phone-out (a phone call), or discord (a Discord voice channel they joined). Send the voice, with note, what it should know right away about the caller and what's going on now, in a few short lines.
+When a call starts you get a "call started" message, whose from says where the caller is: app or web (hex's voice app or page), phone-in or phone-out (a phone call), or discord (a Discord voice channel they joined). It carries the caller's last few calls (title, summary, what was left waiting). Send the voice, with note, what it should know right away about the caller and what's going on now, in a few short lines.
 
 Each handoff arrives as <channel source="voice" delegation_id="..."> with the transcript since the last handoff, oldest first, timestamped from the start of the call: "you" is the caller, "voice" is the voice model. Speech transcripts can mishear words, and the latest correction wins. A late line can belong before one you already got; its timestamp places it.
 

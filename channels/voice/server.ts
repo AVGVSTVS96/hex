@@ -1066,6 +1066,7 @@ function follow(
       [
         `A call started.${filled(record.why) ? ` You placed it because: ${record.why}` : ""}`,
         ...(about ? [about.claude] : []),
+        ...lastCalls(record.id),
         "Send the voice what it should know right away, with note.",
       ].join("\n"),
     { call: record.id, started: "true", from: record.from, ...(about && { task: about.id }) },
@@ -1076,6 +1077,29 @@ function follow(
   }
 
   return next;
+}
+
+const LAST_CALLS = 5;
+
+function lastCalls(now: string) {
+  const held = calls
+    .list()
+    .filter((call) => call.id !== now && (filled(call.title) || filled(call.summary)))
+    .slice(0, LAST_CALLS)
+    .toReversed()
+    .map(({ started, seconds, title: name, summary: what, waiting }) =>
+      [
+        `- ${new Date(started).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}, ${Math.max(1, Math.round(seconds / 60))} min: ${name ?? "untitled"}.`,
+        what,
+        waiting !== undefined && waiting.length > 0
+          ? `Left waiting: ${waiting.join("; ")}.`
+          : undefined,
+      ]
+        .filter(filled)
+        .join(" "),
+    );
+
+  return held.length ? ["Your last calls with the caller, newest last:", ...held] : [];
 }
 
 type Topic = { id: string; claude: string; voice: string };
