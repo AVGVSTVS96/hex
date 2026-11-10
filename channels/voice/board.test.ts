@@ -2407,3 +2407,31 @@ test("a task General owns with no project is finished in the topic that closed i
     board.finished.filter((task) => [pool.id, keys.id].includes(task.id)).map((task) => task.topic),
   ).toEqual(["voiceapp", "voiceapp"]);
 });
+
+test("agents a topic starts for a task General owns with no project stay under that topic", async () => {
+  const store = open(state);
+  store.messages.deliver({
+    key: "telegram:-1001234567890:9005",
+    to: "-1001234567890",
+    from: "telegram",
+    author: "owner",
+    body: "tidy the voice app",
+  });
+
+  const tidy = store.tasks.create({
+    title: "Tidy the voice app",
+    message: "telegram:-1001234567890:9005",
+    owner: "-1001234567890",
+  });
+
+  job("cccccccc-voiceapp", {
+    state: "working",
+    detail: "tidying",
+    updatedAt: ago(0),
+    fan: [{ id: "atidyaaaaaaaaaaaa", kind: "agent", label: "Tidy up", startedAt: Date.now() }],
+  });
+  running("cccccccc-voiceapp", "busy");
+  store.tasks.addAgents(tidy.id, ["atidyaaaaaaaaaaaa"]);
+  await until(() => voiceapp().agents.some((agent) => agent.id === "atidyaaaaaaaaaaaa"));
+  expect(found(general()).agents.map((agent) => agent.id)).not.toContain("atidyaaaaaaaaaaaa");
+});

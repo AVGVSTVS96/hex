@@ -284,6 +284,74 @@ test("a question comes with hex's last two messages in the hour before it in its
   ]);
 });
 
+test("a question asked in General or a DM comes with none of hex's messages before it, which are about any project, and its ask's words are its own message", () => {
+  const DM = "6001";
+  open(state).threads.keep("telegram", {
+    [GROUP]: { name: "hex" },
+    [DESK]: { name: "desk" },
+    [DM]: { name: "DM" },
+  });
+  said([
+    ["18:20:00", "Your call failed: OpenAI is out of credit.", { to: GROUP }],
+    ["18:30:00", "seqno: Logseq names no writer device.", { to: GROUP }],
+    ["18:40:00", "Rivals is done: all three products compared.", { to: DM }],
+  ]);
+
+  const name = asked(9, "For Stripe Atlas: Lantern or Miyage?", ["Lantern", "Miyage"], {
+    thread: GROUP,
+    at: "2026-10-13T19:00:00.000Z",
+  });
+
+  const row = asked(8, "Portfolio: add the panel row?", ["Add it", "Skip"], {
+    thread: DM,
+    at: "2026-10-13T19:00:00.000Z",
+  });
+
+  expect(before(open(state), "telegram", name)).toEqual([]);
+  expect(before(open(state), "telegram", row)).toEqual([]);
+  ledger([name, row]);
+  writeFileSync(
+    join(state, "voice", "check.json"),
+    JSON.stringify({
+      at: "2026-10-13T20:00:00.000Z",
+      why: "test",
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [
+        {
+          id: "check:panel-row",
+          kind: "yesno",
+          task: `telegram:${DESK}`,
+          at: "2026-10-13T19:00:00.000Z",
+          question: "Portfolio: add the panel row?",
+          options: [{ label: "Add it" }, { label: "Skip" }],
+          from: [{ app: "telegram", thread: DM, message: 8 }],
+          refs: [{ app: "telegram", thread: DM, message: 8 }],
+        },
+      ],
+    }),
+  );
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: (why) => {
+      checks.push(why);
+    },
+  });
+  expect(questions.find("check:panel-row")).toMatchObject({
+    topic: "desk",
+    places: [{ place: "DM" }],
+  });
+  expect(questions.words("check:panel-row")).toEqual({
+    place: "DM",
+    at: "2026-10-13T19:00:00.000Z",
+    text: "Portfolio: add the panel row?",
+  });
+  expect(questions.words(`telegram:${GROUP}:9`)).toBeUndefined();
+});
+
 test("a question the check hasn't rewritten yet keeps its own words on the card and hex's messages before it, whole, as its words", () => {
   said([
     ["18:20:00", "Caddy gives a short domain."],

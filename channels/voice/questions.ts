@@ -6,7 +6,7 @@ import { statusPost, open as store } from "@hex/hub";
 import type { Question as Asked, MessageId, Pin, Thread } from "@hex/hub";
 import { z } from "zod";
 
-import { generalOf, nameOf } from "./activity.ts";
+import { generalOf, isDm, nameOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";
 import { before, Check, final } from "./check.ts";
@@ -1132,12 +1132,11 @@ export class Questions extends Changes {
   ): Place & { at?: string | undefined } {
     const key = `${app}:${thread}`;
     const general = generalOf(this.threads.values());
-    const dm = app === "telegram" && !thread.includes(":") && !thread.startsWith("-");
 
     const name =
       general && `${general.app}:${general.thread}` === key
         ? "General"
-        : dm
+        : isDm({ app, thread })
           ? "DM"
           : (this.links.title(app, thread) ?? this.threads.get(key)?.name ?? thread);
 

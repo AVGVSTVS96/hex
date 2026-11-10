@@ -973,6 +973,17 @@ export function generalOf<T extends Named>(
   );
 }
 
+export function isDm({ app, thread }: Pick<Named, "app" | "thread">) {
+  return app === "telegram" && !thread.includes(":") && !thread.startsWith("-");
+}
+
+export function holdsEveryProject(thread: Pick<Named, "app" | "thread">, general?: Named) {
+  return (
+    isDm(thread) ||
+    (general !== undefined && thread.app === general.app && thread.thread === general.thread)
+  );
+}
+
 export function nameOf({ app, thread, name }: Named, general?: Named) {
   return general !== undefined && app === general.app && thread === general.thread
     ? "General"
