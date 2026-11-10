@@ -101,6 +101,7 @@ const StartBody = z.object({
   voice: z.string().exactOptional(),
   from: z.string().exactOptional(),
   about: z.string().exactOptional(),
+  continues: z.string().exactOptional(),
 });
 
 const InterruptionBody = z.object({
@@ -230,7 +231,11 @@ type Live = {
   callerSpoke: number;
   clock?: { session: number; wall: number };
   away?: { told: boolean; settling?: ReturnType<typeof setTimeout> };
-  warning?: ReturnType<typeof setTimeout>;
+  lost?: { reason: string; at: string; giveUp: ReturnType<typeof setTimeout> };
+  shift?: number;
+  usedBefore?: number;
+  reopen?: ((call: Live, opening: string) => void) | undefined;
+  end?: (() => void) | undefined;
   speak?: ((audio: string) => void) | undefined;
   muLaw?: boolean | undefined;
   heard?: Heard | undefined;
@@ -240,7 +245,7 @@ type Live = {
   closed?: true;
 };
 
-type Attaching = { id: string; closing?: string };
+type Attaching = { id: string; session: string; closing?: string };
 
 type Placed = {
   to: string;
@@ -299,7 +304,8 @@ let seq = 0;
 const dials = new Map<string, Dial>();
 const placed = new Map<string, Placed>();
 const RETRIES = [250, 1000, 2000, 4000, 8000];
-const WARN_BEFORE = 120_000;
+const GRACE = 120_000;
+const CARRIES_ON = new Set(["expired", "connection_lost", "remote_hangup"]);
 const CALLER_PAUSE = 1000;
 const HANDOFF_WAIT = 3000;
 const HANDOFF_MOST = 8000;
@@ -614,6 +620,13 @@ function since(call: Live) {
   return call.clock
     ? call.clock.session + now - call.clock.wall
     : now - Date.parse(call.record.started);
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A call carried on in a new session starts that session's timeline over at zero, so its times
+   move up to where the call was. */
+function onCall(call: Live, ms: number) {
+  return ms + (call.shift ?? 0);
 }
 
 function timed(call: Live, at: number | undefined) {
@@ -1020,6 +1033,14 @@ async function hangUpCall(call: Live) {
    opened just for it. A phone or Discord call's socket is its session, so once that socket isn't
    open there's nothing left to close. */
 function close(call: Live, event: string) {
+  if (call.lost) {
+    call.closing ??= event;
+    call.closed = true;
+    finish(call, "close_requested", call.closing);
+
+    return;
+  }
+
   const state = call.socket.readyState;
   const socketIsTheSession = call.speak !== undefined;
 
@@ -1101,9 +1122,10 @@ function ring(call: Live, { delegation, offset }: Ring) {
 }
 
 function hear(call: Live, who: Speaker, event: z.output<typeof Transcript>) {
-  const end = event.end_ms ?? event.start_ms;
-  call.call.hear({ who, text: event.delta, start: event.start_ms, end });
-  call.heard?.(who, event.start_ms, event.delta);
+  const begun = onCall(call, event.start_ms);
+  const end = onCall(call, event.end_ms ?? event.start_ms);
+  call.call.hear({ who, text: event.delta, start: begun, end });
+  call.heard?.(who, begun, event.delta);
   call.changes.changed();
   timed(call, end);
 
@@ -1112,7 +1134,7 @@ function hear(call: Live, who: Speaker, event: z.output<typeof Transcript>) {
   }
 
   for (const due of call.rings) {
-    if (due.offset <= event.start_ms) {
+    if (due.offset <= begun) {
       due.caughtUp = true;
     }
   }
@@ -1161,7 +1183,7 @@ function finish(call: Live, reason: string, by?: string) {
 
   live = undefined;
   ended = call.id;
-  clearTimeout(call.warning);
+  clearTimeout(call.lost?.giveUp);
   clearInterval(call.ringing);
   clearTimeout(call.away?.settling);
   const end = ending(reason, by);
@@ -1183,7 +1205,7 @@ function finish(call: Live, reason: string, by?: string) {
   }
 
   const rest = call.call.handOff();
-  call.record = { ...call.record, ended: new Date().toISOString(), end, reason };
+  call.record = { ...call.record, ended: call.lost?.at ?? new Date().toISOString(), end, reason };
   save(call);
   activity.changed();
   deliver(
@@ -1205,8 +1227,10 @@ function finish(call: Live, reason: string, by?: string) {
   call.socket.close();
 
   if (filled(call.closing) && call.closed !== true && call.speak === undefined) {
-    closeSession(call.id, call.closing);
+    closeSession(sessionOf(call), call.closing);
   }
+
+  call.end?.();
 }
 
 type Failure = Required<Pick<CallRecord, "from" | "end" | "reason">> & Partial<CallRecord>;
@@ -1242,7 +1266,11 @@ function follow(
     notes = [],
     hello,
     about,
+    reopen,
+    end,
   }: {
+    reopen?: Live["reopen"];
+    end?: Live["end"];
     call?: Call;
     speak?: Live["speak"];
     muLaw?: boolean;
@@ -1281,6 +1309,8 @@ function follow(
     speak,
     muLaw,
     heard,
+    reopen,
+    end,
   };
 
   if (JEV) {
@@ -1318,7 +1348,6 @@ function follow(
     }
   });
   listen(next, socket);
-  warn(next);
   deliver(
     hello ??
       [
@@ -1542,7 +1571,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
   socket.addEventListener("message", ({ data }) => {
     const parsed = VoiceEvent.safeParse(JSON.parse(String(data)));
 
-    if (!parsed.success) {
+    if (!parsed.success || call.socket !== socket) {
       return;
     }
 
@@ -1551,7 +1580,11 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
     switch (event.type) {
       case "session.input_transcript.delta": {
         hear(call, "you", event);
-        call.mute?.heard(event.delta, event.start_ms, event.end_ms ?? event.start_ms);
+        call.mute?.heard(
+          event.delta,
+          onCall(call, event.start_ms),
+          onCall(call, event.end_ms ?? event.start_ms),
+        );
         call.stop?.heard(event.delta);
 
         return;
@@ -1572,10 +1605,10 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
         call.handoffs?.add(event.delegation.id);
         call.rings.push({
           delegation: event.delegation.id,
-          offset: event.offset_ms ?? Number.NaN,
+          offset: onCall(call, event.offset_ms ?? Number.NaN),
           asked: Date.now(),
         });
-        timed(call, event.offset_ms);
+        timed(call, event.offset_ms === undefined ? undefined : onCall(call, event.offset_ms));
         ringOnceTheCallerPauses(call);
 
         return;
@@ -1614,7 +1647,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
           call.spoke = Date.now();
         }
 
-        timed(call, event.end_ms);
+        timed(call, event.end_ms === undefined ? undefined : onCall(call, event.end_ms));
         call.speak?.(event.delta);
 
         return;
@@ -1622,7 +1655,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
 
       case "session.usage.updated": {
         call.record.usage = usage(
-          event.usage.seconds,
+          (call.usedBefore ?? 0) + event.usage.seconds,
           event.context_window?.usage_ratio ?? call.record.usage?.context,
         );
 
@@ -1631,7 +1664,16 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
 
       case "session.closed": {
         if (event.usage) {
-          call.record.usage = usage(event.usage.seconds, call.record.usage?.context);
+          call.record.usage = usage(
+            (call.usedBefore ?? 0) + event.usage.seconds,
+            call.record.usage?.context,
+          );
+        }
+
+        if (!filled(call.closing) && CARRIES_ON.has(event.reason ?? "")) {
+          lost(call, event.reason ?? "connection_lost");
+
+          return;
         }
 
         finish(
@@ -1647,24 +1689,18 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
 
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- replaces the close handler a reattach set
   socket.onclose = () => {
-    reconnect(call, Date.now() - opened < 5000 ? attempt + 1 : 0);
+    if (call.socket === socket) {
+      reconnect(call, Date.now() - opened < 5000 ? attempt + 1 : 0);
+    }
   };
 }
 
 function reconnect(call: Live, attempt: number) {
-  if (live !== call) {
+  if (live !== call || call.lost) {
     return;
   }
 
-  for (const pending of call.pending.values()) {
-    pending.reject(
-      new Error(
-        "the connection to the voice dropped and is coming back; try again in a few seconds",
-      ),
-    );
-  }
-
-  call.pending.clear();
+  letGo(call, "the connection to the voice dropped and is coming back; try again in a few seconds");
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   /* A close sent on the dropped connection may never have reached the session, so it goes out
      again. */
@@ -1673,32 +1709,42 @@ function reconnect(call: Live, attempt: number) {
   const socketIsTheSession = call.speak !== undefined;
   const hungUp = filled(call.closing);
 
-  if (socketIsTheSession || (hungUp && attempt >= RETRIES.length)) {
-    finish(call, hungUp ? "close_requested" : "connection_lost", call.closing);
+  if (socketIsTheSession && !hungUp) {
+    lost(call, "connection_lost");
 
     return;
   }
 
-  trace(`lost the connection to ${call.id}, reattaching (try ${attempt + 1})`);
+  if (socketIsTheSession || (hungUp && attempt >= RETRIES.length)) {
+    finish(call, "close_requested", call.closing);
+
+    return;
+  }
+
+  const was = sessionOf(call);
+  const moved = () => live !== call || sessionOf(call) !== was || call.lost !== undefined;
+  trace(`lost the connection to ${was}, reattaching (try ${attempt + 1})`);
   setTimeout(
     () => {
-      if (live !== call) {
+      if (moved()) {
         return;
       }
 
-      const socket = sideband(call.id);
+      const socket = sideband(was);
       socket.addEventListener("open", () => {
-        if (live !== call) {
-          if (filled(call.closing) && call.closed !== true) {
+        if (moved()) {
+          if (live !== call && filled(call.closing) && call.closed !== true) {
             sendClose(call, call.closing, socket);
           }
 
+          // oxlint-disable-next-line unicorn/prefer-add-event-listener -- clears the handler below
+          socket.onclose = null;
           socket.close();
 
           return;
         }
 
-        trace(`reattached to ${call.id}`);
+        trace(`reattached to ${was}`);
         call.socket = socket;
         listen(call, socket, attempt);
       });
@@ -1710,10 +1756,14 @@ function reconnect(call: Live, attempt: number) {
       socket.onclose = async () => {
         const over = filled(call.closing) ? undefined : await sessionOver(call);
 
+        if (moved()) {
+          return;
+        }
+
         if (over === undefined) {
           reconnect(call, attempt + 1);
         } else {
-          finish(call, over);
+          lost(call, over);
         }
       };
     },
@@ -1726,7 +1776,7 @@ async function sessionOver(call: Live) {
     return "expired";
   }
 
-  return (await sessionGone(call.id)) ? "connection_lost" : undefined;
+  return (await sessionGone(sessionOf(call))) ? "connection_lost" : undefined;
 }
 
 function expired({ expires }: Pick<CallRecord, "expires">) {
@@ -1749,40 +1799,87 @@ async function sessionGone(id: string) {
   }
 }
 
-function warn(call: Live) {
-  const { expires } = call.record;
-
-  if (!filled(expires)) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A session OpenAI ends without either side hanging up, its time limit or a lost connection, isn't
+   the end of the call: the call carries on in a new session, opened by the caller's app for an app
+   call and by the engine for a phone or Discord call, and ends only if none opens for a while. */
+function lost(call: Live, reason: string) {
+  if (live !== call || call.lost) {
     return;
   }
 
-  const left = Date.parse(expires) - Date.now();
+  trace(`${sessionOf(call)} ended (${reason}); ${call.id} waits to carry on`);
+  call.lost = {
+    reason,
+    at: new Date().toISOString(),
+    giveUp: setTimeout(() => {
+      finish(call, reason);
+    }, GRACE),
+  };
+  letGo(call, "the voice is reconnecting; try again in a few seconds");
+  call.reopen?.(call, carryOnWith(call, reason));
+}
 
-  if (!(left > WARN_BEFORE)) {
-    return;
+function carried(call: Live, socket: WebSocket, next: string, expires: string | undefined) {
+  const before = call.socket;
+  const reason = call.lost?.reason ?? "connection_lost";
+  // oxlint-disable-next-line unicorn/prefer-add-event-listener -- clears the reconnect handler listen() set
+  before.onclose = null;
+
+  if (!call.lost && before.readyState === WebSocket.OPEN) {
+    before.send(JSON.stringify({ type: "session.close", event_id: `close_hex_${++seq}` }));
   }
 
-  call.warning = setTimeout(() => {
-    if (live !== call) {
-      return;
-    }
+  before.close();
+  clearTimeout(call.lost?.giveUp);
+  delete call.lost;
+  delete call.closed;
+  letGo(call, "the voice moved to a new session; send it again");
+  call.handoffs = new Set();
+  call.shift = since(call);
+  call.usedBefore = call.record.usage?.seconds ?? 0;
+  call.record = { ...call.record, session: next, ...(expires !== undefined && { expires }) };
+  call.socket = socket;
+  trace(`${call.id} carried on in ${next} (${reason})`);
+  remember(
+    call,
+    "reconnected",
+    reason === "expired"
+      ? "The call hit OpenAI's time limit and carried on"
+      : "The connection dropped and came back",
+  );
+  listen(call, socket);
+  deliver(
+    `The call's voice session ended (${reason}) and the call carried on in a new one, which knows the call so far. Answers to earlier handoffs reach it without their handoff.`,
+    { call: call.id, carried: reason },
+  );
+}
 
-    const at = new Date(Date.parse(expires)).toLocaleTimeString([], {
-      hour: "numeric",
-      minute: "2-digit",
-    });
+function carryOnWith(call: Live, reason: string) {
+  const so = call.call
+    .record()
+    .turns.slice(-40)
+    .map(({ who, at, text }) => ({ who, text, start: at }));
 
-    remember(call, "warned", `Two minutes left: the call ends at ${at}`);
-    void send(
-      call,
-      "session.instructions.append",
-      "This call hits its time limit in about two minutes. Tell the caller now, in a sentence, so they can wrap up or call back.",
-    ).catch(fineIfUnconfirmed);
-    deliver(
-      `This call hits its time limit at ${at}, about two minutes from now. Wrap up anything the caller needs before it ends.`,
-      { call: call.id, expires },
-    );
-  }, left - WARN_BEFORE);
+  return [
+    reason === "expired"
+      ? "This call carries on from a session that hit its time limit; the caller heard only a short pause. Don't mention it: finish anything you were cut off saying, otherwise listen."
+      : "The caller's connection dropped for a moment and this call carries on. Say in a few words that you're back, then finish anything you were cut off saying, or ask what they said while you were gone.",
+    ...(so.length ? ["The call so far:", transcript(so)] : []),
+    ...(call.mute?.muted === true ? [MUTED] : []),
+  ].join("\n");
+}
+
+function letGo(call: Live, why: string) {
+  for (const pending of call.pending.values()) {
+    pending.reject(new Error(why));
+  }
+
+  call.pending.clear();
+}
+
+function sessionOf(call: Pick<Live, "id" | "record">) {
+  return call.record.session ?? call.id;
 }
 
 function voiceSocket(url: string) {
@@ -1820,7 +1917,7 @@ function recover() {
       !expired(record);
 
     if (latest) {
-      reattach({ id });
+      reattach({ id, session: record.session ?? id });
     } else {
       closeOut(record);
     }
@@ -1885,8 +1982,8 @@ function retire(pending: Attaching, event: string) {
 }
 
 function reattach(pending: Attaching, attempt = 0) {
-  const { id } = pending;
-  const socket = sideband(id);
+  const { id, session: attachTo } = pending;
+  const socket = sideband(attachTo);
   attaching = pending;
   socket.addEventListener("open", () => {
     if (attaching === pending) {
@@ -1932,7 +2029,7 @@ function reattach(pending: Attaching, attempt = 0) {
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- listen() replaces this handler once the call is live
   socket.onclose = () => {
     if (filled(pending.closing)) {
-      closeSession(id, pending.closing);
+      closeSession(attachTo, pending.closing);
 
       return;
     }
@@ -1947,10 +2044,10 @@ async function attachAgain(pending: Attaching, attempt: number) {
   const record = calls.get(pending.id);
 
   const stillOn =
-    record !== undefined && !live && !expired(record) && !(await sessionGone(pending.id));
+    record !== undefined && !live && !expired(record) && !(await sessionGone(pending.session));
 
   if (filled(pending.closing)) {
-    closeSession(pending.id, pending.closing);
+    closeSession(pending.session, pending.closing);
 
     return;
   }
@@ -1969,11 +2066,11 @@ async function attachAgain(pending: Attaching, attempt: number) {
     return;
   }
 
-  trace(`couldn't attach back to ${pending.id} yet, trying again (try ${attempt + 1})`);
+  trace(`couldn't attach back to ${pending.session} yet, trying again (try ${attempt + 1})`);
   setTimeout(
     () => {
       if (filled(pending.closing)) {
-        closeSession(pending.id, pending.closing);
+        closeSession(pending.session, pending.closing);
       } else if (attaching === pending) {
         reattach(pending, attempt + 1);
       }
@@ -2118,10 +2215,14 @@ type Passed = {
   heard?: Live["heard"];
   notes?: string[] | undefined;
   started: (session: string) => void;
+  moved: (socket: WebSocket) => void;
   refused: (reason: string) => void;
   closed: () => void;
 };
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A phone or Discord call's socket is its session, so the call carries on through a new socket the
+   line's audio moves to; the line itself stays up until the call ends. */
 function passThrough({
   name,
   from,
@@ -2134,10 +2235,10 @@ function passThrough({
   heard,
   notes,
   started,
+  moved,
   refused,
   closed,
 }: Passed) {
-  const openai = voiceSocket(API);
   const voice = readStyle(STATE_DIR).voice ?? VOICE;
   let up = false;
   let refusing = false;
@@ -2151,75 +2252,133 @@ function passThrough({
     refused(reason);
   };
 
-  openai.addEventListener("open", () => {
-    openai.send(
-      JSON.stringify({
-        type: "session.start",
-        session: session(
-          { audio: { format, ...(filled(voice) && { output: { voice } }) } },
-          greeting,
-        ),
-      }),
-    );
-  });
+  const connect = (opening: string, carrying?: Live) => {
+    const openai = voiceSocket(API);
+    let begun = false;
 
-  openai.addEventListener("message", ({ data }) => {
-    const parsed = SessionEvent.safeParse(JSON.parse(String(data)));
-
-    if (!parsed.success) {
-      return;
-    }
-
-    const event = parsed.data;
-
-    if (event.type === "error") {
-      refuseOnce(
-        `OpenAI refused the ${name} session: ${event.error?.message ?? JSON.stringify(event.error)}`,
+    openai.addEventListener("open", () => {
+      openai.send(
+        JSON.stringify({
+          type: "session.start",
+          session: session(
+            { audio: { format, ...(filled(voice) && { output: { voice } }) } },
+            opening,
+          ),
+        }),
       );
+    });
 
-      return;
-    }
+    openai.addEventListener("message", ({ data }) => {
+      const parsed = SessionEvent.safeParse(JSON.parse(String(data)));
 
-    const callerAlreadyHungUp = openai.readyState !== WebSocket.OPEN;
+      if (begun || !parsed.success) {
+        return;
+      }
 
-    if (callerAlreadyHungUp) {
-      return;
-    }
+      const event = parsed.data;
 
-    const placedCallPickedUpWhileAnotherIsLive =
-      from === "phone-out" &&
-      (filled(live?.record.callee) ||
-        ((live !== undefined || attaching !== undefined) && move !== true));
+      if (carrying) {
+        if (event.type === "error") {
+          trace(`OpenAI refused to carry the ${name} call on: ${JSON.stringify(event.error)}`);
+          openai.close();
 
-    if (placedCallPickedUpWhileAnotherIsLive) {
-      refuseOnce("it picked up while another call was live, so it was let go");
+          return;
+        }
 
-      return;
-    }
+        begun = true;
 
-    up = true;
-    started(event.session.id);
-    const expires = expiry(event.session.expires_at);
-    follow(
-      openai,
-      base(event.session.id, from, {
-        ...(voice !== undefined && { voice }),
-        ...(why !== undefined && { why }),
-        ...(callee !== undefined && { callee }),
-        ...(expires !== undefined && { expires }),
-      }),
-      { speak: play, muLaw: format.type === "audio/pcmu", heard, notes },
-    );
-  });
-  openai.addEventListener("close", ({ code, reason }) => {
-    trace(`OpenAI closed the ${name} session (${code} ${reason})`);
-    refuseOnce(
-      `OpenAI closed the ${name} session before it started (${code} ${reason === "" ? "no reason" : reason})`,
-    );
-    closed();
-  });
+        if (live !== carrying || filled(carrying.closing)) {
+          openai.send(JSON.stringify({ type: "session.close", event_id: `close_hex_${++seq}` }));
+          openai.close();
 
-  return openai;
+          return;
+        }
+
+        moved(openai);
+        carried(carrying, openai, event.session.id, expiry(event.session.expires_at));
+
+        return;
+      }
+
+      if (event.type === "error") {
+        refuseOnce(
+          `OpenAI refused the ${name} session: ${event.error?.message ?? JSON.stringify(event.error)}`,
+        );
+
+        return;
+      }
+
+      const callerAlreadyHungUp = openai.readyState !== WebSocket.OPEN;
+
+      if (callerAlreadyHungUp) {
+        return;
+      }
+
+      const placedCallPickedUpWhileAnotherIsLive =
+        from === "phone-out" &&
+        (filled(live?.record.callee) ||
+          ((live !== undefined || attaching !== undefined) && move !== true));
+
+      if (placedCallPickedUpWhileAnotherIsLive) {
+        refuseOnce("it picked up while another call was live, so it was let go");
+
+        return;
+      }
+
+      begun = true;
+      up = true;
+      started(event.session.id);
+      const expires = expiry(event.session.expires_at);
+      follow(
+        openai,
+        base(event.session.id, from, {
+          ...(voice !== undefined && { voice }),
+          ...(why !== undefined && { why }),
+          ...(callee !== undefined && { callee }),
+          ...(expires !== undefined && { expires }),
+        }),
+        {
+          speak: play,
+          muLaw: format.type === "audio/pcmu",
+          heard,
+          notes,
+          end: closed,
+          reopen: (call, text) => {
+            connect(text, call);
+          },
+        },
+      );
+    });
+
+    openai.addEventListener("close", ({ code, reason }) => {
+      trace(`OpenAI closed the ${name} session (${code} ${reason})`);
+
+      if (carrying) {
+        const tryAgain = () => !begun && live === carrying && carrying.lost !== undefined;
+
+        if (tryAgain()) {
+          setTimeout(() => {
+            if (tryAgain()) {
+              connect(opening, carrying);
+            }
+          }, RETRIES[2]);
+        }
+
+        return;
+      }
+
+      if (!up) {
+        refuseOnce(
+          `OpenAI closed the ${name} session before it started (${code} ${reason === "" ? "no reason" : reason})`,
+        );
+        closed();
+      }
+    });
+
+    return openai;
+  };
+
+  return connect(greeting);
 }
 
 function answer(twilio: Bun.ServerWebSocket<Phone>) {
@@ -2277,6 +2436,9 @@ function answer(twilio: Bun.ServerWebSocket<Phone>) {
         call.session = sessionId;
       }
     },
+    moved: (socket) => {
+      twilio.data.openai = socket;
+    },
     refused: (reason) => {
       refuse(twilio, reason);
     },
@@ -2294,7 +2456,7 @@ export function take(from: Source, greeting: string, voiceLine: VoiceLine): Held
   let up = false;
   let gone = false;
 
-  const openai: WebSocket = passThrough({
+  let openai: WebSocket = passThrough({
     name: from,
     from,
     greeting,
@@ -2302,6 +2464,9 @@ export function take(from: Source, greeting: string, voiceLine: VoiceLine): Held
     play: voiceLine.play,
     started: () => {
       up = true;
+    },
+    moved: (socket) => {
+      openai = socket;
     },
     refused: (reason) => {
       if (!gone) {
@@ -2317,7 +2482,7 @@ export function take(from: Source, greeting: string, voiceLine: VoiceLine): Held
 
   return {
     hear: (audio) => {
-      if (up) {
+      if (up && openai.readyState === WebSocket.OPEN) {
         openai.send(JSON.stringify({ type: "session.input_audio.append", audio }));
       }
     },
@@ -2556,8 +2721,8 @@ function hearPhone(twilio: Bun.ServerWebSocket<Phone>, raw: string | Buffer) {
     }
 
     case "media": {
-      if (twilio.data.started === true) {
-        twilio.data.openai?.send(
+      if (twilio.data.started === true && twilio.data.openai?.readyState === WebSocket.OPEN) {
+        twilio.data.openai.send(
           JSON.stringify({ type: "session.input_audio.append", audio: message.media.payload }),
         );
       }
@@ -2635,10 +2800,15 @@ async function start(request: Request) {
     voice = readStyle(STATE_DIR).voice ?? VOICE,
     from: origin,
     about,
+    continues,
   } = body.success ? body.data : {};
 
   if (!filled(sdp)) {
     return new Response("An SDP offer is required", { status: 400 });
+  }
+
+  if (filled(continues)) {
+    return await carryOn(continues, sdp);
   }
 
   const from = origin === "app" ? "app" : "web";
@@ -2646,29 +2816,11 @@ async function start(request: Request) {
   let response: Response;
 
   try {
-    response = await fetch(API, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        session: session(
-          {
-            ...(filled(voice) && { audio: { output: { voice } } }),
-            client: {
-              data_channel: {
-                allowed_client_events: [
-                  "session.input_audio.mute",
-                  "session.input_audio.unmute",
-                  "session.close",
-                ],
-                allowed_server_events: APP_HEARS,
-              },
-            },
-          },
-          topic?.voice ?? "Greet the caller in a few words, then listen.",
-        ),
-        transport: { type: "webrtc", sdp },
-      }),
-    });
+    response = await openSession(
+      sdp,
+      voice,
+      topic?.voice ?? "Greet the caller in a few words, then listen.",
+    );
   } catch (error) {
     const reason = `couldn't reach OpenAI: ${messageOf(error)}`;
     failed({ from, end: "no-connect", reason, ...(voice !== undefined && { voice }) });
@@ -2677,12 +2829,7 @@ async function start(request: Request) {
   }
 
   if (!response.ok) {
-    const text = await response.text();
-
-    if (response.status === 429 && NO_CREDIT.test(text)) {
-      credit = "out";
-    }
-
+    const text = await refusal(response);
     failed({
       from,
       end: "no-connect",
@@ -2706,6 +2853,93 @@ async function start(request: Request) {
   );
 
   return Response.json(result, { status: 201 });
+}
+
+async function openSession(sdp: string, voice: string | undefined, opening: string) {
+  return await fetch(API, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      session: session(
+        {
+          ...(filled(voice) && { audio: { output: { voice } } }),
+          client: {
+            data_channel: {
+              allowed_client_events: [
+                "session.input_audio.mute",
+                "session.input_audio.unmute",
+                "session.close",
+              ],
+              allowed_server_events: APP_HEARS,
+            },
+          },
+        },
+        opening,
+      ),
+      transport: { type: "webrtc", sdp },
+    }),
+  });
+}
+
+async function refusal(response: Response) {
+  const text = await response.text();
+
+  if (response.status === 429 && NO_CREDIT.test(text)) {
+    credit = "out";
+  }
+
+  return text;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The caller's app lost its connection to the voice, or the session hit its time limit, and opens
+   a new one for the same call: the call keeps its id, its record and hex's session. */
+async function carryOn(id: string, sdp: string) {
+  const call =
+    live?.id === id && live.speak === undefined && !filled(live.closing) ? live : undefined;
+
+  if (!call) {
+    return new Response("That call has ended", { status: 410 });
+  }
+
+  let response: Response;
+
+  try {
+    response = await openSession(
+      sdp,
+      call.record.voice,
+      carryOnWith(call, call.lost?.reason ?? "connection_lost"),
+    );
+  } catch (error) {
+    return new Response(`couldn't reach OpenAI: ${messageOf(error)}`, { status: 502 });
+  }
+
+  if (!response.ok) {
+    const text = await refusal(response);
+    trace(`OpenAI refused to carry ${id} on (${response.status}): ${problem(text)}`);
+
+    return new Response(text, { status: response.status });
+  }
+
+  const created = SessionCreated.parse(await response.json());
+
+  if (live !== call || filled(call.closing)) {
+    closeSession(created.session.id, call.closing ?? `close_hex_${++seq}`);
+
+    return new Response("That call has ended", { status: 410 });
+  }
+
+  carried(
+    call,
+    sideband(created.session.id),
+    created.session.id,
+    expiry(created.session.expires_at),
+  );
+
+  return Response.json(
+    { ...created, session: { ...created.session, id: call.id } },
+    { status: 201 },
+  );
 }
 
 const PAUSED =

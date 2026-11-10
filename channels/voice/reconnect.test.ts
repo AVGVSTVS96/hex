@@ -932,19 +932,84 @@ test("an app call whose connection stays down past every retry goes on, and the 
   expect(engine.closes).toEqual([`${ID} close-you-app`]);
 }, 40_000);
 
-test("an app call OpenAI says is gone ends as dropped, with no close sent", async () => {
-  await using engine = await appCall();
-  await started(engine);
-  engine.cut("gone");
+const Created = z.object({
+  session: z.object({
+    input: z.array(z.object({ content: z.array(z.object({ text: z.string() })) })),
+  }),
+});
 
-  for (let tries = 0; (await engine.call()).ended === undefined; tries++) {
-    expect(tries).toBeLessThan(400);
+const Turns = z.object({ turns: z.array(z.object({ who: z.string(), at: z.number() })) });
+
+async function heard(engine: Engine, count: number) {
+  for (let tries = 0; ; tries++) {
+    const { turns } = Turns.parse(await engine.call());
+
+    if (turns.length === count) {
+      return turns;
+    }
+
+    expect(tries).toBeLessThan(100);
     await Bun.sleep(50);
   }
+}
 
-  expect(await engine.call()).toMatchObject({ end: "dropped", reason: "connection_lost" });
+async function carryOn(engine: Engine, continues = ID) {
+  return await fetch(`${engine.base}/session`, {
+    method: "POST",
+    body: JSON.stringify({ sdp: "offer", from: "app", continues }),
+  });
+}
+
+async function waitsToCarryOn(engine: Engine) {
+  engine.cut("gone");
+  await Bun.sleep(2000);
+  expect(await engine.live()).toBe(ID);
+  expect((await engine.call()).ended).toBeUndefined();
+}
+
+test("an app call whose session OpenAI ends carries on in the one the app opens next: same call, the call so far, one clock", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.send({
+    type: "session.input_transcript.delta",
+    delta: "is the build green?",
+    start_ms: 1000,
+  });
+  engine.send({ type: "session.output_transcript.delta", delta: "It is.", start_ms: 2000 });
+  await heard(engine, 2);
+  await waitsToCarryOn(engine);
+  engine.attachIs("open");
+
+  const response = await carryOn(engine);
+  expect(response.status).toBe(201);
+  expect(await response.json()).toMatchObject({ session: { id: ID } });
+  const opening = Created.parse(engine.created[1]).session.input[0]?.content[0]?.text;
+  expect(opening).toContain("you're back");
+  expect(opening).toContain("is the build green?");
+  expect(opening).toContain("It is.");
+
+  await engine.attached();
+  engine.send({ type: "session.input_transcript.delta", delta: "and the tests?", start_ms: 100 });
+  const turns = await heard(engine, 3);
+  expect(turns[2]?.at).toBeGreaterThan(2000);
+  expect((await engine.call()).moments).toMatchObject([{ kind: "reconnected" }]);
+  expect(engine.told.some((told) => told.meta?.carried === "connection_lost")).toBe(true);
+
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
+  expect(engine.closes).toEqual([`${ID}-2 close-you-app`]);
+}, 40_000);
+
+test("hanging up while the call waits to carry on ends it at once, and it can't be carried on after", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  await waitsToCarryOn(engine);
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
   expect(engine.closes).toEqual([]);
-}, 30_000);
+  expect((await carryOn(engine)).status).toBe(410);
+  expect(engine.created).toHaveLength(1);
+}, 40_000);
 
 test("after a restart, the engine keeps coming back to a call it can't attach to yet, and closes it out once OpenAI says it's gone", async () => {
   for (const after of ["open", "gone"] as const) {

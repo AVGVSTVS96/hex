@@ -37,7 +37,8 @@ export type Mark = {
     | "video"
     | "muted"
     | "unmuted"
-    | "stopped";
+    | "stopped"
+    | "reconnected";
   text: string;
   ask?: string;
   sent?: Sent;

@@ -16,6 +16,7 @@ const ClientEvent = z.object({
   content: z.string().optional(),
   audio: z.string().optional(),
   event_id: z.unknown().optional(),
+  session: z.unknown().optional(),
 });
 
 const Step = z.object({
@@ -80,6 +81,7 @@ async function phoneCall({ openaiHoldsEachStart = false } = {}) {
   const starts: (() => void)[] = [];
   const closes: unknown[] = [];
   const told: { session: string; content: string | undefined }[] = [];
+  const begun: string[] = [];
   let connected = 0;
   let sessions = 0;
 
@@ -114,6 +116,8 @@ async function phoneCall({ openaiHoldsEachStart = false } = {}) {
         }
 
         if (event.type === "session.start") {
+          begun.push(JSON.stringify(event.session));
+
           if (openaiHoldsEachStart) {
             starts.push(begin);
           } else {
@@ -262,7 +266,9 @@ step('listening', { port: server.port, tools: tools.port })`;
     steps,
     closes,
     told,
+    begun,
     placed,
+    drop: () => voice?.close(),
     firstPlaced: () => {
       const [token] = placed;
 
@@ -659,4 +665,27 @@ test("a handoff no words follow still reaches the voice session, once, a moment 
   call.say("voice", "One sec.", 1200);
   await Bun.sleep(300);
   expect(handoffs()).toHaveLength(1);
+}, 20_000);
+
+test("a phone call whose voice session drops carries on in a new one: same call, the call so far, the caller's audio goes to it", async () => {
+  await using call = await phoneCall();
+  const phone = await dialIn(call.base);
+  const id = await live(call.base);
+  call.say("you", "is the build green?", 1000);
+  const heard = await listen(call.base, id, undefined, (now) => now.turns.length === 1);
+  call.drop();
+  await until(() => call.begun.length === 2);
+  expect(call.begun[1]).toContain("is the build green?");
+
+  const back = await listen(call.base, id, heard.version, (now) =>
+    JSON.stringify(now).includes('"reconnected"'),
+  );
+
+  expect((await calls(call.base)).live).toBe(id);
+  phone.send(JSON.stringify({ event: "media", media: { payload: "AAAA" } }));
+  expect(await until(() => call.audio.includes("AAAA"))).toBe(true);
+
+  phone.send(JSON.stringify({ event: "stop" }));
+  const ended = await listen(call.base, id, back.version, (now) => now.ended !== undefined);
+  expect(ended).toMatchObject({ id, end: "you" });
 }, 20_000);
