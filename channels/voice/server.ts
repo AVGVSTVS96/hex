@@ -110,9 +110,9 @@ const InterruptionBody = z.object({
 
 const EndBody = z.object({ sessionId: z.string() });
 
-const AnswerBody = z.object({ label: z.string() });
+const AnswerBody = z.object({ label: z.string(), media: z.array(z.string()).default([]) });
 
-const NoteBody = z.object({ text: z.string() });
+const NoteBody = z.object({ text: z.string(), media: z.array(z.string()).default([]) });
 
 const ChatBody = z.object({
   media: z.array(z.string()).default([]),
@@ -1488,10 +1488,10 @@ function missed({ missed: unreached }: Sent) {
   return unreached ? `, but ${unreached} of its copies or threads couldn't be reached` : "";
 }
 
-async function answerQuestion(id: string, label: string, via: "call" | "app") {
+async function answerQuestion(id: string, label: string, via: "call" | "app", items: Item[] = []) {
   const call = live;
   const question = yours.find(id) ?? call?.shown.get(id);
-  const sent = await yours.answer(id, label, via);
+  const sent = await yours.answer(id, label, via, items);
 
   if (call && live === call && question) {
     call.shown.set(id, question);
@@ -2986,13 +2986,21 @@ async function questionRoutes(request: Request, url: URL) {
     const stillOnTheCall = (call = callTheCardIsOn) => (call && live === call ? call : undefined);
 
     if (kind === "asks" && verb === "answer") {
-      const label = (await bodyOf(request, AnswerBody))?.label;
+      const body = await bodyOf(request, AnswerBody);
+      const items = mediaOf(body?.media ?? []);
+
+      if (!items) {
+        return new Response(CHAT_FIELD_PROBLEMS.media, { status: 400 });
+      }
+
+      const typed = body?.label.trim() ?? "";
+      const label = typed === "" ? photos(items) : typed;
 
       if (!filled(label)) {
         return new Response("An answer needs its label", { status: 400 });
       }
 
-      const sent = await answerQuestion(key, label, "app");
+      const sent = await answerQuestion(key, label, "app", items);
       const call = stillOnTheCall();
 
       if (call) {
@@ -3006,13 +3014,21 @@ async function questionRoutes(request: Request, url: URL) {
     }
 
     if (kind === "asks" && verb === "note") {
-      const text = (await bodyOf(request, NoteBody))?.text.trim() ?? "";
+      const body = await bodyOf(request, NoteBody);
+      const items = mediaOf(body?.media ?? []);
+
+      if (!items) {
+        return new Response(CHAT_FIELD_PROBLEMS.media, { status: 400 });
+      }
+
+      const typed = body?.text.trim() ?? "";
+      const text = typed === "" ? photos(items) : typed;
 
       if (text === "") {
         return new Response("A note needs its text", { status: 400 });
       }
 
-      const sent = await questions.note(key, text, "app");
+      const sent = await questions.note(key, text, "app", items);
       const call = stillOnTheCall();
 
       if (call) {
@@ -3188,16 +3204,10 @@ async function sendChat(request: Request, run: Run | Page) {
   }
 
   const { media: names, text, key } = parsed.data;
-  const items: Item[] = [];
+  const items = mediaOf(names);
 
-  for (const name of names) {
-    const item = media.get(name);
-
-    if (!item) {
-      return new Response(CHAT_FIELD_PROBLEMS.media, { status: 400 });
-    }
-
-    items.push(item);
+  if (!items) {
+    return new Response(CHAT_FIELD_PROBLEMS.media, { status: 400 });
   }
 
   if (text.trim() === "" && items.length === 0) {
@@ -3211,6 +3221,23 @@ async function sendChat(request: Request, run: Run | Page) {
   }
 
   return await done(() => chats.send(run, text.trim(), named.data, items));
+}
+
+function mediaOf(names: string[]) {
+  const items = names.map((name) => media.get(name));
+
+  return items.every((item) => item !== undefined) ? items : undefined;
+}
+
+function photos(items: Item[]) {
+  if (items.length === 0) {
+    return "";
+  }
+
+  const kinds = new Set(items.map((item) => item.kind));
+  const kind = kinds.size === 1 ? [...kinds][0] : "photo or video";
+
+  return items.length === 1 ? `a ${kind}` : `${items.length} ${kind}s`;
 }
 
 async function done(act: () => Promise<void> | void) {
