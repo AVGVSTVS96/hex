@@ -199,10 +199,9 @@ export class Questions {
       () =>
         this.db
           .query(
-            "update questions set answer = ?, settled = null where app = ? and thread = ? and message = ? and (? or answer is null)",
+            "update questions set answer = ?, settled = null where app = ? and thread = ? and message = ? and (? or answer is null) returning n",
           )
-          .run(JSON.stringify({ label, at: now(), via }), app, thread, message, again).changes ===
-        1,
+          .all(JSON.stringify({ label, at: now(), via }), app, thread, message, again).length === 1,
     );
   }
 
@@ -227,9 +226,9 @@ export class Questions {
       () =>
         this.db
           .query(
-            "update questions set answer = null, settled = null where app = ? and thread = ? and message = ? and (answer is not null or settled is not null)",
+            "update questions set answer = null, settled = null where app = ? and thread = ? and message = ? and (answer is not null or settled is not null) returning n",
           )
-          .run(app, thread, message).changes === 1,
+          .all(app, thread, message).length === 1,
     );
   }
 

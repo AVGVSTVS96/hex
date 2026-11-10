@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
-import { appendFileSync, mkdirSync, watch } from "node:fs";
+import { appendFileSync, closeSync, fsyncSync, mkdirSync, openSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { join } from "node:path";
+import { Worker } from "node:worker_threads";
 
 import { z } from "zod";
 
@@ -66,6 +67,10 @@ export class Store {
   private readonly listeners = new Set<() => void>();
   private watcher: FSWatcher | undefined;
   private heard = "";
+  private syncer: Worker | undefined;
+  private committed = 0;
+  private onDisk = 0;
+  private readonly waiting = new Set<{ upTo: number; resolve: () => void }>();
 
   constructor(dir: string) {
     this.dir = dir;
@@ -127,10 +132,85 @@ export class Store {
     });
 
     if (this.changes() !== before) {
+      this.committed += 1;
+      this.syncer?.postMessage(this.committed);
       appendFileSync(this.bell, ".");
     }
 
     return result;
+  }
+
+  syncInBackground() {
+    if (this.syncer !== undefined) {
+      return;
+    }
+
+    this.db.run("pragma synchronous = normal");
+    this.db.run("pragma wal_autocheckpoint = 0");
+    this.startSyncer();
+  }
+
+  synced(): Promise<void> {
+    const upTo = this.committed;
+
+    if (this.syncer === undefined || this.onDisk >= upTo) {
+      return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+      this.waiting.add({ upTo, resolve });
+    });
+  }
+
+  private startSyncer() {
+    const syncer = new Worker(join(import.meta.dir, "store/syncer.ts"), {
+      workerData: { db: join(this.dir, "hex.db") },
+    });
+
+    syncer.unref();
+    syncer.on("message", (upTo: number) => {
+      this.onDisk = Math.max(this.onDisk, upTo);
+
+      for (const each of this.waiting) {
+        if (each.upTo <= this.onDisk) {
+          this.waiting.delete(each);
+          each.resolve();
+        }
+      }
+    });
+    syncer.on("error", (error) => {
+      process.stderr.write(
+        `hex.db: the sync thread failed, so writes wait for the disk again: ${String(error)}\n`,
+      );
+    });
+    syncer.on("exit", () => {
+      this.waitForTheDisk();
+    });
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- a worker_threads Worker has no origin
+    syncer.postMessage(this.committed);
+    this.syncer = syncer;
+  }
+
+  private waitForTheDisk() {
+    this.syncer = undefined;
+    this.db.run("pragma synchronous = full");
+    this.db.run("pragma wal_autocheckpoint = 1000");
+
+    const wal = openSync(join(this.dir, "hex.db-wal"), "r");
+
+    try {
+      fsyncSync(wal);
+    } finally {
+      closeSync(wal);
+    }
+
+    this.onDisk = this.committed;
+
+    for (const each of this.waiting) {
+      each.resolve();
+    }
+
+    this.waiting.clear();
   }
 
   watch(listener: () => void): () => void {
@@ -215,6 +295,8 @@ export function stateDir(appFolder?: string) {
   return nonEmptyEnv("HEX_STORE") ?? join(hexDir(), "state");
 }
 
+let inBackground = false;
+
 export function open(dir: string): Store {
   const kept = stores.get(dir);
 
@@ -225,7 +307,19 @@ export function open(dir: string): Store {
   const store = new Store(dir);
   stores.set(dir, store);
 
+  if (inBackground) {
+    store.syncInBackground();
+  }
+
   return store;
+}
+
+export function syncInBackground() {
+  inBackground = true;
+
+  for (const store of stores.values()) {
+    store.syncInBackground();
+  }
 }
 
 const SqliteFailure = z.object({

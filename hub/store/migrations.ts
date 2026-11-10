@@ -41,6 +41,14 @@ const AUTHOR_BEFORE_HEX_KEPT_AUTHORS = `case
 
 const AUTHORS = `(${AuthorColumn.options.map((author) => `'${author}'`).join(", ")})`;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The rows these triggers write count in Bun's `.changes` of the statement that set them off, unlike sqlite3_changes(), so a check on these tables counts what the statement returns.
+const STATUS_INPUTS = [
+  { table: "tasks", thread: (row: string) => `${row}.owner` },
+  { table: "questions", thread: (row: string) => `${row}.thread` },
+  { table: "words", thread: (row: string) => `(select owner from tasks where n = ${row}.task)` },
+];
+
 function sql(text: string) {
   return ({ db }: Migrating) => {
     db.run(text);
@@ -255,7 +263,26 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
       db.run("alter table threads add column project text");
     }
   },
+  sql(`create table if not exists changed (thread text primary key, n integer not null);
+  create index if not exists changed_in_order on changed (n);
+  ${STATUS_INPUTS.map(statusChangeTriggers).join("\n")}`),
 ];
+
+function statusChangeTriggers({ table, thread }: (typeof STATUS_INPUTS)[number]) {
+  const touch = (row: string) =>
+    `insert into changed (thread, n) values (${thread(row)}, (select coalesce(max(n), 0) + 1 from changed)) on conflict (thread) do update set n = excluded.n;`;
+
+  return [
+    ["insert", touch("new")],
+    ["update", touch("old") + touch("new")],
+    ["delete", touch("old")],
+  ]
+    .map(
+      ([event, body]) =>
+        `create trigger if not exists ${table}_${event}_changes after ${event} on ${table} begin ${body} end;`,
+    )
+    .join("\n");
+}
 
 function apps(dir: string): [string, string][] {
   const ownFolderOutsideAHex: [string, string] = [basename(dir), dir];

@@ -1793,3 +1793,40 @@ test("hex message gives the owner's words as he last edited them, and a task quo
   );
   expect(await hexMessage("buzz:e3")).toBe("second edit");
 });
+
+test("a store that syncs in the background shows a write at once, says when it's on disk, and checkpoints off the hub's thread", async () => {
+  const store = new Store(dir);
+  store.syncInBackground();
+  expect(store.db.query("pragma synchronous").get()).toEqual({ synchronous: 1 });
+
+  const other = new Database(join(dir, "hex.db"), { readonly: true });
+
+  for (let n = 0; n < 1500; n += 1) {
+    store.messages.deliver({
+      ...message,
+      key: `telegram:-100:5:${String(n)}`,
+      body: "x".repeat(3000),
+    });
+  }
+
+  expect(other.query("select count(*) as n from messages").get()).toEqual({ n: 1500 });
+  await store.synced();
+  await until(() => Bun.file(join(dir, "hex.db")).size > 4_000_000);
+  other.close();
+});
+
+test("if its sync thread ends, a store waits for the disk on every write again and still answers who waits", async () => {
+  const store = new Store(dir);
+  store.syncInBackground();
+  store.messages.deliver(message);
+  const waiting = store.synced();
+  // oxlint-disable-next-line dot-notation -- ending the thread is what this test is about
+  await store["syncer"]?.terminate();
+  await waiting;
+  await until(
+    () =>
+      z.object({ synchronous: z.literal(2) }).safeParse(store.db.query("pragma synchronous").get())
+        .success,
+  );
+  await store.synced();
+});
