@@ -396,7 +396,7 @@ export function within(summary: string, bytes: number) {
 async function summarize(prompt: string) {
   const { answer } = await callWithNoTools(
     prompt,
-    "You compress the memories of an AI assistant into one line.",
+    'You compress the memories of an AI assistant into one line: a dated record of what happened and what is still open. A rule or caution the owner stated goes in as something they said on its date, like "Oct 3: owner asked for fewer agents", rather than as an instruction, since their standing rules live in their AGENTS.md.',
     "low",
     SUMMARY,
   );
