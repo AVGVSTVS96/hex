@@ -210,6 +210,23 @@ test("a chat is what was said in it, then the owner's words its session hasn't t
   ]);
 });
 
+test("a chat is its newest 40 messages, however much Telegram doesn't show comes after them", async () => {
+  for (let n = 1; n <= 50; n += 1) {
+    say(DESK, n, "owner", `message ${String(n)}`);
+  }
+
+  for (let n = 51; n <= 250; n += 1) {
+    say(DESK, n, "owner", "👍", { reaction: "👍" });
+  }
+
+  const { messages } = await read(store, "telegram:-100:5");
+
+  expect(messages.map(({ text }) => text)).toEqual(
+    Array.from({ length: 40 }, (_, at) => `message ${String(at + 11)}`),
+  );
+  expect(list(store).find(({ id }) => id === "telegram:-100:5")?.line).toBe("message 50");
+});
+
 test("a read after a version waits for the next message, and returns the moment it's written", async () => {
   say(DESK, 1, "owner", "ship it");
   const { version } = await read(store, "telegram:-100:5");

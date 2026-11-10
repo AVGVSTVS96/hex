@@ -115,24 +115,30 @@ function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
   ];
 }
 
-function messages(store: Store, thread: string): Message[] {
-  const rows = store.messages.said(thread);
+function latest(store: Store, thread: string, count: number, rows = count * 2): Message[] {
+  const newest = store.messages.said(thread, rows);
 
   const edits = new Map(
-    rows
+    newest
       .filter((row) => row.meta?.edited === "true" && filled(row.meta.message_id))
       .map((row) => [row.meta?.message_id ?? "", row.body]),
   );
 
-  const said = rows.flatMap((row) => asTelegramShowsIt(row, edits));
+  const showing = newest.flatMap((row) => asTelegramShowsIt(row, edits));
 
+  return showing.length >= count || newest.length < rows
+    ? showing.slice(-count)
+    : latest(store, thread, count, rows * 4);
+}
+
+function messages(store: Store, thread: string, count = LATEST_MESSAGES): Message[] {
   const waiting = owners(store.messages.untaken(thread)).map(({ body }): Message => ({
     from: "me",
     text: body,
     pending: true,
   }));
 
-  return [...said, ...waiting].slice(-LATEST_MESSAGES);
+  return [...latest(store, thread, count), ...waiting].slice(-count);
 }
 
 const lineOf = (message?: Message) =>
@@ -155,7 +161,7 @@ export function list(store: Store): Chat[] {
     }
 
     const rank = hub.fresh(thread) ? 0 : thread === hub.main ? 1 : 2;
-    const line = lineOf(messages(store, thread).at(-1));
+    const line = lineOf(messages(store, thread, 1).at(-1));
 
     return [
       {
