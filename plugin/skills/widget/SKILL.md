@@ -35,4 +35,6 @@ What trips widgets up most:
 
 The guide's "A first look in a browser" has a stand-in for `TelegramWidget`, for a screenshot at 320px before you send.
 
+The owner's DM already has hex's own live board of what every thread is doing, what waits on the owner and what's done, kept current by the hub: point to it rather than sending a snapshot of the same.
+
 Telegram shows widgets only in private chats for now. From a group topic, `widget` sends it to the owner's DM with a button back to the topic, and its requests still come to the topic.

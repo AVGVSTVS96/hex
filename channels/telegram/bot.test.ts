@@ -515,7 +515,9 @@ test("a widget Telegram refuses in a topic goes to the owner's DM with a button 
     message_thread_id: 5,
     html: "<b>board</b>",
   });
-  expect(await called("sendWidget", (p) => p.chat_id === String(OWNER))).toMatchObject({
+  expect(
+    await called("sendWidget", (p) => p.caption === "Board" && p.chat_id === String(OWNER)),
+  ).toMatchObject({
     caption: "Board",
     chat_data: '{"n":1}',
     allow_queries: true,
@@ -564,6 +566,30 @@ test("a widget Telegram refuses in a topic goes to the owner's DM with a button 
   expect(
     await called("editMessageWidgetData", (p) => p.chat_data === '{"n":3,"i":[["a",1]]}'),
   ).toMatchObject({ message_id: id });
+});
+
+test("the owner's DM gets one board at start, pinned and kept by the hub, and /board sends a fresh one in its place", async () => {
+  const first = await called("sendWidget", (p) => p.caption === "hex right now");
+  const id = idOf(first);
+
+  expect(first).toMatchObject({ chat_id: String(OWNER), allow_queries: false });
+  expect(JSON.parse(first.chat_data ?? "")).toMatchObject({ k: [0, 0, 0], w: [], n: [] });
+  expect(await called("pinChatMessage", (p) => p.message_id === id)).toMatchObject({
+    chat_id: String(OWNER),
+    disable_notification: true,
+  });
+
+  await update({ message: message({ text: "/board" }) });
+  expect(
+    await called("sendMessage", (p) => p.text === "Your board is at the bottom of your DM."),
+  ).toBeTruthy();
+  expect(await called("deleteMessage", (p) => p.message_id === id)).toMatchObject({
+    chat_id: String(OWNER),
+  });
+  const again = await called("sendWidget", (p) => p.caption === "hex right now" && idOf(p) !== id);
+  expect(JSON.parse(readFileSync(join(state, "board.json"), "utf-8"))).toEqual({
+    message: idOf(again),
+  });
 });
 
 test("a widget too big for Telegram says how big it is", async () => {
@@ -1575,6 +1601,7 @@ test("/effort and /model set what the thread's next message starts with, and nev
   expect((await called("setMyCommands")).commands?.map((c) => c.command)).toEqual([
     "model",
     "effort",
+    "board",
   ]);
   const before = received().length;
   await update({ message: message({ text: "/tmp/cache is full" }) });
