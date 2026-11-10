@@ -305,6 +305,7 @@ const HANDOFF_WAIT = 3000;
 const HANDOFF_MOST = 8000;
 const ACK_WAIT = 10_000;
 const QUIET = 2000;
+const ANSWER_WAIT = 8000;
 const STYLE_WAIT_MOST = 30_000;
 const HANG_UP_MOST = 10_000;
 const SETTLE = 1500;
@@ -380,6 +381,8 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
       if (filled(handoff)) {
         live.stop?.answered(handoff);
       }
+
+      await untilTheirNewestWordsAreAnswered(live, handoff);
 
       const held = await tell(live, "say", args.text, handoff, {
         checked: args.checked,
@@ -562,6 +565,25 @@ async function tellOnceQuiet(call: Live, lines: string) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* An instruction cuts off whatever the voice is saying, so it waits until the voice is quiet, for so long at most. */
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The voice says an answer the moment it arrives, so one for an earlier handoff that lands while the caller's newest words wait for a reply takes their place, and those words never get handed off: it waits for the voice to answer them first, for so long at most. */
+async function untilTheirNewestWordsAreAnswered(call: Live, handoff: string | undefined) {
+  const latest = () => [...(call.handoffs ?? [])].at(-1);
+  const then = latest();
+
+  if (!filled(handoff) || handoff === then || call.mute?.muted === true) {
+    return;
+  }
+
+  const asked = Date.now();
+  const stillLive = () => live === call;
+  const unanswered = () => call.callerSpoke > call.spoke && latest() === then;
+
+  while (stillLive() && Date.now() - asked < ANSWER_WAIT && unanswered()) {
+    await Bun.sleep(100);
+  }
+}
+
 async function untilQuiet(call: Live, most: number, from = 0) {
   const asked = Date.now();
   const stillLive = () => live === call;

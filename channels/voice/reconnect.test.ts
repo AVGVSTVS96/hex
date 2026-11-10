@@ -603,6 +603,39 @@ test("a handoff id hex copied wrong reaches the voice as the handoff it nearly m
   ]);
 }, 20_000);
 
+test("an answer to an earlier handoff waits for the voice to answer the caller's newest words, so they still get handed off", async () => {
+  await using engine = await appCall();
+  await started(engine);
+
+  for (const id of ["d1", "d2"]) {
+    engine.send({
+      type: "session.delegation.created",
+      delegation: { id, target: "client" },
+      offset_ms: 1500,
+    });
+  }
+
+  engine.send({
+    type: "session.input_transcript.delta",
+    delta: "what was I just asked",
+    start_ms: 4000,
+    end_ms: 4300,
+  });
+  await Bun.sleep(100);
+  const sent = engine.handoffs.length;
+  void engine.tool("say", { delegation_id: "d1", text: "The build is green." });
+  await Bun.sleep(1000);
+  expect(engine.handoffs.length).toBe(sent);
+  engine.send({
+    type: "session.output_transcript.delta",
+    delta: "Checking.",
+    start_ms: 5000,
+    end_ms: 5300,
+  });
+  await until(() => engine.handoffs.length > sent);
+  expect(engine.handoffs.at(-1)).toBe("d1");
+}, 20_000);
+
 test("a photo sent during the call shows in its transcript, reaches hex to look at, and has the voice hand off", async () => {
   await using engine = await appCall();
 
