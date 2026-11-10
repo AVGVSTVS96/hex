@@ -7,7 +7,7 @@ const titleField = z.string().describe('One word, like a chat name ("Anchors", "
 const formatField = z
   .enum(["markdown", "text", "markdownv2"])
   .describe(
-    "Rendering mode. 'markdown' takes ordinary Markdown with no escaping: code blocks, inline code, bold, italic, links, strikethrough, lists, tables, headings. 'markdownv2' is Telegram's own syntax, where the caller escapes special chars. Default: 'text' (plain).",
+    "Rendering mode. 'markdown' takes ordinary Markdown with no escaping: code blocks, inline code, bold, italic, links, strikethrough, lists, tables, headings; a link alone on its line shows as a preview card. 'markdownv2' is Telegram's own syntax, where the caller escapes special chars. Default: 'text' (plain).",
   );
 
 export const tools = [

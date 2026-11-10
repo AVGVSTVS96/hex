@@ -652,6 +652,28 @@ test("markdown goes out as Telegram's own rich markdown, and a code block cut be
   }
 });
 
+test("a link alone on its line in markdown goes out as plain text, so Telegram shows its preview card", async () => {
+  const link = "https://example.com/card/1";
+  await call("reply", {
+    text: `**Card**\n${link}\n\nsee [docs](https://example.com/docs)\n\`\`\`\nhttps://example.com/in-code\n\`\`\``,
+    format: "markdown",
+  });
+  const plain = await called("sendMessage", (p) => p.text === link);
+  expect(plain.message_thread_id).toBe(5);
+  expect(
+    (
+      await called(
+        "sendRichMessage",
+        (p) => p.rich_message?.markdown.startsWith("**Card**") === true,
+      )
+    ).rich_message?.markdown,
+  ).toBe("**Card**");
+  expect(
+    (await called("sendRichMessage", (p) => p.rich_message?.markdown.startsWith("see") === true))
+      .rich_message?.markdown,
+  ).toContain("https://example.com/in-code");
+});
+
 test("a newline in markdown stays a new line, where Telegram would join it into the paragraph, and code blocks go as written", async () => {
   const text = [
     "**Status**",
