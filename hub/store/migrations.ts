@@ -266,6 +266,14 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
   sql(`create table if not exists changed (thread text primary key, n integer not null);
   create index if not exists changed_in_order on changed (n);
   ${STATUS_INPUTS.map(statusChangeTriggers).join("\n")}`),
+  ({ db }: Migrating) => {
+    if (
+      db.query("select 1 from pragma_table_info('messages') where name = 'held_for'").get() ===
+      null
+    ) {
+      db.run("alter table messages add column held_for text");
+    }
+  },
 ];
 
 function statusChangeTriggers({ table, thread }: (typeof STATUS_INPUTS)[number]) {

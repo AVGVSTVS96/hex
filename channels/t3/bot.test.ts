@@ -961,7 +961,23 @@ function steering(sessionId: string) {
   db.close();
 }
 
-test("a steer leaves the session running, its message reaches the session mid-turn, and its turn ends with the session's", async () => {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hook a session runs after each tool call, which gives it what its user sent mid-turn.
+async function toolCall(thread: string) {
+  const run = Bun.spawn([process.execPath, join(import.meta.dir, "..", "..", "hub", "held.ts")], {
+    stdin: new Blob([JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse" })]),
+    stdout: "pipe",
+    env: { ...process.env, HEX_STORE: join(dir, "hex", "state"), HEX_THREAD: thread },
+  });
+
+  await run.exited;
+
+  return z
+    .object({ hookSpecificOutput: z.object({ additionalContext: z.string() }) })
+    .parse(JSON.parse(await new Response(run.stdout).text())).hookSpecificOutput.additionalContext;
+}
+
+test("a steer leaves the session running, its message reaches the session at its next tool call, and its turn ends with the session's", async () => {
   const { agent, updates } = await t3();
   const { sessionId, hex } = await kept(agent);
 
@@ -982,16 +998,23 @@ test("a steer leaves the session running, its message reaches the session mid-tu
     prompt: [{ type: "text", text: "and check the tests" }],
   });
 
-  await until(() => hex.inbound().length === 3);
-  expect(hex.inbound()[2]).toMatchObject({ type: "inbound", content: "and check the tests" });
+  await until(() =>
+    hexdb(join(dir, "hex", "state"))
+      .messages.untaken(sessionId)
+      .some((row) => row.body === "and check the tests"),
+  );
+  const context = await toolCall(sessionId);
+  expect(context).toContain("and check the tests");
+  expect(hex.inbound()).toHaveLength(2);
   hex.write(
     {
       type: "attachment",
       timestamp: now(),
       attachment: {
-        type: "queued_command",
-        origin: { kind: "channel" },
-        prompt: '<channel source="t3">and check the tests</channel>',
+        type: "hook_additional_context",
+        content: [context],
+        hookName: "PostToolUse:Bash",
+        hookEvent: "PostToolUse",
       },
     },
     {

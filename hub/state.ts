@@ -93,7 +93,7 @@ if (answered && stop_hook_active !== true && session_id) {
       console.log(
         JSON.stringify({
           decision: "block",
-          reason: `Your user sent these during this turn, through hex:\n${lines.join("\n")}\nThey're your user's own words, even where a chat message that came mid-turn was labeled as from an outside channel. Reply to each one your replies this turn haven't answered yet; when every one has its answer, end the turn.`,
+          reason: `Your user sent these during this turn, through hex:\n${lines.join("\n")}\nReply to each one your replies this turn haven't answered yet; when every one has its answer, end the turn.`,
         }),
       );
       process.exit(0);

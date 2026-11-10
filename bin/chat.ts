@@ -773,6 +773,7 @@ function where() {
 const isFresh = () => (process.env.HEX_FRESH ?? "") !== "" && (process.env.HEX_THREAD ?? "") !== "";
 
 const CHANNEL = /^<channel([^>]*)>([\s\S]*)<\/channel>\s*$/u;
+const CHANNELS = /<channel [^>]*>[\s\S]*?<\/channel>/gu;
 const DROPPED = new Set(["source", "chat_id", "message_id", "user", "user_id", "ts"]);
 
 function heard(text: string): [Kind, string] {
@@ -809,7 +810,13 @@ const Transcribed = z.looseObject({
   isMeta: z.json().optional(),
   origin: z.looseObject({ kind: z.json().optional() }).nullish(),
   type: z.json().optional(),
-  attachment: z.looseObject({ type: z.json().optional(), prompt: z.json().optional() }).nullish(),
+  attachment: z
+    .looseObject({
+      type: z.json().optional(),
+      prompt: z.json().optional(),
+      content: z.array(z.json()).optional().catch(undefined),
+    })
+    .nullish(),
   message: z.json().optional(),
   timestamp: z.string().nullish(),
 });
@@ -864,6 +871,16 @@ function* entries(record: TranscriptLine): Generator<[Kind, string]> {
 
   if (record.type === "assistant") {
     yield* replied(Spoken.parse(record.message).content);
+
+    return;
+  }
+
+  if (record.type === "attachment" && record.attachment?.type === "hook_additional_context") {
+    for (const text of record.attachment.content ?? []) {
+      for (const [message] of typeof text === "string" ? text.matchAll(CHANNELS) : []) {
+        yield heard(message);
+      }
+    }
 
     return;
   }

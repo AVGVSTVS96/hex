@@ -815,6 +815,8 @@ export function startHub({
 
     if (working) {
       run.untaken = undefined;
+    } else {
+      letHeldGo(thread);
     }
 
     if (run.turn === "done" && (run.renew === "asked" || run.renew === "stale")) {
@@ -1653,7 +1655,7 @@ export function startHub({
       return false;
     }
 
-    pass(thread, name, added ? { content, meta: { key, ...meta } } : { content, meta });
+    pass(thread, name, added ? { content, author, meta: { key, ...meta } } : { content, meta });
 
     return true;
   }
@@ -1712,7 +1714,7 @@ export function startHub({
     if (run.phase.is === "live") {
       if ((stale(thread) && !onCall.has(run)) || spent(thread)) {
         void refresh(thread, message);
-      } else {
+      } else if (!heldForTheTurn(thread, message)) {
         run.untaken = true;
         run.phase.line.send({ type: "inbound", ...message });
       }
@@ -1727,6 +1729,29 @@ export function startHub({
     }
 
     void launch(thread, name);
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Claude Code labels a channel message that comes mid-turn as not from its user, so the owner's words wait for the session's next tool call, where hub/held.ts gives them as hook feedback, which Claude Code treats as the user's; the turn's end sends any still waiting (letHeldGo).
+  function heldForTheTurn(thread: string, message: Message) {
+    const { key } = message.meta;
+    const session = current(thread);
+
+    return (
+      runOf(thread).turn === "busy" &&
+      message.author === "owner" &&
+      present(key) &&
+      present(session) &&
+      kept((store) => store.messages.hold(key, session), false)
+    );
+  }
+
+  function letHeldGo(thread: string) {
+    const rows = kept((store) => store.messages.letHeldGo(thread), []);
+
+    for (const row of rows) {
+      forward(thread, savedOf(thread).name, toMessageWithKeyFirstForTheHook(row));
+    }
   }
 
   function hold(thread: string, message: Message) {
@@ -1873,8 +1898,10 @@ export function startHub({
       : running?.status === "busy";
 
     if (working && run.queue.length === 0) {
-      run.untaken = true;
-      phase.line.send({ type: "inbound", ...message });
+      if (!heldForTheTurn(thread, message)) {
+        run.untaken = true;
+        phase.line.send({ type: "inbound", ...message });
+      }
 
       return;
     }
@@ -1932,6 +1959,7 @@ export function startHub({
       note(thread, id);
     }
 
+    kept((store) => store.messages.letHeldGo(thread), []);
     const given = waiting(thread);
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

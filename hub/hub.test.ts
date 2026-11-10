@@ -757,6 +757,7 @@ test("what a session took and never answered goes to the thread's next session o
   fold(first.received);
   open(dir).turns.turned(SESSION, false);
   open(dir).turns.handled(SESSION);
+  await first.send({ type: "state", thread: "chat:7", busy: false });
   hub.deliver("chat:7", "Desk anchors", { ...message, content: "hanging" });
   await until(() => first.received.length === 2);
   open(dir).turns.turned(SESSION, true);
@@ -2386,7 +2387,8 @@ test("a fresh thread keeps its session while it waits on a permission prompt or 
   await send({ type: "state", thread: "dm", busy: true });
   await until(() => states.length);
   hub.deliver("dm", "DM", { author: "owner", content: "more", meta: {} });
-  await until(() => received.length === 2);
+  await settled();
+  expect(await toolCall("dm")).toContain("more");
   expect(calls().some((each) => each[0] === "stop" || each[0] === "--bg")).toBe(false);
 });
 
@@ -3918,6 +3920,73 @@ test("a message is in hex.db once deliver returns, its key first on the tag, and
   });
   expect(heard(received)[1]?.content).toBe("after");
   expect(Object.keys(heard(received)[0]?.meta ?? {})[0]).toBe("key");
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The PostToolUse hook a session runs after each tool call, as its plugin registers it.
+async function toolCall(thread: string, input: Record<string, string> = {}) {
+  const run = Bun.spawn([process.execPath, join(import.meta.dir, "held.ts")], {
+    stdin: new Blob([
+      JSON.stringify({ session_id: SESSION, hook_event_name: "PostToolUse", ...input }),
+    ]),
+    stdout: "pipe",
+    env: { ...process.env, HEX_STORE: dir, HEX_THREAD: thread },
+  });
+
+  expect(await run.exited).toBe(0);
+
+  return (await new Response(run.stdout).text()).trim();
+}
+
+test("the owner's words that come while the session works reach it at its next tool call as hook feedback, or as a turn once it ends, and anyone else's come as they do now", async () => {
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+  });
+  const { received, send } = await session("chat:7");
+  await send({ type: "state", thread: "chat:7", busy: true });
+  hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "use the docs",
+    meta: { chat_id: "1" },
+    key: "1:50",
+  });
+  hub.deliver("chat:7", "Desk anchors", {
+    author: "other",
+    content: "from a teammate",
+    meta: {},
+    key: "1:51",
+  });
+  await until(() => received.length === 1);
+  expect(heard(received)[0]?.content).toBe("from a teammate");
+
+  expect(await toolCall("chat:7", { agent_id: "a1" })).toBe("");
+  const fed = z
+    .object({
+      hookSpecificOutput: z.object({
+        hookEventName: z.literal("PostToolUse"),
+        additionalContext: z.string(),
+      }),
+    })
+    .parse(JSON.parse(await toolCall("chat:7")));
+  expect(fed.hookSpecificOutput.additionalContext).toBe(
+    'The user sent a new message while you were working:\n<channel source="telegram" key="telegram:1:50" chat_id="1">\nuse the docs\n</channel>\n\nAddress it as you continue this turn.',
+  );
+  expect(open(dir).messages.get("telegram:1:50")?.taken?.by).toBe(SESSION);
+
+  hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "and the tests",
+    meta: {},
+    key: "1:52",
+  });
+  await send({ type: "state", thread: "chat:7", busy: false });
+  await until(() => received.length === 2);
+  expect(heard(received)[1]).toMatchObject({
+    content: "and the tests",
+    meta: { key: "telegram:1:52" },
+  });
+  expect(await toolCall("chat:7")).toBe("");
 });
 
 test("the owner's words written in another client reach the thread's session and show where it lives in the order written, once however often they're sent", async () => {
