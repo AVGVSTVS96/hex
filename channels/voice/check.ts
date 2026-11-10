@@ -73,7 +73,7 @@ const RECENT = 3 * 24 * 60 * 60_000;
 const LONG = 2400;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// One pass runs at a time, in a process of its own so it outlives the voice session that started it; events landing meanwhile leave one mark, so a burst costs one more pass at most.
+// One pass runs at a time, in a process of its own so it outlives the voice session that started it, and a new one each pass so it runs the hex that's installed by then; events landing meanwhile leave one mark, so a burst costs one more pass at most.
 export class Check {
   private readonly dir: string;
   private readonly state: string;
@@ -94,33 +94,42 @@ export class Check {
     writeFileSync(join(this.dir, "next"), why);
 
     if (!this.running) {
-      spawn(process.execPath, [import.meta.path, this.state], {
-        detached: true,
-        stdio: "ignore",
-      }).unref();
+      passInItsOwnProcess(this.state);
     }
   }
 }
 
-async function passPerMarkWhileHoldingTheLock(state: string) {
+function passInItsOwnProcess(state: string) {
+  spawn(process.execPath, [import.meta.path, state], { detached: true, stdio: "ignore" }).unref();
+}
+
+async function passForTheMarkWhileHoldingTheLock(state: string) {
   const dir = join(state, "voice", "check");
 
-  while (existsSync(join(dir, "next")) && hold(join(dir, "lock"))) {
-    try {
-      for (let why = take(join(dir, "next")); why !== undefined; why = take(join(dir, "next"))) {
-        try {
-          await pass(state, why);
-          rmSync(join(dir, "error"), { force: true });
-        } catch (error) {
-          failed(
-            state,
-            `${new Date().toISOString()} ${why}: ${error instanceof Error ? error.message : String(error)}`,
-          );
-        }
+  if (!existsSync(join(dir, "next")) || !hold(join(dir, "lock"))) {
+    return;
+  }
+
+  try {
+    const why = take(join(dir, "next"));
+
+    if (why !== undefined) {
+      try {
+        await pass(state, why);
+        rmSync(join(dir, "error"), { force: true });
+      } catch (error) {
+        failed(
+          state,
+          `${new Date().toISOString()} ${why}: ${error instanceof Error ? error.message : String(error)}`,
+        );
       }
-    } finally {
-      rmSync(join(dir, "lock"), { force: true });
     }
+  } finally {
+    rmSync(join(dir, "lock"), { force: true });
+  }
+
+  if (existsSync(join(dir, "next"))) {
+    passInItsOwnProcess(state);
   }
 }
 
@@ -718,5 +727,5 @@ function alive(pid: number) {
 const stateOfThisRun = process.argv[2];
 
 if (import.meta.main && stateOfThisRun !== undefined) {
-  await passPerMarkWhileHoldingTheLock(stateOfThisRun);
+  await passForTheMarkWhileHoldingTheLock(stateOfThisRun);
 }
