@@ -314,6 +314,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
 .tgp::after { content: ""; position: absolute; left: 50%; bottom: 8px; width: 140px; height: 5px; translate: -50% 0; border-radius: 3px; background: var(--tg-fg); }
 @media (prefers-reduced-motion: no-preference) {
   .tgp .a1, .tgp .a2, .tgp .a3 { animation: arrive 460ms var(--ease) both; }
+  .tgp .bub.a1, .tgp .bub.a2, .tgp .bub.a3 { animation-name: arrive, grow; }
   .tgp .a1 { animation-delay: 400ms; transform-origin: bottom right; }
   .tgp .a2 { animation-delay: 1300ms; transform-origin: bottom left; }
   .tgp .a3 { animation-delay: 4600ms; transform-origin: bottom left; }
@@ -324,6 +325,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
   .typing i:nth-child(3) { animation-delay: .3s; }
 }
 @keyframes arrive { from { opacity: 0; transform: translateY(10px) scale(.92); } }
+@keyframes grow { from { max-height: 0; padding-block: 0; margin-top: -6px; } to { max-height: 240px; } }
 @keyframes tab-in { from { max-width: 0; padding-inline: 0; opacity: 0; transform: scale(.6); } to { max-width: 224px; } }
 @keyframes shown { from { opacity: 0; transform: scale(.6); } }
 @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-3px); } }
@@ -620,18 +622,18 @@ code { font-size: .86em; }
 .dc-msg b { color: var(--dc-strong); font-weight: 600; }
 .dc-msg small { color: var(--dc-muted); font-size: 11px; }
 .mention { padding: 0 2px; border-radius: 3px; background: var(--dc-mention-bg); color: var(--dc-mention-fg); }
-.dc-thread { display: grid; gap: 4px; margin-top: 6px; padding: 8px 10px; border-radius: 6px; background: var(--dc-side); font-size: 13px; }
+.dc-thread { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin-top: 6px; padding: 8px 10px; border-radius: 6px; background: var(--dc-side); font-size: 13px; }
 .dc-thread-top { display: flex; gap: 8px; align-items: baseline; white-space: nowrap; }
 .dc-thread-top b { overflow: hidden; text-overflow: ellipsis; }
 .dc-thread small { color: var(--dc-link); font-weight: 600; font-size: 12.5px; }
-.dc-thread-last { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--dc-soft); white-space: nowrap; }
+.dc-thread-last { display: flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; color: var(--dc-soft); white-space: nowrap; }
 .dc-thread-last img { width: 16px; height: 16px; border-radius: 50%; }
 .dc-thread-last span:not(.who) { overflow: hidden; text-overflow: ellipsis; }
 .dc-thread-last time { flex: none; color: var(--dc-muted); font-size: 11px; }
 .dc-thread .who { color: var(--dc-who); font-weight: 600; }
 .dc-typing { height: 18px; color: var(--dc-soft); font-size: 12px; }
 .dc-typing b { color: var(--dc-strong); }
-.dc-compose { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: var(--dc-input); color: var(--dc-placeholder); font-size: 13px; }
+.dc-compose { display: flex; align-items: center; gap: 10px; white-space: nowrap; padding: 8px 10px; border-radius: 8px; background: var(--dc-input); color: var(--dc-placeholder); font-size: 13px; }
 .dc-plus { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--dc-soft); color: var(--dc-input); font: 700 15px/1 var(--ui); }
 .dc-gif { margin-left: auto; padding: 1px 3px; border: 1.5px solid currentColor; border-radius: 3px; font: 700 8.5px/1 var(--ui); color: var(--dc-soft); }
 .dc-emoji { width: 17px; height: 17px; color: var(--dc-soft); }
