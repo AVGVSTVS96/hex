@@ -166,7 +166,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
   mask-image: radial-gradient(70% 60% at 70% 30%, #000 10%, transparent 75%);
   -webkit-mask-image: radial-gradient(70% 60% at 70% 30%, #000 10%, transparent 75%);
 }
-.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) 580px; align-items: center; gap: clamp(32px, 5vw, 72px); }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr) 520px; align-items: center; gap: clamp(32px, 5vw, 72px); }
 .hero-copy { display: grid; justify-items: start; gap: 24px; }
 .pill {
   display: inline-flex; align-items: center; gap: 8px;
@@ -187,7 +187,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
 .reach svg { width: 16px; height: 16px; }
 
 /* Devices */
-.hero-stage { position: relative; height: 640px; width: 100%; max-width: 580px; justify-self: end; }
+.hero-stage { position: relative; height: 640px; width: 100%; max-width: 520px; justify-self: end; }
 .device {
   position: absolute;
   border-radius: 44px; padding: 3px;
@@ -198,7 +198,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
 .device-tg { width: 300px; height: 640px; left: 0; top: 0; }
 .device-call, .device-board { border-radius: 26px; }
 .device-call > *, .device-board > * { border-radius: 23px; }
-.device-call { width: 264px; right: 0; top: 200px; }
+.device-call { width: 212px; right: 0; top: 250px; }
 
 /* Telegram on iOS 26 with Liquid Glass bars, matched to the real app, in the system's light or dark */
 .tgp, .tgl {
