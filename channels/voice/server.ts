@@ -7,7 +7,7 @@ import { begin, title as oneWord, open, sentPicture } from "@hex/hub";
 import type { Held, VoiceLine } from "@hex/hub";
 import { z } from "zod";
 
-import { findThread, followAgent, followThread } from "./activity.ts";
+import { brief, findThread, followAgent, followThread } from "./activity.ts";
 import type { Step, Thread } from "./activity.ts";
 import { Board, opener } from "./board.ts";
 import type { Page, Run } from "./board.ts";
@@ -2996,7 +2996,15 @@ async function showPage(url: URL, runs: Board, key: string) {
   const read = () => {
     const found = runs.find(key);
 
-    return found && { ...found, ...yours.of(found.id) };
+    return (
+      found && {
+        ...found,
+        ...("steps" in found && {
+          steps: found.steps.map((step) => ({ ...step, brief: brief(step) })),
+        }),
+        ...yours.of(found.id),
+      }
+    );
   };
 
   const after = url.searchParams.get("after");

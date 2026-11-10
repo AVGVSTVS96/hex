@@ -16,6 +16,7 @@ process.env.CLAUDE_CONFIG_DIR = join(home, "claude");
 
 const {
   backOf,
+  brief,
   findThread,
   followAgent,
   followThread,
@@ -1208,4 +1209,17 @@ test("of several notices in one message, each one with a status brings its agent
     { line: "All back." },
     { end: "done" },
   ]);
+});
+
+test("a step's brief fits Siri's Live Activity whole: its own words when short, else what kind of step it is", () => {
+  expect(brief({ kind: "run", text: "Check the build" })).toBe("Check the build");
+  expect(
+    brief({ kind: "run", text: "Read the hex site topic's latest messages", state: "running" }),
+  ).toBe("Running a command");
+  expect(
+    brief({ kind: "run", text: "Read the hex site topic's latest messages", state: "done" }),
+  ).toBe("Ran a command");
+  expect(brief({ kind: "think", text: "The user wants to know whether the jacket wrinkles" })).toBe(
+    "Thinking",
+  );
 });
