@@ -2692,7 +2692,30 @@ test("a call whose restarted session fails to start goes on", async () => {
   await until(() => kept);
 });
 
-test("a call that comes while a renew is on its way takes the new session as it starts, without starting it over again", async () => {
+test("a call that comes while the last call's session is still on its turn keeps that session, warm, instead of waiting for a new one", async () => {
+  start({
+    main: "voice",
+    registry: { voice: { name: "voice", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42, status: "busy" }],
+    reconnect: 60_000,
+    fresh: () => true,
+    capacity: 0,
+  });
+  const { send } = await session("voice");
+  said(500);
+  await send({ type: "state", thread: "voice", busy: true });
+  hub.renew("voice");
+  await settled();
+  let kept = false;
+  void hub.keep("voice").then(() => (kept = true));
+  await until(() => kept);
+  await send({ type: "state", thread: "voice", busy: false });
+  await time.advance(150);
+  expect(calls().some((each) => each[0] === "stop")).toBe(false);
+  expect(hub.session("voice")).toBe(SESSION);
+});
+
+test("a call that comes once a renew is starting the session over takes the new session as it starts, without starting it over again", async () => {
   const old = Bun.spawn(["sleep", "30"]);
   start({
     main: "voice",
@@ -2707,13 +2730,10 @@ test("a call that comes while a renew is on its way takes the new session as it 
   await send({ type: "state", thread: "voice", busy: true });
   hub.renew("voice");
   await settled();
-  let kept = false;
-  void hub
-    .renewal("voice")
-    .then(() => hub.keep("voice"))
-    .then(() => (kept = true));
   await send({ type: "state", thread: "voice", busy: false });
   await until(() => calls().find((each) => each[0] === "stop"));
+  let kept = false;
+  void hub.keep("voice").then(() => (kept = true));
   writeFileSync(join(dir, "agents"), "[]");
   old.kill();
   await launched();

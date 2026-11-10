@@ -144,7 +144,6 @@ const server = serve({
   deliver: (content, meta) => step('deliver', { content, meta }),
   keep: () => step('keep'),
   renew: () => step('renew'),
-  renewal: async () => {},
   session: () => 'brain',
 }, ${JSON.stringify(hex)})
 step('listening', { port: server.port })
