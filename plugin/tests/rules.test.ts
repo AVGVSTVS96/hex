@@ -16,7 +16,7 @@ import { z } from "zod";
 import { open } from "../../hub/store.ts";
 
 const BIN = join(import.meta.dir, "../../bin");
-const SESSION = "addfa113-0000-4000-8000-000000000000";
+const SESSION = "b7e2c5a9-0000-4000-8000-000000000000";
 
 const Told = z.object({
   systemMessage: z.string(),

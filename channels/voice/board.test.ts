@@ -1616,7 +1616,7 @@ function t3Run(
 }
 
 test("a T3 thread another hex thread sent work to shows under the sender while that run is its newest, then on its own again", async () => {
-  threads("discord", { fix: { name: "fix hex NOW", session: "f1f1f1f1-fix" } });
+  threads("discord", { fix: { name: "urgent fix", session: "f1f1f1f1-fix" } });
   threads("t3", { prims: { name: "hex", session: "f2f2f2f2-prims" } });
   job("f1f1f1f1-fix", { state: "done", detail: "sent it on", updatedAt: ago(3) });
   job("f2f2f2f2-prims", { state: "working", detail: "building", updatedAt: ago(1) });

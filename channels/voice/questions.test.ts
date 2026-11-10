@@ -294,7 +294,7 @@ test("a question asked in General or a DM comes with none of hex's messages befo
   said([
     ["18:20:00", "Your call failed: OpenAI is out of credit.", { to: GROUP }],
     ["18:30:00", "notes: Logseq names no writer device.", { to: GROUP }],
-    ["18:40:00", "Rivals is done: all three products compared.", { to: DM }],
+    ["18:40:00", "Comparison is done: all three products compared.", { to: DM }],
   ]);
 
   const name = asked(9, "For Stripe Atlas: Lantern or Miyage?", ["Lantern", "Miyage"], {
@@ -344,8 +344,8 @@ test("a question asked in General or a DM comes with none of hex's messages befo
     topic: "desk",
     places: [{ place: "DM" }],
   });
-  open(state).threads.file(DESK, "portfolio");
-  await until(() => questions.find("check:panel-row")?.topic === "portfolio");
+  open(state).threads.file(DESK, "website");
+  await until(() => questions.find("check:panel-row")?.topic === "website");
   expect(questions.words("check:panel-row")).toEqual({
     place: "DM",
     at: "2026-10-13T19:00:00.000Z",
@@ -1547,7 +1547,7 @@ test("a closed thread's open question stays a check's ref, so answering the ques
 
 test("a question names every place it was asked, each thread once at its open question, pinned post or message, with the best link its app has, the ones that open first, and its pages apart from its answers", async () => {
   const DM = "777";
-  const THREAD = "1560277464146644992";
+  const THREAD = "1560000000000000001";
   open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex", link: "https://t.me/c/1234/1" },
     [DESK]: { name: "desk", link: "https://t.me/c/1234/5" },
@@ -1555,7 +1555,7 @@ test("a question names every place it was asked, each thread once at its open qu
   });
   mkdirSync(join(state, "discord"));
   open(state).threads.keep("discord", {
-    [THREAD]: { name: "fix hex NOW", link: `https://discord.com/channels/42/${THREAD}` },
+    [THREAD]: { name: "urgent fix", link: `https://discord.com/channels/42/${THREAD}` },
   });
   const calls = join(state, "calls");
   mkdirSync(calls);
@@ -1647,7 +1647,7 @@ test("a question names every place it was asked, each thread once at its open qu
     { app: "telegram", place: "DM", task: `telegram:${DM}`, link: "https://t.me/hexbot" },
     {
       app: "discord",
-      place: "fix hex NOW",
+      place: "urgent fix",
       task: `discord:${THREAD}`,
       link: `https://discord.com/channels/42/${THREAD}`,
     },

@@ -43,14 +43,14 @@ function record(name: string, session: SessionFile) {
 
 test("a session runs while its process lives, works for the thread it serves or the one it started for (a background session has the daemon's environment), and its turns are hex's record", async () => {
   const job = Bun.spawn(["sleep", "30"], {
-    env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "telegram:-100:65" },
+    env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "telegram:-100:103" },
   });
 
   afterAll(() => {
     job.kill();
   });
   await until(() =>
-    readFileSync(`/proc/${job.pid}/environ`, "utf-8").includes("HEX_OWNER=telegram:-100:65"),
+    readFileSync(`/proc/${job.pid}/environ`, "utf-8").includes("HEX_OWNER=telegram:-100:103"),
   );
   record("thread", {
     pid: process.pid,
@@ -94,13 +94,13 @@ test("a session runs while its process lives, works for the thread it serves or 
     cwd: "/hex",
     started: 1,
   });
-  expect(sessions.get("bbbbbbbb-1")).toMatchObject({ thread: "telegram:-100:65" });
+  expect(sessions.get("bbbbbbbb-1")).toMatchObject({ thread: "telegram:-100:103" });
   expect(found(sessions, "bbbbbbbb-1").began).toBeString();
   expect(found(sessions, "bbbbbbbb-1").ended).toBeUndefined();
   expect(found(sessions, "dddddddd-1").status).toBe("busy");
   const held = new Map([["aaaaaaaa-1", "discord:7"]]);
   expect(serving(found(sessions, "aaaaaaaa-1"), held)).toBe("discord:7");
-  expect(serving(found(sessions, "bbbbbbbb-1"), held)).toBe("telegram:-100:65");
+  expect(serving(found(sessions, "bbbbbbbb-1"), held)).toBe("telegram:-100:103");
   store.turns.turned("bbbbbbbb-1", false);
   const ended = found(running(store, claude), "bbbbbbbb-1");
   expect(ended.status).toBe("busy");
@@ -155,7 +155,7 @@ test("a session whose process runs under another's works for what that one works
 test("a background session works for the thread its job's settings name, before any thread holds it", () => {
   writeFileSync(
     join(claude, "thread-settings.json"),
-    JSON.stringify({ env: { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:65" } }),
+    JSON.stringify({ env: { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:103" } }),
   );
   mkdirSync(join(claude, "jobs", "aaaaaaaa"), { recursive: true });
   writeFileSync(
@@ -180,7 +180,7 @@ test("a background session works for the thread its job's settings name, before 
     startedAt: 1,
   });
   const sessions = running(store, claude);
-  expect(found(sessions, "aaaaaaaa-4").thread).toBe("telegram:-100:65");
+  expect(found(sessions, "aaaaaaaa-4").thread).toBe("telegram:-100:103");
   expect(found(sessions, "bbbbbbbb-4").thread).toBeUndefined();
   rmSync(join(claude, "jobs"), { recursive: true });
 });

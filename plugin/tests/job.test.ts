@@ -61,7 +61,7 @@ beforeAll(() => {
   for (const [app, threads] of Object.entries({
     t3: { "stray-key": { name: "hex" } },
     telegram: { "-100123:101": { name: "orchard" } },
-    discord: { "555": { name: "fix hex NOW" } },
+    discord: { "555": { name: "urgent fix" } },
   })) {
     open(join(home, "state")).threads.keep(app, threads);
   }
@@ -285,7 +285,7 @@ test("a named owner is an open thread's key or its <app>:<key> id", () => {
   ).toBe("t3:stray-key");
   expect(value(run(["build", "discord:555", "make"]).args, "HEX_OWNER")).toBe("discord:555");
   expect(value(run(["build", "555", "make"]).args, "CLAUDE_CODE_SESSION_NAME")).toBe(
-    "fix hex NOW/build",
+    "urgent fix/build",
   );
   expect(
     value(run(["build", "telegram:-100123:101", "make"]).args, "CLAUDE_CODE_SESSION_NAME"),

@@ -220,7 +220,7 @@ test("a delivery is checked against the words it cites and the thread it goes to
     ".hex/bin/hex deliver hex --to=Website 'Add dark mode (telegram:-100:90).'",
   );
 
-  expect(words).toContain("His messages it cites:\n\n[telegram:-100:90");
+  expect(words).toContain("My messages it cites:\n\n[telegram:-100:90");
   expect(words).toContain("session answers:\n\n[telegram:-100:50");
   expect(words).not.toContain("this session got");
 });

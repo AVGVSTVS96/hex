@@ -107,11 +107,11 @@ test("everything hex runs, one line each: what waits on the caller first, then t
       since: now - 3 * 24 * 60 * 60_000,
       working: false,
     },
-    { unit: "clips", owner: "telegram:-100:65", since: now - 60_000, working: false },
+    { unit: "clips", owner: "telegram:-100:103", since: now - 60_000, working: false },
     { unit: "nightly", owner: "discord:9", since: 0, working: false },
   ];
 
-  expect(overall(runs, strays, units, { "-100:42": "hex", "-100:65": "hex" }, now)).toBe(
+  expect(overall(runs, strays, units, { "-100:42": "hex", "-100:103": "hex" }, now)).toBe(
     [
       "Everything hex is running, 2 threads working, 1 waiting on you:",
       "- orchard (Telegram) waits on you: Pick a music style",
