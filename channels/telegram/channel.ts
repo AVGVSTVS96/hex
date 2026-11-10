@@ -10,6 +10,12 @@ const formatField = z
     "Rendering mode. 'markdown' takes ordinary Markdown with no escaping: code blocks, inline code, bold, italic, links, strikethrough, lists, tables, headings; a link alone on its line shows as a preview card. 'markdownv2' is Telegram's own syntax, where the caller escapes special chars. Default: 'text' (plain).",
   );
 
+const widgetData = z
+  .string()
+  .describe(
+    "A widget's state, up to 1024 bytes, usually JSON: chat_data for this message, public_data for every copy of it. An empty string clears it.",
+  );
+
 export const tools = [
   tool({
     name: "reply",
@@ -70,7 +76,7 @@ export const tools = [
     name: "edit_message",
     _meta: { "anthropic/alwaysLoad": true },
     description:
-      "Edit a message the bot previously sent: its text, a file's caption, or the file itself. Useful for interim progress updates. Edits don't trigger push notifications — send a new reply when a long task completes so the user's device pings.",
+      "Edit a message the bot previously sent: its text, a file's or widget's caption, the file itself, or a widget's chat_data and public_data, which it redraws from. Useful for interim progress updates. Edits don't trigger push notifications — send a new reply when a long task completes so the user's device pings.",
     input: z.object({
       message_id: z
         .string()
@@ -85,6 +91,39 @@ export const tools = [
         .describe(
           "true once the user has answered the question this message asked, or this message answered the user's own question, or it no longer stands: it stops waiting on the user, its buttons come off, and a poll nobody has voted in closes. Without it, an edit keeps a question's buttons. A poll's own text can't be edited.",
         )
+        .optional(),
+      chat_data: widgetData.optional(),
+      public_data: widgetData.optional(),
+    }),
+  }),
+  tool({
+    name: "widget",
+    _meta: { "anthropic/alwaysLoad": true },
+    description:
+      "Send a Telegram widget: a small live app inside a message, one HTML file that the hex:widget skill tells you how to write. Its code is fixed once sent; it draws from chat_data and public_data, which edit_message changes later, and it redraws in place. Its requests come back here as messages. Telegram shows widgets only in private chats for now, so from a group topic it goes to the owner's DM, with a button back to this topic.",
+    input: z.object({
+      file: z
+        .string()
+        .describe(
+          "Absolute path of the widget's HTML: at most 32768 bytes, and 4096 compressed with zlib level 9.",
+        ),
+      caption: z
+        .string()
+        .max(1024)
+        .describe(
+          "What the widget is, in a few words: notifications, the chat list and search show it.",
+        ),
+      chat_data: widgetData.optional(),
+      public_data: widgetData.optional(),
+      width: z
+        .number()
+        .int()
+        .describe("Width in pixels, 200 up to the bubble's. Default: the bubble's full width.")
+        .optional(),
+      height: z
+        .number()
+        .int()
+        .describe("Height in pixels, 50-600. Default: as tall as its content.")
         .optional(),
     }),
   }),
@@ -216,9 +255,9 @@ export const server: ChannelServer = {
   instructions: [
     "The sender reads Telegram, not this session. Anything you want them to see must go through the reply tool — your transcript output never reaches their chat. Nobody watches this terminal either, so the report a background job ends with goes to them as a reply: what they need to know and act on. Once it's sent, end the turn without repeating it here.",
     "",
-    'This session is one Telegram thread: a forum topic, a group\'s General, or a direct chat. Its messages arrive as <channel source="telegram" chat_id="..." message_id="..." user="..." ts="...">, and everything you send with these tools lands back in that same thread. If the tag has an image_path attribute, Read that file — it is a photo the sender attached. If the tag has attachment_file_id, call download_attachment with that file_id to fetch the file, then Read the returned path. If the tag has reply_to_message_id, the sender replied to that earlier message: reply_to_text is its text or caption, reply_to_quote the part they highlighted, reply_to_image_path a photo it carried (Read it), and reply_to_attachment_file_id a file it carried (download_attachment). edited="true" means the sender edited the message with that message_id and this is its new text; forwarded_from names who a forwarded message came from. A photo album arrives as one message: image_path and the attachment_* attributes then list one value per file, separated by "; ". A reaction arrives as (reaction: 👍) or (reaction removed: 👍), with reaction, reaction_removed="true" when taken off, and reaction_to_message_id, reaction_to_user and reaction_to_text for the message it was on. A button tap arrives as the button\'s label with button="true" and button_message_id, and a poll vote as (vote: ...) or (vote removed), with vote (the chosen options), vote_removed="true", poll_message_id and poll (its question). Use reply_to (set to a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply.',
+    'This session is one Telegram thread: a forum topic, a group\'s General, or a direct chat. Its messages arrive as <channel source="telegram" chat_id="..." message_id="..." user="..." ts="...">, and everything you send with these tools lands back in that same thread. If the tag has an image_path attribute, Read that file — it is a photo the sender attached. If the tag has attachment_file_id, call download_attachment with that file_id to fetch the file, then Read the returned path. If the tag has reply_to_message_id, the sender replied to that earlier message: reply_to_text is its text or caption, reply_to_quote the part they highlighted, reply_to_image_path a photo it carried (Read it), and reply_to_attachment_file_id a file it carried (download_attachment). edited="true" means the sender edited the message with that message_id and this is its new text; forwarded_from names who a forwarded message came from. A photo album arrives as one message: image_path and the attachment_* attributes then list one value per file, separated by "; ". A reaction arrives as (reaction: 👍) or (reaction removed: 👍), with reaction, reaction_removed="true" when taken off, and reaction_to_message_id, reaction_to_user and reaction_to_text for the message it was on. A button tap arrives as the button\'s label with button="true" and button_message_id, a poll vote as (vote: ...) or (vote removed), with vote (the chosen options), vote_removed="true", poll_message_id and poll (its question), and a widget\'s request as (widget: <its data>), with widget_request (the data), widget_message_id and widget_caption. Use reply_to (set to a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply.',
     "",
-    'For formatted replies use format: "markdown" and write ordinary Markdown (code blocks, diagrams, bold, links, lists, tables), no escaping needed. reply accepts file paths (files: ["/abs/path.png"]) for attachments, silent: true to send without a notification, and buttons: ["Yes", "No"] for a yes or no. A choice between options goes in poll, which shows each option in full where buttons cut them off. Use react to add or remove emoji reactions, edit_message for interim progress updates or to change a file\'s caption or the file itself, delete_message, forward and poll as their names say, and pin to post this thread\'s status post. Edits don\'t trigger push notifications — when a long task completes, send a new reply so the user\'s device pings.',
+    'For formatted replies use format: "markdown" and write ordinary Markdown (code blocks, diagrams, bold, links, lists, tables), no escaping needed. reply accepts file paths (files: ["/abs/path.png"]) for attachments, silent: true to send without a notification, and buttons: ["Yes", "No"] for a yes or no. A choice between options goes in poll, which shows each option in full where buttons cut them off, and something the user would tap through, follow live or play goes in a widget. Use react to add or remove emoji reactions, edit_message for interim progress updates or to change a file\'s caption or the file itself, delete_message, forward and poll as their names say, and pin to post this thread\'s status post. Edits don\'t trigger push notifications — when a long task completes, send a new reply so the user\'s device pings.',
     "",
     'new_thread opens a new forum topic with its own fresh session and hands it your prompt. Use it for work the user will want to follow or talk to on its own. It only works in a group with topics, and rename_thread changes a topic\'s name or icon. With app: "discord" or "buzz" it opens a Discord or Buzz thread instead, the place for deep, long-form work. handoff moves this whole conversation to Discord or Buzz when the user asks: you stop here and continue there with your memory (from General, a copy continues there and you stay).',
   ].join("\n"),

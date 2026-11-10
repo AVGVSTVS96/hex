@@ -58,6 +58,10 @@ const apiPayload = z.looseObject({
   media: z
     .union([z.array(z.looseObject({ caption: z.string().optional() })), z.looseObject({})])
     .optional(),
+  html: z.string().optional(),
+  chat_data: z.string().optional(),
+  widget_query_id: z.string().optional(),
+  data: z.string().optional(),
 });
 
 type Payload = z.infer<typeof apiPayload>;
@@ -223,6 +227,21 @@ class Bot extends grammy.Bot {
         });
       }
 
+      const refused = (description: string) =>
+        telegramSays({ ok: false, error_code: 400, description: `Bad Request: ${description}` });
+
+      if (call.method === "sendWidget" && String(payload.chat_id).startsWith("-")) {
+        return refused("INPUT_MEDIA_WIDGET_NOT_ALLOWED");
+      }
+
+      if (call.method === "sendWidget" && (payload.html?.length ?? 0) > 32_768) {
+        return refused("INPUT_MEDIA_WIDGET_TOO_LARGE");
+      }
+
+      if (call.method === "editMessageWidgetData" && payload.chat_data === "same") {
+        return refused("message is not modified");
+      }
+
       if (method === "editMessageText" && message_id !== undefined && captionOnly.has(message_id)) {
         return telegramSays({
           ok: false,
@@ -376,13 +395,14 @@ test("closing a thread list entry that isn't a topic forgets it, instead of fail
   await until(() => !("stray-key" in saved()));
 });
 
-test("the bot asks Telegram for reactions, button taps and poll votes", () => {
+test("the bot asks Telegram for reactions, button taps, poll votes and widget requests", () => {
   expect(started?.allowed_updates).toEqual([
     "message",
     "edited_message",
     "message_reaction",
     "callback_query",
     "poll_answer",
+    "widget_query",
   ]);
 });
 
@@ -482,6 +502,71 @@ test("buttons come back as a tap with the label, and the message keeps only the 
   const tap = await inbound((line) => line.meta.button === "true");
   expect(tap.content).toBe("Yes");
   expect(tap.meta.button_message_id).toBe(String(id));
+});
+
+test("a widget Telegram refuses in a topic goes to the owner's DM with a button back, and its requests reach the topic, answered at once", async () => {
+  const file = join(outbox, "board.html");
+  writeFileSync(file, "<b>board</b>");
+
+  const sent = await call("widget", { file, caption: "Board", chat_data: '{"n":1}' });
+  const id = Number(/telegram:\d+:(\d+)/u.exec(sent.text ?? "")?.[1]);
+
+  expect(await called("sendWidget", (p) => p.chat_id === String(FORUM))).toMatchObject({
+    message_thread_id: 5,
+    html: "<b>board</b>",
+  });
+  expect(await called("sendWidget", (p) => p.chat_id === String(OWNER))).toMatchObject({
+    caption: "Board",
+    chat_data: '{"n":1}',
+    allow_queries: true,
+    reply_markup: { inline_keyboard: [[{ text: "desk", url: "https://t.me/c/1234/5" }]] },
+  });
+  expect(sent.text).toContain(`(id: telegram:${OWNER}:${id})`);
+
+  const dm = { id: OWNER, type: "private" as const, first_name: "Victor" };
+
+  await update({
+    widget_query: { id: "move", from: owner, chat: dm, message_id: id, data: "x:4" },
+  });
+  expect(await called("answerWidgetQuery", (p) => p.widget_query_id === "move")).not.toHaveProperty(
+    "data",
+  );
+
+  const request = await inbound((line) => line.meta.widget_request === "x:4");
+  expect(request.content).toBe("(widget: x:4)");
+  expect(request.meta).toMatchObject({
+    widget_message_id: `telegram:${OWNER}:${id}`,
+    widget_caption: "Board",
+  });
+
+  const stranger = { ...owner, id: 3000 };
+  await update({
+    widget_query: { id: "spam", from: stranger, chat: dm, message_id: id, data: "x" },
+  });
+  expect(await called("answerWidgetQuery", (p) => p.widget_query_id === "spam")).toMatchObject({
+    data: "not allowed",
+  });
+
+  const ref = `telegram:${OWNER}:${id}`;
+  expect((await call("edit_message", { message_id: ref, chat_data: '{"n":2}' })).text).toBe(
+    `changed the widget's state (id: ${id})`,
+  );
+  expect(await called("editMessageWidgetData", (p) => p.chat_data === '{"n":2}')).toMatchObject({
+    chat_id: String(OWNER),
+    message_id: id,
+  });
+  expect((await call("edit_message", { message_id: ref, chat_data: "same" })).text).toBe(
+    `changed the widget's state (id: ${id})`,
+  );
+});
+
+test("a widget too big for Telegram says how big it is", async () => {
+  const file = join(outbox, "big.html");
+  writeFileSync(file, "x".repeat(40_000));
+
+  expect((await call("widget", { file, caption: "Big" })).error).toMatch(
+    /40000 bytes, \d+ compressed with zlib level 9; Telegram takes at most 32768 and 4096/u,
+  );
 });
 
 test("a permission prompt asks in its own topic, and the owner's tap answers the session instead of reaching it as a message", async () => {
@@ -1205,7 +1290,7 @@ test("a settled question loses its buttons without reaching its thread, and an e
     settled: { note: "✓ Settled" },
   });
   expect((await call("edit_message", { message_id: String(third) })).error).toBe(
-    "edit_message needs text, a file, or settled",
+    "edit_message needs text, a file, a widget's state, or settled",
   );
 });
 
