@@ -148,16 +148,21 @@ test("with no memories yet, the wake says the memory agent records them, not tha
   expect(text).not.toContain("memo note");
 });
 
-test("the pinned OptMem's own empty-memory text is the one the wake replaces", () => {
-  copyFileSync(join(BIN, "optmem"), join(home, ".hex/bin/optmem"));
-  rmSync(join(home, ".hex/vendor"), { recursive: true });
-  expect(Bun.spawnSync([join(home, ".hex/bin/optmem")]).exitCode).toBe(0);
-  const memory = join(home, "memory");
-  const env = { ...withoutTheHexSessionSteeringTheseHooks, MEMORY_DIR: memory };
-  expect(Bun.spawnSync([join(home, ".hex/vendor/memo"), "init"], { env }).exitCode).toBe(0);
+const onlyInCiSinceItDownloadsThePinAndUpdatesRunTheseTests = (process.env.CI ?? "") === "";
 
-  const text = wake();
-  expect(body(text)).toBe(
-    `${LABEL}No memories yet: the memory agent records them after each turn.\nYou are awake.\n`,
-  );
-});
+test.skipIf(onlyInCiSinceItDownloadsThePinAndUpdatesRunTheseTests)(
+  "the pinned OptMem's own empty-memory text is the one the wake replaces",
+  () => {
+    copyFileSync(join(BIN, "optmem"), join(home, ".hex/bin/optmem"));
+    rmSync(join(home, ".hex/vendor"), { recursive: true });
+    expect(Bun.spawnSync([join(home, ".hex/bin/optmem")]).exitCode).toBe(0);
+    const memory = join(home, "memory");
+    const env = { ...withoutTheHexSessionSteeringTheseHooks, MEMORY_DIR: memory };
+    expect(Bun.spawnSync([join(home, ".hex/vendor/memo"), "init"], { env }).exitCode).toBe(0);
+
+    const text = wake();
+    expect(body(text)).toBe(
+      `${LABEL}No memories yet: the memory agent records them after each turn.\nYou are awake.\n`,
+    );
+  },
+);
