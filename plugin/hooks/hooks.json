@@ -113,6 +113,9 @@
         ]
       }
     ],
+    "PreCompact": [
+      { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/precompact" }] }
+    ],
     "SessionEnd": [
       { "hooks": [{ "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules" }] }
     ]
