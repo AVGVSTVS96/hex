@@ -126,6 +126,50 @@ export class Messages {
     );
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A message held for a session's turn waits for that session's next tool call, which takes it (takeHeld), or for the turn's end, which lets it go (letHeldGo).
+  hold(key: string, session: string): boolean {
+    return this.write(
+      () =>
+        this.db
+          .query("update messages set held_for = ? where key = ? and taken_at is null")
+          .run(session, key).changes === 1,
+    );
+  }
+
+  takeHeld(thread: string, session: string): Row[] {
+    const at = now();
+
+    return this.write(() => {
+      this.db
+        .query(
+          'update messages set taken_by = ?1, taken_at = ?2 where "to" = ?3 and held_for = ?1 and taken_at is null',
+        )
+        .run(session, at, thread);
+
+      return MessageRows.parse(
+        this.db
+          .query(
+            'select * from messages where "to" = ? and held_for = ? and taken_at = ? order by n',
+          )
+          .all(thread, session, at),
+      );
+    });
+  }
+
+  letHeldGo(thread: string): Row[] {
+    const held = 'from messages where "to" = ? and held_for is not null and taken_at is null';
+
+    return this.write(() => {
+      const rows = MessageRows.parse(this.db.query(`select * ${held} order by n`).all(thread));
+      this.db
+        .query(`update messages set held_for = null where key in (select key ${held})`)
+        .run(thread);
+
+      return rows;
+    });
+  }
+
   get(key: string): Row | null {
     return MessageRow.nullable().parse(
       this.db.query("select * from messages where key = ?").get(key),

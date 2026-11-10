@@ -256,6 +256,16 @@ test("a turn logs the user, replies, tool calls and results, and agents' reports
       },
     },
     {
+      type: "attachment",
+      attachment: {
+        type: "hook_additional_context",
+        content: [
+          `The user sent a new message while you were working:\n<channel source="telegram" key="telegram:${THREAD}:11" chat_id="${THREAD}" message_id="11" user="victor">\nand the docs\n</channel>\n\nAddress it as you continue this turn.`,
+        ],
+        hookEvent: "PostToolUse",
+      },
+    },
+    {
       type: "user",
       message: { content: "<task-notification>[Scout] report: the PR is open</task-notification>" },
     },
@@ -280,12 +290,13 @@ test("a turn logs the user, replies, tool calls and results, and agents' reports
     [2, "tool", 'Bash {"command": "fly orgs list"}'],
     [3, "echo", "credit: $500"],
     [4, "user", "and the PR?"],
-    [5, "work", "<task-notification>[Scout] report: the PR is open</task-notification>"],
-    [6, "hex", "Yes, $500, and the PR is open."],
+    [5, "user", `(key: telegram:${THREAD}:11) and the docs`],
+    [6, "work", "<task-notification>[Scout] report: the PR is open</task-notification>"],
+    [7, "hex", "Yes, $500, and the PR is open."],
   ]);
   expect(new Date(messages()[0]?.date ?? "").toISOString()).toBe("2026-10-11T16:00:00.000Z");
   run(["log"], hook());
-  expect(messages()).toHaveLength(7);
+  expect(messages()).toHaveLength(8);
 });
 
 test("the Stop hook returns at once and the turn is logged behind it", async () => {

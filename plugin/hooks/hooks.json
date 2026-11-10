@@ -73,6 +73,9 @@
     ],
     "PostToolUse": [
       {
+        "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/held.ts" }]
+      },
+      {
         "matcher": "^Bash$",
         "hooks": [
           {
@@ -91,6 +94,11 @@
             "async": true
           }
         ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/held.ts" }]
       }
     ],
     "UserPromptSubmit": [

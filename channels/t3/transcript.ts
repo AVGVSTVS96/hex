@@ -40,7 +40,13 @@ const entrySchema = z.looseObject({
   timestamp: z.string().optional(),
   uuid: z.string().optional(),
   origin,
-  attachment: z.looseObject({ origin }).nullish(),
+  attachment: z
+    .looseObject({
+      origin,
+      type: z.string().optional(),
+      content: z.array(z.string()).optional().catch(undefined),
+    })
+    .nullish(),
   compactMetadata: z.looseObject({ trigger: z.string().optional() }).nullish(),
   content: z.string().optional(),
   isMeta: z.boolean().optional(),
@@ -55,6 +61,15 @@ const contentSchema = z.union([
     Array.isArray(value),
   ),
 ]);
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A message that came mid-turn reaches the session through hub/held.ts, as a tool call's hook context.
+function heldForTheTurn(attachment: z.infer<typeof entrySchema>["attachment"]) {
+  return (
+    attachment?.type === "hook_additional_context" &&
+    attachment.content?.some((text) => text.includes('<channel source="')) === true
+  );
+}
 
 export function transcriptPath(cwd: string, session: string) {
   return join(PROJECTS, cwd.replaceAll(/[^a-zA-Z0-9]/gu, "-"), `${session}.jsonl`);
@@ -149,7 +164,8 @@ export function follow({
 
     if (
       (entry.type === "user" && entry.origin?.kind === "channel") ||
-      entry.attachment?.origin?.kind === "channel"
+      entry.attachment?.origin?.kind === "channel" ||
+      heldForTheTurn(entry.attachment)
     ) {
       asked = true;
     }

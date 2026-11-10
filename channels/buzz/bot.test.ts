@@ -595,6 +595,12 @@ exit 0
 
     return {
       send: (message: HubMessage) => socket.write(`${JSON.stringify(message)}\n`),
+      ended: async () => {
+        const ending = connect(join(state, "hub.sock"));
+        await once(ending, "connect");
+        ending.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`);
+        await once(ending, "close");
+      },
       inbound: (count: number) =>
         until(() => {
           const lines = inbounds(line.received);
@@ -659,6 +665,7 @@ async function threadStarted(bot: Awaited<ReturnType<typeof startBot>>) {
   await until(() => bot.launches()[0]);
   const session = await bot.session(root.id);
   await session.inbound(1);
+  await session.ended();
 
   return { root, session };
 }
@@ -1351,6 +1358,8 @@ test("a forum post that tags Hex is its own thread: comments on it reach the ses
   const args = await until(() => bot.launches()[0]);
   expect(args[args.indexOf("--name") + 1]).toBe("should");
   const session = await bot.session(post.id);
+  await session.inbound(1);
+  await session.ended();
   const first = comment("the CI is green now", [["e", post.id, "", "reply"]]);
   bot.relay.inject(
     signed(ownerKey, 40_003, "the CI is finally green", [
