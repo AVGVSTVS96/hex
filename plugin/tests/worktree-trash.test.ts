@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -43,17 +44,26 @@ const age = (path: string) => {
   }
 };
 
-const withoutFdRgGh = join(root, "without-fd-rg-gh");
+const toolbox = (name: string, { missing = "", broken = "" } = {}) => {
+  const dir = join(root, name);
 
-mkdirSync(withoutFdRgGh);
+  mkdirSync(dir);
 
-for (const tool of ["git", "awk", "sed", "find", "grep", "readlink", "lsof", "sh"]) {
-  const path = Bun.which(tool);
+  for (const tool of ["git", "awk", "find", "grep", "readlink", "lsof", "sh"]) {
+    const path = Bun.which(tool);
 
-  if (path !== null) {
-    symlinkSync(path, join(withoutFdRgGh, tool));
+    if (tool === broken) {
+      writeFileSync(join(dir, tool), "#!/bin/sh\nexit 2\n", { mode: 0o755 });
+    } else if (tool !== missing && path !== null) {
+      symlinkSync(path, join(dir, tool));
+    }
   }
-}
+
+  return dir;
+};
+
+const withoutFdRgGh = toolbox("without-fd-rg-gh");
+const plain = join(root, "plain");
 
 let sleeper: ReturnType<typeof Bun.spawn>;
 
@@ -69,7 +79,15 @@ beforeAll(() => {
   commit(wt("merged"), "b");
   git(wt("merged"), "push", "-q", "origin", "merged:main");
 
-  for (const name of ["dirty", "in-use", "recent", "worked", "unmerged", "locked"]) {
+  for (const name of [
+    "dirty",
+    "in-use",
+    "recent",
+    "worked",
+    "worked-codex",
+    "unmerged",
+    "locked",
+  ]) {
     git(repo, "worktree", "add", "-qb", name, wt(name), "origin/main");
   }
 
@@ -78,16 +96,41 @@ beforeAll(() => {
   writeFileSync(join(wt("dirty"), "notes"), "work");
   mkdirSync(join(wt("worked"), "src"));
 
-  for (const name of ["merged", "dirty", "in-use", "worked", "unmerged", "locked"]) {
+  for (const name of [
+    "merged",
+    "dirty",
+    "in-use",
+    "worked",
+    "worked-codex",
+    "unmerged",
+    "locked",
+  ]) {
     age(wt(name));
   }
 
-  const transcripts = join(home, ".claude/projects/worked");
-  mkdirSync(transcripts, { recursive: true });
+  const claude = join(home, ".claude/projects/worked");
+  const codex = join(home, ".codex/sessions/2026/11/10");
+
+  mkdirSync(claude, { recursive: true });
+  mkdirSync(codex, { recursive: true });
   writeFileSync(
-    join(transcripts, "session.jsonl"),
+    join(claude, "session.jsonl"),
     `${JSON.stringify({ type: "user", cwd: join(wt("worked"), "src") })}\n`,
   );
+  writeFileSync(
+    join(codex, "rollout.jsonl"),
+    `${JSON.stringify({ type: "session_meta", payload: { cwd: wt("worked-codex") } })}\n`,
+  );
+
+  git(root, "init", "-q", "-b", "main", "plain");
+  commit(plain, "a");
+  git(plain, "worktree", "add", "-qb", "done", join(plain, "done"));
+  commit(join(plain, "done"), "b");
+  git(plain, "merge", "-q", "done");
+  git(plain, "worktree", "add", "-qb", "open", join(plain, "open"));
+  commit(join(plain, "open"), "c");
+  age(join(plain, "done"));
+  age(join(plain, "open"));
 
   sleeper = Bun.spawn(["sleep", "60"], { cwd: wt("in-use") });
 });
@@ -98,7 +141,7 @@ afterAll(() => {
 });
 
 const trash = (path: string, ...args: string[]) =>
-  Bun.spawnSync([TRASH, repo, ...args], {
+  Bun.spawnSync([TRASH, ...args], {
     env: { PATH: path, HOME: home, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
   });
 
@@ -106,14 +149,35 @@ test.each([
   ["with fd, rg and gh", process.env.PATH ?? ""],
   ["with only git and the POSIX tools", withoutFdRgGh],
 ])("worktree-trash %s lists only the merged worktree nobody is working in", (_, path) => {
-  const run = trash(path);
+  const run = trash(path, repo);
 
   expect(run.stderr.toString()).toBe("");
   expect(run.stdout.toString()).toBe(`${wt("merged")}\n`);
 });
 
+test("worktree-trash on a repo with no origin counts what its checked-out branch has as merged", () => {
+  const run = trash(withoutFdRgGh, plain);
+
+  expect(run.stderr.toString()).toBe("");
+  expect(run.stdout.toString()).toBe(`${join(plain, "done")}\n`);
+});
+
+test.each([
+  ...(existsSync("/proc/self") ? [{ missing: "readlink" }, { broken: "readlink" }] : []),
+  { missing: "grep" },
+  { broken: "grep" },
+  { missing: "find" },
+  { missing: "awk" },
+])("worktree-trash lists nothing and says why when a check can't run: %o", (change) => {
+  const run = trash(toolbox(Object.entries(change).flat().join("-"), change), repo);
+
+  expect(run.exitCode).not.toBe(0);
+  expect(run.stdout.toString()).toBe("");
+  expect(run.stderr.toString()).toContain("so it lists nothing");
+});
+
 test("worktree-trash --remove removes only what it lists", () => {
-  const run = trash(withoutFdRgGh, "--remove");
+  const run = trash(withoutFdRgGh, repo, "--remove");
 
   expect(run.stdout.toString()).toBe(`removed ${wt("merged")}\n`);
   expect(readdirSync(join(root, "wt")).toSorted()).toEqual([
@@ -123,5 +187,6 @@ test("worktree-trash --remove removes only what it lists", () => {
     "recent",
     "unmerged",
     "worked",
+    "worked-codex",
   ]);
 });

@@ -1,28 +1,55 @@
 #!/bin/sh
-# worktree-trash <repo> [--remove]: lists the worktrees of <repo> that are safe to remove, or removes them.
-# Safe means: not locked, no uncommitted or untracked files, HEAD is on origin's default branch or is a merged pull
-# request's head (asked of `gh` when it's installed), no process runs inside it, no file in it (ignored ones included)
-# changed for a day, and no Claude Code or Codex session worked in it in the last day. A check that can't run counts
-# the worktree as in use.
 set -eu
-repo=${1:?usage: worktree-trash <repo> [--remove]}
+usage() {
+  cat >&2 <<'EOF'
+usage: worktree-trash <repo> [--remove]
+Lists the worktrees of <repo> that are safe to remove, or removes them with --remove. Safe means: not locked, no
+uncommitted or untracked files, HEAD is on the default branch (origin's, or the branch <repo> has checked out when it
+has no origin) or is a merged pull request's head (asked of `gh` when it's installed), no process runs in it, no file
+in it changed in the last day (ignored files included), and no Claude Code or Codex session worked in it in the last
+day. When it can't tell whether a worktree is in use, it counts it as in use; when it can't check processes or
+sessions at all, it lists nothing and says why.
+--remove runs `git worktree remove`, which also deletes the worktree's ignored files (.env, builds, caches).
+EOF
+  exit 2
+}
+[ $# -ge 1 ] && [ "$1" != -h ] && [ "$1" != --help ] || usage
+repo=$1
 remove=${2:-}
-git -C "$repo" fetch -q origin
-main=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/main)
+fail() {
+  echo "worktree-trash: $1, so it lists nothing" >&2
+  exit 1
+}
+for tool in awk find grep; do
+  command -v "$tool" >/dev/null || fail "$tool is missing"
+done
 
-if [ -d /proc/self ]; then
-  cwds=$(for p in /proc/[0-9]*; do readlink "$p/cwd" 2>/dev/null || :; done)
-elif command -v lsof >/dev/null; then
-  cwds=$(lsof -a -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+if git -C "$repo" remote get-url origin >/dev/null 2>&1; then
+  git -C "$repo" fetch -q origin
+  main=$(git -C "$repo" symbolic-ref -q --short refs/remotes/origin/HEAD || echo origin/main)
 else
-  echo "worktree-trash: can't see which folders processes run in (no /proc or lsof), so every worktree counts as in use" >&2
-  exit 0
+  main=$(git -C "$repo" symbolic-ref -q --short HEAD) || fail "$repo has no origin and no branch checked out"
 fi
 
-# The folders Claude Code and Codex sessions worked in over the last day, from their transcripts.
-worked=$(find "$HOME/.claude/projects" ${CLAUDE_CONFIG_DIR:+"$CLAUDE_CONFIG_DIR/projects"} "${CODEX_HOME:-$HOME/.codex}/sessions" \
-  -name '*.jsonl' -mtime -1 -exec grep -ohE '"cwd": ?"[^"]*"' {} + 2>/dev/null |
-  awk '{ sub(/^"cwd": *"/, ""); sub(/"$/, "") } !seen[$0]++')
+# Reading another user's process fails, and so does one that just ended: the scan is trusted once it sees itself.
+if [ -d /proc/self ]; then
+  cwds=$(for p in /proc/[0-9]*; do readlink "$p/cwd" 2>/dev/null || :; done)
+else
+  cwds=$(lsof -a -d cwd -Fn 2>/dev/null | awk 'sub(/^n/, "")') || :
+fi
+printf '%s\n' "$cwds" | H=$(pwd -P) awk '$0 == ENVIRON["H"] { found = 1; exit } END { exit !found }' ||
+  fail "it can't see which folders processes run in (it reads /proc with readlink, or lsof)"
+
+set --
+for dir in "$HOME/.claude/projects" ${CLAUDE_CONFIG_DIR:+"$CLAUDE_CONFIG_DIR/projects"} "${CODEX_HOME:-$HOME/.codex}/sessions"; do
+  if [ -d "$dir" ]; then set -- "$@" "$dir"; fi
+done
+worked=
+if [ $# -gt 0 ]; then
+  worked=$(find "$@" -name '*.jsonl' -mtime -1 -exec sh -c 'grep -ohE "$0" "$@"; [ $? -le 1 ]' '"cwd": ?"[^"]*"' {} +) ||
+    fail "it can't read the session transcripts in $*"
+  worked=$(printf '%s\n' "$worked" | awk '{ sub(/^"cwd": *"/, ""); sub(/"$/, "") } !seen[$0]++')
+fi
 
 # A worktree is in use when a process runs or a session worked in it or under it, as git names it or with its
 # symlinks resolved, or when a file in it changed in the last day.
