@@ -1,0 +1,41 @@
+#!/bin/sh
+# A PreToolUse hook: refuses edits to the memory folder and to hex's own checkout (only bin/update changes it, and
+# an edit there stops every update; worktrees under it are their own checkouts), and memo in a subagent, whose
+# notes would arrive duplicated. Bash can still write past it; this catches the edit tools and the memo call.
+hex=$(cd "$(dirname "$0")/.." && pwd -P)
+home=$(dirname "$hex")
+input=$(cat)
+
+if [ -n "$(printf '%s' "$input" | jq -r '.agent_id // empty')" ] &&
+  printf '%s\n' "$input" | jq -r '.tool_input.command // empty' |
+  grep -Eq '(^|[;&|(`])[[:space:]]*([[:alpha:]_][[:alnum:]_]*=[^[:space:]]*[[:space:]]+)*([^[:space:]]*/)?memo([[:space:]]|$)'; then
+  echo "A subagent doesn't run memo: hex's memory agent writes every memory, and .hex/bin/hex recall <regex> searches them." >&2
+  exit 2
+fi
+
+path=$(printf '%s' "$input" | jq -r '.tool_input.file_path // .tool_input.notebook_path // empty')
+[ -n "$path" ] || exit 0
+case $path in /*) ;; *) path="$(printf '%s' "$input" | jq -r '.cwd // empty')/$path" ;; esac
+# physical <path>: the path with its existing folders' symlinks resolved, as pwd -P has them (macOS has no realpath -m).
+physical() {
+  dir=$1 rest=
+  while [ ! -d "$dir" ]; do rest="/$(basename "$dir")$rest" dir=$(dirname "$dir"); done
+  echo "$(cd "$dir" && pwd -P)$rest"
+}
+path=$(physical "$path")
+memory=$(physical "${MEMORY_DIR:-$home/memory}")
+
+case $path/ in
+  "$memory"/*)
+    echo "memory/ is OptMem's: the memo tool manages it, and hex's memory agent writes every memory." >&2
+    exit 2
+    ;;
+  "$hex"/*)
+    dir=$path
+    while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+    if [ "$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)" = "$hex" ]; then
+      echo "$hex is hex itself: only .hex/bin/update changes it, since an edit there stops every update. Change hex in a clone or worktree of its own and land it by pull request." >&2
+      exit 2
+    fi
+    ;;
+esac

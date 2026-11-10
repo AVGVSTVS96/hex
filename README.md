@@ -153,6 +153,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
     │   ├── worktree-trash          clears away worktrees whose work is merged
     │   ├── t3-relink               renews a T3 Code link to another machine
     │   ├── pkill-guard             stops a `pkill -f` that would kill its own shell
+    │   ├── hands-off               keeps edits out of memory/ and .hex/, and memo out of subagents
     │   └── update                  pulls updates, tests them, ships when no session is busy
     ├── chat/prompt.md              Taelin's OptChat prompt, for DM sessions and their compactions
     ├── plugin/                     the hooks every session loads, and skills it reads when needed
