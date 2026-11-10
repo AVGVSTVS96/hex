@@ -136,3 +136,14 @@ test("a wake waits for the one holding hex.db's wake lease, and goes once it's l
   expect(body(wake())).toBe(`${LABEL}#0 2026-10-06 First note.\nYou are awake.\n`);
   expect(Date.now() - started).toBeGreaterThanOrEqual(400);
 });
+
+test("with no memories yet, the wake says the memory agent records them, not that a session should", () => {
+  memo([
+    'No memories yet. Record the first with: ~/hex/.hex/vendor/memo note "<one line>"\nYou are awake.\n',
+  ]);
+  const text = wake();
+  expect(body(text)).toBe(
+    `${LABEL}No memories yet: the memory agent records them after each turn.\nYou are awake.\n`,
+  );
+  expect(text).not.toContain("memo note");
+});
