@@ -18,6 +18,7 @@ export {
   startHub,
   tappable,
   title,
+  typed,
   tool,
   transcribe,
   writable,

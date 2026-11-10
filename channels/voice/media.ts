@@ -10,6 +10,7 @@ export type Item = {
   id: string;
   kind: Kind;
   images: string[];
+  file?: string;
   seconds?: number;
   mute?: true;
   words?: string;
@@ -19,6 +20,7 @@ const savedItem: z.ZodType<Item> = z.object({
   id: z.string(),
   kind: z.enum(["photo", "video"]),
   images: z.array(z.string()),
+  file: z.string().exactOptional(),
   seconds: z.number().exactOptional(),
   mute: z.literal(true).exactOptional(),
   words: z.string().exactOptional(),
@@ -85,8 +87,13 @@ export class Media {
         kind === "video"
           ? await this.clip(id, file)
           : converts
-            ? { id, kind, images: [await jpeg(file, join(this.dir, `${id}.jpg`))] }
-            : { id, kind, images: [file] };
+            ? await jpeg(file, join(this.dir, `${id}.jpg`)).then((still) => ({
+                id,
+                kind,
+                images: [still],
+                file: still,
+              }))
+            : { id, kind, images: [file], file };
 
       if (converts) {
         rmSync(file);
@@ -158,7 +165,7 @@ export class Media {
       }),
     );
 
-    const item: Item = { id, kind: "video", images, seconds: Math.round(seconds) };
+    const item: Item = { id, kind: "video", images, file, seconds: Math.round(seconds) };
 
     if (probe.streams?.some((stream) => stream.codec_type === "audio") !== true) {
       return { ...item, mute: true };
@@ -214,10 +221,6 @@ export function caption(text: string, items: Item[]) {
   return [text, ...items.map(line)].filter(Boolean).join("\n");
 }
 
-export function typed(body: string, items: number) {
-  return items ? body.split("\n").slice(0, -items).join("\n") : body;
-}
-
 export function meta(items: Item[]) {
   if (!items.length) {
     return {};
@@ -226,6 +229,7 @@ export function meta(items: Item[]) {
   return {
     image_path: items.flatMap((item) => item.images).join("; "),
     media: items.map((item) => `${item.kind} ${item.id}`).join("; "),
+    files: items.map((item) => item.file ?? item.images[0] ?? "").join("; "),
   };
 }
 

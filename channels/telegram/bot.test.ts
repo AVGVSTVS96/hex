@@ -1403,6 +1403,54 @@ test("a backfill quotes the owner under their name and posts hex as itself, sile
   expect(sent.slice(3).map((c) => c.payload.text?.length)).toEqual([4096, 5000 - 4089 + 7]);
 });
 
+test("a backfill shows the owner's photos and clips themselves, an album under their name and words, and the line for one whose file is gone", async () => {
+  const shot = join(outbox, `p-${Date.now()}.jpg`);
+  const clip = join(outbox, `v-${Date.now()}.mp4`);
+  writeFileSync(shot, "jpg");
+  writeFileSync(clip, "mp4");
+  const from = calls.length;
+  await clients.get("telegram")?.backfill?.(`${FORUM}:9`, [
+    { from: "me", text: "this one?\n(photo)", media: [{ id: "p", kind: "photo", file: shot }] },
+    {
+      from: "me",
+      text: "(photo)\n(video 0:04, 1 still, no sound)",
+      media: [
+        { id: "p", kind: "photo", file: shot },
+        { id: "v", kind: "video", file: clip },
+      ],
+    },
+    {
+      from: "me",
+      text: "gone\n(photo)",
+      media: [{ id: "q", kind: "photo", file: `${shot}.gone` }],
+    },
+  ]);
+  const sent = calls.slice(from).filter((c) => c.method.startsWith("send"));
+  expect(
+    sent.map((c) => [c.method, c.payload.message_thread_id, c.payload.disable_notification]),
+  ).toEqual([
+    ["sendPhoto", 9, true],
+    ["sendMediaGroup", 9, true],
+    ["sendMessage", 9, true],
+  ]);
+  expect(sent[0]?.payload).toMatchObject({
+    caption: "Bassim\nthis one?",
+    caption_entities: [
+      { type: "bold", offset: 0, length: 6 },
+      { type: "blockquote", offset: 7, length: 9 },
+    ],
+  });
+  expect(sent[1]?.payload.media).toMatchObject([
+    {
+      type: "photo",
+      caption: "Bassim",
+      caption_entities: [{ type: "bold", offset: 0, length: 6 }],
+    },
+    { type: "video" },
+  ]);
+  expect(sent[2]?.payload.text).toBe("Bassim\ngone\n(photo)");
+});
+
 test("/effort and /model set what the thread's next message starts with, and never reach its session, unlike a path", async () => {
   expect((await called("setMyCommands")).commands?.map((c) => c.command)).toEqual([
     "model",

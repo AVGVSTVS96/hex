@@ -1,8 +1,8 @@
-import { carried, clients, history, owners, say, open as store, writable } from "@hex/hub";
+import { carried, clients, history, owners, say, open as store, typed, writable } from "@hex/hub";
 import type { Turn } from "@hex/hub";
 
 import { Changes } from "./changes.ts";
-import { caption, meta as mediaMeta, typed } from "./media.ts";
+import { caption, meta as mediaMeta } from "./media.ts";
 import type { Item } from "./media.ts";
 
 export type Sent = { key: string; text: string; at: string; media?: Turn["media"] };
