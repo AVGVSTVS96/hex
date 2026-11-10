@@ -401,7 +401,7 @@ export const respawn = async (session: Agent) => {
 // A session the supervisor restarts gets the supervisor's PATH, not the hub's, so one started on an older PATH is stale too.
 let staleDaemonCheck: Promise<void> | undefined;
 
-function restartStaleDaemon() {
+export function restartStaleDaemon() {
   return (staleDaemonCheck ??= (async () => {
     const [status, version] = await Promise.all([run(["daemon", "status"]), run(["--version"])]);
     const daemon = status?.match(/^version:\s*(\S+)/mu)?.[1];
@@ -448,8 +448,9 @@ export async function start(
   launcher: string,
   args: string[],
   options: { cwd: string; env: Record<string, string | undefined> },
+  daemonChecked = restartStaleDaemon(),
 ): Promise<string> {
-  await restartStaleDaemon();
+  await daemonChecked;
 
   return await tracked(
     new Promise((resolve, reject) => {

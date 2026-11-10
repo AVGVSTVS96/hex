@@ -137,6 +137,7 @@ beforeEach(() => {
     fake,
     `#!/bin/sh
 trap 'jq -cn "\\$ARGS.positional" --args -- "$@" >> "${dir}/calls"' EXIT
+[ "$1" = "rm" ] && [ -f "${dir}/slow" ] && sleep 0.3
 [ "$1 $2" = "agents --json" ] && [ -f "${dir}/unanswering" ] && exit 1
 [ "$1 $2" = "agents --json" ] && [ -f "${dir}/unreadable" ] && rm "${dir}/unreadable" && echo 'Error: connect ECONNREFUSED' && exit 1
 [ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
@@ -552,10 +553,9 @@ test("a stopped thread has its job record cleared, then resumes under the same i
   start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
   hub.deliver("chat:7", "Desk anchors", message);
   const args = await launched();
-  expect(calls().find((each) => each[0] !== "agents" && each[0] !== "daemon")).toEqual([
-    "rm",
-    SESSION.slice(0, 8),
-  ]);
+  expect(
+    calls().find((each) => !["agents", "daemon", "--version"].includes(each[0] ?? "")),
+  ).toEqual(["rm", SESSION.slice(0, 8)]);
   expect(args).toContain("--resume");
   expect(args[args.indexOf("--resume") + 1]).toBe(SESSION);
 });
@@ -616,6 +616,16 @@ test("a daemon left on an older claude is stopped with its sessions kept, so the
     "daemon stop --any --keep-workers",
     `--bg --channels ${CHANNEL} --name`,
   ]);
+});
+
+test("a session's start checks the daemon while its old record is removed, so the wait for one doesn't add to the other", async () => {
+  writeFileSync(join(dir, "slow"), "");
+  start({ main: "chat", general: true, registry: { chat: { name: "hex", session: SESSION } } });
+  await launched();
+
+  const order = calls().map((each) => each[0]);
+
+  expect(order.indexOf("--version")).toBeLessThan(order.indexOf("rm"));
 });
 
 test("a daemon on the claude that's installed is left running", async () => {
@@ -3365,10 +3375,9 @@ test("an adopted thread clears the old job record, then resumes its session in i
   start({ agents: [] });
   hub.adopt("chat:7", "Desk anchors", SESSION, "carry on", dir);
   const args = await launched();
-  expect(calls().find((each) => each[0] !== "agents" && each[0] !== "daemon")).toEqual([
-    "rm",
-    SESSION.slice(0, 8),
-  ]);
+  expect(
+    calls().find((each) => !["agents", "daemon", "--version"].includes(each[0] ?? "")),
+  ).toEqual(["rm", SESSION.slice(0, 8)]);
   expect(args[args.indexOf("--resume") + 1]).toBe(SESSION);
   expect(args.at(-1)).toBe("carry on");
   expect(registry()["chat:7"]).toEqual({ name: "Desk anchors", session: SESSION, cwd: dir });
