@@ -429,7 +429,7 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
       {
         type: "inbound",
         thread,
-        content: "(not needed, said in the app) Ship it now?",
+        content: "(not needed from me, said in the app: decide or do it yourself) Ship it now?",
         author: "owner",
         meta: { user: "hex app" },
       },

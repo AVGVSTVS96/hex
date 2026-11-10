@@ -495,7 +495,12 @@ export class Questions extends Changes {
         return;
       }
 
-      await this.inform(taken, thread, `(not needed, said ${where}) ${question.question}`, via);
+      await this.inform(
+        taken,
+        thread,
+        `(not needed from me, said ${where}: decide or do it yourself) ${question.question}`,
+        via,
+      );
       told.add(thread);
     };
 
@@ -612,7 +617,9 @@ export class Questions extends Changes {
         const notTold: string[] = [];
 
         for (const thread of mark.told ?? (curated ? [curated.task] : [])) {
-          const line = `(took back) ${mark.question}: ${mark.label}`;
+          const line = isDismissal(mark)
+            ? `(took back: this needs me after all) ${mark.question}`
+            : `(took back) ${mark.question}: ${mark.label}`;
 
           if (!said.has(`${thread} ${line}`)) {
             try {

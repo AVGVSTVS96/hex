@@ -3054,7 +3054,7 @@ async function questionRoutes(request: Request, url: URL) {
         remember(call, "answered", "Not needed", { ask: key, sent });
         activity.changed();
         deliver(
-          `The caller marked the card for ${key} not needed; its threads are told${missed(sent)}.`,
+          `The caller marked the card for ${key} as not needing them; its threads are told to decide or do it themselves${missed(sent)}.`,
           { call: call.id },
         );
       }
