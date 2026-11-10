@@ -21,6 +21,7 @@ import {
   firstLine,
   followTranscript,
   generalOf,
+  isDm,
   itemStep,
   nameOf,
   past,
@@ -890,13 +891,12 @@ export class Board extends Changes {
     const taskOf = (agent: Agent) =>
       links.find(([id]) => id === agent.id || agent.id.startsWith(id))?.[1];
 
-    const destination = (task: { owner: string; project?: string }) => home(task, runs);
     const moved = new Map<string, Agent[]>();
 
     for (const run of runs) {
       run.agents = run.agents.filter((agent) => {
         const task = taskOf(agent);
-        const to = task && destination(task);
+        const to = task && home(task, runs, run);
 
         if (!hasText(to) || to === run.id) {
           return true;
@@ -1419,21 +1419,27 @@ export class Board extends Changes {
   }
 }
 
-function home(task: { owner: string; project?: string }, runs: Run[]) {
+function home(task: { owner: string; project?: string }, runs: Run[], workedIn?: Run) {
   const owner = runs.find((run) => run.thread === task.owner);
 
-  if (owner && owner.where !== "General" && owner.where !== "DM") {
+  if (owner && ofOneProject(owner)) {
     return owner.id;
   }
 
   if (!hasText(task.project)) {
-    return owner?.id;
+    return workedIn && workedIn.app !== "claude" && ofOneProject(workedIn)
+      ? workedIn.id
+      : owner?.id;
   }
 
   return (
-    runs.find((run) => run.name === task.project && run.where !== "General" && run.where !== "DM")
-      ?.id ?? `project:${task.project}`
+    runs.find((run) => run.name === task.project && ofOneProject(run))?.id ??
+    `project:${task.project}`
   );
+}
+
+function ofOneProject(run: Run) {
+  return run.where !== "General" && run.where !== "DM";
 }
 
 function newest(a: Agent, b: Agent) {
@@ -1506,7 +1512,7 @@ function where(thread: Thread) {
     return "General";
   }
 
-  if (thread.app === "telegram" && !thread.id.includes(":") && !thread.id.startsWith("-")) {
+  if (isDm({ app: thread.app, thread: thread.id })) {
     return "DM";
   }
 
