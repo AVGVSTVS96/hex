@@ -20,9 +20,10 @@ import type { tools } from "./channel.ts";
 import { Chats } from "./chat.ts";
 import type { Where } from "./chat.ts";
 import { PORT, STATE_DIR, env } from "./env.ts";
+import { jev } from "./jev.ts";
 import { counted, line, Media } from "./media.ts";
 import type { Item } from "./media.ts";
-import { jev, muting } from "./mute.ts";
+import { muting } from "./mute.ts";
 import type { Muting } from "./mute.ts";
 import { jobs, overall } from "./overall.ts";
 import page from "./page.html" with { type: "text" };
@@ -30,6 +31,8 @@ import { MUTED, NOT_MUTED, UNMUTED, voicePrompt } from "./prompt.ts";
 import { clip, Questions } from "./questions.ts";
 import type { Question } from "./questions.ts";
 import { relay } from "./relay.ts";
+import { stopping } from "./stop.ts";
+import type { Stopping } from "./stop.ts";
 import { options, readStyle, Style, styleLines, writeStyle } from "./style.ts";
 import type { VoiceStyle } from "./style.ts";
 
@@ -231,6 +234,7 @@ type Live = {
   muLaw?: boolean | undefined;
   heard?: Heard | undefined;
   mute?: Muting | undefined;
+  stop?: Stopping | undefined;
   closing?: string;
   closed?: true;
 };
@@ -273,6 +277,7 @@ export type Hub = {
   renew: () => void;
   renewal: () => Promise<void>;
   session: () => string | undefined;
+  interrupt: () => Promise<void>;
 };
 
 type Args = { [Each in (typeof tools)[number] as Each["name"]]: z.output<Each["input"]> };
@@ -370,6 +375,8 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
 
   switch (name) {
     case "say": {
+      live.stop?.answered(args.delegation_id);
+
       const held = await tell(live, "say", args.text, args.delegation_id, {
         checked: args.checked,
       });
@@ -448,6 +455,25 @@ async function tell(
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* An instruction cuts the voice off and has it answer, which a mute needs; an unmute goes quietly, since the voice already answers the caller's "unmute" itself. */
+const STOPPED =
+  "hex stopped your turn: the caller seemed to call off what they asked, in the words below. If they did, stop anything you started for it that still runs, then say what had already happened; if they didn't, carry on.";
+
+async function callOff(call: Live, delegation: string) {
+  if (live !== call) {
+    return;
+  }
+
+  remember(call, "stopped", "You called it off, so hex stopped");
+  await hub.interrupt();
+  const turns = call.call.handOff();
+  deliver([STOPPED, transcript(turns)].join("\n"), {
+    call: call.id,
+    delegation_id: delegation,
+    stopped: "true",
+  });
+  save(call);
+}
+
 function hush(call: Live, muted: boolean, second: boolean) {
   if (live !== call) {
     return;
@@ -992,7 +1018,9 @@ function clock() {
 
 function ring(call: Live, { delegation, offset }: Ring) {
   const turns = call.call.handOff();
-  deliver(turns.length ? transcript(turns) : "(no new words since the last handoff)", {
+  const words = turns.length ? transcript(turns) : "(no new words since the last handoff)";
+  call.stop?.handed(delegation, words);
+  deliver(words, {
     call: call.id,
     delegation_id: delegation,
     at: `${(offset / 1000).toFixed(1)}s`,
@@ -1184,14 +1212,23 @@ function follow(
   };
 
   if (JEV) {
+    const unheard = (error: Error) => {
+      trace(`Jev: ${error.message}`);
+    };
+
     next.mute = muting(
       JEV,
       (muted, second) => {
         hush(next, muted, second);
       },
-      (error) => {
-        trace(`Jev: ${error.message}`);
+      unheard,
+    );
+    next.stop = stopping(
+      JEV,
+      (delegation) => {
+        void callOff(next, delegation);
       },
+      unheard,
     );
   }
 
@@ -1444,6 +1481,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
       case "session.input_transcript.delta": {
         hear(call, "you", event);
         call.mute?.heard(event.delta, event.start_ms, event.end_ms ?? event.start_ms);
+        call.stop?.heard(event.delta);
 
         return;
       }

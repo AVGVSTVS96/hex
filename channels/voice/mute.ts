@@ -1,10 +1,4 @@
-import { z } from "zod";
-
-export type Ask = (said: string, muted: boolean) => Promise<number>;
-
-const Answer = z.object({
-  answers: z.object({ wants: z.object({ noul: z.number() }) }),
-});
+import type { Judge } from "./jev.ts";
 
 const CALL =
   "A phone call between the caller and hex, their voice assistant. `said` is what the caller just said, as speech recognition heard it, and it may be cut off mid-sentence.";
@@ -14,29 +8,6 @@ const QUESTION = {
   unmute:
     'hex is muted. Is `said` a command to hex, the assistant on the call, to unmute or talk again now? "Unmute" and "you can talk again" are such commands. Talking about unmuting, asking how it works, or unmuting something else is not.',
 };
-
-export function jev(key: string, model: string, url: string): Ask {
-  return async (said, muted) => {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        state: { call: CALL, said },
-        questions: {
-          wants: { type: "noul", instructions: muted ? QUESTION.unmute : QUESTION.mute },
-        },
-      }),
-      signal: AbortSignal.timeout(3000),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Jev ${response.status}: ${(await response.text()).slice(0, 200)}`);
-    }
-
-    return Answer.parse(await response.json()).answers.wants.noul;
-  };
-}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* Only words that could be about muting go to Jev, so the rest of the call stays between the caller and OpenAI. */
@@ -52,7 +23,7 @@ export type Muting = ReturnType<typeof muting>;
    yourself" reads as a command until the rest arrives, so each answer stands only until Jev has
    read more of the same sentence; taking one back says so (`second`). */
 export function muting(
-  ask: Ask,
+  judge: Judge,
   flip: (muted: boolean, second: boolean) => void,
   failed: (error: Error) => void,
 ) {
@@ -71,7 +42,7 @@ export function muting(
     }
   };
 
-  const judge = async () => {
+  const decide = async () => {
     if (asking) {
       return;
     }
@@ -87,7 +58,7 @@ export function muting(
     let wants: number;
 
     try {
-      wants = await ask(asked, before);
+      wants = await judge({ call: CALL, said: asked }, before ? QUESTION.unmute : QUESTION.mute);
     } catch (error) {
       failed(error instanceof Error ? error : new Error(String(error)));
 
@@ -99,7 +70,7 @@ export function muting(
     if (said === asked) {
       settle(wants >= SURE);
     } else {
-      await judge();
+      await decide();
     }
   };
 
@@ -115,7 +86,7 @@ export function muting(
 
       said += text;
       end = Math.max(end, until);
-      void judge();
+      void decide();
     },
   };
 }

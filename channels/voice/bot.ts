@@ -68,6 +68,7 @@ serve(
     },
     renewal: () => hub.renewal(THREAD),
     session: () => hub.session(THREAD),
+    interrupt: () => hub.interrupt(THREAD),
   },
   STATE,
 );

@@ -9,11 +9,11 @@ function judge(wants: (said: string, muted: boolean) => number) {
   const flips: string[] = [];
 
   const mute = muting(
-    async (said, muted) => {
+    async ({ said = "" }, question) => {
       asked.push(said);
       await Bun.sleep(5);
 
-      return wants(said, muted);
+      return wants(said, question.startsWith("hex is muted"));
     },
     (muted, second) => {
       flips.push(muted ? "muted" : second ? "not after all" : "unmuted");

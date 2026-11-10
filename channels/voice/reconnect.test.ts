@@ -34,7 +34,9 @@ const CallRecord = z.looseObject({
   moments: z.array(z.unknown()).optional(),
 });
 
-const JevAsk = z.object({ state: z.object({ said: z.string() }) });
+const JevAsk = z.object({
+  state: z.object({ said: z.string(), asked: z.string().optional() }),
+});
 
 const Calls = z.object({ live: z.string().optional() });
 const Media = z.object({ id: z.string(), kind: z.string() });
@@ -98,13 +100,12 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
       }
 
       if (new URL(request.url).pathname.endsWith("/systemone")) {
-        const { said } = JevAsk.parse(await request.json()).state;
+        const { said, asked } = JevAsk.parse(await request.json()).state;
         judged.push(said);
+        const wants = asked === undefined ? /^ ?(mute|unmute)\b/iu : /don't do that/iu;
 
         return Response.json({
-          answers: {
-            wants: { type: "noul", noul: /^ ?(mute|unmute)\b/iu.test(said) ? 0.95 : 0.02 },
-          },
+          answers: { wants: { type: "noul", noul: wants.test(said) ? 0.95 : 0.02 } },
         });
       }
 
@@ -195,7 +196,7 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   }
 
   const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
-const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), renewal: async () => {}, session: () => 'brain' }, ${JSON.stringify(state)})
+const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), renewal: async () => {}, session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))
 for await (const line of console) {
   const { name, args } = JSON.parse(line)
@@ -785,4 +786,33 @@ test("saying mute yourself mutes the voice through Jev: hex's answers wait, sile
     { kind: "say", text: "CI is green." },
     { kind: "unmuted", text: "You unmuted hex" },
   ]);
+}, 20_000);
+
+test("calling off a handoff hex is working on stops its turn at once, then hands it the caller's words", async () => {
+  await using engine = await appCall();
+  await started(engine);
+
+  const words = (who: "you" | "voice", delta: string, start_ms: number) => {
+    engine.send({
+      type: `session.${who === "you" ? "input" : "output"}_transcript.delta`,
+      delta,
+      start_ms,
+      end_ms: start_ms + 300,
+    });
+  };
+
+  words("you", "Start a new topic for Brim", 1000);
+  engine.send({
+    type: "session.delegation.created",
+    delegation: { id: "d1", target: "client" },
+    offset_ms: 1500,
+  });
+  words("voice", "Starting it.", 1600);
+  await until(() => engine.told.find((told) => told.meta?.delegation_id === "d1"));
+  words("you", "Oh, I already did. You don't do that", 6000);
+  const stopped = await until(() => engine.told.find((told) => told.meta?.stopped === "true"));
+  expect(engine.told.map((told) => told.hub).slice(-2)).toEqual(["interrupt", "deliver"]);
+  expect(stopped.meta?.delegation_id).toBe("d1");
+  expect(stopped.content).toContain("You don't do that");
+  expect((await engine.call()).moments).toMatchObject([{ kind: "stopped" }]);
 }, 20_000);
