@@ -34,6 +34,8 @@ const CallRecord = z.looseObject({
   moments: z.array(z.unknown()).optional(),
 });
 
+const JevAsk = z.object({ state: z.object({ said: z.string() }) });
+
 const Calls = z.object({ live: z.string().optional() });
 const Media = z.object({ id: z.string(), kind: z.string() });
 
@@ -70,6 +72,8 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
 
   const closes: string[] = [];
   const instructed: string[] = [];
+  const thought: string[] = [];
+  const judged: string[] = [];
   let voice: Bun.ServerWebSocket<AttachData> | undefined;
   let hold = callStillGoingAtStart;
   let acking = true;
@@ -91,6 +95,17 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
               { error: { message: "You have no credits remaining.", code: "insufficient_quota" } },
               { status: 429 },
             );
+      }
+
+      if (new URL(request.url).pathname.endsWith("/systemone")) {
+        const { said } = JevAsk.parse(await request.json()).state;
+        judged.push(said);
+
+        return Response.json({
+          answers: {
+            wants: { type: "noul", noul: /^ ?(mute|unmute)\b/iu.test(said) ? 0.95 : 0.02 },
+          },
+        });
       }
 
       if (request.method === "POST") {
@@ -130,6 +145,7 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
         }
 
         if (event.type === "session.thinking.append") {
+          thought.push(event.content ?? "");
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
           );
@@ -159,6 +175,8 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
     [
       "OPENAI_API_KEY=test",
       `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`,
+      "OPENROUTER_API_KEY=test",
+      `OPENROUTER_BASE_URL=http://127.0.0.1:${openai.port}/v1`,
       "VOICE_PORT=0",
     ].join("\n"),
   );
@@ -185,7 +203,9 @@ for await (const line of console) {
 }`;
 
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !/^(VOICE|TWILIO|OPENAI|CALLER|HEX)_/u.test(key)),
+    Object.entries(process.env).filter(
+      ([key]) => !/^(VOICE|TWILIO|OPENAI|OPENROUTER|CALLER|HEX)_/u.test(key),
+    ),
   );
 
   const plugin = Bun.spawn(["bun", "-e", engine], {
@@ -227,6 +247,8 @@ for await (const line of console) {
     base,
     closes,
     instructed,
+    thought,
+    judged,
     told,
     relayedToGeneral,
     call,
@@ -734,4 +756,33 @@ test("a call that spends the last of OpenAI's credit warns hex once, before the 
   await until(() => engine.probes() >= 3);
   await Bun.sleep(200);
   expect(warned()).toHaveLength(1);
+}, 20_000);
+
+test("saying mute yourself mutes the voice through Jev: hex's answers wait, silently, until the caller unmutes it", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.send({
+    type: "session.input_transcript.delta",
+    delta: "Mute yourself",
+    start_ms: 1000,
+    end_ms: 1600,
+  });
+  await until(() => engine.instructed.find((line) => line.startsWith("The caller muted you")));
+  expect((await engine.tool("say", { delegation_id: "d1", text: "CI is green." })).result).toBe(
+    "the caller muted the voice: it says this once they unmute it",
+  );
+  expect(engine.thought.at(-1)).toBe("Say this once the caller unmutes you: CI is green.");
+  engine.send({
+    type: "session.input_transcript.delta",
+    delta: "Unmute",
+    start_ms: 9000,
+    end_ms: 9400,
+  });
+  await until(() => engine.thought.find((line) => line.startsWith("The caller unmuted you")));
+  expect(engine.judged).toEqual(["Mute yourself", "Unmute"]);
+  expect((await engine.call()).moments).toMatchObject([
+    { kind: "muted", text: "You muted hex" },
+    { kind: "say", text: "CI is green." },
+    { kind: "unmuted", text: "You unmuted hex" },
+  ]);
 }, 20_000);

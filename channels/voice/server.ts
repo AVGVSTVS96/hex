@@ -22,9 +22,11 @@ import type { Where } from "./chat.ts";
 import { PORT, STATE_DIR, env } from "./env.ts";
 import { counted, line, Media } from "./media.ts";
 import type { Item } from "./media.ts";
+import { jev, muting } from "./mute.ts";
+import type { Muting } from "./mute.ts";
 import { jobs, overall } from "./overall.ts";
 import page from "./page.html" with { type: "text" };
-import { voicePrompt } from "./prompt.ts";
+import { MUTED, NOT_MUTED, UNMUTED, voicePrompt } from "./prompt.ts";
 import { clip, Questions } from "./questions.ts";
 import type { Question } from "./questions.ts";
 import { relay } from "./relay.ts";
@@ -52,6 +54,15 @@ const TWILIO_TOKEN = env.TWILIO_AUTH_TOKEN;
 const TWILIO_NUMBER = env.TWILIO_NUMBER;
 const TWILIO_API = env.TWILIO_BASE_URL ?? "https://api.twilio.com";
 const CALLER_NUMBER = env.CALLER_NUMBER;
+
+const JEV = filled(env.OPENROUTER_API_KEY)
+  ? jev(
+      env.OPENROUTER_API_KEY,
+      "~typesafe/jev-latest",
+      `${env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1"}/systemone`,
+    )
+  : undefined;
+
 const PUBLIC_HOST = env.VOICE_PUBLIC_URL?.replace(/^\w+:\/\//u, "");
 
 const PUBLIC_HOSTNAME = filled(PUBLIC_HOST)
@@ -219,6 +230,7 @@ type Live = {
   speak?: ((audio: string) => void) | undefined;
   muLaw?: boolean | undefined;
   heard?: Heard | undefined;
+  mute?: Muting | undefined;
   closing?: string;
   closed?: true;
 };
@@ -358,9 +370,11 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
 
   switch (name) {
     case "say": {
-      await tell(live, "say", args.text, args.delegation_id, { checked: args.checked });
+      const held = await tell(live, "say", args.text, args.delegation_id, {
+        checked: args.checked,
+      });
 
-      return "said";
+      return held ? "the caller muted the voice: it says this once they unmute it" : "said";
     }
 
     case "note": {
@@ -419,13 +433,36 @@ async function tell(
   delegation?: string,
   more: Pick<Mark, "checked"> = {},
 ) {
+  const held = kind === "say" && call.mute?.muted === true;
+
   await send(
     call,
-    kind === "say" ? "session.commentary.append" : "session.thinking.append",
-    text,
+    kind === "say" && !held ? "session.commentary.append" : "session.thinking.append",
+    held ? `Say this once the caller unmutes you: ${text}` : text,
     delegation,
   );
   remember(call, kind, text, more);
+
+  return held;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* An instruction cuts the voice off and has it answer, which a mute needs; an unmute goes quietly, since the voice already answers the caller's "unmute" itself. */
+function hush(call: Live, muted: boolean, second: boolean) {
+  if (live !== call) {
+    return;
+  }
+
+  remember(
+    call,
+    muted ? "muted" : "unmuted",
+    muted ? "You muted hex" : second ? "Not muted after all" : "You unmuted hex",
+  );
+  void send(
+    call,
+    muted ? "session.instructions.append" : "session.thinking.append",
+    muted ? MUTED : second ? NOT_MUTED : UNMUTED,
+  ).catch(fineIfUnconfirmed);
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1146,6 +1183,18 @@ function follow(
     heard,
   };
 
+  if (JEV) {
+    next.mute = muting(
+      JEV,
+      (muted, second) => {
+        hush(next, muted, second);
+      },
+      (error) => {
+        trace(`Jev: ${error.message}`);
+      },
+    );
+  }
+
   live = next;
   save(next);
   activity.changed();
@@ -1394,6 +1443,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
     switch (event.type) {
       case "session.input_transcript.delta": {
         hear(call, "you", event);
+        call.mute?.heard(event.delta, event.start_ms, event.end_ms ?? event.start_ms);
 
         return;
       }
@@ -2376,7 +2426,7 @@ type SessionExtra = {
 function session(extra: SessionExtra = {}, opening?: string) {
   return {
     model: MODEL,
-    instructions: voicePrompt(IDENTITY, readStyle(STATE_DIR), clock()),
+    instructions: voicePrompt(IDENTITY, readStyle(STATE_DIR), clock(), JEV !== undefined),
     delegation: { type: "client" },
     ...(filled(opening) && {
       input: [
