@@ -1,0 +1,12 @@
+#!/bin/sh
+# A PreToolUse hook on Bash: refuses `pkill -f` and `pkill --full` anywhere in a command, behind sudo or ssh and in
+# quoted scripts too, with -f anywhere among pkill's arguments up to the next ; & | or ).
+command=$(jq -r '.tool_input.command // empty')
+if printf '%s\n' "$command" |
+  grep -Eq '(^|[^[:alnum:]_.-])pkill([[:space:]]+[^;&|()[:space:]]+)*[[:space:]]+(-[[:alnum:]]*f[[:alnum:]]*|--full)([[:space:]]|$|[;&|)])'; then
+  cat >&2 <<'EOF'
+This command has pkill -f (or --full) in it. When run, pkill -f matches whole command lines, including the shell running this command, so it kills itself. Kill by the PID you started or looked up; killing by name (pkill -x bun) also kills every other session's processes with that name.
+If pkill -f is only text here (a commit message, a pull request body, a note or a search), this check can't tell: write the text to a file with the Write tool and pass the file (git commit -F, gh pr create --body-file), or name the flag before the command ("the -f flag of pkill").
+EOF
+  exit 2
+fi
