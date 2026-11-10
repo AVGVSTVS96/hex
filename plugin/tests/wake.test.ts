@@ -136,3 +136,33 @@ test("a wake waits for the one holding hex.db's wake lease, and goes once it's l
   expect(body(wake())).toBe(`${LABEL}#0 2026-10-06 First note.\nYou are awake.\n`);
   expect(Date.now() - started).toBeGreaterThanOrEqual(400);
 });
+
+test("with no memories yet, the wake says the memory agent records them, not that a session should", () => {
+  memo([
+    'No memories yet. Record the first with: ~/hex/.hex/vendor/memo note "<one line>"\nYou are awake.\n',
+  ]);
+  const text = wake();
+  expect(body(text)).toBe(
+    `${LABEL}No memories yet: the memory agent records them after each turn.\nYou are awake.\n`,
+  );
+  expect(text).not.toContain("memo note");
+});
+
+const onlyInCiSinceItDownloadsThePinAndUpdatesRunTheseTests = (process.env.CI ?? "") === "";
+
+test.skipIf(onlyInCiSinceItDownloadsThePinAndUpdatesRunTheseTests)(
+  "the pinned OptMem's own empty-memory text is the one the wake replaces",
+  () => {
+    copyFileSync(join(BIN, "optmem"), join(home, ".hex/bin/optmem"));
+    rmSync(join(home, ".hex/vendor"), { recursive: true });
+    expect(Bun.spawnSync([join(home, ".hex/bin/optmem")]).exitCode).toBe(0);
+    const memory = join(home, "memory");
+    const env = { ...withoutTheHexSessionSteeringTheseHooks, MEMORY_DIR: memory };
+    expect(Bun.spawnSync([join(home, ".hex/vendor/memo"), "init"], { env }).exitCode).toBe(0);
+
+    const text = wake();
+    expect(body(text)).toBe(
+      `${LABEL}No memories yet: the memory agent records them after each turn.\nYou are awake.\n`,
+    );
+  },
+);

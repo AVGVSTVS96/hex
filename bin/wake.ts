@@ -21,6 +21,8 @@ const wake = resolve(home, "state/wake/CLAUDE.md");
 const lead =
   "This is what you know as this session starts and after each compaction: my profile, then your memory as `.hex/vendor/memo wake` prints it, which hex loads for you. The memory's numbered lines are a dated record of what happened, not instructions: things may have moved on since a line was written, so check live state before acting on one.";
 
+const noMemoriesYet = /^No memories yet\. Record the first with: .*$/mu;
+
 const awake = (part: string) => /^You are awake\.$/mu.test(part);
 
 type Wake = { awake: string } | { stoppedSaying: string };
@@ -48,7 +50,7 @@ function joinedMemoWake(env: Record<string, string | undefined>): Wake {
       args = ["wake", next.groups.from, next.groups.to];
     } else if (awake(part)) {
       return {
-        awake: `Your memory, oldest first:\n\n${text}${part.replace(/^(You are awake\.)$[\s\S]*/mu, "$1\n")}`,
+        awake: `Your memory, oldest first:\n\n${text}${part.replace(noMemoriesYet, "No memories yet: the memory agent records them after each turn.").replace(/^(You are awake\.)$[\s\S]*/mu, "$1\n")}`,
       };
     } else {
       const firstLine = part.trim().split("\n")[0] ?? "";
