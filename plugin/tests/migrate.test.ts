@@ -11,6 +11,8 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { z } from "zod";
+
 const HEX = join(import.meta.dir, "../..");
 
 let home: string;
@@ -52,4 +54,31 @@ test("migrate seeds PROACTIVE.md where it is missing, and leaves an existing one
   wrote("state/migrated", "3\n");
   migrate();
   expect(read("PROACTIVE.md")).toBe(mine);
+});
+
+const OLD_HEARTBEAT =
+  "Hourly check: my email if a mail connector is set up, your own inbox if you have one, the background agents and tasks you started, and anything you said you'd follow up on. If something's worth telling me now, message me in General, a line and a link each; if not, answer with exactly `HEARTBEAT_OK`.";
+
+const schedules = (heartbeat: string) =>
+  `${JSON.stringify({ heartbeat: { cron: "0 9 * * *", prompt: heartbeat }, update: { cron: "5 8 * * *", prompt: "Run update." } }, null, 2)}\n`;
+
+const Schedules = z.object({ heartbeat: z.object({ cron: z.string(), prompt: z.string() }) });
+
+const heartbeat = (file = "schedules.json") => Schedules.parse(JSON.parse(read(file))).heartbeat;
+
+test("migrate has the heartbeat restart work that died where it still holds the old default, and keeps the user's hours", () => {
+  wrote("schedules.json", schedules(OLD_HEARTBEAT));
+  migrate();
+  expect(heartbeat()).toEqual({
+    cron: "0 9 * * *",
+    prompt: heartbeat(".hex/defaults/schedules.json").prompt,
+  });
+  expect(heartbeat().prompt).toContain("(restart any that died)");
+});
+
+test("migrate leaves a heartbeat prompt the user changed", () => {
+  const mine = schedules("Look at my mail hourly.");
+  wrote("schedules.json", mine);
+  migrate();
+  expect(read("schedules.json")).toBe(mine);
 });
