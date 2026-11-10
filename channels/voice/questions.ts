@@ -6,7 +6,7 @@ import { statusPost, open as store } from "@hex/hub";
 import type { Question as Asked, MessageId, Pin, Thread } from "@hex/hub";
 import { z } from "zod";
 
-import { generalOf, isDm, nameOf } from "./activity.ts";
+import { generalOf, isDm, projectOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";
 import { before, Check, final } from "./check.ts";
@@ -897,7 +897,7 @@ export class Questions extends Changes {
     const thread = this.threads.get(task);
 
     return thread
-      ? nameOf(thread, generalOf(this.threads.values()))
+      ? projectOf(thread, generalOf(this.threads.values()))
       : task.slice(task.lastIndexOf(":") + 1);
   }
 

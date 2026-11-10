@@ -284,7 +284,7 @@ test("a question comes with hex's last two messages in the hour before it in its
   ]);
 });
 
-test("a question asked in General or a DM comes with none of hex's messages before it, which are about any project, and its ask's words are its own message, and a note on it goes where it was asked", async () => {
+test("a question asked in General or a DM comes with none of hex's messages before it, which are about any project, and its ask's words are its own message, under its thread's project, and a note on it goes where it was asked", async () => {
   const DM = "6001";
   open(state).threads.keep("telegram", {
     [GROUP]: { name: "hex" },
@@ -344,6 +344,8 @@ test("a question asked in General or a DM comes with none of hex's messages befo
     topic: "desk",
     places: [{ place: "DM" }],
   });
+  open(state).threads.file(DESK, "portfolio");
+  await until(() => questions.find("check:panel-row")?.topic === "portfolio");
   expect(questions.words("check:panel-row")).toEqual({
     place: "DM",
     at: "2026-10-13T19:00:00.000Z",

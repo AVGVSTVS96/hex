@@ -1762,6 +1762,26 @@ test("another Telegram group keeps its own name and place, and only hex's Genera
   threads("telegram", telegram);
 });
 
+test("a thread filed under a project goes by the project's name and keeps its own as its place, and General and a DM stay themselves", async () => {
+  const store = open(state);
+  threads("telegram", {
+    ...telegram,
+    "-1001234567890:4700": { name: "Chats", session: "47004700-chats" },
+    "7001": { name: "DM", session: "70017001-dm" },
+  });
+  job("47004700-chats", { state: "done", detail: "bubbles land", updatedAt: ago(2) });
+  job("70017001-dm", { state: "done", detail: "sent the link", updatedAt: ago(2) });
+  store.threads.file("-1001234567890:4700", "iikb");
+  store.threads.file("7001", "iikb");
+  store.threads.file("-1001234567890", "iikb");
+  await until(() => board.get("telegram:-1001234567890:4700")?.name === "iikb");
+  expect(board.get("telegram:-1001234567890:4700")).toMatchObject({ name: "iikb", place: "Chats" });
+  expect(board.get("telegram:7001")).toMatchObject({ name: "DM", place: "DM" });
+  expect(board.get("telegram:-1001234567890")).toMatchObject({ name: "General", place: "General" });
+  store.threads.file("-1001234567890", undefined);
+  threads("telegram", telegram);
+});
+
 test("a T3 Code thread's session below one a hex thread handed work to works under that thread while it's busy, and one nothing handed off isn't on the board", async () => {
   threads("telegram", {
     ...telegram,
