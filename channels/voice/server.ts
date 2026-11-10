@@ -24,9 +24,12 @@ import { counted, line, Media } from "./media.ts";
 import type { Item } from "./media.ts";
 import { jobs, overall } from "./overall.ts";
 import page from "./page.html" with { type: "text" };
+import { voicePrompt } from "./prompt.ts";
 import { clip, Questions } from "./questions.ts";
 import type { Question } from "./questions.ts";
 import { relay } from "./relay.ts";
+import { options, readStyle, Style, styleLines, writeStyle } from "./style.ts";
+import type { VoiceStyle } from "./style.ts";
 
 function filled(value: string | undefined): value is string {
   return value !== undefined && value !== "";
@@ -74,34 +77,6 @@ const IDENTITY = (() => {
     return "You are the voice of a personal assistant, on a live call with the person it works for. Speak warmly and naturally, like a sharp friend: plain words, short answers.";
   }
 })();
-
-const VOICE_PROMPT = `${IDENTITY}
-
-Backchannel policy: Do not produce any backchannel interjections while the caller is speaking. Backchanneling is entirely disallowed: stay silent until it is your turn to respond.
-
-Interruption policy: Stop speaking when the caller interrupts. Listen to what they say.
-
-Delegation policy:
-Backend tools:
-- Assistant: the caller's files, machines, projects, memory, messages, email, calendar and the web. It looks things up, takes actions, runs long tasks and ends the call. It also has the call's full transcript and knows what was sent, seen and done.
-
-You and Assistant are both hex: what Assistant knows and can do, hex knows and can do. You yourself know only this conversation and what Assistant tells you, so questions about hex, its knowledge or the call itself are Assistant's to answer.
-
-Generate <|SpawnThinking|> when:
-- The caller asks something, wants something done or asks you to tell them what's going on, including how a task is going, what's running, and hanging up. Your task board holds only what this call started, never everything hex runs.
-- The caller asks what you heard, know, can see or can do, or whether something happened or was done.
-- The caller challenges something you said.
-- A correction changes the work already requested.
-
-Do not generate <|SpawnThinking|> when:
-- The caller only greets or thanks you.
-- You can answer from the conversation or a still-current result.
-- You need a brief clarification to understand the request.
-
-Generate <|SpawnThinking|> before giving an answer that depends on backend work, then tell the caller in a few words that you're on it.
-Do not guess the result while waiting.
-Say something is done only when the backend says so.
-Say the audio cut, that you lack information, or that you can't see or do something only when the backend says so.`;
 
 const MediaBody = z.object({
   media: z.union([z.string(), z.array(z.string()).min(1)]).transform((ids) => [ids].flat()),
@@ -346,6 +321,20 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
     return await pass(args.thread, args.about, args.text, args.app, args.channel);
   }
 
+  if (name === "style") {
+    const { style, applied } = await restyle(args);
+    const now = styleLines(style).join(" ") || "the usual way of talking";
+
+    const heard =
+      applied === undefined
+        ? ""
+        : applied
+          ? ", and the voice talks that way now"
+          : ", but the voice didn't confirm it, so it may take hold only from the next call";
+
+    return `saved: ${now}${heard}${filled(args.voice) ? `; the ${args.voice} voice starts with the next call` : ""}`;
+  }
+
   if (name === "answer") {
     return await answerQuestion(args.id, args.label, "call").then(
       (sent) => `sent "${args.label}" to ${sent.topic}${missed(sent)}`,
@@ -374,7 +363,7 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
 
   switch (name) {
     case "say": {
-      await tell(live, "say", args.text, args.delegation_id);
+      await tell(live, "say", args.text, args.delegation_id, { checked: args.checked });
 
       return "said";
     }
@@ -428,14 +417,52 @@ function send(call: Live, type: string, content: string, delegation?: string) {
   });
 }
 
-async function tell(call: Live, kind: "say" | "note", text: string, delegation?: string) {
+async function tell(
+  call: Live,
+  kind: "say" | "note",
+  text: string,
+  delegation?: string,
+  more: Pick<Mark, "checked"> = {},
+) {
   await send(
     call,
     kind === "say" ? "session.commentary.append" : "session.thinking.append",
     text,
     delegation,
   );
-  remember(call, kind, text);
+  remember(call, kind, text, more);
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A call's voice and instructions are fixed when it starts, so a change mid-call reaches the voice as an instruction, and the voice itself changes from the next call. */
+async function restyle(change: VoiceStyle) {
+  const before = styleLines(readStyle(STATE_DIR)).join(" ");
+  const style = writeStyle(STATE_DIR, change);
+  const lines = styleLines(style).join(" ");
+
+  const applied =
+    live && lines !== before
+      ? await send(
+          live,
+          "session.instructions.append",
+          `The caller changed how you talk. From now on: ${lines || "talk in your usual way."}`,
+        ).then(
+          () => true,
+          () => false,
+        )
+      : undefined;
+
+  return { style, applied };
+}
+
+async function changeStyle(request: Request) {
+  const change = await bodyOf(request, Style);
+
+  if (!change) {
+    return new Response("personality, pace, words or voice, from GET /settings", { status: 400 });
+  }
+
+  return Response.json({ settings: (await restyle(change)).style, ...options() });
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -460,7 +487,7 @@ function remember(
   call: Live,
   kind: Mark["kind"],
   text: string,
-  more: Pick<Mark, "ask" | "sent" | "media"> = {},
+  more: Pick<Mark, "ask" | "sent" | "media" | "checked"> = {},
 ) {
   call.call.mark({ at: since(call), kind, text, ...more });
   save(call);
@@ -1871,6 +1898,7 @@ function passThrough({
   closed,
 }: Passed) {
   const openai = voiceSocket(API);
+  const voice = readStyle(STATE_DIR).voice ?? VOICE;
   let up = false;
   let refusing = false;
 
@@ -1888,7 +1916,7 @@ function passThrough({
       JSON.stringify({
         type: "session.start",
         session: session(
-          { audio: { format, ...(filled(VOICE) && { output: { voice: VOICE } }) } },
+          { audio: { format, ...(filled(voice) && { output: { voice } }) } },
           greeting,
         ),
       }),
@@ -1935,7 +1963,7 @@ function passThrough({
     follow(
       openai,
       base(event.session.id, from, {
-        ...(VOICE !== undefined && { voice: VOICE }),
+        ...(voice !== undefined && { voice }),
         ...(why !== undefined && { why }),
         ...(callee !== undefined && { callee }),
         ...(expires !== undefined && { expires }),
@@ -2330,7 +2358,7 @@ type SessionExtra = {
 function session(extra: SessionExtra = {}, opening?: string) {
   return {
     model: MODEL,
-    instructions: `${VOICE_PROMPT}\n\nThe call started ${clock()}, the caller's local time.`,
+    instructions: voicePrompt(IDENTITY, readStyle(STATE_DIR), clock()),
     delegation: { type: "client" },
     ...(filled(opening) && {
       input: [
@@ -2347,7 +2375,13 @@ async function start(request: Request) {
   }
 
   const body = StartBody.safeParse(await request.json());
-  const { sdp, voice = VOICE, from: origin, about } = body.success ? body.data : {};
+
+  const {
+    sdp,
+    voice = readStyle(STATE_DIR).voice ?? VOICE,
+    from: origin,
+    about,
+  } = body.success ? body.data : {};
 
   if (!filled(sdp)) {
     return new Response("An SDP offer is required", { status: 400 });
@@ -2966,6 +3000,14 @@ function routes(request: Request) {
 
   if (pathname === "/calls" && request.method === "GET") {
     return listCalls(new URL(request.url));
+  }
+
+  if (pathname === "/settings" && request.method === "GET") {
+    return Response.json({ settings: readStyle(STATE_DIR), ...options() });
+  }
+
+  if (pathname === "/settings" && request.method === "PUT") {
+    return changeStyle(request);
   }
 
   if (pathname === "/activity" && request.method === "GET") {

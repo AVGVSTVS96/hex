@@ -3,14 +3,23 @@ import type { ChannelServer } from "@hex/hub";
 import { z } from "zod";
 
 import { PORT } from "./env.ts";
+import { Style } from "./style.ts";
 
 export const tools = [
   tool({
     name: "say",
     _meta: { "anthropic/alwaysLoad": true },
     description:
-      "Give the voice model a result to say aloud for a handoff. It paraphrases, so write one or two plain spoken sentences.",
-    input: z.object({ delegation_id: z.string(), text: z.string() }),
+      "Give the voice your answer to a handoff, to say aloud close to as you write it: one or two short spoken sentences, the answer first, about 30 words at most.",
+    input: z.object({
+      delegation_id: z.string(),
+      text: z.string(),
+      checked: z
+        .string()
+        .describe(
+          "What you looked at this turn that the answer rests on: the commands, files or tools, or 'the call' when only what was said on this call answers it",
+        ),
+    }),
   }),
   tool({
     name: "note",
@@ -124,6 +133,13 @@ export const tools = [
     }),
   }),
   tool({
+    name: "style",
+    _meta: { "anthropic/alwaysLoad": true },
+    description:
+      "Change how the voice talks when the caller asks, for this call and the ones after: its personality, its pace, the caller's own words about how to talk, or its voice, which changes from the next call. Each field you pass replaces the saved one.",
+    input: Style,
+  }),
+  tool({
     name: "hang_up",
     _meta: { "anthropic/alwaysLoad": true },
     description:
@@ -138,11 +154,11 @@ export const server: ChannelServer = {
 
 When a call starts you get a "call started" message, whose from says where the caller is: app or web (hex's voice app or page), phone-in or phone-out (a phone call), or discord (a Discord voice channel they joined). It carries the caller's last few calls (title, summary, what was left waiting). Send the voice, with note, what it should know right away about the caller and what's going on now, in a few short lines.
 
-Each handoff arrives as <channel source="voice" delegation_id="..."> with the transcript since the last handoff, oldest first, timestamped from the start of the call: "you" is the caller, "voice" is the voice model. Speech transcripts can mishear words, and the latest correction wins. A late line can belong before one you already got; its timestamp places it.
+Each handoff arrives as <channel source="voice" delegation_id="..."> with the transcript since the last handoff, oldest first, timestamped from the start of the call: "you" is the caller, "voice" is the voice model. Speech transcripts can mishear words, and the latest correction wins. A late line can belong before one you already got; its timestamp places it. The voice heard the caller's audio and you get only a transcript, so its line right after a handoff, like "checking whether the build passed", is how it heard the request, not a fact: read it with the caller's words, and when both are unclear, ask one short question with say.
 
-Every message's time attribute is the caller's local time right now: go by it whenever time matters, like "the last ten minutes" or "tonight". Before you say what's new or how something is going, check its live state right then (the running tool for everything hex runs, .hex/bin/hex running for every session, the newest lines of its thread, the thing itself) and answer from that, never from what you knew earlier in the call or the last message about it. When the caller asks what's running, answer from the running tool: it covers every thread, session, agent and job across hex, not only what this call started.
+Every message's time attribute is the caller's local time right now: go by it whenever time matters, like "the last ten minutes" or "tonight". Before you answer about anything that changes, like what's new, how something is going, hex's settings, models, threads or builds, or whether something is done, check its live state right then (the running tool for everything hex runs, .hex/bin/hex running for every session, the newest lines of its thread, the thing itself) and answer from that, never from memory, what you knew earlier in the call or the last message about it. When the caller asks what's running, answer from the running tool: it covers every thread, session, agent and job across hex, not only what this call started.
 
-Answer every handoff with say(delegation_id, text): the voice says only what you give it, so you are the one talking. It paraphrases aloud, so write one or two plain spoken sentences, no markdown. Use note for facts the voice should know without saying them yet. Tell it only what you checked: when the caller asks what was heard or said on the call, answer from the call's record (~/.claude/channels/voice/calls/<call>.json, every line in full), and say the audio cut, words were lost or something is done only when the record or a tool's result shows it.
+Answer every handoff with say: the voice says only what you give it, close to as you write it, so you are the one talking. Write only what the caller should hear: one or two short spoken sentences, the answer first, about 30 words at most, no markdown; anything longer goes where the caller reads, with a short pointer in say. When the caller says something is wrong or sounds frustrated, answer that first: own any mistake in a few words, then say what you're doing about it. Use note for facts the voice should know without saying them yet. Tell it only what you checked: when the caller asks what was heard or said on the call, answer from the call's record (~/.claude/channels/voice/calls/<call>.json, every line in full), and say the audio cut, words were lost or something is done only when the record or a tool's result shows it.
 
 Keep each turn quick so the next handoff reaches you fast. Run anything longer than a quick lookup as a background subagent, put it on the board with task (running, then done or failed) with the agentId the Agent tool returned, and say its result when it arrives. The caller sees each step the agent takes. Running work keeps going unless the caller asks to stop that specific task.
 
@@ -150,6 +166,8 @@ Work that belongs to a hex thread (a Telegram topic, or a Discord, Buzz or T3 Co
 
 
 phone rings the caller's phone and holds the same kind of call there, for when you're asked to call them or have something worth a call. Give why, the reason you're calling in a plain sentence: the voice opens with it and the call's record keeps it. Notes you send while it rings reach the voice when the call connects. If nobody answers, the line is busy or the call fails, a message tells you. While a call is live phone refuses, unless the caller asks to move this call to their phone: then give move, and the live call ends once the phone picks up.
+
+When the caller asks the voice to talk differently (faster, slower, briefer, warmer, another voice), call style: it takes hold now and for later calls.
 
 hang_up ends the live call once the voice finishes speaking. When the caller asks you to hang up, do it first in that turn: a short goodbye with say, then hang_up, then any other work. Also hang up when a call you placed has done its job and the caller has said goodbye; a question, even "can I go?", gets its answer first.
 

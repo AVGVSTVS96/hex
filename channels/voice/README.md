@@ -56,16 +56,19 @@ other apps:
 
    | Tool | Goes to the voice as | For |
    | --- | --- | --- |
-   | `say` | `session.commentary.append` | a result to say aloud (it paraphrases) |
+   | `say` | `session.commentary.append` | the answer to say aloud, close to word for word, with what it rests on (`checked`) |
    | `note` | `session.thinking.append` | a fact to know without saying it yet |
    | `task` | `session.thinking.append` (the task that changed) | task status: running, done, failed |
    | `send` | the board, as running until the thread is done | work for another hex thread (hex only) |
    | `running` | nothing; it returns the whole board, one short line each | "what's running?", across all of hex (hex only) |
+   | `style` | `session.instructions.append` (what changed) | talking differently: personality, pace, the caller's own words, or the voice from the next call |
    | `hang_up` | `session.close`, once the voice stops talking | ending the call |
 
    Each tool returns once OpenAI acknowledges the update.
-5. The voice hands questions and requests to Claude, following OpenAI's
-   GPT-Live template, and says Claude's answers. Claude is a dispatcher with work in background
+5. The voice answers general knowledge itself (how things work, words,
+   history, advice, ideas) and hands Claude everything about the caller, hex
+   or what's true today, following OpenAI's GPT-Live template
+   (`prompt.ts`), then says Claude's answers whole. Claude is a dispatcher with work in background
    subagents, so answering never stops running work; the board keeps the
    voice aware of it.
 6. When the call ends, Claude gets the last words and a "call ended" message,
@@ -128,6 +131,8 @@ updating its record.
 | `DELETE /calls/<id>` | deletes a finished call |
 | `POST /calls/<id>/moments` | `{ "kind": "paused" \| "resumed", "text": "..." }` from the app when the phone takes its audio (a phone call or Siri) and gives it back; the voice is told to wait |
 | `POST /calls/<id>/media` | `{ "media": "<id>" }`: a photo or video sent during the call (see below); 409 when the call isn't live |
+| `GET /settings` | `{ settings, personalities, paces }`: how the voice talks, and each choice's `id` and `label` |
+| `PUT /settings` | any of `{ voice, personality, pace, words }`: saved for every call from then on, and told to a live call's voice at once (its voice changes from the next call) |
 
 ## Photos and video
 
@@ -398,6 +403,12 @@ them with hex) gets Claude walking the list in order.
    for example its name and the person it talks with. Everything else it
    learns from the session: when a call starts, Claude sends it what's going
    on now, and questions about the caller are handed to Claude.
+
+   How it talks goes in `~/.claude/channels/voice/settings.json`, which the
+   app writes through `/settings` and Claude through `style`, and every call
+   reads as it starts: `voice` (over `VOICE`), `personality` (`default`,
+   `friend`, `brief`, `warm`, `playful`), `pace` (`relaxed`, `normal`,
+   `brisk`) and `words`, the caller's own words on how to talk.
 
 2. Run [hex](https://github.com/AVGVSTVS96/hex)'s hub service. It runs
    `bot.ts`, which keeps a session named `voice` running with this channel.

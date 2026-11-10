@@ -78,6 +78,7 @@ const mark: z.ZodType<Mark> = z.object({
     .object({ thread: z.string(), topic: z.string(), settled: z.number(), missed: z.number() })
     .exactOptional(),
   media: z.string().exactOptional(),
+  checked: z.string().exactOptional(),
 });
 
 export const savedCall: z.ZodType<CallRecord> = z.object({

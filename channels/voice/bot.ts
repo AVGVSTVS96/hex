@@ -23,6 +23,7 @@ const handlers: Handlers<typeof tools> = {
   ask: async (_, args) => await tool("ask", args),
   answer: async (_, args) => await tool("answer", args),
   send: async (_, args) => await tool("send", args),
+  style: async (_, args) => await tool("style", args),
   title: async (_, args) => await tool("title", args),
   phone: async (_, args) => await tool("phone", args),
   hang_up: async (_, args) => await tool("hang_up", args),
