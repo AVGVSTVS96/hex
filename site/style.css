@@ -633,7 +633,7 @@ code { font-size: .86em; }
 .dc-thread .who { color: var(--dc-who); font-weight: 600; }
 .dc-typing { height: 18px; color: var(--dc-soft); font-size: 12px; }
 .dc-typing b { color: var(--dc-strong); }
-.dc-compose { display: flex; align-items: center; gap: 10px; white-space: nowrap; padding: 8px 10px; border-radius: 8px; background: var(--dc-input); color: var(--dc-placeholder); font-size: 13px; }
+.dc-compose { display: flex; align-items: center; gap: 10px; min-width: 0; overflow: hidden; white-space: nowrap; padding: 8px 10px; border-radius: 8px; background: var(--dc-input); color: var(--dc-placeholder); font-size: 13px; }
 .dc-plus { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--dc-soft); color: var(--dc-input); font: 700 15px/1 var(--ui); }
 .dc-gif { margin-left: auto; padding: 1px 3px; border: 1.5px solid currentColor; border-radius: 3px; font: 700 8.5px/1 var(--ui); color: var(--dc-soft); }
 .dc-emoji { width: 17px; height: 17px; color: var(--dc-soft); }
