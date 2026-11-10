@@ -150,9 +150,9 @@ Line: It lives on your box, with your whole network, a memory of its own and, if
 
 ## Clients
 
-*(Bassim: "works with your client. pick a client, couple prebuilt connectors, or tell your agent to build your own offer prompts. offer fucking prompts". Never frame these as "three front ends".)*
+*(The idea: it works with your client. Pick a client, take a couple of prebuilt connectors, or tell your agent to build your own, and offer prompts for each. Never frame these as "three front ends".)*
 
-*(Bassim, Oct 8: "I don't want it to be like, this is the client you use for work, this is the client you use for personal ... Pick your personal surface, pick your work surface." No client gets a role like "your pocket" or "your desk": each says what it's like, and you pick.)*
+*(The idea: no client is "the one for work" and another "the one for personal"; you pick your surface. No client gets a role like "your pocket" or "your desk": each says what it's like, and you pick.)*
 
 Section title: Works with your client.
 Line: Pick a ready one, or tell your agent to build yours. Use one for everything, or one for work and another for the rest. hex connects them all.

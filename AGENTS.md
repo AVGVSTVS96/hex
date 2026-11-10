@@ -11,4 +11,4 @@ This repo is hex itself, changed in a clone of its own and landed by pull reques
 
 `bun run check` (oxlint, oxfmt, then `bin/check`: tsc, builds and tests) gates every pull request in CI; `bun run fix` fixes what it can. Tool arguments, socket lines and stored rows are zod schemas, parsed where they come in (`tool()` and `dispatch()` in `hub/mcp.ts`).
 
-microscope reviews every pull request: run `microscope review <number>` after opening it and after each push, then fix or answer what it finds. Merging needs its `microscope/correctness` status, and [CONTRIBUTING.md](CONTRIBUTING.md) has the rest of the flow.
+[CONTRIBUTING.md](CONTRIBUTING.md) has the pull request flow.
