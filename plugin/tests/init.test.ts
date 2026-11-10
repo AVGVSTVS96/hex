@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -69,6 +70,8 @@ test("init sets up a folder on a machine with no git identity, and a second run 
   const first = init();
   expect(first.out).toBe(`hex is set up in ${home}\n`);
   expect(log()).toBe("chore: a new hex");
+  expect(readFileSync(join(home, "PROACTIVE.md"), "utf-8")).toStartWith("# Proactive preferences");
+  expect(readFileSync(join(home, ".gitignore"), "utf-8")).toContain("scratch/\n");
 
   const second = init();
   expect(second.code).toBe(0);
