@@ -100,6 +100,7 @@ test("a job's session is told where its work came from, and the thread's own ses
 
   expect(job?.hookEventName).toBe("SessionStart");
   expect(job?.additionalContext).toContain("/bin/hex message telegram:-100:50`");
+  expect(job?.additionalContext).toStartWith("You are a job, so your memory isn't loaded");
   expect(
     await hook("SessionStart", { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100:7" }),
   ).toBeUndefined();
@@ -153,7 +154,7 @@ test("a thread's own session goes by its thread over job variables it inherited,
   expect(await hook("SubagentStart", { HEX_OWNER: "telegram:-100:99" })).toBeUndefined();
 });
 
-test("a job is told the owner's words as they were when it started, a job no conversation started gets nothing, and a vote taken off isn't the owner's words", async () => {
+test("a job is told the owner's words as they were when it started, a job no conversation started only that it is one, and a vote taken off isn't the owner's words", async () => {
   const store = open(dir);
   store.messages.deliver({
     key: "telegram:-100:52b",
@@ -202,7 +203,9 @@ test("a job is told the owner's words as they were when it started, a job no con
       })
     )?.additionalContext,
   ).toContain("/bin/hex message telegram:-100:50`");
-  expect(await hook("SessionStart", { HEX_OWNER: "telegram:-100:7" })).toBeUndefined();
+  expect(
+    (await hook("SessionStart", { HEX_OWNER: "telegram:-100:7" }))?.additionalContext,
+  ).toEndWith("leave `memo` to the session that started you.");
 });
 
 test("an edit is named by the message it edits, so the line reads as the owner's newest words however often they edit", async () => {

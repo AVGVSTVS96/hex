@@ -330,6 +330,34 @@ test("every folder a background session starts in is trusted (a -p run never ask
   });
 });
 
+test("a job starts without the wake, in the hex folder and in another project, and a run that isn't a job keeps it", () => {
+  const wake = join(home, "state/wake/CLAUDE.md");
+  const project = join(home, "project");
+
+  mkdirSync(project);
+
+  const launched = (cwd: string, env: Record<string, string> = {}) => {
+    Bun.spawnSync([join(home, ".hex/bin/session"), "-p", "build it"], {
+      cwd,
+      env: { ...process.env, ...env },
+    });
+
+    return Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")));
+  };
+
+  for (const cwd of [home, project]) {
+    const args = launched(cwd, { HEX_OWNER: "telegram:-100:7" });
+
+    expect(Settings.parse(JSON.parse(flagValue(args, "--settings"))).claudeMdExcludes).toEqual([
+      wake,
+    ]);
+    expect(args).not.toContain(join(home, "state/wake"));
+  }
+
+  expect(launched(home)).not.toContain("--settings");
+  expect(launched(project)).toContain(join(home, "state/wake"));
+});
+
 test("a run with no terminal says it is hex, over the label it inherited, and a background session drops it for its own", () => {
   writeFileSync(
     join(home, "fake/claude"),

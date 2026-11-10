@@ -55,6 +55,9 @@ export function origin(
   return `This work comes from my conversation${present(name) ? ` in ${name}` : ""}: ${present(message) ? `${log}, and \`${hex}/bin/hex message ${message}\` my newest message there, word for word.` : `${log}.`}`;
 }
 
+const JOB =
+  "You are a job, so your memory isn't loaded: work from your prompt, and leave `memo` to the session that started you.";
+
 const HookInput = z.object({ hook_event_name: z.string().optional() });
 
 function handoffLine(event: string | undefined): string | undefined {
@@ -66,15 +69,14 @@ function handoffLine(event: string | undefined): string | undefined {
   const owner = thread ?? process.env.HEX_FROM;
   const threadSubagentOrJob = event === "SubagentStart" || thread === undefined;
 
-  if (!present(owner) || !threadSubagentOrJob) {
-    return;
-  }
+  const from =
+    present(owner) && threadSubagentOrJob
+      ? origin(open(stateDir()), owner, thread === undefined ? process.env.HEX_FROM_AT : undefined)
+      : undefined;
 
-  return origin(
-    open(stateDir()),
-    owner,
-    thread === undefined ? process.env.HEX_FROM_AT : undefined,
-  );
+  const job = thread === undefined && event !== "SubagentStart" && present(process.env.HEX_OWNER);
+
+  return job ? [JOB, from].filter(present).join(" ") : from;
 }
 
 if (import.meta.main) {
