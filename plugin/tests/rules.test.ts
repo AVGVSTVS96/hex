@@ -129,11 +129,13 @@ test("a hub thread's session keeps its copy of the rules through a resume, hears
   expect(hook("UserPromptSubmit", undefined, env)).toBe("");
 });
 
-const prompt = (env: Record<string, string> = {}): [string, string, string] => [
-  hook("UserPromptSubmit", undefined, env, ["3", "last"]),
-  hook("UserPromptSubmit", undefined, env, ["1"]),
-  hook("UserPromptSubmit", undefined, env, ["2"]),
-];
+function prompt(env: Record<string, string> = {}) {
+  const [fourth, first, third, second] = [["4", "last"], ["1"], ["3"], ["2"]].map((args) =>
+    hook("UserPromptSubmit", undefined, env, args),
+  );
+
+  return [first, second, third, fourth];
+}
 
 const rulesUpTo = (count: number) =>
   `@.hex/HEX.md\n\n${Array.from({ length: count }, (_, i) => `- Rule ${i}.\n`).join("")}`;
@@ -144,45 +146,45 @@ test("a small change reaches the session once, as a diff from the first part", (
     join(home, ".hex/HEX.md"),
     "# How you work\n\nAnswer in plain words, with a link.\n",
   );
-  const [third, first, second] = prompt();
+  const [first, ...rest] = prompt();
   expect(first).toContain("+Answer in plain words, with a link.");
-  expect([second, third]).toEqual(["", ""]);
-  expect(prompt()).toEqual(["", "", ""]);
+  expect(rest).toEqual(["", "", ""]);
+  expect(prompt()).toEqual(["", "", "", ""]);
 });
 
 test("a change too long for a diff arrives whole across the parts, each one hook's size, once", () => {
   hook("SessionStart");
   writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1000));
-  const [third, first, second] = prompt();
+  const [first = "", second = "", third, fourth] = prompt();
   expect(first).toContain("so here they are whole, part 1 of 2");
   expect(second).toContain("part 2 of 2");
-  expect(third).toBe("");
+  expect([third, fourth]).toEqual(["", ""]);
   expect(`${first}${second}`).toContain("- Rule 0.");
   expect(`${first}${second}`).toContain("- Rule 999.");
   expect(`${first}${second}`).toContain("Answer in plain words.");
   expect(Math.max(first.length, second.length)).toBeLessThan(10_000);
-  expect(prompt()).toEqual(["", "", ""]);
+  expect(prompt()).toEqual(["", "", "", ""]);
 });
 
 test("a held session gets a big change whole too, and a compaction starts its parts over", () => {
   const env = holding();
   hook("SessionStart", "resume", env);
   writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1000));
-  expect(prompt(env)[2]).toContain("part 2 of 2");
-  expect(prompt(env)).toEqual(["", "", ""]);
+  expect(prompt(env)[1]).toContain("part 2 of 2");
+  expect(prompt(env)).toEqual(["", "", "", ""]);
   hook("SessionStart", "compact", env);
   writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1001));
-  const [, first] = prompt(env);
+  const [first] = prompt(env);
   expect(first).toContain("+- Rule 1000.");
 });
 
 test("rules longer than the parts can carry end with where to read the rest", () => {
   hook("SessionStart");
   writeFileSync(join(home, "AGENTS.md"), rulesUpTo(4000));
-  const [third] = prompt();
-  expect(third).toContain("part 3 of ");
-  expect(third).toContain("That's all the hooks can show. Read the rest in the files themselves:");
-  expect(third).toContain(join(home, "AGENTS.md"));
+  const fourth = prompt()[3];
+  expect(fourth).toContain("part 4 of ");
+  expect(fourth).toContain("That's all the hooks can show. Read the rest in the files themselves:");
+  expect(fourth).toContain(join(home, "AGENTS.md"));
 });
 
 test("a session on the older hooks, which run the rules once, gets the first part and where to read the rest", () => {

@@ -95,7 +95,8 @@
           { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/state.ts busy" },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 1" },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 2" },
-          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 3 last" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 3" },
+          { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 4 last" },
           { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
         ]
       }
