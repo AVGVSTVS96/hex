@@ -395,6 +395,148 @@
   </div>
 </section>
 
+<section class="sec" id="widgets" aria-labelledby="widgets-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="eyebrow">widgets</p>
+      <h2 id="widgets-title">Apps inside a message.</h2>
+      <p class="sub">Telegram's new widgets let a bot send a small live app as a message, in your private chat with it. These three are real widgets. Tap them. hex support is being built.</p>
+    </header>
+
+    <div class="bento widgets">
+      <article class="card w-tasks">
+        <div class="card-viz wchat">
+          <div class="wbub"><iframe data-widget="tasks" sandbox="allow-scripts" title="A widget: a checklist of four tasks, three waiting"></iframe><p class="wcap">Three things need you today.<time>9:41</time></p></div>
+        </div>
+        <h3>A list you tick</h3>
+        <p>The bot gets your tap and redraws the list in place.</p>
+      </article>
+      <article class="card w-usage">
+        <div class="card-viz wchat">
+          <div class="wbub"><iframe data-widget="usage" sandbox="allow-scripts" title="A widget: a week of usage by topic"></iframe><p class="wcap">Your week so far.<time>9:41</time></p></div>
+        </div>
+        <h3>A chart that stays current</h3>
+        <p>The bot keeps it current in place, with no new message.</p>
+      </article>
+      <article class="card w-game">
+        <div class="card-viz wchat">
+          <div class="wbub"><iframe data-widget="game" sandbox="allow-scripts" title="A widget: tic-tac-toe against hex"></iframe><p class="wcap">Your move.<time>9:41</time></p></div>
+        </div>
+        <h3>A game against the bot</h3>
+        <p>Your move goes to the bot, and its move comes back in the same message.</p>
+      </article>
+    </div>
+    <template id="widget-tasks"><style>
+:root{--ac:light-dark(#d9741a,#f5a524);--ok:light-dark(#1f9d55,#3ecf6e);--ln:var(--tg-theme-section-separator-color);--mu:var(--tg-theme-hint-color)}
+body{margin:0;padding:14px 14px 4px;font:1em/1.3 system-ui;letter-spacing:-.01em}
+.l{display:flex;justify-content:space-between;font-size:.8em;color:var(--mu)}
+.n{display:flex;align-items:baseline;gap:6px;margin:4px 0 10px}
+.n b{font-size:2.9em;font-weight:400;letter-spacing:-.045em;line-height:1;color:var(--ac);font-variant-numeric:tabular-nums;transition:color .3s}
+.n span{font-size:.8em;color:var(--mu)}
+.z .n b{color:var(--ok)}
+.b{display:flex;gap:3px;margin-bottom:6px}
+.b i{flex:1;height:6px;border-radius:3px;background:repeating-linear-gradient(135deg,var(--ac) 0 2px,transparent 2px 5px);transition:background .3s}
+.b i.x{background:var(--ok)}
+.r{display:flex;align-items:center;gap:11px;padding:10px 0;border-top:1px solid var(--ln);cursor:pointer}
+.r:first-child{border:0}
+.d{flex:none;width:18px;height:18px;border-radius:50%;border:1.5px solid var(--ac);display:grid;place-items:center;transition:all .25s}
+.x .d{border-color:var(--ok);background:var(--ok)}
+.x .d::after{content:"";width:4px;height:8px;margin-top:-2px;border:solid var(--tg-theme-bg-color);border-width:0 2px 2px 0;rotate:45deg}
+.t{flex:1;min-width:0;font-size:.93em}
+.t small{display:block;margin-top:1px;color:var(--mu);font-size:.85em}
+.x .t{color:var(--mu)}.x .t span{text-decoration:line-through}
+.w .d{border-style:dashed}
+.f{padding:6px 0 max(10px,var(--tg-content-safe-area-inset-bottom,0px));font-size:.75em;color:var(--mu)}
+</style>
+<div id="w"><div class="l"><span>Waiting on you</span><span id="u"></span></div>
+<div class="n"><b id="c"></b><span id="of"></span></div>
+<div class="b" id="b"></div><div id="l"></div><div class="f" id="f">Tap one when it's done</div></div>
+<script>
+var W=window.TelegramWidget,$=function(i){return document.getElementById(i)},busy=-1;
+function st(){try{return JSON.parse(W.chatData)}catch(e){return null}}
+function draw(){var s=st()||{i:[]},c=0,l=$("l"),b=$("b");l.innerHTML=b.innerHTML="";
+s.i.forEach(function(x,i){var r=document.createElement("div"),g=document.createElement("i");
+r.className="r"+(x[2]?" x":"")+(busy==i?" w":"");if(x[2])g.className="x";else c++;b.appendChild(g);
+r.innerHTML='<div class="d"></div><div class="t"><span></span><small></small></div>';
+r.querySelector("span").textContent=x[0];r.querySelector("small").textContent=x[1];
+r.onclick=function(){if(busy>=0)return;busy=i;draw();W.request("t:"+i).then(function(){busy=-1;draw()},function(e){busy=-1;$("f").textContent=e.code=="TIMEOUT"?"hex didn't answer, try again":"Couldn't reach hex";draw()})};l.appendChild(r)});
+$("c").textContent=c;$("of").textContent="of "+s.i.length+" left";$("u").textContent=s.u||"";$("w").className=c?"":"z"}
+W.onEvent("chatDataChanged",draw);draw();
+</script></template>
+    <template id="widget-usage"><style>
+:root{--ac:light-dark(#d9741a,#f5a524);--ok:light-dark(#1f9d55,#3ecf6e);--c1:light-dark(#d9741a,#f5a524);--c2:light-dark(#3b6fd8,#6f9bff);--c3:light-dark(#8a5cd6,#b48cff);--tr:var(--tg-theme-secondary-bg-color);--ln:var(--tg-theme-section-separator-color);--mu:var(--tg-theme-hint-color)}
+body{margin:0;padding:14px 14px 0;font:1em/1.3 system-ui;letter-spacing:-.01em}
+.l{display:flex;justify-content:space-between;font-size:.8em;color:var(--mu)}
+.k{display:flex;margin:6px 0 14px}
+.k div{flex:1;padding-left:12px;border-left:1px solid var(--ln)}
+.k div:first-child{padding:0;border:0}
+.k b{display:block;font-size:2.3em;font-weight:400;letter-spacing:-.045em;line-height:1.05;font-variant-numeric:tabular-nums}
+.k span{font-size:.75em;color:var(--mu)}
+#p{color:var(--ac)}
+.g{display:flex;align-items:flex-end;gap:5px;height:64px}
+.g div{flex:1;display:flex;flex-direction:column-reverse;border-radius:3px 3px 0 0;overflow:hidden;transition:height .5s}
+.g i{display:block;transition:height .5s}
+.g i:nth-child(1){background:var(--c1)}.g i:nth-child(2){background:var(--c2)}.g i:nth-child(3){background:var(--c3)}
+.g .e{background:var(--tr)}
+.x{display:flex;gap:5px;margin:5px 0 12px;font-size:.7em;color:var(--mu)}
+.x span{flex:1;text-align:center}.x .t{color:var(--tg-theme-text-color);font-weight:600}
+.s{display:flex;align-items:center;gap:8px;padding:7px 0;border-top:1px solid var(--ln);font-size:.85em}
+.s i{width:8px;height:8px;border-radius:2px}
+.s b{margin-left:auto;font-weight:500;font-variant-numeric:tabular-nums}
+.f{display:flex;align-items:center;gap:8px;padding:8px 0 max(12px,var(--tg-content-safe-area-inset-bottom,0px));border-top:1px solid var(--ln);font-size:.75em;color:var(--mu)}
+.f u{text-decoration:none;color:var(--tg-theme-link-color);cursor:pointer}
+</style>
+<div class="l"><span>Claude plan · this week</span><span id="r"></span></div>
+<div class="k"><div><b id="p"></b><span>of the week used</span></div><div><b id="h"></b><span>sessions</span></div></div>
+<div class="g" id="g"></div><div class="x" id="x"></div><div id="s"></div>
+<div class="f"><span id="a"></span><u id="u">Refresh</u></div>
+<script>
+var W=window.TelegramWidget,$=function(i){return document.getElementById(i)},D="MTWTFSS",C=["var(--c1)","var(--c2)","var(--c3)"];
+function st(){try{return JSON.parse(W.chatData)}catch(e){return null}}
+function draw(){var s=st();if(!s)return;var m=Math.max.apply(0,s.d.map(function(d){return d[0]+d[1]+d[2]}))||1,g=$("g"),x=$("x"),t=s.n.map(function(){return 0});
+g.innerHTML=x.innerHTML=$("s").innerHTML="";
+s.d.forEach(function(d,i){var c=document.createElement("div"),k=d[0]+d[1]+d[2];c.style.height=k?Math.max(4,k/m*64)+"px":"64px";
+if(!k)c.className="e";else d.forEach(function(v,j){var e=document.createElement("i");e.style.height=v/k*100+"%";c.appendChild(e);t[j]+=v});
+g.appendChild(c);var y=document.createElement("span");y.textContent=D[i];if(i==s.t)y.className="t";x.appendChild(y)});
+var all=t.reduce(function(a,b){return a+b},0)||1;
+s.n.forEach(function(n,j){var r=document.createElement("div");r.className="s";r.innerHTML='<i style="background:'+C[j]+'"></i><span></span><b></b>';r.children[1].textContent=n;r.children[2].textContent=Math.round(t[j]/all*100)+"%";$("s").appendChild(r)});
+$("p").textContent=s.p+"%";$("h").textContent=s.h;$("r").textContent="resets "+s.r;$("a").textContent=s.a}
+$("u").onclick=function(){$("a").textContent="Checking…";W.request("r").then(function(){},function(){$("a").textContent="Couldn't reach hex"})};
+W.onEvent("chatDataChanged",draw);draw();
+</script></template>
+    <template id="widget-game"><style>
+:root{--x:light-dark(#d9741a,#f5a524);--o:light-dark(#1f9d55,#3ecf6e);--ln:var(--tg-theme-section-separator-color);--mu:var(--tg-theme-hint-color);--tr:var(--tg-theme-secondary-bg-color)}
+body{margin:0;padding:14px 14px 0;font:1em/1.3 system-ui;letter-spacing:-.01em}
+.k{display:flex;border-bottom:1px solid var(--ln);margin-bottom:12px}
+.k div{flex:1;padding:0 0 10px 12px;border-left:1px solid var(--ln)}
+.k div:first-child{padding-left:0;border:0}
+.k span{display:block;font-size:.75em;color:var(--mu)}
+.k b{font-size:2.1em;font-weight:400;letter-spacing:-.04em;line-height:1.1;font-variant-numeric:tabular-nums}
+#y{color:var(--x)}#h{color:var(--o)}#d{color:var(--mu)}
+.g{display:grid;grid-template-columns:repeat(3,1fr);max-width:216px;margin:0 auto}
+.g div{aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:2.3em;font-weight:300;border:0 solid var(--ln);cursor:pointer;transition:background .25s}
+.g div:nth-child(3n+2){border-width:0 1px}
+.g div:nth-child(n+4):nth-child(-n+6){border-top-width:1px;border-bottom-width:1px}
+.X{color:var(--x)}.O{color:var(--o)}.w{background:var(--tr)}
+.f{display:flex;justify-content:space-between;align-items:center;padding:12px 0 max(12px,var(--tg-content-safe-area-inset-bottom,0px));font-size:.8em;color:var(--mu)}
+.f u{text-decoration:none;color:var(--tg-theme-text-color);border:1px solid var(--ln);border-radius:99px;padding:5px 13px;cursor:pointer}
+</style>
+<div class="k"><div><span>You</span><b id="y"></b></div><div><span>hex</span><b id="h"></b></div><div><span>Draws</span><b id="d"></b></div></div>
+<div class="g" id="g"></div><div class="f"><span id="m"></span><u id="n">New game</u></div>
+<script>
+var W=window.TelegramWidget,$=function(i){return document.getElementById(i)},wait=0,L=[[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+function st(){try{return JSON.parse(W.chatData)}catch(e){return null}}
+function line(b){for(var i=0;i<8;i++){var l=L[i];if(b[l[0]]!="."&&b[l[0]]==b[l[1]]&&b[l[1]]==b[l[2]])return l}return null}
+function ask(q){if(wait)return;wait=1;$("m").textContent="hex is thinking…";W.request(q).then(function(){wait=0;draw()},function(){wait=0;$("m").textContent="Couldn't reach hex"})}
+function draw(){var s=st()||{b:".........",s:[0,0,0]},b=s.b.split(""),l=line(b)||[],g=$("g"),over=l.length||b.indexOf(".")<0;g.innerHTML="";
+b.forEach(function(v,i){var c=document.createElement("div");c.className=v+(l.indexOf(i)>=0?" w":"");c.textContent=v=="X"?"×":v=="O"?"○":"";c.onclick=function(){if(v=="."&&!over)ask("m:"+i)};g.appendChild(c)});
+$("y").textContent=s.s[0];$("h").textContent=s.s[1];$("d").textContent=s.s[2];
+if(!wait)$("m").textContent=l.length?(b[l[0]]=="X"?"You win":"hex wins"):over?"Draw":"Your move"}
+$("n").onclick=function(){ask("n")};W.onEvent("chatDataChanged",draw);draw();
+</script></template>
+  </div>
+</section>
+
 <section class="sec voice-sec" id="voice" aria-labelledby="voice-title">
   <div class="wrap">
     <header class="sec-head">

@@ -91,6 +91,21 @@ Three tiles under it, each a small picture and a caption:
   - Prompt: `Build me a Slack client on your hub, modeled on your Discord one, so every Slack thread is its own session.`
   - Button: Copy · after click: Copied
 
+## Widgets
+
+- Label: widgets
+- Headline: Apps inside a message.
+- Line: Telegram's new widgets let a bot send a small live app as a message, in your private chat with it. These three are real widgets. Tap them. hex support is being built.
+
+*(Three cards. Each shows one widget in an incoming Telegram bubble on the chat wallpaper, with its caption and time below it, in the chat's light or dark colors. The widgets are real widget documents, each under Telegram's size limits; the page stands in for Telegram and the bot, so taps work.)*
+
+- **A list you tick.** The bot gets your tap and redraws the list in place.
+  *(Widget: "Waiting on you", a big count, a striped bar per task, four made-up tasks. Caption: "Three things need you today.")*
+- **A chart that stays current.** The bot keeps it current in place, with no new message.
+  *(Widget: share of the week used, sessions, a stacked bar per day by topic, a legend. Caption: "Your week so far.")*
+- **A game against the bot.** Your move goes to the bot, and its move comes back in the same message.
+  *(Widget: tic-tac-toe with a running score. Caption: "Your move.")*
+
 ## Voice
 
 - Label: voice

@@ -143,3 +143,69 @@ if (cells) {
     }
   }
 }
+
+// Telegram widgets: each frame runs the widget's own code; this page stands in for Telegram and the bot.
+const widgetFrames = document.querySelectorAll('iframe[data-widget]');
+if (widgetFrames.length) {
+  const palette = {
+    light: { bg: '#ffffff', text: '#000000', hint: '#8e8e93', link: '#1f7ae0', button: '#1f7ae0', 'button-text': '#ffffff', 'secondary-bg': '#efeff4', 'section-separator': '#e5e5ea' },
+    dark: { bg: '#212030', text: '#ffffff', hint: '#8d8b9e', link: '#8fb5ff', button: '#8774e1', 'button-text': '#ffffff', 'secondary-bg': '#2d2b40', 'section-separator': '#363449' },
+  };
+  const lines = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
+  const won = (b, p) => lines.some((l) => l.every((i) => b[i] === p));
+  const takes = (b, p) => lines.map((l) => l.filter((i) => b[i] === '.')).find((open, n) => open.length === 1 && lines[n].filter((i) => b[i] === p).length === 2)?.[0];
+  const bots = {
+    tasks: {
+      state: { u: 'Today', i: [['Renew the passport', 'Home · due Friday', 0], ['Pick the launch photo', 'launch', 0], ['Approve the deploy', 'ramen', 1], ['Answer the landlord', 'Home', 0]] },
+      answer(s, q) { s.i[+q.slice(2)][2] ^= 1; },
+    },
+    usage: {
+      state: { r: 'Mon 9am', p: 58, h: 41, a: 'Updated 9:41', t: 3, n: ['General', 'ramen', 'dev'], d: [[5, 3, 4], [6, 2, 7], [3, 5, 6], [4, 2, 3], [0, 0, 0], [0, 0, 0], [0, 0, 0]] },
+      answer(s) { s.d[3] = s.d[3].map((v) => v + (Math.random() * 2 | 0)); s.p += 1; s.h += 1; s.a = 'Updated just now'; },
+    },
+    game: {
+      state: { b: '....X...O', s: [3, 4, 2] },
+      answer(s, q) {
+        const b = s.b.split('');
+        if (q === 'n') { s.b = '.........'; return; }
+        b[+q.slice(2)] = 'X';
+        const open = () => b.map((v, i) => (v === '.' ? i : -1)).filter((i) => i >= 0);
+        if (won(b, 'X')) s.s[0]++;
+        else if (!open().length) s.s[2]++;
+        else {
+          const pick = takes(b, 'O') ?? takes(b, 'X') ?? [4, 0, 2, 6, 8, 1, 3, 5, 7].find((i) => b[i] === '.');
+          b[pick] = 'O';
+          if (won(b, 'O')) s.s[1]++;
+          else if (!open().length) s.s[2]++;
+        }
+        s.b = b.join('');
+      },
+    },
+  };
+  const dark = matchMedia('(prefers-color-scheme: dark)');
+  const stub = (name, scheme) => `<script>
+var H={},n=0,W=window.TelegramWidget={profile:1,colorScheme:'${scheme}',chatData:${JSON.stringify(JSON.stringify(bots[name].state))},publicData:null,
+onEvent:function(t,f){(H[t]=H[t]||[]).push(f)},offEvent:function(){},ready:function(){},
+request:function(q){var id=++n;parent.postMessage({w:'${name}',id:id,q:q},'*');return new Promise(function(ok){addEventListener('message',function m(e){if(e.data.id!==id)return;removeEventListener('message',m);W.chatData=e.data.s;(H.chatDataChanged||[]).forEach(function(f){f.call(W)});ok({result:null})})})}};
+addEventListener('DOMContentLoaded',function(){new ResizeObserver(function(){parent.postMessage({w:'${name}',h:Math.ceil(document.documentElement.getBoundingClientRect().height)},'*')}).observe(document.documentElement)});
+<\/script>`;
+  const load = () => {
+    const scheme = dark.matches ? 'dark' : 'light';
+    const vars = Object.entries(palette[scheme]).map(([k, v]) => `--tg-theme-${k}-color:${v}`).join(';');
+    widgetFrames.forEach((frame) => {
+      const name = frame.dataset.widget;
+      frame.srcdoc = `<!doctype html><html style="color-scheme:${scheme};${vars};--tg-content-safe-area-inset-bottom:0px;color:var(--tg-theme-text-color);font:15px/1.35 system-ui,-apple-system,sans-serif"><head><meta charset="utf-8">${stub(name, scheme)}</head><body>${document.getElementById(`widget-${name}`).innerHTML}</body></html>`;
+    });
+  };
+  addEventListener('message', (event) => {
+    const { w, id, q, h } = event.data ?? {};
+    const frame = [...widgetFrames].find((f) => f.dataset.widget === w && f.contentWindow === event.source);
+    if (!frame) return;
+    if (h) { frame.style.height = `${h}px`; return; }
+    const bot = bots[w];
+    bot.answer(bot.state, q);
+    setTimeout(() => frame.contentWindow.postMessage({ id, s: JSON.stringify(bot.state) }, '*'), w === 'game' ? 420 : 220);
+  });
+  dark.addEventListener('change', load);
+  load();
+}
