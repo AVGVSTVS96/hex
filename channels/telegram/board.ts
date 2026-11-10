@@ -11,7 +11,7 @@ export const HTML = join(import.meta.dir, "board.html");
 // Each of a widget's two states holds at most 1024 bytes, and a widget is at most 600px tall, which six rows and a "more" line under the counts fill: https://core.telegram.org/bots/widgets#limits
 const ROOM = 1024;
 const ROWS = 6;
-const WORDS = 60;
+const WORDS = 50;
 const DAY = 24 * 60 * 60_000;
 const CALM = 5000;
 

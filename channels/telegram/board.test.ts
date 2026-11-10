@@ -138,7 +138,7 @@ test("a task done in the last day is done, linked to its proof", () => {
 const many = (n: number) =>
   Array.from({ length: n }, (_, i) => ({
     title: `thread ${i}`,
-    line: "x".repeat(60),
+    line: "x".repeat(50),
     at: Date.parse("2026-11-10T12:00:00Z") - i * 60_000,
     link: `1234/${i}/${i + 100}`,
     count: 3,
@@ -167,7 +167,7 @@ test("the board fits each state in Telegram's 1024 bytes, keeping the full count
   expect(chat.t).toBe(Date.parse("2026-11-10T12:10:00Z") / 60_000);
   expect(chat.w[0]).toEqual([
     "thread 0",
-    "x".repeat(60),
+    "x".repeat(50),
     "/0/100",
     Date.parse("2026-11-10T12:00:00Z") / 60_000 - chat.b,
     3,
