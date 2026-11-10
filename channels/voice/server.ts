@@ -3075,14 +3075,12 @@ async function sendChat(request: Request, run: Run | Page) {
     return new Response(CHAT_FIELD_PROBLEMS.key, { status: 400 });
   }
 
-  return done(() => {
-    chats.send(run, text.trim(), named.data, items);
-  });
+  return await done(() => chats.send(run, text.trim(), named.data, items));
 }
 
-function done(act: () => void) {
+async function done(act: () => Promise<void> | void) {
   try {
-    act();
+    await act();
 
     return new Response(null, { status: 204 });
   } catch (error) {

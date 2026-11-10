@@ -139,16 +139,24 @@ export class Ledger {
       }
     };
 
-    const rewriteAll = () => {
-      for (const { thread } of this.store.pins.list({ app: this.app })) {
+    let seen = this.store.pins.changedSince(0).last;
+
+    const rewriteChanged = () => {
+      const { threads, last } = this.store.pins.changedSince(seen);
+
+      seen = last;
+
+      for (const thread of threads) {
         void rewriteOrReport(thread);
       }
     };
 
-    const stop = this.store.watch(rewriteAll);
+    const stop = this.store.watch(rewriteChanged);
 
     try {
-      rewriteAll();
+      for (const { thread } of this.store.pins.list({ app: this.app })) {
+        void rewriteOrReport(thread);
+      }
     } catch (error) {
       stop();
       throw error;

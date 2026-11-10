@@ -1612,6 +1612,15 @@ const hub = startHub({
   },
 });
 
+// Each getUpdates confirms to Telegram every update before its offset, so it waits until hex.db has them on disk: https://core.telegram.org/bots/api#getupdates
+bot.api.config.use(async (previous, method, payload, signal) => {
+  if (method === "getUpdates") {
+    await hub.synced();
+  }
+
+  return await previous(method, payload, signal);
+});
+
 const downloads = new Map<string, Promise<string>>();
 
 const file = (id: string) => {

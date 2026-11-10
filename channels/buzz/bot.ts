@@ -1572,6 +1572,7 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     }
 
     try {
+      await hub.synced();
       handled(event);
     } catch (error) {
       log(`couldn't save where Buzz left off: ${String(error)}`);

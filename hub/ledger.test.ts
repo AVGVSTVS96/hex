@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { asking, Ledger } from "./ledger.ts";
 import type { Post } from "./ledger.ts";
 import { open, Store } from "./store.ts";
+import { until } from "./until.ts";
 
 let dir: string;
 
@@ -375,4 +376,55 @@ test("the owner's question waits on them once hex answers, until they quote-repl
   ledger.heard("-100:7", 100, "what about the queue?", 98);
   expect(found(ledger.find("-100:7", 98)).settled).toMatchObject({ note: "you replied" });
   expect(store.questions.list({ waiting: true })).toEqual([]);
+});
+
+test("a status post is rebuilt when its own thread's questions change, not on every write to hex.db", async () => {
+  const ledger = new Ledger(dir, "telegram");
+  const rendered: string[] = [];
+  const edited: string[] = [];
+
+  const post: Post = {
+    room: 4096,
+    // oxlint-disable-next-line unicorn/no-useless-undefined -- a Link returns string | undefined, which () => {} doesn't
+    link: () => undefined,
+    send: () => Promise.resolve(1),
+    edit: (thread) => {
+      edited.push(thread);
+
+      return Promise.resolve(true);
+    },
+    ready: (thread) => {
+      rendered.push(thread);
+
+      return Promise.resolve();
+    },
+    pin: () => Promise.resolve(),
+    unpin: () => Promise.resolve(),
+  };
+
+  await ledger.post("-100:8", "Desk", post);
+  await ledger.post("-100:9", "Site", post);
+
+  const stop = ledger.keep(post, (_, error) => {
+    throw error;
+  });
+
+  await until(() => rendered.length >= 4);
+  await Bun.sleep(100);
+  rendered.length = 0;
+
+  open(dir).messages.deliver({
+    key: "telegram:-100:8:1",
+    to: "-100:8",
+    from: "telegram",
+    author: "owner",
+    body: "hi",
+  });
+  await Bun.sleep(200);
+  expect(rendered).toEqual([]);
+
+  ledger.ask("-100:9", 10, "Ship it?", ["Yes", "No"]);
+  await until(() => edited.includes("-100:9"));
+  expect(rendered).toEqual(["-100:9"]);
+  stop();
 });

@@ -2449,6 +2449,7 @@ export function startHub({
     fresh,
     renewal,
     keep,
+    synced: () => kept((store) => store.synced(), Promise.resolve()),
     renew: renewAsked,
     session: current,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show

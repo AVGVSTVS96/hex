@@ -101,8 +101,12 @@ export class Chats {
     this.changes.changed();
   }
 
-  // oxlint-disable-next-line eslint/class-methods-use-this -- the app server sends through its Chats, beside the chat it reads
-  send(where: Where, text: string, keyTheAppNamedSoARetryDeliversOnce: string, media: Item[] = []) {
+  async send(
+    where: Where,
+    text: string,
+    keyTheAppNamedSoARetryDeliversOnce: string,
+    media: Item[] = [],
+  ) {
     const taken = say(where.app, where.thread, {
       content: caption(text, media),
       key: keyTheAppNamedSoARetryDeliversOnce,
@@ -112,6 +116,8 @@ export class Chats {
     if (!taken) {
       throw new Error(`Words typed here can't reach this thread; write to it in its own app.`);
     }
+
+    await store(this.state).synced();
   }
 
   // oxlint-disable-next-line eslint/class-methods-use-this -- the app server stops through its Chats, beside the chat it reads

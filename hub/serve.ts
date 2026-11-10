@@ -5,7 +5,7 @@ import { z } from "zod";
 
 import { nightly } from "./backup.ts";
 import { clients, free, listen, up } from "./hub.ts";
-import { hexDir } from "./store.ts";
+import { hexDir, syncInBackground } from "./store.ts";
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Before the clients load: Telegram's bot module awaits its polling loop, which never ends. A restart (HUP) and a stop (TERM, INT) end the hub alike: live calls hang up, the clients sign off, a call that came in while they did hangs up too, and it exits for bin/hex to start the next one, so two never run at once. A stop also ends a hub still waiting for the port.
@@ -26,6 +26,8 @@ const hangUpSignOffAndExit = () =>
 for (const signal of ["SIGHUP", "SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => void hangUpSignOffAndExit());
 }
+
+syncInBackground();
 
 await listen();
 

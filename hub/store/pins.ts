@@ -25,6 +25,8 @@ const PinRow: z.ZodType<Pin> = z.object({
 
 const PinRows = z.array(PinRow);
 
+const ChangedRows = z.array(z.object({ thread: z.string(), n: z.number() }));
+
 export class Pins {
   private readonly db: Database;
   private readonly write: Write;
@@ -48,6 +50,14 @@ export class Pins {
         )
         .all(app ?? null, thread ?? null),
     );
+  }
+
+  changedSince(after: number) {
+    const rows = ChangedRows.parse(
+      this.db.query("select thread, n from changed where n > ? order by n").all(after),
+    );
+
+    return { threads: rows.map(({ thread }) => thread), last: rows.at(-1)?.n ?? after };
   }
 
   pinned({

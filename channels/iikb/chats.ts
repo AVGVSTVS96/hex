@@ -298,6 +298,7 @@ async function route(
   }
 
   send(chat, text, id, await keep(photos, id, files));
+  await store.synced();
 
   return status(204);
 }

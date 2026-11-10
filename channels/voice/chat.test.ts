@@ -120,8 +120,8 @@ test("a thread's chat is what the owner said and hex replied across its sessions
   });
 });
 
-test("words typed in the app reach the thread as the owner, under the key the app named them", () => {
-  chats.send(where, "and the docs", "app-00000001");
+test("words typed in the app reach the thread as the owner, under the key the app named them", async () => {
+  await chats.send(where, "and the docs", "app-00000001");
   expect(calls).toMatchObject([
     [
       "deliver",
@@ -132,7 +132,7 @@ test("words typed in the app reach the thread as the owner, under the key the ap
   ]);
 });
 
-test("photos and clips go with the owner's words as images the session reads, and the chat shows them beside those words", () => {
+test("photos and clips go with the owner's words as images the session reads, and the chat shows them beside those words", async () => {
   const photo = { id: "p1", kind: "photo" as const, images: ["/m/p1.jpg"] };
 
   const video = {
@@ -143,7 +143,7 @@ test("photos and clips go with the owner's words as images the session reads, an
     mute: true as const,
   };
 
-  chats.send(where, "", "app-00000002", [photo, video]);
+  await chats.send(where, "", "app-00000002", [photo, video]);
   expect(calls).toMatchObject([
     [
       "deliver",
@@ -267,19 +267,25 @@ test("a stop goes through the app's own stop when it has one, and only where an 
   ]);
 });
 
-test("an app that shows only turns it starts, doesn't hold the thread, or isn't here can't take words from here", () => {
+test("an app that shows only turns it starts, doesn't hold the thread, or isn't here can't take words from here", async () => {
   telegram.hub.name = () => {};
 
   expect(chats.of(where).sends).toBe(false);
   telegram.hub.name = () => "Desk";
   telegram.waits = true;
   expect(chats.of(where).sends).toBe(false);
-  expect(() => {
-    chats.send(where, "hi", "app-0002");
-  }).toThrow();
-  expect(() => {
-    chats.send({ ...where, app: "claude" }, "hi", "app-0003");
-  }).toThrow();
+  expect(
+    await chats.send(where, "hi", "app-0002").then(
+      () => "taken",
+      () => "refused",
+    ),
+  ).toBe("refused");
+  expect(
+    await chats.send({ ...where, app: "claude" }, "hi", "app-0003").then(
+      () => "taken",
+      () => "refused",
+    ),
+  ).toBe("refused");
 });
 
 test("a wait for the chat ends when it changes, and not on a change elsewhere", async () => {
