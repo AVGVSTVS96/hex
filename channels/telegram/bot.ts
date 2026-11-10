@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, join, extname, sep } from "node:path";
+import { deflateSync } from "node:zlib";
 
 import {
   startHub,
@@ -34,15 +35,48 @@ import { Bot, GrammyError, InputFile } from "grammy";
 import type { Context } from "grammy";
 import type {
   Chat,
+  InlineKeyboardMarkup,
   InputMediaPhoto,
   InputMediaVideo,
+  Message as Sent,
   MessageEntity,
   MessageOrigin,
   ReactionTypeEmoji,
+  User,
 } from "grammy/types";
 import { z } from "zod";
 
 import { server, tools } from "./channel.ts";
+
+// grammY 1.46 predates Bot API 10.4's widgets: https://core.telegram.org/bots/api#sendwidget
+type WidgetQuery = { id: string; from: User; chat?: Chat; message_id?: number; data: string };
+
+declare module "grammy/types" {
+  interface Update {
+    widget_query?: WidgetQuery;
+  }
+}
+
+type WidgetState = { chat_data?: string; public_data?: string };
+
+type Widgets = {
+  sendWidget: (
+    args: WidgetState & {
+      chat_id: string;
+      message_thread_id?: number;
+      html: string;
+      caption: string;
+      width?: number;
+      height?: number;
+      allow_queries: boolean;
+      reply_markup?: InlineKeyboardMarkup;
+    },
+  ) => Promise<Sent>;
+  editMessageWidgetData: (
+    args: WidgetState & { chat_id: string; message_id: number },
+  ) => Promise<true>;
+  answerWidgetQuery: (args: { widget_query_id: string; data?: string }) => Promise<true>;
+};
 
 const STATE_DIR =
   process.env.TELEGRAM_STATE_DIR ?? join(homedir(), ".claude", "channels", "hex", "telegram");
@@ -90,6 +124,10 @@ process.on("uncaughtException", (err) => {
 });
 
 const bot = new Bot(TOKEN);
+
+// SAFETY: grammY's raw API sends any method by name, through the same transformers as every other call.
+// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- grammY's types don't know the widget methods yet
+const widgets: Widgets = bot.api.raw as never;
 
 const accessFile = z.object({
   allowFrom: z.array(z.string()).default([]),
@@ -774,6 +812,19 @@ async function backfill(thread: string, turns: Turn[]) {
   }
 }
 
+function stateOf({
+  chat_data,
+  public_data,
+}: {
+  chat_data?: string | undefined;
+  public_data?: string | undefined;
+}) {
+  return {
+    ...(chat_data !== undefined && { chat_data }),
+    ...(public_data !== undefined && { public_data }),
+  };
+}
+
 function at(caller: string, name: string | undefined) {
   const thread = name === undefined || name === "" ? caller : hub.find(name);
 
@@ -963,6 +1014,23 @@ const handlers: Handlers<typeof tools> = {
     const text = args.text === undefined ? undefined : tappable(args.text);
     const { file } = args;
     const changes = text !== undefined || (file !== undefined && file !== "");
+    const state = stateOf(args);
+
+    if (Object.keys(state).length > 0) {
+      try {
+        await paced(() =>
+          widgets.editMessageWidgetData({ chat_id: where.chat_id, message_id: id, ...state }),
+        );
+      } catch (error) {
+        if (!String(error).includes("message is not modified")) {
+          throw error;
+        }
+      }
+
+      if (!changes && args.settled !== true) {
+        return `changed the widget's state (id: ${id})`;
+      }
+    }
 
     if (home === thread && Number(ledger.pin(thread)?.message) === id && changes) {
       if ((file !== undefined && file !== "") || text === undefined) {
@@ -1036,7 +1104,7 @@ const handlers: Handlers<typeof tools> = {
         });
       }
     } else if (args.settled !== true) {
-      throw new Error("edit_message needs text, a file, or settled");
+      throw new Error("edit_message needs text, a file, a widget's state, or settled");
     }
 
     if (text !== undefined) {
@@ -1156,6 +1224,66 @@ const handlers: Handlers<typeof tools> = {
     });
 
     return `sent poll (id: ${sent.message_id})`;
+  },
+
+  widget: async (caller, args) => {
+    const html = readFileSync(args.file, "utf-8");
+    const { chat_id, extra } = target(caller);
+
+    const widget = {
+      html,
+      caption: args.caption,
+      allow_queries: true,
+      ...stateOf(args),
+      ...(args.width !== undefined && { width: args.width }),
+      ...(args.height !== undefined && { height: args.height }),
+    };
+
+    const send = async (to: string, more: Partial<Parameters<Widgets["sendWidget"]>[0]>) => {
+      try {
+        return await paced(() => widgets.sendWidget({ chat_id: to, ...more, ...widget }));
+      } catch (error) {
+        if (!String(error).includes("WIDGET_TOO_LARGE")) {
+          throw error;
+        }
+
+        throw new Error(
+          `the widget is ${Buffer.byteLength(html)} bytes, ${deflateSync(html, { level: 9 }).length} compressed with zlib level 9; Telegram takes at most 32768 and 4096`,
+          { cause: error },
+        );
+      }
+    };
+
+    let to = chat_id;
+    let sent: Sent;
+
+    try {
+      sent = await send(chat_id, extra);
+    } catch (error) {
+      const owner = loadAccess().allowFrom[0];
+
+      if (!String(error).includes("WIDGET_NOT_ALLOWED") || owner === undefined) {
+        throw error;
+      }
+
+      const back = extra.message_thread_id === undefined ? undefined : post.link(caller, "");
+      to = owner;
+      sent = await send(owner, {
+        ...(back !== undefined && {
+          reply_markup: { inline_keyboard: [[{ text: hub.name(caller) ?? "Topic", url: back }]] },
+        }),
+      });
+    }
+
+    hub.sent(caller, {
+      key: `${to}:${sent.message_id}`,
+      content: args.caption,
+      meta: { widget: basename(args.file) },
+    });
+
+    return to === chat_id
+      ? `sent widget (id: ${sent.message_id})`
+      : `sent widget to the owner's DM (id: telegram:${to}:${sent.message_id}), since Telegram shows widgets only in private chats for now; its requests still come here`;
   },
 
   rename_thread: async (caller, args) => {
@@ -1965,6 +2093,47 @@ bot.on("callback_query:data", async (ctx) => {
   }
 });
 
+// A request waits at most 15 seconds for its answer, less than a session may take to start a turn, so hex answers at once: null when the session has it, a reason when not. The session answers by changing the widget's state. https://core.telegram.org/bots/widgets#requests-to-the-bot
+const asks = (ctx: Context): ctx is Context & { update: { widget_query: WidgetQuery } } =>
+  ctx.update.widget_query !== undefined;
+
+bot.filter(asks).use(async (ctx) => {
+  const { id, from, chat, message_id, data } = ctx.update.widget_query;
+  const found = chat && message_id !== undefined ? hub.said(`${chat.id}:${message_id}`) : null;
+  const thread = found?.to ?? (chat && plainThread(chat));
+
+  const heard =
+    allowed(from) &&
+    chat !== undefined &&
+    thread !== undefined &&
+    hub.deliver(thread, hub.name(thread) ?? nameOf(ctx, thread), {
+      author: "owner",
+      key: `widget:${id}`,
+      content: `(widget: ${data})`,
+      meta: {
+        chat_id: String(chat.id),
+        user: from.username ?? String(from.id),
+        user_id: String(from.id),
+        ts: new Date().toISOString(),
+        widget_request: data,
+        widget_message_id:
+          String(chat.id) === target(thread).chat_id
+            ? String(message_id)
+            : `telegram:${chat.id}:${message_id}`,
+        ...(found?.body !== undefined && found.body !== "" && { widget_caption: found.body }),
+      },
+    });
+
+  try {
+    await widgets.answerWidgetQuery({
+      widget_query_id: id,
+      ...(!heard && { data: allowed(from) ? "hex couldn't take this request" : "not allowed" }),
+    });
+  } catch (error) {
+    process.stderr.write(`telegram hub: couldn't answer a widget's request: ${String(error)}\n`);
+  }
+});
+
 bot.on("poll_answer", (ctx) => {
   const { poll_id, user, option_ids } = ctx.pollAnswer;
   const question = ledger.byPoll(poll_id);
@@ -2312,6 +2481,7 @@ for (;;) {
         "message_reaction",
         "callback_query",
         "poll_answer",
+        "widget_query",
       ],
       onStart,
     });
