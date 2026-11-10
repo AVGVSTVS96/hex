@@ -103,5 +103,5 @@ tell "$(printf "$live" "$(git rev-parse --short HEAD)")"
 # What merged meanwhile ships next.
 if [ "$mode" = --when-quiet ]; then
   clean
-  exec "$0" --when-quiet
+  exec "$hex/bin/update" --when-quiet
 fi
