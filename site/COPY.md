@@ -22,7 +22,7 @@ How it works · Clients · Voice · Inside · Yours · GitHub icon · Install
 - Buttons: Install hex · View on GitHub
 - Under the buttons: Telegram · Discord · Buzz · T3 Code · iikb · Voice
 
-*(Two devices. Telegram on iOS 26, matched to the real app: back pill with an unread count, the group's name pill, the ••• pill, the bot's avatar on its messages, the topic tab bar (All · General · ramen, which appears and turns "done ✓" · clips · leisure) and the composer. The chat: a voice note, "Done. Your 9am is at 10 now.", then "find 3 ramen spots open tonight near me, make a page comparing them and deploy it" → "On it. Opened #ramen." → "It's live." with a preview of ramen-tonight.vercel.app. Beside it, hex voice on a call on the open iPhone Duo: the app's own screenshot (hex-voice docs/screenshots/call.png), not a drawing. On phones only Telegram shows.)*
+*(Telegram on iOS 26, matched to the real app: back pill with an unread count, the group's name pill, the group's avatar, a "Today" date pill, hex's name and admin tag on the first message of each run and its avatar on the last, bubble tails, the topic tab bar (All · General, open · ramen, which slides in with an unread badge · clips · leisure) and the composer with its / commands button. The chat: a voice note, "Done. Your 9am is at 10 now.", then "find 3 ramen spots open tonight near me, make a page comparing them and deploy it" → "On it. Opened #ramen." → "It's live." with a preview of ramen-tonight.vercel.app.)*
 
 ## Stats
 
@@ -81,11 +81,11 @@ Three tiles under it, each a small picture and a caption:
 
 *(No client gets a role like "for work". Each card shows the real app.)*
 
-- **Telegram**: A group with topics. Every topic is its own session, and voice notes work with any speech-to-text service. *(Telegram's topic list, matched to the real app: General, ramen with an unread badge, clips with "hex is typing", leisure, taxes.)*
-- **Discord**: Tag it and it opens a thread to work in. Room for code and long answers. *(Discord's window: server rail, the hex server's channels with #dev open, "@hex why is CI red on main?" → a thread card "A flaky clock in auth.spec. Fixed in PR #214." → "hex is typing…" and the message box.)*
-- **Buzz**: A workspace for people and agents. Watch each step as it runs. *(Buzz Desktop's window: sidebar with channels and a DM with hex, #ops with "back up the NAS before tonight's update" → "On it. Follow along in Activity.", and the Activity panel with its steps.)*
-- **T3 Code**: Pick hex as the agent in any project. It works there with its memory and rules. *(T3 Code's window: its thread list, a thread "Fix login redirect" in the app project, hex's answer with the file it edited, and the composer with hex picked as the agent. In a narrow card the sidebar is collapsed, as in T3.)*
-- **iikb**: An iOS keyboard. Its Chats open your Telegram threads with hex from inside any app. *(iikb's Chats, after its own screenshots: the topic tabs in a glass capsule beside the menu button, the chat, and the message box with its dictation button.)*
+- **Telegram**: A group with topics. Every topic is its own session, and voice notes work with any speech-to-text service. *(Telegram's topic list: General, ramen with an unread badge, clips with "hex is typing", leisure, taxes.)*
+- **Discord**: Tag it and it opens a thread to work in. Room for code and long answers. *(Discord's window: Discord home and server rail with the hex server picked, the channel list with #dev open and your user panel, "@hex why is CI red on main?" with its thread card ("3 Messages" and hex's last reply "A flaky clock in auth.spec. Fixed in PR #214."), the message box, and "hex is typing…" under it.)*
+- **Buzz**: A workspace for people and agents. Watch each step as it runs. *(Buzz Desktop's window, after its own screenshots: the sidebar with channels, a DM with hex and your profile, #ops with "back up the NAS before tonight's update" → "On it. Disk checked, copying to offsite now.", the message box, and "hex: Working" under it.)*
+- **T3 Code**: Pick hex as the agent in any project. It works there with its memory and rules. *(T3 Code's window: its thread list (one working, one done), a thread "Fix login redirect" in the app project, hex's answer with the file it edited, and the composer with hex picked as the agent.)*
+- **iikb**: An iOS keyboard. Its Chats open your Telegram threads with hex from inside any app. *(iikb's Chats in its glass design, after its own screenshots: the menu button, the topic tabs, the dictation button, a short chat with tails, the message box, and the globe and mic under it.)*
 - **Your own**: Have your agent build one. hex's Buzz client was built this way.
   - Chips: Slack (thread) · WhatsApp (chat) · Signal (chat) · Matrix (room). The pick swaps into the prompt.
   - Prompt: `Build me a Slack client on your hub, modeled on your Discord one, so every Slack thread is its own session.`
@@ -104,7 +104,7 @@ Three tiles under it, each a small picture and a caption:
 - Claude Code · does the work, then tells the voice what to say
 - Chips: Browser · hex voice for iPhone · Phone calls, both ways · Discord voice
 
-*(Right: the Tasks board in hex voice during a call on the open iPhone Duo, redrawn from the app's own screenshot (hex-voice docs/screenshots/tasks.png) with made-up projects: launch, trip, taxes, dev, garden, reading. Tabs Needs you 14 · Working 3 · Done 21 · Quiet 6, "hex has a pick for 9 asks · Take 9", "Go through 14 asks with hex", and the call controls down the right side.)*
+*(Right: the Tasks list in hex voice during a call on the open iPhone Duo, redrawn from the app's code (All tab, colored Needs you, Working and Done heads, a colored mark and count per row, "Go through them with hex") with made-up projects, and the call controls down the right side.)*
 - **A Tasks board** of what waits on you, per project
 - **Answer in place** polls and questions, without opening the thread
 - **Lock Screen and Dynamic Island** the call stays one tap away

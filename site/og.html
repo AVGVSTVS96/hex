@@ -19,7 +19,7 @@
   .lede { margin-top: 24px; color: var(--muted); font-size: 24px; line-height: 1.4; max-width: 30ch; }
   .lede b { color: var(--ink); font-weight: 500; }
   .stage { position: relative; height: 630px; }
-  .device-tg { left: 40px; top: 0; }
+  .device-tg { left: 40px; top: 0; translate: none; }
 </style>
 </head>
 <body>
@@ -36,24 +36,24 @@
   <figure class="device device-tg">
     <div class="tgp" aria-hidden="true">
       <div class="ios-bar"><time>9:41</time><i class="ios-island"></i><span class="ios-icons"><svg viewBox="0 0 18 12"><rect y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" width="3" height="12" rx="1"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.6 5.7 9.2a3.3 3.3 0 0 1 4.6 0zM3.5 7a6.4 6.4 0 0 1 9 0l-1.4 1.4a4.4 4.4 0 0 0-6.2 0zM1.2 4.7a9.6 9.6 0 0 1 13.6 0l-1.4 1.4a7.6 7.6 0 0 0-10.8 0z"/></svg><span class="battery"><i></i></span></span></div>
-      <div class="tg-top"><span class="tg-glass tg-back">‹<em>3</em></span><span class="tg-glass tg-name"><b>hex</b><small>2 members</small></span><span class="tg-glass tg-more">•••</span></div>
+      <div class="tg-top"><span class="tg-glass tg-back">‹<em>3</em></span><span class="tg-glass tg-name"><b>hex</b><small>2 members</small></span><span class="tg-glass tg-group"><img src="icon.svg" alt=""></span></div>
       <div class="tg-chat">
-        <p class="bub out tg-voice"><span class="play"></span><span class="tg-wave"><i style="height:30%"></i><i style="height:55%"></i><i style="height:80%"></i><i style="height:45%"></i><i style="height:95%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:70%"></i><i style="height:100%"></i><i style="height:50%"></i><i style="height:30%"></i><i style="height:65%"></i><i style="height:85%"></i><i style="height:40%"></i><i style="height:25%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:20%"></i></span><small>0:07</small><time>6:10 <b>✓✓</b></time></p>
-        <div class="from"><img class="tg-av" src="icon.svg" alt=""><p class="bub in">Done. Your 9am is at 10 now.<time>6:10</time></p></div>
-        <p class="bub out a1">find 3 ramen spots open tonight near me, make a page comparing them and deploy it<time>6:12 <b>✓✓</b></time></p>
-        <div class="from a2"><img class="tg-av" src="icon.svg" alt=""><p class="bub in">On it. Opened <span class="tg-link">#ramen</span>.<time>6:12</time></p></div>
-        <div class="from a3"><img class="tg-av" src="icon.svg" alt=""><div class="bub in">It's live.<span class="preview"><b>Vercel</b><strong>ramen-tonight.vercel.app</strong><small>3 spots compared · open now · walking distance</small></span><time>6:19</time></div></div>
+        <span class="tg-date tg-glass">Today</span>
+        <p class="bub out tg-voice"><span class="play"></span><span class="tg-vbody"><span class="tg-wave"><i style="height:25%"></i><i style="height:40%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:75%"></i><i style="height:90%"></i><i style="height:55%"></i><i style="height:30%"></i><i style="height:45%"></i><i style="height:70%"></i><i style="height:100%"></i><i style="height:80%"></i><i style="height:50%"></i><i style="height:35%"></i><i style="height:60%"></i><i style="height:85%"></i><i style="height:65%"></i><i style="height:40%"></i><i style="height:30%"></i><i style="height:55%"></i><i style="height:75%"></i><i style="height:45%"></i><i style="height:30%"></i><i style="height:25%"></i><i style="height:40%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:25%"></i><i style="height:20%"></i><i style="height:30%"></i><i style="height:20%"></i><i style="height:15%"></i></span><small>0:07<time>6:10 <b>✓✓</b></time></small></span></p>
+        <div class="from"><div class="run"><p class="bub in tail"><span class="tg-who">hex<em>admin</em></span>Done. Your 9am is at 10 now.<time>6:10</time></p></div><img class="tg-av" src="icon.svg" alt=""></div>
+        <p class="bub out tail a1">find 3 ramen spots open tonight near me, make a page comparing them and deploy it<time>6:12 <b>✓✓</b></time></p>
+        <div class="from"><div class="run"><p class="bub in a2"><span class="tg-who">hex<em>admin</em></span>On it. Opened <span class="tg-link">#ramen</span>.<time>6:12</time></p><div class="bub in tail a3">It's live.<span class="preview"><b>Vercel</b><strong>ramen-tonight.vercel.app</strong><small>3 spots compared · open now · walking distance</small></span><time>6:19</time></div></div><img class="tg-av a2" src="icon.svg" alt=""></div>
       </div>
       <div class="tg-tabs tg-glass">
         <span class="tab all"><svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5v4a2.5 2.5 0 0 1-2.5 2.5H9l-3 2.5V13a2.5 2.5 0 0 1-2-2.5z"/><path d="M18 9h.5A2.5 2.5 0 0 1 21 11.5v4a2.5 2.5 0 0 1-2 2.5V20l-3-2h-3.5a2.5 2.5 0 0 1-2.4-1.8"/></svg>All</span>
         <span class="tab on"><b class="hash">#</b>General</span>
-        <span class="tab new"><span class="ti" style="color:#F25C8E"><svg><use href="#bubble"/></svg><b>R</b></span>ramen<span class="states"><em>working…</em><em class="done">done ✓</em></span></span>
+        <span class="tab new"><span class="ti" style="color:#F25C8E"><svg><use href="#bubble"/></svg><b>R</b></span>ramen<em class="tab-badge">1</em></span>
         <span class="tab"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>C</b></span>clips</span>
         <span class="tab"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>L</b></span>leisure</span>
       </div>
       <div class="tg-compose">
         <span class="tg-glass tg-round"><svg viewBox="0 0 24 24"><path d="M16.5 6.5 8.4 14.6a2 2 0 1 0 2.8 2.8l8.1-8.1a4 4 0 0 0-5.6-5.6L5.4 12a6 6 0 0 0 8.5 8.5l6.6-6.6"/></svg></span>
-        <span class="tg-glass tg-field">Message in General<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 8.5 8.5H12z"/></svg></span>
+        <span class="tg-glass tg-field">Message in General<span class="tg-cmd">/</span><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 8.5 8.5H12z"/></svg></span>
         <span class="tg-glass tg-round"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
       </div>
     </div>
