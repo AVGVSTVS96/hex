@@ -191,6 +191,7 @@ function messages() {
     readFileSync(join(chat, "main", file), "utf-8")
       .trim()
       .split("\n")
+      .filter(Boolean)
       .map((line) => Message.parse(JSON.parse(line))),
   );
 }
