@@ -1,6 +1,4 @@
-import { basename } from "node:path";
-
-import { clients, owners, say, shown } from "@hex/hub";
+import { clients, fileOnly, held, heldFile, owners, say, shown } from "@hex/hub";
 import type { Row, Store } from "@hex/hub";
 import { z } from "zod";
 
@@ -9,8 +7,6 @@ export type Chat = { id: string; name: string; line?: string; pinned?: boolean }
 export type File = { name: string; url: string; type?: string; width?: number; height?: number };
 
 export type Message = { from: "me" | "hex"; text: string; pending?: true; files?: File[] };
-
-type Held = { name: string; type?: string; path?: string; telegram?: string; dimensions?: string };
 
 const APP = "telegram";
 const LATEST_MESSAGES = 40;
@@ -34,52 +30,8 @@ const notAMessageInTelegram = (meta: Record<string, string>) =>
 const telegramIdOf = (row: Row) =>
   row.meta?.message_id ?? row.key.slice(row.key.lastIndexOf(":") + 1);
 
-const imageType = (path: string) => (path.endsWith(".png") ? "image/png" : "image/jpeg");
-
-const each = (value?: string) => (value ?? "").split("; ");
-
-export function held(row: Row): Held[] {
-  const meta = row.meta ?? {};
-  const images = each(meta.image_path).filter(Boolean);
-  const kinds = each(meta.attachment_kind);
-  const names = each(meta.attachment_name);
-  const mimes = each(meta.attachment_mime);
-  const attachmentSizes = each(meta.attachment_dimensions);
-  const imageSizes = each(meta.image_dimensions);
-
-  const attachments = each(meta.attachment_file_id).flatMap((telegram, at): Held[] => {
-    const kind = kinds[at] ?? "";
-    const mime = kind === "photo" ? "image/jpeg" : (mimes[at] ?? "");
-
-    return telegram === ""
-      ? []
-      : [
-          {
-            name: [names[at], meta.file, kind].find(filled) ?? "file",
-            telegram,
-            ...(mime !== "" && { type: mime }),
-            ...(filled(attachmentSizes[at]) && { dimensions: attachmentSizes[at] }),
-          },
-        ];
-  });
-
-  return [
-    ...images.map((path, at) => ({
-      name: basename(path),
-      path,
-      type: imageType(path),
-      ...(filled(imageSizes[at]) && { dimensions: imageSizes[at] }),
-    })),
-    ...attachments,
-  ];
-}
-
 const pollText = (question: string, options: string) =>
   [question, "", ...options.split(" / ").map((option) => `• ${option}`)].join("\n");
-
-const fileOnly = (row: Row) =>
-  (row.author === "hex" && row.body === `(file: ${row.meta?.file ?? ""})`) ||
-  (row.author === "owner" && (row.body === "(photo)" || /^\(album of \d+\)$/u.test(row.body)));
 
 function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
   const meta = row.meta ?? {};
@@ -231,22 +183,11 @@ export function send(chat: string, text: string, id: string) {
 }
 
 async function file(store: Store, key: string, at: number) {
-  const row = store.messages.get(key);
-  const kept = row && row.from === APP ? held(row)[at] : undefined;
+  const kept = store.messages.get(key)?.from === APP ? await heldFile(store, key, at) : undefined;
 
-  if (!kept) {
-    return status(404);
-  }
-
-  const path = kept.path ?? (await clients.get(APP)?.file?.(kept.telegram ?? ""));
-
-  if (!filled(path)) {
-    return status(404);
-  }
-
-  return new Response(Bun.file(path), {
-    headers: { "content-type": kept.type ?? "application/octet-stream" },
-  });
+  return kept
+    ? new Response(Bun.file(kept.path), { headers: { "content-type": kept.type } })
+    : status(404);
 }
 
 const status = (code: number, said?: string) => new Response(said ?? null, { status: code });

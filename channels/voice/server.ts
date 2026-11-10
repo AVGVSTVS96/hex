@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 import { dirname, join } from "node:path";
 
-import { begin, title as oneWord, open } from "@hex/hub";
+import { begin, title as oneWord, open, sentPicture } from "@hex/hub";
 import type { Held, VoiceLine } from "@hex/hub";
 import { z } from "zod";
 
@@ -1311,10 +1311,14 @@ async function upload(request: Request) {
   }
 }
 
-function showImage(id: string) {
+async function showImage(id: string) {
   const image = media.get(id)?.images[0];
+  const sent = image === undefined ? await sentPicture(open(HEX_STATE), id) : undefined;
+  const path = image ?? sent?.path;
 
-  return image === undefined ? new Response("404", { status: 404 }) : new Response(Bun.file(image));
+  return path === undefined
+    ? new Response("404", { status: 404 })
+    : new Response(Bun.file(path), sent && { headers: { "content-type": sent.type } });
 }
 
 function showAsACardInTheTranscript(call: Live, id: string) {

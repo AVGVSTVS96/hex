@@ -22,6 +22,7 @@ import { STARTUP } from "./loaded.ts";
 import { endpoint, toolList } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { queue } from "./observe.ts";
+import { fileOnly, held as filesIn, pictureOf, pictures } from "./pictures.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
 import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
@@ -362,16 +363,26 @@ export function history(store: Store, thread: string, session?: string): Turn[] 
       return [];
     }
 
+    const sent = pictures(row);
+    const words = sent.length > 0 && fileOnly(row) ? "" : row.body;
+
     if (replied(row)) {
-      return shown(row) ? [{ from: "hex", text: row.body }] : [];
+      return shown(row)
+        ? [{ from: "hex", text: words, ...(sent.length > 0 && { media: sent }) }]
+        : [];
     }
 
-    const text =
-      spoken(row) && row.author === "owner" ? (row.from === "t3" ? asked(row.body) : row.body) : "";
+    const media = carried(row.meta) ?? (sent.length > 0 ? sent : undefined);
 
-    const media = carried(row.meta);
+    if (!spoken(row) || row.author !== "owner") {
+      return [];
+    }
 
-    return text ? [{ from: "me", text, ...(media && { media }) }] : [];
+    const text = row.from === "t3" ? asked(row.body) : media === sent ? words : row.body;
+
+    return text !== "" || media !== undefined
+      ? [{ from: "me", text, ...(media && { media }) }]
+      : [];
   });
 }
 
@@ -386,6 +397,29 @@ export function carried(meta?: Record<string, string>): Turn["media"] {
 
     return { id, kind, ...(present(file) && { file }) };
   });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Where a file a chat message holds is on disk, fetched from its app when only the app keeps it.
+export async function heldFile(store: Store, key: string, at: number) {
+  const row = store.messages.get(key);
+  const kept = row === undefined ? undefined : filesIn(row)[at];
+
+  if (!kept || row === undefined) {
+    return;
+  }
+
+  const path = kept.path ?? (await clients.get(row.from)?.file?.(kept.telegram ?? ""));
+
+  return present(path) ? { path, type: kept.type ?? "application/octet-stream" } : undefined;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The file of a picture history() named, or undefined when the id names none.
+export async function sentPicture(store: Store, id: string) {
+  const picture = pictureOf(id);
+
+  return picture && (await heldFile(store, picture.key, picture.at));
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
