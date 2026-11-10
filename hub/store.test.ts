@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1819,6 +1820,27 @@ test("a store that syncs in the background shows a write at once, says when it's
   await until(() => framesInWal() < 1000);
   other.close();
 });
+
+test.skipIf(!existsSync("/proc/locks"))(
+  "a store that syncs in the background keeps its locks on the WAL's index, so no other process cuts it short",
+  async () => {
+    const store = new Store(dir);
+    store.syncInBackground();
+    store.messages.deliver(message);
+    await store.synced();
+    store.messages.deliver({ ...message, key: "telegram:-100:5:2" });
+    await store.synced();
+
+    const { ino } = statSync(join(dir, "hex.db-shm"));
+
+    const held = new RegExp(
+      `POSIX\\s+ADVISORY\\s+READ\\s+${String(process.pid)}\\s+\\S+:${String(ino)}\\s`,
+      "u",
+    );
+
+    expect(readFileSync("/proc/locks", "utf-8")).toMatch(held);
+  },
+);
 
 test("if its sync thread ends, a store waits for the disk on every write again and still answers who waits", async () => {
   const store = new Store(dir);
