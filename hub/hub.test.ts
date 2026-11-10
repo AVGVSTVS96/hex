@@ -574,6 +574,32 @@ test("a stopped thread has its job record cleared, then resumes under the same i
   expect(args[args.indexOf("--resume") + 1]).toBe(SESSION);
 });
 
+test("a stopped thread whose big conversation's cache has expired starts a new session that takes over from it", async () => {
+  start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
+  said(120_000, false, SESSION, clock.now() - 61 * 60_000);
+  hub.deliver("chat:7", "Desk anchors", message);
+  const args = await launched();
+  expect(args).not.toContain("--resume");
+  expect(settingsOf(args).env.HEX_HANDOFF).toEndWith(`/${SESSION}.jsonl`);
+});
+
+test("a stopped thread resumes while its cache is warm", async () => {
+  start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
+  said(120_000, false, SESSION, clock.now() - 50 * 60_000);
+  hub.deliver("chat:7", "Desk anchors", message);
+  const args = await launched();
+  expect(args[args.indexOf("--resume") + 1]).toBe(SESSION);
+  expect(settingsOf(args).env.HEX_HANDOFF).toBeUndefined();
+});
+
+test("a stopped thread with a small conversation resumes even once its cache has expired", async () => {
+  start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
+  said(60_000, false, SESSION, clock.now() - 3 * 60 * 60_000);
+  hub.deliver("chat:7", "Desk anchors", message);
+  const args = await launched();
+  expect(args[args.indexOf("--resume") + 1]).toBe(SESSION);
+});
+
 test("a thread whose session is still running is never relaunched", async () => {
   start({
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },

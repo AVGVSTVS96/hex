@@ -42,10 +42,10 @@ function kept(thread: string, turns: [Author, string][]) {
   }
 }
 
-function hook(env: Record<string, string> = {}) {
+function hook(env: Record<string, string> = {}, source = "compact") {
   const run = Bun.spawnSync([join(home, ".hex/bin/compacted")], {
     cwd: home,
-    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, source: "compact" })),
+    stdin: Buffer.from(JSON.stringify({ session_id: SESSION, source })),
     env: {
       ...process.env,
       CLAUDE_PROJECT_DIR: home,
@@ -103,4 +103,33 @@ test("brings back the end of a message too long for a hook on its own", () => {
   expect(out).toEndWith("the end\n");
   expect(out).toContain("## owner · telegram · ");
   expect(out).not.toContain("start");
+});
+
+test("a new session taking over a thread gets its status post, newest messages and where the rest is", () => {
+  kept("42", [
+    ["owner", "ship it"],
+    ["hex", "shipped"],
+  ]);
+  open(join(home, "state")).pins.pinned({
+    app: "telegram",
+    thread: "42",
+    message: 7,
+    text: "scope",
+    note: "**desk**: 1. anchors ✓ 2. legs",
+  });
+  const transcript = "/projects/hex/old.jsonl";
+  const out = hook({ HEX_THREAD: "42", HEX_HANDOFF: transcript }, "startup");
+  expect(out).toContain("You're a new session taking over this thread");
+  expect(out).toContain("**desk**: 1. anchors ✓ 2. legs");
+  expect(out).toContain(transcript);
+  expect(out).toContain(
+    `\`${join(home, ".hex/bin")}/hex log -- '42'\` has the messages before these`,
+  );
+  expect(out).toContain("## hex · telegram · 42 · 2026-10-06 16:01 · [telegram:1]\n\nshipped");
+});
+
+test("a session that starts without taking over, or resumes, gets nothing from it", () => {
+  kept("42", [["owner", "hi"]]);
+  expect(hook({ HEX_THREAD: "42" }, "startup")).toBe("");
+  expect(hook({ HEX_THREAD: "42", HEX_HANDOFF: "/old.jsonl" }, "resume")).toBe("");
 });

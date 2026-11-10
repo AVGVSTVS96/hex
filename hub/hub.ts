@@ -144,7 +144,7 @@ export type HubLine = z.input<typeof HubRequestLine>;
 
 export type Hub = ReturnType<typeof startHub>;
 
-// idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main thread rests before it compacts, while its cache is still warm. Both sit just inside Claude Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above which a session compacts before it rests. compactWindow: the auto-compact window a thread's session runs with, a fresh thread's aside, which hands off at capacity. Claude Code compacts about 15-35k tokens under it, mid-turn, so a session in steady use, which never rests long enough to compact, stays small; the hex folder's own setting still holds for its terminal sessions, and for its threads too when it's smaller. HEX_COMPACT_WINDOW changes it. reconnect: how long a running session's channel may be gone before the session restarts to get it back. connect: how long a starting session waits for the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a hub running behind still gets its sessions' channels. Claude Code waits that long for each of a session's MCP servers, but a background session doesn't hold its turn for them. capacity: how much context a fresh thread's session holds before a new one takes over; with 0, every message that finds it done goes to a new one, and HEX_CHAT_CAPACITY changes it. (see https://docs.claude.com/en/docs/build-with-claude/prompt-caching and https://code.claude.com/docs/en/mcp)
+// idleStop: how long a quiet session stays warm before it stops. cacheWarm: how long the main thread rests before it compacts, while its cache is still warm. Both sit just inside Claude Code's one-hour prompt cache, so coming back within the hour costs no new cache write. compactAbove: the context above which a session compacts before it rests. compactWindow: the auto-compact window a thread's session runs with, a fresh thread's aside, which hands off at capacity. Claude Code compacts about 15-35k tokens under it, mid-turn, so a session in steady use, which never rests long enough to compact, stays small; the hex folder's own setting still holds for its terminal sessions, and for its threads too when it's smaller. HEX_COMPACT_WINDOW changes it. reconnect: how long a running session's channel may be gone before the session restarts to get it back. connect: how long a starting session waits for the hub to answer its channel, where Claude Code would give up after 30 seconds for good, so a hub running behind still gets its sessions' channels. Claude Code waits that long for each of a session's MCP servers, but a background session doesn't hold its turn for them. capacity: how much context a fresh thread's session holds before a new one takes over; with 0, every message that finds it done goes to a new one, and HEX_CHAT_CAPACITY changes it. handoffAbove: the context above which a thread whose session's cache has expired starts a new session that takes over from it, instead of resuming it and writing that whole context to the cache again: a new session starts at about 50k and reads back what it needs, so a smaller one costs more to replace than to resume. HEX_HANDOFF_ABOVE changes it. (see https://docs.claude.com/en/docs/build-with-claude/prompt-caching and https://code.claude.com/docs/en/mcp)
 export type Limits = {
   idleStop: number;
   cacheWarm: number;
@@ -153,6 +153,7 @@ export type Limits = {
   reconnect: number;
   connect: number;
   capacity: number;
+  handoffAbove: number;
 };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -177,6 +178,7 @@ type SessionEnv = {
   MCP_TIMEOUT?: string;
   HEX_MAIN?: string;
   HEX_FRESH?: string;
+  HEX_HANDOFF?: string;
   HEX_HELD?: string;
 };
 
@@ -474,6 +476,7 @@ const LIMITS: Limits = {
   reconnect: 20_000,
   connect: 300_000,
   capacity: tokensFrom("HEX_CHAT_CAPACITY", 350_000),
+  handoffAbove: tokensFrom("HEX_HANDOFF_ABOVE", 80_000),
 };
 
 function tokensFrom(name: string, fallback: number) {
@@ -667,7 +670,16 @@ export function startHub({
   // Where the app opens a thread, which hex.db keeps with it.
   link?: ((thread: string) => string | undefined) | undefined;
 }) {
-  const { idleStop, cacheWarm, compactAbove, compactWindow, reconnect, connect, capacity } = {
+  const {
+    idleStop,
+    cacheWarm,
+    compactAbove,
+    compactWindow,
+    reconnect,
+    connect,
+    capacity,
+    handoffAbove,
+  } = {
     ...LIMITS,
     ...limits,
   };
@@ -1309,7 +1321,11 @@ export function startHub({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A respawn reads the same file, so it gets the hub's current token too. It runs without the launcher, so the file keeps what the launcher added and renews only the hub's keys.
-  function writeSettings(thread: string, launched: ReturnType<typeof claude.settingsOf> = {}) {
+  function writeSettings(
+    thread: string,
+    launched: ReturnType<typeof claude.settingsOf> = {},
+    takesOverFrom?: string,
+  ) {
     const env: SessionEnv = {
       HEX_CHANNEL: channel,
       HEX_THREAD: thread,
@@ -1333,6 +1349,10 @@ export function startHub({
       env.HEX_HELD = heldOf(thread);
     }
 
+    if (present(takesOverFrom)) {
+      env.HEX_HANDOFF = takesOverFrom;
+    }
+
     writeFileSync(
       settingsOf(thread),
       JSON.stringify({
@@ -1353,7 +1373,8 @@ export function startHub({
     daemonChecked?: Promise<void>,
   ) {
     const known = savedOf(thread);
-    writeSettings(thread);
+    const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread);
+    writeSettings(thread, {}, takesOverFrom);
 
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // The session's hooks keep what's typed in it as the owner's; this one is hex's.
@@ -1387,7 +1408,7 @@ export function startHub({
 
     const resumeArgs = present(source)
       ? ["--resume", source, "--fork-session"]
-      : present(known.session) && !fresh(thread)
+      : present(known.session) && !fresh(thread) && !present(takesOverFrom)
         ? ["--resume", known.session]
         : [];
 
@@ -1414,6 +1435,23 @@ export function startHub({
     } catch (error) {
       fail(thread, error instanceof Error ? error.message : String(error));
     }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The transcript of a thread's saved session whose prompt cache has expired (an hour, or 5 minutes for a short one), when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
+  function expired(thread: string) {
+    const session = savedOf(thread).session;
+
+    if (!present(session) || fresh(thread)) {
+      return;
+    }
+
+    const { sent: context, at, short } = claude.usage(cwdOf(thread), session);
+    const cacheLife = short === true ? 5 * 60_000 : 60 * 60_000;
+
+    return context > handoffAbove && at !== undefined && clock.now() - at > cacheLife
+      ? claude.transcript(cwdOf(thread), session)
+      : undefined;
   }
 
   function watchJob(thread: string, job: string) {
