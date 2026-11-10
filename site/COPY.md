@@ -1,47 +1,41 @@
 # hex landing page copy
 
-Final copy. Use it word for word. Text in `code` is shown as code. Notes in *(italics)* are for the designer, not the page. Anything marked **coming** isn't built yet and has to look it on the page (dashed, muted, with a small "coming" tag).
+The page's copy of record. `index.html` uses it word for word. Text in `code` shows as code. Notes in *(italics)* are for whoever designs the page, not for the page.
 
-Every section is one headline, one short line and a visual. Let the visuals explain; keep captions to one line.
+The page explains itself with pictures: every section is a headline, one short line and visuals that show the real thing (app mocks that match the real apps, diagrams drawn from how hex works). Captions stay one or two short lines. No em dashes. App mocks follow the system's light or dark theme.
 
 ## Page
 
 - `<title>`: hex · The best personal assistant is already on your machine
-- Meta description: Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 16,000 lines plus its connectors, on the Claude plan you already pay for.
+- Meta description: hex turns Claude Code into your personal assistant. It runs on your own machine, on the Claude plan you already pay for, and you reach it from Telegram, Discord, Buzz, T3 Code, your keyboard or a phone call.
+- Link preview (`og.html`, rendered to `og.png` at 1200×630): the wordmark, the hero line, "It's just been busy writing code. hex makes Claude Code your personal assistant." and the Telegram mock from the hero.
+
+## Nav
+
+How it works · Clients · Voice · Inside · Yours · GitHub icon · Install
 
 ## Hero
 
-- Sticker: Built on Claude Code
-- Hero line: The best personal assistant is already on your machine.
-- Sub line: It's just been busy writing code.
+- Pill: Built on Claude Code
+- Headline: The best personal assistant is already on your machine.
+- Line: **It's just been busy writing code.** hex makes Claude Code your personal assistant, on the Claude plan you already pay for.
+- Buttons: Install hex · View on GitHub
+- Under the buttons: Telegram · Discord · Buzz · T3 Code · iikb · Voice
 
-*(The hero is one glance: sticker, three-line headline, one short sub line, two buttons. The stats right under it carry the price.)*
-- Primary CTA: Install
-- Secondary CTA: View on GitHub
-
-*(Telegram phone mock, as Telegram looks on iOS 26: dark, with Liquid Glass header pills, topic bar and composer. "find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it" → "On it. Opened #ramen." → "It's live." with a link preview of ramen-tonight.vercel.app.)*
+*(Two phones. Telegram in General: a voice note, "Done. Your 9am is at 10 now.", then "find 3 ramen spots open tonight near me, make a page comparing them and deploy it" → "On it. Opened #ramen-tonight." → "It's live." with a preview of ramen-tonight.vercel.app. Beside it, a call in the hex voice app: the orb and its controls, after the app's own call screen. On phones only Telegram shows.)*
 
 ## Stats
 
-- ~16,000 · lines of hex, plus ~21,000 in connectors. Claude Code does the rest.
-- $0 · extra, on the Claude plan you already pay for.
-- Any · client: Telegram, Discord, Buzz, or one you build.
-- 0 · frameworks, 0 databases. Just plain files you own.
-
-## Link preview
-
-*(og.html beside og.png, 1200×630, rendered with a screenshot script. The hero as on the page, then four stat blocks. No competitor names here.)*
-
-- ~16,000 · lines of hex itself
-- $0 · extra on your Claude plan
-- Any · client, or build yours
-- 0 · frameworks, plain files
+- ~16,000 · lines of hex · Claude Code does the rest.
+- 6 · clients · Ready to use, or have your agent build yours.
+- 800+ · tests · Run on every update before it ships.
+- 1 · folder · Everything it knows, in a private repo you own.
 
 ## A note from bassim
 
-*(Bassim's handwritten note from the top of the README, in his words: lowercase, as written. A ruled paper card in Caveat with a pink "a note from bassim" sticker, a strip of tape, a slight tilt and the hard shadow. The paper stays paper in dark mode. "my version" is bold italic with a yellow marker swipe.)*
+*(The note from the top of the README, in his words exactly: lowercase, his spelling. Handwritten on a plain paper card; "my version" bold italic with a marker swipe. The paper stays paper in dark mode.)*
 
-Sticker: a note from bassim
+Label: a note from bassim
 
 bootstrapped in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is ***my version*** of the personal assistant
 
@@ -64,175 +58,113 @@ hex will serve as my sandbox for ongoing experimentation and testing, but i've t
 
 please join me in my quest to build the most minimal, capable, safe, and hackable personal assistant :)
 
-— bassim
+-- bassim
 
-## The bet
+## How it works
 
-Section title: Everyone's building an agent. We plugged into the best one.
-Line: Claude Code is the most capable agent around. hex points it at your life.
+- Label: how it works
+- Headline: One assistant. A session for every thread.
+- Line: Every topic and thread is its own Claude Code session, and calls get one too. They all share one memory and one set of rules.
 
-### Size strip
+*(Diagram, drawn live: clients on the left (Telegram · topics, Discord · threads, Buzz · threads, T3 Code · projects, iikb · keyboard, Voice · calls, and a dashed "Yours · build it"), wired into the hub ("hex hub · one process · a session per thread") with `~/hex` under it (AGENTS.md, SOUL.md, memory/, hex.db), wired out to Claude Code sessions: General, #ramen-tonight, #dev › ci (idle), ~/code/app, voice (on a call). Small dots run along the wires. On phones it stacks top to bottom.)*
 
-Label: Lines of source
+Three tiles under it, each a small picture and a caption:
 
-*(Bars on one linear scale. hex's bar is a sliver.)*
-
-- OpenClaw · 4 million+
-- Hermes Agent · 1.5 million
-- NanoClaw (the minimal one) · 49,500
-- hex · ~16,000*
-
-Fine print: * Plus ~21,000 lines of connectors for Telegram, Discord, Buzz, T3 Code and voice, left out like NanoClaw's chat adapters. Tests, docs and generated code excluded. Counted Nov 2026. Even the minimal one is 3x bigger.
-
-*(Recounted Nov 9 2026 the same way: hex main at 706b579 is 15,819 (bin 4,002, hub 11,603, plugin 116, computer 68, defaults 30); its connectors are 20,879 (Telegram 2,354, Discord 2,624, Buzz 3,747, T3 Code 1,864, voice 10,290); NanoClaw src/ and container/ at bdfb2f1 are 49,560. 49,560 / 15,819 = 3.1, shown as 3x. The Oct 10 count follows.)*
-
-*(Both are counted the same way: every line (`wc -l`, comments and blanks included) of what it runs, without tests, Markdown, lockfiles or this site. hex is the files in bin/, plugin/, mods/, computer/ and vault/, the JSON in defaults/, and the hub; on Oct 10 2026 (main at ffccf30, channels at 5db7131) that's 1,394: 707 in bin/plugin/mods/computer/defaults, 327 in vault/, 360 in the hub. Its connectors are the Telegram, Discord and Buzz TS files: 4,165 (Telegram 1,123, Discord 982, Buzz 2,060). NanoClaw is src/ and container/ at commit af699e7 (Oct 9): 47,198 lines in 313 files. Its chat adapters copy in from a separate `channels` branch and its setup/ wizard (19,495) isn't counted either, so its number is rounded down and generous. hex's is rounded up. 47,000 / 1,400 = 33.6, shown as 33x. Bar widths keep the old scale (a full bar is 4.39 million lines). OpenClaw (5,300,069 at e09de504) and Hermes Agent (1,597,845 at f925b017) were recounted the same way on Oct 10; the page keeps the lower 4 million+ and 1.5 million.)*
-
-### Next to the minimal one
-
-*(A plain three-column ledger under the size strip, aligned to the bars: row label, NanoClaw muted, hex in ink. Same state, like for like.)*
-
-- Runs Claude · through the Agent SDK, each agent in its own container · as Claude Code itself, the one you already use
-- Keeps state · in a SQLite database · in plain files, in a git repo you own
-- Guardrails · a wall: every agent in a container · at the edges: who can reach it, what it can send, secrets it never sees
-
-*(NanoClaw: README "runs agents securely in their own containers", better-sqlite3 in src/db, @anthropic-ai/claude-agent-sdk in container/agent-runner. hex: only you can message the bot, send-gate holds sends and deletes until your yes, the vault keeps secrets out of chat and the model.)*
-
-### Layer stack
-
-*(Three stacked layers: a thin one on top, a thick one in the middle, the model at the bottom. Three points beside it.)*
-
-- hex · ~16,000 lines · phone · computer · memory · vault · hub
-- Claude Code · the best agent harness · reasoning, tools, MCP, skills, subagents, computer use
-- Opus 5.5 · the best agent model
-
-Points:
-*(One point per layer, top to bottom: hex, Claude Code, the model.)*
-
-- Super minimal, super light, super snappy.
-- Why rebuild what Anthropic ships every week?
-- Claude models are the best personal assistant models, period. Everything else is cope.
-
-Band, in Bassim's words: The very best personal assistant is the one that does the very least while adding the very most capability. *("while adding the very most capability." in yellow.)*
-
-## One bot, a whole crew
-
-Section title: One bot. A whole crew.
-Line: Every topic and thread gets its own Claude Code session, all on one hub built on Anthropic's own channel plugins.
-
-### Diagram labels
-
-- Telegram · topics, voice notes
-- Discord · threads, long answers
-- Buzz · watch it work
-- Your own · your agent builds it *(dashed box and dashed wire: optional, yours to add)*
-- Arrows between neighbouring apps: hand off
-- hex hub · one bot, many sessions
-- Claude Code × 3 · ramen, clips, #dev › ci
-- SOUL.md · AGENTS.md · memory/ · state/
-- Frame: your box
-
-### Features
-
-1. **A crew, not a chatbot**: Every topic works in parallel, with its own context.
-2. **It still writes code**: Ask for a page from your phone. Get a live link back.
-3. **Rebuilds itself daily**: On Anthropic's latest code. Claude fixes its own patches.
-
-## Its own machine
-
-Section title: It doesn't live in a chat window.
-Line: It lives on your box, with your whole network, a memory of its own and, if you want, a computer too.
-
-- **Its own computer**: Optional: a cloud desktop with Chrome, on any provider you like. *(computer/setup builds one on a Fly.io Sprite. Don't name the provider on the page.)*
-- **Your whole network**: Every machine you can ssh into.
-- **Every connector**: Whatever your Claude account has. *(Mock: "your Claude account" over Gmail, Executor, AgentMail, Calendar. They're examples, not hex features.)*
-- **Memory with a timeline**: one memory, OptMem, summarized as it goes, searchable word for word. *(Terminal mock: today / this week / earlier, then recall → any word, ever.)*
+1. **Threads run side by side.** An idle one stops after about an hour and picks back up when you write. *(Three lanes over time: working, stopped when idle, working again.)*
+2. **A DM never ends.** Logged word for word and folded into a summary tree, so nothing gets compacted away. *(A small tree: words at the bottom, summaries above, the newest leaf highlighted.)*
+3. **Threads move with you.** Ask, and the session moves to another app with its history. *(Telegram #ramen-tonight → "take this to Discord" → Discord #ramen-tonight, "same session, same history".)*
 
 ## Clients
 
-*(The idea: it works with your client. Pick a client, take a couple of prebuilt connectors, or tell your agent to build your own, and offer prompts for each. Never frame these as "three front ends".)*
+- Label: clients
+- Headline: Works with your client.
+- Line: Pick one that's ready, or tell your agent to build yours. Use one for everything, or a different one for each part of your life.
 
-*(The idea: no client is "the one for work" and another "the one for personal"; you pick your surface. No client gets a role like "your pocket" or "your desk": each says what it's like, and you pick.)*
+*(No client gets a role like "for work". Each card shows the real app.)*
 
-Section title: Works with your client.
-Line: Pick a ready one, or tell your agent to build yours. Use one for everything, or one for work and another for the rest. hex connects them all.
+- **Telegram**: A group with topics. Every topic is its own session, and voice notes work. *(Topic list: General, ramen-tonight with an unread badge, trip with a question waiting, taxes.)*
+- **Discord**: Tag it and it opens a thread to work in. Room for code and long answers. *("@hex why is CI red on main?" → a thread → "A flaky clock in auth.spec. Fixed in PR #214.")*
+- **Buzz**: A workspace for people and agents. Watch each step as it runs. *(A step list: read a file, ran tests, editing, open a pull request.)*
+- **T3 Code**: Pick hex as the agent in any project. It works there with its memory and rules. *(hex picked as the agent in ~/code/app, with a small diff.)*
+- **iikb**: An iOS keyboard. Its Chats open your hex threads from inside any app. *(A keyboard with thread chips and the latest message above the keys.)*
+- **Your own**: Have your agent build one. Buzz was built this way.
+  - Chips: Slack (thread) · WhatsApp (chat) · Signal (chat) · Matrix (room). The pick swaps into the prompt.
+  - Prompt: `Build me a Slack channel on your hub, modeled on your Discord one, so every Slack thread is its own session.`
+  - Button: Copy · after click: Copied
 
-**Telegram** · Topics and voice notes.
-- Every topic is its own session
-- Voice notes in, short answers out
-- It speaks up when something needs you
+## Voice
 
-Bridge: take this to Discord or Buzz
+- Label: voice
+- Headline: Call it.
+- Line: Talk to hex live, in the browser, the iPhone app or over a real phone line. It can call you, too.
 
-**Discord** · Threads and long answers.
-- Tag it, and it opens a thread
-- Room for code, logs and long answers
-- Channels group work by area
+*(Left: how a call works, top to bottom.)*
+- You · talk, interrupt, change your mind
+- Voice model · listens and talks back in real time
+- wire label: hands off what you asked
+- Claude Code · does the work, then tells the voice what to say
+- Chips: Browser · iPhone app · Phone calls, both ways · Discord voice
 
-**Buzz** · Watch it work. *(Next to Discord: the two sit side by side under Telegram's full-width row and the bridge. Mock: a thread on the left, Buzz Desktop's Activity / Memory / Files panel on the right.)*
-- Every step shows as it runs
-- Edit its memory and files
-- Shared with people and agents
+*(Right: the hex voice app's Tasks board, after the real app, with made-up projects: site, trip, taxes, dev. Tabs Needs you 6 · Working 3 · Done 14, "hex has a pick for 4 · Take 4", "Go through 6 with hex".)*
+- **A Tasks board** of what waits on you, per project
+- **Answer in place** polls and questions, without opening the thread
+- **On your Lock Screen** the call lives in the Dynamic Island
+- Link: hex voice for iPhone → github.com/AVGVSTVS96/hex-voice
 
-**Your own** · Tell your agent. *(Full-width row under Discord and Buzz on a dot grid, dashed tag. Chips pick the app and swap it into the prompt; Copy copies it.)*
-- Same hub, same sessions, same memory
-- Pick an app, paste the prompt
-- Buzz was built this way
+## Inside
 
-Chips: Slack (thread) · WhatsApp (chat) · Signal (chat) · Matrix (room)
+- Label: inside
+- Headline: It remembers, keeps track, and asks first.
+- Line: The parts a personal assistant needs and Claude Code doesn't ship.
 
-Prompt: `Build me a Slack channel on your hub, modeled on your Discord one, so every Slack thread is its own session.`
+- **Memory with a timeline**: A memory agent writes down what happened after every turn. Older memories fold into summaries and stay searchable word for word. *(Summaries narrowing down to one remembered line, found by `memo recall 'timer'`.)*
+- **Tasks, ideas and questions**: What you ask is saved in your words and closed with proof. Questions wait for your answer, and you're reminded of the ones you missed. *(A task card: your words quoted, done when, agents, proof link.)*
+- **Briefs checked against your words**: Before an agent or job starts, its brief is checked against what you asked. One that drifts goes back. *("you asked" next to a brief that adds a booking; verdict "sent back · it adds a booking you didn't ask for".)*
+- **Asks before it sends**: Sending, replying or deleting waits for your yes. Secrets come by one-time link and never pass through the model. *(A "Send this reply?" card with Yes and No, and "Password, by link · encrypted in your browser, never in chat".)*
+- **Keeps itself up to date**: Updates ship only after the tests pass. `hex doctor` checks your setup and says how to fix what's off, and `hex.db` is backed up nightly. *(Pull · every morning → Test · 800+ tests → Wait · until no session is busy → Ship · restart the hub, and Roll back · if the hub won't start. The steps light up in turn.)*
+- Also: **Schedules** a cron line and a prompt each · **Jobs** long work that wakes its thread when done · **Holds** pause threads until a time · **Connectors** every one on your Claude account · **A computer** optional cloud desktop with Chrome · **Any model** pick one per role
 
-Strip, **coming**: A ready-made iMessage client, and checking on any thread from any app.
-
-## Basics
-
-Table stakes too: an hourly check that stays quiet unless something needs you, schedules in one JSON file, voice notes.
+*(Don't name the computer's provider.)*
 
 ## Yours
 
-*(The theme of the page: hex is modifiable, extensible and yours, the way pi is the coding agent that's yours.)*
+- Label: yours
+- Headline: Small enough to read. Yours to change.
+- Line: Claude Code already does the hard part, so hex stays small.
 
-Section title: There are many assistants. This one is yours. *("yours." highlighted)*
-Line: About 16,000 lines in a folder you own. Change it, extend it, fork it.
+*(Bars on one linear scale, so hex is a sliver, then the small end zoomed in.)*
 
-1. **Ask it to change itself**: It edits its own rules, schedules and memory, and commits every change. *(Terminal: you "no check-ins on weekends" → hex "edited schedules.json" → committed ✓)*
-2. **Extend it with anything**: Whatever Claude Code can load, hex can use. *(Chips: skills, MCP, plugins, hooks, channels, + yours dashed)*
-3. **A folder you own**: Plain files in your own repo. Updates never touch them. *(Terminal: ~/hex/ your git repo · SOUL.md who it is · memory/ what it knows · .hex/ hex, updated)*
+- Label: lines of source
+- OpenClaw · 4 million+
+- Hermes Agent · 1.5 million
+- NanoClaw · 49,560
+- hex · ~16,000
+- Zoomed in: NanoClaw · 49,560 / hex · 16,291 + 22,005 in connectors *(connectors hatched)*
+- Fine print: Lines of what runs, without tests or docs, counted Nov 2026. NanoClaw's count leaves out its chat adapters, so hex's leaves out its connectors.
 
-## Closer
+*(How it's counted: `wc -l` of every file that runs, comments and blanks included, without tests, Markdown, lockfiles or the site. hex at f5054b9: bin 4,226, hub 11,847, plugin hooks 120, computer 68, defaults JSON 30, so 16,291. Connectors, `*.ts` only: Telegram 2,541, Discord 2,624, Buzz 3,747, T3 Code 1,864, voice 10,971, iikb 258, so 22,005. NanoClaw is src/ and container/ at bdfb2f1: 49,560. OpenClaw (5.3 million at e09de504) and Hermes Agent (1.6 million at f925b017) were counted the same way in October; the page shows the lower 4 million+ and 1.5 million.)*
 
-- We didn't build a personal assistant. We found one inside Claude Code and gave it a phone, a computer and a memory.
-- Every Claude Code upgrade is a hex upgrade the same day.
+Three tiles:
+
+1. **A folder you own.** Updates only touch `.hex/`. Everything else is yours. *(Tree of ~/hex/, "yours, a private git repo": AGENTS.md your rules · SOUL.md who it is · PROACTIVE.md what it brings up on its own · schedules.json recurring jobs · memory/ what it knows · state/hex.db every message and task · .hex/ hex itself, updated every morning.)*
+2. **Ask it to change itself.** It edits its rules and schedules, and commits each change. *(You: "no check-ins on weekends" → schedules.json, the cron line gains `1-5` → committed.)*
+3. **Fork it.** Change anything, and send back what works. *(hex → pull → your fork → update → your hex, with a dashed pull request back.)*
+
+Chips, under "extend it with": skills · MCP servers · plugins · hooks · connectors · channels · + yours
 
 ## Install
 
-Section title: Install with one prompt
-Line: Paste this into Claude Code on your box. It asks when it needs you.
-
-Code block: `Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTALL.md in that repo.`
-
-Copy button: Copy · after click: Copied
-
-**You'll need**
-- A machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM
-- A Claude subscription
-- Telegram, Discord, Buzz, or any mix
-
-**You do**
-- Make a bot
-- Add it to your group or server
-- Say hi
-
-## Build
-
-Section title: hex is my sandbox. Come build it with me.
-Line: Fork it. Try your ideas. Send back what works. *(Short on purpose: the note up top already says the rest and carries his signature.)*
-Button: Fork on GitHub
-
-Strip, **next**: More modular. More portable. *(The vault shipped Oct 8.)*
+- Label: install
+- Headline: Install with one prompt.
+- Line: Paste this into Claude Code on a machine that stays on. It asks when it needs you.
+- Prompt: `Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTALL.md in that repo.`
+- Button: Copy · after click: Copied
+- Steps: 1 **Make a bot** with @BotFather · 2 **Make a group** with Topics turned on · 3 **Say hi** hex takes it from there
+- Under: You need a machine that stays on, Claude Code and a Claude subscription.
 
 ## Footer
 
-- Open source under MIT. Yours to fork.
-- github.com/AVGVSTVS96/hex
+- Line: hex is a sandbox. Come build it.
+- Button: Fork on GitHub
+- *(The hex wordmark drawn from small hexagon cells on a tray. Cells light up in a sweep when it comes into view, and under the pointer.)*
+- MIT · built on Claude Code · github.com/AVGVSTVS96/hex
