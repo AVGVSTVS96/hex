@@ -359,9 +359,10 @@ An answer from the app reaches the thread as your own tap would (with
 poll can't take a vote from the bot, so it closes instead. Undo puts the
 buttons back and tells the thread the answer no longer stands (a poll that was
 closed, in Telegram or Discord, stays closed). A note is your own words to the
-thread that asked, and the question stays open. Not needed tells the
-question's thread and every thread its copies are in, and settles the copies,
-which takes it off the list; undo brings it back too.
+thread that asked, and the question stays open. Not needed means it doesn't
+need you: it tells the question's thread and every thread its copies are in to
+decide or do it themselves, and settles the copies, which takes it off the
+list; undo brings it back and tells them it needs you after all.
 
 Answer and not needed go one at a time per question. The first step (the
 answer to its first copy, or not needed's word to the question's thread) has to

@@ -794,7 +794,7 @@ test("not needed takes a question off the list, settles its copies and tells its
     {
       type: "inbound",
       thread: DESK,
-      content: "(not needed, said in the app) Ship it?",
+      content: "(not needed from me, said in the app: decide or do it yourself) Ship it?",
       author: "owner",
       meta: { user: "hex app" },
     },
@@ -819,7 +819,7 @@ test("not needed takes a question off the list, settles its copies and tells its
     {
       type: "inbound",
       thread: DESK,
-      content: "(took back) Ship it?: Not needed",
+      content: "(took back: this needs me after all) Ship it?",
       author: "owner",
       meta: { user: "hex app" },
     },
@@ -836,8 +836,8 @@ test("not needed takes a question off the list, settles its copies and tells its
   await questions.undo("check:read", "app");
   await until(() => questions.find("check:read"));
   expect(lines.map((line) => line.content)).toEqual([
-    "(not needed, said in the app) Read the review",
-    "(took back) Read the review: Not needed",
+    "(not needed from me, said in the app: decide or do it yourself) Read the review",
+    "(took back: this needs me after all) Read the review",
   ]);
   expect(await rejection(questions.undo("check:read", "app"))).toContain(
     "there is no answer here to take back",
@@ -1292,7 +1292,7 @@ test("a question asked again over an earlier answer can be answered, and one und
     {
       type: "inbound",
       thread: DESK,
-      content: "(took back) Ship it: Not needed",
+      content: "(took back: this needs me after all) Ship it",
       author: "owner",
       meta: { user: "hex app" },
     },
