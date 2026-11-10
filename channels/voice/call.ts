@@ -21,7 +21,7 @@ type AppColonThread = string;
 export type Sent = { thread: AppColonThread; topic: string; settled: number; missed: number };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// ask: a question put on the caller's screen by its id; answered carries what sending it did; undone: that answer taken back; photo and video: what the caller sent from the app, by media id.
+// ask: a question put on the caller's screen by its id; answered carries what sending it did; undone: that answer taken back; photo and video: what the caller sent from the app, by media id; checked: what a say's answer rests on, in Claude's words.
 export type Mark = {
   at: number;
   kind:
@@ -39,6 +39,7 @@ export type Mark = {
   ask?: string;
   sent?: Sent;
   media?: string;
+  checked?: string;
 };
 
 export type Saved = {

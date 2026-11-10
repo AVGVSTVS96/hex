@@ -13,6 +13,7 @@ const ClientEvent = z.object({
   session: z.unknown().optional(),
   audio: z.string().optional(),
   event_id: z.unknown().optional(),
+  content: z.unknown().optional(),
 });
 
 const Session = z.object({
@@ -51,6 +52,7 @@ async function lineCall({
   readyVoiceStateBeforeTheEngine(state);
   const heard: string[] = [];
   const started: unknown[] = [];
+  const told: string[] = [];
   let voice: Bun.ServerWebSocket<unknown> | undefined;
 
   const openai = Bun.serve({
@@ -86,6 +88,16 @@ async function lineCall({
         if (event.type === "session.thinking.append") {
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
+          );
+        }
+
+        if (event.type === "session.instructions.append") {
+          told.push(String(event.content));
+          socket.send(
+            JSON.stringify({
+              type: "session.instructions.appended",
+              client_event_id: event.event_id,
+            }),
           );
         }
 
@@ -193,6 +205,7 @@ for await (const line of console) {
     heard,
     started,
     steps,
+    told,
     tell: async (line: string) => {
       await plugin.stdin.write(`${line}\n`);
       await plugin.stdin.flush();
@@ -501,4 +514,58 @@ test("a call opens with the caller's last calls: what each was about and what it
   expect(started.content).toContain(
     "5 min: Company name. Talked through names for the company. Left waiting: Pick a name.",
   );
+});
+
+const Styled = z.object({
+  instructions: z.string(),
+  audio: z.object({ output: z.object({ voice: z.string() }).optional() }),
+});
+
+const Changed = z.object({ settings: z.unknown() });
+
+test("a call talks the way the caller set it; a change mid-call reaches the voice at once and stays for the next call", async () => {
+  await using call = await lineCall({
+    readyVoiceStateBeforeTheEngine: (state) => {
+      writeFileSync(
+        join(state, "settings.json"),
+        JSON.stringify({ voice: "cedar", pace: "brisk", words: "Call me B." }),
+      );
+    },
+  });
+
+  const session = Styled.parse(await until(() => call.started[0]));
+  expect(session.audio.output?.voice).toBe("cedar");
+  expect(session.instructions).toContain("Pace: brisk.");
+  expect(session.instructions).toContain("In the caller's own words, how to talk: Call me B.");
+
+  const changed = Changed.parse(
+    await fetch(`${call.base}/settings`, {
+      method: "PUT",
+      body: JSON.stringify({ pace: "relaxed", personality: "brief" }),
+    }).then((response) => response.json()),
+  );
+
+  expect(changed.settings).toEqual({
+    voice: "cedar",
+    pace: "relaxed",
+    personality: "brief",
+    words: "Call me B.",
+  });
+  expect(call.told.at(-1)).toStartWith(
+    "The caller changed how you talk. From now on: Personality: brief",
+  );
+  expect(call.told.at(-1)).toContain("Pace: slow and deliberate.");
+
+  await call.tell(`tool style ${JSON.stringify({ pace: "brisk" })}`);
+  const tool = await until(() => call.steps.find((step) => step.step === "tool"));
+
+  expect(tool.text).toContain("and the voice talks that way now");
+  expect(call.told.at(-1)).toContain("Pace: brisk.");
+
+  const bad = await fetch(`${call.base}/settings`, {
+    method: "PUT",
+    body: JSON.stringify({ pace: "warp" }),
+  });
+
+  expect(bad.status).toBe(400);
 });
