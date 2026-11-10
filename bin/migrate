@@ -37,14 +37,17 @@ Hourly check: my email if a mail connector is set up, your own inbox if you have
 EOF
   )
   prompt=$(jq -r '.heartbeat.prompt // empty' "$home/schedules.json") || return
-  [ "$prompt" = "$old" ] || return 0
+  [ "$prompt" = "$old" ] || [ "$prompt" = 'Hourly check, see "Heartbeat" in .hex/HEX.md' ] || return 0
   jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt = $defaults[0].heartbeat.prompt' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
 }
 
-# The blob id of the SOUL.md that init used to seed: only a copy that is still exactly that gets the new one.
+# The blob ids of every SOUL.md that init has seeded: only a copy that is still exactly one of them gets the new one.
 step6() {
   [ -f "$home/SOUL.md" ] || return 0
-  [ "$(git hash-object --no-filters "$home/SOUL.md")" = 4ab4ff6c6026d57bd091f0eb3a7f810203b33529 ] || return 0
+  case $(git hash-object --no-filters "$home/SOUL.md") in
+    a456656b478936f8e466863f1a31b26e94248bc5 | 9e2e9b9b8d6f37ac85e369a75b2123b8f76e7e90 | 4ab4ff6c6026d57bd091f0eb3a7f810203b33529) ;;
+    *) return 0 ;;
+  esac
   cp "$hex/defaults/SOUL.md" "$home/SOUL.md.new" && mv "$home/SOUL.md.new" "$home/SOUL.md"
 }
 

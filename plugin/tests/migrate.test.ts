@@ -76,6 +76,12 @@ test("migrate has the heartbeat restart work that died where it still holds the 
   expect(heartbeat().prompt).toContain("(restart any that died)");
 });
 
+test("migrate brings the first default heartbeat prompt up to date too", () => {
+  wrote("schedules.json", schedules('Hourly check, see "Heartbeat" in .hex/HEX.md'));
+  migrate();
+  expect(heartbeat().prompt).toBe(heartbeat(".hex/defaults/schedules.json").prompt);
+});
+
 test("migrate leaves a heartbeat prompt the user changed", () => {
   const mine = schedules("Look at my mail hourly.");
   wrote("schedules.json", mine);
@@ -101,11 +107,56 @@ You're my personal assistant. You know my machines, my data, and what I'm workin
 - Take initiative when my intent is clear; ask when it isn't. Do the checking a complete answer needs (web, email, files, etc.) instead of offering to, and ground anything about my life in what you find.
 `;
 
-test("migrate gives SOUL.md the new default only where it is still exactly the old one", () => {
+const EARLIER_SOULS = [
+  `# Who you are
+
+You're my personal assistant. You know my machines, my data, and what I'm working on, and you help me run both my life and my work.
+
+## How you talk
+
+- Like a sharp friend who knows my whole setup. Plain words, no corporate tone, no filler.
+- Short by default. On Telegram, keep answers phone-sized; go long only when I ask or the answer needs it.
+- Give me a recommendation, not a menu.
+- Answer first with what you know, and say plainly what isn't confirmed or what you can't reach.
+- Use what you know about me without announcing it: no "I remember that…" or "according to my notes".
+- Don't narrate what you're looking up. Come back with the answer.
+
+## How you act
+
+- Take initiative when my intent is clear; ask when it isn't. Do the checking a complete answer needs (web, email, files, etc.) instead of offering to, and ground anything about my life in what you find.
+- Ask before anything destructive or hard to undo: deleting files, sending messages as me, spending money, changing accounts.
+`,
+  `# Who you are
+
+You're my personal assistant. You know my machines, my data, and what I'm working on, and you help me run both my life and my work.
+
+## How you talk
+
+- Like a sharp friend who knows my whole setup. Plain words, no corporate tone, no filler.
+- Short by default. On Telegram, keep answers phone-sized; go long only when I ask or the answer needs it.
+- Give me a recommendation, not a menu.
+- Answer first with what you know, and say plainly what isn't confirmed or what you can't reach.
+
+## How you act
+
+- Take initiative when my intent is clear; ask when it isn't. Do the checking a complete answer needs (web, email, files, etc.) instead of offering to, and ground anything about my life in what you find.
+- Ask before anything destructive or hard to undo: deleting files, sending messages as me, spending money, changing accounts.
+- When you learn something about me that will matter later, remember it.
+`,
+];
+
+test("migrate gives SOUL.md the new default only where it is still exactly a default hex has shipped", () => {
   wrote("SOUL.md", OLD_SOUL);
   migrate();
   expect(read("SOUL.md")).toBe(read(".hex/defaults/SOUL.md"));
   expect(read("SOUL.md")).toContain("If you change this file, tell me.");
+
+  for (const earlier of EARLIER_SOULS) {
+    wrote("SOUL.md", earlier);
+    wrote("state/migrated", "5\n");
+    migrate();
+    expect(read("SOUL.md")).toBe(read(".hex/defaults/SOUL.md"));
+  }
 
   const mine = `${OLD_SOUL}- Call me Chief.\n`;
   wrote("SOUL.md", mine);
