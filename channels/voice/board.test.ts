@@ -1263,9 +1263,7 @@ test("a session whose process runs under a thread's session is one of its agents
     env,
   });
 
-  const kids = await until(() =>
-    children(topic.pid).length === 3 ? children(topic.pid) : undefined,
-  );
+  const kids = await childrenOnceEachRunsSleep(topic.pid, 3);
 
   afterAll(() => {
     for (const pid of [topic.pid, ...kids]) {
@@ -1337,6 +1335,15 @@ function children(pid: number) {
     .map(Number);
 }
 
+const runsSleep = (pid: number) => readFileSync(`/proc/${pid}/comm`, "utf-8") === "sleep\n";
+
+const childrenOnceEachRunsSleep = (pid: number, count: number) =>
+  until(() => {
+    const kids = children(pid);
+
+    return kids.length === count && kids.every(runsSleep) ? kids : undefined;
+  });
+
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
   const build = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-1001234567890:3275" },
@@ -1384,9 +1391,7 @@ test("a job's session works under the thread that owns it, wherever it runs, and
     env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:404" },
   });
 
-  const sub = found(
-    (await until(() => (children(orphan.pid).length === 1 ? children(orphan.pid) : undefined)))[0],
-  );
+  const sub = found((await childrenOnceEachRunsSleep(orphan.pid, 1))[0]);
 
   afterAll(() => {
     for (const pid of [owned.pid, orphan.pid, sub]) {
@@ -1910,11 +1915,7 @@ test("what a session T3 Code runs launches goes by T3's handoffs, not the thread
     env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "" },
   });
 
-  const kid = found(
-    (
-      await until(() => (children(t3server.pid).length === 1 ? children(t3server.pid) : undefined))
-    )[0],
-  );
+  const kid = found((await childrenOnceEachRunsSleep(t3server.pid, 1))[0]);
 
   afterAll(() => {
     for (const pid of [t3server.pid, kid]) {
