@@ -75,6 +75,7 @@ const JobSchema = z
         .string({ error: notIdea })
         .regex(/^t-\d+$/u, { error: notIdea })
         .optional(),
+      check: z.boolean({ error: "check must be true or false" }).optional(),
     },
     { error: "prompt is missing" },
   )
@@ -253,7 +254,7 @@ export function check(
     for (const [name, minute] of slots) {
       const job = jobs[name];
 
-      if (job !== undefined && (job.idea ?? "") === "") {
+      if (job !== undefined && job.idea === undefined && job.check !== true) {
         store.scheduler.fire(
           name,
           minute,
@@ -268,10 +269,8 @@ export function check(
   });
 
   for (const [name, job] of Object.entries(jobs)) {
-    const { idea } = job;
-
-    if (idea !== undefined && idea !== "") {
-      research(storeDir, name, { ...job, idea }, main, slots.get(name));
+    if (job.idea !== undefined || job.check === true) {
+      research(storeDir, name, job, main, slots.get(name));
     }
   }
 }
