@@ -11,7 +11,10 @@ const formatField = z
   );
 
 const widgetData = z
-  .string()
+  .preprocess(
+    (data) => (z.string().safeParse(data).success ? data : JSON.stringify(data)),
+    z.string(),
+  )
   .describe(
     "A widget's state, up to 1024 bytes, usually JSON: chat_data for this message, public_data for every copy of it. An empty string clears it.",
   );
