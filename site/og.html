@@ -16,39 +16,45 @@
   }
   .mark { width: 96px; height: 33px; color: var(--ink); margin-bottom: 44px; }
   h1 { font-size: 62px; line-height: 1.02; letter-spacing: -0.028em; }
-  p { margin-top: 24px; color: var(--muted); font-size: 24px; line-height: 1.4; max-width: 30ch; }
-  p b { color: var(--ink); font-weight: 500; }
+  .lede { margin-top: 24px; color: var(--muted); font-size: 24px; line-height: 1.4; max-width: 30ch; }
+  .lede b { color: var(--ink); font-weight: 500; }
   .stage { position: relative; height: 630px; }
-  .device-tg { left: 30px; top: 64px; width: 300px; height: 640px; }
+  .device-tg { left: 40px; top: 0; }
 </style>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="wordmark" viewBox="0 0 2167 737"><path fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></symbol>
+  <symbol id="bubble" viewBox="0 0 24 24"><path d="M12 2.5C6.5 2.5 2 6.4 2 11.2c0 2.6 1.3 4.9 3.4 6.5L4.6 21l4-1.9c1.1.3 2.2.5 3.4.5 5.5 0 10-3.9 10-8.6S17.5 2.5 12 2.5Z" fill="currentColor"/></symbol>
 </svg>
 <div>
   <svg class="mark" viewBox="0 0 2167 737" aria-label="hex"><use href="#wordmark"/></svg>
   <h1>The best personal assistant is already on your machine.</h1>
-  <p><b>It's just been busy writing code.</b> hex makes Claude Code your personal assistant.</p>
+  <p class="lede"><b>It's just been busy writing code.</b> hex makes Claude Code your personal assistant.</p>
 </div>
 <div class="stage">
   <figure class="device device-tg">
-    <div class="tg">
-      <div class="tg-status"><b>9:41</b><span class="tg-island"></span><span class="tg-sys"><i></i><i></i><i></i></span></div>
-      <div class="tg-head">
-        <span class="glass tg-back">‹</span>
-        <span class="glass tg-title"><b>General</b><small>hex · 4 topics</small></span>
-        <span class="glass tg-ava"><svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg></span>
-      </div>
+    <div class="tgp" aria-hidden="true">
+      <div class="ios-bar"><time>9:41</time><i class="ios-island"></i><span class="ios-icons"><svg viewBox="0 0 18 12"><rect y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" width="3" height="12" rx="1"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.6 5.7 9.2a3.3 3.3 0 0 1 4.6 0zM3.5 7a6.4 6.4 0 0 1 9 0l-1.4 1.4a4.4 4.4 0 0 0-6.2 0zM1.2 4.7a9.6 9.6 0 0 1 13.6 0l-1.4 1.4a7.6 7.6 0 0 0-10.8 0z"/></svg><span class="battery"><i></i></span></span></div>
+      <div class="tg-top"><span class="tg-glass tg-back">‹<em>3</em></span><span class="tg-glass tg-name"><b>hex</b><small>2 members</small></span><span class="tg-glass tg-more">•••</span></div>
       <div class="tg-chat">
-        <div class="bub out voice-note"><span class="vn-play"></span><span class="vn-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span><span class="vn-len">0:07</span><time>6:10</time></div>
-            <div class="bub in">Done. Your 9am is at 10 now.<time>6:10</time></div>
-        <div class="bub out">find 3 ramen spots open tonight near me, make a page comparing them and deploy it<time>6:12</time></div>
-        <div class="bub in">On it. Opened <span class="tg-link">#ramen-tonight</span>.<time>6:12</time></div>
-        <div class="bub in">It's live.
-          <span class="tg-card"><b>Vercel</b><strong>ramen-tonight.vercel.app</strong><small>3 spots · open now</small></span>
-          <time>6:19</time></div>
-        <div style="height:40px"></div>
+        <p class="bub out tg-voice"><span class="play"></span><span class="tg-wave"><i style="height:30%"></i><i style="height:55%"></i><i style="height:80%"></i><i style="height:45%"></i><i style="height:95%"></i><i style="height:60%"></i><i style="height:35%"></i><i style="height:70%"></i><i style="height:100%"></i><i style="height:50%"></i><i style="height:30%"></i><i style="height:65%"></i><i style="height:85%"></i><i style="height:40%"></i><i style="height:25%"></i><i style="height:55%"></i><i style="height:35%"></i><i style="height:20%"></i></span><small>0:07</small><time>6:10 <b>✓✓</b></time></p>
+        <div class="from"><img class="tg-av" src="icon.svg" alt=""><p class="bub in">Done. Your 9am is at 10 now.<time>6:10</time></p></div>
+        <p class="bub out a1">find 3 ramen spots open tonight near me, make a page comparing them and deploy it<time>6:12 <b>✓✓</b></time></p>
+        <div class="from a2"><img class="tg-av" src="icon.svg" alt=""><p class="bub in">On it. Opened <span class="tg-link">#ramen</span>.<time>6:12</time></p></div>
+        <div class="from a3"><img class="tg-av" src="icon.svg" alt=""><div class="bub in">It's live.<span class="preview"><b>Vercel</b><strong>ramen-tonight.vercel.app</strong><small>3 spots compared · open now · walking distance</small></span><time>6:19</time></div></div>
+      </div>
+      <div class="tg-tabs tg-glass">
+        <span class="tab all"><svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5v4a2.5 2.5 0 0 1-2.5 2.5H9l-3 2.5V13a2.5 2.5 0 0 1-2-2.5z"/><path d="M18 9h.5A2.5 2.5 0 0 1 21 11.5v4a2.5 2.5 0 0 1-2 2.5V20l-3-2h-3.5a2.5 2.5 0 0 1-2.4-1.8"/></svg>All</span>
+        <span class="tab on"><b class="hash">#</b>General</span>
+        <span class="tab new"><span class="ti" style="color:#F25C8E"><svg><use href="#bubble"/></svg><b>R</b></span>ramen<span class="states"><em>working…</em><em class="done">done ✓</em></span></span>
+        <span class="tab"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>C</b></span>clips</span>
+        <span class="tab"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>L</b></span>leisure</span>
+      </div>
+      <div class="tg-compose">
+        <span class="tg-glass tg-round"><svg viewBox="0 0 24 24"><path d="M16.5 6.5 8.4 14.6a2 2 0 1 0 2.8 2.8l8.1-8.1a4 4 0 0 0-5.6-5.6L5.4 12a6 6 0 0 0 8.5 8.5l6.6-6.6"/></svg></span>
+        <span class="tg-glass tg-field">Message in General<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 8.5 8.5H12z"/></svg></span>
+        <span class="tg-glass tg-round"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
       </div>
     </div>
   </figure>
