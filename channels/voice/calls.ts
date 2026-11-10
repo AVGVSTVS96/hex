@@ -33,6 +33,7 @@ export type CallRecord = {
   summary?: string;
   waiting?: string[];
   expires?: string;
+  session?: string;
   usage?: Usage;
   turns: { who: Speaker; at: number; text: string }[];
   tasks: Moment[];
@@ -74,6 +75,7 @@ const mark: z.ZodType<Mark> = z.object({
     "muted",
     "unmuted",
     "stopped",
+    "reconnected",
   ]),
   text: z.string(),
   ask: z.string().exactOptional(),
@@ -101,6 +103,7 @@ export const savedCall: z.ZodType<CallRecord> = z.object({
   summary: z.string().exactOptional(),
   waiting: z.array(z.string()).exactOptional(),
   expires: z.string().exactOptional(),
+  session: z.string().exactOptional(),
   usage: z
     .object({ seconds: z.number(), dollars: z.number(), context: z.number().exactOptional() })
     .exactOptional(),

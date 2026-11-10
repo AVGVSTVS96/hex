@@ -155,12 +155,13 @@ each, with why it was calling.
 
 `why` is the reason Claude gave `phone`; `summary` and `waiting` are Claude's
 wrap-up from `title`; `moments` are Claude's exact `say` and `note` words
-(the voice paraphrases them aloud), the time-limit warning, when the
-caller's phone took the audio (`paused`, `resumed`), and each photo or video
-they sent (`photo`, `video`, with its `media` id). `usage` is OpenAI's
+(the voice paraphrases them aloud), each time the call carried on in a new
+session (`reconnected`), when the caller's phone took the audio (`paused`,
+`resumed`), and each photo or video they sent (`photo`, `video`, with its
+`media` id). `usage` is OpenAI's
 billed audio seconds, their cost, and how full the voice's context got;
-`expires` is when OpenAI ends the session, and two minutes before it the voice
-and Claude are told. `at` is milliseconds from the start of the call; `claude` is
+`expires` is when OpenAI ends the current session and `session` its id once
+the call has moved to a new one. `at` is milliseconds from the start of the call; `claude` is
 the Claude Code session that did the work. Each speaker's words are joined
 the way live captions show them: a pause of over two seconds starts a new turn.
 Tasks often finish after the caller hangs up; `task` with that call's id keeps
@@ -204,9 +205,17 @@ said in it: "...")`), and every image in `image_path`, as Telegram's photos arri
 
 ## Dropped connections and restarts
 
-If the engine's connection to a page or app call drops, it reattaches to the
-same session by its id (`/v1/live/sessions/<id>/attach`) a few times over
-about 15 seconds before calling the call dropped. When the engine starts, it
+Only a hang-up ends a call. If the engine's connection to a page or app call
+drops, it keeps reattaching to the same session by its id
+(`/v1/live/sessions/<id>/attach`) for as long as the session lives. A session
+OpenAI ends on its own (`expired`, `connection_lost`, `remote_hangup`) doesn't
+end the call: it carries on in a new session that starts with the call so far.
+The app opens it with `POST /session` and `continues: <call id>`, and gets back
+the same call id; a phone or Discord call's new session is opened by the
+engine, and the line's audio moves to it. The call keeps its id, record and
+clock, Claude is told, and answers to earlier handoffs reach the new session
+without their handoff. With no new session in two minutes the call ends as it
+was lost; a hang-up meanwhile ends it at once. When the engine starts, it
 picks the latest call that never got an end back up the same way and sends
 Claude a "call resumed" message with the call so far; any other call left
 without an end is closed out as `dropped` and ends like any other call: Claude
