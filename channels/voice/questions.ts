@@ -11,6 +11,8 @@ import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";
 import { before, Check, final } from "./check.ts";
 import { linkAt, Links } from "./links.ts";
+import { caption, meta as mediaMeta } from "./media.ts";
+import type { Item } from "./media.ts";
 import { relay } from "./relay.ts";
 import { T3 } from "./t3.ts";
 import type { Fresh, Stuck } from "./t3.ts";
@@ -395,8 +397,8 @@ export class Questions extends Changes {
     }
   }
 
-  answer(id: string, label: string, via: string): Promise<Sent> {
-    return this.take(this.listed(id), label, via, false);
+  answer(id: string, label: string, via: string, media: Item[] = []): Promise<Sent> {
+    return this.take(this.listed(id), label, via, false, media);
   }
 
   private async answering(
@@ -407,6 +409,7 @@ export class Questions extends Changes {
     taken: Taken,
     where: string,
     finishing: boolean,
+    media: Item[],
   ) {
     const value = question.options.find((option) => option.label === label)?.value ?? label;
     const refs = this.left(id, taken);
@@ -425,7 +428,7 @@ export class Questions extends Changes {
       return await tryEach(refs, settle);
     }
 
-    await (first && this.asked(first)?.options.includes(value) === true
+    await (first && media.length === 0 && this.asked(first)?.options.includes(value) === true
       ? this.reach(taken, first, {
           type: "answer",
           thread: first.thread,
@@ -438,6 +441,7 @@ export class Questions extends Changes {
           first ? place(first) : question.task,
           `(answered ${where}) ${question.question}: ${label}`,
           via,
+          media,
         ));
 
     return await tryEach(
@@ -446,7 +450,7 @@ export class Questions extends Changes {
     );
   }
 
-  async note(id: string, text: string, via: string): Promise<Sent> {
+  async note(id: string, text: string, via: string, media: Item[] = []): Promise<Sent> {
     const key = this.listed(id);
     const question = this.find(key);
 
@@ -465,6 +469,8 @@ export class Questions extends Changes {
       thread,
       `(note written ${WHERE.get(via) ?? via}) ${question.question}: ${text}`,
       via,
+      "owner",
+      media,
     );
 
     return { ...this.sent(thread, 0), missed: 0 };
@@ -721,7 +727,13 @@ export class Questions extends Changes {
     return [];
   }
 
-  private async take(id: string, label: string, via: string, dismissed: boolean): Promise<Sent> {
+  private async take(
+    id: string,
+    label: string,
+    via: string,
+    dismissed: boolean,
+    media: Item[] = [],
+  ): Promise<Sent> {
     if (this.taking.has(id)) {
       throw new Error("an answer to that is on its way; try again in a moment");
     }
@@ -766,7 +778,7 @@ export class Questions extends Changes {
 
       const failed = await (notNeeded
         ? this.dismissing(id, via, question, taken, where, finishing)
-        : this.answering(id, label, via, question, taken, where, finishing));
+        : this.answering(id, label, via, question, taken, where, finishing, media));
 
       if (taken.told.length === 0 && taken.refs.length === 0) {
         const [error] = failed;
@@ -805,8 +817,14 @@ export class Questions extends Changes {
     taken.refs.push(ref);
   }
 
-  private async inform(taken: Taken, thread: string, content: string, via: string) {
-    await this.tell(thread, content, via);
+  private async inform(
+    taken: Taken,
+    thread: string,
+    content: string,
+    via: string,
+    media: Item[] = [],
+  ) {
+    await this.tell(thread, content, via, "owner", media);
     taken.told.push(thread);
   }
 
@@ -871,15 +889,21 @@ export class Questions extends Changes {
     return !!asked && !asked.answer && !asked.settled;
   }
 
-  private tell(id: string, content: string, via: string, author: "owner" | "prompt" = "owner") {
+  private tell(
+    id: string,
+    content: string,
+    via: string,
+    author: "owner" | "prompt" = "owner",
+    media: Item[] = [],
+  ) {
     const [app = "", ...thread] = id.split(":");
 
     return relay(this.state, app, {
       type: "inbound",
       thread: thread.join(":"),
-      content,
+      content: caption(content, media),
       author,
-      meta: { user: `hex ${via}` },
+      meta: { user: `hex ${via}`, ...mediaMeta(media) },
     });
   }
 

@@ -12,6 +12,8 @@ import { until } from "@hex/hub/testing";
 import { z } from "zod";
 
 import { before, digest, failed, vet } from "./check.ts";
+import { caption, meta as mediaMeta } from "./media.ts";
+import type { Item } from "./media.ts";
 import { Questions, fromLedger } from "./questions.ts";
 import type { Curated, Source } from "./questions.ts";
 import { T3 } from "./t3.ts";
@@ -750,6 +752,32 @@ test("a note reaches the thread that asked and leaves the question open, with no
   expect(questions.view.asks.map((question) => question.id)).toEqual([
     `telegram:${DESK}:1`,
     "check:read",
+  ]);
+});
+
+test("an answer or a note with a photo reaches the thread as words carrying the photo, even when its words are one of the buttons", async () => {
+  ledger([asked(1, "Ship it?", ["Yes", "No"])]);
+  questions = new Questions(state, { t3Database: "/nonexistent", t3Home: "/nonexistent" });
+  const photo: Item = { id: "m1", kind: "photo", images: [join(state, "m1.jpg")] };
+  await questions.note(`telegram:${DESK}:1`, "this one?", "app", [photo]);
+  await questions.answer(`telegram:${DESK}:1`, "Yes", "app", [photo]);
+  await until(() => lines.length === 3);
+  expect(lines).toEqual([
+    {
+      type: "inbound",
+      thread: DESK,
+      content: caption("(note written in the app) Ship it?: this one?", [photo]),
+      author: "owner",
+      meta: { user: "hex app", ...mediaMeta([photo]) },
+    },
+    {
+      type: "inbound",
+      thread: DESK,
+      content: caption("(answered in the app) Ship it?: Yes", [photo]),
+      author: "owner",
+      meta: { user: "hex app", ...mediaMeta([photo]) },
+    },
+    { type: "settle", thread: DESK, message: 1, note: "✓ Answered in the app: Yes" },
   ]);
 });
 
