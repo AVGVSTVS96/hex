@@ -931,10 +931,17 @@ function past(id: string) {
 }
 
 async function hangUpCall(call: Live) {
-  await untilQuiet(call, HANG_UP_MOST, Date.now());
+  const asked = Date.now();
+  await untilQuiet(call, HANG_UP_MOST, asked);
 
   if (live !== call) {
     return "the call had already ended";
+  }
+
+  if (call.callerSpoke > asked) {
+    const said = call.call.record().turns.findLast((turn) => turn.who === "you")?.text;
+
+    return `not hung up: the caller spoke after you asked to${filled(said) ? ` ("${said}")` : ""}. If they still want to go, hang_up again; otherwise answer them.`;
   }
 
   close(call, `close_hex_${++seq}`);
@@ -1599,47 +1606,82 @@ function reconnect(call: Live, attempt: number) {
   delete call.closed;
 
   const socketIsTheSession = call.speak !== undefined;
+  const hungUp = filled(call.closing);
 
-  if (socketIsTheSession || attempt >= RETRIES.length) {
-    const appCallWouldGoOnWithNothingBehindTheVoice = !filled(call.closing) && !socketIsTheSession;
-
-    finish(call, filled(call.closing) ? "close_requested" : "connection_lost", call.closing);
-
-    if (appCallWouldGoOnWithNothingBehindTheVoice) {
-      closeSession(call.id, `close_hex_${++seq}`);
-    }
+  if (socketIsTheSession || (hungUp && attempt >= RETRIES.length)) {
+    finish(call, hungUp ? "close_requested" : "connection_lost", call.closing);
 
     return;
   }
 
   trace(`lost the connection to ${call.id}, reattaching (try ${attempt + 1})`);
-  setTimeout(() => {
-    if (live !== call) {
-      return;
-    }
-
-    const socket = sideband(call.id);
-    socket.addEventListener("open", () => {
+  setTimeout(
+    () => {
       if (live !== call) {
-        if (filled(call.closing) && call.closed !== true) {
-          sendClose(call, call.closing, socket);
-        }
-
-        socket.close();
-
         return;
       }
 
-      trace(`reattached to ${call.id}`);
-      call.socket = socket;
-      listen(call, socket, attempt);
+      const socket = sideband(call.id);
+      socket.addEventListener("open", () => {
+        if (live !== call) {
+          if (filled(call.closing) && call.closed !== true) {
+            sendClose(call, call.closing, socket);
+          }
+
+          socket.close();
+
+          return;
+        }
+
+        trace(`reattached to ${call.id}`);
+        call.socket = socket;
+        listen(call, socket, attempt);
+      });
+
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      /* The caller's app holds the call, not this connection, so losing it never ends the call: the
+       engine keeps coming back until OpenAI says the session is gone or its time is up. */
+      // oxlint-disable-next-line unicorn/prefer-add-event-listener -- listen() replaces it once the socket opens
+      socket.onclose = async () => {
+        const over = filled(call.closing) ? undefined : await sessionOver(call);
+
+        if (over === undefined) {
+          reconnect(call, attempt + 1);
+        } else {
+          finish(call, over);
+        }
+      };
+    },
+    RETRIES[Math.min(attempt, RETRIES.length - 1)],
+  );
+}
+
+async function sessionOver(call: Live) {
+  if (expired(call.record)) {
+    return "expired";
+  }
+
+  return (await sessionGone(call.id)) ? "connection_lost" : undefined;
+}
+
+function expired({ expires }: Pick<CallRecord, "expires">) {
+  return filled(expires) && Date.parse(expires) <= Date.now();
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* OpenAI answers a plain GET on a session's attach URL with 400 while the session lives and 404
+   once it's gone; anything else, or no answer, says nothing either way. */
+async function sessionGone(id: string) {
+  try {
+    const { status } = await fetch(`${API}/${id}/attach`, {
+      headers: { Authorization: `Bearer ${KEY}` },
+      signal: AbortSignal.timeout(5000),
     });
 
-    // oxlint-disable-next-line unicorn/prefer-add-event-listener -- listen() replaces it once the socket opens
-    socket.onclose = () => {
-      reconnect(call, attempt + 1);
-    };
-  }, RETRIES[attempt]);
+    return status === 404;
+  } catch {
+    return false;
+  }
 }
 
 function warn(call: Live) {
@@ -1710,10 +1752,10 @@ function recover() {
       i === 0 &&
       filled(KEY) &&
       (record.from === "app" || record.from === "web") &&
-      !(filled(record.expires) && Date.parse(record.expires) < Date.now());
+      !expired(record);
 
     if (latest) {
-      reattach(record);
+      reattach({ id });
     } else {
       closeOut(record);
     }
@@ -1777,9 +1819,9 @@ function retire(pending: Attaching, event: string) {
   }
 }
 
-function reattach({ id }: CallRecord) {
+function reattach(pending: Attaching, attempt = 0) {
+  const { id } = pending;
   const socket = sideband(id);
-  const pending: Attaching = { id };
   attaching = pending;
   socket.addEventListener("open", () => {
     if (attaching === pending) {
@@ -1824,28 +1866,55 @@ function reattach({ id }: CallRecord) {
 
   // oxlint-disable-next-line unicorn/prefer-add-event-listener -- listen() replaces this handler once the call is live
   socket.onclose = () => {
-    if (attaching === pending) {
-      attaching = undefined;
-    }
-
     if (filled(pending.closing)) {
       closeSession(id, pending.closing);
 
       return;
     }
 
-    if (live?.id === id) {
-      return;
+    if (live?.id !== id) {
+      void attachAgain(pending, attempt);
     }
+  };
+}
 
-    const record = calls.get(id);
+async function attachAgain(pending: Attaching, attempt: number) {
+  const record = calls.get(pending.id);
+
+  const stillOn =
+    record !== undefined && !live && !expired(record) && !(await sessionGone(pending.id));
+
+  if (filled(pending.closing)) {
+    closeSession(pending.id, pending.closing);
+
+    return;
+  }
+
+  if (!stillOn || live) {
+    if (attaching === pending) {
+      attaching = undefined;
+    }
 
     if (record) {
       closeOut(record);
     } else if (!live) {
       toHub(hub.renew);
     }
-  };
+
+    return;
+  }
+
+  trace(`couldn't attach back to ${pending.id} yet, trying again (try ${attempt + 1})`);
+  setTimeout(
+    () => {
+      if (filled(pending.closing)) {
+        closeSession(pending.id, pending.closing);
+      } else if (attaching === pending) {
+        reattach(pending, attempt + 1);
+      }
+    },
+    RETRIES[Math.min(attempt, RETRIES.length - 1)],
+  );
 }
 
 async function dial({
@@ -2458,8 +2527,22 @@ function closeSocket(openai: WebSocket, event: string) {
 
 type SessionExtra = {
   audio?: { format?: Passed["format"]; output?: { voice: string } };
-  client?: { data_channel: { allowed_client_events: string[] } };
+  client?: {
+    data_channel: { allowed_client_events: string[]; allowed_server_events: { type: string }[] };
+  };
 };
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The app's data channel gets every server event unless told otherwise, the errors the engine's own
+   commands cause included, and an app that hangs up on one loses a call that was fine. */
+const APP_HEARS = [
+  "session.started",
+  "session.input_transcript.delta",
+  "session.output_transcript.delta",
+  "session.input_audio.muted",
+  "session.input_audio.unmuted",
+  "session.closed",
+].map((type) => ({ type }));
 
 function session(extra: SessionExtra = {}, opening?: string) {
   return {
@@ -2512,6 +2595,7 @@ async function start(request: Request) {
                   "session.input_audio.unmute",
                   "session.close",
                 ],
+                allowed_server_events: APP_HEARS,
               },
             },
           },

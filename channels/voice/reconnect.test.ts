@@ -83,6 +83,8 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   let made = 0;
   let probes = 0;
   let credit = true;
+  let attach: "open" | "refused" | "gone" = "open";
+  const created: unknown[] = [];
   const waiting: (() => void)[] = [];
 
   const openai = Bun.serve<AttachData>({
@@ -110,6 +112,8 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
       }
 
       if (request.method === "POST") {
+        created.push(await request.json());
+
         return Response.json(
           {
             session: {
@@ -128,6 +132,14 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
           waiting.push(resolve);
         });
         held = false;
+      }
+
+      if (attach === "gone") {
+        return Response.json({ error: { message: "No session found" } }, { status: 404 });
+      }
+
+      if (attach === "refused") {
+        return new Response(null, { status: 503 });
       }
 
       return server.upgrade(request, {
@@ -274,6 +286,13 @@ for await (const line of console) {
       voice = undefined;
       await until(() => held);
     },
+    cut: (to: typeof attach) => {
+      attach = to;
+      voice?.close();
+      voice = undefined;
+    },
+    attachIs: (to: typeof attach) => void (attach = to),
+    created,
     attaching: () => until(() => held),
     hold: () => void (hold = true),
     holdAcks: () => void (acking = false),
@@ -815,4 +834,94 @@ test("calling off a handoff hex is working on stops its turn at once, then hands
   expect(stopped.meta?.delegation_id).toBe("d1");
   expect(stopped.content).toContain("You don't do that");
   expect((await engine.call()).moments).toMatchObject([{ kind: "stopped" }]);
+}, 20_000);
+
+test("the app's data channel hears only what the app uses, so an error the engine's commands cause never reaches it", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  expect(engine.created[0]).toMatchObject({
+    session: {
+      client: {
+        data_channel: {
+          allowed_server_events: [
+            { type: "session.started" },
+            { type: "session.input_transcript.delta" },
+            { type: "session.output_transcript.delta" },
+            { type: "session.input_audio.muted" },
+            { type: "session.input_audio.unmuted" },
+            { type: "session.closed" },
+          ],
+        },
+      },
+    },
+  });
+});
+
+test("an app call whose connection stays down past every retry goes on, and the engine comes back to it once it can", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.cut("refused");
+  await Bun.sleep(17_000);
+  expect(await engine.live()).toBe(ID);
+  expect((await engine.call()).ended).toBeUndefined();
+  expect(engine.closes).toEqual([]);
+  engine.attachIs("open");
+  await engine.attached();
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
+  expect(engine.closes).toEqual([`${ID} close-you-app`]);
+}, 40_000);
+
+test("an app call OpenAI says is gone ends as dropped, with no close sent", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.cut("gone");
+
+  for (let tries = 0; (await engine.call()).ended === undefined; tries++) {
+    expect(tries).toBeLessThan(400);
+    await Bun.sleep(50);
+  }
+
+  expect(await engine.call()).toMatchObject({ end: "dropped", reason: "connection_lost" });
+  expect(engine.closes).toEqual([]);
+}, 30_000);
+
+test("after a restart, the engine keeps coming back to a call it can't attach to yet, and closes it out once OpenAI says it's gone", async () => {
+  for (const after of ["open", "gone"] as const) {
+    await using engine = await appCall({ callStillGoingAtStart: true });
+    await engine.attaching();
+    engine.attachIs("refused");
+    engine.back();
+    await Bun.sleep(4000);
+    expect((await engine.call()).ended).toBeUndefined();
+    engine.attachIs(after);
+
+    if (after === "open") {
+      await engine.attached();
+      expect(await engine.live()).toBe(ID);
+      expect((await engine.call()).ended).toBeUndefined();
+    } else {
+      expect(await ends(engine)).toMatchObject({
+        reason: "hex's service restarted and the call was gone",
+      });
+      expect(engine.closes).toEqual([]);
+    }
+  }
+}, 40_000);
+
+test("hex's hang-up holds off when the caller speaks after it was asked for", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  const hungUp = engine.tool("hang_up");
+  await Bun.sleep(500);
+  engine.send({
+    type: "session.input_transcript.delta",
+    delta: "wait, one more thing",
+    start_ms: 9000,
+  });
+  expect((await hungUp).result).toStartWith(
+    'not hung up: the caller spoke after you asked to ("wait, one more thing")',
+  );
+  expect(engine.closes).toEqual([]);
+  expect(await engine.tool("hang_up")).toEqual({ result: "hanging up" });
 }, 20_000);
