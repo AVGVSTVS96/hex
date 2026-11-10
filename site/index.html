@@ -2,648 +2,203 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>hex · The best personal assistant is already on your machine</title>
-<meta name="description" content="Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 16,000 lines plus its connectors, on the Claude plan you already pay for.">
+<meta name="description" content="hex turns Claude Code into your personal assistant. It runs on your own machine, on the Claude plan you already pay for, and you reach it from Telegram, Discord, Buzz, T3 Code, your keyboard or a phone call.">
 <meta name="color-scheme" content="light dark">
-<meta name="theme-color" content="#F3EFE6" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0A0A0A" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#FAFAF9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#09090A" media="(prefers-color-scheme: dark)">
 <meta property="og:title" content="hex · The best personal assistant is already on your machine">
-<meta property="og:description" content="Claude Code is the best personal assistant there is. It's just been busy writing code. hex is the thin layer that points it at your life: about 16,000 lines plus its connectors, on the Claude plan you already pay for.">
+<meta property="og:description" content="hex turns Claude Code into your personal assistant, on your own machine and the Claude plan you already pay for.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://hex-sand.vercel.app">
-<meta property="og:image" content="https://hex-sand.vercel.app/og.png?v=5">
+<meta property="og:image" content="https://hex-sand.vercel.app/og.png?v=6">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="hex: The best personal assistant is already on your machine. About 16,000 lines, $0 extra on your Claude plan, any client, no frameworks.">
+<meta property="og:image:alt" content="hex: The best personal assistant is already on your machine.">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:image" content="https://hex-sand.vercel.app/og.png?v=5">
+<meta name="twitter:image" content="https://hex-sand.vercel.app/og.png?v=6">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
-<link rel="preload" href="/fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/style.css">
+<link rel="preload" href="fonts/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-<div class="frame">
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="bubble" viewBox="0 0 24 24"><path d="M12 2.5C6.5 2.5 2 6.4 2 11.2c0 2.6 1.3 4.9 3.4 6.5L4.6 21l4-1.9c1.1.3 2.2.5 3.4.5 5.5 0 10-3.9 10-8.6S17.5 2.5 12 2.5Z" fill="currentColor"/></symbol>
+  <symbol id="wordmark" viewBox="0 0 2167 737"><path fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></symbol>
+  <symbol id="i-github" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" d="M5.5 5.5V3.25c0-.97.78-1.75 1.75-1.75h5.5c.97 0 1.75.78 1.75 1.75v5.5c0 .97-.78 1.75-1.75 1.75H10.5M3.25 5.5h5.5c.97 0 1.75.78 1.75 1.75v5.5c0 .97-.78 1.75-1.75 1.75h-5.5c-.97 0-1.75-.78-1.75-1.75v-5.5c0-.97.78-1.75 1.75-1.75Z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" d="m3.5 8.5 3 3 6-7"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3 8h10M9 4l4 4-4 4"/></symbol>
+  <symbol id="i-tg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="12" fill="#2AABEE"/><path fill="#fff" d="M5.4 11.8c3.5-1.5 5.8-2.5 7-3 3.3-1.4 4-1.6 4.5-1.6.1 0 .3 0 .5.2.1.1.1.3.1.4 0 .1 0 .4 0 .6-.2 1.9-1 6.6-1.4 8.7-.2.9-.5 1.2-.8 1.2-.7.1-1.2-.4-1.9-.9l-2.6-1.8c-1.2-.8-.4-1.2.3-1.9.2-.2 3.1-2.9 3.2-3.1 0 0 0-.1 0-.2s-.2 0-.2 0c-.1 0-1.7 1.1-4.8 3.2-.5.3-.9.5-1.3.5-.4 0-1.2-.2-1.8-.4-.7-.2-1.3-.4-1.2-.8 0-.2.3-.4.8-.6Z"/></symbol>
+  <symbol id="i-dc" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#5865F2"/><path fill="#fff" d="M17.2 7.6a12.4 12.4 0 0 0-3.1-1l-.4.8a11.5 11.5 0 0 0-3.4 0l-.4-.8c-1.1.2-2.1.5-3.1 1C4.8 10.5 4.3 13.4 4.5 16.2c1.3 1 2.6 1.6 3.8 2l.8-1.3c-.5-.2-.9-.4-1.3-.7l.3-.2a8.9 8.9 0 0 0 7.8 0l.3.2c-.4.3-.8.5-1.3.7l.8 1.3c1.2-.4 2.5-1 3.8-2 .3-3.3-.5-6.1-2.1-8.6ZM9.6 14.5c-.8 0-1.4-.7-1.4-1.6s.6-1.6 1.4-1.6 1.4.7 1.4 1.6-.6 1.6-1.4 1.6Zm4.8 0c-.8 0-1.4-.7-1.4-1.6s.6-1.6 1.4-1.6 1.4.7 1.4 1.6-.6 1.6-1.4 1.6Z"/></symbol>
+  <symbol id="i-bz" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#FFB020"/><path fill="#1A1206" d="M7 6.5h6.2c2 0 3.3 1 3.3 2.7 0 1.1-.6 1.9-1.6 2.3 1.3.3 2.1 1.3 2.1 2.6 0 1.9-1.4 3.4-3.8 3.4H7V6.5Zm2.5 2.1v2.3h3.2c.8 0 1.3-.4 1.3-1.1 0-.8-.5-1.2-1.3-1.2H9.5Zm0 4.3v2.7h3.5c1 0 1.6-.5 1.6-1.4 0-.8-.6-1.3-1.6-1.3H9.5Z"/></symbol>
+  <symbol id="i-t3" viewBox="0 0 24 24"><rect x=".5" y=".5" width="23" height="23" rx="5.5" fill="#111" stroke="#fff" stroke-opacity=".18"/><path fill="#fff" d="M5.5 7h6v1.9H9.6V17H7.4V8.9H5.5V7Zm7.3 0h5.4l-2.3 3.2c1.6.2 2.6 1.3 2.6 2.9 0 2.2-1.6 3.6-4 3.6-1 0-2-.3-2.7-.8l.8-1.8c.5.4 1.2.6 1.8.6 1.1 0 1.8-.6 1.8-1.5s-.7-1.4-1.8-1.4h-.9v-1.4l1.6-2.1h-2.3V7Z"/></symbol>
+  <symbol id="i-kb" viewBox="0 0 24 24"><rect width="24" height="24" rx="6" fill="#E9E9EC"/><g fill="#1B1B1F"><rect x="5" y="8" width="3" height="3" rx=".8"/><rect x="9" y="8" width="3" height="3" rx=".8"/><rect x="13" y="8" width="3" height="3" rx=".8"/><rect x="17" y="8" width="2.5" height="3" rx=".8"/><rect x="5" y="12.5" width="3" height="3" rx=".8"/><rect x="9" y="12.5" width="7" height="3" rx=".8"/><rect x="17" y="12.5" width="2.5" height="3" rx=".8"/></g></symbol>
+  <symbol id="i-voice" viewBox="0 0 24 24"><defs><radialGradient id="orb" cx="35%" cy="30%" r="80%"><stop offset="0" stop-color="#FFB45C"/><stop offset=".35" stop-color="#FF4FA0"/><stop offset=".7" stop-color="#7A5CFF"/><stop offset="1" stop-color="#22D3C5"/></radialGradient></defs><circle cx="12" cy="12" r="12" fill="url(#orb)"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><rect x=".5" y=".5" width="23" height="23" rx="5.5" fill="none" stroke="currentColor" stroke-dasharray="3 2.5"/><path stroke="currentColor" stroke-width="1.5" stroke-linecap="round" d="M12 8v8M8 12h8"/></symbol>
+  <symbol id="i-claude" viewBox="0 0 16 16"><g stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M8 1.5v13M1.5 8h13M3.4 3.4l9.2 9.2M12.6 3.4l-9.2 9.2"/></g></symbol>
 </svg>
 
-<header class="bar">
-  <a href="/" class="bar-mark" aria-label="hex home">
-    <svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg>
-  </a>
-  <nav>
-    <a href="#install">Install</a>
-    <a href="https://github.com/AVGVSTVS96/hex">GitHub</a>
-  </nav>
+<header class="nav">
+  <div class="wrap nav-row">
+    <a href="/" class="nav-mark" aria-label="hex home"><svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg></a>
+    <nav class="nav-links" aria-label="Sections">
+      <a href="#how">How it works</a>
+      <a href="#clients">Clients</a>
+      <a href="#voice">Voice</a>
+      <a href="#inside">Inside</a>
+    </nav>
+    <div class="nav-end">
+      <a class="icon-btn" href="https://github.com/AVGVSTVS96/hex" aria-label="hex on GitHub"><svg aria-hidden="true"><use href="#i-github"/></svg></a>
+      <a class="btn btn-ink btn-sm" href="#install">Install</a>
+    </div>
+  </div>
 </header>
 
+<main>
+
 <section class="hero">
-  <div class="hero-copy">
-    <span class="sticker">Built on Claude Code</span>
-    <h1>The best personal assistant is already on your <mark>machine.</mark></h1>
-    <p class="lede">It's just been busy writing code.</p>
-    <div class="actions">
-      <a class="button" href="#install">Install</a>
-      <a class="button ghost" href="https://github.com/AVGVSTVS96/hex">View on GitHub</a>
-    </div>
-  </div>
-
-  <figure class="stage" aria-label="hex in Telegram">
-    <div class="phone" aria-hidden="true">
-      <div class="ios-bar"><time>4:41</time><i class="island"></i><span class="ios-icons"><svg viewBox="0 0 18 12"><rect y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" width="3" height="12" rx="1"/></svg><svg viewBox="0 0 16 12"><path d="M8 11.6 5.7 9.2a3.3 3.3 0 0 1 4.6 0zM3.5 7a6.4 6.4 0 0 1 9 0l-1.4 1.4a4.4 4.4 0 0 0-6.2 0zM1.2 4.7a9.6 9.6 0 0 1 13.6 0l-1.4 1.4a7.6 7.6 0 0 0-10.8 0z"/></svg><span class="battery"><i></i></span></span></div>
-      <div class="tg-top"><span class="glass tg-back">‹<em>3</em></span><span class="glass tg-name"><b>hex</b><small>2 members</small></span><span class="glass tg-more">•••</span></div>
-      <div class="tg-chat">
-        <p class="bub out a1">find 3 ramen spots open tonight near Terra Gallery, make a page comparing them and deploy it<time>4:41 <b>✓✓</b></time></p>
-        <div class="from a2"><img class="tg-av" src="/icon.svg" alt=""><p class="bub in">On it. Opened <span class="link">#ramen</span>.<time>4:41</time></p></div>
-        <div class="from a3"><img class="tg-av" src="/icon.svg" alt=""><div class="bub in">It's live.<span class="preview"><b>Vercel</b><strong>ramen-tonight.vercel.app</strong><small>3 spots compared · open now · walking distance</small></span><time>4:47</time></div></div>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <a class="pill" href="https://github.com/AVGVSTVS96/hex"><span class="pill-dot"></span>Built on Claude Code<svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+      <h1>The best personal assistant is already on your machine.</h1>
+      <p class="lede"><b>It's just been busy writing code.</b> hex makes Claude Code your personal assistant, on the Claude plan you already pay for.</p>
+      <div class="cta">
+        <a class="btn btn-accent" href="#install">Install hex</a>
+        <a class="btn btn-ghost" href="https://github.com/AVGVSTVS96/hex"><svg aria-hidden="true"><use href="#i-github"/></svg>View on GitHub</a>
       </div>
-      <div class="tg-tabs glass">
-        <span class="tab all"><svg viewBox="0 0 24 24"><path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h7A2.5 2.5 0 0 1 16 6.5v4a2.5 2.5 0 0 1-2.5 2.5H9l-3 2.5V13a2.5 2.5 0 0 1-2-2.5z"/><path d="M18 9h.5A2.5 2.5 0 0 1 21 11.5v4a2.5 2.5 0 0 1-2 2.5V20l-3-2h-3.5a2.5 2.5 0 0 1-2.4-1.8"/></svg>All</span>
-        <span class="tab on"><b class="hash">#</b>General</span>
-        <span class="tab new"><span class="ti" style="color:#F25C8E"><svg><use href="#bubble"/></svg><b>R</b></span>ramen<span class="states"><em>working…</em><em class="done">done ✓</em></span></span>
-        <span class="tab"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>C</b></span>clips</span>
-        <span class="tab"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>L</b></span>leisure</span>
-      </div>
-      <div class="tg-compose">
-        <span class="glass tg-round"><svg viewBox="0 0 24 24"><path d="M16.5 6.5 8.4 14.6a2 2 0 1 0 2.8 2.8l8.1-8.1a4 4 0 0 0-5.6-5.6L5.4 12a6 6 0 0 0 8.5 8.5l6.6-6.6"/></svg></span>
-        <span class="glass tg-field">Message in General<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 0 0 8.5 8.5H12z"/></svg></span>
-        <span class="glass tg-round"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></span>
-      </div>
-    </div>
-  </figure>
-</section>
-
-<section class="stats" aria-label="At a glance">
-  <div class="s-blue"><b>~<span data-count="16000">16,000</span></b><span>lines of hex, plus ~21,000 in connectors. Claude Code does the rest.</span></div>
-  <div class="s-yellow"><b>$0</b><span>extra, on the Claude plan you already pay for.</span></div>
-  <div class="s-pink"><b>Any</b><span>client: Telegram, Discord, Buzz, or one you build.</span></div>
-  <div class="s-ink"><b>0</b><span>frameworks, 0 databases. Just plain files you own.</span></div>
-</section>
-
-<section class="note" aria-labelledby="note-title">
-  <article class="paper">
-    <h2 id="note-title" class="sticker">a note from bassim</h2>
-    <p>bootstrapped in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is <strong><em>my version</em></strong> of the personal assistant</p>
-    <ul>
-      <li>as simple, elegant, portable, and modifiable as possible</li>
-      <li>more capable than any other assistant on the market (Dots, Grok Bot, Hermes, OpenClaw)</li>
-      <li>made of pluggable parts, modules that can be interchanged and swapped</li>
-      <li>swappable harness, hex wraps claude code currently, but hex will be portable and able to set itself up on any harness and system with ease</li>
-    </ul>
-    <p>collectively, we still have a lot of work to do before we figure out the "right" way to build these products. there are many opportunities to reduce friction and make the experience more seamless for end users.</p>
-    <p>the most difficult part of building a proper personal assistant appears to be security, and user trust/sentiment. this is tricky, because you never solve it once. every update or improvement made needs to take security and trust implications into account.</p>
-    <p>following security and trust, this is my read on the what the remaining challenges are:</p>
-    <ul>
-      <li>memory and context management</li>
-      <li>instruction/skill management (huge potential for tech debt, and over-constraint; needs constant tuning)</li>
-      <li>harness state and persistent durable architecture</li>
-      <li>portability and modifiability that doesn't threaten the core</li>
-    </ul>
-    <p>hex will serve as my sandbox for ongoing experimentation and testing, but i've tried to package it as an easy install for anyone familiar with claude code</p>
-    <p>please join me in my quest to build the most minimal, capable, safe, and hackable personal assistant :)</p>
-    <p class="signed">— bassim</p>
-  </article>
-</section>
-
-<section class="block" aria-labelledby="bet-title">
-  <div class="block-head">
-    <h2 id="bet-title">Everyone's building an agent. We plugged into the best one.</h2>
-    <p>Claude Code is the most capable agent around. hex points it at your life.</p>
-  </div>
-
-  <figure class="scale" aria-label="Lines of source code">
-    <figcaption class="label">Lines of source</figcaption>
-    <div class="bar-row"><span class="who">OpenClaw</span><span class="track" aria-hidden="true"><i style="--w:100%"></i></span><b>4 million+</b></div>
-    <div class="bar-row"><span class="who">Hermes Agent</span><span class="track" aria-hidden="true"><i style="--w:34%"></i></span><b>1.5 million</b></div>
-    <div class="bar-row"><span class="who">NanoClaw<small>the minimal one</small></span><span class="track" aria-hidden="true"><i style="--w:1.13%"></i></span><b>49,500</b></div>
-    <div class="bar-row r-hex"><span class="who">hex</span><span class="track" aria-hidden="true"><i style="--w:0.36%"></i></span><b>~16,000*</b></div>
-    <p class="fine"><small>* Plus ~21,000 lines of connectors for Telegram, Discord, Buzz, T3 Code and voice, left out like NanoClaw's chat adapters.</small><br>Tests, docs and generated code excluded. Counted Nov 2026. Even the minimal one is 3x bigger.</p>
-  </figure>
-
-  <figure class="versus" aria-labelledby="vs-title">
-    <figcaption id="vs-title" class="label">Next to the minimal one</figcaption>
-    <table>
-      <thead><tr><td></td><th scope="col">NanoClaw</th><th scope="col"><span>hex</span></th></tr></thead>
-      <tbody>
-        <tr><th scope="row">Runs Claude</th><td>through the Agent SDK, each agent in its own container</td><td>as Claude Code itself, the one you already use</td></tr>
-        <tr><th scope="row">Keeps state</th><td>in a SQLite database</td><td>in plain files, in a git repo you own</td></tr>
-        <tr><th scope="row">Guardrails</th><td>a wall: every agent in a container</td><td>at the edges: who can reach it, what it can send, secrets it never sees</td></tr>
-      </tbody>
-    </table>
-  </figure>
-
-  <div class="bet">
-    <figure class="stack" aria-label="hex is a thin layer on top of Claude Code, which runs on Opus 5.5">
-      <div class="layer l-hex">
-        <b>hex</b><span class="size">~16,000 lines</span>
-        <span class="parts">phone&nbsp;· computer&nbsp;· memory&nbsp;· vault&nbsp;· hub</span>
-      </div>
-      <div class="layer l-cc">
-        <b>Claude Code</b><span class="size">the best agent harness</span>
-        <span class="chips"><i class="chip">reasoning</i><i class="chip">tools</i><i class="chip">MCP</i><i class="chip">skills</i><i class="chip">subagents</i><i class="chip">computer use</i></span>
-      </div>
-      <div class="layer l-model">
-        <b>Opus 5.5</b><span class="size">the best agent model</span>
-      </div>
-    </figure>
-
-    <ul class="points">
-      <li>Super minimal, super light, super snappy.</li>
-      <li>Why rebuild what Anthropic ships every week?</li>
-      <li>Claude models are the best personal assistant models, period. Everything else is cope.</li>
-    </ul>
-  </div>
-
-  <p class="quote">The very best personal assistant is the one that does the very least <span>while adding the very most capability.</span></p>
-</section>
-
-<section class="block" aria-labelledby="crew-title">
-  <div class="block-head">
-    <h2 id="crew-title">One bot. A whole crew.</h2>
-    <p>Every topic and thread gets its own Claude Code session, all on one hub built on Anthropic's own channel plugins.</p>
-  </div>
-
-  <figure class="flow" role="img" aria-label="Telegram, Discord, Buzz, or a client your agent builds, send messages to the hex hub on your box. The hub routes each topic or thread to its own Claude Code session, and a session can be handed off between apps. Sessions share memory files.">
-    <svg class="flow-wide" viewBox="26 0 1050 460" aria-hidden="true">
-      <rect class="f-box" x="330" y="24" width="744" height="412"/>
-      <rect class="f-boxlabel" x="330" y="24" width="96" height="26"/>
-      <text class="f-mono f-inv" x="344" y="42">your box</text>
-
-      <path id="w1" class="f-wire" d="M240 64 H300 V220 H384"/>
-      <path class="f-wire" d="M240 168 H300"/>
-      <path class="f-wire" d="M240 272 H300 V220"/>
-      <path class="f-wire f-maybe" d="M240 376 H300 V272"/>
-      <path id="w3" class="f-wire" d="M606 220 H648 V108 H704"/>
-      <path id="w4" class="f-wire" d="M606 220 H704"/>
-      <path id="w5" class="f-wire" d="M606 220 H648 V332 H704"/>
-      <path class="f-hand" d="M140 108 V130"/>
-      <path class="f-handhead" d="M134 112 L140 104 L146 112 M134 126 L140 134 L146 126"/>
-      <text class="f-mono f-muted" x="154" y="123">hand off</text>
-      <path class="f-hand" d="M140 212 V234"/>
-      <path class="f-handhead" d="M134 216 L140 208 L146 216 M134 230 L140 238 L146 230"/>
-      <text class="f-mono f-muted" x="154" y="227">hand off</text>
-
-      <rect class="f-shadow" x="34" y="38" width="206" height="64"/>
-      <rect class="f-tg" x="28" y="32" width="206" height="64"/>
-      <text class="f-title f-inv" x="48" y="62">Telegram</text>
-      <text class="f-mono f-inv f-soft" x="48" y="83">topics, voice notes</text>
-
-      <rect class="f-shadow" x="34" y="142" width="206" height="64"/>
-      <rect class="f-dc" x="28" y="136" width="206" height="64"/>
-      <text class="f-title f-inv" x="48" y="166">Discord</text>
-      <text class="f-mono f-inv f-soft" x="48" y="187">threads, long answers</text>
-
-      <rect class="f-shadow" x="34" y="246" width="206" height="64"/>
-      <rect class="f-bz" x="28" y="240" width="206" height="64"/>
-      <text class="f-title" x="48" y="270">Buzz</text>
-      <text class="f-mono" x="48" y="291">watch it work</text>
-
-      <rect class="f-yours" x="28" y="344" width="206" height="64"/>
-      <text class="f-title f-ink" x="48" y="374">Your own</text>
-      <text class="f-mono f-muted" x="48" y="395">your agent builds it</text>
-
-      <rect class="f-shadow" x="390" y="188" width="216" height="76"/>
-      <rect class="f-hub" x="384" y="182" width="216" height="76"/>
-      <text class="f-title" x="404" y="217">hex hub</text>
-      <text class="f-mono" x="404" y="240">one bot, many sessions</text>
-
-      <g class="f-sess">
-        <rect class="f-shadow" x="710" y="86" width="320" height="56"/><rect class="f-node" x="704" y="80" width="320" height="56"/>
-        <text class="f-label" x="724" y="113">Claude Code</text><text class="f-mono f-muted" x="1004" y="113" text-anchor="end">ramen</text>
-        <rect class="f-shadow" x="710" y="198" width="320" height="56"/><rect class="f-node" x="704" y="192" width="320" height="56"/>
-        <text class="f-label" x="724" y="225">Claude Code</text><text class="f-mono f-muted" x="1004" y="225" text-anchor="end">clips</text>
-        <rect class="f-shadow" x="710" y="310" width="320" height="56"/><rect class="f-node" x="704" y="304" width="320" height="56"/>
-        <text class="f-label" x="724" y="337">Claude Code</text><text class="f-mono f-muted" x="1004" y="337" text-anchor="end">#dev › ci</text>
-      </g>
-
-      <text class="f-mono f-muted" x="384" y="412">SOUL.md · AGENTS.md · memory/ · state/</text>
-
-<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;0;0;1;1" keyTimes="0;0.22;0.23;0.5;0.72;1" calcMode="linear"><mpath href="#w1"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.5;0.72" values="1;0;1;0"/></circle>
-<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#w3"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
-<circle class="f-dot f-dot-pink" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#w4"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
-<circle class="f-dot f-dot-yellow" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#w5"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
-<rect class="f-glow" x="704" y="80" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
-<rect class="f-glow" x="704" y="192" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
-<rect class="f-glow" x="704" y="304" width="320" height="56"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
-    </svg>
-
-    <svg class="flow-tall" viewBox="0 0 460 710" aria-hidden="true">
-      <path id="v1" class="f-wire" d="M216 50 H228 V276"/>
-      <path class="f-wire" d="M240 50 H228"/>
-      <path class="f-wire" d="M216 130 H228"/>
-      <path class="f-wire f-maybe" d="M240 130 H228"/>
-
-      <rect class="f-shadow" x="16" y="26" width="200" height="60"/><rect class="f-tg" x="10" y="20" width="200" height="60"/>
-      <text class="f-title f-inv" x="24" y="48">Telegram</text><text class="f-mono f-inv f-soft" x="24" y="68">topics, voice notes</text>
-      <rect class="f-shadow" x="246" y="26" width="200" height="60"/><rect class="f-dc" x="240" y="20" width="200" height="60"/>
-      <text class="f-title f-inv" x="254" y="48">Discord</text><text class="f-mono f-inv f-soft" x="254" y="68">threads, long answers</text>
-      <rect class="f-shadow" x="16" y="106" width="200" height="60"/><rect class="f-bz" x="10" y="100" width="200" height="60"/>
-      <text class="f-title" x="24" y="128">Buzz</text><text class="f-mono" x="24" y="148">watch it work</text>
-      <rect class="f-yours" x="240" y="100" width="200" height="60"/>
-      <text class="f-title f-ink" x="254" y="128">Your own</text><text class="f-mono f-muted" x="254" y="148">your agent builds it</text>
-
-      <g transform="translate(20 70)">
-      <rect class="f-box" x="10" y="150" width="400" height="476"/>
-      <rect class="f-boxlabel" x="10" y="150" width="96" height="26"/>
-      <text class="f-mono f-inv" x="24" y="168">your box</text>
-
-      <path id="v3" class="f-wire" d="M210 282 V312 H38 V367 H60"/>
-      <path id="v4" class="f-wire" d="M210 282 V312 H38 V441 H60"/>
-      <path id="v5" class="f-wire" d="M210 282 V312 H38 V515 H60"/>
-
-      <rect class="f-shadow" x="106" y="212" width="220" height="70"/><rect class="f-hub" x="100" y="206" width="220" height="70"/>
-      <text class="f-title" x="118" y="238">hex hub</text><text class="f-mono" x="118" y="260">one bot, many sessions</text>
-
-      <rect class="f-shadow" x="66" y="346" width="320" height="50"/><rect class="f-node" x="60" y="340" width="320" height="50"/>
-      <text class="f-label" x="78" y="370">Claude Code</text><text class="f-mono f-muted" x="364" y="370" text-anchor="end">ramen</text>
-      <rect class="f-shadow" x="66" y="420" width="320" height="50"/><rect class="f-node" x="60" y="414" width="320" height="50"/>
-      <text class="f-label" x="78" y="444">Claude Code</text><text class="f-mono f-muted" x="364" y="444" text-anchor="end">clips</text>
-      <rect class="f-shadow" x="66" y="494" width="320" height="50"/><rect class="f-node" x="60" y="488" width="320" height="50"/>
-      <text class="f-label" x="78" y="518">Claude Code</text><text class="f-mono f-muted" x="364" y="518" text-anchor="end">#dev › ci</text>
-
-      <text class="f-mono f-muted" x="60" y="590">SOUL.md · AGENTS.md · memory/ · state/</text>
-<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v3"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
-<circle class="f-dot f-dot-pink" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v4"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
-<circle class="f-dot f-dot-yellow" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;0;1;0;0;1;1" keyTimes="0;0.22;0.44;0.45;0.72;0.94;1" calcMode="linear"><mpath href="#v5"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.44;0.72;0.94" values="0;1;0;1;0"/></circle>
-<rect class="f-glow" x="60" y="340" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
-<rect class="f-glow" x="60" y="414" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
-<rect class="f-glow" x="60" y="488" width="320" height="50"><animate attributeName="opacity" dur="4s" repeatCount="indefinite" keyTimes="0;0.43;0.46;0.6;0.93;0.96;1" values="0;0;1;0;0;1;0"/></rect>
-      </g>
-<circle class="f-dot" r="6"><animateMotion dur="4s" repeatCount="indefinite" keyPoints="0;1;0;0;1;1" keyTimes="0;0.22;0.23;0.5;0.72;1" calcMode="linear"><mpath href="#v1"/></animateMotion><animate attributeName="opacity" dur="4s" repeatCount="indefinite" calcMode="discrete" keyTimes="0;0.22;0.5;0.72" values="1;0;1;0"/></circle>
-    </svg>
-  </figure>
-
-  <div class="features lead">
-    <div class="feat">
-      <div class="viz v-team" aria-hidden="true">
-        <span class="tt t1"><svg style="color:#F25C8E"><use href="#bubble"/></svg>ramen<em>working…</em></span>
-        <span class="tt t2"><svg style="color:#FF7A45"><use href="#bubble"/></svg>flight-options<em>working…</em></span>
-        <span class="tt t3"><svg style="color:#3CB371"><use href="#bubble"/></svg>fix-deploy<em class="done">done ✓</em></span>
-      </div>
-      <h3>A crew, not a chatbot</h3>
-      <p>Every topic works in parallel, with its own context.</p>
+      <ul class="reach" aria-label="Talk to it from">
+        <li><svg aria-hidden="true"><use href="#i-tg"/></svg>Telegram</li>
+        <li><svg aria-hidden="true"><use href="#i-dc"/></svg>Discord</li>
+        <li><svg aria-hidden="true"><use href="#i-bz"/></svg>Buzz</li>
+        <li><svg aria-hidden="true"><use href="#i-t3"/></svg>T3 Code</li>
+        <li><svg aria-hidden="true"><use href="#i-kb"/></svg>iikb</li>
+        <li><svg aria-hidden="true"><use href="#i-voice"/></svg>Voice</li>
+      </ul>
     </div>
 
-    <div class="feat">
-      <div class="viz v-term v-ship" aria-hidden="true">
-<pre><span class="l l1"><b>$</b> bun create astro ramen-tonight</span>
-<span class="l l2"><b>$</b> bun run build <span class="ok">✓</span></span>
-<span class="l l3"><b>$</b> vercel deploy --prod</span>
-<span class="l l4"><span class="ok">✓ deployed</span></span>
-<span class="l l5 url">ramen-tonight.vercel.app ↗</span></pre>
-      </div>
-      <h3>It still writes code</h3>
-      <p>Ask for a page from your phone. Get a live link back.</p>
-    </div>
-
-    <div class="feat">
-      <div class="viz v-term v-ship" aria-hidden="true">
-<pre><span class="l l1"><span class="dim">fork-sync · daily</span></span>
-<span class="l l2">upstream   <b>+14 commits</b></span>
-<span class="l l3">telegram   conflict</span>
-<span class="l l4">claude     <span class="ok">patch fixed ✓</span></span>
-<span class="l l5 url">verified · published</span></pre>
-      </div>
-      <h3>Rebuilds itself daily</h3>
-      <p>On Anthropic's latest code. Claude fixes its own patches.</p>
-    </div>
-  </div>
-</section>
-
-<section class="block" aria-labelledby="box-title">
-  <div class="block-head">
-    <h2 id="box-title">It doesn't live in a chat window.</h2>
-    <p>It lives on your box, with your whole network, a memory of its own and, if you want, a computer too.</p>
-  </div>
-
-  <div class="features rest">
-    <div class="feat">
-      <div class="viz v-computer" aria-hidden="true">
-        <div class="win">
-          <div class="win-bar"><i></i><i></i><i></i><span>flights.google.com</span></div>
-          <div class="win-body">
-            <span class="field"></span><span class="field short"></span>
-            <span class="go">Search</span>
-            <svg class="cursor" viewBox="0 0 16 20"><path d="M1 1v16l4.5-4.2 3 6.2 2.6-1.2-3-6.1H14Z" fill="#0A0A0A" stroke="#fff" stroke-width="1.2"/></svg>
+    <div class="hero-stage" aria-label="hex in Telegram and on a voice call">
+      <figure class="device device-call" aria-hidden="true">
+        <img src="img/call.png" alt="" width="600" height="873" loading="eager">
+      </figure>
+      <figure class="device device-tg">
+        <div class="tg">
+          <div class="tg-status"><b>9:41</b><span class="tg-island"></span><span class="tg-sys"><i></i><i></i><i></i></span></div>
+          <div class="tg-head">
+            <span class="glass tg-back">‹</span>
+            <span class="glass tg-title"><b>ramen-tonight</b><small>hex · topic</small></span>
+            <span class="glass tg-ava"><svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg></span>
+          </div>
+          <div class="tg-chat">
+            <p class="tg-day"><span>Today</span></p>
+            <div class="bub out">find 3 ramen spots open tonight near me, make a page comparing them and deploy it<time>6:12</time></div>
+            <div class="bub in">On it. Opened <span class="tg-link">#ramen-tonight</span>.<time>6:12</time></div>
+            <div class="bub in">It's live.
+              <span class="tg-card"><b>Vercel</b><strong>ramen-tonight.vercel.app</strong><small>3 spots · open now · walking distance</small></span>
+              <time>6:19</time></div>
+          </div>
+          <div class="tg-foot">
+            <span class="glass tg-plus">+</span>
+            <span class="glass tg-input">Message</span>
+            <span class="glass tg-mic"><svg viewBox="0 0 16 16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" d="M8 1.75a2.25 2.25 0 0 0-2.25 2.25v3.5a2.25 2.25 0 0 0 4.5 0V4A2.25 2.25 0 0 0 8 1.75ZM3.75 7.25a4.25 4.25 0 0 0 8.5 0M8 11.5v2.75"/></svg></span>
           </div>
         </div>
-      </div>
-      <h3>Its own computer</h3>
-      <p>Optional: a cloud desktop with Chrome, on any provider you like.</p>
+      </figure>
     </div>
+  </div>
 
-    <div class="feat">
-      <div class="viz v-term" aria-hidden="true">
-<pre><b>$</b> ssh macbook uptime
-<span class="ok">up 6 days</span>
-<b>$</b> ssh nas df -h /data
-<span class="dim">/data  41% used</span></pre>
-      </div>
-      <h3>Your whole network</h3>
-      <p>Every machine you can ssh into.</p>
-    </div>
-
-    <div class="feat">
-      <div class="viz v-accounts" aria-hidden="true">
-        <span class="hubchip">your Claude account</span>
-        <span class="chip acct c1">Gmail</span><span class="chip acct c2">Executor</span><span class="chip acct c3">AgentMail</span><span class="chip acct c4">Calendar</span>
-      </div>
-      <h3>Every connector</h3>
-      <p>Whatever your Claude account has.</p>
-    </div>
-
-    <div class="feat">
-      <div class="viz v-term" aria-hidden="true">
-<pre><span class="dim">OptMem · memory/</span>
-today      flight Fri 9:40
-this week  aisle seats, always
-earlier    summarized <span class="ok">✓</span>
-<b>recall</b>     any word, ever</pre>
-      </div>
-      <h3>Memory with a timeline</h3>
-      <p>One memory: OptMem, summarized as it goes, searchable word for word.</p>
-    </div>
+  <div class="wrap">
+    <dl class="stats">
+      <div><dt>lines of hex</dt><dd data-count="16000">~16,000</dd><p>Claude Code does the rest.</p></div>
+      <div><dt>clients</dt><dd>6</dd><p>Ready to use, or have your agent build yours.</p></div>
+      <div><dt>tests</dt><dd>800+</dd><p>Run on every update before it ships.</p></div>
+      <div><dt>folder</dt><dd>1</dd><p>Everything it knows, in a private repo you own.</p></div>
+    </dl>
   </div>
 </section>
 
-<section class="block" aria-labelledby="rooms-title">
-  <div class="block-head">
-    <h2 id="rooms-title">Works with your client.</h2>
-    <p>Pick a ready one, or tell your agent to build yours. Use one for everything, or one for work and another for the rest. hex connects them all.</p>
-  </div>
-
-  <div class="ways">
-    <article class="way wide">
-      <header>
-        <span class="tag t-tg">Telegram</span>
-        <h3>Topics and voice notes.</h3>
-      </header>
-      <div class="tg-list" aria-hidden="true">
-        <div class="row"><span class="ti hash">#</span><span><b>General</b><small>On it. Opened #ramen.</small></span><time>4:41</time></div>
-        <div class="row"><span class="ti" style="color:#F25C8E"><svg><use href="#bubble"/></svg><b>R</b></span><span><b>ramen</b><small>Live: ramen-tonight.vercel.app</small></span><time>4:47</time><em>1</em></div>
-        <div class="row"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>C</b></span><span><b>clips</b><small class="typing">hex is typing<i></i><i></i><i></i></small></span><time>now</time></div>
-        <div class="row"><span class="ti" style="color:#3E95F2"><svg><use href="#bubble"/></svg><b>L</b></span><span><b>leisure</b><small>Saturday: 3 options for you</small></span><time>Sat</time></div>
-        <div class="row"><span class="ti" style="color:#3CB371"><svg><use href="#bubble"/></svg><b>C</b></span><span><b>Connectors</b><small>Done ✓ Closing this topic.</small></span><time>Fri</time></div>
-      </div>
+<section class="note-sec" aria-labelledby="note-title">
+  <div class="wrap">
+    <h2 id="note-title" class="eyebrow">a note from bassim</h2>
+    <article class="note">
+      <p>bootstrapped in 6 hours at the Personal Agents Hackathon because I wasn't happy with all the other options, this is <strong><em>my version</em></strong> of the personal assistant</p>
       <ul>
-        <li>Every topic is its own session</li>
-        <li>Voice notes in, short answers out</li>
-        <li>It speaks up when something needs you</li>
+        <li>as simple, elegant, portable, and modifiable as possible</li>
+        <li>more capable than any other assistant on the market (Dots, Grok Bot, Hermes, OpenClaw)</li>
+        <li>made of pluggable parts, modules that can be interchanged and swapped</li>
+        <li>swappable harness, hex wraps claude code currently, but hex will be portable and able to set itself up on any harness and system with ease</li>
       </ul>
-    </article>
-
-    <div class="bridge" aria-hidden="true"><span>take this to Discord or Buzz</span></div>
-
-    <article class="way">
-      <header>
-        <span class="tag t-dc">Discord</span>
-        <h3>Threads and long answers.</h3>
-      </header>
-      <div class="dc" aria-hidden="true">
-        <div class="dc-rail"><span class="srv"><img src="/icon.svg" alt=""></span><span class="srv dim"></span><span class="srv dim"></span></div>
-        <div class="dc-side">
-          <b>hex</b>
-          <span># general</span>
-          <span># research</span>
-          <span class="on"># dev</span>
-        </div>
-        <div class="dc-main">
-          <div class="dc-msg">
-            <span class="dc-av"></span>
-            <div><b>you</b> <small>Today at 4:02 PM</small>
-              <p><span class="mention">@hex</span> why did last night's deploy fail?</p>
-              <div class="dc-thread">
-                <b>Deploy failure</b>
-                <p><span class="who">hex</span> Build ran out of memory on step 3. Fix is ready to review.</p>
-                <small>3 Messages ›</small>
-              </div>
-            </div>
-          </div>
-          <div class="dc-typing"><i></i><i></i><i></i> <b>hex</b> is typing…</div>
-          <div class="dc-compose">Message #dev</div>
-        </div>
-      </div>
+      <p>collectively, we still have a lot of work to do before we figure out the "right" way to build these products. there are many opportunities to reduce friction and make the experience more seamless for end users.</p>
+      <p>the most difficult part of building a proper personal assistant appears to be security, and user trust/sentiment. this is tricky, because you never solve it once. every update or improvement made needs to take security and trust implications into account.</p>
+      <p>following security and trust, this is my read on the what the remaining challenges are:</p>
       <ul>
-        <li>Tag it, and it opens a thread</li>
-        <li>Room for code, logs and long answers</li>
-        <li>Channels group work by area</li>
+        <li>memory and context management</li>
+        <li>instruction/skill management (huge potential for tech debt, and over-constraint; needs constant tuning)</li>
+        <li>harness state and persistent durable architecture</li>
+        <li>portability and modifiability that doesn't threaten the core</li>
       </ul>
-    </article>
-    <article class="way">
-      <header>
-        <span class="tag t-bz">Buzz</span>
-        <h3>Watch it work.</h3>
-      </header>
-      <div class="bz" aria-hidden="true">
-        <div class="bz-win">
-          <div class="bz-chrome"><i></i><i></i><i></i></div>
-          <div class="bz-side">
-            <span class="bz-search">Search</span>
-            <span class="bz-nav">Inbox</span>
-            <span class="bz-nav">Agents</span>
-            <b class="bz-group">Home</b>
-            <span class="bz-ch on">ops</span>
-            <span class="bz-ch new">general</span>
-            <span class="bz-ch">research</span>
-            <b class="bz-group">Direct messages</b>
-            <span class="bz-dm"><img src="/icon.svg" alt="">hex</span>
-          </div>
-          <div class="bz-main">
-            <div class="bz-head"># ops</div>
-            <div class="bz-body">
-              <div class="bz-thread">
-                <div class="bz-msg"><span class="dc-av"></span><p><b>you</b><span class="bz-bot"><svg viewBox="0 0 12 12"><rect x="1.5" y="3.5" width="9" height="7" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M6 1v2.5M4.3 7h0M7.7 7h0" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>hex</span> back up the NAS before tonight's update</p></div>
-                <div class="bz-msg"><img src="/icon.svg" alt=""><p><b>hex</b>On it. Follow along in Activity.</p></div>
-                <div class="bz-compose">Message #ops</div>
-                <div class="bz-status"><img src="/icon.svg" alt="">hex: Working<i></i><i></i><i></i></div>
-              </div>
-              <div class="bz-panel">
-                <div class="bz-tabs"><b>Activity</b><span>Memory</span><span>Files</span></div>
-                <ol class="bz-steps">
-                  <li class="ok">memo recall nas</li>
-                  <li class="ok">ssh nas df -h</li>
-                  <li class="run">rsync → offsite</li>
-                </ol>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <ul>
-        <li>Every step shows as it runs</li>
-        <li>Edit its memory and files</li>
-        <li>Shared with people and agents</li>
-      </ul>
-    </article>
-    <article class="way wide own-way">
-      <header>
-        <span class="tag t-own">Your own</span>
-        <h3>Tell your agent.</h3>
-      </header>
-      <div class="own">
-        <div class="own-apps" role="group" aria-label="Pick an app">
-          <button type="button" class="chip" aria-pressed="true" data-app="Slack" data-unit="thread">Slack</button>
-          <button type="button" class="chip" aria-pressed="false" data-app="WhatsApp" data-unit="chat">WhatsApp</button>
-          <button type="button" class="chip" aria-pressed="false" data-app="Signal" data-unit="chat">Signal</button>
-          <button type="button" class="chip" aria-pressed="false" data-app="Matrix" data-unit="room">Matrix</button>
-        </div>
-        <div class="prompt">
-          <pre><code id="own-prompt">Build me a <b data-slot="app">Slack</b> channel on your hub, modeled on your Discord one, so every <b data-slot="app">Slack</b> <b data-slot="unit">thread</b> is its own session.</code></pre>
-          <button type="button" class="copy" data-copy="own-prompt"><span aria-live="polite">Copy</span></button>
-        </div>
-      </div>
-      <ul>
-        <li>Same hub, same sessions, same memory</li>
-        <li>Pick an app, paste the prompt</li>
-        <li>Buzz was built this way</li>
-      </ul>
+      <p>hex will serve as my sandbox for ongoing experimentation and testing, but i've tried to package it as an easy install for anyone familiar with claude code</p>
+      <p>please join me in my quest to build the most minimal, capable, safe, and hackable personal assistant :)</p>
+      <p class="sig">-- bassim</p>
     </article>
   </div>
-
-  <p class="strip"><span class="soon-tag">coming</span> A ready-made iMessage client, and checking on any thread from any app.</p>
 </section>
 
-<p class="strip plan">Table stakes too: an hourly check that stays quiet unless something needs you, schedules in one JSON file, voice notes.</p>
+<section class="sec" id="how" aria-labelledby="how-title">
+  <div class="wrap">
+    <header class="sec-head">
+      <p class="eyebrow">How it works</p>
+      <h2 id="how-title">One assistant.<br>A session for every thread.</h2>
+      <p class="sub">Every topic, thread and call is its own Claude Code session, and they all share one memory and one set of rules.</p>
+    </header>
 
-<section class="block" aria-labelledby="yours-title">
-  <div class="block-head">
-    <h2 id="yours-title">There are many assistants. This one is <mark>yours.</mark></h2>
-    <p>About 16,000 lines in a folder you own. Change it, extend it, fork it.</p>
-  </div>
+    <div class="flow" data-flow>
+      <svg class="flow-wires" aria-hidden="true"></svg>
+      <ul class="flow-col flow-apps" aria-label="Clients">
+        <li data-from><svg aria-hidden="true"><use href="#i-tg"/></svg>Telegram<small>topics</small></li>
+        <li data-from><svg aria-hidden="true"><use href="#i-dc"/></svg>Discord<small>threads</small></li>
+        <li data-from><svg aria-hidden="true"><use href="#i-bz"/></svg>Buzz<small>threads</small></li>
+        <li data-from><svg aria-hidden="true"><use href="#i-t3"/></svg>T3 Code<small>projects</small></li>
+        <li data-from><svg aria-hidden="true"><use href="#i-kb"/></svg>iikb<small>keyboard</small></li>
+        <li data-from><svg aria-hidden="true"><use href="#i-voice"/></svg>Voice<small>calls</small></li>
+        <li data-from class="dashed"><svg aria-hidden="true"><use href="#i-plus"/></svg>Yours<small>build it</small></li>
+      </ul>
 
-  <div class="features lead">
-    <div class="feat">
-      <div class="viz v-term" aria-hidden="true">
-<pre><b>you</b>  no check-ins on weekends
-<b>hex</b>  edited schedules.json
-     <span class="ok">committed ✓</span></pre>
+      <div class="flow-mid">
+        <div class="hub" data-hub>
+          <span class="hub-k"><svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg>hub</span>
+          <b>one process</b>
+          <small>a session per thread</small>
+        </div>
+        <div class="folder" data-folder>
+          <span class="folder-k">~/hex</span>
+          <ul>
+            <li>AGENTS.md</li><li>SOUL.md</li><li>memory/</li><li>hex.db</li>
+          </ul>
+        </div>
       </div>
-      <h3>Ask it to change itself</h3>
-      <p>It edits its own rules, schedules and memory, and commits every change.</p>
-    </div>
 
-    <div class="feat">
-      <div class="viz v-ext" aria-hidden="true">
-        <i class="chip">skills</i><i class="chip">MCP</i><i class="chip">plugins</i><i class="chip">hooks</i><i class="chip">channels</i><i class="chip add">+ yours</i>
-      </div>
-      <h3>Extend it with anything</h3>
-      <p>Whatever Claude Code can load, hex can use.</p>
-    </div>
-
-    <div class="feat">
-      <div class="viz v-term" aria-hidden="true">
-<pre><b>~/hex/</b>        <span class="dim">your git repo</span>
-  SOUL.md     <span class="dim">who it is</span>
-  memory/     <span class="dim">what it knows</span>
-  .hex/       <span class="dim">hex, updated</span></pre>
-      </div>
-      <h3>A folder you own</h3>
-      <p>Plain files in your own repo. Updates never touch them.</p>
-    </div>
-  </div>
-</section>
-
-<section class="closer" aria-label="Why hex">
-  <h2>We didn't build a personal assistant. We found one inside Claude Code and gave it a phone, a computer and a <mark>memory.</mark></h2>
-  <p>Every Claude Code upgrade is a hex upgrade the same day.</p>
-</section>
-
-<section class="block install" id="install" aria-labelledby="install-title">
-  <div class="block-head">
-    <h2 id="install-title">Install with one prompt</h2>
-    <p>Paste this into Claude Code on your box. It asks when it needs you.</p>
-  </div>
-
-  <div class="prompt">
-    <pre><code id="prompt">Set up hex for me: https://github.com/AVGVSTVS96/hex. Follow INSTALL.md in that repo.</code></pre>
-    <button type="button" class="copy" data-copy="prompt"><span aria-live="polite">Copy</span></button>
-  </div>
-
-  <div class="needs">
-    <div>
-      <h3>You'll need</h3>
-      <ul>
-        <li>A machine that stays on: a home server, a Mac that doesn't sleep, a cloud VM</li>
-        <li>A Claude subscription</li>
-        <li>Telegram, Discord, Buzz, or any mix</li>
+      <ul class="flow-col flow-sessions" aria-label="Claude Code sessions">
+        <li data-to><span class="cc" title="Claude Code"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-claude"/></svg></span><b>General</b><i class="live">working</i></li>
+        <li data-to><span class="cc" title="Claude Code"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-claude"/></svg></span><b>#ramen-tonight</b><i class="live">working</i></li>
+        <li data-to><span class="cc" title="Claude Code"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-claude"/></svg></span><b>#dev › ci</b><i>idle</i></li>
+        <li data-to><span class="cc" title="Claude Code"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-claude"/></svg></span><b>~/code/app</b><i class="live">working</i></li>
+        <li data-to><span class="cc" title="Claude Code"><svg viewBox="0 0 16 16" aria-hidden="true"><use href="#i-claude"/></svg></span><b>call · 2:14</b><i class="live">on a call</i></li>
       </ul>
     </div>
-    <div>
-      <h3>You do</h3>
-      <ul>
-        <li>Make a bot</li>
-        <li>Add it to your group or server</li>
-        <li>Say hi</li>
-      </ul>
-    </div>
+
+    <ol class="points">
+      <li><b>Threads work in parallel.</b> Each keeps its own context. One that sits idle for an hour stops, and picks back up when you write.</li>
+      <li><b>A DM never ends.</b> It's logged word for word and folded into a summary tree, so nothing is compacted away.</li>
+      <li><b>Move a thread anywhere.</b> Say "take this to Discord" and the same session moves over with its history.</li>
+    </ol>
   </div>
 </section>
 
-<section class="block build" aria-labelledby="build-title">
-  <div class="block-head">
-    <h2 id="build-title">hex is my sandbox. Come build it with me.</h2>
-    <p>Fork it. Try your ideas. Send back what works.</p>
-  </div>
-  <div class="actions">
-    <a class="button" href="https://github.com/AVGVSTVS96/hex/fork">Fork on GitHub</a>
-  </div>
-  <p class="strip"><span class="soon-tag">next</span> More modular. More portable.</p>
-</section>
+</main>
 
-<footer>
-  <div class="foot-row">
-    <p>Open source under MIT. Yours to fork.</p>
-    <a href="https://github.com/AVGVSTVS96/hex">github.com/AVGVSTVS96/hex</a>
-  </div>
-  <svg class="foot-mark" viewBox="0 0 2167 737" role="img" aria-label="hex"><path id="wordmark" fill="currentColor" d="M0 725V0H185V264H192Q220 235 253 217.5Q286 200 323 192.5Q360 185 397 185Q474 185 525 209.5Q576 234 601.5 283.5Q627 333 627 407V725H443V432Q443 405 435.5 384.5Q428 364 413.5 350.5Q399 337 377.5 330Q356 323 328 323Q289 323 256.5 339Q224 355 204.5 383.5Q185 412 185 450V725ZM1059 737Q951 737 871 708Q791 679 746.5 617.5Q702 556 702 461Q702 369 745.5 307.5Q789 246 867.5 215.5Q946 185 1051 185Q1161 185 1238.5 215Q1316 245 1357 305Q1398 365 1398 455V498H896Q898 540 918 567Q938 594 974.5 606.5Q1011 619 1061 619Q1088 619 1113 613.5Q1138 608 1158.5 598Q1179 588 1191.5 573Q1204 558 1206 540H1396Q1396 585 1371 621.5Q1346 658 1301 684Q1256 710 1194 723.5Q1132 737 1059 737ZM896 400H1201Q1201 378 1190.5 360Q1180 342 1160.5 329.5Q1141 317 1114.5 310Q1088 303 1057 303Q1010 303 975.5 315Q941 327 921 349Q901 371 896 400ZM1408 725 1664 448 1428 197H1663L1795 345H1801L1932 197H2153L1915 451L2167 725H1934L1785 554H1779L1629 725Z"/></svg>
-</footer>
-
-</div>
-<script>
-document.querySelectorAll('[data-copy]').forEach((button) => {
-  const label = button.querySelector('span');
-  let timer;
-  button.addEventListener('click', async () => {
-    await navigator.clipboard.writeText(document.getElementById(button.dataset.copy).textContent);
-    button.classList.add('done');
-    label.textContent = 'Copied';
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      button.classList.remove('done');
-      label.textContent = 'Copy';
-    }, 1800);
-  });
-});
-
-const ownPrompt = document.getElementById('own-prompt');
-const calm = matchMedia('(prefers-reduced-motion: reduce)');
-document.querySelectorAll('[data-app]').forEach((chip, _, chips) => {
-  chip.addEventListener('click', () => {
-    chips.forEach((other) => other.setAttribute('aria-pressed', other === chip));
-    ownPrompt.querySelectorAll('[data-slot]').forEach((slot) => {
-      slot.textContent = chip.dataset[slot.dataset.slot];
-      if (!calm.matches) slot.animate([{ opacity: 0, transform: 'translateY(0.25em)' }, { opacity: 1, transform: 'none' }], { duration: 220, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
-    });
-  });
-});
-
-const counter = document.querySelector('[data-count]');
-new IntersectionObserver(([entry], observer) => {
-  if (!entry.isIntersecting) return;
-  observer.disconnect();
-  if (calm.matches) return;
-  const target = Number(counter.dataset.count);
-  const start = performance.now();
-  const tick = (now) => {
-    const t = Math.min((now - start) / 1200, 1);
-    counter.textContent = Math.round(target * (1 - (1 - t) ** 3)).toLocaleString('en-US');
-    if (t < 1) requestAnimationFrame(tick);
-  };
-  requestAnimationFrame(tick);
-}, { threshold: 0.6 }).observe(counter);
-</script>
+<script src="site.js" defer></script>
 </body>
 </html>
