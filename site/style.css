@@ -740,7 +740,7 @@ code { font-size: .86em; }
 .term-bar i { width: 11px; height: 11px; border-radius: 50%; background: #3A3A40; }
 .term-bar span { margin-left: auto; margin-right: auto; translate: -24px 0; color: #77777F; font: 400 11.5px/1 var(--mono); }
 .term-body { display: flex; align-items: flex-start; gap: 14px; padding: 22px 20px 24px; }
-.term-body p { flex: 1; min-width: 0; font: 400 14px/1.7 var(--mono); }
+.term-body p { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 400 14px/1.7 var(--mono); }
 .caret { color: #D97757; margin-right: 10px; }
 .term .copy { background: #18181B; border-color: #2E2E33; color: #A1A1AA; }
 @media (hover: hover) { .term .copy:hover { color: #fff; border-color: #55555C; } }
