@@ -13,6 +13,8 @@ if (port === null) {
 
 const CHECKPOINT_AT_FRAMES = 1000;
 
+const UserVersion = z.object({ user_version: z.number() });
+
 const db = new Database(path);
 
 db.run("pragma busy_timeout = 30000");
@@ -56,14 +58,35 @@ function framesInWal() {
   }
 }
 
+const Checkpoint = z.object({ busy: z.number(), log: z.number(), checkpointed: z.number() });
+
+function checkpointed() {
+  const {
+    busy,
+    log,
+    checkpointed: copied,
+  } = Checkpoint.parse(db.query("pragma wal_checkpoint(passive)").get());
+
+  return busy === 0 && copied === log;
+}
+
+// The first write after a whole checkpoint starts the WAL over and fsyncs its header (sqlite3WalFrames: https://sqlite.org/src/file?name=src/wal.c), so this thread makes that write.
+function restartWal() {
+  db.transaction(() => {
+    const { user_version: version } = UserVersion.parse(db.query("pragma user_version").get());
+
+    db.run(`pragma user_version = ${String(version)}`);
+  }).immediate();
+}
+
 function sync() {
   const upTo = asked;
 
   fsyncFile(`${path}-wal`);
   port?.postMessage(upTo);
 
-  if (framesInWal() >= CHECKPOINT_AT_FRAMES) {
-    db.run("pragma wal_checkpoint(passive)");
+  if (framesInWal() >= CHECKPOINT_AT_FRAMES && checkpointed()) {
+    restartWal();
   }
 
   scheduled = asked > upTo;
