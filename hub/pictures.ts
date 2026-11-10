@@ -18,7 +18,7 @@ const imageType = (path: string) => (path.endsWith(".png") ? "image/png" : "imag
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The files a Telegram message holds, in the order Telegram shows them: photos the owner sent, kept on disk, then what hex sent, kept by Telegram under a file id.
-export function held(row: Row): Held[] {
+export function held(row: Pick<Row, "meta">): Held[] {
   const meta = row.meta ?? {};
   const images = each(meta.image_path).filter(Boolean);
   const kinds = each(meta.attachment_kind);
@@ -54,7 +54,7 @@ export function held(row: Row): Held[] {
   ];
 }
 
-export const fileOnly = (row: Row) =>
+export const fileOnly = (row: Pick<Row, "author" | "body" | "meta">) =>
   (row.author === "hex" && row.body === `(file: ${row.meta?.file ?? ""})`) ||
   (row.author === "owner" && (row.body === "(photo)" || /^\(album of \d+\)$/u.test(row.body)));
 
@@ -71,7 +71,7 @@ export function pictureOf(id: string): { key: string; at: number } | undefined {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The pictures a chat app's message holds, named so an app can ask for each by id.
-export const pictures = (row: Row) =>
+export const pictures = (row: Pick<Row, "key" | "meta">) =>
   held(row).flatMap(({ type, path }, at) =>
     type?.startsWith("image/") === true
       ? [{ id: pictureId(row.key, at), kind: "photo", ...(path !== undefined && { file: path }) }]

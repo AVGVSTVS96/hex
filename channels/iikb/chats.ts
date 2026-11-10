@@ -1,4 +1,7 @@
-import { clients, fileOnly, held, heldFile, owners, say, shown } from "@hex/hub";
+import { mkdirSync, renameSync } from "node:fs";
+import { join } from "node:path";
+
+import { clients, fileOnly, held, heldFile, owners, say, shown, writable } from "@hex/hub";
 import type { Row, Store } from "@hex/hub";
 import { z } from "zod";
 
@@ -12,7 +15,30 @@ const APP = "telegram";
 const LATEST_MESSAGES = 40;
 const HELD_FOR_A_CHANGE = 25_000;
 
-const Sent = z.object({ text: z.string().trim().min(1), id: z.string().min(1) });
+const ALBUM_MAX = 10;
+
+const UNREACHABLE = "This chat's app isn't running, so words typed here can't reach it.";
+
+const SIGNATURE = { "image/jpeg": "/9j/", "image/png": "iVBORw0K" } as const;
+
+const Uploaded = z
+  .object({
+    type: z.enum(["image/jpeg", "image/png"]),
+    data: z.base64(),
+    width: z.int().positive().optional(),
+    height: z.int().positive().optional(),
+  })
+  .refine(({ type, data }) => data.startsWith(SIGNATURE[type]));
+
+const Sent = z
+  .object({
+    text: z.string().trim(),
+    id: z.string().regex(/^[\w-]+$/u),
+    files: z.array(Uploaded).max(ALBUM_MAX).default([]),
+  })
+  .refine(({ text, files }) => text !== "" || files.length > 0);
+
+export type Photo = { path: string; width?: number; height?: number };
 
 const placeOf = (chat: string) => {
   const colon = chat.indexOf(":");
@@ -33,6 +59,18 @@ const telegramIdOf = (row: Row) =>
 const pollText = (question: string, options: string) =>
   [question, "", ...options.split(" / ").map((option) => `• ${option}`)].join("\n");
 
+const filesOf = (row: Row) =>
+  held(row).map(({ name, type, dimensions }, at): File => {
+    const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
+
+    return {
+      name,
+      url: `files/${encodeURIComponent(row.key)}/${String(at)}`,
+      ...(type !== undefined && { type }),
+      ...(width > 0 && height > 0 && { width, height }),
+    };
+  });
+
 function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
   const meta = row.meta ?? {};
 
@@ -44,16 +82,7 @@ function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
     return [];
   }
 
-  const files = held(row).map(({ name, type, dimensions }, at): File => {
-    const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
-
-    return {
-      name,
-      url: `files/${encodeURIComponent(row.key)}/${String(at)}`,
-      ...(type !== undefined && { type }),
-      ...(width > 0 && height > 0 && { width, height }),
-    };
-  });
+  const files = filesOf(row);
 
   const body = edits.get(telegramIdOf(row)) ?? row.body;
   const text = filled(meta.poll) && row.author === "hex" ? pollText(body, meta.poll) : body;
@@ -84,11 +113,16 @@ function latest(store: Store, thread: string, count: number, rows = count * 2): 
 }
 
 function messages(store: Store, thread: string, count = LATEST_MESSAGES): Message[] {
-  const waiting = owners(store.messages.untaken(thread)).map(({ body }): Message => ({
-    from: "me",
-    text: body,
-    pending: true,
-  }));
+  const waiting = owners(store.messages.untaken(thread)).map((row): Message => {
+    const files = filesOf(row);
+
+    return {
+      from: "me",
+      text: files.length > 0 && fileOnly(row) ? "" : row.body,
+      pending: true,
+      ...(files.length > 0 && { files }),
+    };
+  });
 
   return [...latest(store, thread, count), ...waiting].slice(-count);
 }
@@ -168,17 +202,32 @@ export async function read(store: Store, chat: string, after?: string) {
   return { version: store.messages.mark(thread), messages: messages(store, thread) };
 }
 
-export function send(chat: string, text: string, id: string) {
+const content = (text: string, photos: number) =>
+  text !== "" || photos === 0 ? text : photos === 1 ? "(photo)" : `(album of ${String(photos)})`;
+
+const photoMeta = (photos: Photo[]) =>
+  photos.length === 0
+    ? {}
+    : {
+        image_path: photos.map(({ path }) => path).join("; "),
+        image_dimensions: photos
+          .map(({ width, height }) =>
+            width !== undefined && height !== undefined ? `${String(width)}x${String(height)}` : "",
+          )
+          .join("; "),
+      };
+
+export function send(chat: string, text: string, id: string, photos: Photo[] = []) {
   const { app, thread } = placeOf(chat);
 
   const taken = say(app, thread, {
-    content: text,
+    content: content(text, photos.length),
     key: `iikb-${id}`,
-    meta: { user: "iikb", ts: new Date().toISOString() },
+    meta: { user: "iikb", ts: new Date().toISOString(), ...photoMeta(photos) },
   });
 
   if (!taken) {
-    throw new Error("This chat's app isn't running, so words typed here can't reach it.");
+    throw new Error(UNREACHABLE);
   }
 }
 
@@ -192,7 +241,29 @@ async function file(store: Store, key: string, at: number) {
 
 const status = (code: number, said?: string) => new Response(said ?? null, { status: code });
 
-async function route(store: Store, request: Request, path: string, after: string | null) {
+async function keep(dir: string, id: string, files: z.infer<typeof Uploaded>[]): Promise<Photo[]> {
+  if (files.length > 0) {
+    mkdirSync(dir, { recursive: true });
+  }
+
+  return await Promise.all(
+    files.map(async ({ type, data, width, height }, at) => {
+      const path = join(dir, `${id}-${String(at)}.${type === "image/png" ? "png" : "jpg"}`);
+      await Bun.write(`${path}.part`, Buffer.from(data, "base64"));
+      renameSync(`${path}.part`, path);
+
+      return { path, ...(width !== undefined && height !== undefined && { width, height }) };
+    }),
+  );
+}
+
+async function route(
+  store: Store,
+  request: Request,
+  path: string,
+  after: string | null,
+  photos: string,
+) {
   const [, key = "", at = ""] = /^files\/([^/]+)\/(\d+)$/u.exec(path) ?? [];
 
   if (request.method === "GET" && key !== "") {
@@ -216,15 +287,27 @@ async function route(store: Store, request: Request, path: string, after: string
   const sent = Sent.safeParse(await request.json().catch(() => null));
 
   if (!sent.success) {
-    return status(400, "Send { text, id }");
+    return status(400, "Send { text, id, files? }");
   }
 
-  send(chat, sent.data.text, sent.data.id);
+  const { text, id, files } = sent.data;
+  const { app, thread } = placeOf(chat);
+
+  if (!writable(app, thread)) {
+    return status(502, UNREACHABLE);
+  }
+
+  send(chat, text, id, await keep(photos, id, files));
 
   return status(204);
 }
 
-export async function answer(store: Store, request: Request, token = ""): Promise<Response> {
+export async function answer(
+  store: Store,
+  request: Request,
+  token = "",
+  photos = join(store.dir, "iikb", "photos"),
+): Promise<Response> {
   if (token !== "" && request.headers.get("authorization") !== `Bearer ${token}`) {
     return status(401);
   }
@@ -232,7 +315,13 @@ export async function answer(store: Store, request: Request, token = ""): Promis
   const url = new URL(request.url);
 
   try {
-    return await route(store, request, url.pathname.slice(1), url.searchParams.get("after"));
+    return await route(
+      store,
+      request,
+      url.pathname.slice(1),
+      url.searchParams.get("after"),
+      photos,
+    );
   } catch (error) {
     return status(502, error instanceof Error ? error.message : String(error));
   }

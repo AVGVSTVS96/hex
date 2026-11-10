@@ -2569,9 +2569,11 @@ export function say(app: string, thread: string, message: Omit<Message, "author"
         await earlier;
 
         try {
-          const media = carried(message.meta);
+          const photos = pictures({ key: `${app}:${message.key ?? ""}`, meta: message.meta });
+          const media = carried(message.meta) ?? (photos.length > 0 ? photos : undefined);
+          const words = photos.length > 0 && fileOnly({ author: "owner", body: message.content });
           await there.backfill?.(thread, [
-            { from: "me", text: message.content, ...(media && { media }) },
+            { from: "me", text: words ? "" : message.content, ...(media && { media }) },
           ]);
         } catch (error) {
           process.stderr.write(

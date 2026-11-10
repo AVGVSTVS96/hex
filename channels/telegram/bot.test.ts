@@ -4,7 +4,7 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { clients, open } from "@hex/hub";
+import { clients, open, pictureId } from "@hex/hub";
 import { connect as connectSession, noClaude, until } from "@hex/hub/testing";
 import * as grammy from "grammy";
 import type { PollingOptions } from "grammy";
@@ -1446,6 +1446,11 @@ test("a backfill shows the owner's photos and clips themselves, an album under t
       text: "gone\n(photo)",
       media: [{ id: "q", kind: "photo", file: `${shot}.gone` }],
     },
+    {
+      from: "me",
+      text: "from the keyboard",
+      media: [{ id: pictureId("telegram:iikb-1", 0), kind: "photo", file: shot }],
+    },
   ]);
   const sent = calls.slice(from).filter((c) => c.method.startsWith("send"));
   expect(
@@ -1454,7 +1459,9 @@ test("a backfill shows the owner's photos and clips themselves, an album under t
     ["sendPhoto", 9, true],
     ["sendMediaGroup", 9, true],
     ["sendMessage", 9, true],
+    ["sendPhoto", 9, true],
   ]);
+  expect(sent[3]?.payload).toMatchObject({ caption: "Victor\nfrom the keyboard" });
   expect(sent[0]?.payload).toMatchObject({
     caption: "Victor\nthis one?",
     caption_entities: [
