@@ -34,9 +34,19 @@ export class Seen {
         )
         .run(session, kind, record, at);
       this.db
-        .query("delete from seen where kind not in ('rules', 'hex') and at < ?")
+        .query(
+          "delete from seen where kind not in ('rules', 'hex') and kind not glob 'rules *' and at < ?",
+        )
         .run(new Date(Date.parse(at) - TASKS_RECORD_KEPT_UNCHANGED).toISOString());
     });
+  }
+
+  unshowAll(session: string, kind: string) {
+    this.write(() =>
+      this.db
+        .query("delete from seen where session = ? and (kind = ? or kind glob ?)")
+        .run(session, kind, `${kind} *`),
+    );
   }
 
   unshow(session: string, kind: string) {
