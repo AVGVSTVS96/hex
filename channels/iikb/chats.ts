@@ -1,7 +1,7 @@
-import { mkdirSync } from "node:fs";
+import { mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
-import { clients, fileOnly, held, heldFile, owners, say, shown, typed } from "@hex/hub";
+import { clients, fileOnly, held, heldFile, owners, say, shown, writable } from "@hex/hub";
 import type { Row, Store } from "@hex/hub";
 import { z } from "zod";
 
@@ -17,12 +17,18 @@ const HELD_FOR_A_CHANGE = 25_000;
 
 const ALBUM_MAX = 10;
 
-const Uploaded = z.object({
-  type: z.enum(["image/jpeg", "image/png"]),
-  data: z.base64(),
-  width: z.int().positive().optional(),
-  height: z.int().positive().optional(),
-});
+const UNREACHABLE = "This chat's app isn't running, so words typed here can't reach it.";
+
+const SIGNATURE = { "image/jpeg": "/9j/", "image/png": "iVBORw0K" } as const;
+
+const Uploaded = z
+  .object({
+    type: z.enum(["image/jpeg", "image/png"]),
+    data: z.base64(),
+    width: z.int().positive().optional(),
+    height: z.int().positive().optional(),
+  })
+  .refine(({ type, data }) => data.startsWith(SIGNATURE[type]));
 
 const Sent = z
   .object({
@@ -53,6 +59,18 @@ const telegramIdOf = (row: Row) =>
 const pollText = (question: string, options: string) =>
   [question, "", ...options.split(" / ").map((option) => `• ${option}`)].join("\n");
 
+const filesOf = (row: Row) =>
+  held(row).map(({ name, type, dimensions }, at): File => {
+    const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
+
+    return {
+      name,
+      url: `files/${encodeURIComponent(row.key)}/${String(at)}`,
+      ...(type !== undefined && { type }),
+      ...(width > 0 && height > 0 && { width, height }),
+    };
+  });
+
 function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
   const meta = row.meta ?? {};
 
@@ -64,19 +82,9 @@ function asTelegramShowsIt(row: Row, edits: Map<string, string>): Message[] {
     return [];
   }
 
-  const files = held(row).map(({ name, type, dimensions }, at): File => {
-    const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
+  const files = filesOf(row);
 
-    return {
-      name,
-      url: `files/${encodeURIComponent(row.key)}/${String(at)}`,
-      ...(type !== undefined && { type }),
-      ...(width > 0 && height > 0 && { width, height }),
-    };
-  });
-
-  const said = edits.get(telegramIdOf(row)) ?? row.body;
-  const body = filled(meta.media) ? typed(said, meta.media.split("; ").length) : said;
+  const body = edits.get(telegramIdOf(row)) ?? row.body;
   const text = filled(meta.poll) && row.author === "hex" ? pollText(body, meta.poll) : body;
 
   return [
@@ -105,11 +113,16 @@ function latest(store: Store, thread: string, count: number, rows = count * 2): 
 }
 
 function messages(store: Store, thread: string, count = LATEST_MESSAGES): Message[] {
-  const waiting = owners(store.messages.untaken(thread)).map(({ body }): Message => ({
-    from: "me",
-    text: body,
-    pending: true,
-  }));
+  const waiting = owners(store.messages.untaken(thread)).map((row): Message => {
+    const files = filesOf(row);
+
+    return {
+      from: "me",
+      text: files.length > 0 && fileOnly(row) ? "" : row.body,
+      pending: true,
+      ...(files.length > 0 && { files }),
+    };
+  });
 
   return [...latest(store, thread, count), ...waiting].slice(-count);
 }
@@ -189,16 +202,10 @@ export async function read(store: Store, chat: string, after?: string) {
   return { version: store.messages.mark(thread), messages: messages(store, thread) };
 }
 
-const photoLines = (count: number) => Array.from({ length: count }, () => "(photo)").join("\n");
-
 const content = (text: string, photos: number) =>
-  photos === 0
-    ? text
-    : text === "" && photos > 1
-      ? `(album of ${String(photos)})`
-      : [text, photoLines(photos)].filter(filled).join("\n");
+  text !== "" || photos === 0 ? text : photos === 1 ? "(photo)" : `(album of ${String(photos)})`;
 
-const photoMeta = (id: string, photos: Photo[]) =>
+const photoMeta = (photos: Photo[]) =>
   photos.length === 0
     ? {}
     : {
@@ -208,8 +215,6 @@ const photoMeta = (id: string, photos: Photo[]) =>
             width !== undefined && height !== undefined ? `${String(width)}x${String(height)}` : "",
           )
           .join("; "),
-        media: photos.map((_, at) => `photo ${id}-${String(at)}`).join("; "),
-        files: photos.map(({ path }) => path).join("; "),
       };
 
 export function send(chat: string, text: string, id: string, photos: Photo[] = []) {
@@ -218,11 +223,11 @@ export function send(chat: string, text: string, id: string, photos: Photo[] = [
   const taken = say(app, thread, {
     content: content(text, photos.length),
     key: `iikb-${id}`,
-    meta: { user: "iikb", ts: new Date().toISOString(), ...photoMeta(id, photos) },
+    meta: { user: "iikb", ts: new Date().toISOString(), ...photoMeta(photos) },
   });
 
   if (!taken) {
-    throw new Error("This chat's app isn't running, so words typed here can't reach it.");
+    throw new Error(UNREACHABLE);
   }
 }
 
@@ -244,7 +249,8 @@ async function keep(dir: string, id: string, files: z.infer<typeof Uploaded>[]):
   return await Promise.all(
     files.map(async ({ type, data, width, height }, at) => {
       const path = join(dir, `${id}-${String(at)}.${type === "image/png" ? "png" : "jpg"}`);
-      await Bun.write(path, Buffer.from(data, "base64"));
+      await Bun.write(`${path}.part`, Buffer.from(data, "base64"));
+      renameSync(`${path}.part`, path);
 
       return { path, ...(width !== undefined && height !== undefined && { width, height }) };
     }),
@@ -285,6 +291,12 @@ async function route(
   }
 
   const { text, id, files } = sent.data;
+  const { app, thread } = placeOf(chat);
+
+  if (!writable(app, thread)) {
+    return status(502, UNREACHABLE);
+  }
+
   send(chat, text, id, await keep(photos, id, files));
 
   return status(204);

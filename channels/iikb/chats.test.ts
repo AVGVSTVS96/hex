@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -256,16 +256,18 @@ test("words sent from the keyboard reach the thread as the owner's, from iikb, u
   ]);
 });
 
-test("photos sent from the keyboard are kept on disk and reach the thread as the owner's album, its words as the caption", async () => {
-  const jpeg = Buffer.from("jpeg bytes").toString("base64");
-  const png = Buffer.from("png bytes").toString("base64");
+const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x6a, 0x70, 0x65, 0x67]);
+const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x70]);
+
+test("photos sent from the keyboard are kept on disk and reach the thread as Telegram's own photos do, its words as the caption", async () => {
+  const jpeg = JPEG.toString("base64");
 
   const response = await post("/telegram%3A-100%3A5", {
     text: "the new icon",
     id: "m5",
     files: [
       { type: "image/jpeg", data: jpeg, width: 1600, height: 1200 },
-      { type: "image/png", data: png },
+      { type: "image/png", data: PNG.toString("base64") },
     ],
   });
 
@@ -278,21 +280,19 @@ test("photos sent from the keyboard are kept on disk and reach the thread as the
       "-100:5",
       "Desk",
       {
-        content: "the new icon\n(photo)\n(photo)",
+        content: "the new icon",
         key: "iikb-m5",
         author: "owner",
         meta: {
           user: "iikb",
           image_path: `${join(photos, "m5-0.jpg")}; ${join(photos, "m5-1.png")}`,
           image_dimensions: "1600x1200; ",
-          media: "photo m5-0; photo m5-1",
-          files: `${join(photos, "m5-0.jpg")}; ${join(photos, "m5-1.png")}`,
         },
       },
     ],
   ]);
-  expect(await Bun.file(join(photos, "m5-0.jpg")).text()).toBe("jpeg bytes");
-  expect(await Bun.file(join(photos, "m5-1.png")).text()).toBe("png bytes");
+  expect(Buffer.from(await Bun.file(join(photos, "m5-0.jpg")).arrayBuffer())).toEqual(JPEG);
+  expect(Buffer.from(await Bun.file(join(photos, "m5-1.png")).arrayBuffer())).toEqual(PNG);
 
   await post("/telegram%3A-100%3A5", {
     text: "",
@@ -314,37 +314,55 @@ test("photos sent from the keyboard are kept on disk and reach the thread as the
   ]);
 });
 
-test("a photo sent from the keyboard reads back in its chat as the photo under its caption", async () => {
+test("a photo sent from the keyboard reads back in its chat under its caption, while it waits for its session too", async () => {
   const photo = join(hexDir, "state", "m8-0.jpg");
+  const meta = { user: "iikb", image_path: photo, image_dimensions: "1600x1200" };
 
   writeFileSync(photo, "jpeg bytes");
-  say(DESK, 1, "owner", "the new icon\n(photo)", {
-    user: "iikb",
-    image_path: photo,
-    image_dimensions: "1600x1200",
-    media: "photo m8-0",
-    files: photo,
+  say(DESK, 1, "owner", "the new icon", meta);
+  store.messages.deliver({
+    key: "telegram:-100:5:2",
+    to: DESK,
+    from: "telegram",
+    author: "owner",
+    body: "(photo)",
+    meta,
   });
+
+  const shown = {
+    name: "m8-0.jpg",
+    type: "image/jpeg",
+    width: 1600,
+    height: 1200,
+  };
 
   expect((await read(store, "telegram:-100:5")).messages).toEqual([
     {
       from: "me",
       text: "the new icon",
-      files: [
-        {
-          name: "m8-0.jpg",
-          url: "files/telegram%3A-100%3A5%3A1/0",
-          type: "image/jpeg",
-          width: 1600,
-          height: 1200,
-        },
-      ],
+      files: [{ ...shown, url: "files/telegram%3A-100%3A5%3A1/0" }],
+    },
+    {
+      from: "me",
+      text: "",
+      pending: true,
+      files: [{ ...shown, url: "files/telegram%3A-100%3A5%3A2/0" }],
     },
   ]);
 });
 
 test("a chat whose app isn't running says so, a bad body is refused, and a wrong token gets nothing", async () => {
   expect((await post("/discord%3A7", { text: "hi", id: "m2" })).status).toBe(502);
+  expect(
+    (
+      await post("/discord%3A7", {
+        text: "",
+        id: "m11",
+        files: [{ type: "image/jpeg", data: JPEG.toString("base64") }],
+      })
+    ).status,
+  ).toBe(502);
+  expect(existsSync(join(hexDir, "state", "iikb", "photos", "m11-0.jpg"))).toBe(false);
   expect((await post("/telegram%3A-100%3A5", { text: " ", id: "m3" })).status).toBe(400);
   expect((await post("/telegram%3A-100%3A5", { text: "hi", id: "m4" }, "nope")).status).toBe(401);
   expect(
@@ -357,5 +375,18 @@ test("a chat whose app isn't running says so, a bad body is refused, and a wrong
     ).status,
   ).toBe(400);
   expect((await post("/telegram%3A-100%3A5", { text: "hi", id: "../m10" })).status).toBe(400);
+
+  for (const data of ["", PNG.toString("base64")]) {
+    expect(
+      (
+        await post("/telegram%3A-100%3A5", {
+          text: "",
+          id: "m12",
+          files: [{ type: "image/jpeg", data }],
+        })
+      ).status,
+    ).toBe(400);
+  }
+
   expect(delivered).toEqual([]);
 });

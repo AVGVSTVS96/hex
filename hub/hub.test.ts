@@ -38,6 +38,7 @@ import {
   writable,
 } from "./hub.ts";
 import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
+import { pictureId } from "./pictures.ts";
 import { open } from "./store.ts";
 import type { Author } from "./store.ts";
 import { ATTACH, hangUpAll, http as channelLine, port } from "./testing.ts";
@@ -3893,8 +3894,47 @@ test("the owner's words written in another client reach the thread's session and
         meta: { media: "photo p1", files: "/m/p1.jpg" },
       }),
     ).toBe(true);
-    await until(() => shown.length === 3);
-    expect(shown).toEqual([
+    expect(
+      say("telegram", "chat:7", {
+        content: "and this",
+        key: "kb-3",
+        meta: { image_path: "/s/p2.jpg" },
+      }),
+    ).toBe(true);
+    expect(
+      say("telegram", "chat:7", {
+        content: "(album of 2)",
+        key: "kb-4",
+        meta: { image_path: "/s/p3.jpg; /s/p4.png" },
+      }),
+    ).toBe(true);
+    await until(() => shown.length === 5);
+    expect(shown.slice(3)).toEqual([
+      [
+        "chat:7",
+        [
+          {
+            from: "me",
+            text: "and this",
+            media: [{ id: pictureId("telegram:kb-3", 0), kind: "photo", file: "/s/p2.jpg" }],
+          },
+        ],
+      ],
+      [
+        "chat:7",
+        [
+          {
+            from: "me",
+            text: "",
+            media: [
+              { id: pictureId("telegram:kb-4", 0), kind: "photo", file: "/s/p3.jpg" },
+              { id: pictureId("telegram:kb-4", 1), kind: "photo", file: "/s/p4.png" },
+            ],
+          },
+        ],
+      ],
+    ]);
+    expect(shown.slice(0, 3)).toEqual([
       ["chat:7", [{ from: "me", text: "anchors?" }]],
       ["chat:7", [{ from: "me", text: "and the docs" }]],
       [

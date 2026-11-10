@@ -2,7 +2,7 @@ export { interrupted } from "./claude.ts";
 
 export { above } from "./fit.ts";
 
-export { fileOnly, held, pictureOf } from "./pictures.ts";
+export { fileOnly, held, pictureId, pictureOf } from "./pictures.ts";
 
 export {
   EFFORTS,

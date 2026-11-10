@@ -23,6 +23,7 @@ import {
   title,
   transcribe,
   typed,
+  pictureOf,
   EFFORTS,
   MODELS,
   Ledger,
@@ -749,7 +750,9 @@ async function backfill(thread: string, turns: Turn[]) {
         ? media.flatMap(({ file }) => (file !== undefined && existsSync(file) ? [file] : []))
         : [];
 
-    const words = files.length > 0 ? typed(text, media.length) : text;
+    const words =
+      files.length > 0 ? typed(text, media.filter(({ id }) => !pictureOf(id)).length) : text;
+
     const captioned = files.length > 0 && owner.length + 1 + words.length <= MAX_CAPTION;
 
     const parts = captioned
