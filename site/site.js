@@ -144,7 +144,7 @@ if (cells) {
   }
 }
 
-// Telegram widgets: each frame runs the widget's own code; this page stands in for Telegram and the bot.
+// Telegram widgets: each frame runs the widget's own code. The page stands in for Telegram and hex, which answers a request at once and changes the state after.
 const widgetFrames = document.querySelectorAll('iframe[data-widget]');
 if (widgetFrames.length) {
   const palette = {
@@ -161,7 +161,7 @@ if (widgetFrames.length) {
     },
     usage: {
       state: { r: 'Mon 9am', p: 58, h: 41, a: 'Updated 9:41', t: 3, n: ['General', 'ramen', 'dev'], d: [[5, 3, 4], [6, 2, 7], [3, 5, 6], [4, 2, 3], [0, 0, 0], [0, 0, 0], [0, 0, 0]] },
-      answer(s) { s.d[3] = s.d[3].map((v) => v + (Math.random() * 2 | 0)); s.p += 1; s.h += 1; s.a = 'Updated just now'; },
+      answer(s) { s.d[3] = s.d[3].map((v) => v + (Math.random() * 2 | 0)); s.p = Math.min(s.p + 1, 96); s.h += 1; s.a = 'Updated just now'; },
     },
     game: {
       state: { b: '....X...O', s: [3, 4, 2] },
@@ -186,7 +186,8 @@ if (widgetFrames.length) {
   const stub = (name, scheme) => `<script>
 var H={},n=0,W=window.TelegramWidget={profile:1,colorScheme:'${scheme}',chatData:${JSON.stringify(JSON.stringify(bots[name].state))},publicData:null,
 onEvent:function(t,f){(H[t]=H[t]||[]).push(f)},offEvent:function(){},ready:function(){},
-request:function(q){var id=++n;parent.postMessage({w:'${name}',id:id,q:q},'*');return new Promise(function(ok){addEventListener('message',function m(e){if(e.data.id!==id)return;removeEventListener('message',m);W.chatData=e.data.s;(H.chatDataChanged||[]).forEach(function(f){f.call(W)});ok({result:null})})})}};
+request:function(q){var id=++n;parent.postMessage({w:'${name}',id:id,q:q},'*');return new Promise(function(ok){addEventListener('message',function m(e){if(e.data.id!==id)return;removeEventListener('message',m);ok({result:e.data.r})})})}};
+addEventListener('message',function(e){if(e.data.s===undefined)return;W.chatData=e.data.s;(H.chatDataChanged||[]).forEach(function(f){f.call(W)})});
 addEventListener('DOMContentLoaded',function(){new ResizeObserver(function(){parent.postMessage({w:'${name}',h:Math.ceil(document.documentElement.getBoundingClientRect().height)},'*')}).observe(document.documentElement)});
 <\/script>`;
   const load = () => {
@@ -194,7 +195,7 @@ addEventListener('DOMContentLoaded',function(){new ResizeObserver(function(){par
     const vars = Object.entries(palette[scheme]).map(([k, v]) => `--tg-theme-${k}-color:${v}`).join(';');
     widgetFrames.forEach((frame) => {
       const name = frame.dataset.widget;
-      frame.srcdoc = `<!doctype html><html style="color-scheme:${scheme};${vars};--tg-content-safe-area-inset-bottom:0px;color:var(--tg-theme-text-color);font:15px/1.35 system-ui,-apple-system,sans-serif"><head><meta charset="utf-8">${stub(name, scheme)}</head><body>${document.getElementById(`widget-${name}`).innerHTML}</body></html>`;
+      frame.srcdoc = `<!doctype html><html style="color-scheme:${scheme};${vars};--tg-content-safe-area-inset-bottom:0px;color:var(--tg-theme-text-color);font:16px/1.35 system-ui,-apple-system,sans-serif"><head><meta charset="utf-8">${stub(name, scheme)}</head><body>${document.getElementById(`widget-${name}`).innerHTML}</body></html>`;
     });
   };
   addEventListener('message', (event) => {
@@ -203,8 +204,9 @@ addEventListener('DOMContentLoaded',function(){new ResizeObserver(function(){par
     if (!frame) return;
     if (h) { frame.style.height = `${h}px`; return; }
     const bot = bots[w];
+    frame.contentWindow.postMessage({ id, r: null }, '*');
     bot.answer(bot.state, q);
-    setTimeout(() => frame.contentWindow.postMessage({ id, s: JSON.stringify(bot.state) }, '*'), w === 'game' ? 420 : 220);
+    setTimeout(() => frame.contentWindow.postMessage({ s: JSON.stringify(bot.state) }, '*'), w === 'game' ? 520 : 320);
   });
   dark.addEventListener('change', load);
   load();

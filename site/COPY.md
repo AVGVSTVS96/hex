@@ -100,11 +100,11 @@ Three tiles under it, each a small picture and a caption:
 *(Three cards. Each shows one widget in an incoming Telegram bubble on the chat wallpaper, with its caption and time below it, in the chat's light or dark colors. The widgets are real widget documents, each under Telegram's size limits; the page stands in for Telegram and hex, so taps work.)*
 
 - **A list you tick.** hex gets your tap and redraws the list in place.
-  *(Widget: "Waiting on you", a big count, a striped bar per task, four made-up tasks. Caption: "Three things need you today.")*
+  *(Widget: "Waiting on you", a big count, a red striped bar per open task that turns green when done, four made-up tasks. Caption: "Three things need you today.")*
 - **A chart that stays current.** hex keeps it current in place, with no new message.
   *(Widget: share of the week used, sessions, a stacked bar per day by topic, a legend. Caption: "Your week so far.")*
 - **A game against hex.** Your move goes to hex, and its move comes back in the same message.
-  *(Widget: tic-tac-toe with a running score. Caption: "Your move.")*
+  *(Widget: tic-tac-toe with a running score. Caption: "Tic-tac-toe. You play ×.")*
 
 ## Voice
 
