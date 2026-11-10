@@ -287,7 +287,8 @@ const CALLER_PAUSE = 1000;
 const HANDOFF_WAIT = 3000;
 const HANDOFF_MOST = 8000;
 const ACK_WAIT = 10_000;
-const QUIET_BEFORE_HANG_UP = 2000;
+const QUIET = 2000;
+const STYLE_WAIT_MOST = 30_000;
 const HANG_UP_MOST = 10_000;
 const SETTLE = 1500;
 
@@ -322,15 +323,9 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
   }
 
   if (name === "style") {
-    const { style, applied } = await restyle(args);
+    const { style, telling } = restyle(args);
     const now = styleLines(style).join(" ") || "the usual way of talking";
-
-    const heard =
-      applied === undefined
-        ? ""
-        : applied
-          ? ", and the voice talks that way now"
-          : ", but the voice didn't confirm it, so it may take hold only from the next call";
+    const heard = telling ? ", and the voice switches to it once it finishes what it's saying" : "";
 
     return `saved: ${now}${heard}${filled(args.voice) ? `; the ${args.voice} voice starts with the next call` : ""}`;
   }
@@ -435,24 +430,41 @@ async function tell(
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* A call's voice and instructions are fixed when it starts, so a change mid-call reaches the voice as an instruction, and the voice itself changes from the next call. */
-async function restyle(change: VoiceStyle) {
+function restyle(change: VoiceStyle) {
   const before = styleLines(readStyle(STATE_DIR)).join(" ");
   const style = writeStyle(STATE_DIR, change);
   const lines = styleLines(style).join(" ");
+  const telling = live !== undefined && lines !== before;
 
-  const applied =
-    live && lines !== before
-      ? await send(
-          live,
-          "session.instructions.append",
-          `The caller changed how you talk. From now on: ${lines || "talk in your usual way."}`,
-        ).then(
-          () => true,
-          () => false,
-        )
-      : undefined;
+  if (live && telling) {
+    void tellOnceQuiet(live, lines).catch(fineIfUnconfirmed);
+  }
 
-  return { style, applied };
+  return { style, telling };
+}
+
+async function tellOnceQuiet(call: Live, lines: string) {
+  await untilQuiet(call, STYLE_WAIT_MOST);
+
+  if (live === call) {
+    await send(
+      call,
+      "session.instructions.append",
+      `The caller changed how you talk. From now on: ${lines || "talk in your usual way."}`,
+    );
+  }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* An instruction cuts off whatever the voice is saying, so it waits until the voice is quiet, for so long at most. */
+async function untilQuiet(call: Live, most: number, from = 0) {
+  const asked = Date.now();
+  const stillLive = () => live === call;
+  const voiceSpokeLately = () => Date.now() - Math.max(from, call.spoke) < QUIET;
+
+  while (stillLive() && Date.now() - asked < most && voiceSpokeLately()) {
+    await Bun.sleep(100);
+  }
 }
 
 async function changeStyle(request: Request) {
@@ -462,7 +474,7 @@ async function changeStyle(request: Request) {
     return new Response("personality, pace, words or voice, from GET /settings", { status: 400 });
   }
 
-  return Response.json({ settings: (await restyle(change)).style, ...options() });
+  return Response.json({ settings: restyle(change).style, ...options() });
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -856,13 +868,7 @@ function past(id: string) {
 }
 
 async function hangUpCall(call: Live) {
-  const asked = Date.now();
-  const stillLive = () => live === call;
-  const voiceSpokeLately = () => Date.now() - Math.max(asked, call.spoke) < QUIET_BEFORE_HANG_UP;
-
-  while (stillLive() && Date.now() - asked < HANG_UP_MOST && voiceSpokeLately()) {
-    await Bun.sleep(100);
-  }
+  await untilQuiet(call, HANG_UP_MOST, Date.now());
 
   if (live !== call) {
     return "the call had already ended";
@@ -1162,6 +1168,7 @@ function follow(
         `A call started.${filled(record.why) ? ` You placed it because: ${record.why}` : ""}`,
         ...(about ? [about.claude] : []),
         ...lastCalls(record.id),
+        talksLike(),
         "Send the voice what it should know right away, with note.",
       ].join("\n"),
     { call: record.id, started: "true", from: record.from, ...(about && { task: about.id }) },
@@ -1172,6 +1179,13 @@ function follow(
   }
 
   return next;
+}
+
+function talksLike() {
+  const { words, ...rest } = readStyle(STATE_DIR);
+  const set = styleLines(rest);
+
+  return `How the caller set the voice to talk: ${set.length ? set.join(" ") : "nothing set"}${filled(words) ? ` Their words: ${words}` : ""}`;
 }
 
 const LAST_CALLS = 5;

@@ -210,6 +210,16 @@ for await (const line of console) {
       await plugin.stdin.write(`${line}\n`);
       await plugin.stdin.flush();
     },
+    talk: (delta: string, at: number) => {
+      voice?.send(
+        JSON.stringify({
+          type: "session.output_transcript.delta",
+          delta,
+          start_ms: at,
+          end_ms: at + 500,
+        }),
+      );
+    },
     speak: (audio: string) => {
       if (voice === undefined) {
         throw new Error("OpenAI's stand-in has no session open");
@@ -523,7 +533,7 @@ const Styled = z.object({
 
 const Changed = z.object({ settings: z.unknown() });
 
-test("a call talks the way the caller set it; a change mid-call reaches the voice at once and stays for the next call", async () => {
+test("a call talks the way the caller set it; a change mid-call reaches the voice once it stops talking, never cutting it off, and stays for the next call", async () => {
   await using call = await lineCall({
     readyVoiceStateBeforeTheEngine: (state) => {
       writeFileSync(
@@ -538,6 +548,9 @@ test("a call talks the way the caller set it; a change mid-call reaches the voic
   expect(session.instructions).toContain("Pace: brisk.");
   expect(session.instructions).toContain("In the caller's own words, how to talk: Call me B.");
 
+  call.talk("105 things wait on you.", 40_000);
+  await Bun.sleep(100);
+
   const changed = Changed.parse(
     await fetch(`${call.base}/settings`, {
       method: "PUT",
@@ -551,6 +564,9 @@ test("a call talks the way the caller set it; a change mid-call reaches the voic
     personality: "brief",
     words: "Call me B.",
   });
+  await Bun.sleep(1000);
+  expect(call.told).toEqual([]);
+  await until(() => call.told.length);
   expect(call.told.at(-1)).toStartWith(
     "The caller changed how you talk. From now on: Personality: brief",
   );
@@ -559,7 +575,8 @@ test("a call talks the way the caller set it; a change mid-call reaches the voic
   await call.tell(`tool style ${JSON.stringify({ pace: "brisk" })}`);
   const tool = await until(() => call.steps.find((step) => step.step === "tool"));
 
-  expect(tool.text).toContain("and the voice talks that way now");
+  expect(tool.text).toContain("and the voice switches to it once it finishes what it's saying");
+  await until(() => call.told.length === 2);
   expect(call.told.at(-1)).toContain("Pace: brisk.");
 
   const bad = await fetch(`${call.base}/settings`, {

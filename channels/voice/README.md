@@ -132,7 +132,7 @@ updating its record.
 | `POST /calls/<id>/moments` | `{ "kind": "paused" \| "resumed", "text": "..." }` from the app when the phone takes its audio (a phone call or Siri) and gives it back; the voice is told to wait |
 | `POST /calls/<id>/media` | `{ "media": "<id>" }`: a photo or video sent during the call (see below); 409 when the call isn't live |
 | `GET /settings` | `{ settings, personalities, paces }`: how the voice talks, and each choice's `id` and `label` |
-| `PUT /settings` | any of `{ voice, personality, pace, words }`: saved for every call from then on, and told to a live call's voice at once (its voice changes from the next call) |
+| `PUT /settings` | any of `{ voice, personality, pace, words }`: saved for every call from then on, and told to a live call's voice once it stops talking, since an instruction cuts it off (its voice changes from the next call) |
 
 ## Photos and video
 
