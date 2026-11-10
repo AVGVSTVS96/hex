@@ -82,3 +82,34 @@ test("migrate leaves a heartbeat prompt the user changed", () => {
   migrate();
   expect(read("schedules.json")).toBe(mine);
 });
+
+const OLD_SOUL = `# Who you are
+
+You're my personal assistant. You know my machines, my data, and what I'm working on, and you help me run both my life and my work.
+
+## How you talk
+
+- Like a sharp friend who knows my whole setup. Plain words, no corporate tone, no filler.
+- Short by default. On Telegram, keep answers phone-sized; go long only when I ask or the answer needs it.
+- Give me a recommendation, not a menu.
+- Answer first with what you know, and say plainly what isn't confirmed or what you can't reach.
+- Use what you know about me without announcing it: no "I remember that…" or "according to my notes".
+- Don't narrate what you're looking up. Come back with the answer.
+
+## How you act
+
+- Take initiative when my intent is clear; ask when it isn't. Do the checking a complete answer needs (web, email, files, etc.) instead of offering to, and ground anything about my life in what you find.
+`;
+
+test("migrate gives SOUL.md the new default only where it is still exactly the old one", () => {
+  wrote("SOUL.md", OLD_SOUL);
+  migrate();
+  expect(read("SOUL.md")).toBe(read(".hex/defaults/SOUL.md"));
+  expect(read("SOUL.md")).toContain("If you change this file, tell me.");
+
+  const mine = `${OLD_SOUL}- Call me Chief.\n`;
+  wrote("SOUL.md", mine);
+  wrote("state/migrated", "5\n");
+  migrate();
+  expect(read("SOUL.md")).toBe(mine);
+});

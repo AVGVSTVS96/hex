@@ -6,7 +6,7 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 done="$home/state/migrated"
 
-steps=5
+steps=6
 
 step1() {
   [ -f "$home/schedules.json" ] || return 0
@@ -39,6 +39,13 @@ EOF
   prompt=$(jq -r '.heartbeat.prompt // empty' "$home/schedules.json") || return
   [ "$prompt" = "$old" ] || return 0
   jq --slurpfile defaults "$hex/defaults/schedules.json" '.heartbeat.prompt = $defaults[0].heartbeat.prompt' "$home/schedules.json" > "$home/schedules.json.new" && mv "$home/schedules.json.new" "$home/schedules.json"
+}
+
+# The blob id of the SOUL.md that init used to seed: only a copy that is still exactly that gets the new one.
+step6() {
+  [ -f "$home/SOUL.md" ] || return 0
+  [ "$(git hash-object --no-filters "$home/SOUL.md")" = 4ab4ff6c6026d57bd091f0eb3a7f810203b33529 ] || return 0
+  cp "$hex/defaults/SOUL.md" "$home/SOUL.md.new" && mv "$home/SOUL.md.new" "$home/SOUL.md"
 }
 
 n=$(cat "$done" 2>/dev/null) || n=0
