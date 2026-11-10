@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { checks, research } from "./ideas.ts";
+import { checks, jobChecks, research, watch } from "./ideas.ts";
 import type { Found } from "./ideas.ts";
 import { open, Store } from "./store.ts";
 
@@ -138,4 +138,81 @@ test("each check keeps the input it was given, so a prompt can be replayed again
   expect(checks(dir, "t-1")[0]?.input).toContain(
     "What to look into: Is GPT Live 1.1 on the API yet?",
   );
+});
+
+const heartbeat = {
+  cron: "45 8-22 * * *",
+  check: true,
+  prompt:
+    "Check my mail. If something's worth telling me now, message me; if not, answer HEARTBEAT_OK.",
+};
+
+test("a job's check wakes its thread only with news, and each check starts from what the last ones found", async () => {
+  const inputs: string[] = [];
+
+  const see = (found: Found) => (input: string) => {
+    inputs.push(input);
+
+    return Promise.resolve(found);
+  };
+
+  await watch(
+    dir,
+    "heartbeat",
+    heartbeat,
+    "general",
+    minute,
+    see({ news: false, finding: "Inbox: nothing new." }),
+  );
+  expect(sent()).toEqual([]);
+  await watch(
+    dir,
+    "heartbeat",
+    heartbeat,
+    "general",
+    minute + 60,
+    see({
+      news: true,
+      finding: "The landlord wrote about the lease: https://mail.example/1",
+      tokens: 60_000,
+    }),
+  );
+  await watch(
+    dir,
+    "heartbeat",
+    heartbeat,
+    "general",
+    minute + 120,
+    see({ news: false, finding: "Nothing since the lease mail." }),
+  );
+
+  expect(inputs[0]).toContain("[heartbeat] Check my mail.");
+  expect(inputs[0]).toContain(".hex/bin/hex log -- 'general'");
+  expect(inputs[0]).toContain("This is its first check.");
+  expect(inputs[2]).toContain("Inbox: nothing new.");
+  expect(inputs[2]).toContain(", told the thread: The landlord wrote about the lease");
+  expect(sent()).toMatchObject([
+    {
+      to: "general",
+      body: "[heartbeat] News from its check: The landlord wrote about the lease: https://mail.example/1",
+      meta: { schedule: "heartbeat" },
+    },
+  ]);
+  expect(jobChecks(dir, "heartbeat").map((check) => [check.news, check.tokens])).toEqual([
+    [false, undefined],
+    [true, 60_000],
+    [false, undefined],
+  ]);
+  expect(checks(dir)).toEqual([]);
+});
+
+test("a job whose check can't run runs in its thread instead, so no slot goes unchecked", async () => {
+  await watch(dir, "heartbeat", { ...heartbeat, thread: "-100:7" }, "general", minute, fail);
+  expect(sent()).toMatchObject([
+    {
+      to: "-100:7",
+      body: `[heartbeat] ${heartbeat.prompt}\n\n(Its check couldn't run, so it runs here this time: Error: rate limited)`,
+    },
+  ]);
+  expect(jobChecks(dir, "heartbeat")[0]?.error).toContain("rate limited");
 });

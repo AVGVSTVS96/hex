@@ -246,3 +246,29 @@ test("a job that names an idea is handed to its check every minute, with its slo
   ]);
   expect(fired()).toEqual([]);
 });
+
+test("a check job fires nothing itself, and its check gets the slot that came due", () => {
+  expect(() =>
+    parse(JSON.stringify({ broken: { cron: "45 * * * *", check: "yes", prompt: "x" } })),
+  ).toThrow("check must be true or false");
+  jobs({
+    heartbeat: { cron: "45 * * * *", check: true, prompt: "Check my mail." },
+    standup: { cron: "45 * * * *", prompt: "Standup." },
+  });
+  const checked: [string, number | undefined][] = [];
+
+  for (let minute = at(19, 8, 44); minute <= at(19, 8, 46); minute++) {
+    check(dir, hexDir, "general", minute, (_, name, __, ___, slot) => {
+      checked.push([name, slot]);
+    });
+  }
+
+  expect(checked).toEqual([
+    ["heartbeat", undefined],
+    ["heartbeat", at(19, 8, 45)],
+    ["heartbeat", undefined],
+  ]);
+  expect(fired()).toEqual([
+    `schedule:standup@${new Date(at(19, 8, 45) * 60_000).toISOString().slice(0, 16)}Z`,
+  ]);
+});
