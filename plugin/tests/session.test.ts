@@ -52,6 +52,7 @@ beforeEach(() => {
       env: {
         HEX_MAIN_MODEL: "claude-opus-5-5",
         HEX_ORCHESTRATOR_MODEL: "fable",
+        HEX_VOICE_MODEL: "haiku",
         MEMORY_DIR: join(home, "memory"),
       },
     }),
@@ -213,7 +214,7 @@ test("a topic session orchestrates on its own model, its agents run the folder's
   expect(picked[picked.lastIndexOf("--model") + 1]).toBe("haiku");
 });
 
-test("a voice session, started by the hub, runs the fast model on the 1-hour cache", async () => {
+test("a voice session, started by the hub, runs HEX_VOICE_MODEL on the 1-hour cache", async () => {
   const { settings } = await launch("plugin:voice@hex", "voice", {
     main: "voice",
     fresh: () => true,
@@ -221,7 +222,7 @@ test("a voice session, started by the hub, runs the fast model on the 1-hour cac
   });
 
   expect(settings).toMatchObject({
-    model: "sonnet",
+    model: "haiku",
     effortLevel: "low",
     env: { CLAUDE_CODE_PROMPT_CACHE_TTL: "1h" },
   });
