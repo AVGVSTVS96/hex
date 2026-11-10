@@ -1,0 +1,5 @@
+#!/bin/sh
+# Claude Code adds what a PreCompact hook prints to the instructions its summary is written from, on /compact and on auto-compaction alike: https://code.claude.com/docs/en/hooks#precompact
+cat <<'END'
+Keep, for each piece of work in progress: its task id, where it stands and the next step; every agent, job or thread still working for this conversation, with its id, what it's for and where it reports; each question waiting on the owner, with its message key; the owner's own words on the current work, quoted with their keys; decisions and why. Leave out tool output, file contents and finished side work: the newest messages and the open-task list come back after the summary on their own.
+END
