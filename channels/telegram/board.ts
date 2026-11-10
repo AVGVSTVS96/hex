@@ -8,10 +8,10 @@ import { z } from "zod";
 
 export const HTML = join(import.meta.dir, "board.html");
 
-// Each of a widget's two states holds at most 1024 bytes, and a widget is at most 600px tall, which seven rows under the counts fill: https://core.telegram.org/bots/widgets#limits
+// Each of a widget's two states holds at most 1024 bytes, and a widget is at most 600px tall, which six rows and a "more" line under the counts fill: https://core.telegram.org/bots/widgets#limits
 const ROOM = 1024;
-const ROWS = 7;
-const WORDS = 48;
+const ROWS = 6;
+const WORDS = 60;
 const DAY = 24 * 60 * 60_000;
 const CALM = 5000;
 
@@ -35,7 +35,14 @@ const plain = (text: string) =>
 const cut = (text: string) => {
   const one = plain(text);
 
-  return one.length > WORDS ? `${one.slice(0, WORDS - 1)}…` : one;
+  if (one.length <= WORDS) {
+    return one;
+  }
+
+  const head = one.slice(0, WORDS);
+  const space = head.lastIndexOf(" ");
+
+  return `${(space > WORDS / 2 ? head.slice(0, space) : head.slice(0, WORDS - 1)).replace(/[\s,;:.–—-]+$/u, "")}…`;
 };
 
 function linkTo(thread: string, message: string | undefined) {
@@ -173,8 +180,8 @@ export function lines(store: Store, sessions: Map<string, Session>, now = Date.n
 
     return [
       {
-        title: cut(task.title),
-        line: thread.name,
+        title: thread.name,
+        line: cut(task.title),
         at: Date.parse(task.closed ?? task.at),
         ...(link !== undefined && { link }),
       },
