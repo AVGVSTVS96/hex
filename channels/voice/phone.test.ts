@@ -184,14 +184,13 @@ async function phoneCall({ openaiHoldsEachStart = false } = {}) {
   const hex = join(home, "hex", "state");
   mkdirSync(hex, { recursive: true });
 
-  const engineWhoseRenewalWaitsForAStdinLine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
+  const engineWhoseKeepWaitsForAStdinLine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
 const step = (step, more = {}) => console.log(JSON.stringify({ step, ...more }))
 const lines = console[Symbol.asyncIterator]()
 const server = serve({
   deliver: (content, meta) => step('deliver', { content, meta }),
-  keep: () => step('keep'),
+  keep: async () => (step('keep'), await lines.next()),
   renew: () => step('renew'),
-  renewal: async () => (step('renewal'), await lines.next()),
   session: () => 'brain',
 }, ${JSON.stringify(hex)})
 const tools = Bun.serve({ port: 0, fetch: async request => {
@@ -200,7 +199,7 @@ const tools = Bun.serve({ port: 0, fetch: async request => {
 } })
 step('listening', { port: server.port, tools: tools.port })`;
 
-  const plugin = Bun.spawn(["bun", "-e", engineWhoseRenewalWaitsForAStdinLine], {
+  const plugin = Bun.spawn(["bun", "-e", engineWhoseKeepWaitsForAStdinLine], {
     env: { ...env, HOME: home },
     stdin: "pipe",
     stdout: "pipe",
@@ -561,7 +560,8 @@ test("notes sent while a placed call rings reach that call when it connects, and
   await live(call.base);
   await call.renewed();
   expect((await call.tool("note", { text: "for this call" })).result).toBe("noted");
-  expect(call.told).toEqual([{ session: "sess_phone", content: "for this call" }]);
+  expect(call.told.map((told) => told.session)).toEqual(["sess_phone"]);
+  expect(call.told[0]?.content).toMatch(/not for the caller.* for this call$/u);
 }, 20_000);
 
 test("notes sent while a placed call rings reach the voice once it picks up", async () => {
@@ -569,26 +569,24 @@ test("notes sent while a placed call rings reach the voice once it picks up", as
   await call.tool("phone", { why: "a reminder" });
   await call.tool("note", { text: "the build is green" });
   await pickedUp(call.base, call.firstPlaced());
-  expect(await until(() => call.told[0])).toEqual({
-    session: "sess_phone",
-    content: "the build is green",
-  });
+  const told = await until(() => call.told[0]);
+  expect(told.session).toBe("sess_phone");
+  expect(told.content).toMatch(/not for the caller.* the build is green$/u);
 }, 20_000);
 
-test("a call's words reach the voice session only once the last call's renew is through, in order, and its end lets the session renew", async () => {
+test("a call's words reach the voice session only once its keep is through, in order, and its end lets the session renew", async () => {
   await using call = await phoneCall();
   const phone = await dialIn(call.base);
   await live(call.base);
-  await until(() => call.steps.find((step) => step.step === "renewal"));
+  await until(() => call.steps.find((step) => step.step === "keep"));
   call.delegate("d1", 900);
   await Bun.sleep(50);
   call.say("you", "is the build green?", 1000);
   await Bun.sleep(200);
-  expect(call.steps.map((step) => step.step)).toEqual(["renewal"]);
+  expect(call.steps.map((step) => step.step)).toEqual(["keep"]);
   await call.renewed();
   await until(() => call.steps.filter((step) => step.step === "deliver").length === 2);
-  const [, keep, started, handoff] = call.steps;
-  expect(keep?.step).toBe("keep");
+  const [, started, handoff] = call.steps;
   expect(started?.content).toStartWith("A call started.");
 
   const naming: unknown = expect.stringContaining("is the build green?");

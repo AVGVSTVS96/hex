@@ -223,6 +223,7 @@ type Live = {
   record: Omit<CallRecord, "turns" | "tasks" | "moments">;
   pending: Map<string, Pending>;
   rings: Ring[];
+  handoffs?: Set<string>;
   ringing?: ReturnType<typeof setInterval> | undefined;
   changes: Changes;
   spoke: number;
@@ -269,13 +270,12 @@ type Phone = Dial & {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* What the call engine asks of the voice thread's hub: hand its session a message, hold the
-   session for a call (keep) or let it start over for the next (renew), wait for a renew on its
-   way, and name the session now serving the thread. */
+   session for a call (keep, which waits for a renew already starting the session over) or let it
+   start over for the next (renew), and name the session now serving the thread. */
 export type Hub = {
   deliver: (content: string, meta: Record<string, string>) => void;
   keep: () => Promise<void>;
   renew: () => void;
-  renewal: () => Promise<void>;
   session: () => string | undefined;
   interrupt: () => Promise<void>;
 };
@@ -375,9 +375,13 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
 
   switch (name) {
     case "say": {
-      live.stop?.answered(args.delegation_id);
+      const handoff = handoffOf(live, args.delegation_id);
 
-      const held = await tell(live, "say", args.text, args.delegation_id, {
+      if (filled(handoff)) {
+        live.stop?.answered(handoff);
+      }
+
+      const held = await tell(live, "say", args.text, handoff, {
         checked: args.checked,
       });
 
@@ -385,7 +389,7 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
     }
 
     case "note": {
-      await tell(live, "note", args.text, args.delegation_id);
+      await tell(live, "note", args.text, handoffOf(live, args.delegation_id));
 
       return "noted";
     }
@@ -402,6 +406,35 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
       throw new Error(`unknown tool ${String(name)}`);
     }
   }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The voice rejects an append naming a handoff it never made, and that error reaches every connection to the call, so an id the session copied wrong, a few letters dropped or a quote picked up, goes as the handoff it nearly matches, or as no handoff. A call picked back up after a restart doesn't know its earlier handoffs, so it sends ids as they come. */
+function handoffOf(call: Live, id: string | undefined) {
+  if (!filled(id) || call.handoffs === undefined || call.handoffs.has(id)) {
+    return id;
+  }
+
+  const handoff = [...call.handoffs].find((known) => nearly(id, known));
+  trace(`${call.id}: no handoff ${id}, so it goes as ${handoff ?? "no handoff"}`);
+
+  return handoff;
+}
+
+function nearly(id: string, known: string) {
+  const most = Math.min(id.length, known.length);
+  let front = 0;
+  let back = 0;
+
+  while (front < most && id[front] === known[front]) {
+    front++;
+  }
+
+  while (back < most - front && id.at(-1 - back) === known.at(-1 - back)) {
+    back++;
+  }
+
+  return Math.max(id.length, known.length) - front - back <= 4;
 }
 
 function send(call: Live, type: string, content: string, delegation?: string) {
@@ -433,6 +466,11 @@ function send(call: Live, type: string, content: string, delegation?: string) {
   });
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The voice reads a bare note out as if it were the answer it waits on, tested on gpt-live-1. */
+const NOTED =
+  "Background for you to know, not a result and not for the caller: say none of it unless the caller asks about it. ";
+
 async function tell(
   call: Live,
   kind: "say" | "note",
@@ -445,7 +483,11 @@ async function tell(
   await send(
     call,
     kind === "say" && !held ? "session.commentary.append" : "session.thinking.append",
-    held ? `Say this once the caller unmutes you: ${text}` : text,
+    held
+      ? `Say this once the caller unmutes you: ${text}`
+      : kind === "note"
+        ? `${NOTED}${text}`
+        : text,
     delegation,
   );
   remember(call, kind, text, more);
@@ -1164,7 +1206,7 @@ function follow(
   socket: WebSocket,
   record: Live["record"],
   {
-    call = new Call(),
+    call: resumed,
     speak,
     muLaw,
     heard,
@@ -1199,10 +1241,11 @@ function follow(
     id: record.id,
     shown: new Map(),
     socket,
-    call,
+    call: resumed ?? new Call(),
     record,
     pending: new Map(),
     rings: [],
+    ...(resumed === undefined && { handoffs: new Set<string>() }),
     changes: new Changes(),
     spoke: 0,
     callerSpoke: 0,
@@ -1236,7 +1279,6 @@ function follow(
   save(next);
   activity.changed();
   toHub(async () => {
-    await hub.renewal();
     await hub.keep();
     const claude = hub.session();
 
@@ -1498,6 +1540,7 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
           return;
         }
 
+        call.handoffs?.add(event.delegation.id);
         call.rings.push({
           delegation: event.delegation.id,
           offset: event.offset_ms ?? Number.NaN,

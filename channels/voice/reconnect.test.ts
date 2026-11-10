@@ -15,6 +15,7 @@ const ClientEvent = z.object({
   type: z.string(),
   content: z.string().optional(),
   event_id: z.unknown().optional(),
+  delegation_id: z.string().nullable().optional(),
 });
 
 const EngineLine = z.object({
@@ -75,6 +76,7 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   const closes: string[] = [];
   const instructed: string[] = [];
   const thought: string[] = [];
+  const handoffs: (string | null | undefined)[] = [];
   const judged: string[] = [];
   let voice: Bun.ServerWebSocket<AttachData> | undefined;
   let hold = callStillGoingAtStart;
@@ -145,6 +147,10 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
           instructed.push(event.content);
         }
 
+        if (event.type.endsWith(".append")) {
+          handoffs.push(event.delegation_id);
+        }
+
         if (event.type === "session.thinking.append") {
           thought.push(event.content ?? "");
           socket.send(
@@ -196,7 +202,7 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   }
 
   const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
-const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), renewal: async () => {}, session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
+const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))
 for await (const line of console) {
   const { name, args } = JSON.parse(line)
@@ -249,6 +255,7 @@ for await (const line of console) {
     closes,
     instructed,
     thought,
+    handoffs,
     judged,
     told,
     relayedToGeneral,
@@ -555,6 +562,26 @@ test("a say the voice never confirms gives the voice session an answer instead o
   expect(error).toBe("the voice didn't confirm it within 10s, so it may not have it");
   expect(Date.now() - asked).toBeLessThan(12_000);
   expect((await engine.tool("note", { text: "still here" })).result).toBe("noted");
+}, 20_000);
+
+test("a handoff id hex copied wrong reaches the voice as the handoff it nearly matches, or as none, since the voice rejects an unknown one", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.send({
+    type: "session.delegation.created",
+    delegation: { id: "item_EijjJ5AQL1Cl5XBQPFHez", target: "client" },
+    offset_ms: 1500,
+  });
+  await Bun.sleep(100);
+  const sent = engine.handoffs.length;
+  await engine.tool("note", { delegation_id: "item_EijjAQL1Cl5XBQPFHez", text: "Looking." });
+  await engine.tool("note", { delegation_id: 'item_EijjJ5AQL1Cl5XBQPFHez">', text: "Still." });
+  await engine.tool("note", { delegation_id: "none", text: "Aside." });
+  expect(engine.handoffs.slice(sent)).toEqual([
+    "item_EijjJ5AQL1Cl5XBQPFHez",
+    "item_EijjJ5AQL1Cl5XBQPFHez",
+    null,
+  ]);
 }, 20_000);
 
 test("a photo sent during the call shows in its transcript, reaches hex to look at, and has the voice hand off", async () => {
