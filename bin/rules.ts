@@ -1,5 +1,13 @@
 #!/usr/bin/env bun
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
@@ -72,6 +80,8 @@ function unified(changes: { name: string; before: string; after: string }[]) {
     rmSync(scratch, { recursive: true });
   }
 }
+
+const PARTS = [1, 2, 3, 4];
 
 const NOTE = /^#(?<first>\d+)(?:-(?<last>\d+))? /u;
 
@@ -178,6 +188,34 @@ function memoryWrittenSinceItLoaded(dir: string, room: number) {
   return said.join("\n\n");
 }
 
+function whatTheStalestPartHasSeen(store: ReturnType<typeof open>) {
+  const seenBy = (n: number) => {
+    if (held === undefined) {
+      const row = store.seen.getWithTime(session_id, `rules ${n}`);
+
+      return row && { record: row.record, at: Date.parse(row.at) };
+    }
+
+    const path = join(held, "seen", `rules.${n}.json`);
+
+    return existsSync(path)
+      ? { record: readFileSync(path, "utf-8"), at: statSync(path).mtimeMs }
+      : undefined;
+  };
+
+  const sessionLoaded = () => {
+    if (held !== undefined) {
+      return { record: readFileSync(join(held, "rules.json"), "utf-8"), at: 0 };
+    }
+
+    return { record: store.seen.get(session_id, "rules"), at: 0 };
+  };
+
+  const records = PARTS.map((n) => seenBy(n) ?? sessionLoaded());
+
+  return records.toSorted((a, b) => a.at - b.at)[0]?.record ?? sessionLoaded().record;
+}
+
 try {
   const store = open(stateDir());
 
@@ -197,16 +235,10 @@ try {
 
   const now = rules();
 
-  const seenByThisPart =
-    held === undefined ? `rules ${thisPart}` : join(held, "seen", `rules.${thisPart}.json`);
+  const keptAs = (n: number) =>
+    held === undefined ? `rules ${n}` : join(held, "seen", `rules.${n}.json`);
 
-  const kept =
-    held === undefined
-      ? store.seen.get(session_id, seenByThisPart) || store.seen.get(session_id, "rules")
-      : readFileSync(
-          existsSync(seenByThisPart) ? seenByThisPart : join(held, "rules.json"),
-          "utf-8",
-        );
+  const kept = whatTheStalestPartHasSeen(store);
 
   let out = "";
 
@@ -269,11 +301,13 @@ try {
       return;
     }
 
-    if (held === undefined) {
-      store.seen.show(session_id, seenByThisPart, JSON.stringify(now));
-    } else {
-      mkdirSync(dirname(seenByThisPart), { recursive: true });
-      writeFileSync(seenByThisPart, JSON.stringify(now));
+    for (const n of anOlderHookRunsItAloneSoItsTheLastPart ? PARTS : [thisPart]) {
+      if (held === undefined) {
+        store.seen.show(session_id, keptAs(n), JSON.stringify(now));
+      } else {
+        mkdirSync(dirname(keptAs(n)), { recursive: true });
+        writeFileSync(keptAs(n), JSON.stringify(now));
+      }
     }
   };
 

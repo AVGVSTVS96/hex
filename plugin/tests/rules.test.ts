@@ -196,6 +196,20 @@ test("a session on the older hooks, which run the rules once, gets the first par
   expect(out.length).toBeLessThan(10_000);
 });
 
+test("parts that last saw different rules still agree, all whole or all a diff", () => {
+  for (const env of [{}, holding()]) {
+    hook("SessionStart", "resume", env);
+    writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1000));
+    hook("UserPromptSubmit", undefined, env, ["1"]);
+    writeFileSync(join(home, "AGENTS.md"), rulesUpTo(1001));
+    const [first = "", second = "", third = "", fourth = ""] = prompt(env);
+    expect(first).toContain("so here they are whole, part 1 of 2");
+    expect(second).toContain("part 2 of 2");
+    expect([third, fourth]).toEqual(["", ""]);
+    expect(prompt(env)).toEqual(["", "", "", ""]);
+  }
+});
+
 test("a session's end forgets what it loaded", () => {
   hook("SessionStart");
   expect(open(join(home, "state")).seen.get(SESSION, "rules")).toContain("Answer in plain words.");
