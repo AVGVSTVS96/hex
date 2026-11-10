@@ -28,7 +28,7 @@ How it works · Clients · Voice · Inside · Yours · GitHub icon · Install
 
 - ~16,000 · lines in hex's core
 - 6 · clients ready to use
-- 840+ · tests before every update
+- 840+ · tests run per update
 
 ## A note from bassim
 
