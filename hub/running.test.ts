@@ -115,7 +115,7 @@ test("a session whose process runs under another's works for what that one works
   const kids = await until(() => {
     const pids = children(tree.pid);
 
-    return pids.length === 2 ? pids : undefined;
+    return pids.length === 2 && pids.every(runsSleep) ? pids : undefined;
   });
 
   afterAll(() => {
@@ -243,6 +243,8 @@ function children(pid: number) {
     .filter(Boolean)
     .map(Number);
 }
+
+const runsSleep = (pid: number) => readFileSync(`/proc/${pid}/comm`, "utf-8") === "sleep\n";
 
 test("a session works for the thread its hub started it for, else its job owner", () => {
   expect(served({ HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: "x", HEX_OWNER: "discord:1" })).toBe(

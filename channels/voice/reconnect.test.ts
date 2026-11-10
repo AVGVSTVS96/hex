@@ -485,6 +485,7 @@ test("work sent while the connection to the call is coming back still goes out a
   expect(result).toBe(
     "sent to General, on the board as look-into-it, but the voice may not have heard of it; the work went out, so it needn't be sent again",
   );
+  await until(() => engine.relayedToGeneral.length);
   expect(engine.relayedToGeneral).toMatchObject([
     {
       type: "inbound",

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { open } from "../../hub/store.ts";
+import { until } from "../../hub/until.ts";
 
 const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "quiet-"));
@@ -22,7 +23,25 @@ afterAll(() => {
   rmSync(home, { recursive: true });
 });
 
-const startQuiet = () => Bun.spawn([join(HEX, "bin/quiet")], { env, stdout: "pipe" });
+const startQuiet = () => {
+  const quiet = Bun.spawn([join(HEX, "bin/quiet")], { env, stdout: "pipe" });
+  let said = "";
+
+  const reading = (async () => {
+    for await (const chunk of quiet.stdout.pipeThrough(new TextDecoderStream())) {
+      said += chunk;
+    }
+  })();
+
+  return Object.assign(quiet, {
+    said: () => said,
+    saidAll: async () => {
+      await reading;
+
+      return said;
+    },
+  });
+};
 
 test("bin/quiet waits while a session hex started is mid-turn, and not on other sessions or one whose turn ended since Claude Code called it busy", async () => {
   mkdirSync(sessions, { recursive: true });
@@ -60,7 +79,8 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
   store.turns.turned("unheard", true);
   store.turns.turned("unheard", false);
   status("5.json", "unheard", "bg", "busy", Date.now() + 1000);
-  const quiet = Bun.spawn([join(HEX, "bin/quiet")], { env, stdout: "pipe" });
+  const quiet = startQuiet();
+  await until(() => quiet.said());
   await Bun.sleep(500);
   expect(quiet.exitCode).toBeNull();
   store.turns.turned("ours", false);
@@ -68,9 +88,7 @@ test("bin/quiet waits while a session hex started is mid-turn, and not on other 
   expect(quiet.exitCode).toBeNull();
   status("5.json", "unheard", "bg", "idle", Date.now());
   expect(await quiet.exited).toBe(0);
-  expect(await new Response(quiet.stdout).text()).toBe(
-    "waiting on: ours, unheard\nwaiting on: unheard\n",
-  );
+  expect(await quiet.saidAll()).toBe("waiting on: ours, unheard\nwaiting on: unheard\n");
 });
 
 test("bin/quiet leaves out the turn of each session that asked for an update, not the turns after it", async () => {
@@ -100,7 +118,7 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
   );
   store.turns.turned("later", true);
   const first = startQuiet();
-  await Bun.sleep(300);
+  await until(() => first.said());
   expect(first.exitCode).toBeNull();
   await Bun.sleep(5);
   writeFileSync(
@@ -108,11 +126,12 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
     `asker@${Date.now()} telegram:1 abc\nlater@${Date.now()} telegram:2 abc\n`,
   );
   expect(await first.exited).toBe(0);
-  expect(await new Response(first.stdout).text()).toBe("waiting on: asker, later\n");
+  expect(await first.saidAll()).toBe("waiting on: asker, later\n");
   await Bun.sleep(5);
   store.turns.turned("asker", true);
   const next = startQuiet();
-  await Bun.sleep(500);
+  await until(() => next.said());
+  expect(next.said()).toBe("waiting on: asker\n");
   expect(next.exitCode).toBeNull();
   next.kill();
 });
