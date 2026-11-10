@@ -17,8 +17,8 @@ const HEX = join(import.meta.dir, "../..");
 let home: string;
 let hex: string;
 
-beforeEach(() => {
-  home = mkdtempSync(join(tmpdir(), "init-"));
+function seed(folder: string) {
+  home = folder;
   hex = join(home, ".hex");
   mkdirSync(join(hex, "bin"), { recursive: true });
   mkdirSync(join(hex, "vendor"));
@@ -32,10 +32,17 @@ beforeEach(() => {
   }
 
   chmodSync(join(hex, "bin/hex"), 0o755);
+}
+
+let root: string;
+
+beforeEach(() => {
+  root = mkdtempSync(join(tmpdir(), "init-"));
+  seed(root);
 });
 
 afterEach(() => {
-  rmSync(home, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
 });
 
 const noGitIdentity = {
@@ -90,4 +97,21 @@ test("init leaves a folder that has commits alone", () => {
   expect(init().code).toBe(0);
   expect(log()).toBe("chore: a new hex");
   expect(existsSync(join(home, ".git"))).toBe(true);
+});
+
+const git = (cwd: string, ...args: string[]) =>
+  Bun.spawnSync(["git", "-C", cwd, "-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+    env: noGitIdentity,
+  })
+    .stdout.toString()
+    .trim();
+
+test("init gives a folder inside another git repo its own repo, and commits there", () => {
+  git(root, "init", "-q");
+  git(root, "commit", "-q", "--allow-empty", "-m", "outer");
+  seed(join(root, "hex"));
+  expect(init().code).toBe(0);
+  expect(existsSync(join(home, ".git"))).toBe(true);
+  expect(log()).toBe("chore: a new hex");
+  expect(git(root, "log", "--format=%s")).toBe("outer");
 });
