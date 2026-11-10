@@ -18,7 +18,7 @@ beforeEach(() => {
     from: "telegram",
     body: "Fix the login page.\nIt 500s on submit.",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
   store.messages.deliver({
     key: "telegram:-100:60",
@@ -26,7 +26,7 @@ beforeEach(() => {
     from: "telegram",
     body: "buy a power adapter",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
   store.tasks.create({
     title: "Fix the login page",
@@ -108,7 +108,7 @@ test("after the first list, main gets only what changed, until the changes add u
     from: "telegram",
     body: "and batteries",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
   store.tasks.create({ title: "Buy batteries", message: "telegram:-100:61", owner: "-100:9" });
   store.tasks.edit("t-1", { status: "done", proof: "https://example.com/pr/1" });
@@ -139,7 +139,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
       from: "telegram",
       body: `chore ${n}, damn it`,
       author: "owner",
-      meta: { user: "bassim" },
+      meta: { user: "victor" },
     });
     store.tasks.create({
       title: `Chore ${n}: ${"tidy up the build ".repeat(7)}`,
@@ -164,7 +164,7 @@ test("a list too long for one hook's output gives each entry with its done-when 
     from: "telegram",
     body: "and the API reference",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
   const first = /\n(t-\d+) \(open, Website\)/u.exec(shown)?.[1] ?? "no task shown";
   store.tasks.addWords(first, "telegram:-100:300");

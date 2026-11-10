@@ -29,9 +29,9 @@ beforeEach(() => {
     key: "telegram:-100:42",
     to: "-100:7",
     from: "telegram",
-    body: "remind me to buy Cheryl a salty treat",
+    body: "remind me to water the plants",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
 });
 
@@ -82,7 +82,7 @@ test("a backup is a whole copy of hex.db in state/backups, named for its day", a
   await backup(dir, "2026-10-19");
   expect(readdirSync(join(dir, "backups"))).toEqual(["hex-2026-10-19.db"]);
   expect(saved(join(dir, "backups", "hex-2026-10-19.db"))).toEqual([
-    { body: "remind me to buy Cheryl a salty treat" },
+    { body: "remind me to water the plants" },
   ]);
 });
 

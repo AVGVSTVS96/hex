@@ -29,7 +29,7 @@ beforeEach(() => {
     from: "telegram",
     body: "Fix the login page.",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
   store.messages.take("telegram:-100:50", "s");
   store.messages.deliver({
@@ -45,7 +45,7 @@ beforeEach(() => {
     from: "telegram",
     body: "(reaction: 👍)",
     author: "owner",
-    meta: { user: "bassim", reaction: "👍" },
+    meta: { user: "victor", reaction: "👍" },
   });
   store.messages.take("telegram:-100:51+👍", "s");
   store.messages.deliver({
@@ -54,7 +54,7 @@ beforeEach(() => {
     from: "telegram",
     body: "Also the signup page.",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
 });
 
@@ -161,7 +161,7 @@ test("a job is told the owner's words as they were when it started, a job no con
     from: "telegram",
     body: "A follow-up sent mid-turn.",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
   await Bun.sleep(5);
   const started = new Date().toISOString();
@@ -186,7 +186,7 @@ test("a job is told the owner's words as they were when it started, a job no con
     from: "telegram",
     body: "Something else now.",
     author: "owner",
-    meta: { user: "bassim" },
+    meta: { user: "victor" },
   });
   store.messages.take("telegram:-100:54", "s");
   expect(
@@ -214,7 +214,7 @@ test("an edit is named by the message it edits, so the line reads as the owner's
     from: "telegram",
     body: "Also the signup page, today.",
     author: "owner",
-    meta: { user: "bassim", edited: "true", message_id: "52" },
+    meta: { user: "victor", edited: "true", message_id: "52" },
   });
   store.messages.take("telegram:-100:52@1", "s");
   expect(
@@ -227,7 +227,7 @@ test("an edit is named by the message it edits, so the line reads as the owner's
     from: "telegram",
     body: "Also the signup page, tonight.",
     author: "owner",
-    meta: { user: "bassim", edited: "true", message_id: "52" },
+    meta: { user: "victor", edited: "true", message_id: "52" },
   });
 
   const cli = Bun.spawn(

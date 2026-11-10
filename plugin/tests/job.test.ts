@@ -60,7 +60,7 @@ beforeAll(() => {
 
   for (const [app, threads] of Object.entries({
     t3: { "stray-key": { name: "hex" } },
-    telegram: { "-100123:908": { name: "autofork" } },
+    telegram: { "-100123:101": { name: "orchard" } },
     discord: { "555": { name: "fix hex NOW" } },
   })) {
     open(join(home, "state")).threads.keep(app, threads);
@@ -262,10 +262,10 @@ test("a job session's prompts are hex's words in hex.db, the first and every lat
 });
 
 test("a named owner is an open thread's key or its <app>:<key> id", () => {
-  expect(value(run(["build", "-100123:908", "make"], session).args, "HEX_OWNER")).toBe(
-    "telegram:-100123:908",
+  expect(value(run(["build", "-100123:101", "make"], session).args, "HEX_OWNER")).toBe(
+    "telegram:-100123:101",
   );
-  expect(value(run(["build", "-100123:908", "make"], session).args, "HEX_FROM")).toBe(
+  expect(value(run(["build", "-100123:101", "make"], session).args, "HEX_FROM")).toBe(
     "t3:stray-key",
   );
   expect(value(run(["build", "make"], session).args, "HEX_FROM")).toBe("t3:stray-key");
@@ -279,7 +279,7 @@ test("a named owner is an open thread's key or its <app>:<key> id", () => {
   ).toBe("t3:stray-key");
   expect(
     value(
-      run(["build", "-100123:908", "make"], { ...session, HEX_FROM: "discord:555" }).args,
+      run(["build", "-100123:101", "make"], { ...session, HEX_FROM: "discord:555" }).args,
       "HEX_FROM",
     ),
   ).toBe("t3:stray-key");
@@ -288,8 +288,8 @@ test("a named owner is an open thread's key or its <app>:<key> id", () => {
     "fix hex NOW/build",
   );
   expect(
-    value(run(["build", "telegram:-100123:908", "make"]).args, "CLAUDE_CODE_SESSION_NAME"),
-  ).toBe("autofork/build");
+    value(run(["build", "telegram:-100123:101", "make"]).args, "CLAUDE_CODE_SESSION_NAME"),
+  ).toBe("orchard/build");
 });
 
 test("a job with no owner, or no command, is refused", () => {
@@ -306,7 +306,7 @@ const ended = (...args: string[]) =>
 test("a job's end is kept for its owner's thread while no hub runs, by its id or an older unit's bare key", async () => {
   expect(await ended("round3", "t3:stray-key")).toBe(0);
   expect(await ended("older", "555")).toBe(0);
-  expect(await ended("topic", "telegram:-100123:908")).toBe(0);
+  expect(await ended("topic", "telegram:-100123:101")).toBe(0);
   expect(await ended("early", "telegram:-100123:909")).toBe(0);
 
   const rows = new Database(join(home, "state/hex.db"))
@@ -327,7 +327,7 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
       meta: JSON.stringify({ user: "job" }),
     },
     {
-      to: "-100123:908",
+      to: "-100123:101",
       from: "job",
       body: containing("[job] topic ended"),
       meta: JSON.stringify({ user: "job" }),

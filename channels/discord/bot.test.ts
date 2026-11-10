@@ -210,7 +210,7 @@ type FakeChannel = {
 
 const channels = new Map<string, FakeChannel>();
 const handlers = new Map<string, (...args: unknown[]) => void>();
-const owner: Author = { id: OWNER, username: "bassim", bot: false, partial: false };
+const owner: Author = { id: OWNER, username: "victor", bot: false, partial: false };
 const bot: Author = { id: BOT, username: "hex", bot: true };
 const done: Done[] = [];
 let found: SearchPayload = {};
@@ -724,7 +724,7 @@ test("a reply says which message it answers, an edit comes back marked edited, a
   emit("messageCreate", reply);
   expect((await arrived(reply.id)).meta).toMatchObject({
     reply_to_message_id: asked.id,
-    reply_to_user: "bassim",
+    reply_to_user: "victor",
     reply_to_text: "which anchors?",
   });
 
@@ -787,13 +787,13 @@ test("fetch_messages reads a channel's top-level messages oldest-first, with eac
   const page = await call("fetch_messages", { channel: "#open-source", limit: 2 });
   expect(page.text).toBe(
     [
-      `[${at(1).toISOString()}] bassim: merged the docs fix  (id: ${docs.id})`,
-      `[${at(4).toISOString()}] bassim: release tomorrow  (id: ${release.id})`,
+      `[${at(1).toISOString()}] victor: merged the docs fix  (id: ${docs.id})`,
+      `[${at(4).toISOString()}] victor: release tomorrow  (id: ${release.id})`,
     ].join("\n"),
   );
   const older = await call("fetch_messages", { channel: openSource.id, before: docs.id });
   expect(older.text).toBe(
-    `[${at(0).toISOString()}] bassim: flaky CI on the relay PR  (id: ${ci.id}, 2 replies, last reply ${at(3).toISOString()})`,
+    `[${at(0).toISOString()}] victor: flaky CI on the relay PR  (id: ${ci.id}, 2 replies, last reply ${at(3).toISOString()})`,
   );
 });
 
@@ -801,12 +801,12 @@ test("fetch_messages drills into a thread by the id of the message it hangs off,
   const thread = await call("fetch_messages", { thread: ci.id });
   expect(thread.text).toBe(
     [
-      `[${at(2).toISOString()}] bassim: rebased it  (id: ${rebased.id})`,
-      `[${at(3).toISOString()}] bassim: rebased again ⏎ and pushed  (id: ${pushed.id})`,
+      `[${at(2).toISOString()}] victor: rebased it  (id: ${rebased.id})`,
+      `[${at(3).toISOString()}] victor: rebased again ⏎ and pushed  (id: ${pushed.id})`,
     ].join("\n"),
   );
   expect((await call("fetch_messages", { thread: ci.id, before: pushed.id })).text).toBe(
-    `[${at(2).toISOString()}] bassim: rebased it  (id: ${rebased.id})`,
+    `[${at(2).toISOString()}] victor: rebased it  (id: ${rebased.id})`,
   );
 });
 
@@ -844,9 +844,9 @@ test("a reaction reaches a served thread with what it was on, a removal says so,
   expect(added.content).toBe("(reaction: 👍)");
   expect(added.meta).toMatchObject({
     chat_id: here.id,
-    user: "bassim",
+    user: "victor",
     reaction: "👍",
-    reaction_to_user: "bassim",
+    reaction_to_user: "victor",
     reaction_to_text: "ship the anchors?",
   });
   expect(added.meta.reaction_removed).toBeUndefined();
@@ -934,7 +934,7 @@ test("reply buttons go on the last chunk, and a tap locks them on the choice and
   expect(tap.content).toBe("No");
   expect(tap.meta).toMatchObject({
     chat_id: here.id,
-    user: "bassim",
+    user: "victor",
     button_message_id: posted.id,
   });
   expect(
@@ -1086,7 +1086,7 @@ test("search_messages searches the whole server and says where each match is", a
           channel_id: openSource.id,
           content: "relay flake again",
           timestamp: at(20).toISOString(),
-          author: { id: OWNER, username: "bassim" },
+          author: { id: OWNER, username: "victor" },
           attachments: [],
         },
       ],
@@ -1106,7 +1106,7 @@ test("search_messages searches the whole server and says where each match is", a
   expect((await call("search_messages", { query: "relay", channel: "open-source" })).text).toBe(
     [
       "2 found, newest first",
-      `[${at(20).toISOString()}] bassim: relay flake again  (id: 11, in #open-source)`,
+      `[${at(20).toISOString()}] victor: relay flake again  (id: 11, in #open-source)`,
       `[${at(21).toISOString()}] me: relay fixed  (id: 12, in thread ${ciThread.id} "flaky CI" +1att)`,
     ].join("\n"),
   );
@@ -1216,7 +1216,7 @@ test("a vote on the bot's poll reaches its thread as the answer, a retracted vot
   expect(voted.content).toBe("(vote: Ramen)");
   expect(voted.meta).toMatchObject({
     chat_id: here.id,
-    user: "bassim",
+    user: "victor",
     vote: "Ramen",
     poll: "Lunch?",
   });
@@ -1650,7 +1650,7 @@ test("a backfill posts each line through one webhook of the channel, as the owne
     guild: { members: { me: { displayName: "hex" } } },
   });
 
-  Object.assign(owner, { displayName: "Bassim", displayAvatarURL: () => "https://cdn/owner.png" });
+  Object.assign(owner, { displayName: "Victor", displayAvatarURL: () => "https://cdn/owner.png" });
   const backfill = clients.get("discord")?.backfill;
 
   if (!backfill) {
@@ -1665,7 +1665,7 @@ test("a backfill posts each line through one webhook of the channel, as the owne
   expect(created).toEqual(["hex"]);
 
   const me = {
-    username: "Bassim",
+    username: "Victor",
     avatarURL: "https://cdn/owner.png",
     threadId: thread.id,
     allowedMentions: { parse: [] },

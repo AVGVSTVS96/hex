@@ -1555,13 +1555,13 @@ test("a local open request starts a session for an existing topic with its promp
       `${JSON.stringify({
         type: "open",
         thread: "chat:5",
-        name: "Theo clips",
+        name: "Video clips",
         prompt: "pick it up",
       })}\n`,
     );
   });
   const args = await launched();
-  expect(args.slice(3, 5)).toEqual(["--name", "Theo clips"]);
+  expect(args.slice(3, 5)).toEqual(["--name", "Video clips"]);
   expect(args.at(-1)).toBe("pick it up");
   expect(settingsOf(args).env.HEX_THREAD).toBe("chat:5");
 });
@@ -1588,7 +1588,7 @@ test("a local inbound request for a thread this hub doesn't have opens nothing",
       [
         { type: "inbound", thread: "other-app-key", ...message },
         { type: "inbound", thread: "constructor", ...message },
-        { type: "open", thread: "chat:5", name: "Theo clips" },
+        { type: "open", thread: "chat:5", name: "Video clips" },
       ]
         .map((line) => `${JSON.stringify(line)}\n`)
         .join(""),
@@ -1757,7 +1757,7 @@ test("a thread opened with a prompt, or as a fork, whose start failed starts aga
   );
   await until(() => failures.length === 2);
   writeFileSync(join(dir, "jobs", "job12345", "state.json"), JSON.stringify({ state: "working" }));
-  hub.open("chat:9", "Theo clips");
+  hub.open("chat:9", "Video clips");
   await until(() => bgStarts().length === 3);
   await session("chat:9", "1b2c3d4e-0000-4000-8000-000000000000");
   await until(() => bgStarts().length === 5);
@@ -1884,7 +1884,7 @@ exec claude "$@"
   await until(() => tries() === 2);
   openai.close();
   await session("chat:8", "1b2c3d4e-0000-4000-8000-000000000000");
-  hub.open("chat:9", "Theo clips");
+  hub.open("chat:9", "Video clips");
   await until(() => calls().filter((each) => each[0] === "--bg").length === 2);
   await session("chat:9", "2c3d4e5f-0000-4000-8000-000000000000");
   await Bun.sleep(100);
@@ -1922,7 +1922,7 @@ exec claude "$@"
   hub.deliver("chat:7", "Desk anchors", { ...message, content: "again" });
   await until(() => failures.length === 2);
   rmSync(join(dir, "broken"));
-  hub.open("chat:9", "Theo clips");
+  hub.open("chat:9", "Video clips");
   await until(() => calls().filter((each) => each[0] === "--bg").length === 2);
   await session("chat:9", "2c3d4e5f-0000-4000-8000-000000000000");
   await until(() => deskStarts().length === 1);
@@ -1975,7 +1975,7 @@ test("a fork whose session runs without its channel starts again into that sessi
   await time.lapse(50);
   await time.lapse(50);
   expect(failures[0]).toEqual(["chat:10", "its session runs, but its channel never connects"]);
-  hub.open("chat:9", "Theo clips");
+  hub.open("chat:9", "Video clips");
   await until(() => bgStarts().length === 2);
   await session("chat:9", "1b2c3d4e-0000-4000-8000-000000000000");
   await time.lapse(50);
@@ -3224,14 +3224,14 @@ test("threads are found by name or id, and renames are kept, in hex.db too", () 
   expect(hub.find("desk anchors")).toBe("chat:7");
   expect(hub.find("chat:8")).toBe("chat:8");
   expect(() => hub.find("Nope")).toThrow('no thread named "Nope"');
-  hub.rename("chat:8", "Theo clips");
-  expect(hub.find("Theo clips")).toBe("chat:8");
-  expect(hub.name("chat:8")).toBe("Theo clips");
+  hub.rename("chat:8", "Video clips");
+  expect(hub.find("Video clips")).toBe("chat:8");
+  expect(hub.name("chat:8")).toBe("Video clips");
   expect(hub.name("chat:9")).toBeUndefined();
-  expect(registry()["chat:8"]?.name).toBe("Theo clips");
+  expect(registry()["chat:8"]?.name).toBe("Video clips");
   expect(open(dir).threads.list()).toEqual([
     { app: "telegram", thread: "chat:7", name: "Desk anchors", session: SESSION, open: true },
-    { app: "telegram", thread: "chat:8", name: "Theo clips", open: true },
+    { app: "telegram", thread: "chat:8", name: "Video clips", open: true },
   ]);
 });
 

@@ -75,7 +75,7 @@ function place(settings: Record<string, string> = {}, wait = 10_000) {
         ...process.env,
         PATH: `${fake}:${process.env.PATH}`,
         XDG_STATE_HOME: join(home, "state"),
-        HEX_OWNER: "telegram:-100123:908",
+        HEX_OWNER: "telegram:-100123:101",
       },
     },
   );
@@ -139,7 +139,7 @@ test("with no room anywhere a job waits, and its owner hears it once, with every
   const { out, told } = place({ HEX_MACHINES: "mac:3" }, 3000);
   expect(out).toBe(`hex/deck waits for room:\n${here}: cpu 80% busy\nmac: no answer\n`);
   expect(told).toBe(
-    `--waiting deck telegram:-100123:908 \n${here}: cpu 80% busy\nmac: no answer\n`,
+    `--waiting deck telegram:-100123:101 \n${here}: cpu 80% busy\nmac: no answer\n`,
   );
 });
 

@@ -439,7 +439,7 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
       stdin: Buffer.from(""),
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, HOME: home, INVOCATION_ID: "inv1", HEX_OWNER: "telegram:-100123:908" },
+      env: { ...process.env, HOME: home, INVOCATION_ID: "inv1", HEX_OWNER: "telegram:-100123:101" },
     },
   );
 
@@ -451,7 +451,7 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
   run.kill("SIGTERM");
   expect(await run.exited).toBe(143);
   expect(readFileSync(join(home, "told"), "utf-8")).toBe(
-    '--tell|deck|telegram:-100123:908|couldn\'t stop on mac (t3_thread_interrupt: {"code":"capability_denied","message":"no link"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|',
+    '--tell|deck|telegram:-100123:101|couldn\'t stop on mac (t3_thread_interrupt: {"code":"capability_denied","message":"no link"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|',
   );
 }, 20_000);
 

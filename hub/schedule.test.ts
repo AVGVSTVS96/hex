@@ -100,7 +100,7 @@ test("an at fires once at each time it lists, and never again after", () => {
   jobs({
     treat: {
       at: ["2026-10-20 16:00", "2026-10-20T18:00"],
-      prompt: "Buy Cheryl a salty treat",
+      prompt: "Water the plants",
       thread: "topic",
     },
   });

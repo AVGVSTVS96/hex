@@ -162,7 +162,7 @@ test("a background session works for the thread its job's settings name, before 
     join(claude, "jobs", "aaaaaaaa", "state.json"),
     JSON.stringify({
       state: "working",
-      respawnFlags: ["--name", "Theo", "--settings", join(claude, "thread-settings.json")],
+      respawnFlags: ["--name", "Video", "--settings", join(claude, "thread-settings.json")],
     }),
   );
   record("fresh", {

@@ -178,16 +178,16 @@ test("a long first line never ends inside brackets, and a long question stays wh
     "telegram",
     asked(
       1,
-      "iikb site next step: a 3D Duo in the hero that folds on its real hinge, plus buttons drawn as keycaps? (hex's pick: Yes. It shows off the Duo and the keyboard with zero words)",
+      "site next step: a 3D laptop in the hero that opens on its real hinge, plus buttons drawn as keycaps? (hex's pick: Yes. It shows off the laptop and the keyboard with zero words)",
       ["Yes", "No"],
     ),
   );
 
   expect(pick.question).toBe(
-    "iikb site next step: a 3D Duo in the hero that folds on its real hinge, plus buttons drawn as keycaps?",
+    "site next step: a 3D laptop in the hero that opens on its real hinge, plus buttons drawn as keycaps?",
   );
   expect(pick.context).toBe(
-    "(hex's pick: Yes. It shows off the Duo and the keyboard with zero words)",
+    "(hex's pick: Yes. It shows off the laptop and the keyboard with zero words)",
   );
   const long = `Keep the calmer palette (the one you saw? the blue one) and ${"the bigger type everywhere it shows, ".repeat(4)}tonight? Yes.`;
   const question = fromLedger("telegram", asked(1, long, ["Yes", "No"]));
@@ -293,7 +293,7 @@ test("a question asked in General or a DM comes with none of hex's messages befo
   });
   said([
     ["18:20:00", "Your call failed: OpenAI is out of credit.", { to: GROUP }],
-    ["18:30:00", "seqno: Logseq names no writer device.", { to: GROUP }],
+    ["18:30:00", "notes: Logseq names no writer device.", { to: GROUP }],
     ["18:40:00", "Rivals is done: all three products compared.", { to: DM }],
   ]);
 
@@ -400,7 +400,7 @@ test("the check's asks read their words from their first place that has them: a 
       title: "Morning call",
       started: "2026-10-13T08:00:00.000Z",
       ended: "2026-10-13T08:05:00.000Z",
-      summary: "He wants the Duo build tonight.",
+      summary: "They want the laptop tonight.",
     }),
   );
   said([
@@ -488,7 +488,7 @@ test("the check's asks read their words from their first place that has them: a 
   expect(questions.words("check:call")).toEqual({
     place: "Morning call",
     at: "2026-10-13T08:05:00.000Z",
-    text: "He wants the Duo build tonight.",
+    text: "They want the laptop tonight.",
   });
 });
 
@@ -1565,11 +1565,11 @@ test("a question names every place it was asked, each thread once at its open qu
   );
   ledger(
     [
-      asked(1, "Order the Duo?", ["Ordered", "Not yet"]),
+      asked(1, "Order the laptop?", ["Ordered", "Not yet"]),
       {
         thread: GROUP,
-        message: 3451,
-        text: "Duo ordered?",
+        message: 3401,
+        text: "Laptop ordered?",
         options: ["Yes", "No"],
         at: "2026-10-13T12:00:00.000Z",
       },
@@ -1577,10 +1577,10 @@ test("a question names every place it was asked, each thread once at its open qu
     {
       [GROUP]: {
         message: 2693,
-        text: "Blocked on you: the Duo order",
+        text: "Blocked on you: the laptop order",
         at: "2026-10-13T19:00:00.000Z",
       },
-      [DESK]: { message: 4, text: "Duo order", at: "2026-10-13T21:00:00.000Z" },
+      [DESK]: { message: 4, text: "Laptop order", at: "2026-10-13T21:00:00.000Z" },
     },
   );
   writeFileSync(
@@ -1594,11 +1594,11 @@ test("a question names every place it was asked, each thread once at its open qu
       stuck: [],
       asks: [
         {
-          id: "check:duo",
+          id: "check:laptop",
           kind: "yesno",
           task: `telegram:${DESK}`,
           at: "2026-10-13T11:00:00.000Z",
-          question: "Is the Duo ordered?",
+          question: "Is the Laptop ordered?",
           options: [
             { label: "Ordered", value: "Ordered" },
             { label: "Not yet", value: "Not yet" },
@@ -1628,15 +1628,15 @@ test("a question names every place it was asked, each thread once at its open qu
       checks.push(why);
     },
   });
-  const [duo] = questions.view.asks;
-  expect(duo).toMatchObject({
+  const [laptop] = questions.view.asks;
+  expect(laptop).toMatchObject({
     options: [
       { label: "Ordered", value: "Ordered" },
       { label: "Not yet", value: "Not yet" },
     ],
     links: [{ label: "Apple Store", url: "https://apple.com/store" }],
   });
-  expect(duo?.places).toEqual([
+  expect(laptop?.places).toEqual([
     {
       app: "telegram",
       place: "General",

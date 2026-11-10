@@ -117,14 +117,14 @@ const telegram = {
     session: "aaaaaaaa-general",
     link: "https://t.me/c/1234567890/1",
   },
-  "-1001234567890:908": {
-    name: "autofork",
-    session: "bbbbbbbb-autofork",
-    link: "https://t.me/c/1234567890/908",
+  "-1001234567890:101": {
+    name: "orchard",
+    session: "bbbbbbbb-orchard",
+    link: "https://t.me/c/1234567890/101",
   },
-  "-1001234567890:2583": { name: "voiceapp", session: "cccccccc-voiceapp" },
-  "-1001234567890:65": { name: "Theo clips", session: "dddddddd-theo" },
-  "-1001234567890:72": { name: "Leisure time", session: "eeeeeeee-leisure" },
+  "-1001234567890:102": { name: "phoneapp", session: "cccccccc-phoneapp" },
+  "-1001234567890:103": { name: "Video clips", session: "dddddddd-video" },
+  "-1001234567890:104": { name: "Free time", session: "eeeeeeee-leisure" },
 };
 
 threads("telegram", telegram);
@@ -143,7 +143,7 @@ const [overnight, askedOvernight, published, finished, asked, still] = [
 ];
 
 job(
-  "bbbbbbbb-autofork",
+  "bbbbbbbb-orchard",
   {
     state: "blocked",
     detail: "needs music",
@@ -154,7 +154,7 @@ job(
     { at: overnight, state: "done", detail: "Overnight", text: "" },
     { at: askedOvernight, state: "blocked", detail: "Asked overnight", text: "" },
     { at: published, state: "working", detail: "Publishing", text: "" },
-    { at: finished, state: "done", detail: "**Published** autofork 0.1.2", text: "npm is live" },
+    { at: finished, state: "done", detail: "**Published** orchard 0.1.2", text: "npm is live" },
     { at: asked, state: "blocked", detail: "needs music", text: "Your call" },
     { at: still, state: "blocked", detail: "still needs music", text: "Still yours" },
   ],
@@ -174,12 +174,12 @@ const voiceFan = [
 ];
 
 job(
-  "cccccccc-voiceapp",
+  "cccccccc-phoneapp",
   { state: "working", detail: "building", updatedAt: ago(1), fan: voiceFan },
   [{ at: ago(14), state: "working", detail: "", text: "" }],
 );
 
-job("dddddddd-theo", { state: "stopped", detail: "stopped", updatedAt: ago(30) }, [
+job("dddddddd-video", { state: "stopped", detail: "stopped", updatedAt: ago(30) }, [
   { at: ago(100), state: "done", detail: "clips posted", text: "done" },
 ]);
 
@@ -189,7 +189,7 @@ job("ffffffff-old", { state: "done", detail: "long ago", updatedAt: ago(8 * 24 *
 
 running("aaaaaaaa-general", "idle");
 
-running("cccccccc-voiceapp", "busy");
+running("cccccccc-phoneapp", "busy");
 
 running("eeeeeeee-leisure", "busy", 2 ** 22 + 12_345);
 
@@ -315,10 +315,10 @@ function item(thread: string, ordinal: number, type: string, status: string, pay
   );
 }
 
-mkdirSync(join(project, "cccccccc-voiceapp", "subagents"), { recursive: true });
+mkdirSync(join(project, "cccccccc-phoneapp", "subagents"), { recursive: true });
 
 writeFileSync(
-  join(project, "cccccccc-voiceapp", "subagents", "agent-agent1.meta.json"),
+  join(project, "cccccccc-phoneapp", "subagents", "agent-agent1.meta.json"),
   JSON.stringify({ agentType: "Explore", description: "Build the Tasks view" }),
 );
 
@@ -328,31 +328,31 @@ afterAll(() => {
   board.close();
 });
 
-const voiceapp = () => found(board.get("telegram:-1001234567890:2583"));
+const phoneapp = () => found(board.get("telegram:-1001234567890:102"));
 
 test("each thread is a run from its session's own records, what needs you first, then what's working, then what finished", () => {
   expect(board.runs.map((run) => [run.name, run.state])).toEqual([
-    ["autofork", "needs"],
-    ["voiceapp", "working"],
+    ["orchard", "needs"],
+    ["phoneapp", "working"],
     ["General", "done"],
-    ["Leisure time", "idle"],
-    ["Theo clips", "idle"],
+    ["Free time", "idle"],
+    ["Video clips", "idle"],
   ]);
-  const autofork = found(board.get("telegram:-1001234567890:908"));
-  expect(autofork).toMatchObject({
+  const orchard = found(board.get("telegram:-1001234567890:101"));
+  expect(orchard).toMatchObject({
     where: "Telegram",
-    place: "autofork",
+    place: "orchard",
     line: "Pick a music style, and run claude setup-token",
     needs: "Pick a music style, and run claude setup-token",
     since: asked,
-    link: "https://t.me/c/1234567890/908",
+    link: "https://t.me/c/1234567890/101",
   });
-  expect(autofork.lately.map((moment) => [moment.state, moment.text])).toEqual([
+  expect(orchard.lately.map((moment) => [moment.state, moment.text])).toEqual([
     ["needs", "still needs music"],
     ["needs", "needs music"],
-    ["done", "Published autofork 0.1.2"],
+    ["done", "Published orchard 0.1.2"],
   ]);
-  expect(autofork.track).toEqual([
+  expect(orchard.track).toEqual([
     { at: overnight, state: "done" },
     { at: askedOvernight, state: "needs" },
     { at: published, state: "working" },
@@ -366,8 +366,8 @@ test("each thread is a run from its session's own records, what needs you first,
     link: "https://t.me/c/1234567890/1",
     running: false,
   });
-  expect(found(board.get("telegram:-1001234567890:2583")).running).toBe(true);
-  expect(board.get("telegram:-1001234567890:65")).toMatchObject({
+  expect(found(board.get("telegram:-1001234567890:102")).running).toBe(true);
+  expect(board.get("telegram:-1001234567890:103")).toMatchObject({
     line: "clips posted",
     lately: [],
   });
@@ -377,7 +377,7 @@ test("each thread is a run from its session's own records, what needs you first,
 });
 
 test("a working thread's line is its newest step in words, never a tool call, and each of its agents from this stretch of work shows its own, running ones first", async () => {
-  expect(voiceapp().agents).toEqual([
+  expect(phoneapp().agents).toEqual([
     {
       id: "agent1",
       label: "Build the Tasks view",
@@ -396,49 +396,49 @@ test("a working thread's line is its newest step in words, never a tool call, an
       steps: [],
     },
   ]);
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Read", { file_path: "/repo/src/tasks.ts" });
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Edit", {
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Read", { file_path: "/repo/src/tasks.ts" });
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Edit", {
     file_path: "/repo/src/tasks.ts",
     old_string: "a",
     new_string: "b",
   });
-  await until(() => voiceapp().steps.length === 2);
-  expect(voiceapp().steps.map((step) => [step.kind, step.text])).toEqual([
+  await until(() => phoneapp().steps.length === 2);
+  expect(phoneapp().steps.map((step) => [step.kind, step.text])).toEqual([
     ["edit", "Editing tasks.ts"],
     ["read", "Reading tasks.ts"],
   ]);
-  expect(voiceapp().line).toBe("");
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Bash", {
+  expect(phoneapp().line).toBe("");
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Bash", {
     command: "cd ~/repo && git status --short && git log --oneline -3",
   });
 
   const record = (detail: string) => {
-    job("cccccccc-voiceapp", { state: "working", detail, updatedAt: ago(1), fan: voiceFan }, [
+    job("cccccccc-phoneapp", { state: "working", detail, updatedAt: ago(1), fan: voiceFan }, [
       { at: ago(14), state: "working", detail: "", text: "" },
     ]);
   };
 
   record("Running cd ~/repo && git status --short && git l…");
-  await until(() => voiceapp().steps[0]?.kind === "run");
+  await until(() => phoneapp().steps[0]?.kind === "run");
   await Bun.sleep(50);
-  expect(voiceapp().line).not.toContain("Running");
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Bash", {
+  expect(phoneapp().line).not.toContain("Running");
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Bash", {
     command: "cd ~/repo && python3 -c '\nimport json\nprint(1)'",
   });
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Write", {
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Write", {
     file_path: "/repo/src/rows.ts",
     content: "x",
   });
-  await until(() => voiceapp().steps[0]?.kind === "edit");
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Bash", {
+  await until(() => phoneapp().steps[0]?.kind === "edit");
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Bash", {
     command: "for r in a b; do echo $r; done",
   });
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Bash", { command: "pwd" });
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Grep", { pattern: "board", path: "/repo" });
-  await until(() => voiceapp().steps[0]?.kind === "search");
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Bash", { command: "pwd" });
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Grep", { pattern: "board", path: "/repo" });
+  await until(() => phoneapp().steps[0]?.kind === "search");
   record("Wired the Tasks rows to the board");
   await Bun.sleep(50);
-  expect(voiceapp().line).toBe("");
+  expect(phoneapp().line).toBe("");
 
   for (const tool of [
     "Running pwd",
@@ -450,28 +450,28 @@ test("a working thread's line is its newest step in words, never a tool call, an
   ]) {
     record(tool);
     await Bun.sleep(50);
-    expect(voiceapp().line).toBe("");
+    expect(phoneapp().line).toBe("");
   }
 
   record("Tasks rows wired to the board");
   await Bun.sleep(50);
-  expect(voiceapp().line).toBe("");
+  expect(phoneapp().line).toBe("");
   record("building");
   await Bun.sleep(50);
-  expect(voiceapp().line).toBe("");
-  said(join(project, "cccccccc-voiceapp.jsonl"), {
+  expect(phoneapp().line).toBe("");
+  said(join(project, "cccccccc-phoneapp.jsonl"), {
     type: "text",
     text: "The **Tasks** view reads its rows now.",
   });
-  toolUse(join(project, "cccccccc-voiceapp.jsonl"), "Bash", {
+  toolUse(join(project, "cccccccc-phoneapp.jsonl"), "Bash", {
     command: 'cd ~/repo && git commit -qm "fix: rows"',
   });
-  await until(() => voiceapp().steps[0]?.text.includes("git commit"));
-  expect(voiceapp().line).toBe("The Tasks view reads its rows now.");
+  await until(() => phoneapp().steps[0]?.text.includes("git commit"));
+  expect(phoneapp().line).toBe("The Tasks view reads its rows now.");
   const wiring = { state: "working", detail: "Wiring rows", text: "" };
   const spoken = Date.now();
   job(
-    "cccccccc-voiceapp",
+    "cccccccc-phoneapp",
     { state: "working", detail: "Wiring rows", updatedAt: ago(0), fan: voiceFan },
     [
       { ...wiring, at: new Date(spoken - 30_000).toISOString() },
@@ -479,9 +479,9 @@ test("a working thread's line is its newest step in words, never a tool call, an
     ],
   );
   await Bun.sleep(50);
-  expect(voiceapp().line).toBe("The Tasks view reads its rows now.");
+  expect(phoneapp().line).toBe("The Tasks view reads its rows now.");
   job(
-    "cccccccc-voiceapp",
+    "cccccccc-phoneapp",
     { state: "working", detail: "Rows render from the board", updatedAt: ago(0), fan: voiceFan },
     [
       { ...wiring, at: new Date(spoken - 30_000).toISOString() },
@@ -489,17 +489,17 @@ test("a working thread's line is its newest step in words, never a tool call, an
     ],
   );
   await Bun.sleep(50);
-  expect(voiceapp().line).toBe("The Tasks view reads its rows now.");
+  expect(phoneapp().line).toBe("The Tasks view reads its rows now.");
   job(
-    "cccccccc-voiceapp",
+    "cccccccc-phoneapp",
     { state: "working", detail: "building", updatedAt: ago(1), fan: voiceFan },
     [{ at: ago(14), state: "working", detail: "", text: "" }],
   );
-  toolUse(join(project, "cccccccc-voiceapp", "subagents", "agent-agent1.jsonl"), "Read", {
+  toolUse(join(project, "cccccccc-phoneapp", "subagents", "agent-agent1.jsonl"), "Read", {
     file_path: "/repo/README.md",
   });
-  await until(() => voiceapp().agents[0]?.line === "Reading README.md");
-  const row = found(board.rows().find((one) => one.name === "voiceapp"));
+  await until(() => phoneapp().agents[0]?.line === "Reading README.md");
+  const row = found(board.rows().find((one) => one.name === "phoneapp"));
   expect(row).not.toContainKey("steps");
   expect(row.agents[0]).toMatchObject({
     id: "agent1",
@@ -511,7 +511,7 @@ test("a working thread's line is its newest step in words, never a tool call, an
 
 test("a Claude Code agent shows its type and model, and once it stops, what it handed back", async () => {
   said(
-    join(project, "cccccccc-voiceapp", "subagents", "agent-agent1.jsonl"),
+    join(project, "cccccccc-phoneapp", "subagents", "agent-agent1.jsonl"),
     { type: "text", text: "Looking." },
     {
       message: {
@@ -521,36 +521,36 @@ test("a Claude Code agent shows its type and model, and once it stops, what it h
       },
     },
   );
-  await until(() => voiceapp().agents[0]?.who === "Explore · Haiku 5.5");
+  await until(() => phoneapp().agents[0]?.who === "Explore · Haiku 5.5");
   heard(
-    join(project, "cccccccc-voiceapp.jsonl"),
+    join(project, "cccccccc-phoneapp.jsonl"),
     "<task-notification>\n<task-id>agent2</task-id>\n<status>completed</status>\n<result>[harness: matched a pattern.]\n\n**The server** answers in 40ms.\nThe rest is fine.</result>\n</task-notification>",
     { origin: { kind: "task-notification" } },
   );
-  await until(() => voiceapp().agents[1]?.result !== undefined);
-  expect(voiceapp().agents[1]).toMatchObject({
+  await until(() => phoneapp().agents[1]?.result !== undefined);
+  expect(phoneapp().agents[1]).toMatchObject({
     state: "done",
     line: "The server answers in 40ms.",
     result: "The server answers in 40ms.\nThe rest is fine.",
   });
-  expect(found(board.rows().find((row) => row.name === "voiceapp")).agents[1]).not.toContainKey(
+  expect(found(board.rows().find((row) => row.name === "phoneapp")).agents[1]).not.toContainKey(
     "result",
   );
 });
 
 test("a step's result comes back on it: when it ended, whether it worked, its first lines, and the agent it started", async () => {
-  const transcript = join(project, "cccccccc-voiceapp.jsonl");
+  const transcript = join(project, "cccccccc-phoneapp.jsonl");
   toolUse(transcript, "Bash", { command: "bun test", description: "Run the tests" }, "toolu_test");
-  await until(() => voiceapp().steps[0]?.id === "toolu_test");
-  expect(voiceapp().steps[0]).toMatchObject({
+  await until(() => phoneapp().steps[0]?.id === "toolu_test");
+  expect(phoneapp().steps[0]).toMatchObject({
     kind: "run",
     text: "Run the tests",
     state: "running",
     detail: "bun test",
   });
   back(transcript, "toolu_test", "Exit code 1\n2 fail\n9 pass", { is_error: true });
-  await until(() => voiceapp().steps[0]?.state === "failed");
-  expect(voiceapp().steps[0]).toMatchObject({
+  await until(() => phoneapp().steps[0]?.state === "failed");
+  expect(phoneapp().steps[0]).toMatchObject({
     result: "Exit code 1\n2 fail\n9 pass",
     end: aString,
   });
@@ -571,8 +571,8 @@ test("a step's result comes back on it: when it ended, whether it worked, its fi
     "toolu_agent",
     "Async agent launched successfully.\nagentId: agent9 (internal ID)",
   );
-  await until(() => voiceapp().steps[0]?.agent === "agent9");
-  const [agent, read] = voiceapp().steps;
+  await until(() => phoneapp().steps[0]?.agent === "agent9");
+  const [agent, read] = phoneapp().steps;
   expect(agent).toMatchObject({
     kind: "agent",
     text: "Started Check the phone",
@@ -590,7 +590,7 @@ test("a step's result comes back on it: when it ended, whether it worked, its fi
 });
 
 test("a working thread's page has its thoughts in their own words and its plan as Claude Code's todo list stands", async () => {
-  const transcript = join(project, "cccccccc-voiceapp.jsonl");
+  const transcript = join(project, "cccccccc-phoneapp.jsonl");
   said(transcript, {
     type: "thinking",
     thinking: "The **list** needs a lane.\n\nThen the rows.",
@@ -603,21 +603,21 @@ test("a working thread's page has its thoughts in their own words and its plan a
       { content: "Ship it", status: "pending", activeForm: "Shipping it" },
     ],
   });
-  await until(() => voiceapp().plan.length === 3);
-  expect(voiceapp().plan).toEqual([
+  await until(() => phoneapp().plan.length === 3);
+  expect(phoneapp().plan).toEqual([
     { text: "Read the inbox", state: "done" },
     { text: "Drawing the lanes", state: "running" },
     { text: "Ship it", state: "pending" },
   ]);
   expect(
-    voiceapp()
+    phoneapp()
       .steps.slice(0, 2)
       .map((step) => [step.kind, step.text]),
   ).toEqual([
     ["plan", "Drawing the lanes"],
     ["think", "The list needs a lane. Then the rows."],
   ]);
-  expect(board.rows().find((row) => row.name === "voiceapp")).not.toContainKey("plan");
+  expect(board.rows().find((row) => row.name === "phoneapp")).not.toContainKey("plan");
 });
 
 test("a change to a session wakes the list, and the counts move only when a count does", async () => {
@@ -891,15 +891,15 @@ test("a thread that stops working keeps its last stretch, with nothing left runn
   expect(lead().agents.map((agent) => agent.label)).toEqual(["new: round two"]);
 });
 
-const antibody = () => board.get("telegram:-1001234567890:513");
+const linter = () => board.get("telegram:-1001234567890:105");
 
 test("a thread whose turn ended stays working while its workflow runs, each workflow agent with its own steps", async () => {
   threads("telegram", {
     ...telegram,
-    "-1001234567890:513": { name: "antibody", session: "51351351-antibody" },
+    "-1001234567890:105": { name: "linter", session: "51351351-linter" },
   });
   job(
-    "51351351-antibody",
+    "51351351-linter",
     {
       state: "working",
       detail: "Phase 1 resumed",
@@ -912,27 +912,27 @@ test("a thread whose turn ended stays working while its workflow runs, each work
     },
     [{ at: ago(3), state: "working", detail: "Phase 1 resumed", text: "Resumed Phase 1" }],
   );
-  running("51351351-antibody", "idle");
-  await until(() => antibody()?.state === "working");
-  expect(found(antibody()).agents.map((agent) => [agent.label, agent.state])).toEqual([
+  running("51351351-linter", "idle");
+  await until(() => linter()?.state === "working");
+  expect(found(linter()).agents.map((agent) => [agent.label, agent.state])).toEqual([
     ["build:bills", "working"],
   ]);
   toolUse(
-    join(project, "51351351-antibody", "subagents", "workflows", "wf_1", "agent-wfbills.jsonl"),
+    join(project, "51351351-linter", "subagents", "workflows", "wf_1", "agent-wfbills.jsonl"),
     "Read",
     { file_path: "/repo/bills.ts" },
   );
-  await until(() => antibody()?.agents[0]?.line === "Reading bills.ts");
+  await until(() => linter()?.agents[0]?.line === "Reading bills.ts");
 });
 
 test("a running session that works for no thread isn't on the board", async () => {
-  job("12121212-review", { state: "working", detail: "reviewing autofork", updatedAt: ago(0) });
+  job("12121212-review", { state: "working", detail: "reviewing orchard", updatedAt: ago(0) });
   running("12121212-review", "busy", process.pid, {
     kind: "bg",
-    name: "autofork-review",
+    name: "orchard-review",
     cwd: "/repo",
   });
-  running("56565656-terminal", "busy", process.pid, { kind: "interactive", name: "bassim-1" });
+  running("56565656-terminal", "busy", process.pid, { kind: "interactive", name: "victor-1" });
   const version = board.version;
   job("aaaaaaaa-general", { state: "done", detail: "heartbeat ran again", updatedAt: ago(0) });
   await until(() => board.version !== version);
@@ -942,7 +942,7 @@ test("a running session that works for no thread isn't on the board", async () =
       .strays()
       .map((one) => one.name ?? "")
       .toSorted(),
-  ).toEqual(["autofork-review", "bassim-1"]);
+  ).toEqual(["orchard-review", "victor-1"]);
   rmSync(join(claude, "sessions", "12121212.json"));
   rmSync(join(claude, "sessions", "56565656.json"));
 });
@@ -1346,7 +1346,7 @@ const childrenOnceEachRunsSleep = (pid: number, count: number) =>
 
 test("a thread stays working while a session it started runs, that session one of its agents, and while its own shells run", async () => {
   const build = Bun.spawn(["sleep", "30"], {
-    env: { ...process.env, HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-1001234567890:3275" },
+    env: { ...process.env, HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-1001234567890:106" },
   });
 
   afterAll(() => {
@@ -1354,11 +1354,11 @@ test("a thread stays working while a session it started runs, that session one o
   });
   threads("telegram", {
     ...telegram,
-    "-1001234567890:3275": { name: "lab", session: "32753275-lab" },
+    "-1001234567890:106": { name: "lab", session: "32753275-lab" },
   });
   job("32753275-lab", { state: "done", detail: "started the build", updatedAt: ago(1) });
   running("32753275-lab", "idle");
-  const lab = () => board.get("telegram:-1001234567890:3275");
+  const lab = () => board.get("telegram:-1001234567890:106");
   await until(() => lab()?.state === "done");
   running("78787878-build", "busy", build.pid, {
     kind: "interactive",
@@ -1384,7 +1384,7 @@ test("a thread stays working while a session it started runs, that session one o
 
 test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a run of its own, with what it launched", async () => {
   const owned = Bun.spawn(["sleep", "30"], {
-    env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:65" },
+    env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:103" },
   });
 
   const orphan = Bun.spawn(["sh", "-c", "sleep 30 & wait"], {
@@ -1398,12 +1398,12 @@ test("a job's session works under the thread that owns it, wherever it runs, and
       stop(pid);
     }
   });
-  const theo = () => board.get("telegram:-1001234567890:65");
+  const video = () => board.get("telegram:-1001234567890:103");
   const lastActive = Date.now() - 60_000;
   job("91919191-clips", { state: "working", detail: "cutting clips", updatedAt: ago(0) });
   running("91919191-clips", "busy", owned.pid, {
     kind: "interactive",
-    name: "Theo clips/cut",
+    name: "Video clips/cut",
     startedAt: Date.now(),
   });
   running("92929292-lost", "busy", orphan.pid, {
@@ -1417,9 +1417,9 @@ test("a job's session works under the thread that owns it, wherever it runs, and
     name: "gone/job-build",
     startedAt: lastActive - 30_000,
   });
-  await until(() => theo()?.state === "working" && !!board.get("claude:92929292"));
-  expect(found(theo()).agents.map((agent) => [agent.id, agent.label, agent.state])).toEqual([
-    ["91919191-clips", "Theo clips/cut", "working"],
+  await until(() => video()?.state === "working" && !!board.get("claude:92929292"));
+  expect(found(video()).agents.map((agent) => [agent.id, agent.label, agent.state])).toEqual([
+    ["91919191-clips", "Video clips/cut", "working"],
   ]);
   expect(board.get("claude:92929292")).toMatchObject({
     name: "gone/job",
@@ -1444,37 +1444,37 @@ test("a job's session works under the thread that owns it, wherever it runs, and
   expect(board.get("claude:91919191")).toBeUndefined();
   rmSync(join(claude, "sessions", "91919191.json"));
   rmSync(join(claude, "sessions", "92929292.json"));
-  await until(() => theo()?.state !== "working" && !board.get("claude:92929292"));
+  await until(() => video()?.state !== "working" && !board.get("claude:92929292"));
 });
 
 test("a job's session works under the thread that owns it while that thread has no session of its own", async () => {
   const owned = Bun.spawn(["sleep", "30"], {
-    env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:3675" },
+    env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:107" },
   });
 
   afterAll(() => {
     owned.kill();
   });
-  threads("telegram", { ...telegram, "-1001234567890:3675": { name: "unemployment" } });
-  const claim = () => board.get("telegram:-1001234567890:3675");
-  job("93939393-claim", { state: "working", detail: "filling the claim", updatedAt: ago(0) });
-  running("93939393-claim", "busy", owned.pid, {
+  threads("telegram", { ...telegram, "-1001234567890:107": { name: "trip" } });
+  const booking = () => board.get("telegram:-1001234567890:107");
+  job("93939393-booking", { state: "working", detail: "booking the trip", updatedAt: ago(0) });
+  running("93939393-booking", "busy", owned.pid, {
     kind: "interactive",
-    name: "unemployment/claim",
-    cwd: "/scratch/claim",
+    name: "trip/booking",
+    cwd: "/scratch/booking",
     startedAt: Date.now(),
   });
-  await until(() => claim()?.state === "working");
-  expect(found(claim()).agents.map((agent) => [agent.id, agent.label, agent.state])).toEqual([
-    ["93939393-claim", "unemployment/claim", "working"],
+  await until(() => booking()?.state === "working");
+  expect(found(booking()).agents.map((agent) => [agent.id, agent.label, agent.state])).toEqual([
+    ["93939393-booking", "trip/booking", "working"],
   ]);
   expect(board.get("claude:93939393")).toBeUndefined();
-  toolUse(join(claude, "projects", "-scratch-claim", "93939393-claim.jsonl"), "Read", {
-    file_path: "/scratch/claim/form.md",
+  toolUse(join(claude, "projects", "-scratch-booking", "93939393-booking.jsonl"), "Read", {
+    file_path: "/scratch/booking/form.md",
   });
-  await until(() => claim()?.agents[0]?.line === "Reading form.md");
+  await until(() => booking()?.agents[0]?.line === "Reading form.md");
   rmSync(join(claude, "sessions", "93939393.json"));
-  await until(() => !claim());
+  await until(() => !booking());
 });
 
 test("a renewed session's new job folder still wakes the list", async () => {
@@ -1771,11 +1771,14 @@ test("a thread filed under a project goes by the project's name and keeps its ow
   });
   job("47004700-chats", { state: "done", detail: "bubbles land", updatedAt: ago(2) });
   job("70017001-dm", { state: "done", detail: "sent the link", updatedAt: ago(2) });
-  store.threads.file("-1001234567890:4700", "iikb");
-  store.threads.file("7001", "iikb");
-  store.threads.file("-1001234567890", "iikb");
-  await until(() => board.get("telegram:-1001234567890:4700")?.name === "iikb");
-  expect(board.get("telegram:-1001234567890:4700")).toMatchObject({ name: "iikb", place: "Chats" });
+  store.threads.file("-1001234567890:4700", "keyboard");
+  store.threads.file("7001", "keyboard");
+  store.threads.file("-1001234567890", "keyboard");
+  await until(() => board.get("telegram:-1001234567890:4700")?.name === "keyboard");
+  expect(board.get("telegram:-1001234567890:4700")).toMatchObject({
+    name: "keyboard",
+    place: "Chats",
+  });
   expect(board.get("telegram:7001")).toMatchObject({ name: "DM", place: "DM" });
   expect(board.get("telegram:-1001234567890")).toMatchObject({ name: "General", place: "General" });
   store.threads.file("-1001234567890", undefined);
@@ -1931,9 +1934,12 @@ test("a T3 Code thread goes to the hex thread that sent it work last, by when he
 });
 
 test("what a session T3 Code runs launches goes by T3's handoffs, not the thread its inherited environment names", async () => {
-  const t3server = Bun.spawn(["sh", "-c", "HEX_OWNER=telegram:-1001234567890:65 sleep 30 & wait"], {
-    env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "" },
-  });
+  const t3server = Bun.spawn(
+    ["sh", "-c", "HEX_OWNER=telegram:-1001234567890:103 sleep 30 & wait"],
+    {
+      env: { ...process.env, HEX_CHANNEL: "", HEX_THREAD: "", HEX_OWNER: "" },
+    },
+  );
 
   const kid = found((await childrenOnceEachRunsSleep(t3server.pid, 1))[0]);
 
@@ -1961,7 +1967,7 @@ test("what a session T3 Code runs launches goes by T3's handoffs, not the thread
   job("aaaaaaaa-general", { state: "done", detail: "heartbeat ran once more", updatedAt: ago(0) });
   await until(() => board.version !== version);
   expect(
-    board.get("telegram:-1001234567890:65")?.agents.map((agent) => agent.id) ?? [],
+    board.get("telegram:-1001234567890:103")?.agents.map((agent) => agent.id) ?? [],
   ).not.toContain("c6c6c6c6-build");
   expect(board.runs.filter((run) => run.app === "claude")).toEqual([]);
   rmSync(join(claude, "sessions", "c5c5c5c5.json"));
@@ -2004,7 +2010,7 @@ test("a thread's fresh background session works under it from its first turn, be
   writeFileSync(
     join(home, "leisure-settings.json"),
     JSON.stringify({
-      env: { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-1001234567890:72" },
+      env: { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-1001234567890:104" },
     }),
   );
   job("d1d1d1d1-fresh", {
@@ -2015,10 +2021,10 @@ test("a thread's fresh background session works under it from its first turn, be
   });
   running("d1d1d1d1-fresh", "busy", process.pid, {
     kind: "bg",
-    name: "Leisure time",
+    name: "Free time",
     startedAt: Date.now(),
   });
-  const leisure = () => board.get("telegram:-1001234567890:72");
+  const leisure = () => board.get("telegram:-1001234567890:104");
   await until(
     () =>
       leisure()?.state === "working" &&
@@ -2217,7 +2223,7 @@ test("agents started for a task show under the topic that owns it, or for Genera
   const voice = store.tasks.create({
     title: "Voice bug",
     message: "telegram:-1001234567890:9001",
-    owner: "-1001234567890:2583",
+    owner: "-1001234567890:102",
     project: "hex-voice",
   });
 
@@ -2257,7 +2263,7 @@ test("agents started for a task show under the topic that owns it, or for Genera
     () =>
       group()?.agents.length === 3 &&
       board
-        .get("telegram:-1001234567890:2583")
+        .get("telegram:-1001234567890:102")
         ?.agents.some((agent) => agent.id === "avfixaaaaaaaaaaaa"),
   );
   expect(found(general()).agents.map((agent) => agent.id)).toEqual(["aownaaaaaaaaaaaaa"]);
@@ -2291,7 +2297,7 @@ test("each task closed in the last day is finished under the run it was done for
   const store = open(state);
   store.messages.deliver({
     key: "telegram:-1001234567890:9002",
-    to: "-1001234567890:2583",
+    to: "-1001234567890:102",
     from: "telegram",
     author: "owner",
     body: "fix the done tab, and the call drop, and launch it",
@@ -2300,13 +2306,13 @@ test("each task closed in the last day is finished under the run it was done for
   const tab = store.tasks.create({
     title: "Done tab",
     message: "telegram:-1001234567890:9002",
-    owner: "-1001234567890:2583",
+    owner: "-1001234567890:102",
   });
 
   const drop = store.tasks.create({
     title: "Call drop",
     message: "telegram:-1001234567890:9002",
-    owner: "-1001234567890:2583",
+    owner: "-1001234567890:102",
   });
 
   const launch = store.tasks.create({
@@ -2332,14 +2338,14 @@ test("each task closed in the last day is finished under the run it was done for
     {
       id: tab.id,
       title: "Done tab",
-      topic: "voiceapp",
+      topic: "phoneapp",
       app: "telegram",
       proof: "https://github.com/x/y/pull/1 (live)",
       at: aString,
-      run: "telegram:-1001234567890:2583",
+      run: "telegram:-1001234567890:102",
     },
   ]);
-  expect(board.get("telegram:-1001234567890:2583")?.state).not.toBe("done");
+  expect(board.get("telegram:-1001234567890:102")?.state).not.toBe("done");
   store.tasks.edit(drop.id, { status: "dropped" });
   store.tasks.edit(tab.id, { status: "open" });
   await until(() => board.finished.length === 1);
@@ -2357,7 +2363,7 @@ test("a task General owns with no project is finished in the topic its proof was
   });
   store.messages.deliver({
     key: "telegram:-1001234567890:9011",
-    to: "-1001234567890:2583",
+    to: "-1001234567890:102",
     from: "telegram",
     author: "hex",
     body: "the mic is off",
@@ -2381,8 +2387,8 @@ test("a task General owns with no project is finished in the topic its proof was
     () => board.finished.filter((task) => [mic.id, chat.id].includes(task.id)).length === 2,
   );
   expect(board.finished.find((task) => task.id === mic.id)).toMatchObject({
-    topic: "voiceapp",
-    run: "telegram:-1001234567890:2583",
+    topic: "phoneapp",
+    run: "telegram:-1001234567890:102",
   });
   expect(board.finished.find((task) => task.id === chat.id)).toMatchObject({ topic: "General" });
 });
@@ -2409,7 +2415,7 @@ test("a task General owns with no project is finished in the topic that closed i
     owner: "-1001234567890",
   });
 
-  store.tasks.addAgents(pool.id, ["poolagent1"], "-1001234567890:2583");
+  store.tasks.addAgents(pool.id, ["poolagent1"], "-1001234567890:102");
   store.tasks.edit(pool.id, {
     status: "done",
     proof: "https://github.com/x/y/pull/2",
@@ -2418,14 +2424,14 @@ test("a task General owns with no project is finished in the topic that closed i
   store.tasks.edit(keys.id, {
     status: "done",
     proof: "https://github.com/x/y/pull/3",
-    doneIn: "-1001234567890:2583",
+    doneIn: "-1001234567890:102",
   });
   await until(
     () => board.finished.filter((task) => [pool.id, keys.id].includes(task.id)).length === 2,
   );
   expect(
     board.finished.filter((task) => [pool.id, keys.id].includes(task.id)).map((task) => task.topic),
-  ).toEqual(["voiceapp", "voiceapp"]);
+  ).toEqual(["phoneapp", "phoneapp"]);
 });
 
 test("agents a topic starts for a task General owns with no project stay under that topic", async () => {
@@ -2444,14 +2450,14 @@ test("agents a topic starts for a task General owns with no project stay under t
     owner: "-1001234567890",
   });
 
-  job("cccccccc-voiceapp", {
+  job("cccccccc-phoneapp", {
     state: "working",
     detail: "tidying",
     updatedAt: ago(0),
     fan: [{ id: "atidyaaaaaaaaaaaa", kind: "agent", label: "Tidy up", startedAt: Date.now() }],
   });
-  running("cccccccc-voiceapp", "busy");
+  running("cccccccc-phoneapp", "busy");
   store.tasks.addAgents(tidy.id, ["atidyaaaaaaaaaaaa"]);
-  await until(() => voiceapp().agents.some((agent) => agent.id === "atidyaaaaaaaaaaaa"));
+  await until(() => phoneapp().agents.some((agent) => agent.id === "atidyaaaaaaaaaaaa"));
   expect(found(general()).agents.map((agent) => agent.id)).not.toContain("atidyaaaaaaaaaaaa");
 });

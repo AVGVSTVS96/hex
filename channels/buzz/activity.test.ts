@@ -90,7 +90,7 @@ beforeEach(() => {
     "@.hex/HEX.md\n@SOUL.md\n@MEMORY.md\n\n# My rules for you\n\nBe brief.\n",
   );
   writeFileSync(join(hexDir, "SOUL.md"), "You are hex.\n");
-  writeFileSync(join(hexDir, "MEMORY.md"), "Bassim likes short answers.\n");
+  writeFileSync(join(hexDir, "MEMORY.md"), "Victor likes short answers.\n");
   writeFileSync(join(hexDir, ".hex", "HEX.md"), "How hex works.\n");
   process.env.CLAUDE_CONFIG_DIR = join(dir, "claude");
   const projects = join(dir, "claude", "projects", hexDir.replaceAll(/[^a-zA-Z0-9]/gu, "-"));
@@ -490,7 +490,7 @@ How hex works.
 You are hex.
 
 ── MEMORY.md ──
-Bassim likes short answers.
+Victor likes short answers.
 </agent-instructions>`);
 }, 15_000);
 

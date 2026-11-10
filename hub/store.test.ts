@@ -32,9 +32,9 @@ const message = {
   key: "telegram:-100:42",
   to: "-100:7",
   from: "telegram",
-  body: "remind me to buy Cheryl a salty treat",
+  body: "remind me to water the plants",
   author: "owner",
-  meta: { user: "bassim" },
+  meta: { user: "victor" },
 } satisfies NewRow;
 
 function said(out: string) {
@@ -420,11 +420,11 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     );
   };
 
-  session("38b69086-82da-46a4-8a80-802ddb4fbec5", "hex/seqno-plugins2");
-  session("38b69086-ffff-4000-8000-000000000000", "hex/seqno-import2");
+  session("38b69086-82da-46a4-8a80-802ddb4fbec5", "hex/garden-plugins2");
+  session("38b69086-ffff-4000-8000-000000000000", "hex/garden-import2");
   session("9762845b-0000-4000-8000-000000000000", "hex keyboard", "-100:452");
   session("5cc4f530-0000-4000-8000-000000000000", "Selfheal", "-100:4715");
-  session("7ac61e5d-0000-4000-8000-000000000000", "Theo clips", "-100:65", dir, "");
+  session("7ac61e5d-0000-4000-8000-000000000000", "Video clips", "-100:103", dir, "");
   session(
     "e3bbf1d4-0000-4000-8000-000000000000",
     "another hex",
@@ -439,7 +439,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
   open(dir).threads.keep("telegram", {
     "-100:7": { name: "General", session: "addfa113-11f6-4698-9b9e-c80b1d5aebdf" },
     "-100:452": { name: "hex keyboard" },
-    "-100:65": { name: "Theo clips" },
+    "-100:103": { name: "Video clips" },
   });
 
   const deliver = async (to: string) => {
@@ -490,13 +490,13 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
   expect(await deliver("38b69086-82")).toEqual({
     code: 1,
     said: containing(
-      '38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2) is a session no thread holds, so it would never take this message: message it with Claude Code\'s SendMessage to "hex/seqno-plugins2"',
+      '38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/garden-plugins2) is a session no thread holds, so it would never take this message: message it with Claude Code\'s SendMessage to "hex/garden-plugins2"',
     ),
   });
   expect(await deliver("38b69086")).toEqual({
     code: 1,
     said: containing(
-      "38b69086 starts more than one session's id: 38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/seqno-plugins2), 38b69086-ffff-4000-8000-000000000000 (hex/seqno-import2)",
+      "38b69086 starts more than one session's id: 38b69086-82da-46a4-8a80-802ddb4fbec5 (hex/garden-plugins2), 38b69086-ffff-4000-8000-000000000000 (hex/garden-import2)",
     ),
   });
   expect(await deliver("d4365c34")).toEqual({
@@ -507,7 +507,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
     open(dir)
       .messages.since()
       .map((row) => row.to),
-  ).toEqual(["-100:7", "-100:7", "-100:7", "-100:452", "-100:65", "-100:4715", "-100:3655"]);
+  ).toEqual(["-100:7", "-100:7", "-100:7", "-100:452", "-100:103", "-100:4715", "-100:3655"]);
 }, 20_000);
 
 test("hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has", async () => {
@@ -1284,10 +1284,10 @@ test("hex thread files a thread under the project it's part of, kept as its app 
       .exited;
 
   const projects = () => store.threads.list().map(({ name, project }) => [name, project]);
-  expect(await hex("thread", "Chats", "--project", "iikb")).toBe(0);
+  expect(await hex("thread", "Chats", "--project", "keyboard")).toBe(0);
   store.threads.keep("telegram", { ...telegram, "-100:7": { name: "Chats", session: "s1" } });
   expect(projects()).toEqual([
-    ["Chats", "iikb"],
+    ["Chats", "keyboard"],
     ["Android", undefined],
   ]);
   expect(await hex("thread", "Chats", "--project", "")).toBe(0);
@@ -1295,7 +1295,7 @@ test("hex thread files a thread under the project it's part of, kept as its app 
     ["Chats", undefined],
     ["Android", undefined],
   ]);
-  expect(await hex("thread", "Nowhere", "--project", "iikb")).not.toBe(0);
+  expect(await hex("thread", "Nowhere", "--project", "keyboard")).not.toBe(0);
 });
 
 test("bin/hex hands hex's cli every command its usage lists", async () => {

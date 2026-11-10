@@ -350,7 +350,7 @@ test("Codex's turn items read like Claude's steps: a command by what it does, wi
   ).toMatchObject({ kind: "say", text: "Done. The page is up. More." });
 
   const status =
-    "I told him I gave the status around 3:47pm and repeated the short version, since it may have come through garbled. It covers Monorepos on brand-it, Broadcom's last funded account running out tonight, and the two decisions waiting on him.";
+    "I told him I gave the status around 3:47pm and repeated the short version, since it may have come through garbled. It covers Monorepos on the site, the last funded account running out tonight, and the two decisions waiting on him.";
 
   expect(item("assistant_message", { text: status })).toMatchObject({ kind: "say", text: status });
   expect(
@@ -432,24 +432,24 @@ test("a background subagent's steps come from its transcript as it writes them",
 });
 
 test("a thread is found by its id or its name, in any app but voice", () => {
-  threads("telegram", { "-100:452": { name: "voiceapp", session: "s1" } });
+  threads("telegram", { "-100:452": { name: "phoneapp", session: "s1" } });
   threads("voice", { voice: { name: "voice", session: "v" } });
-  threads("t3", { "t3-id": { name: "commonplace", cwd: "/home/someone/Developer/commonplace" } });
-  expect(findThread(state, "VoiceApp")).toMatchObject({
+  threads("t3", { "t3-id": { name: "notes", cwd: "/home/someone/Developer/notes" } });
+  expect(findThread(state, "PhoneApp")).toMatchObject({
     app: "telegram",
     id: "-100:452",
-    name: "voiceapp",
+    name: "phoneapp",
   });
   expect(findThread(state, "t3-id")).toMatchObject({
     app: "t3",
-    cwd: "/home/someone/Developer/commonplace",
+    cwd: "/home/someone/Developer/notes",
   });
   expect(findThread(state, "voice")).toBeUndefined();
 });
 
 test("General goes by General, found by that name too, and a second Telegram group keeps its own", () => {
   threads("telegram", {
-    "-100:452": { name: "voiceapp", session: "s1" },
+    "-100:452": { name: "phoneapp", session: "s1" },
     "-100": { name: "main", session: "s0" },
     "-200": { name: "Family", session: "s3" },
   });
@@ -478,7 +478,7 @@ test("General goes by General, found by that name too, and a second Telegram gro
     "more than one hex thread goes by General, in discord and telegram",
   );
   threads("discord", {});
-  threads("telegram", { "-100:452": { name: "voiceapp", session: "s1" } });
+  threads("telegram", { "-100:452": { name: "phoneapp", session: "s1" } });
 });
 
 test("a name more than one thread has finds none of them, and says where they are", () => {
@@ -501,7 +501,7 @@ test("a message sent to a thread shows that thread's steps once it takes the mes
   write(path, tool("Bash", { command: "ls", description: "Earlier work" }), ended);
   const steps: object[] = [];
 
-  const stop = followThread(threadNamed("voiceapp"), hex, "tag42", false, (step) => {
+  const stop = followThread(threadNamed("phoneapp"), hex, "tag42", false, (step) => {
     steps.push(step);
   });
 
