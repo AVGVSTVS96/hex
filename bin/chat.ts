@@ -814,7 +814,7 @@ const Transcribed = z.looseObject({
     .looseObject({
       type: z.json().optional(),
       prompt: z.json().optional(),
-      content: z.array(z.json()).optional().catch(undefined),
+      content: z.array(z.string()).optional().catch(undefined),
     })
     .nullish(),
   message: z.json().optional(),
@@ -877,7 +877,7 @@ function* entries(record: TranscriptLine): Generator<[Kind, string]> {
 
   if (record.type === "attachment" && record.attachment?.type === "hook_additional_context") {
     for (const text of record.attachment.content ?? []) {
-      for (const [message] of typeof text === "string" ? text.matchAll(CHANNELS) : []) {
+      for (const [message] of text.matchAll(CHANNELS)) {
         yield heard(message);
       }
     }

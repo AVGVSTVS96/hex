@@ -162,7 +162,9 @@ export class Messages {
 
     return this.write(() => {
       const rows = MessageRows.parse(this.db.query(`select * ${held} order by n`).all(thread));
-      this.db.query(`update messages set held_for = null where key in (select key ${held})`).run(thread);
+      this.db
+        .query(`update messages set held_for = null where key in (select key ${held})`)
+        .run(thread);
 
       return rows;
     });

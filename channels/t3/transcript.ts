@@ -44,7 +44,7 @@ const entrySchema = z.looseObject({
     .looseObject({
       origin,
       type: z.string().optional(),
-      content: z.array(z.unknown()).optional().catch(undefined),
+      content: z.array(z.string()).optional().catch(undefined),
     })
     .nullish(),
   compactMetadata: z.looseObject({ trigger: z.string().optional() }).nullish(),
@@ -67,9 +67,7 @@ const contentSchema = z.union([
 function heldForTheTurn(attachment: z.infer<typeof entrySchema>["attachment"]) {
   return (
     attachment?.type === "hook_additional_context" &&
-    attachment.content?.some(
-      (text) => typeof text === "string" && text.includes('<channel source="'),
-    ) === true
+    attachment.content?.some((text) => text.includes('<channel source="')) === true
   );
 }
 

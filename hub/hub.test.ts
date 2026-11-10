@@ -3961,6 +3961,7 @@ test("the owner's words that come while the session works reach it at its next t
   expect(heard(received)[0]?.content).toBe("from a teammate");
 
   expect(await toolCall("chat:7", { agent_id: "a1" })).toBe("");
+
   const fed = z
     .object({
       hookSpecificOutput: z.object({
@@ -3969,6 +3970,7 @@ test("the owner's words that come while the session works reach it at its next t
       }),
     })
     .parse(JSON.parse(await toolCall("chat:7")));
+
   expect(fed.hookSpecificOutput.additionalContext).toBe(
     'The user sent a new message while you were working:\n<channel source="telegram" key="telegram:1:50" chat_id="1">\nuse the docs\n</channel>\n\nAddress it as you continue this turn.',
   );

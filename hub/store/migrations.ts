@@ -268,8 +268,7 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
   ${STATUS_INPUTS.map(statusChangeTriggers).join("\n")}`),
   ({ db }: Migrating) => {
     if (
-      db.query("select 1 from pragma_table_info('messages') where name = 'held_for'").get() ===
-      null
+      db.query("select 1 from pragma_table_info('messages') where name = 'held_for'").get() === null
     ) {
       db.run("alter table messages add column held_for text");
     }

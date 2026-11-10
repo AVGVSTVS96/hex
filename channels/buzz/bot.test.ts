@@ -596,9 +596,10 @@ exit 0
     return {
       send: (message: HubMessage) => socket.write(`${JSON.stringify(message)}\n`),
       ended: async () => {
-        const once = connect(join(state, "hub.sock"));
-        once.on("connect", () => once.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`));
-        await new Promise((resolve) => once.on("close", resolve));
+        const ending = connect(join(state, "hub.sock"));
+        await once(ending, "connect");
+        ending.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`);
+        await once(ending, "close");
       },
       inbound: (count: number) =>
         until(() => {
