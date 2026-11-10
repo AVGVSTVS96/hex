@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { clients, open } from "@hex/hub";
+import { clients, open, sentPicture } from "@hex/hub";
 import type { Client, Hub } from "@hex/hub";
 
 import { Chats } from "./chat.ts";
@@ -195,6 +195,58 @@ test("photos and clips go with the owner's words as images the session reads, an
       { key: "telegram:app-00000003", text: "this one", media: [{ id: "p2", kind: "photo" }] },
     ],
   });
+});
+
+test("pictures hex and the owner sent in the chat app show as pictures, each fetched by its id", async () => {
+  const store = open(state);
+  store.messages.deliver(
+    {
+      key: "telegram:20",
+      to: DESK,
+      from: "telegram",
+      author: "hex",
+      body: "(file: after-dark.png)",
+      meta: { file: "after-dark.png", attachment_kind: "photo", attachment_file_id: "AgAC1" },
+    },
+    NOW,
+  );
+  store.messages.deliver(
+    {
+      key: "telegram:21",
+      to: DESK,
+      from: "telegram",
+      author: "hex",
+      body: "(file: report.pdf)",
+      meta: { file: "report.pdf", attachment_kind: "document", attachment_file_id: "BQAC2" },
+    },
+    NOW,
+  );
+  store.messages.deliver({
+    key: "telegram:22",
+    to: DESK,
+    from: "telegram",
+    author: "owner",
+    body: "(photo)",
+    meta: { image_path: "/inbox/shot.jpg" },
+  });
+  store.messages.take("telegram:22", NOW);
+
+  const { turns } = chats.of(where);
+  expect(turns).toMatchObject([
+    { from: "hex", text: "", media: [{ kind: "photo" }] },
+    { from: "hex", text: "(file: report.pdf)" },
+    { from: "me", text: "", media: [{ kind: "photo", file: "/inbox/shot.jpg" }] },
+  ]);
+  expect(turns[1]?.media).toBeUndefined();
+
+  telegram.file = (id) => Promise.resolve(`/telegram/${id}.jpg`);
+  const [sent, mine] = [turns[0]?.media?.[0]?.id ?? "", turns[2]?.media?.[0]?.id ?? ""];
+  expect(await sentPicture(store, sent)).toEqual({
+    path: "/telegram/AgAC1.jpg",
+    type: "image/jpeg",
+  });
+  expect(await sentPicture(store, mine)).toEqual({ path: "/inbox/shot.jpg", type: "image/jpeg" });
+  expect(await sentPicture(store, "p1")).toBeUndefined();
 });
 
 test("a stop goes through the app's own stop when it has one, and only where an app holds the thread", () => {

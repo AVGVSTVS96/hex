@@ -2,6 +2,8 @@ export { interrupted } from "./claude.ts";
 
 export { above } from "./fit.ts";
 
+export { fileOnly, held, pictureOf } from "./pictures.ts";
+
 export {
   EFFORTS,
   MODELS,
@@ -11,10 +13,12 @@ export {
   dispatch,
   engine,
   family,
+  heldFile,
   history,
   move,
   preview,
   say,
+  sentPicture,
   startHub,
   tappable,
   title,

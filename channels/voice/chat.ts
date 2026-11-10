@@ -1,4 +1,14 @@
-import { carried, clients, history, owners, say, open as store, typed, writable } from "@hex/hub";
+import {
+  carried,
+  clients,
+  history,
+  owners,
+  pictureOf,
+  say,
+  open as store,
+  typed,
+  writable,
+} from "@hex/hub";
 import type { Turn } from "@hex/hub";
 
 import { Changes } from "./changes.ts";
@@ -47,7 +57,7 @@ export class Chats {
 
     const turns = history(kept, where.thread).map((turn) => ({
       ...turn,
-      text: typed(turn.text, turn.media?.length ?? 0),
+      text: typed(turn.text, turn.media?.filter((item) => !pictureOf(item.id)).length ?? 0),
     }));
 
     const waiting = owners(kept.messages.untaken(where.thread)).map(({ key, body, at, meta }) => {
