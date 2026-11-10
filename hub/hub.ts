@@ -403,9 +403,9 @@ export function carried(meta?: Record<string, string>): Turn["media"] {
 // Where a file a chat message holds is on disk, fetched from its app when only the app keeps it.
 export async function heldFile(store: Store, key: string, at: number) {
   const row = store.messages.get(key);
-  const kept = row === undefined ? undefined : filesIn(row)[at];
+  const kept = row ? filesIn(row)[at] : undefined;
 
-  if (!kept || row === undefined) {
+  if (!kept || !row) {
     return;
   }
 
