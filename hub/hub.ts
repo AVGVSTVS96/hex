@@ -1197,13 +1197,14 @@ export function startHub({
     }
 
     cut(thread);
+    const daemonChecked = claude.restartStaleDaemon();
 
     if (!present(fork) && present(known.session) && !fresh(thread)) {
       await claude.rm(known.session);
     }
 
     if (run.phase === phase) {
-      await start(thread, prompt, fork);
+      await start(thread, prompt, fork, daemonChecked);
     }
   }
 
@@ -1311,7 +1312,12 @@ export function startHub({
     );
   }
 
-  async function start(thread: string, prompt?: string, fork?: string) {
+  async function start(
+    thread: string,
+    prompt?: string,
+    fork?: string,
+    daemonChecked?: Promise<void>,
+  ) {
     const known = savedOf(thread);
     writeSettings(thread);
 
@@ -1368,6 +1374,7 @@ export function startHub({
             ...(present(prompt) ? [prompt] : []),
           ],
           { cwd: known.cwd ?? hexDir, env: inherited },
+          daemonChecked,
         ),
       );
     } catch (error) {
