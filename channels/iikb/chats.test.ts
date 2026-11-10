@@ -69,7 +69,13 @@ const say = (
 const ask = (path: string, init?: RequestInit) =>
   answer(store, new Request(`http://iikb${path}`, init), "secret");
 
-const post = (path: string, body: { text: string; id: string }, token = "secret") =>
+type Sent = {
+  text: string;
+  id: string;
+  files?: { type: string; data: string; width?: number; height?: number }[];
+};
+
+const post = (path: string, body: Sent, token = "secret") =>
   ask(path, {
     method: "POST",
     headers: { authorization: `Bearer ${token}` },
@@ -250,9 +256,106 @@ test("words sent from the keyboard reach the thread as the owner's, from iikb, u
   ]);
 });
 
+test("photos sent from the keyboard are kept on disk and reach the thread as the owner's album, its words as the caption", async () => {
+  const jpeg = Buffer.from("jpeg bytes").toString("base64");
+  const png = Buffer.from("png bytes").toString("base64");
+
+  const response = await post("/telegram%3A-100%3A5", {
+    text: "the new icon",
+    id: "m5",
+    files: [
+      { type: "image/jpeg", data: jpeg, width: 1600, height: 1200 },
+      { type: "image/png", data: png },
+    ],
+  });
+
+  expect(response.status).toBe(204);
+
+  const photos = join(hexDir, "state", "iikb", "photos");
+
+  expect(delivered).toMatchObject([
+    [
+      "-100:5",
+      "Desk",
+      {
+        content: "the new icon\n(photo)\n(photo)",
+        key: "iikb-m5",
+        author: "owner",
+        meta: {
+          user: "iikb",
+          image_path: `${join(photos, "m5-0.jpg")}; ${join(photos, "m5-1.png")}`,
+          image_dimensions: "1600x1200; ",
+          media: "photo m5-0; photo m5-1",
+          files: `${join(photos, "m5-0.jpg")}; ${join(photos, "m5-1.png")}`,
+        },
+      },
+    ],
+  ]);
+  expect(await Bun.file(join(photos, "m5-0.jpg")).text()).toBe("jpeg bytes");
+  expect(await Bun.file(join(photos, "m5-1.png")).text()).toBe("png bytes");
+
+  await post("/telegram%3A-100%3A5", {
+    text: "",
+    id: "m6",
+    files: [{ type: "image/jpeg", data: jpeg }],
+  });
+  await post("/telegram%3A-100%3A5", {
+    text: " ",
+    id: "m7",
+    files: [
+      { type: "image/jpeg", data: jpeg },
+      { type: "image/jpeg", data: jpeg },
+    ],
+  });
+
+  expect(delivered.slice(1)).toMatchObject([
+    ["-100:5", "Desk", { content: "(photo)" }],
+    ["-100:5", "Desk", { content: "(album of 2)" }],
+  ]);
+});
+
+test("a photo sent from the keyboard reads back in its chat as the photo under its caption", async () => {
+  const photo = join(hexDir, "state", "m8-0.jpg");
+
+  writeFileSync(photo, "jpeg bytes");
+  say(DESK, 1, "owner", "the new icon\n(photo)", {
+    user: "iikb",
+    image_path: photo,
+    image_dimensions: "1600x1200",
+    media: "photo m8-0",
+    files: photo,
+  });
+
+  expect((await read(store, "telegram:-100:5")).messages).toEqual([
+    {
+      from: "me",
+      text: "the new icon",
+      files: [
+        {
+          name: "m8-0.jpg",
+          url: "files/telegram%3A-100%3A5%3A1/0",
+          type: "image/jpeg",
+          width: 1600,
+          height: 1200,
+        },
+      ],
+    },
+  ]);
+});
+
 test("a chat whose app isn't running says so, a bad body is refused, and a wrong token gets nothing", async () => {
   expect((await post("/discord%3A7", { text: "hi", id: "m2" })).status).toBe(502);
   expect((await post("/telegram%3A-100%3A5", { text: " ", id: "m3" })).status).toBe(400);
   expect((await post("/telegram%3A-100%3A5", { text: "hi", id: "m4" }, "nope")).status).toBe(401);
+  expect(
+    (
+      await post("/telegram%3A-100%3A5", {
+        text: "",
+        id: "m9",
+        files: [{ type: "application/pdf", data: "cGRm" }],
+      })
+    ).status,
+  ).toBe(400);
+  expect((await post("/telegram%3A-100%3A5", { text: "hi", id: "../m10" })).status).toBe(400);
   expect(delivered).toEqual([]);
 });
