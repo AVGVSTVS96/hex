@@ -366,9 +366,9 @@ function threadOf(ctx: Context): string {
     return chat;
   }
 
-  const topic = ctx.msg.message_thread_id;
+  const thread = `${chat}:${ctx.msg.message_thread_id}`;
 
-  return ctx.chat.type === "private" ? (homeOf(topic) ?? chat) : `${chat}:${topic}`;
+  return ctx.chat.type === "private" ? (homeOf(ctx.msg.message_thread_id) ?? thread) : thread;
 }
 
 function target(thread: string) {
