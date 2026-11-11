@@ -568,6 +568,37 @@ test("a widget Telegram refuses in a topic goes to the owner's DM with a button 
   ).toMatchObject({ message_id: id });
 });
 
+test("with topics on in the owner's DM, a topic's widget goes to a DM topic of its own, made once, and what he says there reaches the topic", async () => {
+  const file = join(outbox, "dm-topic.html");
+  writeFileSync(file, "<b>tiles</b>");
+  hex.has_topics_enabled = true;
+
+  try {
+    const sent = await call("widget", { file, caption: "Tiles" });
+    expect(sent.text).toContain("https://t.me/hex_bot/9");
+    expect(await called("createForumTopic", (p) => p.chat_id === String(OWNER))).toMatchObject({
+      name: "desk",
+    });
+    expect(
+      await called("sendWidget", (p) => p.caption === "Tiles" && p.chat_id === String(OWNER)),
+    ).toMatchObject({ message_thread_id: 9 });
+
+    await call("widget", { file, caption: "Tiles again" });
+    await called("sendWidget", (p) => p.caption === "Tiles again" && p.chat_id === String(OWNER));
+    expect(
+      calls.filter((c) => c.method === "createForumTopic" && c.payload.chat_id === String(OWNER)),
+    ).toHaveLength(1);
+
+    const dm = { id: OWNER, type: "private" as const, first_name: "Victor" };
+    await update({ message: message({ chat: dm, message_thread_id: 9, text: "bigger tiles" }) });
+    expect((await inbound((line) => line.content === "bigger tiles")).meta.chat_id).toBe(
+      String(OWNER),
+    );
+  } finally {
+    hex.has_topics_enabled = false;
+  }
+});
+
 test("the owner's DM gets one board at start, pinned and kept by the hub, and /board sends a fresh one in its place", async () => {
   const first = await called("sendWidget", (p) => p.caption === "hex right now");
   const id = idOf(first);
@@ -893,7 +924,9 @@ test("new_thread opens a topic with a random icon and only the prompt, forwardin
       })
     ).text,
   ).toMatch(/^started thread "Desk" in telegram/u);
-  expect((await called("createForumTopic")).icon_custom_emoji_id).toMatch(/^(111|222)$/u);
+  expect(
+    (await called("createForumTopic", (p) => p.chat_id === String(FORUM))).icon_custom_emoji_id,
+  ).toMatch(/^(111|222)$/u);
   expect(calls.find((c) => c.method === "forwardMessages")).toBeUndefined();
   session({ type: "state", thread: DESK, busy: false });
 
