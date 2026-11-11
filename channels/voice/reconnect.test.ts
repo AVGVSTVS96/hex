@@ -55,7 +55,12 @@ type FromOpenAI = {
 
 const withImage = (told: Line) => told.meta?.image_path !== undefined;
 
-async function appCall({ callStillGoingAtStart = false, graceSeconds = 120 } = {}) {
+async function appCall({
+  callStillGoingAtStart = false,
+  graceSeconds = 120,
+  quietSeconds = 15,
+  throughANetworkThatCanBeLost = false,
+} = {}) {
   const home = mkdtempSync(join(tmpdir(), "reconnect-"));
   const voiceDir = join(home, ".claude", "channels", "voice");
   const state = join(home, "hex", "state");
@@ -87,6 +92,8 @@ async function appCall({ callStillGoingAtStart = false, graceSeconds = 120 } = {
   let probes = 0;
   let credit = true;
   let attach: "open" | "refused" | "gone" = "open";
+  let closedAs = "close_requested";
+  let attaches = 0;
   const created: unknown[] = [];
   const rang: string[] = [];
   const waiting: (() => void)[] = [];
@@ -159,7 +166,10 @@ async function appCall({ callStillGoingAtStart = false, graceSeconds = 120 } = {
         : new Response("no", { status: 400 });
     },
     websocket: {
-      open: (socket) => void (voice = socket),
+      open: (socket) => {
+        voice = socket;
+        attaches++;
+      },
       message(socket, raw) {
         const event = ClientEvent.parse(JSON.parse(String(raw)));
 
@@ -197,11 +207,42 @@ async function appCall({ callStillGoingAtStart = false, graceSeconds = 120 } = {
           socket.send(
             JSON.stringify({
               type: "session.closed",
-              reason: "close_requested",
-              client_event_id: event.event_id,
+              reason: closedAs,
+              ...(closedAs === "close_requested" && { client_event_id: event.event_id }),
             }),
           );
         }
+      },
+    },
+  });
+
+  let networkLost = false;
+
+  const wayOutToOpenAI = Bun.listen<{ out: Promise<Bun.Socket> }>({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(engineSide) {
+        engineSide.data = {
+          out: Bun.connect({
+            hostname: "127.0.0.1",
+            port: Number(openai.port),
+            socket: {
+              data: (_, chunk) => void (networkLost || engineSide.write(chunk)),
+              close: () => void (networkLost || engineSide.end()),
+            },
+          }),
+        };
+      },
+      async data(engineSide, chunk) {
+        const out = await engineSide.data.out;
+
+        if (!networkLost) {
+          out.write(chunk);
+        }
+      },
+      async close(engineSide) {
+        (await engineSide.data.out).end();
       },
     },
   });
@@ -210,11 +251,12 @@ async function appCall({ callStillGoingAtStart = false, graceSeconds = 120 } = {
     join(voiceDir, ".env"),
     [
       "OPENAI_API_KEY=test",
-      `OPENAI_BASE_URL=http://127.0.0.1:${openai.port}/v1`,
+      `OPENAI_BASE_URL=http://127.0.0.1:${throughANetworkThatCanBeLost ? wayOutToOpenAI.port : openai.port}/v1`,
       "OPENROUTER_API_KEY=test",
       `OPENROUTER_BASE_URL=http://127.0.0.1:${openai.port}/v1`,
       "VOICE_PORT=0",
       `VOICE_GRACE_SECONDS=${graceSeconds}`,
+      `VOICE_QUIET_SECONDS=${quietSeconds}`,
       "TWILIO_ACCOUNT_SID=AC1",
       "TWILIO_AUTH_TOKEN=test",
       "TWILIO_NUMBER=+15550000000",
@@ -323,6 +365,10 @@ for await (const line of console) {
       voice = undefined;
     },
     attachIs: (to: typeof attach) => void (attach = to),
+    attaches: () => attaches,
+    loseNetwork: () => void (networkLost = true),
+    networkBack: () => void (networkLost = false),
+    closesAs: (reason: string) => void (closedAs = reason),
     created,
     rang,
     attaching: () => until(() => held),
@@ -345,6 +391,7 @@ for await (const line of console) {
     [Symbol.asyncDispose]: async () => {
       plugin.kill();
       await plugin.exited;
+      wayOutToOpenAI.stop(true);
       await openai.stop(true);
       hub.stop(true);
       rmSync(home, { recursive: true, force: true });
@@ -1086,9 +1133,9 @@ test("hanging up while the call waits to carry on ends it at once, and it can't 
   expect(engine.created).toHaveLength(1);
 }, 40_000);
 
-test("after a restart, the engine keeps coming back to a call it can't attach to yet, and closes it out once OpenAI says it's gone", async () => {
+test("after a restart, the engine keeps coming back to a call it can't attach to yet, and once OpenAI says it's gone closes it out when nothing carried it on for a lost call's wait", async () => {
   for (const after of ["open", "gone"] as const) {
-    await using engine = await appCall({ callStillGoingAtStart: true });
+    await using engine = await appCall({ callStillGoingAtStart: true, graceSeconds: 8 });
     await engine.attaching();
     engine.attachIs("refused");
     engine.back();
@@ -1101,7 +1148,9 @@ test("after a restart, the engine keeps coming back to a call it can't attach to
       expect(await engine.live()).toBe(ID);
       expect((await engine.call()).ended).toBeUndefined();
     } else {
-      expect(await ends(engine)).toMatchObject({
+      await Bun.sleep(1000);
+      expect((await engine.call()).ended).toBeUndefined();
+      expect(await ends(engine, 10)).toMatchObject({
         reason: "hex's service restarted and the call was gone",
       });
       expect(engine.closes).toEqual([]);
@@ -1162,4 +1211,54 @@ test("hex's hang-up holds off when the caller speaks after it was asked for", as
   );
   expect(engine.closes).toEqual([]);
   expect(await engine.tool("hang_up")).toEqual({ result: "hanging up" });
+}, 20_000);
+
+test("after a restart, a call whose session ended while hex was down carries on in the session the app opens, while hex is still attaching back or once it knows the session is gone", async () => {
+  for (const when of ["attaching", "gone"] as const) {
+    await using engine = await appCall({ callStillGoingAtStart: true });
+    await engine.attaching();
+    engine.attachIs(when === "gone" ? "gone" : "refused");
+    engine.back();
+    await Bun.sleep(when === "gone" ? 1000 : 0);
+    expect((await engine.call()).ended).toBeUndefined();
+    engine.attachIs("open");
+
+    const response = await carryOn(engine);
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ session: { id: ID } });
+    await engine.attached();
+    expect(await engine.live()).toBe(ID);
+    expect(
+      engine.told.some(
+        (told) => told.content?.includes("carried it on in a new voice session") === true,
+      ),
+    ).toBe(true);
+    expect((await engine.call()).moments).toMatchObject([{ kind: "reconnected" }]);
+
+    await engine.hangUp();
+    expect(await ends(engine)).toMatchObject({ end: "you" });
+    expect(engine.closes).toEqual([`${ID}-1 close-you-app`]);
+  }
+}, 40_000);
+
+test("an app call whose connection to the voice goes silent without closing is dropped and attached back to once the network is back", async () => {
+  await using engine = await appCall({ quietSeconds: 2, throughANetworkThatCanBeLost: true });
+  await started(engine);
+  expect(engine.attaches()).toBe(1);
+  engine.loseNetwork();
+  await Bun.sleep(4000);
+  engine.networkBack();
+  await until(() => engine.attaches() > 1);
+  expect(await engine.live()).toBe(ID);
+  expect((await engine.call()).ended).toBeUndefined();
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
+}, 40_000);
+
+test("a call OpenAI closes as a lost connection after the caller hung up ends as theirs", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.closesAs("connection_lost");
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
 }, 20_000);
