@@ -3553,6 +3553,40 @@ test("a turn's hook tells the hub and goes, without waiting for a stalled hub to
   expect(received).toEqual([{ type: "state", thread: "t1", busy: false }]);
 });
 
+test("a turn tells the hub it began whatever began it, so the owner's words wait for it, and a command that may run no turn tells it nothing", async () => {
+  const socket = join(dir, "state.sock");
+  const received: object[] = [];
+
+  const server = createServer((client) => {
+    client.on("data", (chunk) => {
+      received.push(SeenLine.parse(JSON.parse(String(chunk))));
+    });
+  }).listen(socket);
+
+  const began = async (prompt: string) => {
+    const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
+      env: { ...process.env, HEX_HUB: socket, HEX_THREAD: "t1", HEX_STORE: dir, MEMORY_DIR: "" },
+      stdin: new Blob([JSON.stringify({ hook_event_name: "UserPromptSubmit", prompt })]),
+    });
+
+    await hook.exited;
+  };
+
+  await began("<task-notification>\n<task-id>b1</task-id>\n</task-notification>");
+  await began('<cross-session-message from="Desk">\nthe build is green\n</cross-session-message>');
+  await began("check the deploy");
+  await until(() => received.length === 3 || undefined);
+  await began("/compact");
+  await began("<local-command-stdout>Compacted</local-command-stdout>");
+  await began("<command-name>/model</command-name>");
+  await began("check it again");
+  await until(() => received.length === 4 || undefined);
+  server.close();
+  expect(received).toEqual(
+    Array.from({ length: 4 }, () => ({ type: "state", thread: "t1", busy: true })),
+  );
+});
+
 test("a main thread whose new session ends before its channel connects is reported and started again", async () => {
   start({ main: "chat", agents: [], reconnect: 50 });
   expect(settingsOf(await launched()).env.HEX_MAIN).toBeUndefined();
