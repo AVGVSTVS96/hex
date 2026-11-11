@@ -3,6 +3,14 @@ input=$(cat)
 gate='^mcp__claude_ai_[^_].*__((send|reply|forward|trash|delete)[a-z_]*|mark_[a-z_]*spam)$'
 printf '%s' "$input" | jq -e --arg gate "$gate" '.tool_name | test($gate)' >/dev/null || exit 0
 
+printf '%s' "$input" | jq -e --arg machines "${HEX_SEND_MACHINES:-}" '
+  ($machines | ascii_downcase | [scan("[^\\s,]+")]) as $machines
+  | [.tool_input | .to, .cc, .bcc | arrays | .[] | ascii_downcase] as $recipients
+  | (.tool_name | test("__(send|forward)[a-z_]*$"))
+    and ($recipients | length > 0)
+    and ($recipients - $machines | length == 0)
+' >/dev/null 2>&1 && exit 0
+
 transcript=$(printf '%s' "$input" | jq -r .transcript_path)
 id=$(printf '%s' "$input" | jq -r .tool_use_id)
 
