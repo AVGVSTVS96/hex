@@ -81,6 +81,7 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   let voice: Bun.ServerWebSocket<AttachData> | undefined;
   let hold = callStillGoingAtStart;
   let acking = true;
+  let confirmingAnswers = false;
   let held = false;
   let made = 0;
   let probes = 0;
@@ -167,6 +168,15 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
           thought.push(event.content ?? "");
           socket.send(
             JSON.stringify({ type: "session.thinking.appended", client_event_id: event.event_id }),
+          );
+        }
+
+        if (event.type === "session.commentary.append" && confirmingAnswers) {
+          socket.send(
+            JSON.stringify({
+              type: "session.commentary.appended",
+              client_event_id: event.event_id,
+            }),
           );
         }
 
@@ -304,6 +314,7 @@ for await (const line of console) {
     hold: () => void (hold = true),
     holdAcks: () => void (acking = false),
     acks: () => void (acking = true),
+    confirmAnswers: () => void (confirmingAnswers = true),
     back: () => {
       hold = false;
 
@@ -603,23 +614,20 @@ test("a handoff id hex copied wrong reaches the voice as the handoff it nearly m
   ]);
 }, 20_000);
 
-test("an answer to an earlier handoff waits for the voice to answer the caller's newest words, so they still get handed off", async () => {
+test("an answer waits for the voice to take up what the caller said after the handoff, so those words still get handed off", async () => {
   await using engine = await appCall();
   await started(engine);
-
-  for (const id of ["d1", "d2"]) {
-    engine.send({
-      type: "session.delegation.created",
-      delegation: { id, target: "client" },
-      offset_ms: 1500,
-    });
-  }
-
+  engine.send({
+    type: "session.delegation.created",
+    delegation: { id: "d1", target: "client" },
+    offset_ms: 1500,
+  });
+  await until(() => engine.told.some((line) => line.meta?.delegation_id === "d1"));
   engine.send({
     type: "session.input_transcript.delta",
-    delta: "what was I just asked",
-    start_ms: 4000,
-    end_ms: 4300,
+    delta: "and tell the other thread too",
+    start_ms: 9000,
+    end_ms: 9300,
   });
   await Bun.sleep(100);
   const sent = engine.handoffs.length;
@@ -629,11 +637,53 @@ test("an answer to an earlier handoff waits for the voice to answer the caller's
   engine.send({
     type: "session.output_transcript.delta",
     delta: "Checking.",
-    start_ms: 5000,
-    end_ms: 5300,
+    start_ms: 10_000,
+    end_ms: 10_300,
   });
   await until(() => engine.handoffs.length > sent);
   expect(engine.handoffs.at(-1)).toBe("d1");
+}, 20_000);
+
+test("an answer goes once the caller has been quiet a while, even when the voice never takes up their newest words", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.confirmAnswers();
+  engine.send({
+    type: "session.input_transcript.delta",
+    delta: "hold on, the door",
+    start_ms: 9000,
+    end_ms: 9300,
+  });
+  await Bun.sleep(100);
+  const sent = engine.handoffs.length;
+  const asked = Date.now();
+  await engine.tool("say", { delegation_id: "d1", text: "The build is green." });
+  expect(engine.handoffs.length).toBe(sent + 1);
+  expect(Date.now() - asked).toBeGreaterThan(2500);
+  expect(Date.now() - asked).toBeLessThan(5000);
+}, 20_000);
+
+test("the same answer sent twice in a row reaches the voice once", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.confirmAnswers();
+  const sent = engine.handoffs.length;
+  expect((await engine.tool("say", { delegation_id: "d1", text: "CI is green." })).result).toBe(
+    "said",
+  );
+  expect((await engine.tool("say", { delegation_id: "d1", text: "CI is green." })).result).toBe(
+    "said already: the voice has this answer, so it isn't sent twice",
+  );
+  expect(engine.handoffs.length).toBe(sent + 1);
+}, 20_000);
+
+test("a task change reaches the voice as background, since it reads a bare one aloud", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  await engine.tool("task", { id: "build", state: "running", text: "the build" });
+  expect(engine.thought.at(-1)).toBe(
+    "Background for you to know, not a result and not for the caller: say none of it unless the caller asks about it. Task update:\n- build running: the build",
+  );
 }, 20_000);
 
 test("a photo sent during the call shows in its transcript, reaches hex to look at, and has the voice hand off", async () => {

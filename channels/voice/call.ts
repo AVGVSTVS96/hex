@@ -97,6 +97,13 @@ export class Call {
     return turnsJoinedAcrossBackchannels(due).map(({ who, text, start }) => ({ who, text, start }));
   }
 
+  unsent(who: Speaker) {
+    return this.fragments
+      .filter((fragment) => !fragment.sent && fragment.who === who)
+      .map(({ text }) => text)
+      .join("");
+  }
+
   track(task: Task, at = 0) {
     this.tasks.set(task.id, task);
     this.moments.push({ ...task, at });

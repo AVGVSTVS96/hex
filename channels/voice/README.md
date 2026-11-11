@@ -58,7 +58,7 @@ other apps:
    | --- | --- | --- |
    | `say` | `session.commentary.append` | the answer to say aloud, close to word for word, with what it rests on (`checked`) |
    | `note` | `session.thinking.append` | a fact to know without saying it yet |
-   | `task` | `session.thinking.append` (the task that changed) | task status: running, done, failed |
+   | `task` | `session.thinking.append` (the task that changed, as background it keeps unsaid) | task status: running, done, failed |
    | `send` | the board, as running until the thread is done | work for another hex thread (hex only) |
    | `running` | nothing; it returns the whole board, one short line each | "what's running?", across all of hex (hex only) |
    | `style` | `session.instructions.append` (what changed) | talking differently: personality, pace, the caller's own words, or the voice from the next call |
