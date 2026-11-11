@@ -55,7 +55,7 @@ type FromOpenAI = {
 
 const withImage = (told: Line) => told.meta?.image_path !== undefined;
 
-async function appCall({ callStillGoingAtStart = false } = {}) {
+async function appCall({ callStillGoingAtStart = false, graceSeconds = 120 } = {}) {
   const home = mkdtempSync(join(tmpdir(), "reconnect-"));
   const voiceDir = join(home, ".claude", "channels", "voice");
   const state = join(home, "hex", "state");
@@ -88,11 +88,18 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
   let credit = true;
   let attach: "open" | "refused" | "gone" = "open";
   const created: unknown[] = [];
+  const rang: string[] = [];
   const waiting: (() => void)[] = [];
 
   const openai = Bun.serve<AttachData>({
     port: 0,
     async fetch(request, server) {
+      if (new URL(request.url).pathname.endsWith("/Calls.json")) {
+        rang.push(new URLSearchParams(await request.text()).get("To") ?? "");
+
+        return Response.json({ sid: "CA1" }, { status: 201 });
+      }
+
       if (new URL(request.url).pathname.endsWith("/embeddings")) {
         probes++;
 
@@ -207,6 +214,13 @@ async function appCall({ callStillGoingAtStart = false } = {}) {
       "OPENROUTER_API_KEY=test",
       `OPENROUTER_BASE_URL=http://127.0.0.1:${openai.port}/v1`,
       "VOICE_PORT=0",
+      `VOICE_GRACE_SECONDS=${graceSeconds}`,
+      "TWILIO_ACCOUNT_SID=AC1",
+      "TWILIO_AUTH_TOKEN=test",
+      "TWILIO_NUMBER=+15550000000",
+      "CALLER_NUMBER=+15550000001",
+      `TWILIO_BASE_URL=http://127.0.0.1:${openai.port}`,
+      "VOICE_PUBLIC_URL=voice.example.com",
     ].join("\n"),
   );
 
@@ -310,6 +324,7 @@ for await (const line of console) {
     },
     attachIs: (to: typeof attach) => void (attach = to),
     created,
+    rang,
     attaching: () => until(() => held),
     hold: () => void (hold = true),
     holdAcks: () => void (acking = false),
@@ -352,9 +367,9 @@ async function started(engine: Engine) {
   await engine.attached();
 }
 
-async function ends(engine: Engine) {
+async function ends(engine: Engine, seconds = 5) {
   for (let tries = 0; (await engine.call()).ended === undefined; tries++) {
-    expect(tries).toBeLessThan(100);
+    expect(tries).toBeLessThan(seconds * 20);
     await Bun.sleep(50);
   }
 
@@ -1092,6 +1107,44 @@ test("after a restart, the engine keeps coming back to a call it can't attach to
       expect(engine.closes).toEqual([]);
     }
   }
+}, 40_000);
+
+test("an app call whose session OpenAI stops serving, with nothing carrying it on, ends as dropped once a lost call's wait is up, and hex can ring again", async () => {
+  await using engine = await appCall({ graceSeconds: 4 });
+  await started(engine);
+  engine.cut("refused");
+  await Bun.sleep(2000);
+  expect(await engine.live()).toBe(ID);
+  expect(await ends(engine, 20)).toMatchObject({ end: "dropped", reason: "connection_lost" });
+  expect(engine.told.some((told) => told.meta?.ended === "dropped")).toBe(true);
+  expect((await engine.tool("phone")).result).toContain("ringing");
+  expect(engine.rang).toEqual(["+15550000001"]);
+}, 40_000);
+
+test("an app call carried on while the engine still can't attach back to its old session goes on in the new one", async () => {
+  await using engine = await appCall({ graceSeconds: 4 });
+  await started(engine);
+  engine.cut("refused");
+  await Bun.sleep(2000);
+  engine.attachIs("open");
+  expect((await carryOn(engine)).status).toBe(201);
+  await engine.attached();
+  await Bun.sleep(5000);
+  expect(await engine.live()).toBe(ID);
+  expect((await engine.call()).ended).toBeUndefined();
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
+}, 40_000);
+
+test("after a restart, a call the engine can't attach back to for a lost call's wait is closed out, and hex can ring again", async () => {
+  await using engine = await appCall({ callStillGoingAtStart: true, graceSeconds: 4 });
+  await engine.attaching();
+  engine.attachIs("refused");
+  engine.back();
+  expect(await ends(engine, 20)).toMatchObject({
+    reason: "hex's service restarted and the call was gone",
+  });
+  expect((await engine.tool("phone")).result).toContain("ringing");
 }, 40_000);
 
 test("hex's hang-up holds off when the caller speaks after it was asked for", async () => {
