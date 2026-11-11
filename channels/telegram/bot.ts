@@ -362,7 +362,13 @@ function threadOf(ctx: Context): string {
 
   const chat = String(ctx.chat.id);
 
-  return ctx.msg?.is_topic_message === true ? `${chat}:${ctx.msg.message_thread_id}` : chat;
+  if (ctx.msg?.is_topic_message !== true) {
+    return chat;
+  }
+
+  const topic = ctx.msg.message_thread_id;
+
+  return ctx.chat.type === "private" ? (homeOf(topic) ?? chat) : `${chat}:${topic}`;
 }
 
 function target(thread: string) {
@@ -402,6 +408,59 @@ function questionAt({ chat_id, message }: { chat_id: string; message: number }) 
 }
 
 const topicNames = new Map<string, string>();
+
+// Telegram shows widgets only in private chats, so a group topic's widgets go to a topic of its own in the owner's DM with hex, once topics are on for the bot in BotFather; what the owner says there reaches the group topic's session. https://core.telegram.org/bots/api#createforumtopic
+const DM_TOPICS_FILE = join(STATE_DIR, "dm-topics.json");
+const dmTopicsFile = z.record(z.string(), z.number());
+
+const dmTopics = new Map(
+  Object.entries(
+    existsSync(DM_TOPICS_FILE)
+      ? dmTopicsFile.parse(JSON.parse(readFileSync(DM_TOPICS_FILE, "utf-8")))
+      : {},
+  ),
+);
+
+function keepDmTopics(): void {
+  writeFileSync(DM_TOPICS_FILE, `${JSON.stringify(Object.fromEntries(dmTopics), null, 2)}\n`);
+}
+
+function homeOf(topic: number | undefined): string | undefined {
+  return [...dmTopics].find(([, each]) => each === topic)?.[0];
+}
+
+const makingDmTopics = new Map<string, Promise<number>>();
+
+async function dmTopic(owner: string, thread: string): Promise<number | undefined> {
+  if (!bot.botInfo.has_topics_enabled) {
+    return undefined;
+  }
+
+  const known = dmTopics.get(thread);
+
+  if (known !== undefined) {
+    return known;
+  }
+
+  const name = (topicNames.get(thread) ?? hub.name(thread) ?? "Topic").slice(0, 128);
+
+  const making =
+    makingDmTopics.get(thread) ??
+    bot.api.createForumTopic(owner, name).then(({ message_thread_id }) => {
+      dmTopics.set(thread, message_thread_id);
+      keepDmTopics();
+
+      return message_thread_id;
+    });
+
+  makingDmTopics.set(thread, making);
+
+  try {
+    return await making;
+  } finally {
+    makingDmTopics.delete(thread);
+  }
+}
 
 const ledger = new Ledger(STATE_DIR, "telegram");
 
@@ -993,17 +1052,13 @@ const handlers: Handlers<typeof tools> = {
   },
 
   react: async (caller, args) => {
-    const { chat_id } = target(caller);
+    const { chat_id, message } = located(caller, args.message_id);
 
     // SAFETY: Telegram checks the emoji against its whitelist and refuses any other, as the tool's description warns.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only Telegram knows its whitelist
     const emoji = args.emoji as ReactionTypeEmoji["emoji"];
 
-    await react(
-      chat_id,
-      Number(args.message_id),
-      args.remove === true ? [] : [{ type: "emoji", emoji }],
-    );
+    await react(chat_id, message, args.remove === true ? [] : [{ type: "emoji", emoji }]);
 
     return args.remove === true ? "reaction removed" : "reacted";
   },
@@ -1258,8 +1313,39 @@ const handlers: Handlers<typeof tools> = {
       }
     };
 
+    const inDmTopic = async (owner: string) => {
+      try {
+        const topic = await dmTopic(owner, caller);
+
+        if (topic === undefined) {
+          return;
+        }
+
+        try {
+          return { sent: await send(owner, { message_thread_id: topic }), topic };
+        } catch (error) {
+          if (!String(error).includes("thread not found")) {
+            throw error;
+          }
+
+          dmTopics.delete(caller);
+          keepDmTopics();
+          const again = await dmTopic(owner, caller);
+
+          return again === undefined
+            ? undefined
+            : { sent: await send(owner, { message_thread_id: again }), topic: again };
+        }
+      } catch (error) {
+        process.stderr.write(
+          `telegram hub: ${caller}'s widget goes to the plain DM, since its DM topic failed: ${String(error)}\n`,
+        );
+      }
+    };
+
     let to = chat_id;
     let sent: Sent;
+    let home: number | undefined;
 
     try {
       sent = await send(chat_id, extra);
@@ -1270,13 +1356,19 @@ const handlers: Handlers<typeof tools> = {
         throw error;
       }
 
-      const back = extra.message_thread_id === undefined ? undefined : post.link(caller, "");
       to = owner;
-      sent = await send(owner, {
-        ...(back !== undefined && {
-          reply_markup: { inline_keyboard: [[{ text: hub.name(caller) ?? "Topic", url: back }]] },
-        }),
-      });
+      const placed = extra.message_thread_id === undefined ? undefined : await inDmTopic(owner);
+
+      if (placed === undefined) {
+        const back = extra.message_thread_id === undefined ? undefined : post.link(caller, "");
+        sent = await send(owner, {
+          ...(back !== undefined && {
+            reply_markup: { inline_keyboard: [[{ text: hub.name(caller) ?? "Topic", url: back }]] },
+          }),
+        });
+      } else {
+        ({ sent, topic: home } = placed);
+      }
     }
 
     hub.sent(caller, {
@@ -1287,7 +1379,9 @@ const handlers: Handlers<typeof tools> = {
 
     return to === chat_id
       ? `sent widget (id: ${sent.message_id})`
-      : `sent widget to the owner's DM (id: telegram:${to}:${sent.message_id}), since Telegram shows widgets only in private chats for now; its requests still come here`;
+      : home === undefined
+        ? `sent widget to the owner's DM (id: telegram:${to}:${sent.message_id}), since Telegram shows widgets only in private chats for now; its requests still come here`
+        : `sent widget to this topic's own topic in the owner's DM (id: telegram:${to}:${sent.message_id}, topic: https://t.me/${me()}/${home}), since Telegram shows widgets only in private chats; its requests, and what he says in that DM topic, come here`;
   },
 
   rename_thread: async (caller, args) => {
@@ -1767,6 +1861,10 @@ const file = (id: string) => {
 clients.set("telegram", { hub, place, backfill, file });
 
 bot.on(["message:forum_topic_created", "message:forum_topic_edited"], (ctx) => {
+  if (ctx.chat.type === "private") {
+    return;
+  }
+
   const name = ctx.message.forum_topic_created?.name ?? ctx.message.forum_topic_edited?.name ?? "";
 
   if (name === "") {
@@ -2358,7 +2456,8 @@ async function deliverInbound(parts: Part[]): Promise<void> {
   const { msg } = ctx;
   const thread = threadOf(ctx);
   const msgId = msg?.message_id;
-  const { chat_id } = target(thread);
+  const chat_id = ctx.chat === undefined ? target(thread).chat_id : String(ctx.chat.id);
+  const elsewhere = chat_id !== target(thread).chat_id;
 
   sendTyping(thread);
 
@@ -2395,7 +2494,9 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     content,
     meta: {
       chat_id,
-      ...(msgId !== undefined && { message_id: String(msgId) }),
+      ...(msgId !== undefined && {
+        message_id: elsewhere ? `telegram:${chat_id}:${msgId}` : String(msgId),
+      }),
       user,
       user_id: String(from.id),
       ts: new Date((msg?.date ?? 0) * 1000).toISOString(),
@@ -2431,7 +2532,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   hub.deliver(thread, nameOf(ctx, thread), message);
 
-  if (msgId !== undefined) {
+  if (msgId !== undefined && !elsewhere) {
     const replyTo = message.meta.reply_to_message_id ?? "";
 
     ledger.heard(thread, msgId, content, replyTo === "" ? undefined : Number(replyTo));
