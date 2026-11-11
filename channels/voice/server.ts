@@ -307,6 +307,8 @@ const dials = new Map<string, Dial>();
 const placed = new Map<string, Placed>();
 const RETRIES = [250, 1000, 2000, 4000, 8000];
 const GRACE = Number(env.VOICE_GRACE_SECONDS ?? 120) * 1000;
+const PING_EVERY = 5000;
+const QUIET_MOST = Number(env.VOICE_QUIET_SECONDS ?? 15) * 1000;
 const CARRIES_ON = new Set(["expired", "connection_lost", "remote_hangup"]);
 const CALLER_PAUSE = 1000;
 const HANDOFF_WAIT = 3000;
@@ -1689,13 +1691,14 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
           return;
         }
 
-        finish(
-          call,
-          event.reason ?? "closed",
-          event.reason === "close_requested" && filled(call.closing)
-            ? call.closing
-            : event.client_event_id,
-        );
+        // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+        /* The app drops its own connection as it hangs up, and OpenAI can close the session for
+           that before it reads the hang-up, so once someone hung up the call ends by them. */
+        if (filled(call.closing)) {
+          finish(call, "close_requested", call.closing);
+        } else {
+          finish(call, event.reason ?? "closed", event.client_event_id);
+        }
       }
     }
   });
@@ -1778,7 +1781,11 @@ function reconnect(call: Live, attempt: number) {
           return;
         }
 
-        if (over !== undefined) {
+        if (over === "no answer") {
+          call.unattached = Date.now();
+        }
+
+        if (over === "expired" || over === "connection_lost") {
           lost(call, over);
         } else if (!filled(call.closing) && Date.now() - (call.unattached ?? 0) >= GRACE) {
           trace(`${was} wasn't served for ${GRACE / 1000}s and nothing carried ${call.id} on`);
@@ -1797,7 +1804,9 @@ async function sessionOver(call: Live) {
     return "expired";
   }
 
-  return (await sessionGone(sessionOf(call))) ? "connection_lost" : undefined;
+  const gone = await sessionGone(sessionOf(call));
+
+  return gone === "gone" ? "connection_lost" : gone;
 }
 
 function expired({ expires }: Pick<CallRecord, "expires">) {
@@ -1807,17 +1816,19 @@ function expired({ expires }: Pick<CallRecord, "expires">) {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* OpenAI answers a plain GET on a session's attach URL with 400 while the session lives. Once it's
    gone the answer is 404 or 503, and 503 is also what a brief outage looks like, so only 404
-   settles it. */
-async function sessionGone(id: string) {
+   settles it. No answer at all means hex can't reach OpenAI, which says nothing about the session,
+   so the wait a call gets to come back counts only time OpenAI could be asked. It can take 5s to
+   answer for a session that just ended. */
+async function sessionGone(id: string): Promise<"gone" | "maybe not" | "no answer"> {
   try {
     const { status } = await fetch(`${API}/${id}/attach`, {
       headers: { Authorization: `Bearer ${KEY}` },
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(15_000),
     });
 
-    return status === 404;
+    return status === 404 ? "gone" : "maybe not";
   } catch {
-    return false;
+    return "no answer";
   }
 }
 
@@ -1880,7 +1891,7 @@ function carried(call: Live, socket: WebSocket, next: string, expires: string | 
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* gpt-live-1 stays silent when the call so far comes as one developer message, and says it's back when it comes as the call's own turns. */
-function carryOnWith(call: Live, reason: string): Said[] {
+function carryOnWith(call: Pick<Live, "call" | "mute">, reason: string): Said[] {
   const turns = call.call
     .record()
     .turns.slice(-40)
@@ -1915,8 +1926,45 @@ function sessionOf(call: Pick<Live, "id" | "record">) {
   return call.record.session ?? call.id;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A network that goes away leaves a connection open that hears nothing and tells nobody (13 minutes
+   on Nov 10), so each connection to the voice is pinged, and dropped once nothing has come back for
+   a while or it never opened; whatever handles its close then brings it back. */
 function voiceSocket(url: string) {
-  return new BunWebSocket(url, { headers: { Authorization: `Bearer ${KEY}` } });
+  // SAFETY: Bun's WebSocket has ping and terminate, which lib "dom" leaves out of its type.
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- widens to the methods Bun's WebSocket has
+  const socket = new BunWebSocket(url, {
+    headers: { Authorization: `Bearer ${KEY}` },
+  }) as WebSocket & {
+    ping: () => void;
+    terminate: () => void;
+  };
+
+  let heard = Date.now();
+
+  const alive = () => {
+    heard = Date.now();
+  };
+
+  for (const type of ["open", "message", "pong"]) {
+    socket.addEventListener(type, alive);
+  }
+
+  const keepAlive = setInterval(() => {
+    if (socket.readyState === WebSocket.CLOSED) {
+      clearInterval(keepAlive);
+    } else if (Date.now() - heard >= QUIET_MOST) {
+      trace(
+        `nothing came back from the voice for ${QUIET_MOST / 1000}s, so hex dropped that connection`,
+      );
+      clearInterval(keepAlive);
+      socket.terminate();
+    } else if (socket.readyState === WebSocket.OPEN) {
+      socket.ping();
+    }
+  }, PING_EVERY);
+
+  return socket;
 }
 
 function sideband(id: string) {
@@ -2036,7 +2084,7 @@ function reattach(pending: Attaching, attempt = 0) {
       socket.onclose = null;
       socket.close();
 
-      if (record) {
+      if (record && live?.id !== id) {
         closeOut(record);
       } else if (!live && !filled(pending.closing)) {
         toHub(hub.renew);
@@ -2045,17 +2093,14 @@ function reattach(pending: Attaching, attempt = 0) {
       return;
     }
 
-    const { turns, tasks, moments: _moments, ...rest } = record;
-    const so = turns.slice(-40).map(({ who, at, text }) => ({ who, text, start: at }));
+    const { turns: _turns, tasks: _tasks, moments: _moments, ...rest } = record;
     trace(`picked ${record.id} back up after a restart`);
     follow(socket, rest, {
       call: Call.resume(record),
-      hello: [
-        `A call resumed: hex's service restarted during call ${record.id} and picked it back up. The caller is still on it, and the voice kept its own memory of the call.`,
-        ...(filled(record.why) ? [`You placed it because: ${record.why}`] : []),
-        ...(so.length ? ["The call so far:", transcript(so)] : []),
-        ...(tasks.length ? [Call.resume(record).board()] : []),
-      ].join("\n"),
+      hello: resumedHello(
+        record,
+        "picked it back up. The caller is still on it, and the voice kept its own memory of the call.",
+      ),
     });
   });
 
@@ -2073,15 +2118,23 @@ function reattach(pending: Attaching, attempt = 0) {
   };
 }
 
+function resumedHello(record: CallRecord, how: string) {
+  const so = record.turns.slice(-40).map(({ who, at, text }) => ({ who, text, start: at }));
+
+  return [
+    `A call resumed: hex's service restarted during call ${record.id} and ${how}`,
+    ...(filled(record.why) ? [`You placed it because: ${record.why}`] : []),
+    ...(so.length ? ["The call so far:", transcript(so)] : []),
+    ...(record.tasks.length ? [Call.resume(record).board()] : []),
+  ].join("\n");
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* A session that ended while hex was down can't be attached back to, but the caller's app is still
+   carrying the call on, so the call waits for it as long as a lost call would. */
 async function attachAgain(pending: Attaching, attempt: number) {
   const record = calls.get(pending.id);
-
-  const stillOn =
-    record !== undefined &&
-    !live &&
-    !expired(record) &&
-    Date.now() - pending.since < GRACE &&
-    !(await sessionGone(pending.session));
+  const gone = record !== undefined && !live ? await sessionGone(pending.session) : "gone";
 
   if (filled(pending.closing)) {
     closeSession(pending.session, pending.closing);
@@ -2089,16 +2142,41 @@ async function attachAgain(pending: Attaching, attempt: number) {
     return;
   }
 
-  if (!stillOn || live) {
-    if (attaching === pending) {
-      attaching = undefined;
-    }
+  if (attaching !== pending) {
+    return;
+  }
 
-    if (record) {
-      closeOut(record);
+  if (gone === "no answer") {
+    pending.since = Date.now();
+  }
+
+  const giveUp = () => {
+    attaching = undefined;
+    const now = calls.get(pending.id);
+
+    if (now) {
+      closeOut(now);
     } else if (!live) {
       toHub(hub.renew);
     }
+  };
+
+  if (!record || live || Date.now() - pending.since >= GRACE) {
+    giveUp();
+
+    return;
+  }
+
+  if (gone === "gone") {
+    trace(`${pending.session} is gone; ${pending.id} waits for the app to carry it on`);
+    setTimeout(
+      () => {
+        if (attaching === pending && !filled(pending.closing)) {
+          giveUp();
+        }
+      },
+      pending.since + GRACE - Date.now(),
+    );
 
     return;
   }
@@ -2934,12 +3012,15 @@ async function refusal(response: Response) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* The caller's app lost its connection to the voice, or the session hit its time limit, and opens
-   a new one for the same call: the call keeps its id, its record and hex's session. */
+   a new one for the same call: the call keeps its id, its record and hex's session. A call hex was
+   picking back up after a restart carries on the same way, from its record. */
 async function carryOn(id: string, sdp: string) {
-  const call =
-    live?.id === id && live.speak === undefined && !filled(live.closing) ? live : undefined;
+  const call = carriable(id);
+  const pending = call ? undefined : attachingBackTo(id);
+  const held = pending && calls.get(id);
+  const from = call ?? (held && { call: Call.resume(held), record: held });
 
-  if (!call) {
+  if (!from) {
     return new Response("That call has ended", { status: 410 });
   }
 
@@ -2948,8 +3029,8 @@ async function carryOn(id: string, sdp: string) {
   try {
     response = await openSession(
       sdp,
-      call.record.voice,
-      carryOnWith(call, call.lost?.reason ?? "connection_lost"),
+      from.record.voice,
+      carryOnWith(from, call?.lost?.reason ?? "connection_lost"),
     );
   } catch (error) {
     return new Response(`couldn't reach OpenAI: ${messageOf(error)}`, { status: 502 });
@@ -2963,24 +3044,57 @@ async function carryOn(id: string, sdp: string) {
   }
 
   const created = SessionCreated.parse(await response.json());
+  const next = created.session.id;
+  const expires = expiry(created.session.expires_at);
+  const now = carriable(id);
 
-  if (live !== call || filled(call.closing)) {
-    closeSession(created.session.id, call.closing ?? `close_hex_${++seq}`);
+  if (now) {
+    carried(now, sideband(next), next, expires);
+  } else if (pending && attachingBackTo(id) === pending) {
+    carryOnAfterRestart(pending, next, expires);
+  } else {
+    closeSession(next, call?.closing ?? pending?.closing ?? `close_hex_${++seq}`);
 
     return new Response("That call has ended", { status: 410 });
   }
 
-  carried(
-    call,
-    sideband(created.session.id),
-    created.session.id,
-    expiry(created.session.expires_at),
+  return Response.json({ ...created, session: { ...created.session, id } }, { status: 201 });
+}
+
+function carriable(id: string) {
+  return live?.id === id && live.speak === undefined && !filled(live.closing) ? live : undefined;
+}
+
+function attachingBackTo(id: string) {
+  return attaching?.id === id && !filled(attaching.closing) ? attaching : undefined;
+}
+
+function carryOnAfterRestart(pending: Attaching, next: string, expires: string | undefined) {
+  const record = calls.get(pending.id);
+
+  if (!record) {
+    return;
+  }
+
+  attaching = undefined;
+  const { turns: _turns, tasks: _tasks, moments: _moments, ...rest } = record;
+  trace(`${record.id} carried on in ${next} after a restart`);
+
+  const call = follow(
+    sideband(next),
+    { ...rest, session: next, ...(expires !== undefined && { expires }) },
+    {
+      call: Call.resume(record),
+      hello: resumedHello(
+        record,
+        "the caller's app carried it on in a new voice session, which knows the call so far.",
+      ),
+    },
   );
 
-  return Response.json(
-    { ...created, session: { ...created.session, id: call.id } },
-    { status: 201 },
-  );
+  call.shift = Date.now() - Date.parse(record.started);
+  call.usedBefore = record.usage?.seconds ?? 0;
+  remember(call, "reconnected", "The connection dropped and came back");
 }
 
 const PAUSED =
