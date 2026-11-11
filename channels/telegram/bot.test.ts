@@ -591,9 +591,16 @@ test("with topics on in the owner's DM, a topic's widget goes to a DM topic of i
 
     const dm = { id: OWNER, type: "private" as const, first_name: "Victor" };
     await update({ message: message({ chat: dm, message_thread_id: 9, text: "bigger tiles" }) });
-    expect((await inbound((line) => line.content === "bigger tiles")).meta.chat_id).toBe(
-      String(OWNER),
+    const said = await inbound((line) => line.content === "bigger tiles");
+    expect(said.meta).toMatchObject({ chat_id: String(OWNER) });
+    expect(said.meta.message_id).toStartWith(`telegram:${OWNER}:`);
+
+    expect((await call("react", { message_id: said.meta.message_id, emoji: "👍" })).text).toBe(
+      "reacted",
     );
+    expect(
+      await called("setMessageReaction", (p) => p.reaction?.[0]?.emoji === "👍"),
+    ).toMatchObject({ chat_id: String(OWNER) });
   } finally {
     hex.has_topics_enabled = false;
   }

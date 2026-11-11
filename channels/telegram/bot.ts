@@ -429,6 +429,8 @@ function homeOf(topic: number | undefined): string | undefined {
   return [...dmTopics].find(([, each]) => each === topic)?.[0];
 }
 
+const makingDmTopics = new Map<string, Promise<number>>();
+
 async function dmTopic(owner: string, thread: string): Promise<number | undefined> {
   if (!bot.botInfo.has_topics_enabled) {
     return undefined;
@@ -441,11 +443,23 @@ async function dmTopic(owner: string, thread: string): Promise<number | undefine
   }
 
   const name = (topicNames.get(thread) ?? hub.name(thread) ?? "Topic").slice(0, 128);
-  const { message_thread_id } = await bot.api.createForumTopic(owner, name);
-  dmTopics.set(thread, message_thread_id);
-  keepDmTopics();
 
-  return message_thread_id;
+  const making =
+    makingDmTopics.get(thread) ??
+    bot.api.createForumTopic(owner, name).then(({ message_thread_id }) => {
+      dmTopics.set(thread, message_thread_id);
+      keepDmTopics();
+
+      return message_thread_id;
+    });
+
+  makingDmTopics.set(thread, making);
+
+  try {
+    return await making;
+  } finally {
+    makingDmTopics.delete(thread);
+  }
 }
 
 const ledger = new Ledger(STATE_DIR, "telegram");
@@ -1038,17 +1052,13 @@ const handlers: Handlers<typeof tools> = {
   },
 
   react: async (caller, args) => {
-    const { chat_id } = target(caller);
+    const { chat_id, message } = located(caller, args.message_id);
 
     // SAFETY: Telegram checks the emoji against its whitelist and refuses any other, as the tool's description warns.
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only Telegram knows its whitelist
     const emoji = args.emoji as ReactionTypeEmoji["emoji"];
 
-    await react(
-      chat_id,
-      Number(args.message_id),
-      args.remove === true ? [] : [{ type: "emoji", emoji }],
-    );
+    await react(chat_id, message, args.remove === true ? [] : [{ type: "emoji", emoji }]);
 
     return args.remove === true ? "reaction removed" : "reacted";
   },
@@ -1303,8 +1313,39 @@ const handlers: Handlers<typeof tools> = {
       }
     };
 
+    const inDmTopic = async (owner: string) => {
+      try {
+        const topic = await dmTopic(owner, caller);
+
+        if (topic === undefined) {
+          return;
+        }
+
+        try {
+          return { sent: await send(owner, { message_thread_id: topic }), topic };
+        } catch (error) {
+          if (!String(error).includes("thread not found")) {
+            throw error;
+          }
+
+          dmTopics.delete(caller);
+          keepDmTopics();
+          const again = await dmTopic(owner, caller);
+
+          return again === undefined
+            ? undefined
+            : { sent: await send(owner, { message_thread_id: again }), topic: again };
+        }
+      } catch (error) {
+        process.stderr.write(
+          `telegram hub: ${caller}'s widget goes to the plain DM, since its DM topic failed: ${String(error)}\n`,
+        );
+      }
+    };
+
     let to = chat_id;
     let sent: Sent;
+    let home: number | undefined;
 
     try {
       sent = await send(chat_id, extra);
@@ -1316,11 +1357,9 @@ const handlers: Handlers<typeof tools> = {
       }
 
       to = owner;
+      const placed = extra.message_thread_id === undefined ? undefined : await inDmTopic(owner);
 
-      const topic =
-        extra.message_thread_id === undefined ? undefined : await dmTopic(owner, caller);
-
-      if (topic === undefined) {
+      if (placed === undefined) {
         const back = extra.message_thread_id === undefined ? undefined : post.link(caller, "");
         sent = await send(owner, {
           ...(back !== undefined && {
@@ -1328,18 +1367,7 @@ const handlers: Handlers<typeof tools> = {
           }),
         });
       } else {
-        try {
-          sent = await send(owner, { message_thread_id: topic });
-        } catch (error_) {
-          if (!String(error_).includes("thread not found")) {
-            throw error_;
-          }
-
-          dmTopics.delete(caller);
-          keepDmTopics();
-          const again = await dmTopic(owner, caller);
-          sent = await send(owner, again === undefined ? {} : { message_thread_id: again });
-        }
+        ({ sent, topic: home } = placed);
       }
     }
 
@@ -1348,8 +1376,6 @@ const handlers: Handlers<typeof tools> = {
       content: args.caption,
       meta: { widget: basename(args.file) },
     });
-
-    const home = dmTopics.get(caller);
 
     return to === chat_id
       ? `sent widget (id: ${sent.message_id})`
@@ -2431,6 +2457,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
   const thread = threadOf(ctx);
   const msgId = msg?.message_id;
   const chat_id = ctx.chat === undefined ? target(thread).chat_id : String(ctx.chat.id);
+  const elsewhere = chat_id !== target(thread).chat_id;
 
   sendTyping(thread);
 
@@ -2467,7 +2494,9 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     content,
     meta: {
       chat_id,
-      ...(msgId !== undefined && { message_id: String(msgId) }),
+      ...(msgId !== undefined && {
+        message_id: elsewhere ? `telegram:${chat_id}:${msgId}` : String(msgId),
+      }),
       user,
       user_id: String(from.id),
       ts: new Date((msg?.date ?? 0) * 1000).toISOString(),
@@ -2503,7 +2532,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   hub.deliver(thread, nameOf(ctx, thread), message);
 
-  if (msgId !== undefined) {
+  if (msgId !== undefined && !elsewhere) {
     const replyTo = message.meta.reply_to_message_id ?? "";
 
     ledger.heard(thread, msgId, content, replyTo === "" ? undefined : Number(replyTo));
