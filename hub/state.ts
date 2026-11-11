@@ -63,6 +63,15 @@ const {
 
 const fromChat = prompt?.startsWith("<channel source=") === true;
 
+const fromAnAgent =
+  prompt !== undefined &&
+  /^<(task-notification|(agent|cross-session|teammate)-message[\s>])/u.test(prompt);
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The hub holds the owner's words for a turn it's told began until that turn's Stop hook, and a command that runs no model turn has none.
+const mayRunNoTurn =
+  prompt === undefined || /^([/!]|<(local-command|command-|bash-|system-reminder))/u.test(prompt);
+
 const background =
   !busy &&
   background_tasks?.some((task) => TASKS_CLAUDE_CODE_COUNTS_AS_WORKING.has(task.type ?? "")) ===
@@ -229,14 +238,7 @@ if (session_id && !recorded) {
 }
 
 const typedInTheTerminal =
-  busy &&
-  prompt !== undefined &&
-  !fromChat &&
-  !/^(\/|<(local-command|command-|system-reminder|task-notification|(agent|cross-session|teammate)-message[\s>]))/u.test(
-    prompt,
-  )
-    ? prompt
-    : undefined;
+  busy && prompt !== undefined && !fromChat && !fromAnAgent && !mayRunNoTurn ? prompt : undefined;
 
 if (typedInTheTerminal !== undefined && typedInTheTerminal !== "" && session_id) {
   try {
@@ -278,7 +280,7 @@ if (!busy && session_id && answered) {
   }
 }
 
-if (given(HEX_HUB) && given(HEX_THREAD) && (!busy || fromChat)) {
+if (given(HEX_HUB) && given(HEX_THREAD) && (!busy || !mayRunNoTurn)) {
   const socket = connect(HEX_HUB);
 
   socket
