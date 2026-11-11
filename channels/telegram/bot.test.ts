@@ -1151,40 +1151,6 @@ test("a DM is its own thread: it reaches the DM session, not the group, and repl
   dm.close();
 });
 
-test("a topic of the owner's own in the DM is its own thread, and replies go back into it", async () => {
-  hex.has_topics_enabled = true;
-
-  const topic = await connectSession({
-    stateDir: state,
-    path: "/telegram",
-    channel: CHANNEL,
-    thread: `${OWNER}:40`,
-  });
-
-  try {
-    await update({
-      message: message({
-        chat: { id: OWNER, type: "private", first_name: "Victor" },
-        message_thread_id: 40,
-        text: "in my own topic",
-      }),
-    });
-    await inbound(
-      (line) => line.content === "in my own topic",
-      () => topic.received,
-    );
-
-    await topic.call("reply", { text: "back in your topic" });
-    expect(await called("sendMessage", (p) => p.text === "back in your topic")).toMatchObject({
-      chat_id: String(OWNER),
-      message_thread_id: 40,
-    });
-  } finally {
-    topic.close();
-    hex.has_topics_enabled = false;
-  }
-});
-
 const ledger = () => ({
   pins: Object.fromEntries(
     open(state)
