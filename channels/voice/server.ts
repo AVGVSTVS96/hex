@@ -233,6 +233,7 @@ type Live = {
   clock?: { session: number; wall: number };
   away?: { told: boolean; settling?: ReturnType<typeof setTimeout> };
   lost?: { reason: string; at: string; giveUp: ReturnType<typeof setTimeout> };
+  unattached?: number;
   shift?: number;
   usedBefore?: number;
   reopen?: ((call: Live, opening: Said[]) => void) | undefined;
@@ -246,7 +247,7 @@ type Live = {
   closed?: true;
 };
 
-type Attaching = { id: string; session: string; closing?: string };
+type Attaching = { id: string; session: string; since: number; closing?: string };
 
 type Placed = {
   to: string;
@@ -305,7 +306,7 @@ let seq = 0;
 const dials = new Map<string, Dial>();
 const placed = new Map<string, Placed>();
 const RETRIES = [250, 1000, 2000, 4000, 8000];
-const GRACE = 120_000;
+const GRACE = Number(env.VOICE_GRACE_SECONDS ?? 120) * 1000;
 const CARRIES_ON = new Set(["expired", "connection_lost", "remote_hangup"]);
 const CALLER_PAUSE = 1000;
 const HANDOFF_WAIT = 3000;
@@ -1733,6 +1734,10 @@ function reconnect(call: Live, attempt: number) {
     return;
   }
 
+  if (attempt === 0 || call.unattached === undefined) {
+    call.unattached = Date.now();
+  }
+
   const was = sessionOf(call);
   const moved = () => live !== call || sessionOf(call) !== was || call.lost !== undefined;
   trace(`lost the connection to ${was}, reattaching (try ${attempt + 1})`);
@@ -1762,8 +1767,9 @@ function reconnect(call: Live, attempt: number) {
       });
 
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      /* The caller's app holds the call, not this connection, so losing it never ends the call: the
-       engine keeps coming back until OpenAI says the session is gone or its time is up. */
+      /* The caller's app holds the call, not this connection, so losing it doesn't end the call: the
+       engine keeps coming back, and the app can carry the call on in a new session meanwhile. A
+       session OpenAI won't serve for as long as a lost call waits to carry on is as good as gone. */
       // oxlint-disable-next-line unicorn/prefer-add-event-listener -- listen() replaces it once the socket opens
       socket.onclose = async () => {
         const over = filled(call.closing) ? undefined : await sessionOver(call);
@@ -1772,10 +1778,13 @@ function reconnect(call: Live, attempt: number) {
           return;
         }
 
-        if (over === undefined) {
-          reconnect(call, attempt + 1);
-        } else {
+        if (over !== undefined) {
           lost(call, over);
+        } else if (!filled(call.closing) && Date.now() - (call.unattached ?? 0) >= GRACE) {
+          trace(`${was} wasn't served for ${GRACE / 1000}s and nothing carried ${call.id} on`);
+          finish(call, "connection_lost");
+        } else {
+          reconnect(call, attempt + 1);
         }
       };
     },
@@ -1796,8 +1805,9 @@ function expired({ expires }: Pick<CallRecord, "expires">) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* OpenAI answers a plain GET on a session's attach URL with 400 while the session lives and 404
-   once it's gone; anything else, or no answer, says nothing either way. */
+/* OpenAI answers a plain GET on a session's attach URL with 400 while the session lives. Once it's
+   gone the answer is 404 or 503, and 503 is also what a brief outage looks like, so only 404
+   settles it. */
 async function sessionGone(id: string) {
   try {
     const { status } = await fetch(`${API}/${id}/attach`, {
@@ -1846,6 +1856,7 @@ function carried(call: Live, socket: WebSocket, next: string, expires: string | 
   clearTimeout(call.lost?.giveUp);
   delete call.lost;
   delete call.closed;
+  delete call.unattached;
   letGo(call, "the voice moved to a new session; send it again");
   call.handoffs = new Set();
   call.shift = since(call);
@@ -1939,7 +1950,7 @@ function recover() {
       !expired(record);
 
     if (latest) {
-      reattach({ id, session: record.session ?? id });
+      reattach({ id, session: record.session ?? id, since: Date.now() });
     } else {
       closeOut(record);
     }
@@ -2066,7 +2077,11 @@ async function attachAgain(pending: Attaching, attempt: number) {
   const record = calls.get(pending.id);
 
   const stillOn =
-    record !== undefined && !live && !expired(record) && !(await sessionGone(pending.session));
+    record !== undefined &&
+    !live &&
+    !expired(record) &&
+    Date.now() - pending.since < GRACE &&
+    !(await sessionGone(pending.session));
 
   if (filled(pending.closing)) {
     closeSession(pending.session, pending.closing);

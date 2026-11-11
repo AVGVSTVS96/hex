@@ -207,7 +207,10 @@ said in it: "...")`), and every image in `image_path`, as Telegram's photos arri
 
 Only a hang-up ends a call. If the engine's connection to a page or app call
 drops, it keeps reattaching to the same session by its id
-(`/v1/live/sessions/<id>/attach`) for as long as the session lives. A session
+(`/v1/live/sessions/<id>/attach`), and the app can carry the call on in a new
+session meanwhile. A session OpenAI won't serve for two minutes
+(`VOICE_GRACE_SECONDS`), with nothing carrying the call on, is taken as gone,
+and the call ends as dropped, so hex can ring again. A session
 OpenAI ends on its own (`expired`, `connection_lost`, `remote_hangup`) doesn't
 end the call: it carries on in a new session that starts with the call so far.
 The app opens it with `POST /session` and `continues: <call id>`, and gets back
@@ -216,7 +219,8 @@ engine, and the line's audio moves to it. The call keeps its id, record and
 clock, Claude is told, and answers to earlier handoffs reach the new session
 without their handoff. With no new session in two minutes the call ends as it
 was lost; a hang-up meanwhile ends it at once. When the engine starts, it
-picks the latest call that never got an end back up the same way and sends
+picks the latest call that never got an end back up the same way, for up to
+the same two minutes, and sends
 Claude a "call resumed" message with the call so far; any other call left
 without an end is closed out as `dropped` and ends like any other call: Claude
 is told to name it, and the session renews. A hang-up (`DELETE /session`,
@@ -450,6 +454,7 @@ them with hex) gets Claude walking the list in order.
    VOICE_MODEL=...    # the OpenAI live model that talks; gpt-live-1 if unset
    VOICE_PORT=8790    # the call page's local port
    VOICE_TOKEN=...    # if set, /session, /calls and /phone need "Authorization: Bearer <token>"
+   VOICE_GRACE_SECONDS=120 # how long a dropped call waits to come back or carry on before it ends
    OPENAI_BASE_URL=... # another endpoint that speaks OpenAI's live API; https://api.openai.com/v1 if unset
    OPENROUTER_API_KEY=... # lets the caller mute the voice, or call off a handoff, by saying so (see Muting); off if unset
    ```
