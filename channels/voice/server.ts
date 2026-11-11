@@ -225,6 +225,7 @@ type Live = {
   pending: Map<string, Pending>;
   rings: Ring[];
   handoffs?: Set<string>;
+  answer?: { text: string; at: number };
   ringing?: ReturnType<typeof setInterval> | undefined;
   changes: Changes;
   spoke: number;
@@ -311,7 +312,9 @@ const HANDOFF_WAIT = 3000;
 const HANDOFF_MOST = 8000;
 const ACK_WAIT = 10_000;
 const QUIET = 2000;
-const ANSWER_WAIT = 8000;
+const ANSWER_WAIT = 20_000;
+const ANSWER_PAUSE = 3000;
+const SAME_ANSWER = 10_000;
 const STYLE_WAIT_MOST = 30_000;
 const HANG_UP_MOST = 10_000;
 const SETTLE = 1500;
@@ -388,11 +391,18 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
         live.stop?.answered(handoff);
       }
 
-      await untilTheirNewestWordsAreAnswered(live, handoff);
+      if (live.answer?.text === args.text && Date.now() - live.answer.at < SAME_ANSWER) {
+        return "said already: the voice has this answer, so it isn't sent twice";
+      }
 
-      const held = await tell(live, "say", args.text, handoff, {
+      const answering = live;
+      await untilTheirNewestWordsAreAnswered(answering);
+
+      const held = await tell(answering, "say", args.text, handoff, {
         checked: args.checked,
       });
+
+      answering.answer = { text: args.text, at: Date.now() };
 
       return held ? "the caller muted the voice: it says this once they unmute it" : "said";
     }
@@ -572,20 +582,22 @@ async function tellOnceQuiet(call: Live, lines: string) {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* An instruction cuts off whatever the voice is saying, so it waits until the voice is quiet, for so long at most. */
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* The voice says an answer the moment it arrives, so one for an earlier handoff that lands while the caller's newest words wait for a reply takes their place, and those words never get handed off: it waits for the voice to answer them first, for so long at most. */
-async function untilTheirNewestWordsAreAnswered(call: Live, handoff: string | undefined) {
-  const latest = () => [...(call.handoffs ?? [])].at(-1);
-  const then = latest();
-
-  if (!filled(handoff) || handoff === then || call.mute?.muted === true) {
-    return;
-  }
-
+/* The voice says an answer the moment it arrives, so one that lands on words the caller said after the last handoff takes their reply's place, and those words never get handed off: it waits while the caller talks and for the voice to take them up, for so long at most. */
+async function untilTheirNewestWordsAreAnswered(call: Live) {
   const asked = Date.now();
-  const stillLive = () => live === call;
-  const unanswered = () => call.callerSpoke > call.spoke && latest() === then;
 
-  while (stillLive() && Date.now() - asked < ANSWER_WAIT && unanswered()) {
+  const unanswered = () =>
+    live === call &&
+    call.mute?.muted !== true &&
+    call.rings.length === 0 &&
+    call.callerSpoke > call.spoke &&
+    !backchannel(call.call.unsent("you"));
+
+  while (
+    unanswered() &&
+    Date.now() - call.callerSpoke < ANSWER_PAUSE &&
+    Date.now() - asked < ANSWER_WAIT
+  ) {
     await Bun.sleep(100);
   }
 }
@@ -911,7 +923,7 @@ function mark(call: string, change: Task): Promise<string> {
     save(live);
     activity.changed();
 
-    return send(live, "session.thinking.append", live.call.change(change.id)).then(
+    return send(live, "session.thinking.append", `${NOTED}${live.call.change(change.id)}`).then(
       () => "board updated",
     );
   }
