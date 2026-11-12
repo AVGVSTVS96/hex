@@ -383,6 +383,9 @@ test("a run with no terminal says it is hex, over the label it inherited, and a 
 });
 
 test("an agent's commands run in a shell 10 nice levels below the agent, so they give way to it", () => {
+  const own = Number(Bun.spawnSync(["sh", "-c", "ps -o ni= -p $$"]).stdout.toString().trim());
+  const below = String(Math.min(own + 12, 19));
+
   for (const shell of ["bash", "zsh"].filter((name) => Bun.which(name) !== null)) {
     const ran = Bun.spawnSync([
       "nice",
@@ -393,6 +396,6 @@ test("an agent's commands run in a shell 10 nice levels below the agent, so they
       "ps -o ni= -p $$; echo $0",
     ]);
 
-    expect(ran.stdout.toString().split(/\s+/u).filter(Boolean)).toEqual(["12", shell]);
+    expect(ran.stdout.toString().split(/\s+/u).filter(Boolean)).toEqual([below, shell]);
   }
 });

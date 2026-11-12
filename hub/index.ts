@@ -54,6 +54,8 @@ export { CLAUDE, busy, ownership, running } from "./running.ts";
 
 export type { Session } from "./running.ts";
 
+export { sinceToday } from "./restarts.ts";
+
 export { statusPost } from "./status.ts";
 
 export { asked, hexDir, open, shown, stateDir } from "./store.ts";

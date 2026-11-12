@@ -12,7 +12,7 @@ const Restart = z.object({
 
 const dayOf = (microseconds: number) => new Date(microseconds / 1000).toISOString().slice(0, 10);
 
-const sinceToday = () => [
+export const sinceToday = () => [
   "journalctl",
   "--user",
   "--follow",
@@ -31,7 +31,7 @@ const systemdsBurst = () =>
 export function restarts(
   storeDir: string,
   main: string,
-  journal = sinceToday,
+  journal: () => string[],
   limit?: number,
 ): () => void {
   const store = open(storeDir);

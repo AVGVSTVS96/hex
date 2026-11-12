@@ -29,6 +29,7 @@ import {
   MODELS,
   Ledger,
   open as openStore,
+  sinceToday,
   stateDir,
   waits,
 } from "@hex/hub";
@@ -1807,6 +1808,7 @@ const hub = startHub({
         : undefined,
   ...(MAIN !== undefined && { main: MAIN }),
   general: true,
+  journal: sinceToday,
   ...(process.env.HEX_DIR !== undefined && { hexDir: process.env.HEX_DIR }),
   ...(process.env.HEX_LAUNCHER !== undefined && { launcher: process.env.HEX_LAUNCHER }),
   ...(process.env.HEX_NAME !== undefined && { mainName: process.env.HEX_NAME }),
