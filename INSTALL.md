@@ -89,7 +89,7 @@ hex's sessions run in `~/hex`, and Claude Code only runs there once the folder i
 
 `doctor` checks every step above and prints a `fix` line, with the step to redo, for each one that isn't right; run it again until it says hex looks healthy. `status` should show the hub running and a session named `hex`. The hub keeps General running and starts a session for every other thread when it's needed.
 
-To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex run` (it stays in the foreground) with whatever it uses for that. With systemd, use the units hex ships, which also keep its sessions in a memory slice apart from the hub, and put what its agents run (builds, tests, evals) in a slice below them, so the agents keep room on a busy machine: `~/hex/.hex/bin/hex stop`, then `systemctl --user link ~/hex/.hex/systemd/hex.service ~/hex/.hex/systemd/hex-sessions.slice ~/hex/.hex/systemd/hex-work.slice && systemctl --user enable --now hex`, plus `loginctl enable-linger "$USER"` (may need `sudo`; ask first). Elsewhere: a launchd agent with `KeepAlive` on macOS, a Sprite service on a Fly.io Sprite, or a crontab line `@reboot ~/hex/.hex/bin/hex start`.
+To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex run` (it stays in the foreground) with whatever it uses for that. With systemd, use the units hex ships, which also keep its sessions in a memory slice apart from the hub: `~/hex/.hex/bin/hex stop`, then `systemctl --user link ~/hex/.hex/systemd/hex.service ~/hex/.hex/systemd/hex-sessions.slice && systemctl --user enable --now hex`, plus `loginctl enable-linger "$USER"` (may need `sudo`; ask first). Elsewhere: a launchd agent with `KeepAlive` on macOS, a Sprite service on a Fly.io Sprite, or a crontab line `@reboot ~/hex/.hex/bin/hex start`.
 
 ## 8. Make it theirs
 
@@ -124,6 +124,12 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
   ```
 
   Claude Code starts background sessions only in folders it trusts, so hex trusts a project folder the first time a T3 thread opens there. A T3 chat with no project works in the hex folder. hex sessions in T3 get T3's own tools too, like `html_render` and `preview`.
+
+- **More machines (optional):** an agent job (`job <unit> claude -p …`) runs on this machine until it's overloaded, on their other machines after that, and waits in line when none has room. A machine has room (`.hex/bin/room`) while its CPU is at most 85% busy for this one and half busy for the others, a fifth of its memory and 25 GB of disk are free, and, for a Mac, it's on power and not slowed by heat. Another machine runs jobs as T3 Code threads, through this machine's T3 Code and its link to that one. To add one, with the `t3` CLI and a signed-in Claude Code on it:
+  1. ssh both ways with a key that needs no agent or passphrase, since jobs connect from services: from here `env -u SSH_AUTH_SOCK ssh -o BatchMode=yes <name> true` must work (`<name>` is what `ssh` reaches it by), and from there `env -u SSH_AUTH_SOCK ssh -o BatchMode=yes <user>@<this machine's hostname> true`, since its jobs reach hex that way.
+  2. There, put `T3CODE_PORT=3774` and `T3CODE_HOST=127.0.0.1` in `~/.t3-hex/service.env`, run `t3 service install --base-dir ~/.t3-hex`, set `"linkedEnvironmentsEnabled": true` in `~/.t3-hex/userdata/settings.json`, and run `t3 pair --base-dir ~/.t3-hex --tailscale --tailscale-serve-port 3774`.
+  3. Here, set the same setting in `~/.t3/userdata/settings.json` and run `t3 environment link <its https URL> --pairing-code <code> --access full-access`. A link lasts 30 days, so add a job to `~/hex/schedules.json` that renews it on the 1st and 15th: `` "<name>-link": { "cron": "0 9 1,15 * *", "prompt": "Run `.hex/bin/t3-relink <name>`, which renews the T3 Code link to <name> (links last 30 days). Tell me only if it failed, with its error." } ``.
+  4. Set `"HEX_MACHINES": "<name>:3"` (then how many jobs it takes; several go space-separated, in order) in the `env` of `~/hex/.claude/settings.json`. `HEX_SLOTS` (12) caps jobs on this machine.
 
 ## 9. Say hi (you)
 
