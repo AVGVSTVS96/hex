@@ -640,6 +640,7 @@ export function startHub({
   launcher = "claude",
   startup = startupFiles(process.env.HEX_STARTUP),
   link,
+  journal,
 }: {
   stateDir: string;
   storeDir?: string | undefined;
@@ -670,6 +671,9 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Where the app opens a thread, which hex.db keeps with it.
   link?: ((thread: string) => string | undefined) | undefined;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The systemd journal General follows for units that keep restarting; a hub without one follows none.
+  journal?: (() => string[]) | undefined;
 }) {
   const {
     idleStop,
@@ -2495,7 +2499,8 @@ export function startHub({
   const unwatch = kept((store) => store.watch(wake), ignore);
   const unschedule = general && present(main) ? schedule(storeDir, hexDir, main) : ignore;
   const unhold = general && present(main) ? holding(storeDir) : ignore;
-  const unrestart = general && present(main) ? restarts(storeDir, main) : ignore;
+  const unrestart =
+    general && present(main) && journal !== undefined ? restarts(storeDir, main, journal) : ignore;
   const retryCompactions = () => void recompact();
 
   const api = {
