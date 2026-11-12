@@ -28,10 +28,14 @@ beforeAll(() => {
   mkdirSync(join(home, ".hex/bin"), { recursive: true });
   mkdirSync(fake);
 
-  for (const file of ["bin/place", "bin/room", "bin/settings"]) {
+  for (const file of ["bin/place", "bin/settings"]) {
     cpSync(join(HEX, file), join(home, ".hex", file));
   }
 
+  script(
+    join(home, ".hex/bin/room"),
+    `echo "$*" > "${fake}/busiest"; cat "${fake}/${here}"; exit $(cat "${fake}/${here}.code")`,
+  );
   script(join(home, ".hex/bin/session"), `echo "session $* $(cat)"`);
   script(
     join(home, ".hex/bin/away"),
@@ -56,14 +60,6 @@ function machine(name: string, reading: string, code: number, awayExit?: number)
   } else {
     writeFileSync(join(fake, `${name}.away`), `${awayExit}`);
   }
-}
-
-function full() {
-  mkdirSync(slots, { recursive: true });
-  const held = Bun.spawn(["flock", "-o", join(slots, `${here}.1`), "sleep", "30"]);
-  Bun.sleepSync(200);
-
-  return held;
 }
 
 function place(settings: Record<string, string> = {}, wait = 10_000) {
@@ -91,32 +87,38 @@ function place(settings: Record<string, string> = {}, wait = 10_000) {
   };
 }
 
-test("a job runs here as a hex session while this machine has a free slot, with what came on its stdin", () => {
+test("a job runs here as a hex session while this machine has room, with what came on its stdin", () => {
+  machine(here, "cpu 3% busy", 0);
   expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
     `hex/atrium runs on ${here}\nsession -n hex/atrium -p build it the log\n`,
   );
 });
 
-test("a busy machine still runs the job here as a hex session while it has a free slot, since what its agents start gives way to them", () => {
+test("a busy machine still runs the job here as a hex session, since what its agents start gives way to them; only its memory and disk can fill it", () => {
+  machine(here, "cpu 99% busy", 0);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
   expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
     `hex/atrium runs on ${here}\nsession -n hex/atrium -p build it the log\n`,
   );
+  expect(readFileSync(join(fake, "busiest"), "utf-8")).toBe("100\n");
 });
 
-test("with every slot here taken, a job goes to the next machine with room, to that machine's hex in its T3 Code", () => {
+test("a job goes to the next machine with room, to that machine's hex in its T3 Code", () => {
+  machine(here, "cpu 80% busy", 1);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
-  const held = full();
-  const { out } = place({ HEX_SLOTS: "1", HEX_MACHINES: "mac:3" });
-  held.kill();
-  expect(out).toBe("hex/atrium runs on mac\naway mac env-mac hex/atrium -p build it the log\n");
+  expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
+    "hex/atrium runs on mac\naway mac env-mac hex/atrium -p build it the log\n",
+  );
 });
 
 test("held slots, a machine without a hex T3 Code, and one where the job could not run are passed over, and the next machine gets all of its stdin", () => {
+  machine(here, "cpu 3% busy", 0);
   machine("cloud", "cpu 1% busy", 0);
   machine("mini", "cpu 1% busy\nt3 env-mini", 0, AWAY_EXIT_WHEN_THE_JOB_CANT_RUN_THERE);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
-  const held = full();
+  mkdirSync(slots, { recursive: true });
+  const held = Bun.spawn(["flock", "-o", join(slots, `${here}.1`), "sleep", "30"]);
+  Bun.sleepSync(200);
   const { out, code } = place({ HEX_SLOTS: "1", HEX_MACHINES: "cloud:1 mini mac:3" });
   held.kill();
   expect(out).toBe(
@@ -126,28 +128,26 @@ test("held slots, a machine without a hex T3 Code, and one where the job could n
 });
 
 test("a machine whose T3 Code doesn't answer is passed over for that round only", () => {
+  machine(here, "cpu 80% busy", 1);
   machine("mini", "cpu 1% busy\nt3 env-mini", 0, 77);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
-  const held = full();
-  const { out } = place({ HEX_SLOTS: "1", HEX_MACHINES: "mini:1 mac:3" });
-  held.kill();
-  expect(out).toBe(
+  expect(place({ HEX_MACHINES: "mini:1 mac:3" }).out).toBe(
     "hex/atrium runs on mini\naway mini env-mini hex/atrium -p build it the log\nhex/atrium runs on mac\naway mac env-mac hex/atrium -p build it the log\n",
   );
 });
 
 test("with no room anywhere a job waits, and its owner hears it once, with every reading", () => {
+  machine(here, "cpu 80% busy", 1);
   machine("mac", "", 255);
-  const held = full();
-  const { out, told } = place({ HEX_SLOTS: "1", HEX_MACHINES: "mac:3" }, 3000);
-  held.kill();
-  expect(out).toBe(`hex/atrium waits for room:\n${here}: every slot taken\nmac: no answer\n`);
+  const { out, told } = place({ HEX_MACHINES: "mac:3" }, 3000);
+  expect(out).toBe(`hex/atrium waits for room:\n${here}: cpu 80% busy\nmac: no answer\n`);
   expect(told).toBe(
-    `--waiting atrium telegram:-100123:101 \n${here}: every slot taken\nmac: no answer\n`,
+    `--waiting atrium telegram:-100123:101 \n${here}: cpu 80% busy\nmac: no answer\n`,
   );
 });
 
 test("a job behind another in line waits its turn without telling its owner", () => {
+  machine(here, "cpu 3% busy", 0);
   mkdirSync(slots, { recursive: true });
   const ahead = Bun.spawn(["flock", "-o", join(slots, "line"), "sleep", "30"]);
   Bun.sleepSync(200);
@@ -157,6 +157,7 @@ test("a job behind another in line waits its turn without telling its owner", ()
 });
 
 test("a stopped job keeps its slot until it has stopped, as systemd's stop reaches every process at once", async () => {
+  machine(here, "cpu 3% busy", 0);
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ env: { HEX_SLOTS: "1" } }));
   const session = join(home, ".hex/bin/session");
   const kept = readFileSync(session, "utf-8");

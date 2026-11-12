@@ -1,8 +1,9 @@
 #!/bin/sh
-# room: prints this machine's readings and exits 0 when it has room for one more agent job: the CPU at most half
-# busy over 2 s, a fifth of its memory and 25 GB of disk free, and a Mac on power and not slowed by heat.
+# room [busiest]: prints this machine's readings and exits 0 when it has room for one more agent job: the CPU at most
+# busiest% busy over 2 s (50), a fifth of its memory and 25 GB of disk free, and a Mac on power and not slowed by heat.
 # Another machine runs it as `ssh <machine> sh -s < room`. Its last line names the machine's hex T3 Code while that runs.
 set -u
+busiest=${1:-50}
 room=0
 disk=$(df -Pk "$HOME" | awk 'NR == 2 { print int($4 / 1048576) }')
 if [ "$(uname)" = Darwin ]; then
@@ -23,7 +24,7 @@ else
   free=$(awk '/MemTotal/ { t = $2 } /MemAvailable/ { a = $2 } END { print int(100 * a / t) }' /proc/meminfo)
   echo "cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free"
 fi
-[ "$busy" -le 50 ] && [ "$free" -ge 20 ] && [ "$disk" -ge 25 ] || room=1
+[ "$busy" -le "$busiest" ] && [ "$free" -ge 20 ] && [ "$disk" -ge 25 ] || room=1
 origin=$(sed -n 's/.*"origin":"\([^"]*\)".*/\1/p' "$HOME/.t3-hex/userdata/server-runtime.json" 2>/dev/null)
 [ -n "$origin" ] && curl -fsm 3 -o /dev/null "$origin/.well-known/t3/environment" && echo "t3 $(cat "$HOME/.t3-hex/userdata/environment-id")"
 exit $room
