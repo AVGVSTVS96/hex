@@ -1,5 +1,3 @@
-import { join } from "node:path";
-
 import { z } from "zod";
 
 import { open } from "./store.ts";
@@ -9,17 +7,17 @@ const MINUTE = 60_000;
 
 const Restart = z.object({
   USER_UNIT: z.string(),
-  N_RESTARTS: z.coerce.number(),
-  __CURSOR: z.string(),
+  __REALTIME_TIMESTAMP: z.coerce.number(),
 });
 
-const following = (storeDir: string) => [
+const dayOf = (microseconds: number) => new Date(microseconds / 1000).toISOString().slice(0, 10);
+
+const sinceToday = () => [
   "journalctl",
   "--user",
   "--follow",
   "--output=json",
-  "--lines=0",
-  `--cursor-file=${join(storeDir, "restarts.cursor")}`,
+  `--since=@${Math.floor(Date.parse(dayOf(Date.now() * 1000)) / 1000)}`,
   `MESSAGE_ID=${RESTART_SCHEDULED}`,
 ];
 
@@ -33,10 +31,11 @@ const systemdsBurst = () =>
 export function restarts(
   storeDir: string,
   main: string,
-  journal = following(storeDir),
+  journal = sinceToday,
   limit?: number,
 ): () => void {
   const store = open(storeDir);
+  const counted = new Map<string, number>();
   let burst = limit;
   let closed = false;
   let child: { kill: () => void } | undefined;
@@ -51,18 +50,21 @@ export function restarts(
       return;
     }
 
-    if (restart.N_RESTARTS !== burst) {
+    const unit = restart.USER_UNIT;
+    const day = `${unit}@${dayOf(restart.__REALTIME_TIMESTAMP)}`;
+    const count = (counted.get(day) ?? 0) + 1;
+    counted.set(day, count);
+
+    if (count !== burst) {
       return;
     }
 
-    const unit = restart.USER_UNIT;
-
     store.messages.deliver({
-      key: `restarts:${unit}@${restart.__CURSOR}`,
+      key: `restarts:${day}`,
       to: main,
       from: "restarts",
       author: "prompt",
-      body: `[restarts] ${unit} keeps failing: systemd has restarted it ${burst} times in a row and goes on restarting it. \`journalctl --user -u ${unit}\` shows why.`,
+      body: `[restarts] ${unit} keeps failing: systemd has restarted it ${burst} times today. \`journalctl --user -u ${unit}\` shows why.`,
       meta: { user: "restarts" },
     });
   };
@@ -72,7 +74,7 @@ export function restarts(
 
     try {
       burst ??= systemdsBurst();
-      journald = Bun.spawn(journal, { stdout: "pipe", stderr: "inherit" });
+      journald = Bun.spawn(journal(), { stdout: "pipe", stderr: "inherit" });
     } catch (error) {
       process.stderr.write(
         `hub: no systemd journal here, so units that keep failing go unheard: ${String(error)}\n`,
@@ -82,6 +84,7 @@ export function restarts(
     }
 
     child = journald;
+    counted.clear();
     let rest = "";
 
     for await (const chunk of journald.stdout.pipeThrough(new TextDecoderStream())) {
