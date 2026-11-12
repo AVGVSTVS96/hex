@@ -6,7 +6,7 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 done="$home/state/migrated"
 
-steps=7
+steps=8
 
 step1() {
   [ -f "$home/schedules.json" ] || return 0
@@ -55,6 +55,13 @@ step7() {
   [ -f "$home/.gitignore" ] || return 0
   grep -qx 'scratch/' "$home/.gitignore" && return 0
   { [ ! -s "$home/.gitignore" ] || [ -z "$(tail -c 1 "$home/.gitignore")" ] || echo; echo 'scratch/'; } >> "$home/.gitignore"
+}
+
+# An install on hex's own units gets the slice its agents' work runs in.
+step8() {
+  unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null) || return 0
+  [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] || return 0
+  systemctl --user link "$hex/systemd/hex-work.slice" && systemctl --user daemon-reload
 }
 
 n=$(cat "$done" 2>/dev/null) || n=0
