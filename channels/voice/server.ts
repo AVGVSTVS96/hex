@@ -226,6 +226,7 @@ type Live = {
   rings: Ring[];
   handoffs?: Set<string>;
   answer?: { text: string; at: number };
+  failedSend?: string;
   ringing?: ReturnType<typeof setInterval> | undefined;
   changes: Changes;
   spoke: number;
@@ -349,7 +350,20 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
   }
 
   if (name === "send") {
-    return await pass(args.thread, args.about, args.text, args.app, args.channel);
+    const call = live;
+
+    try {
+      const sent = await pass(args.thread, args.about, args.text, args.app, args.channel);
+      delete call?.failedSend;
+
+      return sent;
+    } catch (error) {
+      if (call) {
+        call.failedSend = messageOf(error);
+      }
+
+      throw error;
+    }
   }
 
   if (name === "style") {
@@ -392,6 +406,16 @@ export async function tool(...[name, args]: ToolCall): Promise<string> {
 
       if (filled(handoff)) {
         live.stop?.answered(handoff);
+      }
+
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      /* The session can write its answer in the same breath as the send it reports, before the
+         send fails, and the caller then hears that it went. */
+      if (filled(live.failedSend)) {
+        const why = live.failedSend;
+        delete live.failedSend;
+
+        return `not said: send failed just before this (${why}), so tell the caller what actually happened`;
       }
 
       if (live.answer?.text === args.text && Date.now() - live.answer.at < SAME_ANSWER) {
