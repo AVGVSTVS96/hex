@@ -7,26 +7,41 @@ const MINUTE = 60_000;
 
 const Restart = z.object({
   USER_UNIT: z.string(),
+  N_RESTARTS: z.coerce.number(),
   __REALTIME_TIMESTAMP: z.coerce.number(),
 });
 
-const dayOf = (microseconds: number) => new Date(microseconds / 1000).toISOString().slice(0, 10);
+const dayOf = (milliseconds: number) => new Date(milliseconds).toLocaleDateString("sv");
 
 export const sinceToday = () => [
   "journalctl",
   "--user",
   "--follow",
   "--output=json",
-  `--since=@${Math.floor(Date.parse(dayOf(Date.now() * 1000)) / 1000)}`,
+  `--since=@${Math.floor(new Date().setHours(0, 0, 0, 0) / 1000)}`,
   `MESSAGE_ID=${RESTART_SCHEDULED}`,
 ];
 
-const systemdsBurst = () =>
-  Number(
-    Bun.spawnSync(["systemctl", "--user", "show", "--property=DefaultStartLimitBurst", "--value"])
-      .stdout.toString()
-      .trim(),
-  );
+const systemdsBurst = () => {
+  const systemctl = Bun.which("systemctl");
+
+  const burst =
+    systemctl === null
+      ? Number.NaN
+      : Number(
+          Bun.spawnSync([
+            systemctl,
+            "--user",
+            "show",
+            "--property=DefaultStartLimitBurst",
+            "--value",
+          ])
+            .stdout.toString()
+            .trim(),
+        );
+
+  return Number.isInteger(burst) && burst > 0 ? burst : 5;
+};
 
 export function restarts(
   storeDir: string,
@@ -36,9 +51,10 @@ export function restarts(
 ): () => void {
   const store = open(storeDir);
   const counted = new Map<string, number>();
-  let burst = limit;
+  const burst = limit ?? systemdsBurst();
   let closed = false;
   let child: { kill: () => void } | undefined;
+  let followed = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const heard = (line: string) => {
@@ -51,11 +67,12 @@ export function restarts(
     }
 
     const unit = restart.USER_UNIT;
-    const day = `${unit}@${dayOf(restart.__REALTIME_TIMESTAMP)}`;
+    const at = restart.__REALTIME_TIMESTAMP / 1000;
+    const day = `${unit}@${dayOf(at)}`;
     const count = (counted.get(day) ?? 0) + 1;
     counted.set(day, count);
 
-    if (count !== burst) {
+    if (at < followed || count < burst || restart.N_RESTARTS < burst) {
       return;
     }
 
@@ -64,7 +81,7 @@ export function restarts(
       to: main,
       from: "restarts",
       author: "prompt",
-      body: `[restarts] ${unit} keeps failing: systemd has restarted it ${burst} times today. \`journalctl --user -u ${unit}\` shows why.`,
+      body: `[restarts] ${unit} keeps failing: systemd has restarted it ${count} times today. \`journalctl --user -u ${unit}\` shows why.`,
       meta: { user: "restarts" },
     });
   };
@@ -73,7 +90,7 @@ export function restarts(
     let journald: Bun.Subprocess<"ignore", "pipe", "inherit">;
 
     try {
-      burst ??= systemdsBurst();
+      followed = Date.now();
       journald = Bun.spawn(journal(), { stdout: "pipe", stderr: "inherit" });
     } catch (error) {
       process.stderr.write(

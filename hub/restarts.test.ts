@@ -11,17 +11,17 @@ import { until } from "./until.ts";
 let dir: string;
 let store: Store;
 
-const restart = (unit: string, at: string, counter: number) =>
+const restart = (unit: string, at: number, counter: number) =>
   JSON.stringify({
     USER_UNIT: unit,
     N_RESTARTS: String(counter),
-    __REALTIME_TIMESTAMP: String(Date.parse(at) * 1000),
+    __REALTIME_TIMESTAMP: String(at * 1000),
     MESSAGE: `${unit}: Scheduled restart job, restart counter is at ${counter}.`,
   });
 
-const loop = (unit: string, day: string, times: number, from = 1) =>
+const loop = (unit: string, times: number, { from = 1, before = false } = {}) =>
   Array.from({ length: times }, (_, i) =>
-    restart(unit, `${day}T15:55:${String(10 + i * 3).padStart(2, "0")}Z`, from + i),
+    restart(unit, Date.now() + (before ? -1000 - (times - i) * 10 : 1000 + i * 10), from + i),
   );
 
 const journal = (...lines: string[]) => {
@@ -46,12 +46,11 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test("a service that keeps failing reaches General once, at its fifth restart of the day, however many it had before", async () => {
+test("a service that keeps failing reaches General once, however many restarts it had before", async () => {
   const stop = restarts(
     dir,
     "-100:1",
-    journal(...loop("api.service", "2026-11-10", 8, 41), "not json"),
-    5,
+    journal(...loop("api.service", 8, { from: 41 }), "not json"),
   );
 
   await until(() => prompts().length > 0);
@@ -63,28 +62,49 @@ test("a service that keeps failing reaches General once, at its fifth restart of
   ]);
 });
 
-test("a few restarts add nothing, a day read again after the hub restarts adds nothing, and the next day still failing is told again", async () => {
+test("restarts from before the hub followed the journal count toward today, but only a unit still restarting since it was last started reaches General", async () => {
+  const stop = restarts(
+    dir,
+    "-100:1",
+    journal(
+      ...loop("stopped.service", 9, { before: true }),
+      ...loop("restarted.service", 9, { before: true }),
+      ...loop("restarted.service", 1),
+      ...loop("tunnel.service", 3, { before: true }),
+      ...loop("tunnel.service", 2, { from: 4 }),
+      ...loop("web.service", 4),
+    ),
+    5,
+  );
+
+  await until(() => prompts().length > 0);
+  await Bun.sleep(50);
+  stop();
+
+  expect(prompts()).toEqual([
+    "[restarts] tunnel.service keeps failing: systemd has restarted it 5 times today. `journalctl --user -u tunnel.service` shows why.",
+  ]);
+});
+
+test("a unit still failing after the hub restarts is told once", async () => {
   const lines = [
-    ...loop("tunnel.service", "2026-11-09", 3),
-    ...loop("tunnel.service", "2026-11-10", 2, 4),
-    ...loop("web.service", "2026-11-10", 5),
+    ...loop("web.service", 5, { before: true }),
+    ...loop("web.service", 2, { from: 6 }),
   ];
 
   const first = restarts(dir, "-100:1", journal(...lines), 5);
-
   await until(() => prompts().length > 0);
   first();
 
   const again = restarts(
     dir,
     "-100:1",
-    journal(...lines, ...loop("web.service", "2026-11-11", 5)),
+    journal(...lines, ...loop("web.service", 1, { from: 8 })),
     5,
   );
 
-  await until(() => prompts().length > 1);
-  await Bun.sleep(50);
+  await Bun.sleep(300);
   again();
 
-  expect(prompts().map((body) => body.split(" ")[1])).toEqual(["web.service", "web.service"]);
+  expect(prompts()).toHaveLength(1);
 });
