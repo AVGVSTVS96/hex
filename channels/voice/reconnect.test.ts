@@ -737,11 +737,11 @@ test("an answer written before a send failed comes back unsaid with the failure,
     text: "look into it",
   });
 
-  expect(error).toBe("no hex thread is named Selfheal; pass app to open one");
+  expect(error).toBe("no open hex thread is named Selfheal; pass app to open one");
   expect(
     (await engine.tool("say", { delegation_id: "d1", text: "Handed it to Selfheal." })).result,
   ).toBe(
-    "not said: send failed just before this (no hex thread is named Selfheal; pass app to open one), so tell the caller what actually happened",
+    "not said: send failed just before this (no open hex thread is named Selfheal; pass app to open one), so tell the caller what actually happened",
   );
   expect(engine.handoffs.length).toBe(sent);
   expect(
