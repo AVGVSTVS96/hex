@@ -725,6 +725,31 @@ test("an answer goes once the caller has been quiet a while, even when the voice
   expect(Date.now() - asked).toBeLessThan(5000);
 }, 20_000);
 
+test("an answer written before a send failed comes back unsaid with the failure, so the voice never says it went", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.confirmAnswers();
+  const sent = engine.handoffs.length;
+
+  const { error } = await engine.tool("send", {
+    thread: "Selfheal",
+    about: "Job runner swapped hex",
+    text: "look into it",
+  });
+
+  expect(error).toBe("no hex thread is named Selfheal; pass app to open one");
+  expect(
+    (await engine.tool("say", { delegation_id: "d1", text: "Handed it to Selfheal." })).result,
+  ).toBe(
+    "not said: send failed just before this (no hex thread is named Selfheal; pass app to open one), so tell the caller what actually happened",
+  );
+  expect(engine.handoffs.length).toBe(sent);
+  expect(
+    (await engine.tool("say", { delegation_id: "d1", text: "That didn't go through yet." })).result,
+  ).toBe("said");
+  expect(engine.handoffs.length).toBe(sent + 1);
+}, 20_000);
+
 test("the same answer sent twice in a row reaches the voice once", async () => {
   await using engine = await appCall();
   await started(engine);
