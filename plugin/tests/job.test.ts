@@ -108,11 +108,11 @@ function run(args: string[], more: Record<string, string> = {}, cwd = home, stdi
 const value = (args: string[], name: string) =>
   args.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
 
-test("a job a hex session starts is its thread's, runs below the agents when it has none, in that session's own app, and its sessions are named for it", () => {
+test("a job a hex session starts is its thread's, in that session's own app, and its sessions are named for it", () => {
   const { args, error } = run(["round3", "make", "all"], session);
   expect(args.slice(args.indexOf("--"))).toEqual(["--", "make", "all"]);
   expect(args).toContain(`--working-directory=${home}`);
-  expect(args).toContain("--slice=hex-work.slice");
+  expect(args).toContain("--slice=hex-jobs.slice");
   expect(error).toBe("");
   expect(value(args, "HEX_OWNER")).toBe("t3:stray-key");
   expect(value(args, "CLAUDE_CODE_SESSION_NAME")).toBe("hex/round3");
@@ -120,9 +120,8 @@ test("a job a hex session starts is its thread's, runs below the agents when it 
   expect(run(["round3", "stray-key", "claude"], session).args).toContain("HEX_OWNER=t3:stray-key");
 });
 
-test("an agent job takes a slot in the agents' slice, from the folder it was started from", () => {
+test("an agent job goes to a machine with room, from the folder it was started from", () => {
   const priced = run(["atrium", "claude", "-p", "cost $5 in $HOME"], session).args;
-  expect(priced).toContain("--slice=hex-jobs.slice");
   expect(priced.at(-1)).toBe("cost $$5 in $$HOME");
   const project = mkdtempSync(join(home, "atrium-"));
   const away = run(["atrium", "claude", "-p", "build it", "--model", "opus"], session, project);

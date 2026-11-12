@@ -118,12 +118,12 @@ if (mode === "--ended") {
     process.env.INVOCATION_ID ?? `${Date.now()}`,
   );
 } else if (mode === "--waiting") {
-  const [unit = "", owner = "", slots = ""] = rest;
+  const [unit = "", owner = "", readings = ""] = rest;
 
   tell(
     unit,
     owner,
-    `waits for a slot: all ${slots} of this machine's agent job slots are taken. It starts by itself once one is free.`,
+    `waits for room: no machine has a free slot and room right now. It starts by itself once one does.${readings}`,
     `${process.env.INVOCATION_ID ?? Date.now()}:waiting`,
   );
 } else if (mode === "--tell") {
@@ -315,10 +315,10 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
   const agent = basename(kept.command[0] ?? "") === "claude";
   const name = `${store.threads.names()[store.threads.key(kept.owner)] ?? store.threads.key(kept.owner)}/${unit}`;
   const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command;
-  const slice = agent ? "hex-jobs.slice" : "hex-work.slice";
+  const roomToStopItsThreadOnAnotherMachineFirst = agent ? ["-p", "TimeoutStopSec=90s"] : [];
 
   const started =
-    await $`systemd-run --user --unit=${unit} --slice=${slice} --working-directory=${kept.cwd} ${input} --collect ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
+    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} --collect ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
 
   if (started.exitCode === 0) {
     return;
