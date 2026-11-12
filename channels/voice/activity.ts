@@ -1035,7 +1035,7 @@ export function findThread(state: string, wanted: string): Thread | undefined {
 
   if (matches.length > 1) {
     throw new Error(
-      `more than one hex thread goes by ${wanted}, in ${[...new Set(matches.map(({ app }) => app))].join(" and ")}: pass its app:key id, from hex threads --json`,
+      `more than one hex thread goes by ${wanted}: ${matches.map((one) => `${one.app}:${one.thread} (${nameOf(one, general)})`).join(", ")}; pass the id of the one you mean`,
     );
   }
 
@@ -1050,6 +1050,29 @@ export function findThread(state: string, wanted: string): Thread | undefined {
         ...(found.cwd !== undefined && { cwd: found.cwd }),
         state,
       };
+}
+
+export function noThread(state: string, wanted: string) {
+  const threads = open(state).threads.list();
+  const general = generalOf(threads);
+  const lower = wanted.toLowerCase();
+
+  const named = threads
+    .filter(({ app }) => app !== "voice")
+    .map((one) => ({
+      ...one,
+      name: nameOf(one, general),
+    }));
+
+  const closed = named.some((one) => !one.open && one.name.toLowerCase() === lower);
+
+  const like = named
+    .filter((one) => one.open && one.name.toLowerCase().includes(lower))
+    .map(({ name }) => name);
+
+  return `no open hex thread is named ${wanted}${closed ? ": that one is closed" : ""}${
+    like.length ? `; open ones named like it: ${like.join(", ")}` : "; pass app to open one"
+  }`;
 }
 
 const nothingToStop = (_last?: boolean) => Promise.resolve();

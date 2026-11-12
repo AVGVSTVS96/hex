@@ -25,6 +25,7 @@ const {
   headline,
   itemStep,
   nameOf,
+  noThread,
   past,
   stepOf,
 } = await import("./activity.ts");
@@ -448,6 +449,21 @@ test("a thread is found by its id or its name, in any app but voice", () => {
   expect(findThread(state, "voice")).toBeUndefined();
 });
 
+test("a name no open thread goes by says the thread is closed and names the open ones like it", () => {
+  threads("telegram", {
+    "-100:4715": { name: "Selfheal", session: "s1" },
+    "-100:8213": { name: "Selfheal2", session: "s2" },
+  });
+  threads("telegram", { "-100:8213": { name: "Selfheal2", session: "s2" } });
+  expect(findThread(state, "Selfheal")).toBeUndefined();
+  expect(noThread(state, "Selfheal")).toBe(
+    "no open hex thread is named Selfheal: that one is closed; open ones named like it: Selfheal2",
+  );
+  expect(noThread(state, "garden")).toBe(
+    "no open hex thread is named garden; pass app to open one",
+  );
+});
+
 test("General goes by General, found by that name too, and a second Telegram group keeps its own", () => {
   threads("telegram", {
     "-100:4803": { name: "phoneapp", session: "s1" },
@@ -476,7 +492,7 @@ test("General goes by General, found by that name too, and a second Telegram gro
   ]);
   threads("discord", { "discord-general": { name: "general", session: "s9" } });
   expect(() => findThread(state, "General")).toThrow(
-    "more than one hex thread goes by General, in discord and telegram",
+    "more than one hex thread goes by General: discord:discord-general (general), telegram:-100 (General)",
   );
   threads("discord", {});
   threads("telegram", { "-100:4803": { name: "phoneapp", session: "s1" } });
@@ -486,7 +502,7 @@ test("a name more than one thread has finds none of them, and says where they ar
   threads("buzz", { "buzz-id": { name: "hex", session: "s1" } });
   threads("discord", { "discord-id": { name: "hex", session: "s2" } });
   expect(() => findThread(state, "hex")).toThrow(
-    "more than one hex thread goes by hex, in buzz and discord: pass its app:key id, from hex threads --json",
+    "more than one hex thread goes by hex: buzz:buzz-id (hex), discord:discord-id (hex); pass the id of the one you mean",
   );
   expect(findThread(state, "discord-id")).toMatchObject({ app: "discord", name: "hex" });
   expect(findThread(state, "buzz:buzz-id")).toMatchObject({

@@ -7,7 +7,7 @@ import { begin, title as oneWord, open, sentPicture } from "@hex/hub";
 import type { Held, VoiceLine } from "@hex/hub";
 import { z } from "zod";
 
-import { brief, findThread, followAgent, followThread } from "./activity.ts";
+import { brief, findThread, followAgent, followThread, noThread } from "./activity.ts";
 import type { Step, Thread } from "./activity.ts";
 import { Board, opener } from "./board.ts";
 import type { Page, Run } from "./board.ts";
@@ -745,7 +745,7 @@ async function pass(
   const known = filled(newThreadIn) ? undefined : findThread(HEX_STATE, name);
 
   if (!filled(newThreadIn) && !known) {
-    throw new Error(`no hex thread is named ${name}; pass app to open one`);
+    throw new Error(noThread(HEX_STATE, name));
   }
 
   if (filled(call) && live?.id !== call) {
@@ -768,7 +768,7 @@ async function pass(
   }
 
   if (!thread) {
-    throw new Error(`no hex thread is named ${name}; pass app to open one`);
+    throw new Error(noThread(HEX_STATE, name));
   }
 
   const toldTheVoiceWithoutHoldingUpTheWork =
