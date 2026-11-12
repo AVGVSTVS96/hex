@@ -2499,8 +2499,10 @@ export function startHub({
   const unwatch = kept((store) => store.watch(wake), ignore);
   const unschedule = general && present(main) ? schedule(storeDir, hexDir, main) : ignore;
   const unhold = general && present(main) ? holding(storeDir) : ignore;
+
   const unrestart =
     general && present(main) && journal !== undefined ? restarts(storeDir, main, journal) : ignore;
+
   const retryCompactions = () => void recompact();
 
   const api = {
