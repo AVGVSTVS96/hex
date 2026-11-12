@@ -108,11 +108,12 @@ function run(args: string[], more: Record<string, string> = {}, cwd = home, stdi
 const value = (args: string[], name: string) =>
   args.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
 
-test("a job a hex session starts is its thread's, in that session's own app, and its sessions are named for it", () => {
+test("a job a hex session starts is its thread's, in that session's own app, and its sessions are named for it, and one with no agent gives way to the agents", () => {
   const { args, error } = run(["round3", "make", "all"], session);
   expect(args.slice(args.indexOf("--"))).toEqual(["--", "make", "all"]);
   expect(args).toContain(`--working-directory=${home}`);
   expect(args).toContain("--slice=hex-jobs.slice");
+  expect(args).toContain("Nice=10");
   expect(error).toBe("");
   expect(value(args, "HEX_OWNER")).toBe("t3:stray-key");
   expect(value(args, "CLAUDE_CODE_SESSION_NAME")).toBe("hex/round3");
@@ -126,6 +127,7 @@ test("an agent job goes to a machine with room, from the folder it was started f
   const project = mkdtempSync(join(home, "atrium-"));
   const away = run(["atrium", "claude", "-p", "build it", "--model", "opus"], session, project);
   expect(away.args).toContain(`--working-directory=${project}`);
+  expect(away.args).not.toContain("Nice=10");
   const placed: unknown[] = away.args.slice(away.args.indexOf("--"));
   expect(placed).toEqual([
     "--",

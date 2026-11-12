@@ -170,6 +170,7 @@ test("a DM session the hub starts gets the chat prompt, its view's tail and wake
     HEX_THREAD: "1000001",
     CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD: "1",
   });
+  expect(settings.env.CLAUDE_CODE_SHELL).toStartWith(join(home, ".hex/bin/shell/"));
   expect(settings.env.HEX_TOKEN).toBeString();
   expect(args.join(" ")).not.toContain(settings.env.HEX_TOKEN);
   expect(statSync(file).mode.toString(8)).toEndWith("600");
@@ -379,4 +380,19 @@ test("a run with no terminal says it is hex, over the label it inherited, and a 
   expect(launched("-p", "--", "--bg")).toBe("hex");
   expect(launched("--bg", "build it")).toBe("unset");
   expect(launched("--bg", "-p")).toBe("unset");
+});
+
+test("an agent's commands run in a shell 10 nice levels below the agent, so they give way to it", () => {
+  for (const shell of ["bash", "zsh"].filter((name) => Bun.which(name) !== null)) {
+    const ran = Bun.spawnSync([
+      "nice",
+      "-n",
+      "2",
+      join(HEX, "bin/shell", shell),
+      "-c",
+      "ps -o ni= -p $$; echo $0",
+    ]);
+
+    expect(ran.stdout.toString().split(/\s+/u).filter(Boolean)).toEqual(["12", shell]);
+  }
 });

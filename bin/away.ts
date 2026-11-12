@@ -519,23 +519,16 @@ const wanted =
   modelIn(join(homedir(), ".claude/settings.json")) ??
   "opus";
 
-const claude = offered.providers.find((provider) => provider.providerInstanceId === "claudeAgent");
+const hex = offered.providers.find((provider) => provider.providerInstanceId === "hex");
 
-const newestFirst = claude?.models
-  .filter(({ id }) => id.includes(wanted))
-  .toSorted((a, b) => b.id.localeCompare(a.id));
-
-const chosen = claude?.models.find(({ id }) => id === wanted) ?? newestFirst?.[0];
+const chosen =
+  hex?.models.find(({ id }) => id === wanted) ?? hex?.models.find(({ id }) => wanted.includes(id));
 
 if (!chosen) {
-  quit(ELSEWHERE, claude ? `its Claude has no ${wanted}` : "its T3 Code has no Claude");
+  quit(ELSEWHERE, hex ? `its hex has no ${wanted}` : "its T3 Code has no hex");
 }
 
-const identity = Bun.spawnSync([join(import.meta.dir, "identity"), home]).stdout.toString();
-
-const message = `${identity}
-
-You are running on ${machine}, in a T3 Code thread hex started there because ${hostname()}, where hex runs, was short on room. The job was started in ${process.cwd()} on ${hostname()}. Your folder ${home}, the files under it and every other path on ${hostname()} are reached with \`ssh ${userInfo().username}@${hostname()} '<command>'\`, hex's commands included. Work in this machine's own checkouts: clone or pull a repo here, and push what you commit.
+const message = `You are running on ${machine}, in a T3 Code thread hex on ${hostname()} started there because ${hostname()} was short on room. The job was started in ${process.cwd()} on ${hostname()}. hex's folder there, ${home}, the files under it and every other path on ${hostname()} are reached with \`ssh ${userInfo().username}@${hostname()} '<command>'\`, hex's commands included. Work in this machine's own checkouts: clone or pull a repo here, and push what you commit.
 
 ${asked}`;
 
@@ -555,7 +548,7 @@ const launch = () =>
       message,
       runtimeMode: "full-access",
       modelSelection: {
-        provider: "claudeAgent",
+        provider: "hex",
         model: chosen.id,
         options: effort === undefined || effort === "" ? [] : [{ id: "effort", value: effort }],
       },

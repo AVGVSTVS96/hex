@@ -1,10 +1,10 @@
 #!/bin/sh
 # place <name> <claude args...>: an agent job's unit runs this. The job takes a slot on the first machine with room:
-# this one (HEX_SLOTS, 12) until it's overloaded, its CPU over 85% busy, then each of HEX_MACHINES in order, which
-# take jobs only while half idle ("mac:3" is the machine `ssh mac` reaches, with 3 slots). It runs here as a hex
-# session, there as a T3 Code thread (bin/away). With no room anywhere it waits, and its owner hears so once. A slot
-# is a lock this script holds until its job has ended, a stop included, so a job that ends, however it ends, gives
-# its slot back.
+# this one while it has a free slot (HEX_SLOTS, 12), since what its agents start gives way to them here, then each of
+# HEX_MACHINES in order, which take jobs only while half idle ("mac:3" is the machine `ssh mac` reaches, with 3 slots).
+# It runs here as a hex session, there as that machine's hex agent in its T3 Code (bin/away). With no room anywhere
+# it waits, and its owner hears so once. A slot is a lock this script holds until its job has ended, a stop included,
+# so a job that ends, however it ends, gives its slot back.
 set -u
 hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
@@ -63,15 +63,15 @@ $host: the job can't run there"
       continue ;;
     esac
     if [ "$host" = "$here" ]; then
-      reading=$("$hex/bin/room" 85)
+      fits=0 t3= measured="every slot taken"
     else
       # A machine that doesn't answer in 30 s, asleep or too busy to, has no room.
       reading=$(timeout 30 ssh -o BatchMode=yes "$host" sh -s < "$hex/bin/room")
+      fits=$?
+      t3=$(echo "$reading" | sed -n 's/^t3 //p')
+      measured=$(echo "$reading" | grep '^cpu ') || { measured="no answer"; fits=1; }
+      [ -n "$t3" ] || [ "$fits" != 0 ] || { measured="$measured, no hex T3 Code"; fits=1; }
     fi
-    fits=$?
-    t3=$(echo "$reading" | sed -n 's/^t3 //p')
-    measured=$(echo "$reading" | grep '^cpu ') || { measured="no answer"; fits=1; }
-    [ "$host" = "$here" ] || [ -n "$t3" ] || [ "$fits" != 0 ] || { measured="$measured, no hex T3 Code"; fits=1; }
     readings="$readings
 $host: $measured"
     [ "$fits" = 0 ] || continue
