@@ -1,0 +1,13 @@
+#!/bin/sh
+# work <command>: hex sessions hand Claude Code this as CLAUDE_CODE_SHELL_PREFIX (bin/session), so each Bash and Monitor
+# command an agent runs, and all it starts, goes in hex-work.slice, below the agents, and gives way to them for CPU
+# and memory. Stopping the agent's unit stops its commands too. Hooks come through here as well and stay with the agent:
+# Claude Code's own commands are the ones that end by saving the shell's folder.
+shell=bash
+case ${CLAUDE_CODE_SHELL:-${SHELL:-}} in */zsh | */bash) shell=${CLAUDE_CODE_SHELL:-$SHELL} ;; esac
+case $1 in
+  *' && pwd -P >| '*)
+    unit=$(sed -n 's:.*/::p' /proc/self/cgroup)
+    exec systemd-run --user --scope --quiet --collect --slice=hex-work.slice -p "BindsTo=$unit" -- "$shell" -c "$1" ;;
+esac
+exec "$shell" -c "$1"

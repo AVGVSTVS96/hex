@@ -28,6 +28,8 @@ untrusted && echo "hex couldn't mark $here trusted in $config" >&2
 (. "$hex/bin/settings"; { [ -n "${MEMORY_DIR:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ]; } || wake)
 # A job works from its prompt, as a subagent does, so it starts without the wake, and the agents it starts inherit that.
 [ -n "${HEX_OWNER:-}" ] && [ -z "${HEX_THREAD:-}" ] && job=1
+# Where systemd runs this user's sessions, the builds, tests and evals an agent runs give way to hex's agents (bin/work).
+grep -q '/user@[0-9]*\.service/' /proc/self/cgroup 2>/dev/null && work=${CLAUDE_CODE_SHELL_PREFIX:-$hex/bin/work}
 # Outside the hex folder, hex's settings come only through --settings, and so does what a job leaves out.
 [ -n "${away:-}${job:-}" ] && ! printf '%s\n' "$@" | grep -qx -- --settings && set -- --settings '{}' "$@"
 for arg; do
@@ -61,7 +63,7 @@ for arg; do
     folder_model=$(jq -r '.model // empty' "$home/.claude/settings.json" 2>/dev/null)
     [ -n "${thread:-}" ] && [ -z "${voice:-}" ] && [ -n "$folder_model" ] && arg=$(printf '%s' "$arg" | jq -c --arg model "$folder_model" '.env.CLAUDE_CODE_SUBAGENT_MODEL //= $model')
     # Claude's daemon runs a --bg session in a spare process it started earlier, which keeps the daemon's environment, not this one, so the flag goes in the settings too.
-    flagged=$(printf '%s' "$arg" | jq -c '.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = "1"' 2>/dev/null) && arg=$flagged
+    flagged=$(printf '%s' "$arg" | jq -c --arg work "${work:-}" '.env.CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD = "1" | if $work != "" then .env.CLAUDE_CODE_SHELL_PREFIX = $work end' 2>/dev/null) && arg=$flagged
     # Only hex's own settings files are written back; anyone else's goes in as the merged text.
     case $file in "$home/state/"*) (umask 077 && printf '%s\n' "$arg" > "$file.$$" && mv "$file.$$" "$file") && arg=$file ;; esac
   fi
@@ -87,6 +89,7 @@ fi
 # With several Claude accounts pooled by tokenmaxxing (github.com/anaclumos/tokenmaxxing), each session starts on the one with the most headroom left.
 [ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1
+[ -n "${work:-}" ] && export CLAUDE_CODE_SHELL_PREFIX="$work"
 # Anthropic's 5-hour limit charges a run with no terminal, which Claude Code labels sdk-cli, more per token than an interactive one (anthropics/claude-code#97074), and Claude Code reads its label only from the environment, where a labeled parent leaves its own.
 if [ "$bg" != --bg ] && [ ! -t 1 ]; then export CLAUDE_CODE_ENTRYPOINT=hex; else unset CLAUDE_CODE_ENTRYPOINT; fi
 exec claude --plugin-dir "$hex/plugin" "$@"

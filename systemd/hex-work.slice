@@ -1,0 +1,9 @@
+[Unit]
+Description=What hex's agents run (builds, tests, evals, jobs with no agent), below the agents, so they give way first
+
+[Slice]
+# T3 Code gives its agents' work the same weight against its server. The agents' slices keep the default 100 each.
+CPUWeight=10
+MemoryHigh=45%
+MemoryMax=55%
+MemorySwapMax=2G
