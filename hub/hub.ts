@@ -23,6 +23,7 @@ import { endpoint, toolList } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { queue } from "./observe.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures } from "./pictures.ts";
+import { restarts } from "./restarts.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
 import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
@@ -2494,6 +2495,7 @@ export function startHub({
   const unwatch = kept((store) => store.watch(wake), ignore);
   const unschedule = general && present(main) ? schedule(storeDir, hexDir, main) : ignore;
   const unhold = general && present(main) ? holding(storeDir) : ignore;
+  const unrestart = general && present(main) ? restarts(storeDir, main) : ignore;
   const retryCompactions = () => void recompact();
 
   const api = {
@@ -2555,6 +2557,7 @@ export function startHub({
       unwatch();
       unschedule();
       unhold();
+      unrestart();
       retries.delete(retry);
       answered.delete(retryCompactions);
 
