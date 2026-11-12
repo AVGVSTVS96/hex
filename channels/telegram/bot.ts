@@ -356,7 +356,34 @@ function asPhoto(f: string): boolean {
   return PHOTO_EXTS.has(extname(f).toLowerCase()) && size <= MAX_PHOTO_BYTES;
 }
 
-const dmTopicWrittenInLast = new Map<string, number>();
+const DM_TOPIC_WRITTEN_IN_LAST_FILE = join(STATE_DIR, "dm-topic-written-in-last.json");
+
+const dmTopicWrittenInLast = new Map(
+  Object.entries(
+    existsSync(DM_TOPIC_WRITTEN_IN_LAST_FILE)
+      ? z
+          .record(z.string(), z.number())
+          .parse(JSON.parse(readFileSync(DM_TOPIC_WRITTEN_IN_LAST_FILE, "utf-8")))
+      : {},
+  ),
+);
+
+function wroteIn(chat: string, topic: number | undefined): void {
+  if (dmTopicWrittenInLast.get(chat) === topic) {
+    return;
+  }
+
+  if (topic === undefined) {
+    dmTopicWrittenInLast.delete(chat);
+  } else {
+    dmTopicWrittenInLast.set(chat, topic);
+  }
+
+  writeFileSync(
+    DM_TOPIC_WRITTEN_IN_LAST_FILE,
+    `${JSON.stringify(Object.fromEntries(dmTopicWrittenInLast), null, 2)}\n`,
+  );
+}
 
 function threadOf(ctx: Context): string {
   if (!ctx.chat) {
@@ -376,11 +403,7 @@ function threadOf(ctx: Context): string {
     return home;
   }
 
-  if (topic === undefined) {
-    dmTopicWrittenInLast.delete(chat);
-  } else {
-    dmTopicWrittenInLast.set(chat, topic);
-  }
+  wroteIn(chat, topic);
 
   return chat;
 }
@@ -1544,7 +1567,9 @@ const callOrForget: Call = async (caller, tool, args) => {
   } catch (error) {
     const { thread, chat_id } = at(caller, threadArgument.safeParse(args).data?.thread);
 
-    if (gone(String(error)) && !thread.includes(":") && dmTopicWrittenInLast.delete(chat_id)) {
+    if (gone(String(error)) && !thread.includes(":") && dmTopicWrittenInLast.has(chat_id)) {
+      wroteIn(chat_id, undefined);
+
       return await call(caller, tool, args);
     }
 

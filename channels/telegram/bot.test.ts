@@ -1194,6 +1194,9 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
       chat_id: String(OWNER),
       message_thread_id: 41,
     });
+    expect(JSON.parse(readFileSync(join(state, "dm-topic-written-in-last.json"), "utf-8"))).toEqual(
+      { [OWNER]: 41 },
+    );
 
     await writeIn(DELETED_TOPIC, "in a topic I then delete");
     expect((await dm.call("reply", { text: "still reaches you" })).error).toBeUndefined();
