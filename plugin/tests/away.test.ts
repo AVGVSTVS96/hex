@@ -36,6 +36,7 @@ let launchDrop = 0;
 let launchSlow = 0;
 let launched = false;
 let unlinked = false;
+let offersHex = true;
 
 const server = Bun.serve({
   port: 0,
@@ -127,14 +128,11 @@ const server = Bun.serve({
       Object.entries({
         orchestrator_capabilities: () => ({
           providers: [
-            {
-              providerInstanceId: "claudeAgent",
-              models: [
-                { id: "claude-opus-4-1" },
-                { id: "claude-opus-5-5" },
-                { id: "claude-sonnet-5-5" },
-              ],
-            },
+            { providerInstanceId: "claudeAgent", models: [{ id: "claude-opus-5-5" }] },
+            { providerInstanceId: "codex", models: [{ id: "gpt-6.1-sol" }] },
+            ...(offersHex
+              ? [{ providerInstanceId: "hex", models: [{ id: "opus" }, { id: "fable" }] }]
+              : []),
           ],
         }),
         t3_thread_launch: () => {
@@ -207,7 +205,6 @@ beforeAll(() => {
   mkdirSync(join(home, ".t3/userdata"), { recursive: true });
   symlinkSync(join(HEX, "node_modules"), join(home, ".hex/node_modules"));
   cpSync(join(HEX, "bin/away"), join(home, ".hex/bin/away"), { dereference: true });
-  script(join(home, ".hex/bin/identity"), 'echo "You are hex."');
   script(
     join(home, ".hex/bin/t3-mcp-headers"),
     `echo "sign-in $*\${T3_REFUSED:+ refused=$T3_REFUSED}" >> "${home}/signed"; echo '{"Authorization":"Bearer t"}'`,
@@ -254,11 +251,12 @@ const reset = () => {
   launchSlow = 0;
   launched = false;
   unlinked = false;
+  offersHex = true;
   asked = [];
   rmSync(join(home, "signed"), { force: true });
 };
 
-test("a job runs as a T3 Code thread on that machine, follows its run through early and dropped waits, and prints the thread's last answer", async () => {
+test("a job runs as that machine's hex in its T3 Code, follows its run through early and dropped waits, and prints the thread's last answer", async () => {
   reset();
   waits = [
     { status: "preparing", timedOut: false },
@@ -284,11 +282,11 @@ test("a job runs as a T3 Code thread on that machine, follows its run through ea
     clientRequestId: "hex-job-hex/atrium-mac-inv1",
   });
   expect(launch.modelSelection).toEqual({
-    provider: "claudeAgent",
-    model: "claude-opus-5-5",
+    provider: "hex",
+    model: "opus",
     options: [{ id: "effort", value: "high" }],
   });
-  expect(launch.message).toStartWith("You are hex.");
+  expect(launch.message).toStartWith("You are running on mac");
   expect(launch.message).toEndWith("Build the Usage tab.\n\nthe log");
   const waited = calls.filter(({ name }) => name === "t3_thread_wait");
   expect(waited).toHaveLength(4);
@@ -337,6 +335,23 @@ test("a job can't run there, having started nothing, with claude flags a thread 
   unlinked = true;
   expect(await away(["-p", "Build it."]).run.exited).toBe(76);
   expect(calls.some(({ name }) => name === "t3_thread_launch")).toBe(false);
+});
+
+test("a job can't run on a machine whose T3 Code has no hex, and starts nothing there, whatever other agents it offers", async () => {
+  reset();
+  offersHex = false;
+  const { run, error } = away(["-p", "Build it.", "--model", "opus"]);
+  expect(await run.exited).toBe(76);
+  expect(await error()).toContain("its T3 Code has no hex");
+  expect(calls.some(({ name }) => name === "t3_thread_launch")).toBe(false);
+});
+
+test("a job asking for a full model name runs on the hex model it names", async () => {
+  reset();
+  const { run } = away(["-p", "Build it.", "--model", "claude-fable-5-2"]);
+  expect(await run.exited).toBe(0);
+  const launch = calls.find(({ name }) => name === "t3_thread_launch")?.arguments ?? {};
+  expect(launch.modelSelection).toMatchObject({ provider: "hex", model: "fable" });
 });
 
 test("stopping the job stops its thread, and the stop counts once its run has ended", async () => {

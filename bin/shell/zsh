@@ -1,0 +1,5 @@
+#!/bin/sh
+# bin/session hands this to Claude Code as CLAUDE_CODE_SHELL, the shell it runs an agent's commands in, and only
+# those: its hooks and MCP servers start without it. So the builds, tests and evals an agent runs start 10 nice levels
+# below the agent and give way to it for CPU.
+exec nice -n 10 "${0##*/}" "$@"

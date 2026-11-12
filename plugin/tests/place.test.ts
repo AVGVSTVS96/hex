@@ -94,13 +94,16 @@ test("a job runs here as a hex session while this machine has room, with what ca
   );
 });
 
-test("this machine keeps its jobs until its CPU is 85% busy, while other machines take them only half idle", () => {
-  machine(here, "cpu 70% busy", 0);
-  place({ HEX_MACHINES: "mac:3" });
-  expect(readFileSync(join(fake, "busiest"), "utf-8")).toBe("85\n");
+test("a busy machine still runs the job here as a hex session, since what its agents start gives way to them; only its memory and disk can fill it", () => {
+  machine(here, "cpu 99% busy", 0);
+  machine("mac", "cpu 20% busy\nt3 env-mac", 0);
+  expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
+    `hex/atrium runs on ${here}\nsession -n hex/atrium -p build it the log\n`,
+  );
+  expect(readFileSync(join(fake, "busiest"), "utf-8")).toBe("100\n");
 });
 
-test("a job goes to the next machine with room, as a T3 Code thread on that machine's hex T3", () => {
+test("a job goes to the next machine with room, to that machine's hex in its T3 Code", () => {
   machine(here, "cpu 80% busy", 1);
   machine("mac", "cpu 20% busy\nt3 env-mac", 0);
   expect(place({ HEX_MACHINES: "mac:3" }).out).toBe(
