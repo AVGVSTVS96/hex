@@ -18,6 +18,7 @@ import { above, held, open as openStore, pictures as picturesIn, shown } from "@
 import type { Question as Asked, MessageId, Row, Store } from "@hex/hub";
 import { z } from "zod";
 
+import { rendered } from "../../bin/instructions";
 import { generalOf, holdsEveryProject, nameOf } from "./activity.ts";
 import { savedCall } from "./calls.ts";
 import type { Answer, CheckResult, Curated, Ref, Source } from "./questions.ts";
@@ -25,8 +26,11 @@ import { relay } from "./relay.ts";
 import { T3 } from "./t3.ts";
 import type { Stuck } from "./t3.ts";
 
+type Back = { id: string; task: string; question: string; why: string; from: Source[] };
+
 type Verdict = Pick<CheckResult, "asks" | "fixed" | "flagged" | "stuck"> & {
   settle: (Ref & { note: string })[];
+  back: Back[];
 };
 
 type Known = {
@@ -65,6 +69,7 @@ const previousPass = z.object({
   inputs: z.string().optional(),
   asks: z.array(z.object({ id: z.string(), question: z.string() })).optional(),
   stuck: z.array(z.object({ id: z.string(), title: z.string() })).optional(),
+  back: z.array(z.object({ id: z.string(), question: z.string() })).optional(),
 });
 
 const MODEL = process.env.HEX_CHECK_MODEL ?? "opus";
@@ -186,6 +191,8 @@ async function pass(state: string, why: string) {
     answered: records.answered,
   });
 
+  handBack(state, verdict.back, records.threads);
+
   for (const ref of verdict.settle) {
     try {
       await relay(state, ref.app, {
@@ -212,12 +219,28 @@ async function pass(state: string, why: string) {
     fixed: verdict.fixed,
     flagged: verdict.flagged,
     stuck: verdict.stuck,
+    back: verdict.back.map(({ id, question }) => ({ id, question })),
     inputs,
   };
 
   const file = join(state, "voice", "check.json");
   writeFileSync(`${file}.tmp`, `${JSON.stringify(result, null, 1)}\n`);
   renameSync(`${file}.tmp`, file);
+}
+
+export function handBack(state: string, back: Back[], threads: Record<string, string>) {
+  for (const { id, task, question, why } of back) {
+    if (task in threads) {
+      openStore(state).messages.deliver({
+        key: `check:back:${id}`,
+        to: task.slice(task.indexOf(":") + 1),
+        from: "check",
+        author: "prompt",
+        body: `[check] Off the owner's Needs you list and back to you, since their rules make it yours to decide or do: ${question}. ${why}`,
+        meta: { user: "check" },
+      });
+    }
+  }
 }
 
 function gather(state: string) {
@@ -413,6 +436,7 @@ function prompt(
   const ids = {
     asks: (previous?.asks ?? []).map(({ id, question }) => ({ id, question })),
     stuck: (previous?.stuck ?? []).map(({ id, title }) => ({ id, title })),
+    back: (previous?.back ?? []).map(({ id, question }) => ({ id, question })),
   };
 
   return `You're hex's check. hex is a personal assistant (its owner, and their rules, are in ${hexDir}/AGENTS.md): it works for its owner in many threads at once (Telegram topics, Discord threads, T3 Code threads, calls with its voice app), and each thread asks them things: questions with buttons, polls, the "waiting on you" part of its pinned status post, and the waiting lines of a call's wrap-up. They pile up in dozens of places and many go stale. Your pass turns them into one honest list in their voice app, where they answer each in place.
@@ -422,13 +446,14 @@ It's there so the owner can manage their tasks with hex: by going through the tr
 The records are below as JSON: every open question asked with buttons or a poll (open, each with its ref and before: what hex said in its thread just before asking, left empty in General and a DM, where the messages before are about anything), the ones answered or settled lately (closed), the asks they answered in the app or on a call (answered, by id: their answer, when, the question and the threads told), each thread's pinned post (pins, each with its own ref), the pictures hex sent lately in each open thread (pictures, each with its ref and file names), calls' wrap-ups (calls, each with its id), what T3 Code shows as stuck or newly finished (t3; the app lists those already), and the ids your previous pass gave (previous). To confirm something before you settle it, read their records: every message hex.db holds in messages.md in your folder (one heading per message: author, app, thread, time, key; rg it), every thread hex has had in threads.json in your folder (app, thread, name, open, session, cwd, link), session transcripts under ~/.claude/projects/, project notes under ${hexDir}/projects/. In a transcript, the owner's messages arrive as <channel source="..." chat_id="..." message_id="..."> and hex's own replies come back as "sent (id: N)", so a question asked in plain words has a message id there.
 
 Return:
-- asks: one entry per decision or action that is still theirs, however many places asked it. from lists every place that asked it, so they can open each one: an open question (copy its ref), a pinned post (copy the pin's ref), a plain message you found ({app, thread, message} with its id, or {app, thread} when you can't find the id), or a call ({app: "voice", call: its id}); thread is a key of threads without its "<app>:" prefix. Leave none out: an ask from a pinned post and a call has both. id is "check:" plus a short slug, the same slug as in your previous pass for the same thing, never one in answered. task is the thread it belongs to ("<app>:<thread id>", from threads). question is one short plain line (60 characters at most). context is a few short plain sentences they can follow cold, without opening the thread: what the thing is, what its terms mean, and what each option means for them, in words rather than message numbers. options are their possible answers, as short labels, each one telling the thread something; each option's detail is one plain sentence on what answering with it does for them, what it costs and what it gives up, so they can decide from the options alone; mark the thread's own pick with pick (one at most, only where the thread made one), and say in why, in a sentence or two, why it's the pick; when an option stands for a button, value is that button's exact text from the first open question in from. shows lists the refs of pictures they need to see to decide it, like the screenshots of what a look ask asks them to check, so the card shows them. links are the pages it points to, never answers: label names the page in one to three words without a verb ("Apple Store", "PR #2", "Paper file"), url opens it. kind is pick (one of several), yesno (two ways), do (only their hands can do it, like a sign-in, a purchase, a recording: options like Done and Later, its page in links) or look (something to watch or read: options like Seen and Later, its page in links). tag is "money" when an option spends money, or "unblocks N" when N other things wait on it. Order: what unblocks the most first, even when it costs money, then the quickest; other money and anything sent in their name last. An ask's task is the thread it belongs to, even when only a pinned post or a call asked it. General and a DM hold every project's work, so one asked there belongs to the thread of the project it's about when threads has one, and to General or the DM only when it has none.
+- asks: one entry per decision or action that is still theirs by their rules, however many places asked it. from lists every place that asked it, so they can open each one: an open question (copy its ref), a pinned post (copy the pin's ref), a plain message you found ({app, thread, message} with its id, or {app, thread} when you can't find the id), or a call ({app: "voice", call: its id}); thread is a key of threads without its "<app>:" prefix. Leave none out: an ask from a pinned post and a call has both. id is "check:" plus a short slug, the same slug as in your previous pass for the same thing, never one in answered. task is the thread it belongs to ("<app>:<thread id>", from threads). question is one short plain line (60 characters at most). context is a few short plain sentences they can follow cold, without opening the thread: what the thing is, what its terms mean, and what each option means for them, in words rather than message numbers. options are their possible answers, as short labels, each one telling the thread something; each option's detail is one plain sentence on what answering with it does for them, what it costs and what it gives up, so they can decide from the options alone; mark the thread's own pick with pick (one at most, only where the thread made one), and say in why, in a sentence or two, why it's the pick; when an option stands for a button, value is that button's exact text from the first open question in from. shows lists the refs of pictures they need to see to decide it, like the screenshots of what a look ask asks them to check, so the card shows them. links are the pages it points to, never answers: label names the page in one to three words without a verb ("Apple Store", "PR #2", "Paper file"), url opens it. kind is pick (one of several), yesno (two ways), do (only their hands can do it, like a sign-in, a purchase, a recording: options like Done and Later, its page in links) or look (something to watch or read: options like Seen and Later, its page in links). tag is "money" when an option spends money, or "unblocks N" when N other things wait on it. Order: what unblocks the most first, even when it costs money, then the quickest; other money and anything sent in their name last. An ask's task is the thread it belongs to, even when only a pinned post or a call asked it. General and a DM hold every project's work, so one asked there belongs to the thread of the project it's about when threads has one, and to General or the DM only when it has none.
 - settle: open questions the records show are already decided or done: decided in a conversation or a call, replaced by a later question, or the thing already happened. note is what the question's buttons in Telegram or Discord will say instead, like "Settled: Pro is on" (40 characters at most). Settle only what the records show; anything you're unsure of stays an ask.
+- back: what a thread put to them that their rules give to hex, like a pick that doesn't change what they get, a fact or file hex can find, or a step hex can take itself. It leaves their list and goes back to its thread to decide or do. id, task and from as for asks; question is the one short line; why is a sentence on what in their rules or words makes it hex's.
 - fixed: what you settled or merged, the way they'd read it: title (the thing), text (the evidence in plain words: who said or did what, and when), did (what you did, in a few words).
 - flagged: what they should look at that you can't settle yourself, like the same thing asked with different options, or a question days old whose work has stalled: title and text.
 - stuck: work stopped with nobody moving it that the t3 list doesn't already show, like a failing service a pinned post mentions: id (a short slug), title, why (one sentence), action (one or two words, like Restore or Look), mark (paused or failed), at, and request: what hex should do when they tap the action, as a message to hex.
 
-Every answer is theirs, and an ask stays only while a place still asks it: an open question, a pinned post, a call, or a message from the last three days. One that only an older message asked is no longer theirs. One in answered is answered: leave it out. Anything new, and a thread asking it again after the answer, gets an id that isn't in answered. Leave health details and phone numbers out of everything you write.
+Their rules come with your instructions and say which calls are theirs. An ask stays only while a place still asks it: an open question, a pinned post, a call, or a message from the last three days. One that only an older message asked is no longer theirs. One in answered is answered: leave it out. Anything new, and a thread asking it again after the answer, gets an id that isn't in answered. Leave health details and phone numbers out of everything you write.
 
 ${JSON.stringify({ ...records, previous: ids })}`;
 }
@@ -471,6 +496,15 @@ const verdictOfThePass: z.ZodType<Verdict> = z.object({
     }),
   ),
   settle: z.array(refSchema.extend({ note: z.string() })),
+  back: z.array(
+    z.object({
+      id: z.string(),
+      task: z.string(),
+      question: z.string(),
+      why: z.string(),
+      from: z.array(sourceSchema),
+    }),
+  ),
   fixed: z.array(noteSchema),
   flagged: z.array(noteSchema),
   stuck: z.array(
@@ -518,6 +552,8 @@ function claude(input: string, hexDir: string, state: string) {
     "--tools",
     "Read,Grep,Glob",
     "--safe-mode",
+    "--append-system-prompt",
+    rendered(),
     "--no-session-persistence",
     "--add-dir",
     hexDir,
@@ -658,11 +694,28 @@ export function vet(
       .map((ref) => `${ref.app} ${ref.thread} ${ref.message}`),
   );
 
+  const back = verdict.back.map(({ id, from, ...rest }) => ({
+    ...rest,
+    id: id.startsWith("check:") ? id : `check:${id}`,
+    from: from.filter(real),
+  }));
+
+  const backRefs = back.flatMap(({ from }) =>
+    from.flatMap(({ app, thread, message }) =>
+      thread !== undefined && message !== undefined && open({ app, thread, message })
+        ? [{ app, thread, message, note: "Back to hex: its call" }]
+        : [],
+    ),
+  );
+
   return {
     asks: curated.filter((question) => asked(question) && !again(question)),
-    settle: verdict.settle
-      .filter((ref) => open(ref) && !listed.has(`${ref.app} ${ref.thread} ${ref.message}`))
-      .map((ref) => ({ ...ref, note: ref.note.slice(0, 60) })),
+    settle: [...verdict.settle, ...backRefs].flatMap((ref) =>
+      open(ref) && !listed.has(`${ref.app} ${ref.thread} ${ref.message}`)
+        ? [{ ...ref, note: ref.note.slice(0, 60) }]
+        : [],
+    ),
+    back,
     fixed: verdict.fixed,
     flagged: [
       ...verdict.flagged,

@@ -147,6 +147,7 @@ const CheckFile = z.object({
   fixed: z.array(NoteSchema),
   flagged: z.array(NoteSchema),
   stuck: z.array(Waiting),
+  back: z.array(z.object({ id: z.string(), question: z.string() })).exactOptional(),
   inputs: z.string().exactOptional(),
 });
 
