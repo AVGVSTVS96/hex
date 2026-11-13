@@ -437,11 +437,28 @@ function missingFromPath(pid: string): Promise<string[]> {
     new Promise((resolve) => {
       execFile("ps", ["eww", "-o", "command=", "-p", pid], (error, stdout) => {
         const theirs = error ? undefined : / PATH=(\S*)/u.exec(stdout)?.[1];
-        const ours = (process.env.PATH ?? "").split(":").filter(Boolean);
-        resolve(theirs === undefined ? [] : ours.filter((dir) => !theirs.split(":").includes(dir)));
+
+        resolve(theirs === undefined ? [] : lackingFrom(theirs.split(":")));
       });
     }),
   );
+}
+
+function lackingFrom(theirs: string[]): string[] {
+  const found = new Set(theirs.flatMap(commands));
+  const ours = (process.env.PATH ?? "").split(":").filter(Boolean);
+
+  return ours.filter(
+    (each) => !theirs.includes(each) && commands(each).some((command) => !found.has(command)),
+  );
+}
+
+function commands(directory: string): string[] {
+  try {
+    return readdirSync(directory);
+  } catch {
+    return [];
+  }
 }
 
 export async function start(

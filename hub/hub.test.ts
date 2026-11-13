@@ -144,6 +144,7 @@ trap 'jq -cn "\\$ARGS.positional" --args -- "$@" >> "${dir}/calls"' EXIT
 [ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
 [ "$1 $2" = "daemon status" ] && [ -f "${dir}/down" ] && exit 1
 [ "$1 $2" = "daemon status" ] && echo "version: $(cat "${dir}/daemon" 2>/dev/null || echo 2.1.0)"
+[ "$1 $2" = "daemon status" ] && [ -f "${dir}/daemon.pid" ] && echo "pid: $(cat "${dir}/daemon.pid")"
 [ "$1 $2" = "daemon stop" ] && rm -f "${dir}/daemon"
 [ "$1" = "--version" ] && echo "2.1.0 (Claude Code)"
 [ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
@@ -672,6 +673,48 @@ test("a daemon on the claude that's installed is left running", async () => {
   start({ main: "chat", general: true });
   await launched();
   expect(calls().some((each) => each[0] === "daemon" && each[1] === "stop")).toBe(false);
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Each login shell can put a directory of its own on PATH for the same commands, as fnm does for node.
+async function daemonWithPath(hubs: string[], daemons: string[]) {
+  const ours = commandsIn("ours", hubs);
+  const theirs = commandsIn("theirs", daemons);
+  const daemon = Bun.spawn(["sleep", "60"], { env: { PATH: `${theirs}:${process.env.PATH}` } });
+
+  sleepers.push(daemon);
+  writeFileSync(join(dir, "daemon.pid"), String(daemon.pid));
+  const path = process.env.PATH;
+  process.env.PATH = `${ours}:${path}`;
+
+  try {
+    start({ main: "chat", general: true });
+    await launched();
+  } finally {
+    process.env.PATH = path;
+  }
+
+  return calls().some((each) => each[0] === "daemon" && each[1] === "stop");
+}
+
+function commandsIn(name: string, commands: string[]) {
+  const directory = join(dir, name);
+
+  mkdirSync(directory);
+
+  for (const command of commands) {
+    writeFileSync(join(directory, command), "");
+  }
+
+  return directory;
+}
+
+test("a daemon whose PATH finds every command the hub's does is left running, though the directories differ", async () => {
+  expect(await daemonWithPath(["node"], ["node"])).toBe(false);
+});
+
+test("a daemon whose PATH lacks a command the hub's finds is stopped with its sessions kept", async () => {
+  expect(await daemonWithPath(["node", "hex-only-here"], ["node"])).toBe(true);
 });
 
 test("the main thread starts with the hub, under its name, with no prompt and no typing", async () => {
