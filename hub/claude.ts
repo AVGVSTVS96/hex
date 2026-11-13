@@ -7,6 +7,7 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  realpathSync,
   statSync,
   watch,
 } from "node:fs";
@@ -437,11 +438,49 @@ function missingFromPath(pid: string): Promise<string[]> {
     new Promise((resolve) => {
       execFile("ps", ["eww", "-o", "command=", "-p", pid], (error, stdout) => {
         const theirs = error ? undefined : / PATH=(\S*)/u.exec(stdout)?.[1];
-        const ours = (process.env.PATH ?? "").split(":").filter(Boolean);
-        resolve(theirs === undefined ? [] : ours.filter((dir) => !theirs.split(":").includes(dir)));
+
+        resolve(theirs === undefined ? [] : lackingFrom(theirs.split(":")));
       });
     }),
   );
+}
+
+function lackingFrom(theirs: string[]): string[] {
+  const ours = (process.env.PATH ?? "").split(":").filter(Boolean);
+  const shared = new Set(theirs.map(real));
+
+  return ours.filter(
+    (each) =>
+      !shared.has(real(each)) &&
+      commands(each).some((command) => found(command, ours) !== found(command, theirs)),
+  );
+}
+
+function real(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+function found(command: string, path: string[]): string | undefined {
+  for (const each of path) {
+    try {
+      return realpathSync(join(each, command));
+      // oxlint-disable-next-line eslint/no-empty -- a directory without the command leaves it to the next
+    } catch {}
+  }
+
+  return undefined;
+}
+
+function commands(directory: string): string[] {
+  try {
+    return readdirSync(directory);
+  } catch {
+    return [];
+  }
 }
 
 export async function start(

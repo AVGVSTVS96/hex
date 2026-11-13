@@ -21,10 +21,11 @@ import { z } from "zod";
 import type { Relay } from "./relay.ts";
 
 const ENGRAM = 30_174;
-const FILE = 30_180;
+const FILE = 34_180;
 const EDIT = 4180;
 const RESULT = 4181;
 const LIMIT = 65_535;
+const ROOM_FOR_SLUG = 1024;
 const SHARE = ["AGENTS.md", "SOUL.md", "schedules.json"];
 const NOTES = "memory/LOG.txt";
 const SETTLE = 500;
@@ -39,6 +40,27 @@ const tag = (event: Event, name: string) => event.tags.find(([key]) => key === n
 
 function log(line: string) {
   process.stderr.write(`buzz hub: ${line}\n`);
+}
+
+function partsUnderLimit(lines: string[]) {
+  const parts: string[] = [];
+  let part: string[] = [];
+  let bytes = 0;
+
+  for (const line of lines) {
+    const size = Buffer.byteLength(JSON.stringify(line)) + 2;
+
+    if (part.length > 0 && bytes + size > LIMIT - ROOM_FOR_SLUG) {
+      parts.push(part.join("\n"));
+      part = [];
+      bytes = 0;
+    }
+
+    part.push(line);
+    bytes += size;
+  }
+
+  return [...parts, part.join("\n")];
 }
 
 const keepingLeadingBomForSha256 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -71,7 +93,7 @@ const editRequest = z.looseObject({
   content: z.string(),
 });
 
-// The memory panel is NIP-AE (https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/docs/nips/NIP-AE.md) and Agent Files is NIP-AF (https://github.com/AVGVSTVS96/buzz/blob/8f9e4593dbaf029beed0490b3ca2e6464e536732/docs/nips/NIP-AF.md)
+// The memory panel is NIP-AE (https://github.com/block/buzz/blob/d839d3731a11ab363a69e7f5b851c3031b7680dd/docs/nips/NIP-AE.md) and Agent Files is NIP-AF (https://github.com/AVGVSTVS96/buzz/blob/c0e6a6b440e1a0722fab901a9cec8c7d81e46800/docs/nips/NIP-AF.md)
 export function startMemory({
   relay,
   secretKey,
@@ -241,8 +263,10 @@ export function startMemory({
     const notes = (read(NOTES) ?? "").matchAll(/^#\d+ (\d{4}-\d\d-\d\d) (.+?)\s*$/gmu);
 
     for (const [day, lines] of Map.groupBy(notes, ([, noteDay]) => noteDay ?? "")) {
-      const slug = `mem/notes/${day}`;
-      wanted.set(slug, { slug, value: lines.map((note) => `- ${note[2]}`).join("\n") });
+      for (const [part, value] of partsUnderLimit(lines.map((note) => `- ${note[2]}`)).entries()) {
+        const slug = part === 0 ? `mem/notes/${day}` : `mem/notes/${day}/${part + 1}`;
+        wanted.set(slug, { slug, value });
+      }
     }
 
     return wanted;
@@ -354,7 +378,7 @@ export function startMemory({
     });
   }
 
-  // NIP-AF answers only a readable edit request addressed to this agent alone, so any other gets no result: https://github.com/AVGVSTVS96/buzz/blob/8f9e4593dbaf029beed0490b3ca2e6464e536732/docs/nips/NIP-AF.md#edit-requests
+  // NIP-AF answers only a readable edit request addressed to this agent alone, so any other gets no result: https://github.com/AVGVSTVS96/buzz/blob/c0e6a6b440e1a0722fab901a9cec8c7d81e46800/docs/nips/NIP-AF.md#edit-requests
   async function answer(event: Event) {
     if (answered.has(event.id) || event.pubkey !== owner) {
       return;

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash, createHmac } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -285,6 +285,33 @@ test("OptMem's notes become one memory per day, a new note updates only its day,
   expect(relay.events.length).toBe(3);
 });
 
+test("a day of notes too big for one memory goes out in parts that each fit, with nothing logged", async () => {
+  const notes = Array.from({ length: 800 }, (_, n) =>
+    note(n, "2026-11-09", `note ${n} ${"x".repeat(100)}`),
+  ).join("");
+
+  write("memory/LOG.txt", notes);
+  const relay = fakeRelay();
+  const logged = spyOn(process.stderr, "write");
+  start(relay, []);
+  await until(() => relay.events.length === 2);
+  const parts = opened(relay, 30_174).map(({ text, body }) => ({ text, body }));
+
+  expect(parts.map(({ body }) => body.slug)).toEqual([
+    "mem/notes/2026-11-09",
+    "mem/notes/2026-11-09/2",
+  ]);
+  expect(parts.every(({ text }) => Buffer.byteLength(text) <= 65_535)).toBe(true);
+  expect(
+    parts
+      .map(({ body }) => body.value)
+      .join("\n")
+      .split("\n"),
+  ).toHaveLength(800);
+  expect(logged.mock.calls.flat().join("")).not.toContain("over 64 KB");
+  logged.mockRestore();
+});
+
 test("shared files are published with their content, listed when it cannot be inlined, and removed when gone", async () => {
   write("AGENTS.md", "@SOUL.md\n");
   write("SOUL.md", "# Who you are\n");
@@ -296,10 +323,10 @@ test("shared files are published with their content, listed when it cannot be in
   write("notes/.git/config", "x");
   const relay = fakeRelay();
   start(relay, ["AGENTS.md", "SOUL.md", "schedules.json", "notes/"]);
-  await until(() => opened(relay, 30_180).length === 6);
+  await until(() => opened(relay, 34_180).length === 6);
 
   const records = Object.fromEntries(
-    opened(relay, 30_180).map(({ event, body }) => [
+    opened(relay, 34_180).map(({ event, body }) => [
       String(body.path),
       Body.parse({ d: event.tags, ...body }),
     ]),
@@ -335,17 +362,17 @@ test("shared files are published with their content, listed when it cannot be in
   running.pop()?.close();
   start(relay, ["AGENTS.md", "SOUL.md", "schedules.json", "notes"]);
   await Bun.sleep(300);
-  expect(opened(relay, 30_180).length).toBe(6);
+  expect(opened(relay, 34_180).length).toBe(6);
 
   rmSync(join(dir, "AGENTS.md"));
-  await until(() => opened(relay, 30_180).length === 7);
-  expect(nth(opened(relay, 30_180), 6).text).toBe('{"path":"AGENTS.md","removed":true}');
+  await until(() => opened(relay, 34_180).length === 7);
+  expect(nth(opened(relay, 34_180), 6).text).toBe('{"path":"AGENTS.md","removed":true}');
 
   running.pop()?.close();
   start(relay, ["SOUL.md"]);
-  await until(() => opened(relay, 30_180).length === 11);
+  await until(() => opened(relay, 34_180).length === 11);
   expect(
-    opened(relay, 30_180)
+    opened(relay, 34_180)
       .slice(7)
       .map(({ body }) => (body.removed === true ? String(body.path) : ""))
       .toSorted(),
@@ -392,12 +419,12 @@ test("an edit request is written, committed, republished and answered", async ()
     sha256: sha256("# My rules for you\n- be brief\n"),
   });
   expect(readFileSync(join(dir, "AGENTS.md"), "utf-8")).toBe("# My rules for you\n- be brief\n");
-  expect(nth(opened(relay, 30_180), -1).body).toMatchObject({
+  expect(nth(opened(relay, 34_180), -1).body).toMatchObject({
     path: "AGENTS.md",
     content: "# My rules for you\n- be brief\n",
   });
   expect(relay.events.findIndex((event) => event.kind === 4181)).toBeGreaterThan(
-    relay.events.indexOf(nth(opened(relay, 30_180), -1).event),
+    relay.events.indexOf(nth(opened(relay, 34_180), -1).event),
   );
   expect(
     execFileSync("git", ["-C", dir, "log", "-1", "--format=%s", "--name-only"], {
@@ -444,7 +471,7 @@ test("the file on disk decides: stale edits conflict, unshared, hidden, linked a
   expect(readFileSync(join(dir, "AGENTS.md"), "utf-8")).toBe("next\n");
   expect(readFileSync(join(dir, "notes/.env"), "utf-8")).toBe("TOKEN=1\n");
   expect(readFileSync(join(dir, "outside.md"), "utf-8")).toBe("mine\n");
-  expect(opened(relay, 30_180).map(({ body }) => body.path)).not.toContain("notes/link.md");
+  expect(opened(relay, 34_180).map(({ body }) => body.path)).not.toContain("notes/link.md");
 });
 
 test("after a restart, answered requests are not applied again and ones sent while offline are", async () => {
@@ -494,7 +521,7 @@ test("a relay without Agent Files refuses one record and memory keeps working", 
   write("SOUL.md", "me, changed\n");
   await until(() => relay.events.length === 2);
   expect(opened(relay, 30_174).map(({ body }) => body.profile)).toEqual(["me\n", "me, changed\n"]);
-  expect(relay.attempts.filter((kind) => kind === 30_180)).toEqual([30_180]);
+  expect(relay.attempts.filter((kind) => kind === 34_180)).toEqual([34_180]);
   expect(relay.subs.size).toBe(0);
 });
 
@@ -506,8 +533,8 @@ const FILES = {
     nonce: 1,
     content:
       "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABeWYcxyTrp5d68LBgA38mWthpZhLbxJYMfhJBIaLKj/BibYNSQQWLt6lkAXZKid+iG4Qbw5alru2O5QNHEsvgLDxoohNxwegWO+R8ZglzvKJvONpvb2DQgtDOCoAHlk4U79qce+Bc6EPESBbYYhyTsoZ3K4phyhQbPf4Wf17d6VrIjF90VGEnjdGQ8+kf9Q+LvFbLZK5Yy8TJmm+uSe6nruhmEJtEgN+E4HqYl3hm3wi0I7zDVq6XE5YP8+33SUgi3Fw=",
-    id: "ffedcefb2ceca14ebd23fc5832be2eaece81364e5749b40551febb34ece68129",
-    sig: "851749264f0ee6cc356343942f6a8987687eeeb36718624459c8057ebd910676afa566280b06896b627e024b99a5ac65508c98becca7359873e2241ef9b46db6",
+    id: "8d740f4965bb27935feea98fe2e20f1d24445d1836c1a03be5d1276d61de420c",
+    sig: "e4f681bc46916fba7c291217e210b6cb8cb49c693f8c4f9fdc270a050bf56ea0ea2cfe5031693e505e31c3965f5f15bf116caad03ff95a18a0e21696dc77c65a",
   },
   plan: {
     body: '{"path":"PLANS/agent files.md","sha256":"c3964bb3b70a957ec9b233c7dd3653f6ba17701ab00facf88ae1393dc6155577","size":7,"content":"# Plan\\n"}',
@@ -516,8 +543,8 @@ const FILES = {
     nonce: 2,
     content:
       "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACGzxBPvRUxTMAxOGGRKGhZiqgsEArQCRWg50Ke1gDJx+TGj9/Fewz3WSyeAfivT3k1gBothiBPJ5s4cOhoEO8II+l0uqLSfcuoPyWdKtqiGzypCM6179dYp0PvWim9j+wvCOLYun2TmeW8X9jYUNEs30aK7W0KxbM0JFd90vjbhlIh9YFQzQmV/gd5sN2BqBULXmmZgc5sMVzdb8DKkbG4CfkSf4eefdbfkQh4P8Adrk5gFTQ3MMFjBFsMXvjpLUQrAs=",
-    id: "7057f1c1826c58d24cd61bd2ca084e6ebe3ac23e9d664deb286629e029d43da4",
-    sig: "c72a734e84af6b038e7c28dfefba7576b0bcb02f385bd38a99ce7c4795b867dc6d27e72d446aed33c2fcf4a211099fd55fc135ee3236f863180baa56a18ff751",
+    id: "e7f5b20bb36c9d347775076f26b03047088fc74ec8a917d6da9897730bc57f30",
+    sig: "f3c93e2c038de5d1ce46332ac4b88baddd39899dd0a9b4433ac58583fdcf5b447024a19f317287b796532de1b11c6eb0f6d036d09f693ae945a338e45026ff00",
   },
   big: {
     body: '{"path":"logs/big.log","sha256":"66915c0872933db504e7578828dd85b7e74a4e0a061f9756793b89c4151bd4b5","size":70000}',
@@ -526,8 +553,8 @@ const FILES = {
     nonce: 3,
     content:
       "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADufi8i0aj4uoLnp2rR/0icXfrLlipO1/EFjgIaMEZgjMtBxFfHRl2FE2vy5jJ/Z0ZfIqS0LWZbYrASsnxSWX0T0d1keXs2rhM8a/1YsmLEwPZUyetBJ6AUQpEoMjyKlwhJ8hHY02Z/WmOvJ+eAcSak81lFyUYqr/Q+r9Vu8cOmTJd+doLd9zrrbg1weUnGD1ZxHH403ggde05EdOMG+BgzCWm",
-    id: "6ba315bfc0b986c56662e78e94de1a5df07fdee30e410e2b84e62b1608b3fba7",
-    sig: "5b73e8ffda0caeb76fac13150a2e617b2b4bb0b1c1a38dbee6619a5ee5852ed81ee1b0a3e6d80733e0d47f57625303988d842285880189c4656a0c4a81254947",
+    id: "5c0a6057f2cff7ad64fa0b32a72af0a8b15ebde55f7bbd0b61e8b7f2cccec4d0",
+    sig: "9cbeb52a78432ae2090a47bc42a3bdb1fa1dcbec49f8adb0412a1c9a0448c97f1bb76a06b222f4c0cda20621c6ea14e64b1a3a315ad059fa3b867e375f7ae107",
   },
   removed: {
     body: '{"path":"notes.md","removed":true}',
@@ -536,8 +563,8 @@ const FILES = {
     nonce: 4,
     content:
       "AgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEEZ1HAFvscs/AcKaYSSZ7c4DJyiq9MWbCVhh3F5cJYKzzNVHP0Co4mCrkLHwQYMHhOrSCVp2209axj77xAk5tDKg8mc1ZeRGDsVVtCEMHNYahgYEMzcE4bH/po+T3shhnl0c=",
-    id: "1bec75664cb1939429d2f18b0a431dac23c5557668ac28665fa4ce7b2024c38a",
-    sig: "ff395138e65c57fa113c59c70e60f82a6ef47738a2de72fc9ab527c399f852836f7b74ce792b568ac7fec7986801d674c4881d87d21df4f87b4b413fc8bc0600",
+    id: "0d7f4380aaefffb984cd16ae1606ea63b8e3c0836acf74eaac1baff3d3ff2483",
+    sig: "37057eec9b646df24de96b4e8dfe7a84a2a54be695623b77f2b01ae8a5c70d99f3dcdce641eec017ee22f039580c16ea2f7139cd97b5c652741678e472e01d76",
   },
   applied: {
     body: '{"status":"applied","path":"PLANS/agent files.md","sha256":"e62b5d89e5ee431c4431bed125f015eaf4b952c81d55d5577487a5f1efc89786"}',
@@ -550,7 +577,7 @@ const FILES = {
   },
 };
 
-// NIP-AF's Event 5, the owner's edit request, exactly as published: https://github.com/AVGVSTVS96/buzz/blob/8f9e4593dbaf029beed0490b3ca2e6464e536732/docs/nips/NIP-AF.md#reference-test-vectors
+// NIP-AF's Event 5, the owner's edit request, exactly as published: https://github.com/AVGVSTVS96/buzz/blob/c0e6a6b440e1a0722fab901a9cec8c7d81e46800/docs/nips/NIP-AF.md#reference-test-vectors
 const EDIT_REQUEST: Event = {
   kind: 4180,
   pubkey: OWNER,
@@ -610,11 +637,11 @@ test("shared files reproduce the NIP-AF test vectors: records, a tombstone for a
   write("logs/big.log", "a".repeat(70_000));
   const relay = fakeRelay();
   start(relay, ["notes.md", "PLANS", "logs"]);
-  await until(() => opened(relay, 30_180).length === 3);
+  await until(() => opened(relay, 34_180).length === 3);
 
   const byPath = (path: string) =>
     nth(
-      opened(relay, 30_180).filter(({ body }) => body.path === path),
+      opened(relay, 34_180).filter(({ body }) => body.path === path),
       -1,
     );
 
@@ -625,10 +652,10 @@ test("shared files reproduce the NIP-AF test vectors: records, a tombstone for a
   running.pop()?.close();
   rmSync(join(dir, "notes.md"));
   start(relay, ["notes.md", "PLANS", "logs"]);
-  await until(() => opened(relay, 30_180).length === 4);
-  expectFileVector(nth(opened(relay, 30_180), 3), FILES.removed);
-  expect(nth(opened(relay, 30_180), 3).event.created_at).toBeGreaterThan(
-    nth(opened(relay, 30_180), 0).event.created_at,
+  await until(() => opened(relay, 34_180).length === 4);
+  expectFileVector(nth(opened(relay, 34_180), 3), FILES.removed);
+  expect(nth(opened(relay, 34_180), 3).event.created_at).toBeGreaterThan(
+    nth(opened(relay, 34_180), 0).event.created_at,
   );
 
   relay.feed(EDIT_REQUEST);
@@ -656,7 +683,7 @@ test("heads that break NIP-AF are not heads, and a new record lands after the ne
     relay.feed(
       finalizeEvent(
         {
-          kind: 30_180,
+          kind: 34_180,
           created_at,
           tags: [
             ["d", fileTag("notes.md")],
@@ -684,9 +711,9 @@ test("heads that break NIP-AF are not heads, and a new record lands after the ne
   );
   start(relay, ["notes.md"]);
   await Bun.sleep(300);
-  expect(opened(relay, 30_180).length).toBe(2);
+  expect(opened(relay, 34_180).length).toBe(2);
 
   write("notes.md", "changed\n");
-  await until(() => opened(relay, 30_180).length === 3);
-  expect(nth(opened(relay, 30_180), 2).event.created_at).toBe(future + 1);
+  await until(() => opened(relay, 34_180).length === 3);
+  expect(nth(opened(relay, 34_180), 2).event.created_at).toBe(future + 1);
 });

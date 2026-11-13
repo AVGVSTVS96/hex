@@ -1834,6 +1834,7 @@ test("the check's fingerprint takes in the answers it reads, and stays the same 
     closed: [],
     answered,
     pins: [],
+    pictures: [],
     calls: [],
     t3: { stuck: [], fresh: [] },
     previous: undefined,
