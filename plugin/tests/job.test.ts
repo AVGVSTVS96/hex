@@ -3,11 +3,13 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import {
   chmodSync,
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -345,6 +347,10 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
 
 test("a job's output is kept in a file of its own, and its end brings the last of it, says where all of it is, and calls a claude job's words its own account to check", async () => {
   const jobs = join(home, "state/jobs");
+  const weekOld = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+
+  writeFileSync(join(jobs, "stale.log"), "long done\n");
+  utimesSync(join(jobs, "stale.log"), weekOld, weekOld);
 
   const { args } = run(
     ["pages", "claude", "--session-id", "s-9", "-p", "build the pages"],
@@ -354,6 +360,7 @@ test("a job's output is kept in a file of its own, and its end brings the last o
   expect(args).toContain(`StandardOutput=append:${join(jobs, "pages.log")}`);
   expect(args).toContain(`StandardError=append:${join(jobs, "pages.log")}`);
   expect(readFileSync(join(jobs, "pages.log"), "utf-8")).toBe("");
+  expect(existsSync(join(jobs, "stale.log"))).toBe(false);
   run(["chatty", "make", "all"], session);
   run(["wide", "make", "all"], session);
   run(["quiet", "make", "all"], session);
@@ -430,6 +437,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   expect(readFileSync(join(jobs, "make.json"), "utf-8")).toContain('"make","all"');
   rmSync(join(home, "state/moving"));
   rmSync(ran, { force: true });
+  writeFileSync(join(jobs, "atrium.log"), "before the machine went down\n");
 
   const resumed = Bun.spawnSync(["bun", job, "--resume"], {
     cwd: home,
@@ -451,6 +459,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     "s-1",
   ]);
   expect(args.at(-1)).toContain("carry on");
+  expect(readFileSync(join(jobs, "atrium.log"), "utf-8")).toBe("before the machine went down\n");
   expect(
     readdirSync(jobs)
       .filter((file) => file.endsWith(".json"))

@@ -1,11 +1,15 @@
 #!/usr/bin/env bun
 import {
+  closeSync,
   existsSync,
   fstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -33,6 +37,8 @@ type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 
 const LINES_OF_OUTPUT = 40;
 const CHARACTERS_OF_OUTPUT = 4000;
+const BYTES_READ_FOR_THE_END = 64 * 1024;
+const LOGS_KEPT_FOR_THEIR_THREADS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const isSet = (value?: string): value is string => value !== undefined && value !== "";
 
@@ -258,6 +264,10 @@ if (mode === "--ended") {
     kept.session = ownIdToResumeBy;
   }
 
+  mkdirSync(records, { recursive: true });
+  writeFileSync(join(records, `${mode}.log`), "");
+  pruneOldLogs();
+
   await launch(
     mode,
     kept,
@@ -286,7 +296,7 @@ function lastOutput(unit: string) {
   let lines: string[];
 
   try {
-    lines = readFileSync(log, "utf-8").trimEnd().split("\n").filter(Boolean);
+    lines = endOf(log).trimEnd().split("\n").filter(Boolean);
   } catch {
     return "Its output wasn't kept.";
   }
@@ -306,6 +316,28 @@ function lastOutput(unit: string) {
   const earlier = cut ? `, all of it in ${log}` : "";
 
   return `What it printed last${earlier}:\n<output>\n${text}\n</output>`;
+}
+
+function endOf(path: string) {
+  const fd = openSync(path, "r");
+
+  try {
+    const size = fstatSync(fd).size;
+    const bytes = Buffer.alloc(Math.min(size, BYTES_READ_FOR_THE_END));
+    readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+
+    return bytes.toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function pruneOldLogs() {
+  for (const file of readdirSync(records).filter((each) => each.endsWith(".log"))) {
+    if (Date.now() - statSync(join(records, file)).mtimeMs > LOGS_KEPT_FOR_THEIR_THREADS_MS) {
+      rmSync(join(records, file), { force: true });
+    }
+  }
 }
 
 function readdir(dir: string) {
@@ -360,8 +392,6 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
   writeFileSync(record, JSON.stringify(kept));
 
   const log = join(records, `${unit}.log`);
-
-  writeFileSync(log, "");
 
   const agent = basename(kept.command[0] ?? "") === "claude";
   const name = `${store.threads.names()[store.threads.key(kept.owner)] ?? store.threads.key(kept.owner)}/${unit}`;
