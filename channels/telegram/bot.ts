@@ -393,17 +393,15 @@ function threadOf(ctx: Context): string {
   const chat = String(ctx.chat.id);
   const topic = ctx.msg?.is_topic_message === true ? ctx.msg.message_thread_id : undefined;
   const dm = ctx.chat.type === "private";
+  const own = topic === undefined ? chat : `${chat}:${topic}`;
+  const thread = !dm || hub.name(own) !== undefined ? own : (homeOf(chat, topic) ?? chat);
+  const home = target(thread);
+  const elsewhere = topic !== undefined && (chat !== home.chat_id || topic !== home.topic);
+  const service = ctx.msg?.forum_topic_created ?? ctx.msg?.forum_topic_edited;
 
-  const thread = dm
-    ? (homeOf(chat, topic) ?? chat)
-    : topic === undefined
-      ? chat
-      : `${chat}:${topic}`;
-
-  wroteIn(
-    thread,
-    dm && topic !== undefined ? { chat_id: chat, message_thread_id: topic } : undefined,
-  );
+  if (allowed(ctx.from) && service === undefined) {
+    wroteIn(thread, elsewhere ? { chat_id: chat, message_thread_id: topic } : undefined);
+  }
 
   return thread;
 }
@@ -421,6 +419,23 @@ function into(thread: string): { chat_id: string; extra: { message_thread_id?: n
   return where === undefined
     ? target(thread)
     : { chat_id: where.chat_id, extra: { message_thread_id: where.message_thread_id } };
+}
+
+async function intoOrHome<T>(
+  thread: string,
+  send: (to: ReturnType<typeof into>) => Promise<T>,
+): Promise<T> {
+  try {
+    return await send(into(thread));
+  } catch (error) {
+    if (!gone(String(error)) || !writtenIn.has(thread)) {
+      throw error;
+    }
+
+    wroteIn(thread, undefined);
+
+    return await send(into(thread));
+  }
 }
 
 function idIn(thread: string, chat: string | number, message: number): MessageId {
@@ -529,7 +544,9 @@ const ledger = new Ledger(STATE_DIR, "telegram");
 const post: Post = {
   room: MAX_CHUNK_LIMIT,
   send: async (thread, text) => {
-    const { chat_id, extra } = target(thread);
+    const home = target(thread);
+    const there = into(thread);
+    const { chat_id, extra } = there.chat_id === home.chat_id ? there : home;
     const sent = await bot.api.sendRichMessage(chat_id, { markdown: keepLines(text) }, extra);
 
     said(thread, sent, text);
@@ -574,9 +591,10 @@ const post: Post = {
   },
   link: (thread, message) => {
     const [chat = thread, topic] = thread.split(":");
+    const here = String(message).includes(":") ? undefined : message;
 
     return chat.startsWith("-100")
-      ? `https://t.me/c/${[chat.slice(4), topic, message].filter(Boolean).join("/")}`
+      ? `https://t.me/c/${[chat.slice(4), topic, here].filter(Boolean).join("/")}`
       : undefined;
   },
 };
@@ -702,21 +720,24 @@ const asking = new Map<string, Set<MessageId>>();
 
 async function ask(thread: string, request: Permission): Promise<void> {
   const { request_id, tool_name, description } = request;
-  const { chat_id, extra } = into(thread);
   const text = `🔐 ${tool_name}: ${description}\n\n${preview(request)}`.slice(0, MAX_CHUNK_LIMIT);
 
   try {
-    const sent = await bot.api.sendMessage(chat_id, text, {
-      ...extra,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Allow", callback_data: `perm:allow:${request_id}` },
-            { text: "Deny", callback_data: `perm:deny:${request_id}` },
-          ],
-        ],
-      },
-    });
+    const sent = await intoOrHome(
+      thread,
+      async ({ chat_id, extra }) =>
+        await bot.api.sendMessage(chat_id, text, {
+          ...extra,
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "Allow", callback_data: `perm:allow:${request_id}` },
+                { text: "Deny", callback_data: `perm:deny:${request_id}` },
+              ],
+            ],
+          },
+        }),
+    );
 
     said(thread, sent, text, { permission: request_id });
     asking.set(thread, (asking.get(thread) ?? new Set()).add(idOf(thread, sent)));
@@ -966,7 +987,7 @@ const handlers: Handlers<typeof tools> = {
     const quoting =
       quotes === undefined || quoted === undefined
         ? undefined
-        : { question: quotes, message: quoted.message };
+        : { question: quotes, message: idIn(quotes.thread, quoted.chat_id, quoted.message) };
 
     const quote = quoted && {
       reply_parameters: {
@@ -1140,6 +1161,7 @@ const handlers: Handlers<typeof tools> = {
         : where.chat_id);
 
     const ref = idIn(home, where.chat_id, id);
+    const shown = idIn(thread, where.chat_id, id);
     const text = args.text === undefined ? undefined : tappable(args.text);
     const { file } = args;
     const changes = text !== undefined || (file !== undefined && file !== "");
@@ -1157,7 +1179,7 @@ const handlers: Handlers<typeof tools> = {
       }
 
       if (!changes && args.settled !== true) {
-        return `changed the widget's state (id: ${id})`;
+        return `changed the widget's state (id: ${shown})`;
       }
     }
 
@@ -1187,7 +1209,7 @@ const handlers: Handlers<typeof tools> = {
 
       await settleQuestion(home, ref, "✓ Settled");
 
-      return `settled the poll (id: ${id}); its own text can't be edited, so reply with what changed`;
+      return `settled the poll (id: ${shown}); its own text can't be edited, so reply with what changed`;
     }
 
     // A Telegram edit takes a message's buttons off unless it sends them again (https://core.telegram.org/bots/api#editmessagetext), and a question stays open until it's settled.
@@ -1245,10 +1267,10 @@ const handlers: Handlers<typeof tools> = {
       args.settled === true &&
       !(await settleQuestion(home, question?.message ?? ref, "✓ Settled"))
     ) {
-      return `${changes ? "edited, but " : ""}no question waits on message ${id}, so nothing was settled`;
+      return `${changes ? "edited, but " : ""}no question waits on message ${shown}, so nothing was settled`;
     }
 
-    return `${args.settled === true ? "settled" : "edited"} (id: ${id})`;
+    return `${args.settled === true ? "settled" : "edited"} (id: ${shown})`;
   },
 
   delete_message: async (caller, args) => {
@@ -1561,7 +1583,13 @@ const handlers: Handlers<typeof tools> = {
 
   handoff: async (caller, args) => {
     const { chat_id, topic } = target(caller);
-    const there = into(caller);
+
+    const say = (words: string) =>
+      intoOrHome(
+        caller,
+        async (there) => await bot.api.sendMessage(there.chat_id, words, there.extra),
+      );
+
     const { to } = args;
 
     const name =
@@ -1570,15 +1598,19 @@ const handlers: Handlers<typeof tools> = {
     const link = await move(hub, caller, to, name, args.channel);
 
     if (caller === MAIN) {
-      await bot.api.sendMessage(there.chat_id, `Continued in ${to}: ${link}`, there.extra);
+      await say(`Continued in ${to}: ${link}`);
 
       return `a copy of this conversation continues in ${to}: ${link}. You stay here.`;
     }
 
-    await bot.api.sendMessage(there.chat_id, `Moved to ${to}: ${link}`, there.extra);
+    await say(`Moved to ${to}: ${link}`);
 
     if (topic !== undefined) {
-      await bot.api.closeForumTopic(chat_id, topic);
+      await bot.api.closeForumTopic(chat_id, topic).catch((error: unknown) => {
+        if (!gone(String(error))) {
+          throw error;
+        }
+      });
     }
 
     return `moving to ${to}: ${link}. Your session stops here once this turn ends and resumes there.`;
@@ -1787,7 +1819,7 @@ function waiting(message: Message, still: boolean): void {
 
   void react(
     chat_id,
-    Number(message_id),
+    Number(message_id.split(":").at(-1)),
     still ? [ASLEEP] : ack,
     !still && ack.length > 0 ? [] : undefined,
   ).catch(ignore);
@@ -1907,10 +1939,11 @@ const hub = startHub({
     },
   },
   failed: (thread, reason) => {
-    const { chat_id, extra } = into(thread);
-    void bot.api
-      .sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra)
-      .catch(ignore);
+    void intoOrHome(
+      thread,
+      async ({ chat_id, extra }) =>
+        await bot.api.sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra),
+    ).catch(ignore);
   },
   waits: (_, message, still) => {
     waiting(message, still);
@@ -2194,7 +2227,7 @@ bot.on("message_reaction", (ctx) => {
     user: user.username ?? String(user.id),
     user_id: String(user.id),
     ts: new Date(date * 1000).toISOString(),
-    reaction_to_message_id: String(message_id),
+    reaction_to_message_id: String(idIn(thread, chat.id, message_id)),
     ...(known !== undefined && {
       reaction_to_user: known.author === "hex" ? me() : (known.meta?.user ?? known.author),
     }),

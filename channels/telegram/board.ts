@@ -49,7 +49,9 @@ function linkTo(thread: string, message: string | undefined) {
   const [chat = "", topic] = thread.split(":");
 
   return chat.startsWith("-100") && message !== undefined
-    ? [chat.slice(4), topic, message].filter((part) => part !== undefined).join("/")
+    ? [chat.slice(4), topic, message.includes(":") ? undefined : message]
+        .filter((part) => part !== undefined)
+        .join("/")
     : undefined;
 }
 
