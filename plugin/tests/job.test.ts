@@ -343,6 +343,46 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
   ]);
 });
 
+test("a job's end brings what it printed last, and a claude job's end says its report is the agent's own and where its conversation is", async () => {
+  writeFileSync(
+    join(home, "fake/journalctl"),
+    `#!/bin/sh\ncase "$*" in *_SYSTEMD_INVOCATION_ID=run-7*) echo "built 3 pages"; echo "all pushed" ;; esac\n`,
+  );
+  chmodSync(join(home, "fake/journalctl"), 0o755);
+  run(["pages", "claude", "--session-id", "s-9", "-p", "build the pages"], session);
+  run(["quiet", "make", "all"], session);
+
+  for (const [unit, invocation] of [
+    ["pages", "run-7"],
+    ["quiet", "run-8"],
+  ]) {
+    await Bun.spawn(["bun", job, "--ended", unit, "t3:stray-key"], {
+      env: {
+        ...env,
+        PATH: `${join(home, "fake")}:${env.PATH}`,
+        SERVICE_RESULT: "success",
+        EXIT_STATUS: "0",
+        INVOCATION_ID: invocation,
+      },
+    }).exited;
+  }
+
+  const said = (unit: string) =>
+    z
+      .object({ body: z.string() })
+      .parse(
+        new Database(join(home, "state/hex.db"))
+          .query("select body from messages where body like ? order by rowid desc limit 1")
+          .get(`[job] ${unit} ended%`),
+      ).body;
+
+  expect(said("pages")).toContain("<output>\nbuilt 3 pages\nall pushed\n</output>");
+  expect(said("pages")).toContain("agent's own report");
+  expect(said("pages")).toContain("log -- s-9");
+  expect(said("quiet")).toContain("It printed nothing.");
+  expect(said("quiet")).not.toContain("agent's own report");
+});
+
 test("a job that runs already is refused", () => {
   writeFileSync(join(home, "active.txt"), "busy\n");
   expect(run(["busy", "make"], session).code).toBe(1);

@@ -31,6 +31,9 @@ const WhatAJobNeedsToRunAgain = z.object({
 
 type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 
+const LINES_OF_OUTPUT = 40;
+const CHARACTERS_OF_OUTPUT = 4000;
+
 const isSet = (value?: string): value is string => value !== undefined && value !== "";
 
 const momentASocketGetsToStartSinceNodeParentsLikeClaudeCodesBashLeaveItOpenAndSilent = 1000;
@@ -98,7 +101,13 @@ if (mode === "--ended") {
     process.exit(0);
   }
 
-  rmSync(join(records, `${unit}.json`), { force: true });
+  const record = join(records, `${unit}.json`);
+
+  const session = existsSync(record)
+    ? WhatAJobNeedsToRunAgain.safeParse(JSON.parse(readFileSync(record, "utf-8"))).data?.session
+    : undefined;
+
+  rmSync(record, { force: true });
 
   const key = owner.slice(owner.indexOf(":") + 1);
 
@@ -111,11 +120,22 @@ if (mode === "--ended") {
   const result = process.env.SERVICE_RESULT ?? "unknown";
   const status = process.env.EXIT_STATUS ?? "?";
 
+  const invocation = process.env.INVOCATION_ID;
+  const output = isSet(invocation) ? await lastOutput(invocation) : "";
+
+  const printed = isSet(output)
+    ? `\nWhat it printed last:\n<output>\n${output}\n</output>`
+    : " It printed nothing.";
+
+  const check = isSet(session)
+    ? `\nThat's the agent's own report, and its whole conversation is in \`${join(import.meta.dir, "hex")} log -- ${session}\`. Check what it says against the real thing (files, commits, links, what's live) before you pass any of it on.`
+    : "\nCheck what it shows against the real thing before you report it.";
+
   tell(
     unit,
     owner,
-    `ended: ${result} (exit ${status}). Check its output and report it.`,
-    process.env.INVOCATION_ID ?? `${Date.now()}`,
+    `ended: ${result} (exit ${status}).${printed}${check}`,
+    invocation ?? `${Date.now()}`,
   );
 } else if (mode === "--waiting") {
   const [unit = "", owner = "", readings = ""] = rest;
@@ -259,6 +279,16 @@ if (mode === "--ended") {
     ],
     input,
   );
+}
+
+async function lastOutput(invocation: string) {
+  const lines =
+    await $`journalctl --user _SYSTEMD_INVOCATION_ID=${invocation} -o cat --no-pager -n ${LINES_OF_OUTPUT}`
+      .nothrow()
+      .quiet()
+      .text();
+
+  return lines.trim().slice(-CHARACTERS_OF_OUTPUT);
 }
 
 function readdir(dir: string) {
