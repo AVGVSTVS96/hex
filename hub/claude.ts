@@ -447,12 +447,21 @@ function missingFromPath(pid: string): Promise<string[]> {
 
 function lackingFrom(theirs: string[]): string[] {
   const ours = (process.env.PATH ?? "").split(":").filter(Boolean);
+  const shared = new Set(theirs.map(real));
 
   return ours.filter(
     (each) =>
-      !theirs.includes(each) &&
+      !shared.has(real(each)) &&
       commands(each).some((command) => found(command, ours) !== found(command, theirs)),
   );
+}
+
+function real(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 function found(command: string, path: string[]): string | undefined {
