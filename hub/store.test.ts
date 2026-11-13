@@ -140,6 +140,33 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
   expect(store.messages.latest("buzz:e1")?.body).toBe("tagged on edit");
 });
 
+test("a message a topic's session sent into another chat reads as its newest edit, kept by its id with its chat", () => {
+  const store = new Store(dir);
+
+  const sent = {
+    key: "telegram:2000:55",
+    to: "-100:7",
+    from: "telegram",
+    author: "hex",
+    body: "Tiles",
+  } satisfies NewRow;
+
+  store.messages.deliver(sent);
+  store.messages.deliver({
+    ...sent,
+    key: "telegram:edit-6",
+    body: "Bigger tiles",
+    meta: { edited: "true", message_id: "telegram:2000:55" },
+  });
+  store.messages.deliver({
+    ...sent,
+    key: "telegram:edit-7",
+    body: "the group's own message 55",
+    meta: { edited: "true", message_id: "55" },
+  });
+  expect(store.messages.latest(sent.key)?.body).toBe("Bigger tiles");
+});
+
 test("the first session to take a message has it, and it leaves what waits", () => {
   const store = new Store(dir);
   store.messages.deliver(message);
@@ -296,7 +323,7 @@ test("hex watch prints a line once it listens and one for each change to hex.db,
     change();
     expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n/u);
     await lines.cancel();
-    await until(() => watch.exitCode !== null || void change(), 10_000);
+    await until(() => watch.exitCode !== null || void change());
     expect(watch.exitCode).toBe(0);
   } finally {
     watch.kill();
@@ -509,7 +536,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
       .messages.since()
       .map((row) => row.to),
   ).toEqual(["-100:7", "-100:7", "-100:7", "-100:4803", "-100:103", "-100:4801", "-100:4802"]);
-}, 20_000);
+});
 
 test("hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has", async () => {
   open(dir).threads.keep("t3", {
@@ -560,7 +587,7 @@ test("hex deliver finds a thread by its name too, keeps one for a closed thread 
     "5b0e7d2a-0000-4000-8000-000000000000",
     "0f3a9c1e-0000-4000-8000-000000000000",
   ]);
-}, 20_000);
+});
 
 const ask = {
   ...message,
@@ -1013,7 +1040,7 @@ test("hex log reads every thread a name means, a delivery to that name asks for 
     code: 2,
     err: "hex: -i is only for recall\n",
   });
-}, 20_000);
+});
 
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
   new Store(dir).db.close();

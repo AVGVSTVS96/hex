@@ -228,7 +228,9 @@ is told to name it, and the session renews. A hang-up (`DELETE /session`,
 the connection is up. One while the engine attaches back to a call, or a new
 call starting then, ends that call at once, and its close goes out once the
 attach opens. A phone call's audio runs through the engine, so the service
-waits for a call to end before it restarts.
+waits for a call to end before it restarts or stops, except a page or app call
+the engine is reattaching to: nothing of it runs here, and the next engine picks
+it back up.
 
 One session takes a whole call. When a call starts, the engine tells the hub
 to keep the session (`keep`) once the last call's renew is through, so a

@@ -357,7 +357,7 @@ test("a turn streams its new transcript lines as ACP session updates, then compl
     // oxlint-disable-next-line typescript/no-unsafe-assignment -- bun types its asymmetric matchers as any
     [{ kinds: [24_200], "#p": [agent], authors: [owner], since: expect.any(Number) }],
   ]);
-}, 15_000);
+});
 
 test("at most one relay event a second, with what piled up sent as one batch", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -394,7 +394,7 @@ test("at most one relay event a second, with what piled up sent as one batch", a
 
   const seqs = frames().map((frame) => frame.seq);
   expect(seqs).toEqual([...new Set(seqs)].toSorted((a, b) => a - b));
-}, 15_000);
+});
 
 test("a turn reported over before its last step is written completes once Claude Code has written it", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -413,7 +413,7 @@ test("a turn reported over before its last step is written completes once Claude
         frame.kind === "acp_read" ? textOf(AcpRead.parse(frame).payload.params.update) : frame.kind,
       ),
   ).toEqual(["working on it", "all done", "turn_completed"]);
-}, 15_000);
+});
 
 test("an interrupted turn, which runs no Stop hooks, completes at the line Claude Code writes for the interrupt", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -454,7 +454,7 @@ test("a turn whose session was stopped completes with what it wrote, and the nex
       .filter((kind) => kind.startsWith("turn_")),
   ).toEqual(["turn_started", "turn_completed", "turn_started", "turn_completed", "turn_started"]);
   expect(updates().map(textOf)).toEqual(["halfway"]);
-}, 15_000);
+});
 
 test("session/new is sent once per session, with AGENTS.md and what it imports", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -492,7 +492,7 @@ You are hex.
 ── MEMORY.md ──
 Victor likes short answers.
 </agent-instructions>`);
-}, 15_000);
+});
 
 test("a session learned mid-turn picks up the lines written since the turn began", async () => {
   assistant("msg_old", { type: "text", text: "an earlier turn" });
@@ -504,7 +504,7 @@ test("a session learned mid-turn picks up the lines written since the turn began
   await until(() => updates().length === 2);
   expect(updates().map(textOf)).toEqual(["first", "second"]);
   expect(frames().filter((frame) => frame.kind === "turn_started")).toHaveLength(1);
-}, 15_000);
+});
 
 test("a transcript that appears late and arrives in pieces is read whole", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -529,7 +529,7 @@ test("a transcript that appears late and arrives in pieces is read whole", async
   appendFileSync(transcript, bytes.subarray(middle));
   await until(() => updates().length === 1);
   expect(textOf(nth(updates(), 0))).toBe("héllo wörld");
-}, 15_000);
+});
 
 test("an oversized tool result is cut down to fit one frame", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -543,7 +543,7 @@ test("an oversized tool result is cut down to fit one frame", async () => {
 
   expect(result).toContain("characters cut");
   expect(result).toContain("THE END");
-}, 15_000);
+});
 
 test("cancel_turn from the owner cancels the open turn and answers with control_result", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -567,7 +567,7 @@ test("cancel_turn from the owner cancels the open turn and answers with control_
     turnId: null,
     payload: { type: "cancel_turn", status: "sent", requestId: "r4" },
   });
-}, 15_000);
+});
 
 test("turn_liveness every 10 s while a turn is open, none after it completes", async () => {
   activity.busy({ thread: ROOT, channel: CHANNEL, session: SESSION, triggers: [] });
@@ -586,7 +586,7 @@ test("turn_liveness every 10 s while a turn is open, none after it completes", a
     sessionId: SESSION,
     payload: { threadRootEventId: ROOT },
   });
-}, 15_000);
+});
 
 test("log_follow answers with the buffered tail, then streams new lines until the lease lapses", async () => {
   activity.log("buzz hub: one");
@@ -615,10 +615,10 @@ test("log_follow answers with the buffered tail, then streams new lines until th
         frame.turnId === null,
     ),
   ).toBe(true);
-}, 15_000);
+});
 
 test("log_follow with nothing buffered still answers, so Desktop knows logs work", async () => {
   control({ type: "log_follow", requestId: "l1", tail: 200 });
   await until(() => frames().some((frame) => frame.kind === "log"));
   expect(nth(frames(), 0).payload).toEqual({ lines: [], dropped: 0 });
-}, 15_000);
+});

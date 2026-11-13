@@ -144,6 +144,7 @@ trap 'jq -cn "\\$ARGS.positional" --args -- "$@" >> "${dir}/calls"' EXIT
 [ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
 [ "$1 $2" = "daemon status" ] && [ -f "${dir}/down" ] && exit 1
 [ "$1 $2" = "daemon status" ] && echo "version: $(cat "${dir}/daemon" 2>/dev/null || echo 2.1.0)"
+[ "$1 $2" = "daemon status" ] && [ -f "${dir}/daemon.pid" ] && echo "pid: $(cat "${dir}/daemon.pid")"
 [ "$1 $2" = "daemon stop" ] && rm -f "${dir}/daemon"
 [ "$1" = "--version" ] && echo "2.1.0 (Claude Code)"
 [ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
@@ -672,6 +673,62 @@ test("a daemon on the claude that's installed is left running", async () => {
   start({ main: "chat", general: true });
   await launched();
   expect(calls().some((each) => each[0] === "daemon" && each[1] === "stop")).toBe(false);
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Each login shell can put a directory of its own on PATH that links to the same commands, as fnm does for node.
+async function daemonWithPath(ours: string, theirs: string) {
+  const daemon = Bun.spawn(["sleep", "60"], { env: { PATH: `${theirs}:${process.env.PATH}` } });
+
+  sleepers.push(daemon);
+  writeFileSync(join(dir, "daemon.pid"), String(daemon.pid));
+  const path = process.env.PATH;
+  process.env.PATH = `${ours}:${path}`;
+
+  try {
+    start({ main: "chat", general: true });
+    await launched();
+  } finally {
+    process.env.PATH = path;
+  }
+
+  return calls().some((each) => each[0] === "daemon" && each[1] === "stop");
+}
+
+function commandsIn(name: string, commands: string[]) {
+  const directory = join(dir, name);
+
+  mkdirSync(directory);
+
+  for (const command of commands) {
+    writeFileSync(join(directory, command), "");
+  }
+
+  return directory;
+}
+
+function linkTo(name: string, target: string) {
+  symlinkSync(target, join(dir, name));
+
+  return join(dir, name);
+}
+
+test("a daemon whose PATH finds the same commands is left running, though through another directory", async () => {
+  const node = commandsIn("node-24", ["node"]);
+
+  expect(await daemonWithPath(linkTo("ours", node), linkTo("theirs", node))).toBe(false);
+});
+
+test("a daemon whose PATH lacks a command the hub's finds is stopped with its sessions kept", async () => {
+  const ours = commandsIn("ours", ["only-here"]);
+
+  expect(await daemonWithPath(ours, commandsIn("theirs", []))).toBe(true);
+});
+
+test("a daemon whose PATH finds another copy of a command than the hub's is stopped with its sessions kept", async () => {
+  expect(await daemonWithPath(commandsIn("ours", ["node"]), commandsIn("theirs", ["node"]))).toBe(
+    true,
+  );
 });
 
 test("the main thread starts with the hub, under its name, with no prompt and no typing", async () => {
@@ -3199,6 +3256,33 @@ test("a restart waits for every call to hang up, even while its session's channe
   await until(() => freed);
 });
 
+test("a restart doesn't wait on a call its engine can't reach, and waits again once the engine is back on it", async () => {
+  start({
+    main: "voice",
+    registry: { voice: { name: "voice", session: SESSION } },
+    fresh: () => true,
+    capacity: 0,
+  });
+  let freed = false;
+  await session("voice");
+  said(500);
+  void hub.keep("voice");
+  hub.adrift("voice", true);
+  hub.adrift("voice", false);
+  void free().then(() => (freed = true));
+  await time.advance(50);
+  expect(freed).toBe(false);
+  hub.adrift("voice", true);
+  await until(() => freed);
+  freed = false;
+  hub.adrift("voice", false);
+  void free().then(() => (freed = true));
+  await time.advance(50);
+  expect(freed).toBe(false);
+  hub.renew("voice");
+  await until(() => freed);
+});
+
 test("closing an idle thread stops its session right away, then forgets the thread", async () => {
   start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
   const { close } = await session("chat:7");
@@ -3541,15 +3625,9 @@ test("a turn's hook tells the hub and goes, without waiting for a stalled hub to
     stdin: new Blob([JSON.stringify({ hook_event_name: "Stop" })]),
   });
 
-  const ended = await Promise.race([
-    hook.exited.then(() => true),
-    Bun.sleep(3000).then(() => false),
-  ]);
-
-  hook.kill();
+  await hook.exited;
   await until(() => received.length || undefined);
   server.close();
-  expect(ended).toBe(true);
   expect(received).toEqual([{ type: "state", thread: "t1", busy: false }]);
 });
 

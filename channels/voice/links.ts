@@ -461,7 +461,7 @@ function readFile(path: string) {
 }
 
 export function linkAt(app: string, link: string | undefined, message?: MessageId) {
-  if (link === undefined || link === "" || message === undefined) {
+  if (link === undefined || link === "" || message === undefined || String(message).includes(":")) {
     return link;
   }
 

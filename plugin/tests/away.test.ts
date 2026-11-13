@@ -295,7 +295,7 @@ test("a job runs as that machine's hex in its T3 Code, follows its run through e
       ({ arguments: input }) => input.runId === "r1" && input.untilDelegatedWorkSettled === true,
     ),
   ).toBe(true);
-}, 20_000);
+});
 
 test("a refused token is renewed and a tool error without a final code is retried", async () => {
   reset();
@@ -306,7 +306,7 @@ test("a refused token is renewed and a tool error without a final code is retrie
   expect(readFileSync(join(home, "signed"), "utf-8")).toBe(
     "sign-in \nsign-in --refresh refused=t\n",
   );
-}, 30_000);
+});
 
 test("a job whose thread stops at a question ends there, with the question as its answer", async () => {
   reset();
@@ -409,7 +409,7 @@ test("a job stopped while its launch may have reached the other machine finds th
     arguments: { threadId: "t1", stop: true },
   });
   expect(await error()).toContain("trying again");
-}, 20_000);
+});
 
 test("a job stopped while its launch is on its way stops the thread the launch answers with", async () => {
   reset();
@@ -429,7 +429,7 @@ test("a job stopped while its launch is on its way stops the thread the launch a
     name: "t3_thread_interrupt",
     arguments: { threadId: "t1", stop: true },
   });
-}, 20_000);
+});
 
 test("a launch that was tried and refused fails the job there, rather than moving it to a machine where it could run twice", async () => {
   reset();
@@ -468,7 +468,7 @@ test("a stop that can't reach the thread tells the job's owner where it may stil
   expect(readFileSync(join(home, "told"), "utf-8")).toBe(
     '--tell|atrium|telegram:-100123:101|couldn\'t stop on mac (t3_thread_interrupt: {"code":"capability_denied","message":"no link"}): its T3 Code thread <t3-thread://v2/env-mac/t1> may still be running there. Stop it in T3 Code on mac.|',
   );
-}, 20_000);
+});
 
 test("a run a restart cut, which T3 shows final but timed out while its continuation is pending, is followed to the end", async () => {
   reset();
