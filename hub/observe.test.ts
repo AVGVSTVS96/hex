@@ -452,9 +452,7 @@ printf '%s %s\\n' "$2" "$3" > "${dir}/napped"
   expect(existsSync(join(dir, "napped"))).toBe(false);
 });
 
-test("what the memory agent wrote is committed in the owner's folder, leaving what others staged", () => {
-  const home = join(dir, "home");
-
+const folder = (home: string) => {
   const git = (...args: string[]) =>
     Bun.spawnSync(["git", "-C", home, ...args])
       .stdout.toString()
@@ -462,20 +460,54 @@ test("what the memory agent wrote is committed in the owner's folder, leaving wh
 
   mkdirSync(join(home, "memory"), { recursive: true });
   git("init", "--quiet");
+
   git("config", "user.name", "owner");
   git("config", "user.email", "owner@example.com");
   git("config", "commit.gpgsign", "false");
+  git("config", "core.hooksPath", join(home, ".hooks"));
+
   writeFileSync(join(home, "memory", "LOG.txt"), "#1 a memory\n");
+
+  return git;
+};
+
+test("what the memory agent wrote is committed in the owner's folder, leaving what others staged", () => {
+  const home = join(dir, "home");
+  const git = folder(home);
   writeFileSync(join(home, "AGENTS.md"), "a rule\n");
   git("add", "AGENTS.md");
 
-  record(join(home, "memory"));
+  record(join(home, "memory"), home);
 
   expect(git("show", "--name-only", "--format=%s", "HEAD")).toBe(
     "chore(memory): record what happened\n\nmemory/LOG.txt",
   );
   expect(git("diff", "--cached", "--name-only")).toBe("AGENTS.md");
 
-  record(join(home, "memory"));
+  record(join(home, "memory"), home);
+
   expect(git("rev-list", "--count", "HEAD")).toBe("1");
+});
+
+test("memory in a repo that isn't the owner's folder isn't committed", () => {
+  const home = join(dir, "home");
+  const git = folder(home);
+
+  record(join(home, "memory"), dir);
+
+  expect(git("rev-list", "--count", "--all")).toBe("0");
+  expect(git("diff", "--cached", "--name-only")).toBe("");
+});
+
+test("a commit that fails leaves memory unstaged, so no one else's commit sweeps it in", () => {
+  const home = join(dir, "home");
+  const git = folder(home);
+  mkdirSync(join(home, ".hooks"));
+  writeFileSync(join(home, ".hooks", "pre-commit"), "#!/bin/sh\nexit 1\n");
+  chmodSync(join(home, ".hooks", "pre-commit"), 0o755);
+
+  record(join(home, "memory"), home);
+
+  expect(git("rev-list", "--count", "--all")).toBe("0");
+  expect(git("diff", "--cached", "--name-only")).toBe("");
 });
