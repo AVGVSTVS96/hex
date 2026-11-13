@@ -2597,7 +2597,7 @@ export function startHub({
       );
 
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // One that was mid-turn when the hub stopped may have died with it (a reboot): it gets the same wait, and if it's gone, its next session gets what it left.
+      // One that was mid-turn when the hub stopped, with no session running for it (a reboot, or hex moved to another machine), has nothing to reconnect: its next session gets what it left at once. The list is from a supervisor that answered, so a session missing from it isn't running.
       const cutShort = [...threads.keys()].filter(
         (thread) => !outlived.has(thread) && kept((store) => store.turns.midTurn(thread), false),
       );
@@ -2609,8 +2609,12 @@ export function startHub({
           continue;
         }
 
-        become(run, { is: "recovering" });
-        recover(thread);
+        if (outlived.has(thread)) {
+          become(run, { is: "recovering" });
+          recover(thread);
+        } else {
+          gone(thread);
+        }
       }
 
       if (present(main) && !(fresh(main) && outlived.has(main)) && !cutShort.includes(main)) {
