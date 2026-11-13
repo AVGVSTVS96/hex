@@ -1123,14 +1123,17 @@ function serve(token: string) {
 
   function quotable(ref: string): string | undefined {
     const id = ref.replace(/^discord:/u, "");
+    const kept = /^\d+$/u.test(id) ? undefined : hub.said(id)?.meta;
 
-    if (/^\d+$/u.test(id)) {
-      return id;
-    }
+    const quoted =
+      kept === undefined
+        ? id
+        : (kept.button_message_id ??
+          kept.poll_message_id ??
+          kept.reaction_to_message_id ??
+          kept.message_id);
 
-    const kept = hub.said(id);
-
-    return kept?.meta?.button_message_id ?? kept?.meta?.poll_message_id ?? kept?.meta?.message_id;
+    return quoted !== undefined && /^\d+$/u.test(quoted) ? quoted : undefined;
   }
 
   async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {

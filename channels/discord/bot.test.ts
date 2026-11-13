@@ -1458,6 +1458,15 @@ test("a reply quoting an answer given in hex's app quotes the question it answer
     messageReference: asked.id,
   });
 
+  await call("reply", { text: "On it", reply_to: asked.id });
+  await call("reply", { text: "Still on it", reply_to: `discord:${asked.id}` });
+
+  for (const content of ["On it", "Still on it"]) {
+    expect(done.findLast((d) => d.send?.content === content)?.send?.reply).toMatchObject({
+      messageReference: asked.id,
+    });
+  }
+
   await call("reply", {
     text: "Logo next",
     reply_to: "discord:0c3f8f5e-5b1a-4d0e-9a51-3e1b7a6c2d40",
