@@ -1,6 +1,6 @@
 #!/bin/sh
 # room [busiest]: prints this machine's readings and exits 0 when it has room for one more agent job: the CPU at most
-# busiest% busy over 2 s (50), a fifth of its memory and 25 GB of disk free, and a Mac on power and not slowed by heat.
+# busiest% busy over 2 s (50), a fifth of its memory and 25 GB of disk free, and a Mac not slowed by heat.
 # Another machine runs it as `ssh <machine> sh -s < room`. Its last line names the machine's hex T3 Code while that runs.
 set -u
 busiest=${1:-50}
@@ -13,7 +13,7 @@ if [ "$(uname)" = Darwin ]; then
   power=$(pmset -g batt | grep -q "AC Power" && echo "on power" || echo "on battery")
   heat=$(pmset -g therm | awk -F'= *' '/CPU_Speed_Limit/ && $2 < 100 { hot = 1 } /level set to [1-9]/ { hot = 1 } END { if (hot) print "slowed by heat" }')
   echo "cpu ${busy}% busy, memory ${free}% free, disk ${disk} GB free, $power${heat:+, $heat}"
-  [ "$power" = "on power" ] && [ -z "$heat" ] || room=1
+  [ -z "$heat" ] || room=1
 else
   # The share of CPU time not idle between two reads of /proc/stat, as T3 Code measures a host. Time spent on niced
   # work counts as idle, since a new job takes that time back.
