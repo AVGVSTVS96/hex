@@ -3,8 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { asked, brief, check } from "./intent.ts";
-import type { Verdict } from "./intent.ts";
+import { asked, brief, check, ruleEdit } from "./intent.ts";
+import type { Kind, Verdict } from "./intent.ts";
 import { open } from "./store.ts";
 import type { Store } from "./store.ts";
 
@@ -273,4 +273,113 @@ test("a check that fails lets the work start", async () => {
   const result = await check(hook, store, () => Promise.reject(new Error("out of usage")));
 
   expect(result?.verdict).toBe("failed");
+});
+
+test("a change to the rules is what writes a rule file", () => {
+  const rules = join(dir, "AGENTS.md");
+  writeFileSync(rules, "- Update what of ours is out of date yourself.\n");
+  writeFileSync(join(dir, "notes.md"), "");
+
+  const edit = (tool_name: string, tool_input: Record<string, string>) =>
+    ruleEdit({ tool_name, tool_input, cwd: "/" }, [rules]);
+
+  const sed = `cd ${dir} && enclave get machines password | sudo -S chattr -i AGENTS.md && sed -i '1s/.*/- Update it. When an update breaks something, fix ours./' AGENTS.md`;
+  expect(edit("Bash", { command: sed })).toBe(sed);
+  expect(edit("Bash", { command: `echo '- A new line.' >> ${rules}` })).toBeDefined();
+  expect(edit("Bash", { command: `cd ${dir} && git checkout HEAD~1 -- AGENTS.md` })).toBeDefined();
+  expect(
+    edit("Edit", { file_path: rules, old_string: "yourself.", new_string: "yourself. And more." }),
+  ).toContain("And more.");
+
+  expect(
+    edit("Bash", {
+      command: `cd ${dir} && rg -n 'Update' AGENTS.md; lsattr AGENTS.md 2>/dev/null`,
+    }),
+  ).toBeUndefined();
+  expect(edit("Bash", { command: `rg -n Update ${rules} > ${dir}/found.txt` })).toBeUndefined();
+  expect(edit("Bash", { command: `cd ${dir} && sed -i 's/a/b/' notes.md` })).toBeUndefined();
+  expect(edit("Bash", { command: `cp ${rules} ${dir}/rules.before` })).toBeUndefined();
+  expect(
+    edit("Bash", { command: `rg -n Update ${rules}; sed -i 's/a/b/' ${dir}/notes.md` }),
+  ).toBeUndefined();
+  expect(
+    edit("Bash", { command: `cd ${dir} && git add AGENTS.md && git commit -m 'install it'` }),
+  ).toBeUndefined();
+  expect(
+    edit("Bash", { command: `cd ${dir} && cd elsewhere && sed -i 's/a/b/' AGENTS.md` }),
+  ).toBeUndefined();
+  expect(edit("Bash", { command: `git -C ${dir} checkout HEAD~1 -- AGENTS.md` })).toBeDefined();
+  expect(edit("Bash", { command: `cp ${dir}/notes.md ${rules}` })).toBeDefined();
+  expect(edit("Bash", { command: `sudo -S -p '' chattr -i ${rules}` })).toBeDefined();
+  expect(
+    edit("Bash", { command: `cd ${dir} && sed -i '1s/yourself;/yourself; and more/' AGENTS.md` }),
+  ).toBeDefined();
+  expect(
+    edit("Bash", {
+      command: `cd ${dir} && python3 - <<'EOF'\np='AGENTS.md'\nopen(p,'a').write('- More.')\nEOF`,
+    }),
+  ).toBeDefined();
+  expect(edit("Bash", { command: `git -C ${dir} commit -m 'apply it' AGENTS.md` })).toBeUndefined();
+  expect(edit("Bash", { command: `sed -n '/ -i /p' ${rules}` })).toBeUndefined();
+  expect(edit("Bash", { command: `sudo chattr +i ${rules}` })).toBeUndefined();
+  expect(
+    edit("Edit", { file_path: join(dir, "notes.md"), old_string: "", new_string: "x" }),
+  ).toBeUndefined();
+});
+
+test("a change to the rules is checked against the owner's words, apart from briefs", async () => {
+  const rules = join(dir, "AGENTS.md");
+  writeFileSync(rules, "");
+
+  const hook = {
+    session_id: "main",
+    tool_name: "Bash",
+    tool_input: { command: `echo '- Login pages load fast.' >> ${rules}` },
+  };
+
+  const seen: [string, Kind | undefined][] = [];
+
+  const revise = (input: string, kind?: Kind): Promise<Verdict> => {
+    seen.push([input, kind]);
+
+    return Promise.resolve({
+      verdict: "revise",
+      notes: "He asked for a fast login page, not a rule.",
+    });
+  };
+
+  expect(await check(hook, store, revise, [rules])).toMatchObject({
+    kind: "rules",
+    round: 1,
+    verdict: { verdict: "revise" },
+  });
+  expect(seen[0]?.[1]).toBe("rules");
+  expect(seen[0]?.[0]).toContain("Make the login page load fast.");
+  expect(seen[0]?.[0]).toContain("The change to my rules (Bash)");
+
+  const handOff = {
+    session_id: "main",
+    tool_name: "Agent",
+    tool_input: { prompt: "Task t-1: fix login." },
+  };
+
+  expect(await check(handOff, store, revise, [rules])).toMatchObject({ kind: "brief", round: 1 });
+  expect(seen[1]?.[1]).toBe("brief");
+
+  const handOffWritingRules = {
+    session_id: "other",
+    tool_name: "Bash",
+    tool_input: { command: `claude -p "Task t-2: tidy the rules." | tee -a ${rules}` },
+  };
+
+  expect(await check(handOffWritingRules, store, revise, [rules])).toMatchObject({ kind: "rules" });
+
+  const rulesAsked = (input: string, kind?: Kind): Promise<Verdict> =>
+    kind === "rules" ? Promise.resolve({ verdict: "ok", notes: "" }) : revise(input, kind);
+
+  expect(
+    await check({ ...handOffWritingRules, session_id: "third" }, store, rulesAsked, [rules]),
+  ).toMatchObject({
+    kind: "brief",
+  });
 });
