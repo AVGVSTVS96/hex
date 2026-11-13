@@ -4110,7 +4110,7 @@ test("a message is in hex.db once deliver returns, its key first on the tag, and
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     agents: [{ sessionId: SESSION, pid: 42 }],
   });
-  const { received } = await session("chat:7");
+  const { received, send } = await session("chat:7");
   hub.deliver("chat:7", "Desk anchors", { ...message, key: "1:42" });
   expect(open(dir).messages.get("telegram:1:42")).toMatchObject({
     to: "chat:7",
@@ -4125,6 +4125,8 @@ test("a message is in hex.db once deliver returns, its key first on the tag, and
     meta: {},
     key: "1:43",
   });
+  await until(() => received.length === 1);
+  await send({ type: "state", thread: "chat:7", busy: false });
   await until(() => received.length === 2);
   expect(received[0]).toEqual({
     type: "inbound",
@@ -4204,12 +4206,70 @@ test("the owner's words that come while the session works reach it at its next t
   expect(await toolCall("chat:7")).toBe("");
 });
 
-test("the owner's words written in another client reach the thread's session and show where it lives in the order written, once however often they're sent", async () => {
+test("the owner's words that come after his message started a turn are held for it, though the session's hook hasn't said it's working yet", async () => {
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+  });
+  const { received, send } = await session("chat:7");
+  hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "did you see what it did",
+    meta: {},
+    key: "1:60",
+  });
+  await until(() => received.length === 1);
+  hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "and why",
+    meta: {},
+    key: "1:61",
+  });
+  await settled();
+  expect(received).toHaveLength(1);
+  expect(open(dir).messages.get("telegram:1:61")?.taken).toBeUndefined();
+
+  await send({ type: "state", thread: "chat:7", busy: true });
+
+  const fed = z
+    .object({ hookSpecificOutput: z.object({ additionalContext: z.string() }) })
+    .parse(JSON.parse(await toolCall("chat:7")));
+
+  expect(fed.hookSpecificOutput.additionalContext).toContain("and why");
+
+  await send({ type: "state", thread: "chat:7", busy: false });
+  hub.deliver("chat:7", "Desk anchors", {
+    author: "owner",
+    content: "next",
+    meta: {},
+    key: "1:62",
+  });
+  await until(() => received.length === 2);
+  expect(heard(received)[1]?.content).toBe("next");
+});
+
+test("the owner's words held for a turn that never reports go to the session once the report is overdue", async () => {
   start({
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
     agents: [{ sessionId: SESSION, pid: 42 }],
   });
   const { received } = await session("chat:7");
+  hub.deliver("chat:7", "Desk anchors", { author: "owner", content: "one", meta: {}, key: "1:70" });
+  await until(() => received.length === 1);
+  hub.deliver("chat:7", "Desk anchors", { author: "owner", content: "two", meta: {}, key: "1:71" });
+  await settled();
+  expect(received).toHaveLength(1);
+  await time.lapse(60_000);
+  await until(() => received.length === 2);
+  expect(heard(received)[1]?.content).toBe("two");
+});
+
+test("the owner's words written in another client reach the thread's session and show where it lives in the order written, once however often they're sent", async () => {
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42 }],
+  });
+  const { received, send } = await session("chat:7");
   const shown: unknown[][] = [];
   clients.set("telegram", {
     hub,
@@ -4228,7 +4288,9 @@ test("the owner's words written in another client reach the thread's session and
     expect(say("telegram", "chat:7", { ...words, content: "and the docs", key: "kb-2" })).toBe(
       true,
     );
-    await until(() => received.length === 2 && shown.length === 2);
+    await until(() => received.length === 1 && shown.length === 2);
+    await send({ type: "state", thread: "chat:7", busy: false });
+    await until(() => received.length === 2);
     expect(heard(received).map((each) => each.content)).toEqual(["anchors?", "and the docs"]);
     expect(open(dir).messages.get("telegram:kb-1")).toMatchObject({ author: "owner" });
     expect(
