@@ -1684,7 +1684,17 @@ function only(text: string) {
   return { inline_keyboard: [[{ text, disabled: {} }]] };
 }
 
+const marking = new Set<string>();
+
 async function markButtons(chat_id: string | number, message: number, text: string) {
+  const key = `${chat_id}:${message}`;
+
+  if (marking.has(key)) {
+    return;
+  }
+
+  marking.add(key);
+
   try {
     await paced(() =>
       bot.api.editMessageReplyMarkup(chat_id, message, { reply_markup: only(text) }),
@@ -1693,6 +1703,8 @@ async function markButtons(chat_id: string | number, message: number, text: stri
     process.stderr.write(
       `telegram hub: couldn't mark the buttons on ${chat_id} ${message} "${text}": ${String(error)}\n`,
     );
+  } finally {
+    marking.delete(key);
   }
 }
 
