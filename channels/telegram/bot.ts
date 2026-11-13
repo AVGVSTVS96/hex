@@ -356,26 +356,64 @@ function asPhoto(f: string): boolean {
   return PHOTO_EXTS.has(extname(f).toLowerCase()) && size <= MAX_PHOTO_BYTES;
 }
 
+const DM_TOPIC_WRITTEN_IN_LAST_FILE = join(STATE_DIR, "dm-topic-written-in-last.json");
+
+const dmTopicWrittenInLast = new Map(
+  Object.entries(
+    existsSync(DM_TOPIC_WRITTEN_IN_LAST_FILE)
+      ? z
+          .record(z.string(), z.number())
+          .parse(JSON.parse(readFileSync(DM_TOPIC_WRITTEN_IN_LAST_FILE, "utf-8")))
+      : {},
+  ),
+);
+
+function wroteIn(chat: string, topic: number | undefined): void {
+  if (dmTopicWrittenInLast.get(chat) === topic) {
+    return;
+  }
+
+  if (topic === undefined) {
+    dmTopicWrittenInLast.delete(chat);
+  } else {
+    dmTopicWrittenInLast.set(chat, topic);
+  }
+
+  writeFileSync(
+    DM_TOPIC_WRITTEN_IN_LAST_FILE,
+    `${JSON.stringify(Object.fromEntries(dmTopicWrittenInLast), null, 2)}\n`,
+  );
+}
+
 function threadOf(ctx: Context): string {
   if (!ctx.chat) {
     throw new Error("an update with no chat has no thread");
   }
 
   const chat = String(ctx.chat.id);
+  const topic = ctx.msg?.is_topic_message === true ? ctx.msg.message_thread_id : undefined;
 
-  if (ctx.msg?.is_topic_message !== true) {
-    return chat;
+  if (ctx.chat.type !== "private") {
+    return topic === undefined ? chat : `${chat}:${topic}`;
   }
 
-  const topic = ctx.msg.message_thread_id;
+  const home = homeOf(topic);
 
-  return ctx.chat.type === "private" ? (homeOf(topic) ?? chat) : `${chat}:${topic}`;
+  if (home !== undefined) {
+    return home;
+  }
+
+  wroteIn(chat, topic);
+
+  return chat;
 }
 
 function target(thread: string) {
-  const [chat_id = thread, topic = ""] = thread.split(":");
+  const [chat_id = thread, own = ""] = thread.split(":");
+  const topic = own === "" ? undefined : Number(own);
+  const into = topic ?? dmTopicWrittenInLast.get(chat_id);
 
-  return { chat_id, extra: topic ? { message_thread_id: Number(topic) } : {} };
+  return { chat_id, topic, extra: into === undefined ? {} : { message_thread_id: into } };
 }
 
 function located(thread: string, ref: string) {
@@ -590,7 +628,7 @@ const GENERAL_TOPIC = 1;
 async function typingTarget(thread: string) {
   const { chat_id, extra } = target(thread);
 
-  if (thread.includes(":")) {
+  if (extra.message_thread_id !== undefined) {
     return { chat_id, extra };
   }
 
@@ -1290,7 +1328,7 @@ const handlers: Handlers<typeof tools> = {
 
   widget: async (caller, args) => {
     const html = readFileSync(args.file, "utf-8");
-    const { chat_id, extra } = target(caller);
+    const { chat_id, topic: groupTopic, extra } = target(caller);
 
     const widget = {
       html,
@@ -1360,10 +1398,10 @@ const handlers: Handlers<typeof tools> = {
       }
 
       to = owner;
-      const placed = extra.message_thread_id === undefined ? undefined : await inDmTopic(owner);
+      const placed = groupTopic === undefined ? undefined : await inDmTopic(owner);
 
       if (placed === undefined) {
-        const back = extra.message_thread_id === undefined ? undefined : post.link(caller, "");
+        const back = groupTopic === undefined ? undefined : post.link(caller, "");
         sent = await send(owner, {
           ...(back !== undefined && {
             reply_markup: { inline_keyboard: [[{ text: hub.name(caller) ?? "Topic", url: back }]] },
@@ -1388,8 +1426,7 @@ const handlers: Handlers<typeof tools> = {
   },
 
   rename_thread: async (caller, args) => {
-    const { chat_id, extra } = target(caller);
-    const topic = extra.message_thread_id;
+    const { chat_id, topic } = target(caller);
 
     if (topic === undefined || topic === 0) {
       throw new Error("only topics can be renamed");
@@ -1444,8 +1481,7 @@ const handlers: Handlers<typeof tools> = {
   download_attachment: async (_caller, args) => await download(args.file_id, args.file_id),
 
   close_thread: async (caller, args) => {
-    const { thread, chat_id, extra } = at(caller, args.thread);
-    const topic = extra.message_thread_id;
+    const { thread, chat_id, topic } = at(caller, args.thread);
 
     if (topic === undefined || topic === 0) {
       if (thread === MAIN) {
@@ -1492,7 +1528,7 @@ const handlers: Handlers<typeof tools> = {
   },
 
   handoff: async (caller, args) => {
-    const { chat_id, extra } = target(caller);
+    const { chat_id, topic, extra } = target(caller);
     const { to } = args;
 
     const name =
@@ -1508,8 +1544,8 @@ const handlers: Handlers<typeof tools> = {
 
     await bot.api.sendMessage(chat_id, `Moved to ${to}: ${link}`, extra);
 
-    if (extra.message_thread_id !== undefined) {
-      await bot.api.closeForumTopic(chat_id, extra.message_thread_id);
+    if (topic !== undefined) {
+      await bot.api.closeForumTopic(chat_id, topic);
     }
 
     return `moving to ${to}: ${link}. Your session stops here once this turn ends and resumes there.`;
@@ -1529,7 +1565,13 @@ const callOrForget: Call = async (caller, tool, args) => {
   try {
     return await call(caller, tool, args);
   } catch (error) {
-    const { thread } = at(caller, threadArgument.safeParse(args).data?.thread);
+    const { thread, chat_id } = at(caller, threadArgument.safeParse(args).data?.thread);
+
+    if (gone(String(error)) && !thread.includes(":") && dmTopicWrittenInLast.has(chat_id)) {
+      wroteIn(chat_id, undefined);
+
+      return await call(caller, tool, args);
+    }
 
     if (thread === MAIN || !thread.includes(":") || !gone(String(error))) {
       throw error;

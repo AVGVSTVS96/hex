@@ -15,6 +15,7 @@ const CHANNEL = "plugin:telegram@hex";
 const OWNER = 2000;
 const FORUM = -1_001_234;
 const DESK = `${FORUM}:5`;
+const DELETED_TOPIC = 404;
 const owner = { id: OWNER, is_bot: false, first_name: "Victor", username: "victor" };
 
 const hex: UserFromGetMe = {
@@ -230,6 +231,10 @@ class Bot extends grammy.Bot {
 
       const refused = (description: string) =>
         telegramSays({ ok: false, error_code: 400, description: `Bad Request: ${description}` });
+
+      if (method.startsWith("send") && payload.message_thread_id === DELETED_TOPIC) {
+        return refused("message thread not found");
+      }
 
       if (call.method === "sendWidget" && String(payload.chat_id).startsWith("-")) {
         return refused("INPUT_MEDIA_WIDGET_NOT_ALLOWED");
@@ -1155,6 +1160,63 @@ test("a DM is its own thread: it reaches the DM session, not the group, and repl
     chat_id: String(OWNER),
   });
   dm.close();
+});
+
+test("with topics on in the DM, it stays one thread, and hex answers in the topic he wrote in last", async () => {
+  hex.has_topics_enabled = true;
+
+  const dm = await connectSession({
+    stateDir: state,
+    path: "/telegram",
+    channel: CHANNEL,
+    thread: String(OWNER),
+  });
+
+  try {
+    const writeIn = async (topic: number, text: string) => {
+      await update({
+        message: message({
+          chat: { id: OWNER, type: "private", first_name: "Victor" },
+          message_thread_id: topic,
+          text,
+        }),
+      });
+      await inbound(
+        (line) => line.content === text,
+        () => dm.received,
+      );
+    };
+
+    await writeIn(40, "in one topic");
+    await writeIn(41, "in another");
+    await dm.call("reply", { text: "answered where you are" });
+    expect(await called("sendMessage", (p) => p.text === "answered where you are")).toMatchObject({
+      chat_id: String(OWNER),
+      message_thread_id: 41,
+    });
+    expect(JSON.parse(readFileSync(join(state, "dm-topic-written-in-last.json"), "utf-8"))).toEqual(
+      { [OWNER]: 41 },
+    );
+
+    await writeIn(DELETED_TOPIC, "in a topic I then delete");
+    expect((await dm.call("reply", { text: "still reaches you" })).error).toBeUndefined();
+    expect(
+      await called(
+        "sendMessage",
+        (p) => p.text === "still reaches you" && p.message_thread_id === undefined,
+      ),
+    ).toMatchObject({ chat_id: String(OWNER) });
+
+    expect((await dm.call("rename_thread", { title: "Renamed" })).error).toBe(
+      "only topics can be renamed",
+    );
+    expect(
+      calls.some((c) => c.method === "editForumTopic" && c.payload.chat_id === String(OWNER)),
+    ).toBe(false);
+  } finally {
+    dm.close();
+    hex.has_topics_enabled = false;
+  }
 });
 
 const ledger = () => ({
