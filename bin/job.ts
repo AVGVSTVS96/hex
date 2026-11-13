@@ -126,13 +126,8 @@ function tell(unit: string, owner: string, said: string, at: string) {
 function nameOf(owner: string) {
   const key = store.threads.key(owner);
 
-  const thread =
-    besideWhat(key) ??
-    store.messages
-      .taken(key, 50)
-      .map((row) => besideWhat(row.to))
-      .find(isSet) ??
-    key;
+  const ran = store.messages.ranFor(key);
+  const thread = besideWhat(key) ?? (ran === null ? undefined : besideWhat(ran.to)) ?? key;
 
   return store.threads.names()[thread] ?? thread;
 }
@@ -282,10 +277,9 @@ if (mode === "--owner") {
       ]
     : [];
 
-  const startedInThread = served({
-    HEX_CHANNEL: process.env.HEX_CHANNEL,
-    HEX_THREAD: process.env.HEX_THREAD,
-  });
+  const startedInThread = isSet(process.env.HEX_BESIDE)
+    ? reportsTo()
+    : served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD });
 
   const conversationThatStartedIt = isSet(startedInThread)
     ? { HEX_FROM: startedInThread, HEX_FROM_AT: new Date().toISOString() }

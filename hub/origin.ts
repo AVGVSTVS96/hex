@@ -2,6 +2,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { besideWhat } from "./beside.ts";
 import { served } from "./running.ts";
 import { open, spoken, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
@@ -36,7 +37,7 @@ export function origin(
   const names = store.threads.names();
 
   if (!(thread in names)) {
-    return;
+    return besideRun(store, thread, names, hex);
   }
 
   const newestWords = store.messages
@@ -55,6 +56,19 @@ export function origin(
   return `This work comes from my conversation${present(name) ? ` in ${name}` : ""}: ${present(message) ? `${log}, and \`${hex}/bin/hex message ${message}\` my newest message there, word for word.` : `${log}.`}`;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session beside a thread worked for the row it was started for, not for the owner's newest words there.
+function besideRun(store: Store, session: string, names: Record<string, string>, hex: string) {
+  const ran = store.messages.ranFor(session);
+  const thread = ran === null ? undefined : besideWhat(ran.to);
+
+  if (ran === null || thread === undefined) {
+    return;
+  }
+
+  return `This work comes from hex's run beside my conversation in ${names[thread] ?? thread}: \`${hex}/bin/hex message ${ran.key}\` prints what it was started for, and \`${hex}/bin/hex log -- '${session}'\` what reached it since.`;
+}
+
 const JOB =
   "You are a job, so your memory isn't loaded: work from your prompt, and leave `memo` to the session that started you.";
 
@@ -66,7 +80,12 @@ function handoffLine(event: string | undefined): string | undefined {
     HEX_THREAD: process.env.HEX_THREAD,
   });
 
-  const owner = thread ?? process.env.HEX_FROM;
+  const { HEX_BESIDE } = process.env;
+
+  const runBeside =
+    thread !== undefined && present(HEX_BESIDE) ? `${thread.split(":")[0]}:${HEX_BESIDE}` : thread;
+
+  const owner = runBeside ?? process.env.HEX_FROM;
   const threadSubagentOrJob = event === "SubagentStart" || thread === undefined;
 
   const from =

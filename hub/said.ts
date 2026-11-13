@@ -15,6 +15,7 @@ const WORDS_A_MESSAGE_SHOWS = 600;
 
 const words = (body: string) => {
   const text = body.trim();
+
   const shown =
     text.length > WORDS_A_MESSAGE_SHOWS ? `${text.slice(0, WORDS_A_MESSAGE_SHOWS - 1)}…` : text;
 

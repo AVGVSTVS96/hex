@@ -30,6 +30,16 @@ export function prompt(app: string, row: Row, zone: string) {
   return `<channel source="${app}"${attributes}>\n${row.body}\n</channel>`;
 }
 
+function lastWords(log: string) {
+  try {
+    return readFileSync(log, "utf-8").trim().slice(-WORDS_KEPT);
+  } catch {
+    return "";
+  } finally {
+    rmSync(log, { force: true });
+  }
+}
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Runs a session to its end the way the hub runs every session it starts (contained), so it outlives a hub restart, with background agents it starts let finish. What it printed on stderr goes to log, and comes back as its last words.
 export function run(
@@ -41,14 +51,6 @@ export function run(
   const err = openSync(log, "w", 0o600);
 
   return new Promise((resolve) => {
-    const said = () => {
-      try {
-        return readFileSync(log, "utf-8").trim().slice(-WORDS_KEPT);
-      } finally {
-        rmSync(log, { force: true });
-      }
-    };
-
     const child = spawn(contain, within, {
       cwd,
       env: { ...inherited(), CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...env },
@@ -57,10 +59,10 @@ export function run(
 
     closeSync(err);
     child.on("error", (error) => {
-      resolve({ code: 1, said: `${said()} ${String(error)}`.trim() });
+      resolve({ code: 1, said: `${lastWords(log)} ${String(error)}`.trim() });
     });
     child.on("close", (exit) => {
-      resolve({ code: exit ?? 1, said: said() });
+      resolve({ code: exit ?? 1, said: lastWords(log) });
     });
   });
 }

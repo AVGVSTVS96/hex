@@ -4774,23 +4774,86 @@ test("a session beside a thread speaks in its chat as itself, and is neither its
   ).toBe("beside-1");
 });
 
-test("a run beside a thread that never takes its row starts again once, then its chat hears why; one that took it and failed is said there too", async () => {
+const aTurnGoesThrough = () => sendToHub({ type: "state", thread: "chat:7", busy: false });
+
+test("a run beside a thread that never takes its row starts again once a turn goes through, then its chat hears why, once, and the hub takes it", async () => {
   writeFileSync(join(dir, "go"), "1");
   start({ main: "general", general: true, launcher: besideLauncher() });
   await launched();
   timed("schedule:heartbeat@1");
+  await until(() => runs().length === 1);
+  await Bun.sleep(200);
+  expect(runs()).toHaveLength(1);
+  expect(failures).toEqual([]);
+  await aTurnGoesThrough();
   await until(() => failures.length);
   expect(runs()).toHaveLength(2);
   expect(failures).toEqual([
     ["general", "[heartbeat] couldn't start beside this chat, 2 times: exit 1"],
   ]);
+  expect(open(dir).messages.get("schedule:heartbeat@1")?.taken?.by).toBe("hub");
+});
+
+test("a run beside a thread that fails after taking its row carries on once a turn goes through, its chat hearing once, and is left if it fails again", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  timed("schedule:heartbeat@1");
+  const run = await until(() => runs()[0]);
+  open(dir).messages.take("schedule:heartbeat@1", run.beside);
+  writeFileSync(join(dir, "go"), "1");
+  await until(() => failures.length);
+  expect(failures).toEqual([
+    [
+      "general",
+      "[heartbeat] ran beside this chat and failed: exit 1\nIt carries on once turns go through again.",
+    ],
+  ]);
+  await Bun.sleep(200);
+  expect(runs()).toHaveLength(1);
   rmSync(join(dir, "go"));
-  timed("schedule:heartbeat@2");
-  const run = await until(() => runs()[2]);
-  open(dir).messages.take("schedule:heartbeat@2", run.beside);
+  await aTurnGoesThrough();
+  const again = await until(() => runs()[1]);
+  expect(again.args.slice(0, 3)).toEqual(["-p", "--resume", run.beside]);
+  expect(again.args.at(-1)).toContain(`key="hub:beside:${run.beside}:carry"`);
+  open(dir).messages.take(`hub:beside:${run.beside}:carry`, run.beside);
   writeFileSync(join(dir, "go"), "1");
   await until(() => failures.length === 2);
-  expect(failures[1]).toEqual(["general", "[heartbeat] ran beside this chat and failed: exit 1"]);
+  expect(failures[1]?.[1]).toStartWith("[heartbeat] failed again beside this chat");
+  await aTurnGoesThrough();
+  await Bun.sleep(200);
+  expect(runs()).toHaveLength(2);
+});
+
+test("a run beside a thread cut off mid-turn with the machine runs again as the hub starts", async () => {
+  const store = open(dir);
+  store.messages.deliver({
+    key: "schedule:once@1",
+    to: "beside:general",
+    from: "schedule",
+    author: "prompt",
+    body: "[once] Remind me",
+    meta: { user: "schedule", schedule: "once" },
+  });
+  store.turns.turned("dead-beside", true, "2026-01-01T00:00:00.000Z");
+  store.messages.take("schedule:once@1", "dead-beside");
+  start({ main: "general", general: true, launcher: besideLauncher(), agents: [] });
+  const run = await until(() => runs()[0]);
+  expect(run.args.at(-1)).toContain('key="schedule:once@1"');
+  expect(run.beside).not.toBe("dead-beside");
+});
+
+test("a client that shows only its own turns can't be spoken into from beside, so its thread takes the row", async () => {
+  clients.set("telegram", { hub, waits: true, place: () => Promise.reject(new Error("no")) });
+
+  try {
+    start({ main: "general", general: true, launcher: besideLauncher() });
+    await launched();
+    timed("schedule:heartbeat@1");
+    await until(() => open(dir).messages.get("schedule:heartbeat@1")?.to === "general");
+    expect(runs()).toEqual([]);
+  } finally {
+    clients.delete("telegram");
+  }
 });
 
 test("a job's news for a session beside a thread resumes that session once its run is over", async () => {

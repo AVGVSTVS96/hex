@@ -1950,7 +1950,12 @@ export function startHub({
       ],
       {
         cwd: cwdOf(thread),
-        env: { HEX_BESIDE: session, CLAUDE_CODE_SESSION_NAME: `${known.name}/${job}` },
+        env: {
+          HEX_CHANNEL: channel,
+          HEX_THREAD: thread,
+          HEX_BESIDE: session,
+          CLAUDE_CODE_SESSION_NAME: `${known.name}/${job}`,
+        },
         log: join(sessionsDir, `beside-${session}.log`),
       },
     );
@@ -1965,12 +1970,9 @@ export function startHub({
     const why = said === "" ? `exit ${code}` : `exit ${code}: ${said}`;
 
     if (code === 0 && taken) {
-      turnsGoThrough();
-
-      return;
-    }
-
-    if (!taken) {
+      besideWaits.clear();
+      besideTold.clear();
+    } else if (!taken) {
       startFailed(thread, row.key, job, why);
     } else if (taken.by === session) {
       runFailed(thread, session, row.key, job, why);
@@ -1999,9 +2001,9 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A run that failed after taking its row, as on an API error, carries on once a turn goes through anywhere, as a thread's turn does, and its chat hears once a run there waits for that; one that fails again is left, and its chat hears that.
   function runFailed(thread: string, session: string, key: string, job: string, why: string) {
-    const carry = `hub:beside:${session}:carry`;
+    const carryOn = `hub:beside:${session}:carry`;
 
-    if (key === carry) {
+    if (key === carryOn) {
       failed(
         thread,
         `[${job}] failed again beside this chat, so it won't run by itself again: ${why}`,
@@ -2014,16 +2016,16 @@ export function startHub({
     kept(
       (store) =>
         store.messages.deliver({
-          key: carry,
+          key: carryOn,
           to: session,
           from: "hub",
           author: "prompt",
           body: "[hub] Your last turn failed before it was done, and turns go through again now: carry on with it.",
-          meta: { user: "hub" },
+          meta: { user: job },
         }),
       false,
     );
-    besideWaits.add(carry);
+    besideWaits.add(carryOn);
 
     if (!besideTold.has(thread)) {
       besideTold.add(thread);

@@ -241,3 +241,33 @@ test("an edit is named by the message it edits, so the line reads as the owner's
   expect(await cli.exited).toBe(0);
   expect((await new Response(cli.stdout).text()).trim()).toBe("Also the signup page, tonight.");
 });
+
+test("a subagent or job of a session beside a thread is told the row that session ran for", async () => {
+  const store = open(dir);
+
+  store.messages.deliver({
+    key: "hub:schedule:digest",
+    to: "beside:-100:7",
+    from: "hub",
+    body: "Send the digest.",
+    author: "hex",
+  });
+  store.messages.take("hub:schedule:digest", "b1");
+
+  const said = "This work comes from hex's run beside my conversation in Website: `";
+
+  const subagent = await hook("SubagentStart", {
+    HEX_CHANNEL: "plugin:telegram@hex",
+    HEX_THREAD: "-100:7",
+    HEX_BESIDE: "b1",
+  });
+
+  expect(subagent?.additionalContext).toStartWith(said);
+  expect(subagent?.additionalContext).toContain("/bin/hex message hub:schedule:digest`");
+  expect(subagent?.additionalContext).toContain("/bin/hex log -- 'b1'`");
+
+  const job = await hook("SessionStart", { HEX_OWNER: "telegram:b1", HEX_FROM: "telegram:b1" });
+
+  expect(job?.additionalContext).toContain(said);
+  expect(job?.additionalContext).toContain("/bin/hex message hub:schedule:digest`");
+});
