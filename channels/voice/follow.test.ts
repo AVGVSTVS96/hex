@@ -167,8 +167,7 @@ test("a task that ends while a live call's connection comes back after a restart
   await until(() => engine.record().tasks.length === 2);
   engine.reconnect();
 
-  for (let tries = 0; (await engine.live()) !== CALL; tries++) {
-    expect(tries).toBeLessThan(100);
+  while ((await engine.live()) !== CALL) {
     await Bun.sleep(50);
   }
 

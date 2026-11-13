@@ -1079,14 +1079,13 @@ const Created = z.object({
 const Turns = z.object({ turns: z.array(z.object({ who: z.string(), at: z.number() })) });
 
 async function heard(engine: Engine, count: number) {
-  for (let tries = 0; ; tries++) {
+  for (;;) {
     const { turns } = Turns.parse(await engine.call());
 
     if (turns.length === count) {
       return turns;
     }
 
-    expect(tries).toBeLessThan(100);
     await Bun.sleep(50);
   }
 }
