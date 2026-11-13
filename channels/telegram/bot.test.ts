@@ -761,13 +761,14 @@ test("a permission prompt asks in its own topic, and the owner's tap answers the
   expect(received().find((line) => line.type === "permission")).toBeUndefined();
 
   const before = received().length;
+  limited.add(id);
   await tap(owner);
   expect(await until(() => received().find((line) => line.type === "permission"))).toEqual({
     type: "permission",
     request_id: "abcde",
     behavior: "deny",
   });
-  expect(await called("editMessageReplyMarkup", (p) => p.message_id === id)).toMatchObject({
+  expect(await until(() => landed.find((edit) => edit.message_id === id))).toMatchObject({
     reply_markup: { inline_keyboard: [[{ text: "✓ Deny", disabled: {} }]] },
   });
   await Bun.sleep(100);
@@ -788,9 +789,10 @@ test("a prompt still open when the turn ends, answered in the session itself, st
   const prompt = await called("sendMessage", (p) => p.text?.startsWith("🔐 Write") === true);
   expect(prompt.text).toBe("🔐 Write: Write notes.md\n\nfile_path: /tmp/notes.md\ncontent: hi");
   const id = idOf(prompt);
+  limited.add(id);
   session({ type: "state", thread: DESK, busy: true });
   session({ type: "state", thread: DESK, busy: false });
-  expect(await called("editMessageReplyMarkup", (p) => p.message_id === id)).toMatchObject({
+  expect(await until(() => landed.find((edit) => edit.message_id === id))).toMatchObject({
     reply_markup: { inline_keyboard: [[{ text: "No longer waiting", disabled: {} }]] },
   });
 });
@@ -1782,7 +1784,10 @@ test("a status post is the session's note over lines hex keeps current from the 
   const next = idIn(await call("pin", { note: "Site: v2" }));
   expect(await called("unpinChatMessage", (p) => p.message_id === id)).toBeTruthy();
   expect(ledger().pins[DESK]).toMatchObject({ message: next, note: "Site: v2" });
-  expect((await call("pin", { unpin: true })).text).toBe(`unpinned the status post (id: ${next})`);
+  expect((await call("pin", { unpin: true, message_id: `telegram:${FORUM}:${next}` })).text).toBe(
+    `unpinned the status post (id: ${next})`,
+  );
+  expect(await called("unpinChatMessage", (p) => p.message_id === next)).toBeTruthy();
   expect(ledger().pins[DESK]).toBeUndefined();
 });
 
