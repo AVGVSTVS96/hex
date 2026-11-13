@@ -43,7 +43,7 @@ function midTurn() {
     .values()
     .filter(
       (session) =>
-        session.kind === "bg" &&
+        (session.kind === "bg" || session.beside !== undefined) &&
         session.status === "busy" &&
         !turnEndedSinceClaudeCodeLastCalledItBusy(session) &&
         !turnWaitingOnTheUpdateItAskedFor(session),

@@ -481,7 +481,7 @@ export function queue(state: string, turn: Pass) {
 }
 
 export function ended(state: string, session: string, last?: string) {
-  const { HEX_THREAD, HEX_CHANNEL } = process.env;
+  const { HEX_THREAD, HEX_CHANNEL, HEX_BESIDE } = process.env;
   const t3 = HEX_CHANNEL?.startsWith("plugin:t3@") === true;
   const from = t3 ? "t3" : "terminal";
   const answer = last?.trim();
@@ -492,7 +492,7 @@ export function ended(state: string, session: string, last?: string) {
       open(state).messages.deliver(
         {
           key: `${from}:${crypto.randomUUID()}`,
-          to: HEX_THREAD ?? session,
+          to: given(HEX_BESIDE) ? HEX_BESIDE : (HEX_THREAD ?? session),
           from,
           author: "hex",
           body: answer,
@@ -505,7 +505,11 @@ export function ended(state: string, session: string, last?: string) {
     process.stderr.write(`hex couldn't keep this turn's answer: ${String(error)}\n`);
   }
 
-  queue(state, { session, by: new Date().toISOString(), thread: HEX_THREAD });
+  queue(state, {
+    session,
+    by: new Date().toISOString(),
+    thread: given(HEX_BESIDE) ? HEX_BESIDE : HEX_THREAD,
+  });
 }
 
 if (import.meta.main && given(process.env.HEX_PASS)) {
