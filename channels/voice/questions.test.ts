@@ -2403,7 +2403,59 @@ test("a question shows the pictures hex sent with it, each at its shape, by the 
 
   expect(questions.find(`telegram:${DESK}:40`)?.pictures).toEqual([
     // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
-    { id: pictureId(chatKey(1, 41), 0), shape: 2 },
+    { id: pictureId(chatKey(1, 41), 0), kind: "photo", shape: 2 },
+  ]);
+});
+
+test("an ask the check made shows the pictures of the messages it names", () => {
+  said([
+    ["18:00:00", "Flights tab is live.", { id: 40 }],
+    [
+      "18:00:02",
+      "(file: sheet.png)",
+      {
+        id: 41,
+        meta: {
+          file: "sheet.png",
+          attachment_kind: "photo",
+          attachment_file_id: "AgAC1",
+          attachment_dimensions: "900x1350",
+        },
+      },
+    ],
+  ]);
+  writeFileSync(
+    join(state, "voice", "check.json"),
+    JSON.stringify({
+      at: "2026-10-13T20:00:00.000Z",
+      why: "a call ended",
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [
+        {
+          id: "check:sheet",
+          kind: "look",
+          task: `telegram:${DESK}`,
+          at: "",
+          question: "Does the flight sheet blur the page behind it?",
+          options: [{ label: "Seen" }, { label: "Later" }],
+          from: [{ app: "telegram", thread: DESK, message: 40 }],
+          shows: [{ app: "telegram", thread: DESK, message: 41 }],
+        },
+      ],
+    }),
+  );
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+
+  expect(questions.find("check:sheet")?.pictures).toEqual([
+    // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
+    { id: pictureId(chatKey(1, 41), 0), kind: "photo", shape: 2 / 3 },
   ]);
 });
 

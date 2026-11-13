@@ -1,3 +1,4 @@
+import { readFileSync, statSync } from "node:fs";
 import { basename } from "node:path";
 
 import type { Row } from "./store.ts";
@@ -70,10 +71,70 @@ export function pictureOf(id: string): { key: string; at: number } | undefined {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The pictures a chat app's message holds, named so an app can ask for each by id.
+// The pictures a chat app's message holds, named so an app can ask for each by id, each with its width over height so an app lays it out before it arrives.
 export const pictures = (row: Pick<Row, "key" | "meta">) =>
-  held(row).flatMap(({ type, path }, at) =>
-    type?.startsWith("image/") === true
-      ? [{ id: pictureId(row.key, at), kind: "photo", ...(path !== undefined && { file: path }) }]
-      : [],
-  );
+  held(row).flatMap(({ type, path, dimensions }, at) => {
+    const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
+    const widthOverHeight = height > 0 ? width / height : widthOverHeightOf(path);
+
+    return type?.startsWith("image/") === true
+      ? [
+          {
+            id: pictureId(row.key, at),
+            kind: "photo",
+            ...(path !== undefined && { file: path }),
+            ...(widthOverHeight !== undefined &&
+              widthOverHeight > 0 && {
+                // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
+                shape: widthOverHeight,
+              }),
+          },
+        ]
+      : [];
+  });
+
+export type Picture = ReturnType<typeof pictures>[number];
+
+const widthOverHeightOfEachFileVersion = new Map<string, number | undefined>();
+
+export function widthOverHeightOf(file: string | undefined) {
+  if (file === undefined) {
+    return;
+  }
+
+  const version = `${file}@${statSync(file, { throwIfNoEntry: false })?.mtimeMs}`;
+
+  if (!widthOverHeightOfEachFileVersion.has(version)) {
+    widthOverHeightOfEachFileVersion.set(version, readWidthOverHeight(file));
+  }
+
+  return widthOverHeightOfEachFileVersion.get(version);
+}
+
+const PNG_SIGNATURE = 0x89_50_4e_47;
+
+function readWidthOverHeight(file: string) {
+  let bytes: Buffer;
+
+  try {
+    bytes = readFileSync(file);
+  } catch {
+    return;
+  }
+
+  if (bytes.readUInt32BE(0) === PNG_SIGNATURE) {
+    return bytes.readUInt32BE(16) / bytes.readUInt32BE(20);
+  }
+
+  for (
+    let at = 2;
+    bytes[at] === 0xff && at + 9 < bytes.length;
+    at += 2 + bytes.readUInt16BE(at + 2)
+  ) {
+    const marker = bytes[at + 1] ?? 0;
+
+    if (marker >= 0xc0 && marker <= 0xc3) {
+      return bytes.readUInt16BE(at + 7) / bytes.readUInt16BE(at + 5);
+    }
+  }
+}
