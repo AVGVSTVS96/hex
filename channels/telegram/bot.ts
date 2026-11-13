@@ -850,7 +850,7 @@ async function place(name: string, _where?: string, about?: string) {
   };
 }
 
-// A backfill is more messages than Telegram lets a bot send in a minute, so each waits out the limit Telegram names. https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
+// A backfill, or many questions redrawn at once, is more than Telegram lets a bot send in a minute, so each call waits out the limit Telegram names. https://core.telegram.org/bots/faq#my-bot-is-hitting-limits-how-do-i-avoid-this
 async function paced<T>(send: () => Promise<T>): Promise<T> {
   for (;;) {
     try {
@@ -1231,7 +1231,7 @@ const handlers: Handlers<typeof tools> = {
         return `the poll is already answered (${question.answer.label}), so it stays as it is; its own text can't be edited, so reply with what changed`;
       }
 
-      await settleQuestion(home, ref, "✓ Settled");
+      settleQuestion(home, ref, "✓ Settled");
 
       return `settled the poll (id: ${shown}); its own text can't be edited, so reply with what changed`;
     }
@@ -1287,10 +1287,7 @@ const handlers: Handlers<typeof tools> = {
       ledger.edited(home, ref, text);
     }
 
-    if (
-      args.settled === true &&
-      !(await settleQuestion(home, question?.message ?? ref, "✓ Settled"))
-    ) {
+    if (args.settled === true && !settleQuestion(home, question?.message ?? ref, "✓ Settled")) {
       return `${changes ? "edited, but " : ""}no question waits on message ${shown}, so nothing was settled`;
     }
 
@@ -1701,30 +1698,32 @@ const drawing = new Map<string, Promise<void>>();
 
 async function redraw(thread: string, message: MessageId): Promise<void> {
   try {
-    const question = questionOf(thread, message);
+    await paced(async () => {
+      const question = questionOf(thread, message);
 
-    if (question === undefined || question.options.length === 0) {
-      return;
-    }
+      if (question === undefined || question.options.length === 0) {
+        return;
+      }
 
-    const { chat_id, message: id } = located(thread, String(message));
+      const { chat_id, message: id } = located(thread, String(message));
 
-    if (question.poll === undefined) {
-      await bot.api.editMessageReplyMarkup(chat_id, id, {
-        reply_markup: question.answer
-          ? only(answeredText(question.answer))
-          : question.settled
-            ? only(question.settled.note)
-            : buttonsOf(question.options),
-      });
+      if (question.poll === undefined) {
+        await bot.api.editMessageReplyMarkup(chat_id, id, {
+          reply_markup: question.answer
+            ? only(answeredText(question.answer))
+            : question.settled
+              ? only(question.settled.note)
+              : buttonsOf(question.options),
+        });
 
-      return;
-    }
+        return;
+      }
 
-    if (question.settled || (question.answer && question.answer.via !== "telegram")) {
-      // A poll can't take a vote from the bot (https://core.telegram.org/bots/api#stoppoll), so one answered elsewhere closes, and stays closed.
-      await bot.api.stopPoll(chat_id, id);
-    }
+      if (question.settled || (question.answer && question.answer.via !== "telegram")) {
+        // A poll can't take a vote from the bot (https://core.telegram.org/bots/api#stoppoll), so one answered elsewhere closes, and stays closed.
+        await bot.api.stopPoll(chat_id, id);
+      }
+    });
   } catch (error) {
     process.stderr.write(
       `telegram hub: couldn't draw the buttons on ${thread} ${message}: ${String(error)}\n`,
@@ -1748,7 +1747,7 @@ const answeredText = ({ label, via }: { label: string; via: string }) => {
   return where === undefined ? `✓ ${label}` : `✓ Answered ${where}: ${label}`;
 };
 
-async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
+function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
   const question = questionOf(thread, message);
 
   if (!question || question.answer) {
@@ -1777,11 +1776,11 @@ async function answerQuestion(thread: string, message: MessageId, label: string,
   );
 
   if (answered) {
-    await drawInTurn(thread, message);
+    void drawInTurn(thread, message);
   }
 }
 
-async function settleQuestion(thread: string, message: MessageId, note: string): Promise<boolean> {
+function settleQuestion(thread: string, message: MessageId, note: string): boolean {
   const question = questionOf(thread, message);
 
   if (!question || !waits(question)) {
@@ -1789,12 +1788,12 @@ async function settleQuestion(thread: string, message: MessageId, note: string):
   }
 
   ledger.settled(thread, message, note);
-  await drawInTurn(thread, message);
+  void drawInTurn(thread, message);
 
   return true;
 }
 
-async function reopenQuestion(thread: string, message: MessageId, via: string) {
+function reopenQuestion(thread: string, message: MessageId, via: string) {
   const question = questionOf(thread, message);
 
   if (!question || !(question.answer || question.settled)) {
@@ -1826,7 +1825,7 @@ async function reopenQuestion(thread: string, message: MessageId, via: string) {
         );
 
   if (reopened) {
-    await drawInTurn(thread, message);
+    void drawInTurn(thread, message);
   }
 }
 
@@ -1954,13 +1953,13 @@ const hub = startHub({
   },
   questions: {
     answer: (thread, message, label, via) => {
-      void answerQuestion(thread, asMessageId(message), label, via);
+      answerQuestion(thread, asMessageId(message), label, via);
     },
     settle: (thread, message, note) => {
-      void settleQuestion(thread, asMessageId(message), note);
+      settleQuestion(thread, asMessageId(message), note);
     },
     reopen: (thread, message, via) => {
-      void reopenQuestion(thread, asMessageId(message), via);
+      reopenQuestion(thread, asMessageId(message), via);
     },
   },
   failed: (thread, reason) => {
@@ -2342,7 +2341,7 @@ bot.on("callback_query:data", async (ctx) => {
   );
 
   if (question) {
-    await drawInTurn(thread, id);
+    void drawInTurn(thread, id);
   }
 });
 

@@ -96,6 +96,7 @@ const calls: Call[] = [];
 const captionOnly = new Set<number>();
 
 const slow = new Set<number>();
+const limited = new Set<number>();
 const landed: Payload[] = [];
 let deliver: (update: Update) => Promise<void>;
 let started: PollingOptions | undefined;
@@ -194,7 +195,12 @@ class Bot extends grammy.Bot {
       const call: Call = { method, payload };
       calls.push(call);
 
-      if (method.startsWith("send") && throttled > 0 && throttled--) {
+      if (
+        (method.startsWith("send") && throttled > 0 && throttled--) ||
+        (method === "editMessageReplyMarkup" &&
+          payload.message_id !== undefined &&
+          limited.delete(payload.message_id))
+      ) {
         return telegramSays({
           ok: false,
           error_code: 429,
@@ -1424,6 +1430,20 @@ test("a reply quoting an answer given in the app quotes the question it answered
   expect(await called("sendMessage", (p) => p.text === "Logo next")).not.toHaveProperty(
     "reply_parameters",
   );
+});
+
+test("a question reopened while Telegram is rate-limiting gets its buttons back once the limit passes", async () => {
+  const id = idIn(await call("reply", { text: "Which week?", buttons: ["This", "Next"] }));
+  session({ type: "answer", thread: DESK, message: id, label: "Next", via: "app" });
+  await inbound((line) => line.meta.button_message_id === String(id) && line.content === "Next");
+  await until(() => landed.some((edit) => edit.message_id === id));
+
+  limited.add(id);
+  session({ type: "reopen", thread: DESK, message: id, via: "app" });
+  await until(() => landed.filter((edit) => edit.message_id === id).length === 2);
+  expect(
+    landed.findLast((edit) => edit.message_id === id)?.reply_markup?.inline_keyboard[0],
+  ).toHaveLength(2);
 });
 
 test("an answer taken back right away gets its buttons back, even when the answer's own edit lands late", async () => {
