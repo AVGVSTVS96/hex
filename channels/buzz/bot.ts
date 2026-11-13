@@ -1227,8 +1227,11 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
     call,
     state: showState,
     fresh: (thread) => channels.get(thread)?.dm ?? false,
-    failed: (thread, reason) => {
-      void post(thread, `Couldn't start this thread's session: ${reason}`).catch(() => null);
+    failed: (thread, reason, turn) => {
+      void post(
+        thread,
+        `${turn === true ? "This thread's last turn failed" : "Couldn't start this thread's session"}: ${reason}`,
+      ).catch(() => null);
     },
     hexDir: process.env.HEX_DIR,
     launcher: process.env.HEX_LAUNCHER,

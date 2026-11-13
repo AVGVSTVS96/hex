@@ -1523,9 +1523,14 @@ function serve(token: string) {
     call,
     state: settle,
     fresh: (thread) => dms.has(thread),
-    failed: (thread, reason) => {
+    failed: (thread, reason, turn) => {
       void threadChannel(thread)
-        .then(async (ch) => await ch.send(`Couldn't start this thread's session: ${reason}`))
+        .then(
+          async (ch) =>
+            await ch.send(
+              `${turn === true ? "This thread's last turn failed" : "Couldn't start this thread's session"}: ${reason}`,
+            ),
+        )
         .catch(() => null);
     },
     permission: (thread, request) =>

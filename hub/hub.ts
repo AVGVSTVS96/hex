@@ -46,7 +46,9 @@ export type Call = (thread: string, tool: string, args: ToolArguments) => Promis
 
 export type State = (thread: string, busy: boolean, background: boolean) => void;
 
-export type Failed = (thread: string, reason: string) => void;
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// turn: the session started, and its last turn failed on the API rather than its start.
+export type Failed = (thread: string, reason: string, turn?: boolean) => void;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // still: the message waits for the thread's session, or else that wait is over.
@@ -105,6 +107,8 @@ const HubRequestLine = z.discriminatedUnion("type", [
     busy: z.boolean(),
     background: z.boolean().optional(),
     failed: z.boolean().optional(),
+    error: z.string().optional(),
+    said: z.string().optional(),
     taken: z.array(z.string()).optional(),
     session: z.string().optional(),
   }),
@@ -234,6 +238,9 @@ type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The starts that failed in a row since the thread's session last connected; retried: another session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean } | undefined;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Its last turn failed on the API, until a turn begins or goes through. waiting: the error clears on its own (a rate limit, a dropped connection), so it carries on at the next turn anywhere that goes through; resumed: the hub had it carry on, once; told: its chat heard it waits for its next message.
+  stalled?: "waiting" | "resumed" | "told" | undefined;
   opening?: Opening | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The kept messages the client was told wait for a session, by key, until one takes them.
@@ -303,6 +310,10 @@ const answered = new Set<() => void>();
 
 let generalHub: Hub | undefined;
 const TELL_GENERAL_AFTER_FAILED_STARTS = 3;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Claude Code's StopFailure errors that clear on their own or once an account has room again; a refused connection reaches the hook as server_error.
+const PASSING_API_ERRORS = new Set(["rate_limit", "overloaded", "server_error", "billing_error"]);
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Resolves with the hub serving General once General's session first connects to it: from then on, hex works on the code this process runs.
@@ -1862,6 +1873,48 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A turn the API refused ends with what set it off unanswered and nothing to start it again, and the session can't say why when its requests don't go through. So the thread's chat hears the API's error from the hub, and whether it carries on: one that clears does, once, at the next turn anywhere that goes through (resumeStalled), and the chat hears again only when that changes.
+  function stall(thread: string, error = "unknown", said?: string) {
+    const run = runOf(thread);
+    const was = run.stalled;
+    run.stalled = PASSING_API_ERRORS.has(error) && was !== "resumed" ? "waiting" : "told";
+    process.stderr.write(`hub: ${thread}'s turn failed on the API (${error})\n`);
+
+    if (was === run.stalled) {
+      return;
+    }
+
+    const why = (said !== undefined && said !== "" ? said : error).slice(0, 400);
+
+    const next =
+      run.stalled === "waiting"
+        ? "It carries on once turns go through again."
+        : "Its next message starts it again.";
+
+    failed(thread, `${why}\n${next}`, true);
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // One thread for each turn that goes through, so the threads an outage stalled don't all hit the API in the same moment.
+  function resumeStalled() {
+    for (const [thread, run] of runs) {
+      if (run.stalled !== "waiting" || run.turn === "busy") {
+        continue;
+      }
+
+      run.stalled = "resumed";
+      deliver(thread, threads.get(thread)?.name ?? thread, {
+        content:
+          "[hub] Your last turn here failed on the API, and turns go through again now: carry on with it.",
+        author: "prompt",
+        meta: { user: "hub" },
+      });
+
+      return;
+    }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A session that started before hex kept messages can't mark one taken itself, so its hook says so here.
   function took(keys: string[] | undefined, session: string | undefined) {
     if (keys === undefined || session === undefined) {
@@ -2307,6 +2360,15 @@ export function startHub({
     switch (request.type) {
       case "state": {
         took(request.taken, request.session);
+
+        const run = runOf(request.thread);
+
+        if (request.failed === true) {
+          stall(request.thread, request.error, request.said);
+        } else if (!request.busy || run.stalled !== "resumed") {
+          run.stalled = undefined;
+        }
+
         setState(request.thread, request.busy, request.background === true);
 
         if (!request.busy && request.failed !== true) {
@@ -2598,6 +2660,7 @@ export function startHub({
       unrestart();
       retries.delete(retry);
       answered.delete(retryCompactions);
+      answered.delete(resumeStalled);
 
       if (generalHub === api) {
         generalHub = undefined;
@@ -2621,6 +2684,7 @@ export function startHub({
 
   retries.add(retry);
   answered.add(retryCompactions);
+  answered.add(resumeStalled);
 
   if (general && present(main)) {
     generalHub = api;

@@ -29,6 +29,8 @@ const HookInput = z.object({
   last_assistant_message: z.string().optional(),
   hook_event_name: z.string().optional(),
   stop_hook_active: z.boolean().optional(),
+  error: z.string().optional(),
+  error_details: z.string().optional(),
 });
 
 const SessionRecord = z.object({
@@ -59,6 +61,8 @@ const {
   last_assistant_message,
   hook_event_name,
   stop_hook_active,
+  error: apiError,
+  error_details,
 } = await input();
 
 const fromChat = prompt?.startsWith("<channel source=") === true;
@@ -291,7 +295,11 @@ if (given(HEX_HUB) && given(HEX_THREAD) && (!busy || !mayRunNoTurn)) {
           thread: HEX_THREAD,
           busy,
           ...(background && { background }),
-          ...(hook_event_name === "StopFailure" && { failed: true }),
+          ...(hook_event_name === "StopFailure" && {
+            failed: true,
+            error: apiError,
+            said: given(last_assistant_message) ? last_assistant_message : error_details,
+          }),
           ...(leftForTheHubToTake !== undefined && { taken: [leftForTheHubToTake] }),
           ...(session_id && { session: session_id }),
         })}\n`,

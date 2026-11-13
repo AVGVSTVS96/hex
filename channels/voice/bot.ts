@@ -44,8 +44,10 @@ const hub = startHub({
   call: dispatch(tools, handlers),
   // oxlint-disable-next-line eslint/no-empty-function -- the voice hub shows no session status anywhere
   state: () => {},
-  failed: (_, reason) => {
-    process.stderr.write(`voice hub: the voice session couldn't start: ${reason}\n`);
+  failed: (_, reason, turn) => {
+    process.stderr.write(
+      `voice hub: ${turn === true ? "the voice session's turn failed" : "the voice session couldn't start"}: ${reason}\n`,
+    );
   },
 });
 
