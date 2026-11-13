@@ -1151,7 +1151,7 @@ test("an older question gets the file messages hex sent right with it, and nothi
     .object({ user_version: z.number() })
     .parse(store.db.query("pragma user_version").get());
 
-  store.db.run(`pragma user_version = ${String(version.user_version - 1)}`);
+  store.db.run(`pragma user_version = ${String(version.user_version - 2)}`);
   store.db.close();
 
   const after = new Store(dir);

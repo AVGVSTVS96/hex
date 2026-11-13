@@ -7,12 +7,6 @@ import type { Core, Write } from "./db.ts";
 import { MessageRows } from "./messages.ts";
 import type { Row } from "./messages.ts";
 
-type Beat = { began: string; until?: string; after?: string };
-
-const BeatRows = z.array(
-  z.object({ session: z.string(), began: z.string(), until: TextOrAbsent, after: TextOrAbsent }),
-);
-
 const TurnRow = z
   .object({ began: TextOrAbsent, ended: TextOrAbsent, handled: TextOrAbsent })
   .transform(({ began, ended, handled }) => ({
@@ -26,7 +20,6 @@ const UnfinishedTurnRows = z.array(z.object({ session: z.string(), handled: Text
 const RepliesRow = z.object({ replies: z.number() });
 
 const TURNS = 30 * 24 * 60 * 60 * 1000;
-const BEATS = 7 * 24 * 60 * 60 * 1000;
 
 export class Turns {
   private readonly db: Database;
@@ -37,50 +30,8 @@ export class Turns {
     this.write = write;
   }
 
-  turned(session: string, busy: boolean, at = now(), heartbeat = false, flipped?: number) {
+  turned(session: string, busy: boolean, at = now()) {
     this.write(() => {
-      const { began, ended } = this.get(session);
-      const heartbeatOpensATurn = heartbeat && (began === undefined || ended !== undefined);
-
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // Claude Code can record a turn before hex's hook runs, so the hook's own time can be late.
-      const claudeCodeMarkedItBusyFirst =
-        heartbeatOpensATurn &&
-        flipped !== undefined &&
-        flipped <= Date.parse(at) &&
-        (ended === undefined || flipped > Date.parse(ended));
-
-      const heartbeatBegan =
-        claudeCodeMarkedItBusyFirst && flipped !== undefined ? new Date(flipped).toISOString() : at;
-
-      if (busy && !heartbeat) {
-        this.db.query("delete from beats where session = ? and began > ?").run(session, at);
-      }
-
-      if ((!heartbeat && (busy || began === undefined || at >= began)) || heartbeatOpensATurn) {
-        this.db
-          .query("update beats set until = ? where session = ? and until is null and began <= ?")
-          .run(at, session, at);
-      }
-
-      if (busy && !heartbeat) {
-        this.db
-          .query("update beats set after = ? where session = ? and after is null")
-          .run(at, session);
-      }
-
-      if (heartbeatOpensATurn) {
-        this.db
-          .query("insert into beats (session, began) values (?, ?)")
-          .run(session, heartbeatBegan);
-      }
-
-      this.db
-        .query(
-          "delete from beats where coalesce(after, until, began) < ? and (after is not null or rowid > (select min(rowid) from beats run where run.session = beats.session and run.after is null))",
-        )
-        .run(new Date(Date.parse(at) - BEATS).toISOString());
-
       if (busy) {
         this.db
           .query(
@@ -99,40 +50,6 @@ export class Turns {
         .query("delete from turns where coalesce(ended, began) < ?")
         .run(new Date(Date.parse(at) - TURNS).toISOString());
     });
-  }
-
-  beats(session: string): Beat[] {
-    return this.everyBeat().get(session) ?? [];
-  }
-
-  everyBeat(): Map<string, Beat[]> {
-    const beats = new Map<string, Beat[]>();
-
-    const rows = BeatRows.parse(
-      this.db.query("select session, began, until, after from beats order by began").all(),
-    );
-
-    for (const { session, began, until, after } of rows) {
-      const beat: Beat = {
-        began,
-        ...(until !== undefined && { until }),
-        ...(after !== undefined && { after }),
-      };
-
-      beats.set(session, [...(beats.get(session) ?? []), beat]);
-    }
-
-    return beats;
-  }
-
-  beaten(): string {
-    return JSON.stringify(
-      this.db
-        .query(
-          "select max(rowid), count(*), count(until), count(after), (select max(coalesce(ended, began)) from turns where session in (select session from beats)) from beats",
-        )
-        .values(),
-    );
   }
 
   handled(session: string, at = now()) {

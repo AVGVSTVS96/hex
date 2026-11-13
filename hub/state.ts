@@ -1,12 +1,8 @@
-import { readdirSync, readFileSync } from "node:fs";
 import { connect } from "node:net";
-import { join } from "node:path";
 
 import { z } from "zod";
 
-import { CLAUDE } from "./running.ts";
 import { open, stateDir } from "./store.ts";
-import type { Store } from "./store.ts";
 
 const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env;
 const at = new Date().toISOString();
@@ -32,19 +28,6 @@ const HookInput = z.object({
   error: z.string().optional(),
   error_details: z.string().optional(),
 });
-
-const SessionRecord = z.object({
-  sessionId: z.string(),
-  status: z.string(),
-  statusUpdatedAt: z.number(),
-});
-
-const JobRecord = z.object({
-  sessionId: z.string().optional(),
-  fan: z.array(z.object({ id: z.string(), startedAt: z.number().optional() })).optional(),
-});
-
-type Job = z.infer<typeof JobRecord>;
 
 async function input(): Promise<z.infer<typeof HookInput>> {
   try {
@@ -118,19 +101,16 @@ if (answered && stop_hook_active !== true && session_id) {
 
 let leftForTheHubToTake = key;
 let recorded = false;
-let heartbeat = false;
 
 if (key !== undefined) {
   try {
     const store = open(stateDir());
-    heartbeat = store.messages.get(key)?.meta?.schedule === "heartbeat";
-    const flipped = heartbeat ? busySince(session_id) : undefined;
     let took: boolean;
 
     try {
       const takenAsOneTurn = () =>
         store.messages.take(key, session_id) &&
-        (!session_id || (store.turns.turned(session_id, busy, at, heartbeat, flipped), true));
+        (!session_id || (store.turns.turned(session_id, busy, at), true));
 
       took = store.write(takenAsOneTurn);
       recorded = took && !!session_id;
@@ -154,81 +134,13 @@ if (key !== undefined) {
   }
 }
 
-function wokenByHeartbeatTask(store: Store, session: string) {
-  const task =
-    prompt?.startsWith("<task-notification") === true
-      ? /<task-id>([\w-]+)<\/task-id>/u.exec(prompt)?.[1]
-      : undefined;
-
-  const beats = task === undefined ? [] : store.turns.beats(session);
-  const first = beats.slice(beats.findLastIndex((beat) => beat.after !== undefined) + 1)[0];
-
-  if (!first) {
-    return false;
-  }
-
-  const fan = job(session)?.fan ?? [];
-
-  return (fan.find((one) => one.id === task)?.startedAt ?? 0) >= Date.parse(first.began);
-}
-
-function filesIn(dir: string): string[] {
-  try {
-    return readdirSync(dir);
-  } catch {
-    return [];
-  }
-}
-
-function busySince(session: string): number | undefined {
-  const dir = join(CLAUDE, "sessions");
-
-  const times = filesIn(dir).flatMap((file) => {
-    try {
-      const record = SessionRecord.parse(JSON.parse(readFileSync(join(dir, file), "utf-8")));
-
-      return record.sessionId === session && record.status === "busy"
-        ? [record.statusUpdatedAt]
-        : [];
-    } catch {
-      return [];
-    }
-  });
-
-  return times.length > 0 ? Math.max(...times) : undefined;
-}
-
-function readJob(folder: string): Job {
-  try {
-    return JobRecord.parse(
-      JSON.parse(readFileSync(join(CLAUDE, "jobs", folder, "state.json"), "utf-8")),
-    );
-  } catch {
-    return {};
-  }
-}
-
-function job(session: string): Job | undefined {
-  const folderNamedForItsId = readJob(session.slice(0, 8));
-
-  if (folderNamedForItsId.sessionId === session) {
-    return folderNamedForItsId;
-  }
-
-  return filesIn(join(CLAUDE, "jobs"))
-    .map(readJob)
-    .find((keptByARenewedJob) => keptByARenewedJob.sessionId === session);
-}
-
 if (session_id && !recorded) {
   try {
     const store = open(stateDir());
-    const beat = heartbeat || (busy && wokenByHeartbeatTask(store, session_id));
-
     store.write(() => {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // bin/quiet trusts this record over Claude Code's busy status once it says the turn ended, so an update lands between turns.
-      store.turns.turned(session_id, busy, at, beat);
+      store.turns.turned(session_id, busy, at);
 
       if (answered && background) {
         store.turns.waitsOnAgents(session_id, at);
