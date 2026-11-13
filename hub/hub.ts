@@ -15,6 +15,7 @@ import { basename, join } from "node:path";
 
 import { z } from "zod";
 
+import { besideOf, besideWhat, prompt as besidePrompt, run as runBeside } from "./beside.ts";
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
 import { holding } from "./holds.ts";
@@ -24,6 +25,7 @@ import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { queue } from "./observe.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { restarts } from "./restarts.ts";
+import { running as sessionsRunning } from "./running.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
 import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
@@ -723,8 +725,8 @@ export function startHub({
   };
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The thread whose session made the tool call in progress.
-  const caller = new AsyncLocalStorage<string>();
+  // The session that made the tool call in progress.
+  const caller = new AsyncLocalStorage<string | undefined>();
   const socketPath = join(stateDir, "hub.sock");
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Each thread's session reads its settings, binding and token from here, so none of it shows in a process's arguments, and a respawn reads the thread's current ones.
@@ -1154,6 +1156,7 @@ export function startHub({
     clock.clearTimeout(run.rest);
     runs.delete(thread);
     rmSync(settingsOf(thread), { force: true });
+    rmSync(besideSettingsOf(thread), { force: true });
     rmSync(heldOf(thread), { recursive: true, force: true });
     leaving(session);
   }
@@ -1353,6 +1356,10 @@ export function startHub({
 
   function settingsOf(thread: string) {
     return join(sessionsDir, `${encodeURIComponent(thread)}.json`);
+  }
+
+  function besideSettingsOf(thread: string) {
+    return join(sessionsDir, `beside-${encodeURIComponent(thread)}.json`);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1577,12 +1584,19 @@ export function startHub({
       !(general && thread === main)
     ) {
       failing.told = true;
-      const content = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
-      generalHub.deliver(generalMain, generalHub.name(generalMain) ?? "hex", {
-        content,
-        author: "prompt",
-        meta: { user: "hub" },
-      });
+      const body = `[hub] hex couldn't start the session of ${app} thread "${threads.get(thread)?.name ?? thread}" ${failing.count} times in a row: ${reason}. Its next message starts it again.`;
+      kept(
+        (store) =>
+          store.messages.deliver({
+            key: `hub:${app}:${thread}:failing@${randomUUID()}`,
+            to: besideOf(generalMain),
+            from: "hub",
+            author: "prompt",
+            body,
+            meta: { user: "hub" },
+          }),
+        false,
+      );
     }
 
     setState(thread, false);
@@ -1716,7 +1730,7 @@ export function startHub({
     };
 
     kept(
-      (store) => store.messages.deliver(row, current(caller.getStore() ?? thread) ?? "hub"),
+      (store) => store.messages.deliver(row, caller.getStore() ?? current(thread) ?? "hub"),
       false,
     );
   }
@@ -1865,6 +1879,10 @@ export function startHub({
       }
     }
 
+    for (const row of kept((store) => store.messages.beside([...threads.keys()].map(besideOf)), [])) {
+      void beside(row);
+    }
+
     const untaken = new Set(rows.map((row) => row.key));
 
     for (const [thread, run] of runs) {
@@ -1877,6 +1895,95 @@ export function startHub({
         waits?.(thread, message, false);
       }
     }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Each session running beside a thread, by the row it was started for, and the starts of each row that ended without taking it.
+  const besides = new Map<string, string>();
+  const besideStarts = new Map<string, number>();
+  const BESIDE_STARTS_TRIED = 2;
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A row beside a thread starts a session of its own, as hex in the thread's chat: it takes the row itself, so one that never starts leaves it for another try, and a resumed one waits for its last run to end.
+  async function beside(row: Row & { beside: string; resume?: string }) {
+    const thread = besideWhat(row.beside);
+    const { resume } = row;
+
+    if (
+      closed ||
+      thread === undefined ||
+      !threads.has(thread) ||
+      [...besides.values()].includes(row.key) ||
+      (resume !== undefined &&
+        (besides.has(resume) || kept((store) => sessionsRunning(store).has(resume), true))) ||
+      (besideStarts.get(row.key) ?? 0) >= BESIDE_STARTS_TRIED
+    ) {
+      return;
+    }
+
+    const session = resume ?? randomUUID();
+    const job = row.meta?.schedule ?? row.meta?.user ?? "beside";
+    besides.set(session, row.key);
+    writeBesideSettings(thread);
+
+    const { code, said } = await runBeside(
+      [
+        launcher,
+        "-p",
+        ...(resume === undefined ? ["--session-id", session] : ["--resume", session]),
+        ...extra(thread),
+        "--settings",
+        besideSettingsOf(thread),
+        besidePrompt(app, row, zoneOf(hexDir) ?? Temporal.Now.timeZoneId()),
+      ],
+      {
+        session,
+        cwd: cwdOf(thread),
+        env: { HEX_BESIDE: session },
+        name: `${threads.get(thread)?.name ?? thread}/${job}`,
+      },
+    );
+
+    besides.delete(session);
+
+    if (closed) {
+      return;
+    }
+
+    const taken = kept((store) => store.messages.get(row.key)?.taken, undefined);
+    const why = said === "" ? `exit ${code}` : `exit ${code}: ${said}`;
+
+    if (!taken) {
+      const tries = (besideStarts.get(row.key) ?? 0) + 1;
+      besideStarts.set(row.key, tries);
+      process.stderr.write(`hub: ${row.key} beside ${thread} didn't start (${why})\n`);
+
+      if (tries >= BESIDE_STARTS_TRIED) {
+        failed(thread, `[${job}] couldn't start beside this chat, ${tries} times: ${why}`, true);
+      }
+    } else if (taken.by === session && code !== 0) {
+      failed(thread, `[${job}] ran beside this chat and failed: ${why}`, true);
+    }
+
+    wake();
+  }
+
+  function writeBesideSettings(thread: string) {
+    writeFileSync(
+      besideSettingsOf(thread),
+      JSON.stringify({
+        enabledPlugins: { [plugin]: true },
+        env: {
+          HEX_CHANNEL: channel,
+          HEX_THREAD: thread,
+          HEX_PORT: String(port),
+          HEX_TOKEN: token,
+          HEX_STORE: storeDir,
+          ...(general && thread === main && { HEX_MAIN: "1" }),
+        },
+      }),
+      { mode: 0o600 },
+    );
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -2354,7 +2461,8 @@ export function startHub({
     {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // A tool can send into another thread: what it sends there is still its caller's session's words.
-      call: (thread, tool, toolArgs) => caller.run(thread, () => call(thread, tool, toolArgs)),
+      call: (thread, tool, toolArgs, beside) =>
+        caller.run(beside ?? current(thread), () => call(thread, tool, toolArgs)),
       permission: (thread, request) => permission?.(thread, request),
       open: welcome,
       close: drop,
