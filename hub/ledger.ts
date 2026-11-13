@@ -178,7 +178,7 @@ export class Ledger {
     message: MessageId,
     text: string,
     options: string[],
-    how: Pick<Question, "poll" | "multiple" | "shots"> = {},
+    how: Pick<Question, "poll" | "multiple" | "shots" | "attached"> = {},
   ) {
     this.store.questions.ask({ app: this.app, thread, message, text, options, ...how });
     this.store.questions.replied(this.app, thread, {

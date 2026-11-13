@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import {
+  copyFileSync,
   readFileSync,
   writeFileSync,
   mkdirSync,
@@ -86,6 +87,7 @@ const GUILD_FILE = join(STATE_DIR, "guild.json");
 const CURSOR_FILE = join(STATE_DIR, "cursor.json");
 const ENV_FILE = join(STATE_DIR, ".env");
 const INBOX_DIR = join(STATE_DIR, "inbox");
+const SENT_DIR = join(STATE_DIR, "sent");
 const MAX_CHUNK_LIMIT = 2000;
 
 function readEnvFile(): string {
@@ -588,6 +590,28 @@ async function hear(att: Attachment | undefined): Promise<string | undefined> {
   } catch (error) {
     failed("voice transcription failed")(error);
   }
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Discord's links to a sent file expire, so the pictures hex sends are kept on disk under their message, for the apps that show them later.
+function keepPictures(message: string, files: string[]) {
+  const pictures = files.filter((file) => /\.(?:png|jpe?g)$/iu.test(file));
+
+  if (pictures.length === 0) {
+    return;
+  }
+
+  const dir = join(SENT_DIR, message);
+  mkdirSync(dir, { recursive: true });
+
+  const paths = pictures.map((file, i) => {
+    const copy = join(dir, `${i}-${basename(file)}`);
+    copyFileSync(file, copy);
+
+    return copy;
+  });
+
+  return paths.join("; ");
 }
 
 async function images(attachments: Collection<string, Attachment>): Promise<string[]> {
@@ -1268,7 +1292,8 @@ function serve(token: string) {
             }),
           });
 
-          said(thread, sent.id, content);
+          const pictures = i === 0 ? keepPictures(sent.id, files) : undefined;
+          said(thread, sent.id, content, pictures === undefined ? {} : { image_path: pictures });
           sentIds.push(sent.id);
         }
       } catch (error) {
@@ -1287,7 +1312,10 @@ function serve(token: string) {
       }
 
       if (asks) {
-        ledger.ask(thread, last, text, labels, { multiple });
+        ledger.ask(thread, last, text, labels, {
+          multiple,
+          ...(files.length > 0 && sentIds[0] !== undefined && { attached: [sentIds[0]] }),
+        });
       } else if (text !== "") {
         ledger.said(thread, last, text);
       }

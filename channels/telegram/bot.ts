@@ -950,6 +950,7 @@ const handlers: Handlers<typeof tools> = {
     const silent = args.silent === true ? { disable_notification: true } : {};
     const keyboard = buttons.length > 0 ? { reply_markup: buttonsOf(buttons) } : {};
     const sentIds: number[] = [];
+    const filed: number[] = [];
     let asked: number | undefined;
 
     try {
@@ -1033,6 +1034,7 @@ const handlers: Handlers<typeof tools> = {
         ...held,
       });
       sentIds.push(sent.message_id);
+      filed.push(sent.message_id);
 
       if (buttons.length > 0 && captioned) {
         asked = sent.message_id;
@@ -1042,7 +1044,7 @@ const handlers: Handlers<typeof tools> = {
     const last = sentIds.at(-1);
 
     if (asked !== undefined) {
-      ledger.ask(thread, asked, text, buttons);
+      ledger.ask(thread, asked, text, buttons, { attached: filed });
     } else if (text !== "" && last !== undefined) {
       ledger.said(thread, last, text, quoting);
     }
