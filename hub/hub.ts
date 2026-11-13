@@ -2241,7 +2241,7 @@ export function startHub({
   function drift(thread: string, away: boolean) {
     const run = runOf(thread);
 
-    if (away && onCall.has(run)) {
+    if (away) {
       adrift.add(run);
     } else {
       adrift.delete(run);

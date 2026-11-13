@@ -1095,6 +1095,18 @@ test("hanging up a call the engine can't reach holds the hub again until its clo
   await engine.hangUp();
   await until(() => drifts(engine).length === 2, 5000);
   expect(drifts(engine)).toEqual(["adrift", "back"]);
+  expect(await ends(engine, 20)).toMatchObject({ end: "you" });
+}, 40_000);
+
+test("a call whose connection drops and comes right back holds up the hub's restart or stop the whole time", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.cut("open");
+  await until(() => engine.attaches() === 2, 5000);
+  await Bun.sleep(500);
+  expect(drifts(engine)).toEqual([]);
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
 }, 20_000);
 
 const Created = z.object({

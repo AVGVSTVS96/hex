@@ -1750,8 +1750,9 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-/* While the engine can't reach a call nobody hung up, nothing of the call runs here, and after a
-   restart the engine picks it back up, so it doesn't hold up the hub's restart or stop. */
+/* Once the engine has failed to reach a call nobody hung up, nothing of the call runs here, and
+   after a restart the engine picks it back up, so it doesn't hold up the hub's restart or stop. The
+   hub hears it at once, not after a keep still waiting on a session that may never start. */
 function adrift(call: Live, away: boolean) {
   if ((call.adrift === true) === away) {
     return;
@@ -1763,9 +1764,7 @@ function adrift(call: Live, away: boolean) {
     delete call.adrift;
   }
 
-  toHub(() => {
-    hub.adrift(away);
-  });
+  hub.adrift(away);
 }
 
 function reconnect(call: Live, attempt: number) {
@@ -1797,8 +1796,6 @@ function reconnect(call: Live, attempt: number) {
   if (attempt === 0 || call.unattached === undefined) {
     call.unattached = Date.now();
   }
-
-  adrift(call, !hungUp);
 
   const was = sessionOf(call);
   const moved = () => live !== call || sessionOf(call) !== was || call.lost !== undefined;
@@ -1851,6 +1848,7 @@ function reconnect(call: Live, attempt: number) {
           trace(`${was} wasn't served for ${GRACE / 1000}s and nothing carried ${call.id} on`);
           finish(call, "connection_lost");
         } else {
+          adrift(call, !filled(call.closing));
           reconnect(call, attempt + 1);
         }
       };
