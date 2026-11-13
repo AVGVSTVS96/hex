@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { clock, drain, nap, observe, within } from "./observe.ts";
+import { clock, drain, nap, observe, record, within } from "./observe.ts";
 import type { Answer, Pass } from "./observe.ts";
 import { open } from "./store.ts";
 
@@ -442,4 +450,32 @@ printf '%s %s\\n' "$2" "$3" > "${dir}/napped"
   const failed = nap(napper, () => Promise.reject(new Error("API Error: 529")));
   expect(await failed.then(() => "", String)).toContain("529");
   expect(existsSync(join(dir, "napped"))).toBe(false);
+});
+
+test("what the memory agent wrote is committed in the owner's folder, leaving what others staged", () => {
+  const home = join(dir, "home");
+
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", home, ...args])
+      .stdout.toString()
+      .trim();
+
+  mkdirSync(join(home, "memory"), { recursive: true });
+  git("init", "--quiet");
+  git("config", "user.name", "owner");
+  git("config", "user.email", "owner@example.com");
+  git("config", "commit.gpgsign", "false");
+  writeFileSync(join(home, "memory", "LOG.txt"), "#1 a memory\n");
+  writeFileSync(join(home, "AGENTS.md"), "a rule\n");
+  git("add", "AGENTS.md");
+
+  record(join(home, "memory"));
+
+  expect(git("show", "--name-only", "--format=%s", "HEAD")).toBe(
+    "chore(memory): record what happened\n\nmemory/LOG.txt",
+  );
+  expect(git("diff", "--cached", "--name-only")).toBe("AGENTS.md");
+
+  record(join(home, "memory"));
+  expect(git("rev-list", "--count", "HEAD")).toBe("1");
 });

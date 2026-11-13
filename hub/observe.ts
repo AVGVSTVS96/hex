@@ -508,6 +508,21 @@ export function ended(state: string, session: string, last?: string) {
   queue(state, { session, by: new Date().toISOString(), thread: HEX_THREAD });
 }
 
+export function record(memory: string | undefined) {
+  if (!given(memory)) {
+    return;
+  }
+
+  const git = (...args: string[]) =>
+    Bun.spawnSync(["git", "-C", memory, ...args], { stdout: "ignore", stderr: "ignore" })
+      .exitCode === 0;
+
+  if (git("add", "--all", "--", ".")) {
+    git("commit", "--quiet", "--message", "chore(memory): record what happened", "--", ".");
+  }
+}
+
 if (import.meta.main && given(process.env.HEX_PASS)) {
   await drain(stateDir());
+  record(process.env.MEMORY_DIR);
 }
