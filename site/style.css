@@ -116,13 +116,13 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
 /* Buttons */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid transparent;
+  height: 44px; padding: 0 18px; border-radius: 14px; border: 1px solid transparent;
   font: 500 15px/1 var(--sans); white-space: nowrap;
   transition: background-color .15s ease, border-color .15s ease, transform .12s var(--ease);
 }
 .btn:active { transform: scale(0.97); }
 .btn svg { width: 16px; height: 16px; }
-.btn-sm { height: 34px; padding: 0 14px; font-size: 14px; border-radius: 8px; }
+.btn-sm { height: 34px; padding: 0 14px; font-size: 14px; border-radius: 11px; }
 .btn-ink { background: var(--ink); color: var(--bg); }
 .btn-accent { background: var(--accent); color: var(--accent-ink); box-shadow: inset 0 1px 0 rgb(255 255 255 / .18), 0 1px 2px rgb(43 62 255 / .3), 0 6px 16px -6px rgb(43 62 255 / .55); }
 .btn-ghost { border-color: var(--line-2); background: var(--surface); color: var(--ink); box-shadow: var(--shadow-sm); }
@@ -131,14 +131,13 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
   .btn-accent:hover { background: color-mix(in srgb, var(--accent) 90%, #000); }
   .btn-ghost:hover { border-color: var(--faint); }
 }
-.icon-btn { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: var(--muted); transition: color .15s, background-color .15s; }
+.icon-btn { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; color: var(--muted); transition: color .15s, background-color .15s; }
 .icon-btn svg { width: 18px; height: 18px; }
 @media (hover: hover) { .icon-btn:hover { color: var(--ink); background: var(--bg-2); } }
 
 /* Nav */
 .nav {
   position: sticky; top: 0; z-index: 20;
-  border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--bg) 82%, transparent);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
@@ -147,7 +146,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
 .nav-mark { display: block; color: var(--ink); }
 .nav-mark svg { width: 56px; height: 19px; }
 .nav-links { display: flex; gap: 4px; }
-.nav-links a { padding: 7px 10px; border-radius: 7px; color: var(--muted); font-size: 14px; transition: color .15s, background-color .15s; }
+.nav-links a { padding: 7px 10px; border-radius: 10px; color: var(--muted); font-size: 14px; transition: color .15s, background-color .15s; }
 @media (hover: hover) { .nav-links a:hover { color: var(--ink); background: var(--bg-2); } }
 .nav-end { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 
