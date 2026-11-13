@@ -98,6 +98,7 @@ const slow = new Set<number>();
 const landed: Payload[] = [];
 let deliver: (update: Update) => Promise<void>;
 let started: PollingOptions | undefined;
+let stopped = false;
 let nextMessage = 100;
 let nextUpdate = 1;
 let throttled = 0;
@@ -258,6 +259,11 @@ class Bot extends grammy.Bot {
     started = options;
     deliver = (incoming) => this.handleUpdate(incoming);
     await options?.onStart?.(hex);
+  }
+
+  override async stop() {
+    await super.stop();
+    stopped = true;
   }
 }
 
@@ -1702,4 +1708,9 @@ test("set_model sets what the thread's next message starts with, when the user t
   expect((await call("set_model", { model: "gpt" })).error).toMatch(
     /expected one of "opus"\|"sonnet"\|"haiku"\|"fable"/u,
   );
+});
+
+test("a stop ends polling before the hub waits out a live call, so the next hub, maybe on another machine, gets every message", async () => {
+  await clients.get("telegram")?.deafen?.();
+  expect(stopped).toBe(true);
 });
