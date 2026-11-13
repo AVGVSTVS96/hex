@@ -1860,7 +1860,14 @@ const file = (id: string) => {
   return kept;
 };
 
-clients.set("telegram", { hub, place, backfill, file });
+let deaf = false;
+
+const deafen = async () => {
+  deaf = true;
+  await bot.stop();
+};
+
+clients.set("telegram", { hub, place, backfill, file, deafen });
 
 bot.on(["message:forum_topic_created", "message:forum_topic_edited"], (ctx) => {
   if (ctx.chat.type === "private") {
@@ -2665,5 +2672,9 @@ for (;;) {
       `telegram hub: ${is409 ? "409 Conflict, another poller holds this token" : `polling error: ${String(error)}`}, retrying in ${delay / 1000}s\n`,
     );
     await Bun.sleep(delay);
+
+    if (deaf) {
+      break;
+    }
   }
 }

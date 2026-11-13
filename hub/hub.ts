@@ -280,6 +280,9 @@ export type Client = {
   // What the client does as the hub stops, once no call is live.
   close?: () => Promise<void>;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A stop hands the owner's messages to the hub that runs next, maybe on the cloud twin, so the client stops taking them in at once, while a live call still holds this hub.
+  deafen?: () => Promise<void>;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The owner's stop as the client's own Stop does it, when it keeps state of its own about a turn.
   stop?: (thread: string) => void;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
