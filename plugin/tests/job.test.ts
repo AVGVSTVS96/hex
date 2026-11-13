@@ -402,9 +402,12 @@ test("a job's output is kept in a file of its own, and its end brings the last o
   expect(said("unkept")).toContain("Its output wasn't kept.");
 });
 
-test("a job that runs already is refused", () => {
+test("a job that runs already is refused, and what it printed so far is kept", () => {
+  mkdirSync(join(home, "state/jobs"), { recursive: true });
+  writeFileSync(join(home, "state/jobs/busy.log"), "halfway\n");
   writeFileSync(join(home, "active.txt"), "busy\n");
   expect(run(["busy", "make"], session).code).toBe(1);
+  expect(readFileSync(join(home, "state/jobs/busy.log"), "utf-8")).toBe("halfway\n");
   rmSync(join(home, "active.txt"));
 });
 

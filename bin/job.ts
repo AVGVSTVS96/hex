@@ -264,10 +264,6 @@ if (mode === "--ended") {
     kept.session = ownIdToResumeBy;
   }
 
-  mkdirSync(records, { recursive: true });
-  writeFileSync(join(records, `${mode}.log`), "");
-  pruneOldLogs();
-
   await launch(
     mode,
     kept,
@@ -278,6 +274,7 @@ if (mode === "--ended") {
         .filter((arg, at, args) => arg !== "--session-id" && args[at - 1] !== "--session-id"),
     ],
     input,
+    true,
   );
 }
 
@@ -334,8 +331,12 @@ function endOf(path: string) {
 
 function pruneOldLogs() {
   for (const file of readdirSync(records).filter((each) => each.endsWith(".log"))) {
-    if (Date.now() - statSync(join(records, file)).mtimeMs > LOGS_KEPT_FOR_THEIR_THREADS_MS) {
-      rmSync(join(records, file), { force: true });
+    const log = join(records, file);
+    const running = existsSync(log.replace(/\.log$/u, ".json"));
+    const written = statSync(log, { throwIfNoEntry: false })?.mtimeMs ?? Date.now();
+
+    if (!running && Date.now() - written > LOGS_KEPT_FOR_THEIR_THREADS_MS) {
+      rmSync(log, { force: true });
     }
   }
 }
@@ -374,7 +375,13 @@ function flags(args: string[]) {
   return kept;
 }
 
-async function launch(unit: string, kept: Kept, args: string[], input: string[] = []) {
+async function launch(
+  unit: string,
+  kept: Kept,
+  args: string[],
+  input: string[] = [],
+  fresh = false,
+) {
   if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) {
     console.error(`job: ${unit} already runs`);
     process.exit(1);
@@ -392,6 +399,11 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
   writeFileSync(record, JSON.stringify(kept));
 
   const log = join(records, `${unit}.log`);
+
+  if (fresh) {
+    writeFileSync(log, "");
+    pruneOldLogs();
+  }
 
   const agent = basename(kept.command[0] ?? "") === "claude";
   const name = `${store.threads.names()[store.threads.key(kept.owner)] ?? store.threads.key(kept.owner)}/${unit}`;
