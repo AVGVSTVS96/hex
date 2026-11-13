@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { besideOf } from "./beside.ts";
 import { open } from "./store.ts";
 
 const RESTART_SCHEDULED = "5eb03494b6584870a536b337290809b3";
@@ -78,7 +79,7 @@ export function restarts(
 
     store.messages.deliver({
       key: `restarts:${day}`,
-      to: main,
+      to: besideOf(main),
       from: "restarts",
       author: "prompt",
       body: `[restarts] ${unit} keeps failing: systemd has restarted it ${count} times today. \`journalctl --user -u ${unit}\` shows why.`,

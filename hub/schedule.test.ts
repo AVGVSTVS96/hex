@@ -60,13 +60,13 @@ function takeAll() {
   }
 }
 
-test("a job fires at its minute on the owner's clock, once, to the main thread", () => {
+test("a job fires at its minute on the owner's clock, once, beside the main thread", () => {
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
   expect(checkEachMinuteAndListFired(at(18, 14, 40), at(18, 14, 50))).toEqual([
     "schedule:heartbeat@2026-10-18T21:45Z",
   ]);
   expect(open(dir).messages.get("schedule:heartbeat@2026-10-18T21:45Z")).toMatchObject({
-    to: "general",
+    to: "beside:general",
     from: "schedule",
     body: "[heartbeat] Hourly check",
   });
@@ -174,6 +174,7 @@ test("a broken schedules.json fires nothing, says why once, and its jobs catch u
   const [broken, ...rest] = open(dir).messages.untaken();
   expect(rest).toEqual([]);
   expect(broken?.body).toContain('"hourly" is not a five-field cron expression');
+  expect(broken?.to).toBe("beside:general");
   takeAll();
   jobs({ heartbeat: { cron: "45 * * * *", prompt: "Hourly check" } });
   check(dir, hexDir, "general", at(18, 9, 51));
@@ -247,28 +248,18 @@ test("a job that names an idea is handed to its check every minute, with its slo
   expect(fired()).toEqual([]);
 });
 
-test("a check job fires nothing itself, and its check gets the slot that came due", () => {
+test("a check job runs beside its thread, where a job with a thread runs in it", () => {
   expect(() =>
     parse(JSON.stringify({ broken: { cron: "45 * * * *", check: "yes", prompt: "x" } })),
   ).toThrow("check must be true or false");
   jobs({
-    heartbeat: { cron: "45 * * * *", check: true, prompt: "Check my mail." },
-    standup: { cron: "45 * * * *", prompt: "Standup." },
+    mail: { cron: "45 * * * *", check: true, thread: "topic", prompt: "Check my mail." },
+    standup: { cron: "45 * * * *", thread: "topic", prompt: "Standup." },
   });
-  const checked: [string, number | undefined][] = [];
+  check(dir, hexDir, "general", at(19, 8, 44));
+  check(dir, hexDir, "general", at(19, 8, 45));
+  const slot = `${new Date(at(19, 8, 45) * 60_000).toISOString().slice(0, 16)}Z`;
 
-  for (let minute = at(19, 8, 44); minute <= at(19, 8, 46); minute++) {
-    check(dir, hexDir, "general", minute, (_, name, __, ___, slot) => {
-      checked.push([name, slot]);
-    });
-  }
-
-  expect(checked).toEqual([
-    ["heartbeat", undefined],
-    ["heartbeat", at(19, 8, 45)],
-    ["heartbeat", undefined],
-  ]);
-  expect(fired()).toEqual([
-    `schedule:standup@${new Date(at(19, 8, 45) * 60_000).toISOString().slice(0, 16)}Z`,
-  ]);
+  expect(open(dir).messages.get(`schedule:mail@${slot}`)?.to).toBe("beside:topic");
+  expect(open(dir).messages.get(`schedule:standup@${slot}`)?.to).toBe("topic");
 });

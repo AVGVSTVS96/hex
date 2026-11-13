@@ -34,7 +34,7 @@ const journal = (...lines: string[]) => {
 const prompts = () =>
   store.messages
     .since()
-    .filter((message) => message.from === "restarts" && message.to === "-100:1")
+    .filter((message) => message.from === "restarts" && message.to === "beside:-100:1")
     .map((message) => message.body);
 
 beforeEach(() => {

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { besideOf } from "./beside.ts";
 import { study } from "./ideas.ts";
 import { open } from "./store.ts";
 import { zoneOf } from "./zone.ts";
@@ -205,7 +206,7 @@ export function check(
 
     store.messages.deliver({
       key: `schedule:broken@${Bun.hash(text).toString(36)}`,
-      to: main,
+      to: besideOf(main),
       from: "schedule",
       author: "prompt",
       body,
@@ -254,11 +255,13 @@ export function check(
     for (const [name, minute] of slots) {
       const job = jobs[name];
 
-      if (job !== undefined && job.idea === undefined && job.check !== true) {
+      if (job !== undefined && job.idea === undefined) {
         store.scheduler.fire(
           name,
           minute,
-          job.thread ?? main,
+          job.thread === undefined || job.check === true
+            ? besideOf(job.thread ?? main)
+            : job.thread,
           `[${name}] ${job.prompt}`,
           minute < now,
         );
@@ -269,8 +272,8 @@ export function check(
   });
 
   for (const [name, job] of Object.entries(jobs)) {
-    if (job.idea !== undefined || job.check === true) {
-      research(storeDir, name, job, main, slots.get(name));
+    if (job.idea !== undefined) {
+      research(storeDir, name, { ...job, idea: job.idea }, main, slots.get(name));
     }
   }
 }

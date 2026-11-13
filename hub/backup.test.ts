@@ -151,7 +151,7 @@ test("the hub backs up the last night it missed at its start, and a failed one t
   stop();
   const day = failed.key.slice("backup:failed@".length);
   expect(failed).toMatchObject({
-    to: "general",
+    to: "beside:general",
     body: `[backup] hex couldn't back up state/hex.db for ${day}: cloud didn't take it: no such sprite. The next try is at 3:00.`,
   });
   expect(readdirSync(join(dir, "backups"))).toEqual([`hex-${day}.db`]);
