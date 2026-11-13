@@ -35,9 +35,11 @@ const WhatAJobNeedsToRunAgain = z.object({
   command: z.array(z.string()),
   session: z.string().optional(),
   input: z.array(z.string()).optional(),
+  machine: z.string().optional(),
+  startedOver: z.boolean().optional(),
 });
 
-const StoppedBecause = z.enum(["moved", "shutdown", ""]);
+const StoppedBecause = z.enum(["moved", "shutdown", "ended", ""]);
 
 type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 
@@ -141,14 +143,19 @@ if (mode === "--owner") {
 } else if (mode === "--ended") {
   const [unit = "", owner = ""] = rest;
 
-  const stopped = existsSync(join(stateDir(), "moving"))
-    ? "moved"
-    : (await $`systemctl is-system-running`.nothrow().text()).trim() === "stopping"
-      ? "shutdown"
-      : undefined;
+  const finishedByItself = process.env.EXIT_CODE === "exited" && process.env.EXIT_STATUS === "0";
 
-  if (stopped !== undefined) {
-    store.seen.show(`job:${unit}`, "stopped", stopped);
+  const stopped = finishedByItself
+    ? "ended"
+    : existsSync(join(stateDir(), "moving"))
+      ? "moved"
+      : (await $`systemctl is-system-running`.nothrow().text()).trim() === "stopping"
+        ? "shutdown"
+        : "ended";
+
+  store.seen.show(`job:${unit}`, "stopped", stopped);
+
+  if (stopped !== "ended") {
     process.exit(0);
   }
 
@@ -212,25 +219,44 @@ if (mode === "--owner") {
 
     rmSync(join(records, file));
 
-    const why = {
-      moved: "hex moved to another machine",
-      shutdown: "the machine it ran on shut down",
-      "": "the machine it ran on went down",
-    }[StoppedBecause.catch("").parse(store.seen.get(`job:${recorded}`, "stopped"))];
+    const mark = StoppedBecause.catch("").parse(store.seen.get(`job:${recorded}`, "stopped"));
 
     store.seen.unshow(`job:${recorded}`, "stopped");
 
+    if (mark === "ended") {
+      continue;
+    }
+
+    const ranOn = kept.machine ?? "the machine";
+    const movedHere = mark === "moved" || (isSet(kept.machine) && kept.machine !== here);
+
+    const why = movedHere
+      ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}`
+      : mark === "shutdown"
+        ? `${ranOn} shut down`
+        : `${ranOn} went down`;
+
     const resumes = valueAfter(kept.command, /^(--resume|-r)$/u);
-    const session = kept.session ?? resumes;
-    const conversation = isSet(session) && saved(session);
+    const forks = kept.command.includes("--fork-session");
+    const continues = kept.command.some((arg) => /^(--continue|-c)$/u.test(arg));
+    const session = kept.session ?? (forks ? undefined : resumes);
     const agent = basename(kept.command[0] ?? "") === "claude";
+    const conversation = agent && isSet(session) && saved(session);
     const command = kept.command.join(" ");
 
-    if (agent && !conversation && !isSet(session)) {
+    const leftToItsOwner = conversation
+      ? undefined
+      : agent && (continues || !isSet(session))
+        ? "it would continue the folder's latest conversation, which is another one now"
+        : kept.startedOver === true
+          ? "it had already started over once, and starting it again could repeat what stopped it"
+          : undefined;
+
+    if (leftToItsOwner !== undefined) {
       tell(
         recorded,
         kept.owner,
-        `stopped because ${why}, and hasn't run since: it continued the folder's latest conversation, which is another one now. Start it again if its work still needs doing: ${command}`,
+        `stopped because ${why}, and hasn't run since: ${leftToItsOwner}. Start it again if its work still needs doing: ${command}`,
         `${at}:again`,
       );
       continue;
@@ -252,7 +278,12 @@ if (mode === "--owner") {
         ]
       : startArgs(kept);
 
-    const started = await launch(recorded, kept, args, conversation ? [] : (kept.input ?? []));
+    const started = await launch(
+      recorded,
+      conversation ? kept : { ...kept, startedOver: true },
+      args,
+      conversation ? [] : (kept.input ?? []),
+    );
 
     const said =
       started === 0
@@ -337,6 +368,7 @@ if (mode === "--owner") {
     kept.input = input;
   }
 
+  store.seen.unshow(`job:${mode}`, "stopped");
   process.exitCode = await launch(mode, kept, startArgs(kept), input, true);
 }
 
@@ -501,7 +533,7 @@ async function launch(
 
   const record = keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns;
 
-  writeFileSync(record, JSON.stringify(kept));
+  writeFileSync(record, JSON.stringify({ ...kept, machine: hostname() }));
 
   const log = join(records, `${unit}.log`);
 
@@ -517,7 +549,9 @@ async function launch(
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];
 
   const started =
-    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
+    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`
+      .cwd(existsSync(kept.cwd) ? kept.cwd : process.cwd())
+      .nothrow();
 
   if (started.exitCode !== 0) {
     rmSync(record, { force: true });

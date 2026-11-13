@@ -11,7 +11,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -30,6 +30,8 @@ const home = mkdtempSync(join(tmpdir(), "job-"));
 const job = join(home, ".hex/bin/job");
 const ran = join(home, "ran.json");
 const launches = join(home, "launches.jsonl");
+const folders = join(home, "folders.txt");
+const here = hostname();
 
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -74,7 +76,11 @@ beforeAll(() => {
   mkdirSync(join(home, "fake"));
   writeFileSync(
     join(home, "fake/systemd-run"),
-    `#!/bin/sh\njq -cn '$ARGS.positional' --args -- "$@" | tee "${ran}" >> "${launches}"\n`,
+    `#!/bin/sh
+case "$*" in *--unit=refused*) exit 1 ;; esac
+jq -cn '$ARGS.positional' --args -- "$@" | tee "${ran}" >> "${launches}"
+pwd >> "${folders}"
+`,
   );
   chmodSync(join(home, "fake/systemd-run"), 0o755);
   writeFileSync(
@@ -460,6 +466,7 @@ const told = (like: string) =>
 
 function resume(config: string) {
   rmSync(launches, { force: true });
+  rmSync(folders, { force: true });
 
   const resumed = Bun.spawnSync(["bun", job, "--resume"], {
     cwd: home,
@@ -469,9 +476,10 @@ function resume(config: string) {
 
   expect(resumed.exitCode).toBe(0);
 
-  const started = readFileSync(launches, "utf-8")
+  const started = (existsSync(launches) ? readFileSync(launches, "utf-8") : "")
     .trim()
     .split("\n")
+    .filter(Boolean)
     .map((line) => Args.parse(JSON.parse(line)));
 
   return new Map(
@@ -482,9 +490,12 @@ function resume(config: string) {
   );
 }
 
-const end = (unit: string) =>
+const stoppedByASignal = { EXIT_CODE: "killed", EXIT_STATUS: "TERM" };
+const finishedByItself = { EXIT_CODE: "exited", EXIT_STATUS: "0" };
+
+const end = (unit: string, how = stoppedByASignal) =>
   Bun.spawnSync(["bun", job, "--ended", unit, "t3:stray-key"], {
-    env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}` },
+    env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, ...how },
   });
 
 test("a job the machine going down stopped carries on as hex starts: a claude job in its own conversation, any other job from the beginning", () => {
@@ -526,7 +537,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     "--resume",
     "s-1",
   ]);
-  expect(atrium.at(-1)).toContain("the machine it ran on went down");
+  expect(atrium.at(-1)).toContain(`because ${here} went down; hex runs on ${here} now`);
   expect(atrium.at(-1)).toContain("carry on");
   const early = started.get("early") ?? [];
   expect(early.slice(early.indexOf("--") + 2)).toEqual([
@@ -545,11 +556,11 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   const ends: unknown[] = told("%stopped because%").toSorted();
   expect(ends).toEqual([
     containing(
-      "[job] atrium stopped because the machine it ran on went down, and carried on in its own conversation as hex started on",
+      `[job] atrium stopped because ${here} went down, and carried on in its own conversation as hex started on ${here}`,
     ),
-    containing("[job] early stopped because the machine it ran on went down, and started over"),
+    containing(`[job] early stopped because ${here} went down, and started over`),
     containing(
-      "[job] make stopped because the machine it ran on shut down, and started over from the beginning as hex started on",
+      `[job] make stopped because ${here} shut down, and started over from the beginning as hex started on ${here}`,
     ),
   ]);
   rmSync(join(home, "active.txt"));
@@ -562,7 +573,13 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   mkdirSync(join(config, "projects/-pick"), { recursive: true });
   writeFileSync(join(config, "projects/-pick/r-1.jsonl"), "{}\n");
   run(["pick", "claude", "-p", "--resume", "r-1", "--model", "opus", "pick up"], session);
-  run(["checks", "./checks.sh", "--all"], session);
+  const project = mkdtempSync(join(home, "checks-"));
+  run(["checks", "./checks.sh", "--all"], session, project);
+  run(["done", "make", "all"], session);
+  run(["over", "make", "all"], session);
+  const overRecord = readFileSync(join(jobs, "over.json"), "utf-8");
+  end("over", finishedByItself);
+  writeFileSync(join(jobs, "over.json"), overRecord);
   run(["piped", "claude", "-p", "--model", "opus"], session, home, "Build the Usage tab.\n");
   writeFileSync(join(home, "state/moving"), "");
 
@@ -574,6 +591,8 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   });
 
   expect(records).toEqual([true, true, true]);
+  end("done", finishedByItself);
+  expect(existsSync(join(jobs, "done.json"))).toBe(false);
 
   rmSync(join(home, "state/moving"));
 
@@ -593,16 +612,25 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
     "--resume",
     "r-1",
   ]);
-  expect(pick.at(-1)).toContain("hex moved to another machine");
+  expect(pick.at(-1)).toContain(`hex moved to ${here}`);
   expect(pick.at(-1)).toContain("pick up");
   const checks = started.get("checks") ?? [];
   expect(checks.slice(checks.indexOf("--"))).toEqual(["--", "./checks.sh", "--all"]);
+  expect(readFileSync(folders, "utf-8").split("\n")).toContain(project);
   const piped = started.get("piped") ?? [];
   expect(Buffer.from(value(piped, "StandardInputData") ?? "", "base64").toString()).toBe(
     "Build the Usage tab.\n",
   );
-  expect(told("%hex moved to another machine%")).toHaveLength(3);
+  expect(told("%hex moved to%")).toHaveLength(3);
   expect(told("%went down%").filter((body) => /\b(pick|checks|piped)\b/u.test(body))).toEqual([]);
+  expect(told("%[job] done ended%")).toHaveLength(1);
+  expect(told("%[job] over stopped%")).toEqual([]);
+
+  writeFileSync(join(home, "state/moving"), "");
+  end("checks");
+  rmSync(join(home, "state/moving"));
+  expect(resume(config).has("checks")).toBe(false);
+  expect(told("%[job] checks stopped%").at(-1)).toContain("had already started over once");
 });
 
 test("a job that can't come back as it was is told to its owner, and a bad or conflicting record holds up no other job", () => {
@@ -615,7 +643,7 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
   mkdirSync(jobs, { recursive: true });
   writeFileSync(join(jobs, "broken.json"), "{");
   writeFileSync(
-    join(jobs, "older.json"),
+    join(jobs, "olden.json"),
     JSON.stringify({
       owner: "t3:stray-key",
       cwd: home,
@@ -623,16 +651,51 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
       command: ["claude", "-p", "--resume", "o-1", "first words"],
     }),
   );
-  writeFileSync(join(jobs, "older.sync-conflict-20261113-010055-ABC.json"), "{}");
+  writeFileSync(join(jobs, "olden.sync-conflict-20261113-010055-ABC.json"), "{}");
+  const owned = { owner: "t3:stray-key", cwd: home, properties: [] };
+  writeFileSync(
+    join(jobs, "forked.json"),
+    JSON.stringify({
+      ...owned,
+      command: ["claude", "-p", "--resume", "o-1", "--fork-session", "x"],
+    }),
+  );
+  writeFileSync(
+    join(jobs, "twice.json"),
+    JSON.stringify({ ...owned, command: ["make", "all"], startedOver: true }),
+  );
+  writeFileSync(join(jobs, "refused.json"), JSON.stringify({ ...owned, command: ["make", "all"] }));
+  writeFileSync(
+    join(jobs, "away.json"),
+    JSON.stringify({ ...owned, command: ["make", "all"], machine: "elsewhere" }),
+  );
 
   const started = resume(config);
 
-  expect([...started.keys()]).toEqual(["older"]);
-  const older = started.get("older") ?? [];
-  expect(older.slice(older.indexOf("--") + 2, -1)).toEqual(["hex/older", "-p", "--resume", "o-1"]);
-  const latest: unknown[] = told("%[job] latest stopped%");
-  expect(latest).toEqual([
-    containing("hasn't run since: it continued the folder's latest conversation"),
+  expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
+    "away",
+    "olden",
+  ]);
+
+  const olden = started.get("olden") ?? [];
+  expect(olden.slice(olden.indexOf("--") + 2, -1)).toEqual(["hex/olden", "-p", "--resume", "o-1"]);
+
+  const left: unknown[] = told("%hasn't run since%")
+    .filter((body) => /\[job\] (latest|forked|twice) /u.test(body))
+    .toSorted();
+
+  expect(left).toEqual([
+    containing(
+      "[job] forked stopped because the machine went down, and hasn't run since: it would",
+    ),
+    containing("[job] latest stopped"),
+    containing("[job] twice stopped because the machine went down, and hasn't run since: it had"),
+  ]);
+  const refused: unknown[] = told("%[job] refused stopped%");
+  expect(refused).toEqual([containing("couldn't start again")]);
+  const away: unknown[] = told("%[job] away stopped%");
+  expect(away).toEqual([
+    containing(`because hex moved from elsewhere to ${here}, and started over`),
   ]);
   expect(existsSync(join(jobs, "broken.json"))).toBe(true);
 });
