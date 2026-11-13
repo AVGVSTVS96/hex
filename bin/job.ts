@@ -1,11 +1,15 @@
 #!/usr/bin/env bun
 import {
+  closeSync,
   existsSync,
   fstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -30,6 +34,11 @@ const WhatAJobNeedsToRunAgain = z.object({
 });
 
 type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
+
+const LINES_OF_OUTPUT = 40;
+const CHARACTERS_OF_OUTPUT = 4000;
+const BYTES_READ_FOR_THE_END = 64 * 1024;
+const LOGS_KEPT_FOR_THEIR_THREADS_MS = 7 * 24 * 60 * 60 * 1000;
 
 const isSet = (value?: string): value is string => value !== undefined && value !== "";
 
@@ -98,8 +107,11 @@ if (mode === "--ended") {
     process.exit(0);
   }
 
+  const session = keptSession(unit);
+
   rmSync(join(records, `${unit}.json`), { force: true });
 
+  const output = lastOutput(unit);
   const key = owner.slice(owner.indexOf(":") + 1);
 
   if (!store.threads.list().some(({ thread }) => thread === key)) {
@@ -111,10 +123,14 @@ if (mode === "--ended") {
   const result = process.env.SERVICE_RESULT ?? "unknown";
   const status = process.env.EXIT_STATUS ?? "?";
 
+  const check = isSet(session)
+    ? `That's the agent's own account, not proof: check what it says against the real thing (files, commits, links, what's live) before you pass any of it on. Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``
+    : "Check what it shows against the real thing before you report it.";
+
   tell(
     unit,
     owner,
-    `ended: ${result} (exit ${status}). Check its output and report it.`,
+    `ended: ${result} (exit ${status}).\n${output}\n${check}`,
     process.env.INVOCATION_ID ?? `${Date.now()}`,
   );
 } else if (mode === "--waiting") {
@@ -258,7 +274,71 @@ if (mode === "--ended") {
         .filter((arg, at, args) => arg !== "--session-id" && args[at - 1] !== "--session-id"),
     ],
     input,
+    true,
   );
+}
+
+function keptSession(unit: string) {
+  try {
+    const kept: unknown = JSON.parse(readFileSync(join(records, `${unit}.json`), "utf-8"));
+
+    return WhatAJobNeedsToRunAgain.safeParse(kept).data?.session ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function lastOutput(unit: string) {
+  const log = join(records, `${unit}.log`);
+  let lines: string[];
+
+  try {
+    lines = endOf(log).trimEnd().split("\n").filter(Boolean);
+  } catch {
+    return "Its output wasn't kept.";
+  }
+
+  if (lines.length === 0) {
+    return "It printed nothing.";
+  }
+
+  const shown = lines.slice(-LINES_OF_OUTPUT);
+
+  while (shown.length > 1 && shown.join("\n").length > CHARACTERS_OF_OUTPUT) {
+    shown.shift();
+  }
+
+  const text = shown.join("\n").slice(-CHARACTERS_OF_OUTPUT);
+  const cut = shown.length < lines.length || text.length < shown.join("\n").length;
+  const earlier = cut ? `, all of it in ${log}` : "";
+
+  return `What it printed last${earlier}:\n<output>\n${text}\n</output>`;
+}
+
+function endOf(path: string) {
+  const fd = openSync(path, "r");
+
+  try {
+    const size = fstatSync(fd).size;
+    const bytes = Buffer.alloc(Math.min(size, BYTES_READ_FOR_THE_END));
+    readSync(fd, bytes, 0, bytes.length, size - bytes.length);
+
+    return bytes.toString("utf-8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function pruneOldLogs() {
+  for (const file of readdirSync(records).filter((each) => each.endsWith(".log"))) {
+    const log = join(records, file);
+    const running = existsSync(log.replace(/\.log$/u, ".json"));
+    const written = statSync(log, { throwIfNoEntry: false })?.mtimeMs ?? Date.now();
+
+    if (!running && Date.now() - written > LOGS_KEPT_FOR_THEIR_THREADS_MS) {
+      rmSync(log, { force: true });
+    }
+  }
 }
 
 function readdir(dir: string) {
@@ -295,7 +375,13 @@ function flags(args: string[]) {
   return kept;
 }
 
-async function launch(unit: string, kept: Kept, args: string[], input: string[] = []) {
+async function launch(
+  unit: string,
+  kept: Kept,
+  args: string[],
+  input: string[] = [],
+  fresh = false,
+) {
   if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) {
     console.error(`job: ${unit} already runs`);
     process.exit(1);
@@ -312,6 +398,13 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
 
   writeFileSync(record, JSON.stringify(kept));
 
+  const log = join(records, `${unit}.log`);
+
+  if (fresh) {
+    writeFileSync(log, "");
+    pruneOldLogs();
+  }
+
   const agent = basename(kept.command[0] ?? "") === "claude";
   const name = `${store.threads.names()[store.threads.key(kept.owner)] ?? store.threads.key(kept.owner)}/${unit}`;
   const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command;
@@ -319,7 +412,7 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];
 
   const started =
-    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
+    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
 
   if (started.exitCode === 0) {
     return;

@@ -78,7 +78,7 @@ git worktree add -q --detach "$check" "$incoming"
 if ! output=$("$check/bin/check" 2>&1); then
   printf '%s\n' "$output"
   echo "not updated: hex $(git rev-parse --short "$incoming") fails bin/check"
-  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex $(git rev-parse --short "$incoming") fails bin/check, so hex stays on $before; its output is in journalctl --user -u hex-update"
+  [ "$mode" != --when-quiet ] || tell all "didn't ship: hex $(git rev-parse --short "$incoming") fails bin/check, so hex stays on $before; its output is in $home/state/jobs/hex-update.log"
   exit 1
 fi
 
