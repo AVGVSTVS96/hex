@@ -67,7 +67,9 @@ export function waiting(question: Question, named: Record<string, string> = {}):
 
   const ref =
     question.app === "telegram"
-      ? `telegram:${question.thread.split(":")[0] ?? ""}:${whereItWaits}`
+      ? String(whereItWaits).startsWith("telegram:")
+        ? String(whereItWaits)
+        : `telegram:${question.thread.split(":")[0] ?? ""}:${whereItWaits}`
       : `message ${whereItWaits}`;
 
   const text =

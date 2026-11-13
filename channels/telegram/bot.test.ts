@@ -342,6 +342,7 @@ beforeAll(async () => {
     [DESK]: { name: "desk" },
     [String(OWNER)]: { name: "Victor" },
     [`${FORUM}:6`]: { name: "notes" },
+    [`${OWNER}:77`]: { name: "minis" },
     "stray-key": { name: "stray" },
   });
   Object.assign(process.env, {
@@ -562,24 +563,24 @@ test("a widget Telegram refuses in a topic goes to the owner's DM with a button 
 
   const ref = `telegram:${OWNER}:${id}`;
   expect((await call("edit_message", { message_id: ref, chat_data: '{"n":2}' })).text).toBe(
-    `changed the widget's state (id: ${id})`,
+    `changed the widget's state (id: ${ref})`,
   );
   expect(await called("editMessageWidgetData", (p) => p.chat_data === '{"n":2}')).toMatchObject({
     chat_id: String(OWNER),
     message_id: id,
   });
   expect((await call("edit_message", { message_id: ref, chat_data: "same" })).text).toBe(
-    `changed the widget's state (id: ${id})`,
+    `changed the widget's state (id: ${ref})`,
   );
   expect(
     (await call("edit_message", { message_id: ref, chat_data: { n: 3, i: [["a", 1]] } })).text,
-  ).toBe(`changed the widget's state (id: ${id})`);
+  ).toBe(`changed the widget's state (id: ${ref})`);
   expect(
     await called("editMessageWidgetData", (p) => p.chat_data === '{"n":3,"i":[["a",1]]}'),
   ).toMatchObject({ message_id: id });
 });
 
-test("with topics on in the owner's DM, a topic's widget goes to a DM topic of its own, made once, and what he says there reaches the topic", async () => {
+test("with topics on in the owner's DM, a topic's widget goes to a DM topic of its own, made once, and what he says there reaches the topic and is answered there", async () => {
   const file = join(outbox, "dm-topic.html");
   writeFileSync(file, "<b>tiles</b>");
   hex.has_topics_enabled = true;
@@ -612,6 +613,63 @@ test("with topics on in the owner's DM, a topic's widget goes to a DM topic of i
     expect(
       await called("setMessageReaction", (p) => p.reaction?.[0]?.emoji === "👍"),
     ).toMatchObject({ chat_id: String(OWNER) });
+
+    const answered = await call("reply", { text: "bigger it is", buttons: ["Bigger", "Same"] });
+    expect(answered.text).toContain(`id: telegram:${OWNER}:`);
+    const sentThere = await called("sendMessage", (p) => p.text === "bigger it is");
+    expect(sentThere).toMatchObject({ chat_id: String(OWNER), message_thread_id: 9 });
+
+    await update({
+      callback_query: {
+        id: "dm-topic-tap",
+        from: owner,
+        chat_instance: "dm",
+        data: "0",
+        message: {
+          ...message({ chat: dm, message_thread_id: 9, text: "bigger it is", from: hex }),
+          message_id: idOf(sentThere),
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "Bigger", callback_data: "0" },
+                { text: "Same", callback_data: "1" },
+              ],
+            ],
+          },
+        },
+      },
+    });
+    const tapped = await inbound((line) => line.content === "Bigger");
+    expect(answered.text).toBe(`sent (id: ${tapped.meta.button_message_id})`);
+    expect(
+      await called(
+        "editMessageReplyMarkup",
+        (p) => p.message_id === idOf(sentThere) && p.chat_id === String(OWNER),
+      ),
+    ).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: "✓ Bigger" }]] } });
+
+    expect((await call("rename_thread", { title: "desk" })).error).toBeUndefined();
+    expect(await called("editForumTopic", (p) => p.name === "desk")).toMatchObject({
+      chat_id: String(FORUM),
+      message_thread_id: 5,
+    });
+
+    await update({
+      message: message({ from: hex, forum_topic_edited: { name: "desk" } }),
+    });
+    await call("reply", { text: "still where you wrote" });
+    expect(await called("sendMessage", (p) => p.text === "still where you wrote")).toMatchObject({
+      chat_id: String(OWNER),
+      message_thread_id: 9,
+    });
+
+    await update({ message: message({ text: "back in the group" }) });
+    await inbound((line) => line.content === "back in the group");
+    await call("reply", { text: "answered in the group" });
+    expect(await called("sendMessage", (p) => p.text === "answered in the group")).toMatchObject({
+      chat_id: String(FORUM),
+      message_thread_id: 5,
+    });
   } finally {
     hex.has_topics_enabled = false;
   }
@@ -950,7 +1008,7 @@ test("new_thread opens a topic with a random icon and only the prompt, forwardin
   session({ type: "state", thread: DESK, busy: false });
 
   await call("rename_thread", { title: "Anchors", icon: "❤" });
-  expect(await called("editForumTopic")).toMatchObject({
+  expect(await called("editForumTopic", (p) => p.name === "Anchors")).toMatchObject({
     message_thread_id: 5,
     name: "Anchors",
     icon_custom_emoji_id: "222",
@@ -1173,6 +1231,13 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
     thread: String(OWNER),
   });
 
+  const minis = await connectSession({
+    stateDir: state,
+    path: "/telegram",
+    channel: CHANNEL,
+    thread: `${OWNER}:77`,
+  });
+
   try {
     const writeIn = async (topic: number, text: string) => {
       await update({
@@ -1188,6 +1253,21 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
       );
     };
 
+    await update({
+      message: message({
+        chat: { id: OWNER, type: "private", first_name: "Victor" },
+        message_thread_id: 77,
+        text: "for the topic that's a thread of its own",
+      }),
+    });
+    await inbound(
+      (line) => line.content === "for the topic that's a thread of its own",
+      () => linesOf(minis.received),
+    );
+    expect(dm.received.some((line) => JSON.stringify(line).includes("a thread of its own"))).toBe(
+      false,
+    );
+
     await writeIn(40, "in one topic");
     await writeIn(41, "in another");
     await dm.call("reply", { text: "answered where you are" });
@@ -1195,9 +1275,21 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
       chat_id: String(OWNER),
       message_thread_id: 41,
     });
-    expect(JSON.parse(readFileSync(join(state, "dm-topic-written-in-last.json"), "utf-8"))).toEqual(
-      { [OWNER]: 41 },
-    );
+    expect(JSON.parse(readFileSync(join(state, "written-in.json"), "utf-8"))).toMatchObject({
+      [OWNER]: { chat_id: String(OWNER), message_thread_id: 41 },
+    });
+
+    await dm.call("pin", { note: "DM status" });
+    expect(
+      await called(
+        "sendRichMessage",
+        (p) => p.rich_message?.markdown.includes("DM status") === true,
+      ),
+    ).toMatchObject({
+      chat_id: String(OWNER),
+      message_thread_id: 41,
+    });
+    await dm.call("pin", { unpin: true });
 
     await writeIn(DELETED_TOPIC, "in a topic I then delete");
     expect((await dm.call("reply", { text: "still reaches you" })).error).toBeUndefined();
@@ -1214,8 +1306,16 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
     expect(
       calls.some((c) => c.method === "editForumTopic" && c.payload.chat_id === String(OWNER)),
     ).toBe(false);
+
+    expect((await minis.call("close_thread", {})).text).toBe(
+      'forgot "minis": Telegram closes topics only in groups, so it stays open in the DM',
+    );
+    expect(
+      calls.some((c) => c.method === "closeForumTopic" && c.payload.chat_id === String(OWNER)),
+    ).toBe(false);
   } finally {
     dm.close();
+    minis.close();
     hex.has_topics_enabled = false;
   }
 });
@@ -1476,7 +1576,7 @@ test("another thread, or the DM, quotes and settles a question by its key, and a
   expect(asked(id).settled).toMatchObject({ note: "✓ Settled" });
   expect(
     (await dm.call("edit_message", { message_id: `telegram:${FORUM}:${id}`, settled: true })).text,
-  ).toBe(`no question waits on message ${id}, so nothing was settled`);
+  ).toBe(`no question waits on message telegram:${FORUM}:${id}, so nothing was settled`);
   general.close();
   dm.close();
 });
