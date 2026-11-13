@@ -821,7 +821,7 @@ test("what a session took and never answered goes to the thread's next session o
   expect(holds).toContainEqual(["chat:7", "hanging", true]);
 });
 
-test("a hub that starts after its sessions died (a reboot) gives what they never answered to their threads' next sessions", async () => {
+test("a hub that starts after its sessions died (a reboot, or a move to another machine) gives what they never answered to their threads' next sessions at once", async () => {
   const store = open(dir);
   store.threads.keep("telegram", { "chat:7": { name: "Desk anchors", session: SESSION } });
   store.messages.deliver({
@@ -834,8 +834,7 @@ test("a hub that starts after its sessions died (a reboot) gives what they never
   });
   store.turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   store.messages.take("telegram:1:9", SESSION);
-  start({ agents: [], reconnect: 50 });
-  await time.lapse(50);
+  start({ agents: [] });
   await launched();
   const next = await session("chat:7");
   await until(() => next.received.length);
@@ -1123,6 +1122,35 @@ test("a session that restarts in place and still gets no channel is reported, no
   await time.lapse(50);
   expect(failures[0]).toEqual(["chat:7", "its session runs, but its channel never connects"]);
   expect(calls().filter((each) => each[0] === "respawn").length).toBe(1);
+});
+
+test("a session still running mid-turn when the hub starts gets its window to reconnect before anything else starts for its thread", async () => {
+  bound("chat:7");
+  const store = open(dir);
+  store.messages.deliver({
+    key: "telegram:1:9",
+    to: "chat:7",
+    from: "telegram",
+    author: "owner",
+    body: "mid-turn",
+    meta: {},
+  });
+  store.turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  store.messages.take("telegram:1:9", SESSION);
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: 42, startedAt: 1 }],
+    reconnect: 50,
+  });
+  await time.armed(50);
+  await settled();
+  expect(calls().filter((each) => each[0] === "--bg" || each[0] === "respawn")).toEqual([]);
+  expect(open(dir).turns.midTurn("chat:7")).toBe(true);
+  await time.lapse(50);
+  expect(await until(() => calls().find((each) => each[0] === "respawn"))).toEqual([
+    "respawn",
+    SESSION.slice(0, 8),
+  ]);
 });
 
 test("a session that outlived the hub and never reconnects restarts in place", async () => {
