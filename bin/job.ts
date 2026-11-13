@@ -274,22 +274,26 @@ if (mode === "--ended") {
 
 function keptRecord(unit: string) {
   const record = join(records, `${unit}.json`);
+  const started = existsSync(record) ? statSync(record).mtime : undefined;
 
   try {
     const kept = WhatAJobNeedsToRunAgain.safeParse(JSON.parse(readFileSync(record, "utf-8")));
 
-    return { session: kept.data?.session, started: statSync(record).mtime };
+    return { session: kept.data?.session, started };
   } catch {
-    return { session: undefined, started: undefined };
+    return { session: undefined, started };
   }
 }
 
 async function lastOutput(unit: string, started?: Date) {
   const since = started ? ["--since", `@${Math.floor(started.getTime() / 1000)}`] : [];
-  const everything = `journalctl --user -u ${unit} ${since.join(" ")} -o cat`;
+  const printedByIt = `_SYSTEMD_USER_UNIT=${unit}.service`;
+  const everything = `journalctl --user ${printedByIt} ${since.join(" ")} -o cat`;
+
+  await $`journalctl --user --sync`.nothrow().quiet();
 
   const lines = (
-    await $`journalctl --user -u ${unit} ${since} -o cat --no-pager -n ${LINES_OF_OUTPUT + 1}`
+    await $`journalctl --user ${printedByIt} ${since} -o cat --no-pager -n ${LINES_OF_OUTPUT + 1}`
       .nothrow()
       .quiet()
       .text()

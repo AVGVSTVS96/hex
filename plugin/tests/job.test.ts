@@ -348,17 +348,21 @@ test("a job's end brings the last of what it printed, says where the rest is, an
     join(home, "fake/journalctl"),
     `#!/bin/sh
 case "$*" in
-  *"-u pages "*) echo "built 3 pages"; echo "all pushed" ;;
-  *"-u chatty "*) seq 1 41 ;;
+  *--sync*) ;;
+  *"_SYSTEMD_USER_UNIT=pages.service "*) echo "built 3 pages"; echo "all pushed" ;;
+  *"_SYSTEMD_USER_UNIT=chatty.service "*) seq 1 41 ;;
+  *"_SYSTEMD_USER_UNIT=wide.service "*) for n in 1 2 3; do printf "%02000d\\n" "$n"; done ;;
+  *" -u "*) echo "Started the job." ;;
 esac
 `,
   );
   chmodSync(join(home, "fake/journalctl"), 0o755);
   run(["pages", "claude", "--session-id", "s-9", "-p", "build the pages"], session);
   run(["chatty", "make", "all"], session);
+  run(["wide", "make", "all"], session);
   run(["quiet", "make", "all"], session);
 
-  for (const unit of ["pages", "chatty", "quiet"]) {
+  for (const unit of ["pages", "chatty", "wide", "quiet"]) {
     await Bun.spawn(["bun", job, "--ended", unit, "t3:stray-key"], {
       env: {
         ...env,
@@ -383,10 +387,15 @@ esac
   );
   expect(said("pages")).toContain("the agent's own account, not proof");
   expect(said("pages")).toContain("log -- s-9");
-  expect(said("chatty")).toContain("the rest in `journalctl --user -u chatty --since @");
+  expect(said("chatty")).toContain(
+    "the rest in `journalctl --user _SYSTEMD_USER_UNIT=chatty.service --since @",
+  );
   expect(said("chatty")).toContain("<output>\n2\n3\n");
   expect(said("chatty")).toContain("\n41\n</output>");
   expect(said("chatty")).not.toContain("own account");
+  expect(said("wide")).toContain("the rest in `journalctl");
+  expect(said("wide")).not.toContain("1\n0000");
+  expect(said("wide")).toContain(`${"0".repeat(1999)}3\n</output>`);
   expect(said("quiet")).toContain("No output of it could be read from its journal");
 });
 
