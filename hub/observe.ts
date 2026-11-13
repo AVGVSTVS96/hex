@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -512,6 +512,59 @@ export function ended(state: string, session: string, last?: string) {
   });
 }
 
+export function record(memory: string | undefined, home = hexDir()) {
+  if (!given(memory)) {
+    return;
+  }
+
+  const git = (...args: string[]) => {
+    const run = Bun.spawnSync(["git", "-C", memory, ...args], {
+      timeout: 30_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    });
+
+    return {
+      ok: run.exitCode === 0,
+      out: run.stdout.toString().trim(),
+      err: run.stderr.toString().trim(),
+    };
+  };
+
+  const top = git("rev-parse", "--show-toplevel");
+
+  if (
+    !top.ok ||
+    realpathSync(top.out) !== realpathSync(home) ||
+    !git("symbolic-ref", "--quiet", "HEAD").ok
+  ) {
+    return;
+  }
+
+  if (!git("add", "--all", "--", ".").ok || git("diff", "--cached", "--quiet", "--", ".").ok) {
+    return;
+  }
+
+  const identity = git("var", "GIT_COMMITTER_IDENT").ok
+    ? []
+    : ["-c", "user.name=hex", "-c", "user.email=hex@localhost"];
+
+  const commit = git(
+    ...identity,
+    "commit",
+    "--quiet",
+    "--message",
+    "chore(memory): record what happened",
+    "--",
+    ".",
+  );
+
+  if (!commit.ok) {
+    git("reset", "--quiet", "--", ".");
+    logIndented(`hex couldn't commit its memory: ${commit.err}`);
+  }
+}
+
 if (import.meta.main && given(process.env.HEX_PASS)) {
   await drain(stateDir());
+  record(process.env.MEMORY_DIR);
 }
