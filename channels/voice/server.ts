@@ -111,7 +111,11 @@ const InterruptionBody = z.object({
 
 const EndBody = z.object({ sessionId: z.string() });
 
-const AnswerBody = z.object({ label: z.string(), media: z.array(z.string()).default([]) });
+const AnswerBody = z.object({
+  label: z.string().default(""),
+  labels: z.array(z.string()).default([]),
+  media: z.array(z.string()).default([]),
+});
 
 const NoteBody = z.object({ text: z.string(), media: z.array(z.string()).default([]) });
 
@@ -1578,10 +1582,16 @@ function missed({ missed: unreached }: Sent) {
   return unreached ? `, but ${unreached} of its copies or threads couldn't be reached` : "";
 }
 
-async function answerQuestion(id: string, label: string, via: "call" | "app", items: Item[] = []) {
+async function answerQuestion(
+  id: string,
+  picked: string | string[],
+  via: "call" | "app",
+  items: Item[] = [],
+) {
   const call = live;
   const question = yours.find(id) ?? call?.shown.get(id);
-  const sent = await yours.answer(id, label, via, items);
+  const sent = await yours.answer(id, picked, via, items);
+  const label = [picked].flat().join("; ");
 
   if (call && live === call && question) {
     call.shown.set(id, question);
@@ -3428,14 +3438,15 @@ async function questionRoutes(request: Request, url: URL) {
         return new Response(CHAT_FIELD_PROBLEMS.media, { status: 400 });
       }
 
+      const picked = body?.labels.filter(filled) ?? [];
       const typed = body?.label.trim() ?? "";
-      const label = typed === "" ? photos(items) : typed;
+      const label = picked.length > 0 ? picked.join("; ") : typed === "" ? photos(items) : typed;
 
       if (!filled(label)) {
         return new Response("An answer needs its label", { status: 400 });
       }
 
-      const sent = await answerQuestion(key, label, "app", items);
+      const sent = await answerQuestion(key, picked.length > 0 ? picked : label, "app", items);
       const call = stillOnTheCall();
 
       if (call) {

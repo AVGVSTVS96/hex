@@ -697,6 +697,51 @@ test("an answer that lands in the ledger takes the question off the list, and un
   });
 });
 
+test("a question that takes several answers says so, and its picks go back together as one answer", async () => {
+  ledger([
+    asked(1, "Which projects go public?", ["iikb (my pick)", "brim", "denoise"], {
+      poll: "p1",
+      multiple: true,
+    }),
+    asked(2, "Ship it?", ["Yes", "No"]),
+  ]);
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+  await until(() => questions.view.asks.length === 2);
+
+  const [several, one] = [1, 2].map((message) =>
+    questions.view.asks.find((ask) => ask.id === `telegram:${DESK}:${message}`),
+  );
+
+  expect(several?.multiple).toBe(true);
+  expect(one?.multiple).toBeUndefined();
+
+  await questions.answer(`telegram:${DESK}:1`, ["iikb", "denoise"], "app");
+  expect(await until(() => lines[0])).toEqual({
+    type: "answer",
+    thread: DESK,
+    message: 1,
+    label: "iikb (my pick); denoise",
+    via: "app",
+  });
+
+  await questions.answer(`telegram:${DESK}:2`, ["Yes", "No"], "app");
+  await until(() => lines.length === 3);
+  expect(lines.slice(1)).toEqual([
+    {
+      type: "inbound",
+      thread: DESK,
+      content: "(answered in the app) Ship it?: Yes; No",
+      author: "owner",
+      meta: { user: "hex app" },
+    },
+    { type: "settle", thread: DESK, message: 2, note: "✓ Answered in the app: Yes; No" },
+  ]);
+});
+
 test("a note reaches the thread that asked and leaves the question open, with nothing settled", async () => {
   ledger([asked(1, "Ship it?", ["Yes", "No"])]);
   writeFileSync(
