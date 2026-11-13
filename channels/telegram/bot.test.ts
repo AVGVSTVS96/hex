@@ -1403,6 +1403,29 @@ test("a question answered in the app reaches its thread like a tap, says so on i
   expect(asked(id).answer).toBeUndefined();
 });
 
+test("a reply quoting an answer given in the app quotes the question it answered, and one with no Telegram message goes out unquoted", async () => {
+  const id = idIn(await call("reply", { text: "Which bank?", buttons: ["Stripe", "Mercury"] }));
+  session({ type: "answer", thread: DESK, message: id, label: "Stripe", via: "app" });
+  const tap = await inbound((line) => line.meta.button_message_id === String(id));
+
+  const followUp = idIn(
+    await call("reply", { text: "Stripe it is. Which logo?", reply_to: tap.meta.key }),
+  );
+
+  expect(
+    (await called("sendMessage", (p) => p.text === "Stripe it is. Which logo?")).reply_parameters,
+  ).toEqual({ message_id: id });
+  expect(asked(followUp).text).toBe("Stripe it is. Which logo?");
+
+  await call("reply", {
+    text: "Logo next",
+    reply_to: "telegram:0c3f8f5e-5b1a-4d0e-9a51-3e1b7a6c2d40",
+  });
+  expect(await called("sendMessage", (p) => p.text === "Logo next")).not.toHaveProperty(
+    "reply_parameters",
+  );
+});
+
 test("an answer taken back right away gets its buttons back, even when the answer's own edit lands late", async () => {
   const id = idIn(await call("reply", { text: "Which day?", buttons: ["Mon", "Tue"] }));
 

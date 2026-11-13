@@ -448,7 +448,7 @@ const idOf = (thread: string, sent: { chat: { id: number }; message_id: number }
 const asMessageId = (message: MessageId): MessageId =>
   /^\d+$/u.test(String(message)) ? Number(message) : String(message);
 
-function located(thread: string, ref: string) {
+function telegramMessage(thread: string, ref: string) {
   const [, linkChat, linkMessage] = /t\.me\/c\/(\d+)\/(?:\d+\/)?(\d+)/u.exec(ref) ?? [];
 
   if (linkChat !== undefined) {
@@ -457,9 +457,30 @@ function located(thread: string, ref: string) {
 
   const [, keyChat, keyMessage] = /^(?:telegram:)?(-?\d+)(?::\d+)?:(\d+)$/u.exec(ref) ?? [];
 
-  return keyChat === undefined
-    ? { chat_id: target(thread).chat_id, message: Number(ref) }
-    : { chat_id: keyChat, message: Number(keyMessage) };
+  if (keyChat !== undefined) {
+    return { chat_id: keyChat, message: Number(keyMessage) };
+  }
+
+  return /^\d+$/u.test(ref) ? { chat_id: target(thread).chat_id, message: Number(ref) } : undefined;
+}
+
+function located(thread: string, ref: string) {
+  const where = telegramMessage(thread, ref);
+
+  if (where === undefined) {
+    throw new Error(`${ref} has no Telegram message of its own`);
+  }
+
+  return where;
+}
+
+function questionAnsweredBy(ref: string) {
+  const row = hub.said(ref.replace(/^telegram:/u, ""));
+  const message = Number(row?.meta?.button_message_id ?? row?.meta?.poll_message_id);
+
+  return row === null || Number.isNaN(message)
+    ? undefined
+    : { chat_id: target(row.to).chat_id, message };
 }
 
 function questionAt({ chat_id, message }: { chat_id: string; message: number }) {
@@ -981,7 +1002,7 @@ const handlers: Handlers<typeof tools> = {
     const { chat_id, extra } = into(thread);
     const access = loadAccess();
     const text = tappable(args.text ?? "");
-    const quoted = args.reply_to === undefined ? undefined : located(thread, args.reply_to);
+    const quoted = args.reply_to === undefined ? undefined : telegramMessage(thread, args.reply_to);
     const quotes = quoted && questionAt(quoted);
 
     const quoting =
@@ -989,10 +1010,13 @@ const handlers: Handlers<typeof tools> = {
         ? undefined
         : { question: quotes, message: idIn(quotes.thread, quoted.chat_id, quoted.message) };
 
-    const quote = quoted && {
+    const shown =
+      quoted ?? (args.reply_to === undefined ? undefined : questionAnsweredBy(args.reply_to));
+
+    const quote = shown && {
       reply_parameters: {
-        message_id: quoted.message,
-        ...(quoted.chat_id !== chat_id && { chat_id: quoted.chat_id }),
+        message_id: shown.message,
+        ...(shown.chat_id !== chat_id && { chat_id: shown.chat_id }),
       },
     };
 
