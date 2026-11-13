@@ -6,11 +6,9 @@ hex runs wherever Claude Code does, on a machine that stays on: a home server, a
 
 ## 1. Check what's there
 
-`git`, `curl`, `jq`, `bun` and `claude` must be on the `PATH`.
+`git`, `curl`, `jq` and `python3` must be on the `PATH`; install what's missing with the system package manager, after asking. Step 5 installs `bun` and Claude Code if they aren't there.
 
-- Missing `bun`: install it from https://bun.sh.
-- Missing `jq`: install it with the system package manager, after asking.
-- Missing `claude`: install Claude Code from https://claude.com/claude-code. The person signs in by running `claude` once **(you)**.
+The person signs in to Claude Code by running `claude` once **(you)**, now or after step 5.
 
 ## 2. Make their hex
 
@@ -49,49 +47,21 @@ curl -s "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getUpdates" \
 
 If nothing shows up, the bot isn't an admin yet or the message was sent before it joined. Ask them to send another one.
 
-## 5. Install the channels
-
-The Telegram, Discord, Buzz and T3 Code channels come from hex's own plugin marketplace:
+## 5. Set up the machine and start hex
 
 ```sh
-claude plugin marketplace add ~/hex/.hex/channels
-claude plugin install telegram@hex
-claude plugin disable telegram@hex
+~/hex/.hex/bin/hex restore
 ```
 
-Disabling it keeps the channel out of their other Claude Code sessions; hex turns it on for its own.
+`restore` sets this machine up from two lists: hex's own (`.hex/services.json`) and theirs (`~/hex/services.json`, if they have one; see [Moving hex](#moving-hex)). It installs what's missing (`bun`, `claude`), installs hex's channels turned off (hex turns one on in its own sessions), lets Claude Code run them through its managed settings, trusts `~/hex` for Claude Code the way its first prompt there would, and starts hex. Then it runs `hex doctor`.
 
-Claude Code only runs a channel from a marketplace other than Anthropic's when the machine's managed settings allow it. Add this to the managed settings file, merging with what's there: `/etc/claude-code/managed-settings.json` on Linux, `/Library/Application Support/ClaudeCode/managed-settings.json` on macOS. Writing it needs `sudo`; ask first.
+Ask before running it: the managed settings file (`/etc/claude-code/managed-settings.json` on Linux, `/Library/Application Support/ClaudeCode/managed-settings.json` on macOS) is merged with what's there and written with `sudo`, and on Linux `loginctl enable-linger` may need `sudo` too, so their services keep running when they log out.
 
-```json
-{
-  "channelsEnabled": true,
-  "allowedChannelPlugins": [
-    { "plugin": "telegram", "marketplace": "hex" },
-    { "plugin": "discord", "marketplace": "hex" },
-    { "plugin": "buzz", "marketplace": "hex" },
-    { "plugin": "t3", "marketplace": "hex" }
-  ]
-}
-```
+With systemd, hex runs as the units it ships (`hex.service`, and `hex-sessions.slice`, which keeps its sessions in a memory slice apart from the hub), linked into `~/.config/systemd/user` and enabled. Without it, `restore` starts hex with `hex start`; have the machine run `~/hex/.hex/bin/hex run` (it stays in the foreground) as it boots: a launchd agent with `KeepAlive` on macOS, a Sprite service on a Fly.io Sprite, or a crontab line `@reboot ~/hex/.hex/bin/hex start`.
 
-## 6. Trust the folder (you)
+`doctor` prints a `fix` line for each thing that isn't right; run it again until it says hex looks healthy. `~/hex/.hex/bin/hex status` should show the hub running and a session named `hex`. The hub keeps General running and starts a session for every other thread when it's needed.
 
-hex's sessions run in `~/hex`, and Claude Code only runs there once the folder is trusted. Ask the person to run `cd ~/hex && claude`, choose **Yes, I trust this folder**, then quit with `/exit`.
-
-## 7. Start it
-
-```sh
-~/hex/.hex/bin/hex start
-~/hex/.hex/bin/hex doctor
-~/hex/.hex/bin/hex status
-```
-
-`doctor` checks every step above and prints a `fix` line, with the step to redo, for each one that isn't right; run it again until it says hex looks healthy. `status` should show the hub running and a session named `hex`. The hub keeps General running and starts a session for every other thread when it's needed.
-
-To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex run` (it stays in the foreground) with whatever it uses for that. With systemd, use the units hex ships, which also keep its sessions in a memory slice apart from the hub: `~/hex/.hex/bin/hex stop`, then `systemctl --user link ~/hex/.hex/systemd/hex.service ~/hex/.hex/systemd/hex-sessions.slice && systemctl --user enable --now hex`, plus `loginctl enable-linger "$USER"` (may need `sudo`; ask first). Elsewhere: a launchd agent with `KeepAlive` on macOS, a Sprite service on a Fly.io Sprite, or a crontab line `@reboot ~/hex/.hex/bin/hex start`.
-
-## 8. Make it theirs
+## 6. Make it theirs
 
 - Ask their name, what they do, and anything they want hex to know from day one, and save each fact as a memory: `MEMORY_DIR=~/hex/memory ~/hex/.hex/vendor/memo note "<fact>"`. Then run `MEMORY_DIR=~/hex/memory ~/hex/.hex/bin/wake`, so the next session starts with them.
 - Ask what time zone they're in. If `date` here shows another one, set `env.TZ` in `~/hex/.claude/settings.json` to theirs (like `America/New_York`), so schedules fire on their clock.
@@ -131,9 +101,30 @@ To start hex when the machine boots, have the machine run `~/hex/.hex/bin/hex ru
   3. Here, set the same setting in `~/.t3/userdata/settings.json` and run `t3 environment link <its https URL> --pairing-code <code> --access full-access`. A link lasts 30 days, so add a job to `~/hex/schedules.json` that renews it on the 1st and 15th: `` "<name>-link": { "cron": "0 9 1,15 * *", "prompt": "Run `.hex/bin/t3-relink <name>`, which renews the T3 Code link to <name> (links last 30 days). Tell me only if it failed, with its error." } ``.
   4. Set `"HEX_MACHINES": "<name>:3"` (then how many jobs it takes; several go space-separated, in order) in the `env` of `~/hex/.claude/settings.json`. `HEX_SLOTS` (12) caps jobs on this machine.
 
-## 9. Say hi (you)
+## 7. Say hi (you)
 
 Ask them to say hi in General. hex should answer within a few seconds. Then show them what hex does on its own: ask for something worth its own thread (for example "research X and keep me posted") and a new topic will appear with a session working on it.
+
+## Moving hex
+
+Everything hex knows lives in four places: hex itself (`.hex/`, this repo), their folder (`~/hex`, a git repo of its own), `state/hex.db`, and the vault (`~/.enclave`). On a new machine, with hex stopped on the old one: clone their folder to `~/hex` and hex into `~/hex/.hex`, copy over `state/hex.db`, `.env` and the vault, then run `~/hex/.hex/bin/hex restore`.
+
+What else hex needs on their machines goes in `~/hex/services.json`, in the shape of hex's own `.hex/services.json`:
+
+```json
+{
+  "install": {
+    "litestream": "curl -fsSL https://github.com/benbjohnson/litestream/releases/download/v0.5.18/litestream-0.5.18-linux-x86_64.tar.gz | tar -xz -C ~/.local/bin litestream",
+    "~/Developer/pages": "git clone https://github.com/<them>/pages ~/Developer/pages"
+  },
+  "units": ["services/hex-db.service", "services/hex.service.d/vault.conf"],
+  "managed": { "cleanupPeriodDays": 36500 }
+}
+```
+
+- `install`: a command, or a path (from home with `~/`), and the line that makes it when it's missing. They run in order, in the folder of the list.
+- `units`: systemd unit files to link and enable, from the list's folder or from home. A file in a folder named for its unit (`hex.service.d/`) is a drop-in for it.
+- `managed`: Claude Code managed settings, merged into the machine's.
 
 ## Updating
 

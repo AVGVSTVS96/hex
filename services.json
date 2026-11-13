@@ -1,0 +1,7 @@
+{
+  "install": {
+    "bun": "curl -fsSL https://bun.sh/install | bash",
+    "claude": "curl -fsSL https://claude.ai/install.sh | bash"
+  },
+  "units": ["systemd/hex.service", "systemd/hex-sessions.slice"]
+}
