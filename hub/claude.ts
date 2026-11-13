@@ -7,6 +7,7 @@ import {
   readFileSync,
   readSync,
   readdirSync,
+  realpathSync,
   statSync,
   watch,
 } from "node:fs";
@@ -445,12 +446,24 @@ function missingFromPath(pid: string): Promise<string[]> {
 }
 
 function lackingFrom(theirs: string[]): string[] {
-  const found = new Set(theirs.flatMap(commands));
   const ours = (process.env.PATH ?? "").split(":").filter(Boolean);
 
   return ours.filter(
-    (each) => !theirs.includes(each) && commands(each).some((command) => !found.has(command)),
+    (each) =>
+      !theirs.includes(each) &&
+      commands(each).some((command) => found(command, ours) !== found(command, theirs)),
   );
+}
+
+function found(command: string, path: string[]): string | undefined {
+  for (const each of path) {
+    try {
+      return realpathSync(join(each, command));
+      // oxlint-disable-next-line eslint/no-empty -- a directory without the command leaves it to the next
+    } catch {}
+  }
+
+  return undefined;
 }
 
 function commands(directory: string): string[] {

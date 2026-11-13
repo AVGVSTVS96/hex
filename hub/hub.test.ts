@@ -676,10 +676,8 @@ test("a daemon on the claude that's installed is left running", async () => {
 });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Each login shell can put a directory of its own on PATH for the same commands, as fnm does for node.
-async function daemonWithPath(hubs: string[], daemons: string[]) {
-  const ours = commandsIn("ours", hubs);
-  const theirs = commandsIn("theirs", daemons);
+// Each login shell can put a directory of its own on PATH that links to the same commands, as fnm does for node.
+async function daemonWithPath(ours: string, theirs: string) {
   const daemon = Bun.spawn(["sleep", "60"], { env: { PATH: `${theirs}:${process.env.PATH}` } });
 
   sleepers.push(daemon);
@@ -709,12 +707,28 @@ function commandsIn(name: string, commands: string[]) {
   return directory;
 }
 
-test("a daemon whose PATH finds every command the hub's does is left running, though the directories differ", async () => {
-  expect(await daemonWithPath(["node"], ["node"])).toBe(false);
+function linkTo(name: string, target: string) {
+  symlinkSync(target, join(dir, name));
+
+  return join(dir, name);
+}
+
+test("a daemon whose PATH finds the same commands is left running, though through another directory", async () => {
+  const node = commandsIn("node-24", ["node"]);
+
+  expect(await daemonWithPath(linkTo("ours", node), linkTo("theirs", node))).toBe(false);
 });
 
 test("a daemon whose PATH lacks a command the hub's finds is stopped with its sessions kept", async () => {
-  expect(await daemonWithPath(["node", "hex-only-here"], ["node"])).toBe(true);
+  const ours = commandsIn("ours", ["only-here"]);
+
+  expect(await daemonWithPath(ours, commandsIn("theirs", []))).toBe(true);
+});
+
+test("a daemon whose PATH finds another copy of a command than the hub's is stopped with its sessions kept", async () => {
+  expect(await daemonWithPath(commandsIn("ours", ["node"]), commandsIn("theirs", ["node"]))).toBe(
+    true,
+  );
 });
 
 test("the main thread starts with the hub, under its name, with no prompt and no typing", async () => {
