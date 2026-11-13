@@ -28,7 +28,7 @@ How it works · Clients · Voice · Inside · Yours · GitHub icon · Install
 
 - ~17,500 · lines in hex's core
 - 6 · clients ready to use
-- $0 · extra on your Claude plan
+- $0 · extra on your plan
 
 ## A note from bassim
 
@@ -70,7 +70,7 @@ please join me in my quest to build the most minimal, capable, safe, and hackabl
 Three tiles under it, each a small picture and a caption:
 
 1. **Threads run side by side.** *(Three lanes over time: working, stopped when idle, working again.)*
-2. **A DM never ends.** Nothing gets compacted away. *(A small tree: words at the bottom, summaries above, the newest leaf highlighted.)*
+2. **A DM never forgets.** *(A small tree: words at the bottom, summaries above, the newest leaf highlighted.)*
 3. **Threads move with you.** *(Telegram #ramen-tonight → "take this to Discord" → Discord #ramen-tonight, "same session, same history".)*
 
 ## Clients
@@ -94,15 +94,15 @@ Three tiles under it, each a small picture and a caption:
 
 - Label: widgets
 - Headline: Apps inside a message.
-- Line: In Telegram. Tap them, they're real.
+- Line: Live in a Telegram message. Tap them, they're real.
 
 *(Three cards. Each shows one widget in an incoming Telegram bubble on the chat wallpaper, with its caption and time below it, in the chat's light or dark colors. The widgets are real widget documents, each under Telegram's size limits; the page stands in for Telegram and hex, so taps work.)*
 
-- **A list you tick**
+- **A list you tick.** Tick one, and hex knows it's done.
   *(Widget: "Waiting on you", a big count, a red striped bar per open task that turns green when done, four made-up tasks. Caption: "Three things need you today.")*
-- **A chart that stays current**
+- **A chart that stays current.** It updates in place, with no new message.
   *(Widget: share of the week used, sessions, a stacked bar per day by topic, a legend. Caption: "Your week so far.")*
-- **A game against hex**
+- **A game against hex.** hex plays back in the same message.
   *(Widget: tic-tac-toe with a running score. Caption: "Tic-tac-toe. You play ×.")*
 
 ## Voice
@@ -128,8 +128,8 @@ Three tiles under it, each a small picture and a caption:
 - Label: inside
 - Headline: It remembers, keeps track, and asks first.
 
-- **Memory with a timeline**: It remembers what happened, and finds it word for word. *(Summaries narrowing down to one remembered line, found by `memo recall 'timer'`.)*
-- **Tasks and questions**: What you ask for is kept in your words and closed with proof. Questions you missed come back. *(A task card: your words quoted, done when, agents, proof link.)*
+- **Memory with a timeline**: It remembers what happened and when, and finds any of it word for word. *(Summaries narrowing down to one remembered line, found by `memo recall 'timer'`.)*
+- **Tasks and questions**: What you ask for is kept in your words and closed with proof. Missed questions come back. *(A task card: your words quoted, done when, agents, proof link.)*
 - **Agents do what you asked**: A brief that drifts from your words goes back. *("you asked" next to a brief that adds a booking; verdict "sent back · it adds a booking you didn't ask for".)*
 - **Asks before it sends**: Nothing is sent or deleted without your yes. Passwords never go through chat. *(A "Send this reply?" card with Yes and No, and "Password, by link · encrypted in your browser, never in chat".)*
 - **Keeps itself up to date**: Every morning, never mid-task. *(Pull · every morning → Test · 840+ tests → Wait · until no session is busy → Ship · restarts itself, and Roll back · if it won't start. The steps light up in turn.)*
@@ -150,7 +150,7 @@ Three tiles under it, each a small picture and a caption:
 - NanoClaw · 49,940
 - hex · 17,567
 - Zoomed in: NanoClaw · 49,940 / hex · 17,567 + 23,730 in clients *(clients hatched)*
-- Fine print: Lines of code that runs, without tests or docs. Counted Oct and Nov 2026.
+- Fine print: Lines of code that runs, without tests or docs, counted Oct and Nov 2026. Like NanoClaw's, hex's count leaves out its chat clients.
 
 *(How it's counted: `wc -l` of every file that runs, comments and blanks included, without tests, Markdown, lockfiles or the site. hex at e7fa099 (Nov 12 2026): bin 4,516, hub `*.ts` 12,814, plugin hooks 138, computer 68, defaults JSON 31, so 17,567. Its clients in channels/, `*.ts` only, so 23,730. NanoClaw is src/ and container/ at 0ede4cf (Nov 12 2026): 49,940. NanoClaw's count leaves out its chat adapters, so hex's leaves out its clients. OpenClaw (5,300,069 at e09de504) and Hermes Agent (1,597,845 at f925b017) were counted the same way in October 2026.)*
 
@@ -158,7 +158,7 @@ Three tiles:
 
 1. **A folder you own.** *(Tree of ~/hex/, "yours, a private git repo": AGENTS.md your rules · SOUL.md who it is · PROACTIVE.md what it brings up on its own · schedules.json recurring jobs · memory/ what it knows · state/hex.db every message and task · .hex/ hex itself, updated every morning.)*
 2. **Ask it to change itself.** *(You: "no check-ins on weekends" → schedules.json, the cron line gains `1-5` → committed.)*
-3. **Fork it.** Send back what works. *(hex → pull → your fork → update → your hex, with a dashed pull request back.)*
+3. **Fork it.** *(hex → pull → your fork → update → your hex, with a dashed pull request back.)*
 
 Chips, under "extend it with": skills · MCP servers · plugins · hooks · connectors · clients · + yours
 
