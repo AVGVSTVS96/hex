@@ -577,7 +577,7 @@ const FILES = {
   },
 };
 
-// NIP-AF's Event 5, the owner's edit request, exactly as published: https://github.com/AVGVSTVS96/buzz/blob/c0e6a6b44/docs/nips/NIP-AF.md#reference-test-vectors
+// NIP-AF's Event 5, the owner's edit request, exactly as published: https://github.com/AVGVSTVS96/buzz/blob/c0e6a6b440e1a0722fab901a9cec8c7d81e46800/docs/nips/NIP-AF.md#reference-test-vectors
 const EDIT_REQUEST: Event = {
   kind: 4180,
   pubkey: OWNER,
