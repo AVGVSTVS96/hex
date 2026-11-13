@@ -655,7 +655,7 @@ test("with topics on in the owner's DM, a topic's widget goes to a DM topic of i
     });
 
     await update({
-      message: message({ from: hex, forum_topic_edited: { name: "desk" }, text: undefined }),
+      message: message({ from: hex, forum_topic_edited: { name: "desk" } }),
     });
     await call("reply", { text: "still where you wrote" });
     expect(await called("sendMessage", (p) => p.text === "still where you wrote")).toMatchObject({
@@ -1305,6 +1305,13 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
     );
     expect(
       calls.some((c) => c.method === "editForumTopic" && c.payload.chat_id === String(OWNER)),
+    ).toBe(false);
+
+    expect((await minis.call("close_thread", {})).text).toBe(
+      'forgot "minis": Telegram closes topics only in groups, so it stays open in the DM',
+    );
+    expect(
+      calls.some((c) => c.method === "closeForumTopic" && c.payload.chat_id === String(OWNER)),
     ).toBe(false);
   } finally {
     dm.close();

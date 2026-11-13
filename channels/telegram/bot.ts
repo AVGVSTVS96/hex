@@ -1536,8 +1536,9 @@ const handlers: Handlers<typeof tools> = {
 
   close_thread: async (caller, args) => {
     const { thread, chat_id, topic } = at(caller, args.thread);
+    const inDm = !chat_id.startsWith("-");
 
-    if (topic === undefined || topic === 0) {
+    if (topic === undefined || topic === 0 || inDm) {
       if (thread === MAIN) {
         throw new Error("only topics can be closed");
       }
@@ -1545,7 +1546,9 @@ const handlers: Handlers<typeof tools> = {
       const name = hub.name(thread) ?? thread;
       void retire(thread);
 
-      return `forgot "${name}": it isn't a topic, so there was nothing to close in Telegram`;
+      return topic === undefined || topic === 0
+        ? `forgot "${name}": it isn't a topic, so there was nothing to close in Telegram`
+        : `forgot "${name}": Telegram closes topics only in groups, so it stays open in the DM`;
     }
 
     void retire(thread);
@@ -1605,12 +1608,14 @@ const handlers: Handlers<typeof tools> = {
 
     await say(`Moved to ${to}: ${link}`);
 
-    if (topic !== undefined) {
-      await bot.api.closeForumTopic(chat_id, topic).catch((error: unknown) => {
+    if (topic !== undefined && chat_id.startsWith("-")) {
+      try {
+        await bot.api.closeForumTopic(chat_id, topic);
+      } catch (error) {
         if (!gone(String(error))) {
           throw error;
         }
-      });
+      }
     }
 
     return `moving to ${to}: ${link}. Your session stops here once this turn ends and resumes there.`;
@@ -1805,13 +1810,9 @@ const ASLEEP: ReactionTypeEmoji = { type: "emoji", emoji: "😴" };
 
 function waiting(message: Message, still: boolean): void {
   const { chat_id = "", message_id = "", edited = "" } = message.meta;
+  const id = message_id.split(":").at(-1) ?? "";
 
-  if (
-    chat_id === "" ||
-    message_id === "" ||
-    edited !== "" ||
-    (!still && !asleep.has(`${chat_id}:${message_id}`))
-  ) {
+  if (chat_id === "" || id === "" || edited !== "" || (!still && !asleep.has(`${chat_id}:${id}`))) {
     return;
   }
 
@@ -1819,7 +1820,7 @@ function waiting(message: Message, still: boolean): void {
 
   void react(
     chat_id,
-    Number(message_id.split(":").at(-1)),
+    Number(id),
     still ? [ASLEEP] : ack,
     !still && ack.length > 0 ? [] : undefined,
   ).catch(ignore);

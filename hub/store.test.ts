@@ -140,6 +140,33 @@ test("a message reads as its newest edit, made in any topic of its chat, even wh
   expect(store.messages.latest("buzz:e1")?.body).toBe("tagged on edit");
 });
 
+test("a message a topic's session sent into another chat reads as its newest edit, kept by its id with its chat", () => {
+  const store = new Store(dir);
+
+  const sent = {
+    key: "telegram:2000:55",
+    to: "-100:7",
+    from: "telegram",
+    author: "hex",
+    body: "Tiles",
+  } satisfies NewRow;
+
+  store.messages.deliver(sent);
+  store.messages.deliver({
+    ...sent,
+    key: "telegram:edit-6",
+    body: "Bigger tiles",
+    meta: { edited: "true", message_id: "telegram:2000:55" },
+  });
+  store.messages.deliver({
+    ...sent,
+    key: "telegram:edit-7",
+    body: "the group's own message 55",
+    meta: { edited: "true", message_id: "55" },
+  });
+  expect(store.messages.latest(sent.key)?.body).toBe("Bigger tiles");
+});
+
 test("the first session to take a message has it, and it leaves what waits", () => {
   const store = new Store(dir);
   store.messages.deliver(message);

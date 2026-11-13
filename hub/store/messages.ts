@@ -198,8 +198,10 @@ export class Messages {
     const edit = MessageRow.nullable().parse(
       this.db
         .query(
-          `select * from messages where "from" = ?1 and json_extract(meta, '$.edited') = 'true' and json_extract(meta, '$.message_id') = ?2
-           and (?3 = '' or "to" = ?3 or "to" like ?3 || ':%') order by at desc, n desc limit 1`,
+          `select * from messages where "from" = ?1 and json_extract(meta, '$.edited') = 'true'
+           and (json_extract(meta, '$.message_id') = ?2 and (?3 = '' or "to" = ?3 or "to" like ?3 || ':%')
+             or ?3 != '' and json_extract(meta, '$.message_id') = ?1 || ':' || ?3 || ':' || ?2)
+           order by at desc, n desc limit 1`,
         )
         .get(app, id, chat),
     );
