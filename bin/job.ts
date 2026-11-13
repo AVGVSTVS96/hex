@@ -35,8 +35,9 @@ const WhatAJobNeedsToRunAgain = z.object({
   command: z.array(z.string()),
   session: z.string().optional(),
   input: z.array(z.string()).optional(),
-  stopped: z.enum(["moved", "shutdown"]).optional(),
 });
+
+const StoppedBecause = z.enum(["moved", "shutdown", ""]);
 
 type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 
@@ -139,7 +140,6 @@ if (mode === "--owner") {
   console.log(reportsTo() ?? "");
 } else if (mode === "--ended") {
   const [unit = "", owner = ""] = rest;
-  const kept = keptRecord(unit);
 
   const stopped = existsSync(join(stateDir(), "moving"))
     ? "moved"
@@ -148,14 +148,11 @@ if (mode === "--owner") {
       : undefined;
 
   if (stopped !== undefined) {
-    if (kept !== undefined) {
-      writeFileSync(join(records, `${unit}.json`), JSON.stringify({ ...kept, stopped }));
-    }
-
+    store.seen.show(`job:${unit}`, "stopped", stopped);
     process.exit(0);
   }
 
-  const session = kept?.session ?? "";
+  const session = keptRecord(unit)?.session ?? "";
 
   rmSync(join(records, `${unit}.json`), { force: true });
 
@@ -199,46 +196,70 @@ if (mode === "--owner") {
   const here = hostname();
   const at = new Date().toISOString();
 
-  for (const file of readdir(records)) {
+  for (const file of readdir(records).filter((name) => !name.includes(".sync-conflict-"))) {
     const recorded = file.slice(0, -".json".length);
 
     if ((await $`systemctl --user is-active --quiet ${recorded}`.nothrow()).exitCode === 0) {
       continue;
     }
 
-    const kept = WhatAJobNeedsToRunAgain.parse(
-      JSON.parse(readFileSync(join(records, file), "utf-8")),
-    );
+    const kept = keptRecord(recorded);
+
+    if (kept === undefined) {
+      console.error(`job: ${file} can't be read, so ${recorded} isn't started again`);
+      continue;
+    }
 
     rmSync(join(records, file));
 
-    const why =
-      kept.stopped === undefined
-        ? "the machine it ran on went down"
-        : { moved: "hex moved to another machine", shutdown: "the machine it ran on shut down" }[
-            kept.stopped
-          ];
+    const why = {
+      moved: "hex moved to another machine",
+      shutdown: "the machine it ran on shut down",
+      "": "the machine it ran on went down",
+    }[StoppedBecause.catch("").parse(store.seen.get(`job:${recorded}`, "stopped"))];
 
-    const { stopped: _, ...again } = kept;
-    const conversation = isSet(kept.session) && saved(kept.session);
+    store.seen.unshow(`job:${recorded}`, "stopped");
+
+    const resumes = valueAfter(kept.command, /^(--resume|-r)$/u);
+    const session = kept.session ?? resumes;
+    const conversation = isSet(session) && saved(session);
+    const agent = basename(kept.command[0] ?? "") === "claude";
+    const command = kept.command.join(" ");
+
+    if (agent && !conversation && !isSet(session)) {
+      tell(
+        recorded,
+        kept.owner,
+        `stopped because ${why}, and hasn't run since: it continued the folder's latest conversation, which is another one now. Start it again if its work still needs doing: ${command}`,
+        `${at}:again`,
+      );
+      continue;
+    }
+
+    const { flags, prompt } = partsOf(kept.command.slice(1), kept.input);
+
+    const firstPrompt =
+      isSet(resumes) && isSet(prompt)
+        ? `\n\nThis job started by resuming this conversation with the prompt below; if you hadn't taken it up yet, do it now:\n\n${prompt}`
+        : "";
 
     const args = conversation
       ? [
-          ...flags(kept.command.slice(1)),
+          ...flags,
           "--resume",
-          kept.session ?? "",
-          `You were stopped in the middle of your work because ${why}; hex runs on ${here} now. This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.`,
+          session ?? "",
+          `You were stopped in the middle of your work because ${why}; hex runs on ${here} now. This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.${firstPrompt}`,
         ]
-      : startArgs(again);
+      : startArgs(kept);
 
-    const started = await launch(recorded, again, args, conversation ? [] : (kept.input ?? []));
+    const started = await launch(recorded, kept, args, conversation ? [] : (kept.input ?? []));
 
     const said =
       started === 0
         ? conversation
           ? `carried on in its own conversation as hex started on ${here}.`
-          : `started over from the beginning as hex started on ${here}: ${kept.command.join(" ")}`
-        : `couldn't start again on ${here}. Start it again if its work still needs doing: ${kept.command.join(" ")}`;
+          : `started over from the beginning as hex started on ${here}: ${command}`
+        : `couldn't start again on ${here}. Start it again if its work still needs doing: ${command}`;
 
     tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
@@ -425,33 +446,38 @@ function readdir(dir: string) {
   }
 }
 
-function flags(args: string[]) {
+function partsOf(args: string[], input: string[] = []) {
   const theOnlyFlagsWithoutAValue = /^(-p|--print|--verbose|--dangerously-skip-permissions)$/u;
   const whichConversation = /^(--session-id|--resume|-r)$/u;
   const startsAnotherConversation = /^(--fork-session|--continue|-c)$/u;
 
-  const kept: string[] = [];
+  const flags: string[] = [];
+  const words: string[] = [];
 
   for (let at = 0; at < args.length; at++) {
     const arg = args[at] ?? "";
 
     if (!arg.startsWith("-")) {
-      continue;
-    }
-
-    if (whichConversation.test(arg)) {
+      words.push(arg);
+    } else if (whichConversation.test(arg)) {
       at++;
     } else if (startsAnotherConversation.test(arg)) {
       continue;
     } else if (theOnlyFlagsWithoutAValue.test(arg) || arg.includes("=")) {
-      kept.push(arg);
+      flags.push(arg);
     } else {
       at++;
-      kept.push(arg, args[at] ?? "");
+      flags.push(arg, args[at] ?? "");
     }
   }
 
-  return kept;
+  const piped = input.find((property) => property.startsWith("StandardInputData="));
+
+  if (piped !== undefined) {
+    words.push(Buffer.from(piped.slice("StandardInputData=".length), "base64").toString());
+  }
+
+  return { flags, prompt: words.join("\n\n") };
 }
 
 async function launch(

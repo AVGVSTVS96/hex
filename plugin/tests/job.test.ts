@@ -566,9 +566,14 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   run(["piped", "claude", "-p", "--model", "opus"], session, home, "Build the Usage tab.\n");
   writeFileSync(join(home, "state/moving"), "");
 
-  for (const unit of ["pick", "checks", "piped"]) {
+  const records = ["pick", "checks", "piped"].map((unit) => {
+    const before = readFileSync(join(jobs, `${unit}.json`), "utf-8");
     end(unit);
-  }
+
+    return readFileSync(join(jobs, `${unit}.json`), "utf-8") === before;
+  });
+
+  expect(records).toEqual([true, true, true]);
 
   rmSync(join(home, "state/moving"));
 
@@ -589,6 +594,7 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
     "r-1",
   ]);
   expect(pick.at(-1)).toContain("hex moved to another machine");
+  expect(pick.at(-1)).toContain("pick up");
   const checks = started.get("checks") ?? [];
   expect(checks.slice(checks.indexOf("--"))).toEqual(["--", "./checks.sh", "--all"]);
   const piped = started.get("piped") ?? [];
@@ -597,4 +603,36 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   );
   expect(told("%hex moved to another machine%")).toHaveLength(3);
   expect(told("%went down%").filter((body) => /\b(pick|checks|piped)\b/u.test(body))).toEqual([]);
+});
+
+test("a job that can't come back as it was is told to its owner, and a bad or conflicting record holds up no other job", () => {
+  const jobs = join(home, "state/jobs");
+  rmSync(jobs, { recursive: true, force: true });
+  const config = join(home, "claude");
+  mkdirSync(join(config, "projects/-older"), { recursive: true });
+  writeFileSync(join(config, "projects/-older/o-1.jsonl"), "{}\n");
+  run(["latest", "claude", "-p", "--continue", "go on"], session);
+  mkdirSync(jobs, { recursive: true });
+  writeFileSync(join(jobs, "broken.json"), "{");
+  writeFileSync(
+    join(jobs, "older.json"),
+    JSON.stringify({
+      owner: "t3:stray-key",
+      cwd: home,
+      properties: [],
+      command: ["claude", "-p", "--resume", "o-1", "first words"],
+    }),
+  );
+  writeFileSync(join(jobs, "older.sync-conflict-20261113-010055-ABC.json"), "{}");
+
+  const started = resume(config);
+
+  expect([...started.keys()]).toEqual(["older"]);
+  const older = started.get("older") ?? [];
+  expect(older.slice(older.indexOf("--") + 2, -1)).toEqual(["hex/older", "-p", "--resume", "o-1"]);
+  const latest: unknown[] = told("%[job] latest stopped%");
+  expect(latest).toEqual([
+    containing("hasn't run since: it continued the folder's latest conversation"),
+  ]);
+  expect(existsSync(join(jobs, "broken.json"))).toBe(true);
 });
