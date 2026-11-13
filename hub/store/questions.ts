@@ -18,6 +18,7 @@ export type Question = {
   poll?: string;
   multiple?: boolean;
   shots?: string[];
+  attached?: MessageId[];
   answer?: Answer;
   settled?: { note: string; at: string };
 };
@@ -28,6 +29,8 @@ export const waits = (question: Question) =>
   !question.settled && (question.asker === "owner") === !!question.answer;
 
 const Labels = z.array(z.string());
+
+const MessageIds = z.array(MessageIdColumn);
 
 export const AnswerJson: z.ZodType<Answer> = z.object({
   label: z.string(),
@@ -51,6 +54,7 @@ const QuestionRow = z
     poll: TextOrAbsent,
     multiple: z.number(),
     shots: TextOrAbsent.optional(),
+    attached: TextOrAbsent.optional(),
     answer: TextOrAbsent,
     settled: TextOrAbsent,
   })
@@ -65,6 +69,7 @@ const QuestionRow = z
     ...(row.poll !== undefined && { poll: row.poll }),
     ...(row.multiple !== 0 && { multiple: true }),
     ...(row.shots !== undefined && { shots: fromJson(Labels, row.shots) }),
+    ...(row.attached !== undefined && { attached: fromJson(MessageIds, row.attached) }),
     ...(row.answer !== undefined && { answer: fromJson(AnswerJson, row.answer) }),
     ...(row.settled !== undefined && { settled: fromJson(SettledJson, row.settled) }),
   }));
@@ -90,12 +95,13 @@ export class Questions {
     poll,
     multiple,
     shots,
+    attached,
     at = now(),
     answer,
     settled,
   }: NewQuestion) {
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-    // An older hex's questions, brought in by steps before the asker and shots columns exist, are hex's and fill only the columns they had.
+    // An older hex's questions, brought in by steps before the asker, shots and attached columns exist, are hex's and fill only the columns they had.
     const row = {
       ...(asker !== undefined && { asker }),
       app,
@@ -106,6 +112,7 @@ export class Questions {
       poll: poll ?? null,
       multiple: multiple === true ? 1 : 0,
       ...(shots !== undefined && shots.length > 0 && { shots: JSON.stringify(shots) }),
+      ...(attached !== undefined && attached.length > 0 && { attached: JSON.stringify(attached) }),
       answer: answer === undefined ? null : JSON.stringify(answer),
       settled: settled === undefined ? null : JSON.stringify(settled),
       at,

@@ -6,7 +6,7 @@ import type { Server } from "node:net";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
-import { open } from "@hex/hub";
+import { open, pictureId } from "@hex/hub";
 import type { Pin, Question, NewRow } from "@hex/hub";
 import { until } from "@hex/hub/testing";
 import { z } from "zod";
@@ -2330,6 +2330,36 @@ test("each option that stands for a poll's option shows its screenshot at its sh
   expect(questions.shot("check:button", 0)).toBe(join(state, "one.png"));
   expect(questions.shot(raw, 0)).toBe(join(state, "one.png"));
   expect(questions.shot("check:button", 2)).toBeUndefined();
+});
+
+test("a question shows the pictures hex sent with it, each at its shape, by the id the app reads them by", () => {
+  said([
+    ["18:00:00", "The new m?", { id: 40 }],
+    [
+      "18:00:02",
+      "(file: logo.png)",
+      {
+        id: 41,
+        meta: {
+          file: "logo.png",
+          attachment_kind: "photo",
+          attachment_file_id: "AgAC1",
+          attachment_dimensions: "1200x600",
+        },
+      },
+    ],
+  ]);
+  ledger([asked(40, "The new m?", ["This one", "Not it"], { attached: [41] })]);
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: () => {},
+  });
+
+  expect(questions.find(`telegram:${DESK}:40`)?.pictures).toEqual([
+    // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
+    { id: pictureId(chatKey(1, 41), 0), shape: 2 },
+  ]);
 });
 
 function png(dir: string, name: string, width: number, height: number) {

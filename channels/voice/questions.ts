@@ -2,7 +2,7 @@ import { readFileSync, renameSync, statSync, watch, writeFileSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { statusPost, open as store } from "@hex/hub";
+import { held as filesIn, pictureId, statusPost, open as store } from "@hex/hub";
 import type { Question as Asked, MessageId, Pin, Thread } from "@hex/hub";
 import { z } from "zod";
 
@@ -109,8 +109,12 @@ const CuratedSchema = z.object({
 
 export type Curated = z.infer<typeof CuratedSchema>;
 
+// oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name, as an option's
+export type Picture = { id: string; shape?: number };
+
 export type Question = Omit<Curated, "from" | "refs" | "options"> & {
   options: Option[];
+  pictures?: Picture[];
   app: string;
   topic: string;
   places: Place[];
@@ -1107,15 +1111,48 @@ export class Questions extends Changes {
       this.shots.set(question.id, shown.shots);
     }
 
+    const sentWith = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.attached);
+    const pictures = sentWith ? this.pictures(sentWith) : [];
+
     return {
       ...question,
       app,
       topic: this.topic(question.task),
       options: options.map((option) => withItsShot(option, shown)),
+      ...(pictures.length > 0 && { pictures }),
       places: this.places(from ?? [...(refs ?? []), { app, thread: thread.join(":") }]),
       ...(was.length > 0 && { was }),
       ...this.half(question.id),
     };
+  }
+
+  private pictures({ thread, attached = [] }: Asked): Picture[] {
+    const db = store(this.state);
+
+    return attached.flatMap((message) => {
+      // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Store#find(thread, message) is not Array#find
+      const row = db.messages.find(thread, message);
+
+      return row
+        ? filesIn(row).flatMap(({ type, path, dimensions }, at) => {
+            const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
+            const widthOverHeight = height > 0 ? width / height : widthOverHeightOf(path);
+
+            return type?.startsWith("image/") === true
+              ? [
+                  {
+                    id: pictureId(row.key, at),
+                    ...(widthOverHeight !== undefined &&
+                      widthOverHeight > 0 && {
+                        // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
+                        shape: widthOverHeight,
+                      }),
+                  },
+                ]
+              : [];
+          })
+        : [];
+    });
   }
 
   private places(from: Source[]): Place[] {

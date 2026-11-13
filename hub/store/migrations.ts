@@ -273,6 +273,17 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
       db.run("alter table messages add column held_for text");
     }
   },
+  ({ db }: Migrating) => {
+    if (
+      db.query("select 1 from pragma_table_info('questions') where name = 'attached'").get() ===
+      null
+    ) {
+      db.run(
+        "alter table questions add column attached text check (json_valid(attached) and json_type(attached) = 'array')",
+      );
+    }
+  },
+  attachOldQuestionsTheirFiles,
 ];
 
 function statusChangeTriggers({ table, thread }: (typeof STATUS_INPUTS)[number]) {
@@ -599,4 +610,69 @@ function carryProfile(store: Migrating) {
 
   rename(file);
   rename(history);
+}
+
+const AskedRows = z.array(
+  z.object({ n: z.number(), thread: z.string(), app: z.string(), message: MessageIdColumn }),
+);
+
+const SentRows = z.array(
+  z.object({
+    key: z.string(),
+    author: z.string(),
+    body: z.string(),
+    file: z.number(),
+    at: z.string(),
+  }),
+);
+
+const SENT_TOGETHER_WITHIN_MS = 30_000;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Before questions kept the messages their files went in, a reply sent its files right after its words, or as the first file's caption: each question gets the file messages hex sent with it.
+function attachOldQuestionsTheirFiles({ db }: Migrating) {
+  const asked = AskedRows.parse(
+    db
+      .query(
+        "select n, thread, app, message from questions where asker = 'hex' and attached is null and poll is null",
+      )
+      .all(),
+  );
+
+  const after = db.query(
+    `select key, author, body, json_extract(meta, '$.attachment_file_id') is not null as file, at from messages
+    where "to" = ?1 and "from" = ?2 and n >= (select n from messages where "to" = ?1 and "from" = ?2 and substr(key, -length(?3) - 1) = ':' || ?3 order by n desc limit 1)
+    order by n limit 12`,
+  );
+
+  const attach = db.query("update questions set attached = ? where n = ?");
+
+  for (const question of asked) {
+    const [own, ...next] = SentRows.parse(
+      after.all(question.thread, question.app, String(question.message)),
+    );
+
+    if (own === undefined) {
+      continue;
+    }
+
+    const until = Date.parse(own.at) + SENT_TOGETHER_WITHIN_MS;
+
+    const following = next.findIndex(
+      (row) =>
+        row.author !== "hex" ||
+        !row.body.startsWith("(file: ") ||
+        row.file === 0 ||
+        Date.parse(row.at) > until,
+    );
+
+    const ids = [
+      ...(own.file === 1 ? [own] : []),
+      ...next.slice(0, following === -1 ? undefined : following),
+    ].map((row) => row.key.slice(row.key.lastIndexOf(":") + 1));
+
+    if (ids.length > 0) {
+      attach.run(JSON.stringify(ids), question.n);
+    }
+  }
 }

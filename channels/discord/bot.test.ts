@@ -945,6 +945,20 @@ test("reply buttons go on the last chunk, and a tap locks them on the choice and
   ]);
 });
 
+test("a question keeps the message its pictures went in, and the pictures stay on disk after Discord's links expire", async () => {
+  const logo = join(mkdtempSync(join(tmpdir(), "outbox-")), "logo.png");
+  writeFileSync(logo, "png");
+  await call("reply", { text: "The new m?", buttons: ["This one", "Not it"], files: [logo] });
+  const posted = lastPosted(here);
+
+  expect(open(state).questions.get("discord", here.id, posted.id)?.attached).toEqual([posted.id]);
+
+  const kept = open(state).messages.get(`discord:${posted.id}`)?.meta?.image_path ?? "";
+  expect(kept.startsWith(state)).toBe(true);
+  expect(readFileSync(kept, "utf-8")).toBe("png");
+  open(state).questions.unask("discord", here.id, posted.id);
+});
+
 test("react takes off only the bot's own reaction, and edit_message replaces the files instead of adding to them", async () => {
   const msg = say(here, 15, "pin me");
   msg.reactions.cache.set("👀", {

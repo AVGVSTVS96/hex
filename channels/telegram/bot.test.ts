@@ -1440,6 +1440,32 @@ test("a poll's screenshots go above it as one album, each captioned with its opt
   expect(kept.some((shot) => shot.startsWith(outbox))).toBe(false);
 });
 
+test("a question keeps the messages its pictures went in, after its words or as their caption", async () => {
+  const logo = join(outbox, `logo-${Date.now()}.png`);
+  writeFileSync(logo, "png");
+
+  const after = await call("reply", {
+    text: "**The new m?**",
+    format: "markdown",
+    buttons: ["This one", "Not it"],
+    files: [logo],
+  });
+
+  const [words = 0, picture = 0] =
+    /ids: (\d+), (\d+)/u
+      .exec(after.text ?? "")
+      ?.slice(1)
+      .map(Number) ?? [];
+
+  expect(asked(words).attached).toEqual([picture]);
+
+  const captioned = idIn(
+    await call("reply", { text: "The new m?", buttons: ["This one", "Not it"], files: [logo] }),
+  );
+
+  expect(asked(captioned).attached).toEqual([captioned]);
+});
+
 test("edit_message settles a poll even with text, which a poll can't change, and without settled says so", async () => {
   const id = idIn(await call("poll", { question: "Ship it?", options: ["Yes", "No"] }));
 

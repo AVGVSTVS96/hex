@@ -1084,6 +1084,58 @@ test("a session that ended loses what it was shown, and log/'s turns headed t be
   expect(after.messages.get("t:past:abc:0")).toBeNull();
 });
 
+const SENT_WITH_A_QUESTION = [
+  [10, "hex", "The new m?", "", "02:40:20"],
+  [11, "hex", "(file: logo.png)", "A", "02:40:22"],
+  [12, "hex", "(file: logo.png)", "B", "02:40:23"],
+  [13, "owner", "yes", "", "02:41:00"],
+  [14, "hex", "(file: logo.png)", "C", "02:41:05"],
+  [20, "hex", "Ship it?", "D", "03:00:00"],
+  [30, "hex", "Rename it?", "", "04:00:00"],
+  [31, "hex", "(file: late.png)", "E", "04:05:00"],
+] as const;
+
+test("an older question gets the file messages hex sent right with it, and nothing it didn't", () => {
+  const store = new Store(dir);
+  const thread = "-100:9";
+
+  const sent = store.db.query(
+    'insert into messages (key, "to", "from", author, body, meta, at) values (?, ?, ?, ?, ?, ?, ?)',
+  );
+
+  for (const [id, author, body, file, time] of SENT_WITH_A_QUESTION) {
+    const meta = file === "" ? {} : { file: "logo.png", attachment_file_id: file };
+    sent.run(
+      `telegram:-100:${id}`,
+      thread,
+      "telegram",
+      author,
+      body,
+      JSON.stringify(meta),
+      `2026-11-12T${time}.000Z`,
+    );
+  }
+
+  for (const [id, , text] of SENT_WITH_A_QUESTION.filter(([n]) => n % 10 === 0)) {
+    store.questions.ask({ app: "telegram", thread, message: id, text, options: ["Yes", "No"] });
+  }
+
+  const version = z
+    .object({ user_version: z.number() })
+    .parse(store.db.query("pragma user_version").get());
+
+  store.db.run(`pragma user_version = ${String(version.user_version - 1)}`);
+  store.db.close();
+
+  const after = new Store(dir);
+
+  expect([10, 20, 30].map((id) => after.questions.get("telegram", thread, id)?.attached)).toEqual([
+    ["11", "12"],
+    ["20"],
+    undefined,
+  ]);
+});
+
 test("each app's relays.jsonl comes into hex.db once, the newest run per pair of threads", () => {
   mkdirSync(join(dir, "discord"));
 
