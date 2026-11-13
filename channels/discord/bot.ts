@@ -1441,7 +1441,10 @@ function serve(token: string) {
       });
 
       said(thread, sent.id, args.question, { poll: args.options.join(" / ") });
-      ledger.ask(thread, sent.id, args.question, args.options, { poll: sent.id });
+      ledger.ask(thread, sent.id, args.question, args.options, {
+        poll: sent.id,
+        multiple: args.multiple === true,
+      });
 
       return `sent poll (id: ${sent.id})`;
     },

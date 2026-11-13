@@ -743,7 +743,7 @@ test("forward sends a message into another topic, found by its name", async () =
   });
 });
 
-test("a poll goes out with named votes, and each vote comes back as the chosen options", async () => {
+test("a poll goes out with named votes, keeps whether it takes several, and each vote comes back as the chosen options", async () => {
   const sent = await call("poll", {
     question: "Lunch?",
     options: ["tacos", "pho", "salad"],
@@ -757,6 +757,7 @@ test("a poll goes out with named votes, and each vote comes back as the chosen o
     is_anonymous: false,
     allows_multiple_answers: true,
   });
+  expect(asked(id).multiple).toBe(true);
   await update({
     poll_answer: {
       poll_id: `poll-${id}`,

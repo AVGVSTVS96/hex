@@ -114,6 +114,7 @@ export type Picture = { id: string; shape?: number };
 
 export type Question = Omit<Curated, "from" | "refs" | "options"> & {
   options: Option[];
+  multiple?: true;
   pictures?: Picture[];
   app: string;
   topic: string;
@@ -401,8 +402,10 @@ export class Questions extends Changes {
     }
   }
 
-  answer(id: string, label: string, via: string, media: Item[] = []): Promise<Sent> {
-    return this.take(this.listed(id), label, via, false, media);
+  answer(id: string, picked: string | string[], via: string, media: Item[] = []): Promise<Sent> {
+    const labels = [picked].flat();
+
+    return this.take(this.listed(id), labels.join("; "), via, false, media, labels);
   }
 
   private async answering(
@@ -414,8 +417,12 @@ export class Questions extends Changes {
     where: string,
     finishing: boolean,
     media: Item[],
+    labels: string[],
   ) {
-    const value = question.options.find((option) => option.label === label)?.value ?? label;
+    const values = labels.map(
+      (picked) => question.options.find((option) => option.label === picked)?.value ?? picked,
+    );
+
     const refs = this.left(id, taken);
     const missed = new Set(chain(taken.before).flatMap((mark) => (mark.missed ?? []).map(refId)));
     const first = refs.find((ref) => !missed.has(refId(ref)));
@@ -432,12 +439,19 @@ export class Questions extends Changes {
       return await tryEach(refs, settle);
     }
 
-    await (first && media.length === 0 && this.asked(first)?.options.includes(value) === true
+    const asked = first && this.asked(first);
+
+    const fits =
+      asked !== undefined &&
+      (values.length === 1 || asked.multiple === true) &&
+      values.every((value) => asked.options.includes(value));
+
+    await (first && media.length === 0 && fits
       ? this.reach(taken, first, {
           type: "answer",
           thread: first.thread,
           message: first.message,
-          label: value,
+          label: values.join("; "),
           via,
         })
       : this.inform(
@@ -744,6 +758,7 @@ export class Questions extends Changes {
     via: string,
     dismissed: boolean,
     media: Item[] = [],
+    labels = [label],
   ): Promise<Sent> {
     if (this.taking.has(id)) {
       throw new Error("an answer to that is on its way; try again in a moment");
@@ -789,7 +804,7 @@ export class Questions extends Changes {
 
       const failed = await (notNeeded
         ? this.dismissing(id, via, question, taken, where, finishing)
-        : this.answering(id, label, via, question, taken, where, finishing, media));
+        : this.answering(id, label, via, question, taken, where, finishing, media, labels));
 
       if (taken.told.length === 0 && taken.refs.length === 0) {
         const [error] = failed;
@@ -1112,6 +1127,7 @@ export class Questions extends Changes {
     }
 
     const sentWith = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.attached);
+    const multiple = refs?.some((ref) => this.asked(ref)?.multiple === true) === true;
     const pictures = sentWith ? this.pictures(sentWith) : [];
 
     return {
@@ -1119,6 +1135,7 @@ export class Questions extends Changes {
       app,
       topic: this.topic(question.task),
       options: options.map((option) => withItsShot(option, shown)),
+      ...(multiple && { multiple }),
       ...(pictures.length > 0 && { pictures }),
       places: this.places(from ?? [...(refs ?? []), { app, thread: thread.join(":") }]),
       ...(was.length > 0 && { was }),

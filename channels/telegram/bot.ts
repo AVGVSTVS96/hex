@@ -1320,6 +1320,7 @@ const handlers: Handlers<typeof tools> = {
 
     ledger.ask(caller, sent.message_id, question, options, {
       poll: sent.poll.id,
+      multiple: args.multiple === true,
       ...(keep.length > 0 && { shots: keep }),
     });
 
