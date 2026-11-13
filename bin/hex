@@ -19,11 +19,12 @@ shell_path() {
 
 # A hub that exits three times within a minute can't start. If hex changed since General last
 # connected (the hub writes that commit to state/good), hex goes back to it, bin/update won't take
-# the commit that failed (state/bad) again, and General hears why once it's back.
+# the commit that failed (state/bad) again, and General hears why once it's back. Fails when there's
+# nothing to go back to.
 roll_back() {
-  good=$(cat "$home/state/good" 2>/dev/null) || return 0
+  good=$(cat "$home/state/good" 2>/dev/null) || return 1
   bad=$(git -C "$hex" rev-parse HEAD)
-  [ -n "$good" ] && [ "$good" != "$bad" ] && git -C "$hex" reset -q --keep "$good" || return 0
+  [ -n "$good" ] && [ "$good" != "$bad" ] && git -C "$hex" reset -q --keep "$good" || return 1
   echo "$bad" > "$home/state/bad"
   note="hex $(git -C "$hex" log -1 --format='%h ("%s")' "$bad") couldn't start: its hub exited three times within a minute. So hex went back to $(git -C "$hex" log -1 --format='%h ("%s")' "$good"), the last commit General connected on, and bin/update won't take $(git -C "$hex" rev-parse --short "$bad") again. What the failed starts printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex)."
   echo "$note" >&2
@@ -67,7 +68,8 @@ case "${1:-}" in
     ;;
   run)
     shell_path
-    (. "$hex/bin/settings"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]) || { echo "no TELEGRAM_BOT_TOKEN in $home/.env" >&2; exit 1; }
+    # In a shell of its own, so a line of .env that fails stops the check the way it would stop the hub.
+    home="$home" sh -eu -c '. "$1"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]' sh "$hex/bin/settings" || { echo "hex can't start: $home/.env doesn't load, or sets no TELEGRAM_BOT_TOKEN" >&2; exit 1; }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
     export HEX_STARTUP="$hex"
@@ -97,7 +99,8 @@ case "${1:-}" in
       hub=
       first=$second second=$third third=$(date +%s)
       if [ -n "$first" ] && [ $((third - first)) -le 60 ]; then
-        roll_back
+        # With nothing to go back to, hex stops as failed, for its service manager to see and act on.
+        roll_back || { echo "hex's hub exited three times within a minute, and there's no earlier hex to go back to" >&2; exit 1; }
         first= second= third=
       fi
       sleep 3
