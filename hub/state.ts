@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { open, stateDir } from "./store.ts";
 
-const { HEX_HUB, HEX_THREAD, HEX_OWNER } = process.env;
+const { HEX_HUB, HEX_THREAD, HEX_OWNER, HEX_BESIDE } = process.env;
 const at = new Date().toISOString();
 const busy = process.argv[2] === "busy";
 
@@ -214,6 +214,7 @@ if (given(HEX_HUB) && given(HEX_THREAD) && (!busy || !mayRunNoTurn)) {
           }),
           ...(leftForTheHubToTake !== undefined && { taken: [leftForTheHubToTake] }),
           ...(session_id && { session: session_id }),
+          ...(given(HEX_BESIDE) && { beside: HEX_BESIDE }),
         })}\n`,
         () => {
           socket.destroy();

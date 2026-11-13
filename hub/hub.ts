@@ -113,6 +113,7 @@ const HubRequestLine = z.discriminatedUnion("type", [
     said: z.string().optional(),
     taken: z.array(z.string()).optional(),
     session: z.string().optional(),
+    beside: z.string().optional(),
   }),
   z.object({
     type: z.literal("open"),
@@ -1901,8 +1902,9 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each session running beside a thread, by the row it was started for; the rows that wait for a turn to go through anywhere before they run again; the threads whose chat heard so; and each row's starts that ended without taking it.
+  // Each session running beside a thread, by the row it was started for; why the API failed one of them; the rows that wait for a turn to go through anywhere before they run again; the threads whose chat heard so; and each row's starts that ended without taking it.
   const besides = new Map<string, string>();
+  const besideRefused = new Map<string, string>();
   const besideWaits = new Set<string>();
   const besideTold = new Set<string>();
   const besideStarts = new Map<string, number>();
@@ -1961,13 +1963,15 @@ export function startHub({
     );
 
     besides.delete(session);
+    const refused = besideRefused.get(session);
+    besideRefused.delete(session);
 
     if (closed) {
       return;
     }
 
     const taken = kept((store) => store.messages.get(row.key)?.taken, undefined);
-    const why = said === "" ? `exit ${code}` : `exit ${code}: ${said}`;
+    const why = refused ?? (said === "" ? `exit ${code}` : `exit ${code}: ${said}`);
 
     if (code === 0 && taken) {
       besideWaits.clear();
@@ -1975,7 +1979,7 @@ export function startHub({
     } else if (!taken) {
       startFailed(thread, row.key, job, why);
     } else if (taken.by === session) {
-      runFailed(thread, session, row.key, job, why);
+      runFailed(thread, session, job, why);
     }
 
     wake();
@@ -2000,10 +2004,10 @@ export function startHub({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A run that failed after taking its row, as on an API error, carries on once a turn goes through anywhere, as a thread's turn does, and its chat hears once a run there waits for that; one that fails again is left, and its chat hears that.
-  function runFailed(thread: string, session: string, key: string, job: string, why: string) {
+  function runFailed(thread: string, session: string, job: string, why: string) {
     const carryOn = `hub:beside:${session}:carry`;
 
-    if (key === carryOn) {
+    if (kept((store) => store.messages.get(carryOn)?.taken?.by === session, false)) {
       failed(
         thread,
         `[${job}] failed again beside this chat, so it won't run by itself again: ${why}`,
@@ -2037,6 +2041,27 @@ export function startHub({
     }
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A session beside a thread says how its turns end, never as the thread's own turn: one that went through lets what waits for that run, and one the API refused fails its run here when no hub waits on it to end, as after a hub restart.
+  function besideTurned(thread: string, session: string, turn: { failed: boolean; why: string }) {
+    if (!turn.failed) {
+      for (const each of answered) {
+        each();
+      }
+
+      return;
+    }
+
+    if (besides.has(session)) {
+      besideRefused.set(session, turn.why);
+
+      return;
+    }
+
+    const ran = kept((store) => store.messages.ranFor(session), null);
+    runFailed(thread, session, ran?.meta?.schedule ?? ran?.meta?.user ?? "beside", turn.why);
+  }
+
   function turnsGoThrough() {
     if (besideWaits.size === 0 && besideTold.size === 0) {
       return;
@@ -2058,6 +2083,7 @@ export function startHub({
           HEX_PORT: String(port),
           HEX_TOKEN: token,
           HEX_STORE: storeDir,
+          HEX_HUB: socketPath,
           ...(general && thread === main && { HEX_MAIN: "1" }),
         },
       }),
@@ -2580,6 +2606,17 @@ export function startHub({
     switch (request.type) {
       case "state": {
         took(request.taken, request.session);
+
+        if (request.beside !== undefined) {
+          if (!request.busy) {
+            besideTurned(request.thread, request.beside, {
+              failed: request.failed === true,
+              why: request.said ?? request.error ?? "unknown",
+            });
+          }
+
+          return;
+        }
 
         const run = runOf(request.thread);
 

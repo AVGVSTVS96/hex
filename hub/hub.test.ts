@@ -4730,7 +4730,7 @@ test("a timer beside General runs in a session of its own, as hex in General's c
   const { env, enabledPlugins } = settingsOf(args);
   expect(enabledPlugins).toEqual({ "telegram@hex": true });
   expect(env).toMatchObject({ HEX_CHANNEL: CHANNEL, HEX_THREAD: "general", HEX_MAIN: "1" });
-  expect(env.HEX_HUB).toBeUndefined();
+  expect(env.HEX_HUB).toBe(join(dir, "hub.sock"));
   open(dir).messages.take("schedule:heartbeat@1", run?.beside ?? "");
   writeFileSync(join(dir, "go"), "0");
   await Bun.sleep(200);
@@ -4794,18 +4794,33 @@ test("a run beside a thread that never takes its row starts again once a turn go
   expect(open(dir).messages.get("schedule:heartbeat@1")?.taken?.by).toBe("hub");
 });
 
-test("a run beside a thread that fails after taking its row carries on once a turn goes through, its chat hearing once, and is left if it fails again", async () => {
+const refused = (by: string) =>
+  sendToHub({
+    type: "state",
+    thread: "general",
+    busy: false,
+    failed: true,
+    error: "server_error",
+    said: "API Error: Connection refused",
+    session: by,
+    beside: by,
+  });
+
+test("a run beside a thread that fails after taking its row carries on once a turn goes through, its chat hearing once with the API's words, and is left if it fails again", async () => {
   start({ main: "general", general: true, launcher: besideLauncher() });
   await launched();
   timed("schedule:heartbeat@1");
   const run = await until(() => runs()[0]);
   open(dir).messages.take("schedule:heartbeat@1", run.beside);
+  await refused(run.beside);
+  await Bun.sleep(100);
+  expect(failures).toEqual([]);
   writeFileSync(join(dir, "go"), "1");
   await until(() => failures.length);
   expect(failures).toEqual([
     [
       "general",
-      "[heartbeat] ran beside this chat and failed: exit 1\nIt carries on once turns go through again.",
+      "[heartbeat] ran beside this chat and failed: API Error: Connection refused\nIt carries on once turns go through again.",
     ],
   ]);
   await Bun.sleep(200);
@@ -4840,6 +4855,38 @@ test("a run beside a thread cut off mid-turn with the machine runs again as the 
   const run = await until(() => runs()[0]);
   expect(run.args.at(-1)).toContain('key="schedule:once@1"');
   expect(run.beside).not.toBe("dead-beside");
+});
+
+test("a run beside a thread that outlived the hub fails when the API refuses its turn, and carries on once a turn goes through", async () => {
+  const store = open(dir);
+  timed("schedule:heartbeat@1");
+  store.messages.take("schedule:heartbeat@1", "outlived");
+  start({ main: "general", general: true, launcher: besideLauncher(), agents: [] });
+  await launched();
+  await refused("outlived");
+  await until(() => failures.length);
+  expect(failures).toEqual([
+    [
+      "general",
+      "[heartbeat] ran beside this chat and failed: API Error: Connection refused\nIt carries on once turns go through again.",
+    ],
+  ]);
+  expect(runs()).toEqual([]);
+  await aTurnGoesThrough();
+  const again = await until(() => runs()[0]);
+  expect(again.args.slice(0, 3)).toEqual(["-p", "--resume", "outlived"]);
+  expect(again.args.at(-1)).toContain('key="hub:beside:outlived:carry"');
+});
+
+test("a turn beside a thread is never the thread's own", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  const general = await session("general");
+  await sendToHub({ type: "state", thread: "general", busy: true, session: "b", beside: "b" });
+  await sendToHub({ type: "state", thread: "general", busy: false, session: "b", beside: "b" });
+  await Bun.sleep(100);
+  expect(states.filter(([thread]) => thread === "general")).toEqual([]);
+  expect(general.received).toEqual([]);
 });
 
 test("a client that shows only its own turns can't be spoken into from beside, so its thread takes the row", async () => {
