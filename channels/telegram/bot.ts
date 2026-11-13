@@ -577,7 +577,8 @@ const post: Post = {
   pin: (thread, message) => bot.api.pinChatMessage(target(thread).chat_id, Number(message)),
   unpin: async (thread, message) => {
     try {
-      await bot.api.unpinChatMessage(target(thread).chat_id, Number(message));
+      const { chat_id, message: id } = located(thread, String(message));
+      await bot.api.unpinChatMessage(chat_id, id);
     } catch (error) {
       if (!/message to unpin not found|message not found/u.test(String(error))) {
         throw error;
@@ -778,11 +779,7 @@ function settle(thread: string, busy: boolean, background: boolean): void {
 
   for (const id of asking.get(thread) ?? []) {
     const { chat_id, message } = located(thread, String(id));
-    void bot.api
-      .editMessageReplyMarkup(chat_id, message, {
-        reply_markup: { inline_keyboard: [[{ text: "No longer waiting", disabled: {} }]] },
-      })
-      .catch(ignore);
+    void markButtons(chat_id, message, "No longer waiting");
   }
 
   asking.delete(thread);
@@ -1304,10 +1301,12 @@ const handlers: Handlers<typeof tools> = {
 
   pin: async (caller, args) => {
     if (args.unpin === true) {
+      const where = args.message_id === undefined ? undefined : located(caller, args.message_id);
+
       const was = await ledger.unpin(
         caller,
         post,
-        args.message_id === undefined ? undefined : Number(args.message_id),
+        where && idIn(caller, where.chat_id, where.message),
       );
 
       return was === undefined
@@ -1683,6 +1682,30 @@ const ANSWERED_IN = new Map([
 
 function only(text: string) {
   return { inline_keyboard: [[{ text, disabled: {} }]] };
+}
+
+const marking = new Set<string>();
+
+async function markButtons(chat_id: string | number, message: number, text: string) {
+  const key = `${chat_id}:${message}`;
+
+  if (marking.has(key)) {
+    return;
+  }
+
+  marking.add(key);
+
+  try {
+    await paced(() =>
+      bot.api.editMessageReplyMarkup(chat_id, message, { reply_markup: only(text) }),
+    );
+  } catch (error) {
+    process.stderr.write(
+      `telegram hub: couldn't mark the buttons on ${chat_id} ${message} "${text}": ${String(error)}\n`,
+    );
+  } finally {
+    marking.delete(key);
+  }
 }
 
 function buttonsOf(options: string[]) {
@@ -2308,13 +2331,7 @@ bot.on("callback_query:data", async (ctx) => {
   const question = verdict === undefined ? questionOf(thread, id) : undefined;
 
   if (!question) {
-    try {
-      await bot.api.editMessageReplyMarkup(message.chat.id, message.message_id, {
-        reply_markup: { inline_keyboard: [[{ text: `✓ ${label}`, disabled: {} }]] },
-      });
-    } catch (error) {
-      process.stderr.write(`telegram hub: couldn't mark the tapped button: ${String(error)}\n`);
-    }
+    void markButtons(message.chat.id, message.message_id, `✓ ${label}`);
   }
 
   if (verdict !== undefined && requestId !== undefined) {
