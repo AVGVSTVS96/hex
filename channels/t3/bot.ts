@@ -223,12 +223,15 @@ const hub = startHub({
 
     turn.reader?.settle();
   },
-  failed: (thread, reason) => {
+  failed: (thread, reason, failedTurn) => {
     const turn = turns.get(thread);
     turns.delete(thread);
     turn?.reader?.close();
     turn?.reject(
-      RequestError.internalError(undefined, `hex couldn't start this thread's session: ${reason}`),
+      RequestError.internalError(
+        undefined,
+        `${failedTurn === true ? "hex's turn failed" : "hex couldn't start this thread's session"}: ${reason}`,
+      ),
     );
   },
   args: (thread) => {

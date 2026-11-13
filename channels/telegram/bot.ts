@@ -1939,11 +1939,15 @@ const hub = startHub({
       void reopenQuestion(thread, asMessageId(message), via);
     },
   },
-  failed: (thread, reason) => {
+  failed: (thread, reason, turn) => {
     void intoOrHome(
       thread,
       async ({ chat_id, extra }) =>
-        await bot.api.sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra),
+        await bot.api.sendMessage(
+          chat_id,
+          `${turn === true ? "This topic's last turn failed" : "Couldn't start this topic's session"}: ${reason}`,
+          extra,
+        ),
     ).catch(ignore);
   },
   waits: (_, message, still) => {

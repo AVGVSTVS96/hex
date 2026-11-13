@@ -2083,6 +2083,90 @@ test("a fork whose session runs without its channel starts again into that sessi
   expect(calls().filter((each) => each[0] === "respawn")).toHaveLength(2);
 });
 
+test("a turn that fails on the API is told in its chat once, carries on once another thread's turn goes through, and waits for its next message if that fails too", async () => {
+  start();
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  const stuck = await session("chat:7");
+  await until(() => stuck.received.length);
+  const limited = "API Error: Server is temporarily limiting requests (not your usage limit)";
+  const failure = { failed: true, error: "rate_limit", said: limited };
+  await stuck.send({ type: "state", thread: "chat:7", busy: false, ...failure });
+  await stuck.send({ type: "state", thread: "chat:7", busy: false, ...failure });
+  expect(failures).toEqual([["chat:7", `${limited}\nIt carries on once turns go through again.`]]);
+
+  hub.open("chat:8", "OpenAI");
+  await until(() => bgStarts().length === 2);
+  const other = await session("chat:8", "1b2c3d4e-0000-4000-8000-000000000000");
+  await other.send({ type: "state", thread: "chat:8", busy: true });
+  expect(stuck.received).toHaveLength(1);
+  await other.send({ type: "state", thread: "chat:8", busy: false });
+  await until(() => stuck.received.length === 2);
+  expect(heard(stuck.received)[1]?.content).toStartWith(
+    "[hub] Your last turn here failed on the API",
+  );
+
+  await stuck.send({ type: "state", thread: "chat:7", busy: true });
+  await stuck.send({ type: "state", thread: "chat:7", busy: false, ...failure });
+  expect(failures[1]).toEqual(["chat:7", `${limited}\nIts next message starts it again.`]);
+  await other.send({ type: "state", thread: "chat:8", busy: false });
+  await settled();
+  expect(stuck.received).toHaveLength(2);
+});
+
+test("a turn that fails for good is told in its chat, and waits for its next message", async () => {
+  start();
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  const stuck = await session("chat:7");
+  await until(() => stuck.received.length);
+  await stuck.send({
+    type: "state",
+    thread: "chat:7",
+    busy: false,
+    failed: true,
+    error: "invalid_request",
+    said: "API Error: 400 prompt is too long",
+  });
+  expect(failures).toEqual([
+    ["chat:7", "API Error: 400 prompt is too long\nIts next message starts it again."],
+  ]);
+  await stuck.send({ type: "state", thread: "chat:7", busy: false });
+  await settled();
+  expect(stuck.received).toHaveLength(1);
+});
+
+test("threads an outage stalled carry on one for each turn that goes through", async () => {
+  start();
+
+  const stalled = [
+    ["chat:7", SESSION],
+    ["chat:9", "3d4e5f60-0000-4000-8000-000000000000"],
+  ] as const;
+
+  const lines = [];
+
+  for (const [thread, id] of stalled) {
+    hub.open(thread, thread);
+    await until(() => bgStarts().length === lines.length + 1);
+    const line = await session(thread, id);
+    await line.send({ type: "state", thread, busy: false, failed: true, error: "overloaded" });
+    lines.push(line);
+  }
+
+  const [first, second] = lines;
+  hub.open("chat:8", "OpenAI");
+  await until(() => bgStarts().length === 3);
+  const other = await session("chat:8", "1b2c3d4e-0000-4000-8000-000000000000");
+  await other.send({ type: "state", thread: "chat:8", busy: false });
+  await until(() => first?.received.length === 1);
+  await settled();
+  expect(second?.received).toHaveLength(0);
+  await other.send({ type: "state", thread: "chat:8", busy: false });
+  await until(() => second?.received.length === 1);
+  expect(first?.received).toHaveLength(1);
+});
+
 test("a thread whose session runs without its channel is retried once, not each time another session starts", async () => {
   const STUCK = "2c3d4e5f-0000-4000-8000-000000000000";
   bound("chat:10", STUCK);
@@ -3596,7 +3680,16 @@ test("a session's stop hook names its session, and says when the turn failed", a
   for (const hook_event_name of ["Stop", "StopFailure"]) {
     const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "idle"], {
       env: { ...process.env, HEX_HUB: socket, HEX_THREAD: "t1", HEX_STORE: dir, MEMORY_DIR: "" },
-      stdin: new Blob([JSON.stringify({ hook_event_name, session_id: SESSION })]),
+      stdin: new Blob([
+        JSON.stringify({
+          hook_event_name,
+          session_id: SESSION,
+          ...(hook_event_name === "StopFailure" && {
+            error: "rate_limit",
+            last_assistant_message: "API Error: 429",
+          }),
+        }),
+      ]),
     });
 
     await hook.exited;
@@ -3606,7 +3699,15 @@ test("a session's stop hook names its session, and says when the turn failed", a
   server.close();
   expect(received).toEqual([
     { type: "state", thread: "t1", busy: false, session: SESSION },
-    { type: "state", thread: "t1", busy: false, failed: true, session: SESSION },
+    {
+      type: "state",
+      thread: "t1",
+      busy: false,
+      failed: true,
+      error: "rate_limit",
+      said: "API Error: 429",
+      session: SESSION,
+    },
   ]);
 });
 
