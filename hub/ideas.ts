@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
-import { clip } from "./fit.ts";
 import { besideOf } from "./beside.ts";
+import { clip } from "./fit.ts";
 import type { IdeaJob } from "./schedule.ts";
 import { hexDir, open } from "./store.ts";
 import { render } from "./tasks.ts";

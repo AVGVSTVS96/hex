@@ -810,8 +810,7 @@ export class Board extends Changes {
             ...(job?.fan ?? [])
               .filter(
                 (fan) =>
-                  WORK.has(fan.kind) &&
-                  (!hasTime(fan.doneAt) || fan.doneAt >= Date.parse(since)),
+                  WORK.has(fan.kind) && (!hasTime(fan.doneAt) || fan.doneAt >= Date.parse(since)),
               )
               .map((fan) => this.subagent(key, fan)),
             ...started.map((one) =>

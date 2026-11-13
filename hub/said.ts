@@ -70,7 +70,10 @@ export function said(store: Store, thread: string, session: string, prompt = "")
 
 if (import.meta.main) {
   try {
-    const { session_id: session, prompt } = Hook.parse(JSON.parse((await Bun.stdin.text()) || "{}"));
+    const { session_id: session, prompt } = Hook.parse(
+      JSON.parse((await Bun.stdin.text()) || "{}"),
+    );
+
     const thread = process.env.HEX_THREAD;
 
     if (session !== undefined && session !== "" && thread !== undefined && thread !== "") {

@@ -133,9 +133,11 @@ test("a job General or a session beside a thread starts reports beside it, so Ge
   );
   const besideIt = run(["mail", "claude", "-p", "go"], { ...general, HEX_BESIDE: "b-1" }).args;
   expect(value(besideIt, "HEX_OWNER")).toBe("telegram:b-1");
+
   const owner = Bun.spawnSync(["bun", job, "--owner"], {
     env: { ...env, ...general, HEX_BESIDE: "b-1" },
   });
+
   expect(owner.stdout.toString()).toBe("telegram:b-1\n");
 
   await Bun.spawn(["bun", job, "--ended", "mail", "telegram:beside:-100123:101"], {
@@ -152,6 +154,7 @@ test("a job General or a session beside a thread starts reports beside it, so Ge
   const told = open(join(home, "state"))
     .messages.untaken()
     .find((row) => row.key.startsWith("job:mail@"));
+
   expect(told?.to).toBe("beside:-100123:101");
   expect(told?.body).toContain("This work comes from my conversation in orchard");
   open(join(home, "state")).db.run("delete from messages where key = ?", [told?.key ?? ""]);

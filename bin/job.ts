@@ -107,7 +107,11 @@ function reportsTo(): string | undefined {
 // A new session beside General learns from the job where its work came from.
 function tell(unit: string, owner: string, said: string, at: string) {
   const to = store.threads.key(owner);
-  const from = besideWhat(to) === undefined ? undefined : origin(store, process.env.HEX_FROM, process.env.HEX_FROM_AT);
+
+  const from =
+    besideWhat(to) === undefined
+      ? undefined
+      : origin(store, process.env.HEX_FROM, process.env.HEX_FROM_AT);
 
   store.messages.deliver({
     key: `job:${unit}@${at}`,
@@ -155,10 +159,7 @@ if (mode === "--owner") {
   const key = store.threads.key(owner);
   const thread = besideWhat(key) ?? key;
 
-  if (
-    !store.messages.took(key) &&
-    !store.threads.list().some((each) => each.thread === thread)
-  ) {
+  if (!store.messages.took(key) && !store.threads.list().some((each) => each.thread === thread)) {
     console.error(
       `job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`,
     );

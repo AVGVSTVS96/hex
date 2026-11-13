@@ -31,7 +31,12 @@ export function prompt(app: string, row: Row, zone: string) {
 // Runs a session to its end: as a systemd unit of its own where hex's sessions have a slice, so it outlives a hub restart and keeps its output in the journal, and otherwise as a child that does. Resolves with its exit code and, when it failed, its last words.
 export function run(
   command: string[],
-  { session, cwd, env, name }: { session: string; cwd: string; env: Record<string, string>; name: string },
+  {
+    session,
+    cwd,
+    env,
+    name,
+  }: { session: string; cwd: string; env: Record<string, string>; name: string },
 ): Promise<{ code: number; said: string }> {
   const slice = process.env.HEX_SESSIONS_SLICE;
   const unit = `hex-beside-${session}`;
@@ -75,28 +80,33 @@ export function run(
     child.on("error", (error) => {
       resolve({ code: 1, said: String(error) });
     });
-    child.on("close", (code) => {
-      const done = code ?? 1;
+    child.on("close", (exit) => {
+      ended(exit ?? 1);
+    });
 
-      if (done === 0 || !journal) {
-        resolve({ code: done, said: said.trim() });
+    function ended(code: number) {
+      if (code === 0 || !journal) {
+        resolve({ code, said: said.trim() });
 
         return;
       }
 
-      const last = spawn("journalctl", ["--user", "-u", unit, "-o", "cat", "-n", "4", "--no-pager"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
+      const last = spawn(
+        "journalctl",
+        ["--user", "-u", unit, "-o", "cat", "-n", "4", "--no-pager"],
+        { stdio: ["ignore", "pipe", "ignore"] },
+      );
+
       let out = "";
       last.stdout.on("data", (chunk: Buffer) => {
         out += chunk.toString();
       });
       last.on("error", () => {
-        resolve({ code: done, said: said.trim() });
+        resolve({ code, said: said.trim() });
       });
       last.on("close", () => {
-        resolve({ code: done, said: (out.trim() || said.trim()).slice(-400) });
+        resolve({ code, said: (out.trim() || said.trim()).slice(-400) });
       });
-    });
+    }
   });
 }

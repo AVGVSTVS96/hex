@@ -1879,7 +1879,10 @@ export function startHub({
       }
     }
 
-    for (const row of kept((store) => store.messages.beside([...threads.keys()].map(besideOf)), [])) {
+    for (const row of kept(
+      (store) => store.messages.beside([...threads.keys()].map(besideOf)),
+      [],
+    )) {
       void beside(row);
     }
 
@@ -1907,21 +1910,21 @@ export function startHub({
   // A row beside a thread starts a session of its own, as hex in the thread's chat: it takes the row itself, so one that never starts leaves it for another try, and a resumed one waits for its last run to end.
   async function beside(row: Row & { beside: string; resume?: string }) {
     const thread = besideWhat(row.beside);
-    const { resume } = row;
+    const resumed = row.resume;
 
     if (
       closed ||
       thread === undefined ||
       !threads.has(thread) ||
       [...besides.values()].includes(row.key) ||
-      (resume !== undefined &&
-        (besides.has(resume) || kept((store) => sessionsRunning(store).has(resume), true))) ||
+      (resumed !== undefined &&
+        (besides.has(resumed) || kept((store) => sessionsRunning(store).has(resumed), true))) ||
       (besideStarts.get(row.key) ?? 0) >= BESIDE_STARTS_TRIED
     ) {
       return;
     }
 
-    const session = resume ?? randomUUID();
+    const session = resumed ?? randomUUID();
     const job = row.meta?.schedule ?? row.meta?.user ?? "beside";
     besides.set(session, row.key);
     writeBesideSettings(thread);
@@ -1930,7 +1933,7 @@ export function startHub({
       [
         launcher,
         "-p",
-        ...(resume === undefined ? ["--session-id", session] : ["--resume", session]),
+        ...(resumed === undefined ? ["--session-id", session] : ["--resume", session]),
         ...extra(thread),
         "--settings",
         besideSettingsOf(thread),
@@ -2461,8 +2464,8 @@ export function startHub({
     {
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // A tool can send into another thread: what it sends there is still its caller's session's words.
-      call: (thread, tool, toolArgs, beside) =>
-        caller.run(beside ?? current(thread), () => call(thread, tool, toolArgs)),
+      call: (thread, tool, toolArgs, by) =>
+        caller.run(by ?? current(thread), () => call(thread, tool, toolArgs)),
       permission: (thread, request) => permission?.(thread, request),
       open: welcome,
       close: drop,

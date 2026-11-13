@@ -154,6 +154,14 @@ function result(id: RpcId, value: Answer) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session hex runs beside a thread says its own id here: it speaks in the thread's chat, and is neither its inbound line nor its permission relay.
+function besideOf(request: Request) {
+  const session = request.headers.get("x-hex-beside");
+
+  return session === null || session === "" ? undefined : session;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here with their binding and the hub's token in headers. Every session id is taken as it comes, so a session that connected before the hub restarted carries on where it was without initializing again.
 export function endpoint(
   name: string,
@@ -171,14 +179,6 @@ export function endpoint(
       request.headers.get("x-hex-channel") === channel ? request.headers.get("x-hex-thread") : null;
 
     return thread === null || thread === "" ? undefined : thread;
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session hex runs beside the thread says its own id here: it speaks in the thread's chat, and is neither its inbound line nor its permission relay.
-  function besideOf(request: Request) {
-    const session = request.headers.get("x-hex-beside");
-
-    return session === null || session === "" ? undefined : session;
   }
 
   const active = new Map<string, Promise<Result>>();

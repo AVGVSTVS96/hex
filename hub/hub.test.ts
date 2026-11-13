@@ -81,11 +81,6 @@ const Initialized = z.object({
 
 const Declined = z.object({ error: z.object({ code: z.number() }) });
 
-function anyString(): string {
-  // oxlint-disable-next-line typescript/no-unsafe-return -- bun types its asymmetric matchers as any
-  return expect.any(String);
-}
-
 function matching(pattern: RegExp): string {
   // oxlint-disable-next-line typescript/no-unsafe-return -- bun types its asymmetric matchers as any
   return expect.stringMatching(pattern);
@@ -314,9 +309,6 @@ const respawns = () => calls().filter((each) => each[0] === "respawn");
 
 const restsOf = (thread: string) =>
   states.filter(([each, busy]) => each === thread && !busy).length;
-
-const minutesIntoNovember = (minutes: number) =>
-  new Date(Date.parse("2026-11-01T00:00:00.000Z") + minutes * 60_000).toISOString();
 
 const SeenLine = z.looseObject({});
 
@@ -4736,7 +4728,12 @@ test("a session beside a thread speaks in its chat as itself, and is neither its
   await beside.open();
   await beside.rpc("tools/list");
   await beside.call("reply", { text: "The landlord wrote." });
-  await beside.ask({ request_id: "abcde", tool_name: "Bash", description: "ls", input_preview: "{}" });
+  await beside.ask({
+    request_id: "abcde",
+    tool_name: "Bash",
+    description: "ls",
+    input_preview: "{}",
+  });
   hub.deliver("general", "hex", { ...message, content: "and now?" });
   await until(() => general.received.length);
   expect(heard(general.received).map((turn) => turn.content)).toEqual(["and now?"]);

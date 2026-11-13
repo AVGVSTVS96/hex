@@ -53,16 +53,15 @@ const MessageRow = z
 
 export const MessageRows = z.array(MessageRow);
 
-const withColumns = <Shape extends z.ZodRawShape>(shape: Shape) =>
+const withColumns = <Columns extends z.ZodObject>(columns: Columns) =>
   z.array(
     z
-      .object(shape)
-      .and(z.record(z.string(), z.unknown()))
-      .transform((raw) => ({ row: MessageRow.parse(raw), ...z.object(shape).parse(raw) })),
+      .record(z.string(), z.unknown())
+      .transform((raw) => ({ row: MessageRow.parse(raw), ...columns.parse(raw) })),
   );
 
-const BesideRows = withColumns({ beside: z.string(), resume: TextOrNull });
-const JobRows = withColumns({ job: TextOrNull });
+const BesideRows = withColumns(z.object({ beside: z.string(), resume: TextOrNull }));
+const JobRows = withColumns(z.object({ job: TextOrNull }));
 
 const TakenAtRow = z.object({ at: TextOrNull });
 const TakerRow = z.object({ taken_by: z.string(), taken_at: z.string() }).nullable();
