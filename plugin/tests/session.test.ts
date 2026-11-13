@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { startHub } from "../../hub/hub.ts";
+import { until } from "../../hub/until.ts";
 
 const Args = z.array(z.string());
 
@@ -144,9 +145,7 @@ async function launch(
     hub.deliver(thread, thread, { content: "hi", author: "owner", meta: {} });
   }
 
-  for (let i = 0; i < 200 && !existsSync(join(home, "launched")); i++) {
-    await Bun.sleep(25);
-  }
+  await until(() => existsSync(join(home, "launched")));
 
   const args = Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")));
   const file = flagValue(args, "--settings");

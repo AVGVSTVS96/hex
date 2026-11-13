@@ -19,5 +19,5 @@ for plugin in $(jq -r '.plugins[].name' channels/.claude-plugin/marketplace.json
 done
 $build channels/buzz/provider.ts --outdir "$out/provider" >/dev/null
 $build hub/serve.ts --outdir "$out/hub" >/dev/null
-# A test's time limit is there to catch a hang: on a busy server, tests that take 4 s pass bun's default 5 s.
-bun test --isolate --timeout 30000 plugin/tests hub channels
+# The one time limit on tests, so a test fails on time only when it hangs: on a busy server one that takes a second here took 32.
+bun test --isolate --timeout 300000 plugin/tests hub channels

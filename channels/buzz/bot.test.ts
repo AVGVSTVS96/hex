@@ -419,7 +419,7 @@ test("after a drop it reconnects, authenticates again, resubscribes from shortly
 
   clientRelay.drop();
   clientRelay.inject(signed(ownerKey, 9, "two", [["h", "c3"]]));
-  await until(() => seen.length === 2, 5000);
+  await until(() => seen.length === 2);
   expect(reqs().length).toBe(2);
   expect(nth(reqs(), 1).since).toBeGreaterThanOrEqual(since);
   expect(seen).toEqual(["one", "two"]);

@@ -91,6 +91,10 @@ test("a thread's history a hub restart cut short loads again without repeating w
     }, 100);
   });
 
+  const closed = new Promise((resolve) => {
+    first.on("close", resolve);
+  });
+
   const proxy = Bun.spawn(["bun", join(import.meta.dir, "acp.ts"), path], {
     stdin: "pipe",
     stdout: "pipe",
@@ -108,9 +112,7 @@ test("a thread's history a hub restart cut short loads again without repeating w
   );
   void proxy.stdin.flush();
   await until(() => out.length === 2);
-  await new Promise((resolve) => {
-    first.on("close", resolve);
-  });
+  await closed;
   await hubAnsweringEachRequestWith((request, socket) => {
     if (request.method !== "session/load") {
       write(socket, { id: request.id, result: {} });

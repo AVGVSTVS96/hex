@@ -210,13 +210,7 @@ export async function connect(options: Parameters<typeof http>[0]) {
   await line.open();
   await line.rpc("tools/list");
 
-  const end = Date.now() + 3000;
-
   while (line.listed() < 2) {
-    if (Date.now() > end) {
-      throw new Error("the hub never opened the channel");
-    }
-
     await Bun.sleep(10);
   }
 

@@ -188,4 +188,4 @@ test("a stopped job keeps its slot until it has stopped, as systemd's stop reach
   expect(Bun.spawnSync(["flock", "-n", join(slots, `${here}.1`), "true"]).exitCode).toBe(0);
   writeFileSync(session, kept);
   rmSync(join(fake, "started"));
-}, 20_000);
+});

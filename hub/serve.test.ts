@@ -73,12 +73,12 @@ test("a hub that finds the port held waits for it instead of exiting, which bin/
     }
   })();
 
-  await until(() => said.includes(`port ${port} is in use`) || waiting.exitCode !== null, 15_000);
+  await until(() => said.includes(`port ${port} is in use`) || waiting.exitCode !== null);
   await Bun.sleep(1500);
   expect(waiting.exitCode).toBeNull();
   waiting.kill("SIGTERM");
   expect(await waiting.exited).toBe(0);
-}, 20_000);
+});
 
 test("the next hub listens once the one holding the port exits", async () => {
   const port = await oldHub();
@@ -95,4 +95,4 @@ test("the next hub listens once the one holding the port exits", async () => {
   } finally {
     await listener.stop(true);
   }
-}, 15_000);
+});

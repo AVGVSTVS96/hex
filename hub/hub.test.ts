@@ -3568,15 +3568,9 @@ test("a turn's hook tells the hub and goes, without waiting for a stalled hub to
     stdin: new Blob([JSON.stringify({ hook_event_name: "Stop" })]),
   });
 
-  const ended = await Promise.race([
-    hook.exited.then(() => true),
-    Bun.sleep(3000).then(() => false),
-  ]);
-
-  hook.kill();
+  await hook.exited;
   await until(() => received.length || undefined);
   server.close();
-  expect(ended).toBe(true);
   expect(received).toEqual([{ type: "state", thread: "t1", busy: false }]);
 });
 

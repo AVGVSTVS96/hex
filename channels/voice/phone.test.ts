@@ -368,7 +368,7 @@ async function pickedUp(base: string, token: string) {
 }
 
 async function live(base: string) {
-  for (let i = 0; i < 100; i++) {
+  for (;;) {
     const id = (await calls(base)).live;
 
     if (id !== undefined && id !== "") {
@@ -377,8 +377,6 @@ async function live(base: string) {
 
     await Bun.sleep(50);
   }
-
-  throw new Error("the phone call never went live");
 }
 
 async function listen(
@@ -437,7 +435,7 @@ test("a phone call's words reach the app as they're heard, and how it ended land
   expect(ended.version).toBeUndefined();
   expect(ended.turns).toHaveLength(2);
   expect((await calls(call.base)).live).toBeUndefined();
-}, 20_000);
+});
 
 test("the caller talking over the voice clears what Twilio hasn't played yet, but not the words it's answering, however late they come", async () => {
   await using call = await phoneCall();
@@ -485,7 +483,7 @@ test("the caller talking over the voice clears what Twilio hasn't played yet, bu
     clears(),
     "Twilio handed back every mark the clear dropped, so with nothing left unplayed more words clear nothing",
   ).toHaveLength(1);
-}, 20_000);
+});
 
 test("hex never rings while a call is live, and a call it placed that picks up once one is live, as a voicemail can, is let go", async () => {
   await using call = await phoneCall();
@@ -509,7 +507,7 @@ test("hex never rings while a call is live, and a call it placed that picks up o
 
   expect(missed.content).toContain("another call was live");
   expect((await calls(call.base)).live).toBe(id);
-}, 20_000);
+});
 
 test("Call my phone moves the live call: the phone rings past the live call, and once it picks up the old call ends as moved", async () => {
   await using call = await phoneCall();
@@ -526,7 +524,7 @@ test("Call my phone moves the live call: the phone rings past the live call, and
     reason: "moved to a new call",
   });
   expect((await calls(call.base)).live).toBe("sess_phone_2");
-}, 20_000);
+});
 
 test("phone moves the live call only with move, and only to the caller's own phone", async () => {
   await using call = await phoneCall();
@@ -539,7 +537,7 @@ test("phone moves the live call only with move, and only to the caller's own pho
   expect((await call.tool("phone", { why: "a reminder" })).error).toContain("a call is live");
   expect((await call.tool("phone", { move: true })).result).toStartWith(`ringing ${CALLER}`);
   expect(call.placed).toHaveLength(1);
-}, 20_000);
+});
 
 test("while hex is on a call it placed to someone else, a call meant for the owner waits for it to end instead of going to them", async () => {
   await using call = await phoneCall();
@@ -554,7 +552,7 @@ test("while hex is on a call it placed to someone else, a call meant for the own
   expect(error).toContain("ring again once it ends");
   expect((await call.tool("phone", { move: true })).error).toContain("on a call to +15550003333");
   expect(call.placed).toHaveLength(1);
-}, 20_000);
+});
 
 test("notes sent while a placed call rings reach that call when it connects, and never one the caller started meanwhile", async () => {
   await using call = await phoneCall();
@@ -568,7 +566,7 @@ test("notes sent while a placed call rings reach that call when it connects, and
   expect((await call.tool("note", { text: "for this call" })).result).toBe("noted");
   expect(call.told.map((told) => told.session)).toEqual(["sess_phone"]);
   expect(call.told[0]?.content).toMatch(/not for the caller.* for this call$/u);
-}, 20_000);
+});
 
 test("notes sent while a placed call rings reach the voice once it picks up", async () => {
   await using call = await phoneCall();
@@ -578,7 +576,7 @@ test("notes sent while a placed call rings reach the voice once it picks up", as
   const told = await until(() => call.told[0]);
   expect(told.session).toBe("sess_phone");
   expect(told.content).toMatch(/not for the caller.* the build is green$/u);
-}, 20_000);
+});
 
 test("a call's words reach the voice session only once its keep is through, in order, and its end lets the session renew", async () => {
   await using call = await phoneCall();
@@ -601,7 +599,7 @@ test("a call's words reach the voice session only once its keep is through, in o
   await until(() => call.steps.at(-1)?.step === "renew");
   expect(call.steps.at(-2)?.content).toStartWith("The call ended");
   expect((await record(call.base, "sess_phone")).claude).toBe("brain");
-}, 20_000);
+});
 
 test("the app ends only the call it names: a stale screen closing its old call leaves the live one going", async () => {
   await using call = await phoneCall();
@@ -624,7 +622,7 @@ test("the app ends only the call it names: a stale screen closing its old call l
   expect(
     await listen(call.base, id, (await ending).version, (now) => now.ended !== undefined),
   ).toMatchObject({ end: "you" });
-}, 20_000);
+});
 
 test("a caller who hangs up before the voice session starts leaves no call behind: the session is let go, never taken as live", async () => {
   await using call = await phoneCall({ openaiHoldsEachStart: true });
@@ -649,7 +647,7 @@ test("a caller who hangs up before the voice session starts leaves no call behin
         /didn't happen/u.test(step.content),
     ),
   ).toBe(false);
-}, 20_000);
+});
 
 test("a handoff no words follow still reaches the voice session, once, a moment later", async () => {
   await using call = await phoneCall();
@@ -660,12 +658,12 @@ test("a handoff no words follow still reaches the voice session, once, a moment 
   await Bun.sleep(100);
   call.delegate("d1", 900);
   const handoffs = () => call.steps.filter((step) => step.meta?.delegation_id === "d1");
-  await until(() => handoffs().length, 6000);
+  await until(() => handoffs().length);
   expect(handoffs()[0]?.content).toContain("is the build green?");
   call.say("voice", "One sec.", 1200);
   await Bun.sleep(300);
   expect(handoffs()).toHaveLength(1);
-}, 20_000);
+});
 
 test("a phone call whose voice session drops carries on in a new one: same call, the call so far, the caller's audio goes to it", async () => {
   await using call = await phoneCall();
@@ -688,4 +686,4 @@ test("a phone call whose voice session drops carries on in a new one: same call,
   phone.send(JSON.stringify({ event: "stop" }));
   const ended = await listen(call.base, id, back.version, (now) => now.ended !== undefined);
   expect(ended).toMatchObject({ id, end: "you" });
-}, 20_000);
+});

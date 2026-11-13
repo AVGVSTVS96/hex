@@ -286,7 +286,7 @@ test("a call whose client left while the hub was too busy to read it doesn't run
 
     Bun.spawn(["bun", "-e", client], { stdout: "ignore", stderr: "ignore" });
 
-    for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;) {
+    for (const end = Date.now() + 240_000; !existsSync(left) && Date.now() < end;) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
 
@@ -338,7 +338,7 @@ test("a call whose client left while the hub was too busy to send its answer cou
     await reached();
     writeFileSync(gave, "");
 
-    for (const end = Date.now() + 20_000; !existsSync(left) && Date.now() < end;) {
+    for (const end = Date.now() + 240_000; !existsSync(left) && Date.now() < end;) {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
     }
 
