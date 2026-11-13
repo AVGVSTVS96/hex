@@ -343,33 +343,33 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
   ]);
 });
 
-test("a job's end brings the last of what it printed, says where the rest is, and calls a claude job's words its own account to check", async () => {
-  writeFileSync(
-    join(home, "fake/journalctl"),
-    `#!/bin/sh
-case "$*" in
-  *--sync*) ;;
-  *"_SYSTEMD_USER_UNIT=pages.service "*) echo "built 3 pages"; echo "all pushed" ;;
-  *"_SYSTEMD_USER_UNIT=chatty.service "*) seq 1 41 ;;
-  *"_SYSTEMD_USER_UNIT=wide.service "*) for n in 1 2 3; do printf "%02000d\\n" "$n"; done ;;
-  *" -u "*) echo "Started the job." ;;
-esac
-`,
+test("a job's output is kept in a file of its own, and its end brings the last of it, says where all of it is, and calls a claude job's words its own account to check", async () => {
+  const jobs = join(home, "state/jobs");
+
+  const { args } = run(
+    ["pages", "claude", "--session-id", "s-9", "-p", "build the pages"],
+    session,
   );
-  chmodSync(join(home, "fake/journalctl"), 0o755);
-  run(["pages", "claude", "--session-id", "s-9", "-p", "build the pages"], session);
+
+  expect(args).toContain(`StandardOutput=append:${join(jobs, "pages.log")}`);
+  expect(args).toContain(`StandardError=append:${join(jobs, "pages.log")}`);
+  expect(readFileSync(join(jobs, "pages.log"), "utf-8")).toBe("");
   run(["chatty", "make", "all"], session);
   run(["wide", "make", "all"], session);
   run(["quiet", "make", "all"], session);
+  writeFileSync(join(jobs, "pages.log"), "pages runs on server\nbuilt 3 pages\nall pushed\n");
+  writeFileSync(
+    join(jobs, "chatty.log"),
+    Array.from({ length: 41 }, (_, n) => `${n + 1}\n`).join(""),
+  );
+  writeFileSync(
+    join(jobs, "wide.log"),
+    ["1", "2", "3"].map((n) => `${n.padStart(2000, "0")}\n`).join(""),
+  );
 
-  for (const unit of ["pages", "chatty", "wide", "quiet"]) {
+  for (const unit of ["pages", "chatty", "wide", "quiet", "unkept"]) {
     await Bun.spawn(["bun", job, "--ended", unit, "t3:stray-key"], {
-      env: {
-        ...env,
-        PATH: `${join(home, "fake")}:${env.PATH}`,
-        SERVICE_RESULT: "success",
-        EXIT_STATUS: "0",
-      },
+      env: { ...env, SERVICE_RESULT: "success", EXIT_STATUS: "0" },
     }).exited;
   }
 
@@ -383,20 +383,16 @@ esac
       ).body;
 
   expect(said("pages")).toContain(
-    "What it printed last:\n<output>\nbuilt 3 pages\nall pushed\n</output>",
+    "What it printed last:\n<output>\npages runs on server\nbuilt 3 pages\nall pushed\n</output>",
   );
   expect(said("pages")).toContain("the agent's own account, not proof");
   expect(said("pages")).toContain("log -- s-9");
-  expect(said("chatty")).toContain(
-    "the rest in `journalctl --user _SYSTEMD_USER_UNIT=chatty.service --since @",
-  );
-  expect(said("chatty")).toContain("<output>\n2\n3\n");
+  expect(said("chatty")).toContain(`, all of it in ${join(jobs, "chatty.log")}:\n<output>\n2\n3\n`);
   expect(said("chatty")).toContain("\n41\n</output>");
   expect(said("chatty")).not.toContain("own account");
-  expect(said("wide")).toContain("the rest in `journalctl");
-  expect(said("wide")).not.toContain("1\n0000");
-  expect(said("wide")).toContain(`${"0".repeat(1999)}3\n</output>`);
-  expect(said("quiet")).toContain("No output of it could be read from its journal");
+  expect(said("wide")).toContain(`<output>\n${"0".repeat(1999)}3\n</output>`);
+  expect(said("quiet")).toContain("It printed nothing.");
+  expect(said("unkept")).toContain("Its output wasn't kept.");
 });
 
 test("a job that runs already is refused", () => {
@@ -455,7 +451,11 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     "s-1",
   ]);
   expect(args.at(-1)).toContain("carry on");
-  expect(readdirSync(jobs).toSorted()).toEqual(["atrium.json", "live.json"]);
+  expect(
+    readdirSync(jobs)
+      .filter((file) => file.endsWith(".json"))
+      .toSorted(),
+  ).toEqual(["atrium.json", "live.json"]);
 
   const told: unknown[] = z
     .array(z.string())

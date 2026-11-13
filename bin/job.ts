@@ -6,7 +6,6 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -102,11 +101,11 @@ if (mode === "--ended") {
     process.exit(0);
   }
 
-  const { session, started } = keptRecord(unit);
+  const session = keptSession(unit);
 
   rmSync(join(records, `${unit}.json`), { force: true });
 
-  const output = await lastOutput(unit, started);
+  const output = lastOutput(unit);
   const key = owner.slice(owner.indexOf(":") + 1);
 
   if (!store.threads.list().some(({ thread }) => thread === key)) {
@@ -272,38 +271,28 @@ if (mode === "--ended") {
   );
 }
 
-function keptRecord(unit: string) {
-  const record = join(records, `${unit}.json`);
-  const started = existsSync(record) ? statSync(record).mtime : undefined;
-
+function keptSession(unit: string) {
   try {
-    const kept = WhatAJobNeedsToRunAgain.safeParse(JSON.parse(readFileSync(record, "utf-8")));
+    const kept: unknown = JSON.parse(readFileSync(join(records, `${unit}.json`), "utf-8"));
 
-    return { session: kept.data?.session, started };
+    return WhatAJobNeedsToRunAgain.safeParse(kept).data?.session ?? "";
   } catch {
-    return { session: undefined, started };
+    return "";
   }
 }
 
-async function lastOutput(unit: string, started?: Date) {
-  const since = started ? ["--since", `@${Math.floor(started.getTime() / 1000)}`] : [];
-  const printedByIt = `_SYSTEMD_USER_UNIT=${unit}.service`;
-  const everything = `journalctl --user ${printedByIt} ${since.join(" ")} -o cat`;
+function lastOutput(unit: string) {
+  const log = join(records, `${unit}.log`);
+  let lines: string[];
 
-  await $`journalctl --user --sync`.nothrow().quiet();
-
-  const lines = (
-    await $`journalctl --user ${printedByIt} ${since} -o cat --no-pager -n ${LINES_OF_OUTPUT + 1}`
-      .nothrow()
-      .quiet()
-      .text()
-  )
-    .trimEnd()
-    .split("\n")
-    .filter(Boolean);
+  try {
+    lines = readFileSync(log, "utf-8").trimEnd().split("\n").filter(Boolean);
+  } catch {
+    return "Its output wasn't kept.";
+  }
 
   if (lines.length === 0) {
-    return `No output of it could be read from its journal (\`${everything}\`).`;
+    return "It printed nothing.";
   }
 
   const shown = lines.slice(-LINES_OF_OUTPUT);
@@ -314,7 +303,7 @@ async function lastOutput(unit: string, started?: Date) {
 
   const text = shown.join("\n").slice(-CHARACTERS_OF_OUTPUT);
   const cut = shown.length < lines.length || text.length < shown.join("\n").length;
-  const earlier = cut ? `, the rest in \`${everything}\`` : "";
+  const earlier = cut ? `, all of it in ${log}` : "";
 
   return `What it printed last${earlier}:\n<output>\n${text}\n</output>`;
 }
@@ -370,6 +359,10 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
 
   writeFileSync(record, JSON.stringify(kept));
 
+  const log = join(records, `${unit}.log`);
+
+  writeFileSync(log, "");
+
   const agent = basename(kept.command[0] ?? "") === "claude";
   const name = `${store.threads.names()[store.threads.key(kept.owner)] ?? store.threads.key(kept.owner)}/${unit}`;
   const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command;
@@ -377,7 +370,7 @@ async function launch(unit: string, kept: Kept, args: string[], input: string[] 
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];
 
   const started =
-    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
+    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
 
   if (started.exitCode === 0) {
     return;
