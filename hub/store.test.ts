@@ -296,7 +296,7 @@ test("hex watch prints a line once it listens and one for each change to hex.db,
     change();
     expect(await line()).toMatch(/^\d{4}-\d\d-\d\dT[\d:.]+Z\n/u);
     await lines.cancel();
-    await until(() => watch.exitCode !== null || void change(), 10_000);
+    await until(() => watch.exitCode !== null || void change());
     expect(watch.exitCode).toBe(0);
   } finally {
     watch.kill();
@@ -509,7 +509,7 @@ test("hex deliver reaches a thread by its session's id or the 8 characters hex r
       .messages.since()
       .map((row) => row.to),
   ).toEqual(["-100:7", "-100:7", "-100:7", "-100:4803", "-100:103", "-100:4801", "-100:4802"]);
-}, 20_000);
+});
 
 test("hex deliver finds a thread by its name too, keeps one for a closed thread till it opens, and refuses an address no thread has", async () => {
   open(dir).threads.keep("t3", {
@@ -560,7 +560,7 @@ test("hex deliver finds a thread by its name too, keeps one for a closed thread 
     "5b0e7d2a-0000-4000-8000-000000000000",
     "0f3a9c1e-0000-4000-8000-000000000000",
   ]);
-}, 20_000);
+});
 
 const ask = {
   ...message,
@@ -1013,7 +1013,7 @@ test("hex log reads every thread a name means, a delivery to that name asks for 
     code: 2,
     err: "hex: -i is only for recall\n",
   });
-}, 20_000);
+});
 
 test("each app's threads.json comes into hex.db once, as that app's open threads", () => {
   new Store(dir).db.close();

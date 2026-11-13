@@ -220,7 +220,7 @@ test("the keeper sends the board once, redraws it as hex changes, and stops when
     text: "Ship it?",
     options: [],
   });
-  await until(() => edits.at(-1)?.chat_data.includes("Ship it?"), 15_000);
+  await until(() => edits.at(-1)?.chat_data.includes("Ship it?"));
 
   gone = true;
   store.questions.ask({
@@ -230,12 +230,12 @@ test("the keeper sends the board once, redraws it as hex changes, and stops when
     text: "Logo?",
     options: [],
   });
-  await until(() => readFileSync(file, "utf-8").includes("off"), 15_000);
+  await until(() => readFileSync(file, "utf-8").includes("off"));
 
   await keeper.again();
   expect(sent).toHaveLength(2);
   keeper.stop();
-}, 30_000);
+});
 
 test("a board already sent is redrawn when the hub starts again, not sent twice", async () => {
   const file = join(dir, "board.json");

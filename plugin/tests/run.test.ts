@@ -150,7 +150,7 @@ test("a commit whose hub can't start goes back to the last one General connected
   git("remote", "add", "origin", join(home, "origin"));
   git("push", "-q", "origin", "main");
   run();
-  await until(() => hubs().length === 1, 20_000);
+  await until(() => hubs().length === 1);
   expect(git("rev-parse", "HEAD")).toBe(good);
   expect(readFileSync(join(home, "state/bad"), "utf-8").trim()).toBe(bad);
   expect(readFileSync(join(home, "state/rollback"), "utf-8")).toContain(
@@ -162,4 +162,4 @@ test("a commit whose hub can't start goes back to the last one General connected
     `not updated: hex ${bad.slice(0, 7)} couldn't start here`,
   );
   expect(git("rev-parse", "HEAD")).toBe(good);
-}, 30_000);
+});

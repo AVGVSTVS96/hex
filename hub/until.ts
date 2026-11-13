@@ -1,9 +1,7 @@
 const truthy = <T>(value: T): value is NonNullable<T> => Boolean(value);
 
-export async function until<T>(check: () => T, timeout = 20_000): Promise<NonNullable<T>> {
-  const end = Date.now() + timeout;
-
-  while (Date.now() < end) {
+export async function until<T>(check: () => T): Promise<NonNullable<T>> {
+  for (;;) {
     const value = check();
 
     if (truthy(value)) {
@@ -12,6 +10,4 @@ export async function until<T>(check: () => T, timeout = 20_000): Promise<NonNul
 
     await Bun.sleep(20);
   }
-
-  throw new Error("timed out");
 }

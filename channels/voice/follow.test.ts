@@ -158,7 +158,7 @@ test("a task picked back up after a restart is done once its thread rests, and s
   }
 
   expect(engine.record().tasks.map((task) => task.state)).toEqual(["running", "done"]);
-}, 20_000);
+});
 
 test("a task that ends while a live call's connection comes back after a restart stays done once the call is picked back up", async () => {
   await using engine = await engineResumingACallTask({ callStillLive: true });
@@ -173,4 +173,4 @@ test("a task that ends while a live call's connection comes back after a restart
   }
 
   expect(engine.record().tasks.map((task) => task.state)).toEqual(["running", "done"]);
-}, 20_000);
+});

@@ -290,7 +290,7 @@ test("a call on another client's line is held like a phone call: PCM both ways, 
     end: "you",
     claude: "brain",
   });
-}, 20_000);
+});
 
 test("a line hung up on before its session starts never becomes a call, and one OpenAI refuses ends its line and is reported once", async () => {
   {
@@ -313,7 +313,7 @@ test("a line hung up on before its session starts never becomes a call, and one 
   );
   const [record] = Calls.parse(await fetch(`${call.base}/calls`).then((r) => r.json())).calls;
   expect(record).toMatchObject({ from: "discord", end: "no-connect" });
-}, 20_000);
+});
 
 test("on a call, a note on a shown card reaches its thread and the call and leaves it open, and an answer says what it did", async () => {
   const relayed: z.infer<typeof Relayed>[] = [];
@@ -462,7 +462,7 @@ test("on a call, a note on a shown card reaches its thread and the call and leav
   } finally {
     hub?.close();
   }
-}, 20_000);
+});
 
 test("on a call, running answers from every thread hex has at work, not only what the call started", async () => {
   await using call = await lineCall({
@@ -490,7 +490,7 @@ test("on a call, running answers from every thread hex has at work, not only wha
   const { text } = await until(() => call.steps.find((step) => step.step === "tool"));
   expect(text).toStartWith("Everything hex is running, 1 thread working:");
   expect(text).toContain("\n- desk (Telegram), working for 1 minute");
-}, 20_000);
+});
 
 test("a call opens with the caller's last calls: what each was about and what it left waiting", async () => {
   await using call = await lineCall({
