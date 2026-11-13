@@ -94,7 +94,7 @@ Three tiles under it, each a small picture and a caption:
 
 - Label: widgets
 - Headline: Apps inside a message.
-- Line: Live in a Telegram message. Tap them, they're real.
+- Line: Live in Telegram. Tap them, they're real.
 
 *(Three cards. Each shows one widget in an incoming Telegram bubble on the chat wallpaper, with its caption and time below it, in the chat's light or dark colors. The widgets are real widget documents, each under Telegram's size limits; the page stands in for Telegram and hex, so taps work.)*
 
