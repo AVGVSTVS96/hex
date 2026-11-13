@@ -3199,6 +3199,33 @@ test("a restart waits for every call to hang up, even while its session's channe
   await until(() => freed);
 });
 
+test("a restart doesn't wait on a call its engine can't reach, and waits again once the engine is back on it", async () => {
+  start({
+    main: "voice",
+    registry: { voice: { name: "voice", session: SESSION } },
+    fresh: () => true,
+    capacity: 0,
+  });
+  let freed = false;
+  await session("voice");
+  said(500);
+  void hub.keep("voice");
+  hub.adrift("voice", true);
+  hub.adrift("voice", false);
+  void free().then(() => (freed = true));
+  await time.advance(50);
+  expect(freed).toBe(false);
+  hub.adrift("voice", true);
+  await until(() => freed);
+  freed = false;
+  hub.adrift("voice", false);
+  void free().then(() => (freed = true));
+  await time.advance(50);
+  expect(freed).toBe(false);
+  hub.renew("voice");
+  await until(() => freed);
+});
+
 test("closing an idle thread stops its session right away, then forgets the thread", async () => {
   start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
   const { close } = await session("chat:7");

@@ -280,7 +280,7 @@ async function appCall({
   }
 
   const engine = `import { serve, tool } from ${JSON.stringify(join(import.meta.dir, "server.ts"))}
-const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
+const server = serve({ deliver: (content, meta) => console.log(JSON.stringify({ hub: 'deliver', content, meta })), keep: async () => {}, renew: () => console.log(JSON.stringify({ hub: 'renew' })), adrift: (away) => console.log(JSON.stringify({ hub: away ? 'adrift' : 'back' })), session: () => 'brain', interrupt: async () => console.log(JSON.stringify({ hub: 'interrupt' })) }, ${JSON.stringify(state)})
 console.log(JSON.stringify({ port: server.port }))
 for await (const line of console) {
   const { name, args } = JSON.parse(line)
@@ -1068,6 +1068,46 @@ test("an app call whose connection stays down past every retry goes on, and the 
   expect(await ends(engine)).toMatchObject({ end: "you" });
   expect(engine.closes).toEqual([`${ID} close-you-app`]);
 }, 40_000);
+
+const drifts = (engine: Engine) =>
+  engine.told.flatMap((told) => (told.hub === "adrift" || told.hub === "back" ? [told.hub] : []));
+
+test("an app call the engine can't reach holds up no restart or stop of the hub until it's reattached", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.cut("refused");
+  await until(() => drifts(engine).length === 1, 5000);
+  expect(drifts(engine)).toEqual(["adrift"]);
+  expect(await engine.live()).toBe(ID);
+  engine.attachIs("open");
+  await engine.attached();
+  await until(() => drifts(engine).length === 2, 5000);
+  expect(drifts(engine)).toEqual(["adrift", "back"]);
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
+}, 20_000);
+
+test("hanging up a call the engine can't reach holds the hub again until its close goes out", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.cut("refused");
+  await until(() => drifts(engine).length === 1, 5000);
+  await engine.hangUp();
+  await until(() => drifts(engine).length === 2, 5000);
+  expect(drifts(engine)).toEqual(["adrift", "back"]);
+  expect(await ends(engine, 20)).toMatchObject({ end: "you" });
+}, 40_000);
+
+test("a call whose connection drops and comes right back holds up the hub's restart or stop the whole time", async () => {
+  await using engine = await appCall();
+  await started(engine);
+  engine.cut("open");
+  await until(() => engine.attaches() === 2, 5000);
+  await Bun.sleep(500);
+  expect(drifts(engine)).toEqual([]);
+  await engine.hangUp();
+  expect(await ends(engine)).toMatchObject({ end: "you" });
+}, 20_000);
 
 const Created = z.object({
   session: z.object({

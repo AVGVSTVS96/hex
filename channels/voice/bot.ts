@@ -66,6 +66,9 @@ serve(
     renew: () => {
       hub.renew(THREAD);
     },
+    adrift: (away) => {
+      hub.adrift(THREAD, away);
+    },
     session: () => hub.session(THREAD),
     interrupt: () => hub.interrupt(THREAD),
   },
