@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync, realpathSync, statSync, watch } from "node:f
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
+import { besideOf } from "./beside.ts";
 import { record, settingsOf } from "./claude.ts";
 import { instant, line, place } from "./holds.ts";
 import { checks } from "./ideas.ts";
@@ -15,7 +16,7 @@ import { entry, render, waiting } from "./tasks.ts";
 import { zoneOf } from "./zone.ts";
 
 const USAGE = `usage:
-  hex deliver <from>[:<id>] --to <thread> [--user <name>] <words…>
+  hex deliver <from>[:<id>] --to <thread> [--beside] [--user <name>] <words…>
   hex task new <message key> --title '<what the owner wants, in a few plain words>' [--quote <part of it>] [--owner <thread>] [--project <name>] [--done-when <outcome>] [--idea]
   hex task add <task> <message key> [--quote <part of it>]
   hex task quote <task> <message key> --quote <part of it>
@@ -44,6 +45,7 @@ const { values: flags, positionals } = parseArgs({
   allowPositionals: true,
   options: {
     to: { type: "string" },
+    beside: { type: "boolean" },
     user: { type: "string" },
     title: { type: "string" },
     quote: { type: "string" },
@@ -768,9 +770,10 @@ try {
       }
 
       const key = from === given ? `${from}:${crypto.randomUUID()}` : given;
+      const thread = recipient(flags.to);
       store.messages.deliver({
         key,
-        to: recipient(flags.to),
+        to: flags.beside === true ? besideOf(thread) : thread,
         from,
         author: "prompt",
         body: words.join(" "),
