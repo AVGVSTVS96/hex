@@ -275,7 +275,7 @@ test("a check that fails lets the work start", async () => {
   expect(result?.verdict).toBe("failed");
 });
 
-test("a change to his rules is what writes a rule file", () => {
+test("a change to the rules is what writes a rule file", () => {
   const rules = join(dir, "AGENTS.md");
   writeFileSync(rules, "- Update what of ours is out of date yourself.\n");
   writeFileSync(join(dir, "notes.md"), "");
@@ -298,12 +298,24 @@ test("a change to his rules is what writes a rule file", () => {
   ).toBeUndefined();
   expect(edit("Bash", { command: `rg -n Update ${rules} > ${dir}/found.txt` })).toBeUndefined();
   expect(edit("Bash", { command: `cd ${dir} && sed -i 's/a/b/' notes.md` })).toBeUndefined();
+  expect(edit("Bash", { command: `cp ${rules} ${dir}/rules.before` })).toBeUndefined();
+  expect(
+    edit("Bash", { command: `rg -n Update ${rules}; sed -i 's/a/b/' ${dir}/notes.md` }),
+  ).toBeUndefined();
+  expect(
+    edit("Bash", { command: `cd ${dir} && git add AGENTS.md && git commit -m 'install it'` }),
+  ).toBeUndefined();
+  expect(
+    edit("Bash", { command: `cd ${dir} && cd elsewhere && sed -i 's/a/b/' AGENTS.md` }),
+  ).toBeUndefined();
+  expect(edit("Bash", { command: `git -C ${dir} checkout HEAD~1 -- AGENTS.md` })).toBeDefined();
+  expect(edit("Bash", { command: `cp ${dir}/notes.md ${rules}` })).toBeDefined();
   expect(
     edit("Edit", { file_path: join(dir, "notes.md"), old_string: "", new_string: "x" }),
   ).toBeUndefined();
 });
 
-test("a change to his rules is checked against his words, apart from briefs", async () => {
+test("a change to the rules is checked against the owner's words, apart from briefs", async () => {
   const rules = join(dir, "AGENTS.md");
   writeFileSync(rules, "");
 
@@ -341,4 +353,12 @@ test("a change to his rules is checked against his words, apart from briefs", as
 
   expect(await check(handOff, store, revise, [rules])).toMatchObject({ kind: "brief", round: 1 });
   expect(seen[1]?.[1]).toBe("brief");
+
+  const handOffWritingRules = {
+    session_id: "other",
+    tool_name: "Bash",
+    tool_input: { command: `claude -p "Task t-2: tidy the rules." | tee -a ${rules}` },
+  };
+
+  expect(await check(handOffWritingRules, store, revise, [rules])).toMatchObject({ kind: "brief" });
 });

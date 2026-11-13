@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { appendFileSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -24,7 +24,7 @@ The agent that gets it is as capable as you, loads my rules itself, and gets a l
 
 Answer ok when it does, or when it only reports or answers and hands over no work; wording, order and a stray wrong detail are the session's call. Answer revise when the brief drops or changes part of my ask, steers the how, or goes against my rules or a decision in memory: a note per problem, a line or two each, quoting my words where they settle it.`;
 
-const RULES = `One of my hex sessions is about to change one of my rule files: the instructions every session of mine loads, or my own words gathered in the instructions folder of my hex workspace. You read the change before it lands, next to my newest words that session got, the work hex handed it, and my rules below.
+const RULES = `One of my hex sessions is about to change one of my rule files: the instructions every session of mine loads, or what I want hex to bring up on its own. You read the change before it lands, next to my newest words that session got, the work hex handed it, and my rules below.
 
 My rules change when I ask for a change, and then the edit carries my intent into the line it belongs to, editing or cutting what's there before adding. When I point out a mistake, I expect it fixed and hex to reflect on why it happened; that alone doesn't call for a new rule.
 
@@ -113,33 +113,67 @@ const real = (path: string) => {
   }
 };
 
-export function ruleFiles(): string[] {
-  const words = join(hexDir(), "instructions");
+export const ruleFiles = (): string[] =>
+  [...files().map(({ path }) => path), join(hexDir(), "PROACTIVE.md")].map(real);
 
-  const gathered = (() => {
-    try {
-      return readdirSync(words, { recursive: true, encoding: "utf-8" })
-        .filter((file) => file.endsWith(".md"))
-        .map((file) => join(words, file));
-    } catch {
-      return [];
+const INTO = /(?:(?:^|[^\d&>=-])>>?|\btee\s+(?:-a\s+)?)\s*(\S+)/gu;
+
+const IN_PLACE = new Map([
+  ["chattr", /\s-i\b/u],
+  ["sed", /\s(?:-\w*i|--in-place)/u],
+  ["perl", /\s-\w*i/u],
+  ["git", /\s(?:checkout|restore|apply|revert|reset)\b/u],
+  ["rm", /$/u],
+  ["truncate", /$/u],
+]);
+
+const PROGRAM = /^(?:sudo\s+(?:-\S+\s+)*)?(?:\w+=\S*\s+)*(\S+)/u;
+
+const place = (path: string, from: string) =>
+  resolve(
+    from,
+    path.replaceAll(/^['"]|['"]$/gu, "").replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/u, homedir()),
+  );
+
+export function written(command: string, cwd: string): string[] {
+  let dir = cwd;
+  const out: string[] = [];
+
+  for (const part of command.split(/&&|\|\||[;\n|]/u).map((p) => p.trim())) {
+    const words = part.split(/\s+/u);
+    const program = PROGRAM.exec(part)?.[1]?.replace(/^.*\//u, "") ?? "";
+
+    if (program === "cd" && words[1] !== undefined) {
+      dir = place(words[1], dir);
+      continue;
     }
-  })();
 
-  return [...files().map(({ path }) => path), ...gathered].map(real);
+    const git = program === "git" ? /\s-C\s+(\S+)/u.exec(part)?.[1] : undefined;
+    const here = git === undefined ? dir : place(git, dir);
+
+    out.push(...[...part.matchAll(INTO)].map(([, path = ""]) => place(path, here)));
+
+    if (IN_PLACE.get(program)?.test(part) === true) {
+      out.push(
+        ...words
+          .slice(1)
+          .filter((word) => !word.startsWith("-"))
+          .map((word) => place(word, here)),
+      );
+    } else if (/^(?:cp|mv|install)$/u.test(program) && words.length > 2) {
+      out.push(place(words.at(-1) ?? "", here));
+    }
+  }
+
+  return out;
 }
-
-const IN_PLACE =
-  /\bchattr\s+-i\b|\b(?:sed|perl)\b[^|;&\n]*\s-\w*i|\b(?:cp|mv|install|truncate)\s|\bgit\s+(?:checkout|restore|apply|revert)\b|\bwrite_text\b|\bopen\([^)]*['"][wa]/u;
-
-const INTO = /(?:>>?|\btee\s+(?:-a\s+)?)\s*['"]?([\w.~/-]+\.md)\b/gu;
 
 export function ruleEdit(
   { tool_name: tool = "", tool_input: input = {}, cwd = process.cwd() }: Hook,
   rules = ruleFiles(),
 ): string | undefined {
-  const isRule = (path: string, dirs = [cwd]) =>
-    dirs.some((dir) => rules.includes(real(resolve(dir, path.replace(/^~(?=\/)/u, homedir())))));
+  const isRule = (path: string) =>
+    rules.includes(real(resolve(cwd, path.replace(/^~(?=\/)/u, homedir()))));
 
   if (/^(Edit|Write|MultiEdit)$/u.test(tool)) {
     const path = input.file_path ?? "";
@@ -157,26 +191,9 @@ export function ruleEdit(
       : `${tool} ${path}:\n\n${edits.map((edit) => `replacing:\n${edit.old_string}\n\nwith:\n${edit.new_string}`).join("\n\n")}`;
   }
 
-  if (tool !== "Bash") {
-    return;
-  }
+  const command = tool === "Bash" ? (input.command ?? "") : "";
 
-  const command = input.command ?? "";
-
-  const dirs = [
-    cwd,
-    ...[...command.matchAll(/\bcd\s+['"]?([^\s'";&|]+)/gu)].map(([, dir = ""]) =>
-      resolve(cwd, dir.replace(/^~(?=\/|$)/u, homedir())),
-    ),
-  ];
-
-  const mentioned = [...new Set(command.match(/[\w.~/-]+\.md\b/gu))].some((path) =>
-    isRule(path, dirs),
-  );
-
-  const written = [...command.matchAll(INTO)].some(([, path = ""]) => isRule(path, dirs));
-
-  return written || (mentioned && IN_PLACE.test(command)) ? command : undefined;
+  return written(command, cwd).some(isRule) ? command : undefined;
 }
 
 function promptFilesNow(command: string, cwd: string): [string, string][] {
@@ -362,9 +379,10 @@ export async function check(
   decide = judge,
   rules?: string[],
 ): Promise<Checked | undefined> {
-  const edit = ruleEdit(hook, rules);
+  const handoff = brief(hook);
+  const edit = handoff === undefined ? ruleEdit(hook, rules) : undefined;
   const kind: Kind = edit === undefined ? "brief" : "rules";
-  const text = edit ?? brief(hook);
+  const text = edit ?? handoff;
 
   if (text === undefined || text === "") {
     return;
