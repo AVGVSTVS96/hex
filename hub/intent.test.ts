@@ -372,5 +372,14 @@ test("a change to the rules is checked against the owner's words, apart from bri
     tool_input: { command: `claude -p "Task t-2: tidy the rules." | tee -a ${rules}` },
   };
 
-  expect(await check(handOffWritingRules, store, revise, [rules])).toMatchObject({ kind: "brief" });
+  expect(await check(handOffWritingRules, store, revise, [rules])).toMatchObject({ kind: "rules" });
+
+  const rulesAsked = (input: string, kind?: Kind): Promise<Verdict> =>
+    kind === "rules" ? Promise.resolve({ verdict: "ok", notes: "" }) : revise(input, kind);
+
+  expect(
+    await check({ ...handOffWritingRules, session_id: "third" }, store, rulesAsked, [rules]),
+  ).toMatchObject({
+    kind: "brief",
+  });
 });

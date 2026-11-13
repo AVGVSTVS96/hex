@@ -122,7 +122,7 @@ const PROGRAM =
   /^\(?\s*(?:sudo(?:\s+-[pug]\s+\S+|\s+-\w+)*\s+)?(?:\w+=\S*\s+)*(?:\S*\/)?([^\s/]+)/u;
 
 const READS =
-  /^(?:rg|grep|cat|head|tail|less|wc|ls|lsattr|stat|diff|file|bat|realpath|readlink|echo|printf)$/u;
+  /^(?:rg|grep|cat|head|tail|less|wc|ls|lsattr|stat|diff|file|bat|realpath|readlink|echo|printf|awk|nl|sort|fd|test|sha256sum)$/u;
 
 const GIT_WRITES =
   /^(?:checkout|switch|restore|apply|am|revert|stash|merge|pull|cherry-pick|rm|mv)$/u;
@@ -420,15 +420,30 @@ export async function check(
   decide = judge,
   rules?: string[],
 ): Promise<Checked | undefined> {
+  const edit = ruleEdit(hook, rules);
   const handoff = brief(hook);
-  const edit = handoff === undefined ? ruleEdit(hook, rules) : undefined;
-  const kind: Kind = edit === undefined ? "brief" : "rules";
-  const text = edit ?? handoff;
 
-  if (text === undefined || text === "") {
-    return;
-  }
+  const onRules =
+    edit === undefined ? undefined : await checkAs("rules", edit, hook, store, decide);
 
+  const sentBack =
+    onRules !== undefined &&
+    onRules.verdict !== "failed" &&
+    onRules.verdict.verdict === "revise" &&
+    onRules.through !== true;
+
+  return sentBack || handoff === undefined || handoff === ""
+    ? onRules
+    : await checkAs("brief", handoff, hook, store, decide);
+}
+
+async function checkAs(
+  kind: Kind,
+  text: string,
+  hook: Hook,
+  store: Store,
+  decide: typeof judge,
+): Promise<Checked> {
   const session = hook.session_id ?? "";
   const key = kind === "rules" ? "intent:rules" : "intent";
   const sent = SentBack.safeParse(JSON.parse(store.seen.get(session, key) || "null")).data;
