@@ -50,6 +50,7 @@ type Sent = {
   files?: string[];
   attachments?: never[];
   components?: Built[];
+  reply?: { messageReference: string; failIfNotExists?: boolean };
 };
 
 type Done = {
@@ -272,6 +273,16 @@ function channel(
     sendTyping: () => Promise.resolve(),
     send: (input: string | Sent) => {
       const options = isText(input) ? { content: input } : input;
+      const quoted = options.reply?.messageReference;
+
+      if (quoted !== undefined && !/^\d+$/u.test(quoted)) {
+        return Promise.reject(
+          new Error(
+            "Invalid Form Body\nmessage_reference.message_id[NUMBER_TYPE_COERCE]: Value is not snowflake.",
+          ),
+        );
+      }
+
       done.push({ send: options, in: id });
 
       return Promise.resolve(
@@ -1430,6 +1441,28 @@ test("a question with buttons goes in the ledger: a tap answers it there, and on
   expect(labels(done.findLast((d) => d.edit === kept.id)?.options?.components)).toEqual([
     "✓ Settled",
   ]);
+});
+
+test("a reply quoting an answer given in hex's app quotes the question it answered", async () => {
+  await call("reply", { text: "Which bank?", buttons: ["Stripe", "Mercury"] });
+  const asked = lastPosted(here);
+  await send({ type: "answer", thread: here.id, message: asked.id, label: "Stripe", via: "app" });
+
+  const answer = await inbound(
+    received,
+    (line) => line.meta.button_message_id === asked.id && line.content === "Stripe",
+  );
+
+  await call("reply", { text: "Stripe it is", reply_to: answer.meta.key });
+  expect(done.findLast((d) => d.send?.content === "Stripe it is")?.send?.reply).toMatchObject({
+    messageReference: asked.id,
+  });
+
+  await call("reply", {
+    text: "Logo next",
+    reply_to: "discord:0c3f8f5e-5b1a-4d0e-9a51-3e1b7a6c2d40",
+  });
+  expect(done.findLast((d) => d.send?.content === "Logo next")?.send?.reply).toBeUndefined();
 });
 
 test("buttons with multiple come as a menu, and a pick of several comes back as their labels and locks the menu on them", async () => {
