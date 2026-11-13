@@ -310,6 +310,18 @@ test("a change to the rules is what writes a rule file", () => {
   ).toBeUndefined();
   expect(edit("Bash", { command: `git -C ${dir} checkout HEAD~1 -- AGENTS.md` })).toBeDefined();
   expect(edit("Bash", { command: `cp ${dir}/notes.md ${rules}` })).toBeDefined();
+  expect(edit("Bash", { command: `sudo -S -p '' chattr -i ${rules}` })).toBeDefined();
+  expect(
+    edit("Bash", { command: `cd ${dir} && sed -i '1s/yourself;/yourself; and more/' AGENTS.md` }),
+  ).toBeDefined();
+  expect(
+    edit("Bash", {
+      command: `cd ${dir} && python3 - <<'EOF'\np='AGENTS.md'\nopen(p,'a').write('- More.')\nEOF`,
+    }),
+  ).toBeDefined();
+  expect(edit("Bash", { command: `git -C ${dir} commit -m 'apply it' AGENTS.md` })).toBeUndefined();
+  expect(edit("Bash", { command: `sed -n '/ -i /p' ${rules}` })).toBeUndefined();
+  expect(edit("Bash", { command: `sudo chattr +i ${rules}` })).toBeUndefined();
   expect(
     edit("Edit", { file_path: join(dir, "notes.md"), old_string: "", new_string: "x" }),
   ).toBeUndefined();

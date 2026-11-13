@@ -28,7 +28,7 @@ const RULES = `One of my hex sessions is about to change one of my rule files: t
 
 My rules change when I ask for a change, and then the edit carries my intent into the line it belongs to, editing or cutting what's there before adding. When I point out a mistake, I expect it fixed and hex to reflect on why it happened; that alone doesn't call for a new rule.
 
-Answer ok when my words ask for this change, or it carries out one I asked for, like taking back an edit I objected to. Answer revise when the change is the session's own idea or goes past what I asked: a note per problem, a line or two each, quoting my words where they settle it.`;
+Answer ok when my words ask for this change, or it carries out one I asked for, like taking back an edit I objected to; a standing instruction in my rules counts as asking, like adding a word voice transcripts mishear. A command that only reads the file is ok too. Answer revise when the change is the session's own idea or goes past what I asked: a note per problem, a line or two each, quoting my words where they settle it.`;
 
 const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
@@ -116,18 +116,16 @@ const real = (path: string) => {
 export const ruleFiles = (): string[] =>
   [...files().map(({ path }) => path), join(hexDir(), "PROACTIVE.md")].map(real);
 
-const INTO = /(?:(?:^|[^\d&>=-])>>?|\btee\s+(?:-a\s+)?)\s*(\S+)/gu;
+const INTO = /(?:(?:^|[^\d&>=-])\d?>>?|\btee\s+(?:-\S+\s+)*)\s*(\S+)/gu;
 
-const IN_PLACE = new Map([
-  ["chattr", /\s-i\b/u],
-  ["sed", /\s(?:-\w*i|--in-place)/u],
-  ["perl", /\s-\w*i/u],
-  ["git", /\s(?:checkout|restore|apply|revert|reset)\b/u],
-  ["rm", /$/u],
-  ["truncate", /$/u],
-]);
+const PROGRAM =
+  /^\(?\s*(?:sudo(?:\s+-[pug]\s+\S+|\s+-\w+)*\s+)?(?:\w+=\S*\s+)*(?:\S*\/)?([^\s/]+)/u;
 
-const PROGRAM = /^(?:sudo\s+(?:-\S+\s+)*)?(?:\w+=\S*\s+)*(\S+)/u;
+const READS =
+  /^(?:rg|grep|cat|head|tail|less|wc|ls|lsattr|stat|diff|file|bat|realpath|readlink|echo|printf)$/u;
+
+const GIT_WRITES =
+  /^(?:checkout|switch|restore|apply|am|revert|stash|merge|pull|cherry-pick|rm|mv)$/u;
 
 const place = (path: string, from: string) =>
   resolve(
@@ -135,34 +133,77 @@ const place = (path: string, from: string) =>
     path.replaceAll(/^['"]|['"]$/gu, "").replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/u, homedir()),
   );
 
-export function written(command: string, cwd: string): string[] {
-  let dir = cwd;
-  const out: string[] = [];
+function parts(command: string): string[] {
+  const out = [""];
+  let quote = "";
 
-  for (const part of command.split(/&&|\|\||[;\n|]/u).map((p) => p.trim())) {
-    const words = part.split(/\s+/u);
-    const program = PROGRAM.exec(part)?.[1]?.replace(/^.*\//u, "") ?? "";
+  for (let i = 0; i < command.length; i++) {
+    const char = command[i] ?? "";
+    const pair = char + (command[i + 1] ?? "");
 
-    if (program === "cd" && words[1] !== undefined) {
-      dir = place(words[1], dir);
+    if (quote === "" && (/[;\n|]/u.test(char) || pair === "&&")) {
+      out.push("");
+      i += pair === "&&" || pair === "||" ? 1 : 0;
       continue;
     }
 
+    quote = quote === char ? "" : quote === "" && /['"]/u.test(char) ? char : quote;
+    out[out.length - 1] += char;
+  }
+
+  return out.flatMap((part) => (part.trim() === "" ? [] : [part.trim()]));
+}
+
+function writes(part: string, program: string, path: string, here: string): boolean {
+  const bare = part.replaceAll(/'[^']*\s[^']*'|"[^"]*\s[^"]*"/gu, "''");
+
+  if ([...bare.matchAll(INTO)].some(([, into = ""]) => real(place(into, here)) === path)) {
+    return true;
+  }
+
+  if (/^(?:cp|mv|install|ln)$/u.test(program)) {
+    return real(place(bare.split(/\s+/u).at(-1) ?? "", here)) === path;
+  }
+
+  if (program === "git") {
+    const sub = /\bgit(?:\s+-[Cc]\s+\S+)*\s+([\w-]+)/u.exec(bare)?.[1] ?? "";
+
+    return (
+      (GIT_WRITES.test(sub) && !/\s--staged\b/u.test(bare)) || /\breset\s+--hard\b/u.test(bare)
+    );
+  }
+
+  if (program === "sed" || program === "perl") {
+    return /\s(?:-\w*i|--in-place)/u.test(bare);
+  }
+
+  if (program === "chattr") {
+    return /\s-\w*i/u.test(bare);
+  }
+
+  return !READS.test(program);
+}
+
+export function written(command: string, cwd: string, rules: string[]): string[] {
+  let dir = cwd;
+  const out: string[] = [];
+
+  for (const part of parts(command)) {
+    const program = PROGRAM.exec(part)?.[1] ?? "";
     const git = program === "git" ? /\s-C\s+(\S+)/u.exec(part)?.[1] : undefined;
     const here = git === undefined ? dir : place(git, dir);
 
-    out.push(...[...part.matchAll(INTO)].map(([, path = ""]) => place(path, here)));
+    const touched = [...part.matchAll(/[\w.~${}/-]*[\w-]\.md\b/gu)].flatMap(([path]) => {
+      const file = real(place(path, here));
 
-    if (IN_PLACE.get(program)?.test(part) === true) {
-      out.push(
-        ...words
-          .slice(1)
-          .filter((word) => !word.startsWith("-"))
-          .map((word) => place(word, here)),
-      );
-    } else if (/^(?:cp|mv|install)$/u.test(program) && words.length > 2) {
-      out.push(place(words.at(-1) ?? "", here));
+      return rules.includes(file) ? [file] : [];
+    });
+
+    if (program === "cd") {
+      dir = place(part.split(/\s+/u)[1] ?? "~", dir);
     }
+
+    out.push(...touched.filter((path) => writes(part, program, path, here)));
   }
 
   return out;
@@ -193,7 +234,7 @@ export function ruleEdit(
 
   const command = tool === "Bash" ? (input.command ?? "") : "";
 
-  return written(command, cwd).some(isRule) ? command : undefined;
+  return written(command, cwd, rules).length > 0 ? command : undefined;
 }
 
 function promptFilesNow(command: string, cwd: string): [string, string][] {
