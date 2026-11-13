@@ -62,9 +62,15 @@ function run(extra: Record<string, string> = {}) {
     ...extra,
   };
 
-  loop = Bun.spawn([join(hex, "bin/hex"), "run"], { env, stdout: "ignore", stderr: "pipe" });
+  const spawned = Bun.spawn([join(hex, "bin/hex"), "run"], {
+    env,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
 
-  return loop;
+  loop = spawned;
+
+  return spawned;
 }
 
 beforeEach(() => {

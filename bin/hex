@@ -100,7 +100,7 @@ case "${1:-}" in
       first=$second second=$third third=$(date +%s)
       if [ -n "$first" ] && [ $((third - first)) -le 60 ]; then
         # With nothing to go back to, hex stops as failed, for its service manager to see and act on.
-        roll_back || { echo "hex's hub exited three times within a minute, and there's no earlier hex to go back to" >&2; exit 1; }
+        roll_back || { echo "hex's hub exited three times within a minute, and there's no earlier hex to go back to" >&2; rm -f "$pidfile"; exit 1; }
         first= second= third=
       fi
       sleep 3
