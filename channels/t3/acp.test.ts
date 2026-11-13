@@ -90,6 +90,7 @@ test("a thread's history a hub restart cut short loads again without repeating w
       socket.destroy();
     }, 100);
   });
+
   const closed = new Promise((resolve) => {
     first.on("close", resolve);
   });
