@@ -21,10 +21,11 @@ import { z } from "zod";
 import type { Relay } from "./relay.ts";
 
 const ENGRAM = 30_174;
-const FILE = 30_180;
+const FILE = 34_180;
 const EDIT = 4180;
 const RESULT = 4181;
 const LIMIT = 65_535;
+const ROOM_FOR_SLUG = 1024;
 const SHARE = ["AGENTS.md", "SOUL.md", "schedules.json"];
 const NOTES = "memory/LOG.txt";
 const SETTLE = 500;
@@ -39,6 +40,27 @@ const tag = (event: Event, name: string) => event.tags.find(([key]) => key === n
 
 function log(line: string) {
   process.stderr.write(`buzz hub: ${line}\n`);
+}
+
+function partsUnderLimit(lines: string[]) {
+  const parts: string[] = [];
+  let part: string[] = [];
+  let bytes = 0;
+
+  for (const line of lines) {
+    const size = Buffer.byteLength(JSON.stringify(line)) + 2;
+
+    if (part.length > 0 && bytes + size > LIMIT - ROOM_FOR_SLUG) {
+      parts.push(part.join("\n"));
+      part = [];
+      bytes = 0;
+    }
+
+    part.push(line);
+    bytes += size;
+  }
+
+  return [...parts, part.join("\n")];
 }
 
 const keepingLeadingBomForSha256 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -241,8 +263,10 @@ export function startMemory({
     const notes = (read(NOTES) ?? "").matchAll(/^#\d+ (\d{4}-\d\d-\d\d) (.+?)\s*$/gmu);
 
     for (const [day, lines] of Map.groupBy(notes, ([, noteDay]) => noteDay ?? "")) {
-      const slug = `mem/notes/${day}`;
-      wanted.set(slug, { slug, value: lines.map((note) => `- ${note[2]}`).join("\n") });
+      for (const [part, value] of partsUnderLimit(lines.map((note) => `- ${note[2]}`)).entries()) {
+        const slug = part === 0 ? `mem/notes/${day}` : `mem/notes/${day}/${part + 1}`;
+        wanted.set(slug, { slug, value });
+      }
     }
 
     return wanted;
