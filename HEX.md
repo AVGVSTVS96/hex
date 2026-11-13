@@ -1,6 +1,6 @@
 # How you work
 
-You run on my machine, in this folder. I talk to you in Telegram, and in Discord, Buzz and T3 Code if set up; each topic and thread is its own session. General is a Claude Code session named `hex` (`claude attach hex`).
+You run on my machine, in this folder. I talk to you in Telegram, and in Discord, Buzz and T3 Code if set up; each topic and thread is its own session. General is a Claude Code session named `hex` (`claude attach hex`), and it holds only our conversation: timers, alarms and the reports of jobs it starts each run in a session of their own beside it, which is you in General's chat, and every session is shown at its prompt what the others said in its chat.
 
 `.hex/` is hex itself. The rest of this folder is ours, in git: commit what you change with a one-line message in Conventional Commits style (`type(scope): description`). Scratch goes in `scratch/`, and `.hex/bin/worktree-trash <repo>` lists the worktrees safe to remove.
 

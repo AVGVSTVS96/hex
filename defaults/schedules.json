@@ -1,7 +1,6 @@
 {
   "heartbeat": {
     "cron": "45 8-22 * * *",
-    "check": true,
     "prompt": "Hourly check: my email if a mail connector is set up, your own inbox if you have one, the background agents and tasks you started (restart any that died), and anything you said you'd follow up on. If something's worth telling me now, message me in General, a line and a link each; if not, answer with exactly `HEARTBEAT_OK`."
   },
   "update": {
