@@ -570,26 +570,30 @@ function contentsOf(path: string): Read {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A voice call runs in this process (its call engine holds the caller's audio), so a restart waits for every thread on a call to hang up.
+// A voice call runs in this process (its call engine holds the caller's audio), so a restart waits for every thread on a call to hang up. A call whose engine has lost its link to it runs nothing here, and the next hub's engine picks it back up, so a restart doesn't wait on it.
 const onCall = new Set<Run>();
+const adrift = new Set<Run>();
 const hungUp: (() => void)[] = [];
 
 export function free(): Promise<void> {
   return new Promise((resolve) => {
-    if (onCall.size > 0) {
-      hungUp.push(resolve);
-    } else {
-      resolve();
-    }
+    hungUp.push(resolve);
+    settle();
   });
 }
 
-function hangUp(run: Run) {
-  if (onCall.delete(run) && !onCall.size) {
+function settle() {
+  if ([...onCall].every((run) => adrift.has(run))) {
     for (const resolve of hungUp.splice(0)) {
       resolve();
     }
   }
+}
+
+function hangUp(run: Run) {
+  onCall.delete(run);
+  adrift.delete(run);
+  settle();
 }
 
 export function title(text: string): string {
@@ -2234,6 +2238,18 @@ export function startHub({
     return renewal(thread);
   }
 
+  function drift(thread: string, away: boolean) {
+    const run = runOf(thread);
+
+    if (away && onCall.has(run)) {
+      adrift.add(run);
+    } else {
+      adrift.delete(run);
+    }
+
+    settle();
+  }
+
   function renewAsked(thread: string) {
     const run = runOf(thread);
 
@@ -2538,6 +2554,7 @@ export function startHub({
     fresh,
     renewal,
     keep,
+    adrift: drift,
     synced: () => kept((store) => store.synced(), Promise.resolve()),
     renew: renewAsked,
     session: current,

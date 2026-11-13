@@ -239,6 +239,7 @@ type Live = {
   away?: { told: boolean; settling?: ReturnType<typeof setTimeout> };
   lost?: { reason: string; at: string; giveUp: ReturnType<typeof setTimeout> };
   unattached?: number;
+  adrift?: true;
   shift?: number;
   usedBefore?: number;
   reopen?: ((call: Live, opening: Said[]) => void) | undefined;
@@ -283,11 +284,13 @@ type Phone = Dial & {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 /* What the call engine asks of the voice thread's hub: hand its session a message, hold the
    session for a call (keep, which waits for a renew already starting the session over) or let it
-   start over for the next (renew), and name the session now serving the thread. */
+   start over for the next (renew), say whether the call is out of the engine's reach (adrift), and
+   name the session now serving the thread. */
 export type Hub = {
   deliver: (content: string, meta: Record<string, string>) => void;
   keep: () => Promise<void>;
   renew: () => void;
+  adrift: (away: boolean) => void;
   session: () => string | undefined;
   interrupt: () => Promise<void>;
 };
@@ -1092,6 +1095,7 @@ function close(call: Live, event: string) {
   }
 
   call.closing ??= event;
+  adrift(call, false);
 
   if (state === WebSocket.OPEN) {
     sendClose(call, event);
@@ -1745,6 +1749,25 @@ function listen(call: Live, socket: WebSocket, attempt = 0) {
   };
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* While the engine can't reach a call nobody hung up, nothing of the call runs here, and after a
+   restart the engine picks it back up, so it doesn't hold up the hub's restart or stop. */
+function adrift(call: Live, away: boolean) {
+  if ((call.adrift === true) === away) {
+    return;
+  }
+
+  if (away) {
+    call.adrift = true;
+  } else {
+    delete call.adrift;
+  }
+
+  toHub(() => {
+    hub.adrift(away);
+  });
+}
+
 function reconnect(call: Live, attempt: number) {
   if (live !== call || call.lost) {
     return;
@@ -1775,6 +1798,8 @@ function reconnect(call: Live, attempt: number) {
     call.unattached = Date.now();
   }
 
+  adrift(call, !hungUp);
+
   const was = sessionOf(call);
   const moved = () => live !== call || sessionOf(call) !== was || call.lost !== undefined;
   trace(`lost the connection to ${was}, reattaching (try ${attempt + 1})`);
@@ -1799,6 +1824,7 @@ function reconnect(call: Live, attempt: number) {
         }
 
         trace(`reattached to ${was}`);
+        adrift(call, false);
         call.socket = socket;
         listen(call, socket, attempt);
       });
@@ -1876,6 +1902,7 @@ function lost(call: Live, reason: string) {
   }
 
   trace(`${sessionOf(call)} ended (${reason}); ${call.id} waits to carry on`);
+  adrift(call, false);
   call.lost = {
     reason,
     at: new Date().toISOString(),
@@ -1902,6 +1929,7 @@ function carried(call: Live, socket: WebSocket, next: string, expires: string | 
   delete call.lost;
   delete call.closed;
   delete call.unattached;
+  adrift(call, false);
   letGo(call, "the voice moved to a new session; send it again");
   call.handoffs = new Set();
   call.shift = since(call);
