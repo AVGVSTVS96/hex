@@ -144,6 +144,7 @@ trap 'jq -cn "\\$ARGS.positional" --args -- "$@" >> "${dir}/calls"' EXIT
 [ "$1 $2" = "agents --json" ] && { [ -f "${dir}/down" ] && echo '[]' || cat "${dir}/agents" 2>/dev/null || echo '[]'; }
 [ "$1 $2" = "daemon status" ] && [ -f "${dir}/down" ] && exit 1
 [ "$1 $2" = "daemon status" ] && echo "version: $(cat "${dir}/daemon" 2>/dev/null || echo 2.1.0)"
+[ "$1 $2" = "daemon status" ] && [ -f "${dir}/daemon.pid" ] && echo "pid: $(cat "${dir}/daemon.pid")"
 [ "$1 $2" = "daemon stop" ] && rm -f "${dir}/daemon"
 [ "$1" = "--version" ] && echo "2.1.0 (Claude Code)"
 [ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
@@ -672,6 +673,62 @@ test("a daemon on the claude that's installed is left running", async () => {
   start({ main: "chat", general: true });
   await launched();
   expect(calls().some((each) => each[0] === "daemon" && each[1] === "stop")).toBe(false);
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Each login shell can put a directory of its own on PATH that links to the same commands, as fnm does for node.
+async function daemonWithPath(ours: string, theirs: string) {
+  const daemon = Bun.spawn(["sleep", "60"], { env: { PATH: `${theirs}:${process.env.PATH}` } });
+
+  sleepers.push(daemon);
+  writeFileSync(join(dir, "daemon.pid"), String(daemon.pid));
+  const path = process.env.PATH;
+  process.env.PATH = `${ours}:${path}`;
+
+  try {
+    start({ main: "chat", general: true });
+    await launched();
+  } finally {
+    process.env.PATH = path;
+  }
+
+  return calls().some((each) => each[0] === "daemon" && each[1] === "stop");
+}
+
+function commandsIn(name: string, commands: string[]) {
+  const directory = join(dir, name);
+
+  mkdirSync(directory);
+
+  for (const command of commands) {
+    writeFileSync(join(directory, command), "");
+  }
+
+  return directory;
+}
+
+function linkTo(name: string, target: string) {
+  symlinkSync(target, join(dir, name));
+
+  return join(dir, name);
+}
+
+test("a daemon whose PATH finds the same commands is left running, though through another directory", async () => {
+  const node = commandsIn("node-24", ["node"]);
+
+  expect(await daemonWithPath(linkTo("ours", node), linkTo("theirs", node))).toBe(false);
+});
+
+test("a daemon whose PATH lacks a command the hub's finds is stopped with its sessions kept", async () => {
+  const ours = commandsIn("ours", ["only-here"]);
+
+  expect(await daemonWithPath(ours, commandsIn("theirs", []))).toBe(true);
+});
+
+test("a daemon whose PATH finds another copy of a command than the hub's is stopped with its sessions kept", async () => {
+  expect(await daemonWithPath(commandsIn("ours", ["node"]), commandsIn("theirs", ["node"]))).toBe(
+    true,
+  );
 });
 
 test("the main thread starts with the hub, under its name, with no prompt and no typing", async () => {
