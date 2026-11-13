@@ -579,7 +579,7 @@ test("a widget Telegram refuses in a topic goes to the owner's DM with a button 
   ).toMatchObject({ message_id: id });
 });
 
-test("with topics on in the owner's DM, a topic's widget goes to a DM topic of its own, made once, and what he says there reaches the topic", async () => {
+test("with topics on in the owner's DM, a topic's widget goes to a DM topic of its own, made once, and what he says there reaches the topic and is answered there", async () => {
   const file = join(outbox, "dm-topic.html");
   writeFileSync(file, "<b>tiles</b>");
   hex.has_topics_enabled = true;
@@ -612,6 +612,54 @@ test("with topics on in the owner's DM, a topic's widget goes to a DM topic of i
     expect(
       await called("setMessageReaction", (p) => p.reaction?.[0]?.emoji === "👍"),
     ).toMatchObject({ chat_id: String(OWNER) });
+
+    const answered = await call("reply", { text: "bigger it is", buttons: ["Bigger", "Same"] });
+    expect(answered.text).toContain(`id: telegram:${OWNER}:`);
+    const sentThere = await called("sendMessage", (p) => p.text === "bigger it is");
+    expect(sentThere).toMatchObject({ chat_id: String(OWNER), message_thread_id: 9 });
+
+    await update({
+      callback_query: {
+        id: "dm-topic-tap",
+        from: owner,
+        chat_instance: "dm",
+        data: "0",
+        message: {
+          ...message({ chat: dm, message_thread_id: 9, text: "bigger it is", from: hex }),
+          message_id: idOf(sentThere),
+          reply_markup: {
+            inline_keyboard: [
+              [
+                { text: "Bigger", callback_data: "0" },
+                { text: "Same", callback_data: "1" },
+              ],
+            ],
+          },
+        },
+      },
+    });
+    const tapped = await inbound((line) => line.content === "Bigger");
+    expect(answered.text).toBe(`sent (id: ${tapped.meta.button_message_id})`);
+    expect(
+      await called(
+        "editMessageReplyMarkup",
+        (p) => p.message_id === idOf(sentThere) && p.chat_id === String(OWNER),
+      ),
+    ).toMatchObject({ reply_markup: { inline_keyboard: [[{ text: "✓ Bigger" }]] } });
+
+    expect((await call("rename_thread", { title: "desk" })).error).toBeUndefined();
+    expect(await called("editForumTopic", (p) => p.name === "desk")).toMatchObject({
+      chat_id: String(FORUM),
+      message_thread_id: 5,
+    });
+
+    await update({ message: message({ text: "back in the group" }) });
+    await inbound((line) => line.content === "back in the group");
+    await call("reply", { text: "answered in the group" });
+    expect(await called("sendMessage", (p) => p.text === "answered in the group")).toMatchObject({
+      chat_id: String(FORUM),
+      message_thread_id: 5,
+    });
   } finally {
     hex.has_topics_enabled = false;
   }
@@ -950,7 +998,7 @@ test("new_thread opens a topic with a random icon and only the prompt, forwardin
   session({ type: "state", thread: DESK, busy: false });
 
   await call("rename_thread", { title: "Anchors", icon: "❤" });
-  expect(await called("editForumTopic")).toMatchObject({
+  expect(await called("editForumTopic", (p) => p.name === "Anchors")).toMatchObject({
     message_thread_id: 5,
     name: "Anchors",
     icon_custom_emoji_id: "222",
@@ -1195,9 +1243,9 @@ test("with topics on in the DM, it stays one thread, and hex answers in the topi
       chat_id: String(OWNER),
       message_thread_id: 41,
     });
-    expect(JSON.parse(readFileSync(join(state, "dm-topic-written-in-last.json"), "utf-8"))).toEqual(
-      { [OWNER]: 41 },
-    );
+    expect(JSON.parse(readFileSync(join(state, "written-in.json"), "utf-8"))).toEqual({
+      [OWNER]: { chat_id: String(OWNER), message_thread_id: 41 },
+    });
 
     await writeIn(DELETED_TOPIC, "in a topic I then delete");
     expect((await dm.call("reply", { text: "still reaches you" })).error).toBeUndefined();

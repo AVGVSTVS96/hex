@@ -33,7 +33,7 @@ import {
   stateDir,
   waits,
 } from "@hex/hub";
-import type { Call, Handlers, Message, Permission, Turn, Post } from "@hex/hub";
+import type { Call, Handlers, Message, MessageId, Permission, Turn, Post } from "@hex/hub";
 import { Bot, GrammyError, InputFile } from "grammy";
 import type { Context } from "grammy";
 import type {
@@ -356,33 +356,33 @@ function asPhoto(f: string): boolean {
   return PHOTO_EXTS.has(extname(f).toLowerCase()) && size <= MAX_PHOTO_BYTES;
 }
 
-const DM_TOPIC_WRITTEN_IN_LAST_FILE = join(STATE_DIR, "dm-topic-written-in-last.json");
+const WRITTEN_IN_FILE = join(STATE_DIR, "written-in.json");
+const dmTopicPlace = z.object({ chat_id: z.string(), message_thread_id: z.number() });
 
-const dmTopicWrittenInLast = new Map(
+type DmTopicPlace = z.infer<typeof dmTopicPlace>;
+
+const writtenIn = new Map(
   Object.entries(
-    existsSync(DM_TOPIC_WRITTEN_IN_LAST_FILE)
-      ? z
-          .record(z.string(), z.number())
-          .parse(JSON.parse(readFileSync(DM_TOPIC_WRITTEN_IN_LAST_FILE, "utf-8")))
+    existsSync(WRITTEN_IN_FILE)
+      ? z.record(z.string(), dmTopicPlace).parse(JSON.parse(readFileSync(WRITTEN_IN_FILE, "utf-8")))
       : {},
   ),
 );
 
-function wroteIn(chat: string, topic: number | undefined): void {
-  if (dmTopicWrittenInLast.get(chat) === topic) {
+function wroteIn(thread: string, where: DmTopicPlace | undefined): void {
+  const was = writtenIn.get(thread);
+
+  if (was?.chat_id === where?.chat_id && was?.message_thread_id === where?.message_thread_id) {
     return;
   }
 
-  if (topic === undefined) {
-    dmTopicWrittenInLast.delete(chat);
+  if (where === undefined) {
+    writtenIn.delete(thread);
   } else {
-    dmTopicWrittenInLast.set(chat, topic);
+    writtenIn.set(thread, where);
   }
 
-  writeFileSync(
-    DM_TOPIC_WRITTEN_IN_LAST_FILE,
-    `${JSON.stringify(Object.fromEntries(dmTopicWrittenInLast), null, 2)}\n`,
-  );
+  writeFileSync(WRITTEN_IN_FILE, `${JSON.stringify(Object.fromEntries(writtenIn), null, 2)}\n`);
 }
 
 function threadOf(ctx: Context): string {
@@ -392,29 +392,46 @@ function threadOf(ctx: Context): string {
 
   const chat = String(ctx.chat.id);
   const topic = ctx.msg?.is_topic_message === true ? ctx.msg.message_thread_id : undefined;
+  const dm = ctx.chat.type === "private";
 
-  if (ctx.chat.type !== "private") {
-    return topic === undefined ? chat : `${chat}:${topic}`;
-  }
+  const thread = dm
+    ? (homeOf(chat, topic) ?? chat)
+    : topic === undefined
+      ? chat
+      : `${chat}:${topic}`;
 
-  const home = homeOf(topic);
+  wroteIn(
+    thread,
+    dm && topic !== undefined ? { chat_id: chat, message_thread_id: topic } : undefined,
+  );
 
-  if (home !== undefined) {
-    return home;
-  }
-
-  wroteIn(chat, topic);
-
-  return chat;
+  return thread;
 }
 
 function target(thread: string) {
   const [chat_id = thread, own = ""] = thread.split(":");
   const topic = own === "" ? undefined : Number(own);
-  const into = topic ?? dmTopicWrittenInLast.get(chat_id);
 
-  return { chat_id, topic, extra: into === undefined ? {} : { message_thread_id: into } };
+  return { chat_id, topic, extra: topic === undefined ? {} : { message_thread_id: topic } };
 }
+
+function into(thread: string): { chat_id: string; extra: { message_thread_id?: number } } {
+  const where = writtenIn.get(thread);
+
+  return where === undefined
+    ? target(thread)
+    : { chat_id: where.chat_id, extra: { message_thread_id: where.message_thread_id } };
+}
+
+function idIn(thread: string, chat: string | number, message: number): MessageId {
+  return String(chat) === target(thread).chat_id ? message : `telegram:${chat}:${message}`;
+}
+
+const idOf = (thread: string, sent: { chat: { id: number }; message_id: number }) =>
+  idIn(thread, sent.chat.id, sent.message_id);
+
+const asMessageId = (message: MessageId): MessageId =>
+  /^\d+$/u.test(String(message)) ? Number(message) : String(message);
 
 function located(thread: string, ref: string) {
   const [, linkChat, linkMessage] = /t\.me\/c\/(\d+)\/(?:\d+\/)?(\d+)/u.exec(ref) ?? [];
@@ -431,17 +448,21 @@ function located(thread: string, ref: string) {
 }
 
 function questionAt({ chat_id, message }: { chat_id: string; message: number }) {
-  const here = ledger.questions.filter(
-    (question) => question.thread === chat_id || question.thread.startsWith(`${chat_id}:`),
-  );
+  const isHere = (thread: string, id: MessageId | undefined) => {
+    const where = id === undefined ? undefined : located(thread, String(id));
+
+    return where?.chat_id === chat_id && where.message === message;
+  };
+
+  const { questions } = ledger;
 
   return (
-    here.find((question) => String(question.message) === String(message)) ??
-    here.find(
+    questions.find((question) => isHere(question.thread, question.message)) ??
+    questions.find(
       (question) =>
         question.asker !== undefined &&
         waits(question) &&
-        String(question.answer?.message) === String(message),
+        isHere(question.thread, question.answer?.message),
     )
   );
 }
@@ -464,8 +485,10 @@ function keepDmTopics(): void {
   writeFileSync(DM_TOPICS_FILE, `${JSON.stringify(Object.fromEntries(dmTopics), null, 2)}\n`);
 }
 
-function homeOf(topic: number | undefined): string | undefined {
-  return [...dmTopics].find(([, each]) => each === topic)?.[0];
+function homeOf(chat: string, topic: number | undefined): string | undefined {
+  return chat === loadAccess().allowFrom[0]
+    ? [...dmTopics].find(([, each]) => each === topic)?.[0]
+    : undefined;
 }
 
 const makingDmTopics = new Map<string, Promise<number>>();
@@ -509,7 +532,7 @@ const post: Post = {
     const { chat_id, extra } = target(thread);
     const sent = await bot.api.sendRichMessage(chat_id, { markdown: keepLines(text) }, extra);
 
-    said(thread, sent.message_id, text);
+    said(thread, sent, text);
 
     return sent.message_id;
   },
@@ -560,12 +583,12 @@ const post: Post = {
 
 function said(
   thread: string,
-  id: number | undefined,
+  sent: { chat: { id: number }; message_id: number } | undefined,
   text = "",
   meta: Record<string, string> = {},
 ): void {
   hub.sent(thread, {
-    ...(id !== undefined && { key: `${target(thread).chat_id}:${id}` }),
+    ...(sent !== undefined && { key: `${sent.chat.id}:${sent.message_id}` }),
     content: text,
     meta,
   });
@@ -626,7 +649,7 @@ const forums = new Map<string, Promise<boolean>>();
 const GENERAL_TOPIC = 1;
 
 async function typingTarget(thread: string) {
-  const { chat_id, extra } = target(thread);
+  const { chat_id, extra } = into(thread);
 
   if (extra.message_thread_id !== undefined) {
     return { chat_id, extra };
@@ -675,11 +698,11 @@ function showTyping(thread: string, busy: boolean): void {
   );
 }
 
-const asking = new Map<string, Set<number>>();
+const asking = new Map<string, Set<MessageId>>();
 
 async function ask(thread: string, request: Permission): Promise<void> {
   const { request_id, tool_name, description } = request;
-  const { chat_id, extra } = target(thread);
+  const { chat_id, extra } = into(thread);
   const text = `🔐 ${tool_name}: ${description}\n\n${preview(request)}`.slice(0, MAX_CHUNK_LIMIT);
 
   try {
@@ -695,8 +718,8 @@ async function ask(thread: string, request: Permission): Promise<void> {
       },
     });
 
-    said(thread, sent.message_id, text, { permission: request_id });
-    asking.set(thread, (asking.get(thread) ?? new Set()).add(sent.message_id));
+    said(thread, sent, text, { permission: request_id });
+    asking.set(thread, (asking.get(thread) ?? new Set()).add(idOf(thread, sent)));
   } catch (error) {
     process.stderr.write(
       `telegram hub: couldn't relay a permission prompt to ${thread}: ${String(error)}\n`,
@@ -711,11 +734,10 @@ function settle(thread: string, busy: boolean, background: boolean): void {
     return;
   }
 
-  const { chat_id } = target(thread);
-
   for (const id of asking.get(thread) ?? []) {
+    const { chat_id, message } = located(thread, String(id));
     void bot.api
-      .editMessageReplyMarkup(chat_id, id, {
+      .editMessageReplyMarkup(chat_id, message, {
         reply_markup: { inline_keyboard: [[{ text: "No longer waiting", disabled: {} }]] },
       })
       .catch(ignore);
@@ -775,8 +797,7 @@ async function place(name: string, _where?: string, about?: string) {
   if (about !== undefined && about !== "") {
     said(
       thread,
-      (await bot.api.sendMessage(chat_id, about, { message_thread_id: topic.message_thread_id }))
-        .message_id,
+      await bot.api.sendMessage(chat_id, about, { message_thread_id: topic.message_thread_id }),
       about,
     );
   }
@@ -935,7 +956,8 @@ function at(caller: string, name: string | undefined) {
 
 const handlers: Handlers<typeof tools> = {
   reply: async (caller, args) => {
-    const { thread, chat_id, extra } = at(caller, args.thread);
+    const { thread } = at(caller, args.thread);
+    const { chat_id, extra } = into(thread);
     const access = loadAccess();
     const text = tappable(args.text ?? "");
     const quoted = args.reply_to === undefined ? undefined : located(thread, args.reply_to);
@@ -987,9 +1009,9 @@ const handlers: Handlers<typeof tools> = {
 
     const silent = args.silent === true ? { disable_notification: true } : {};
     const keyboard = buttons.length > 0 ? { reply_markup: buttonsOf(buttons) } : {};
-    const sentIds: number[] = [];
-    const filed: number[] = [];
-    let asked: number | undefined;
+    const sentIds: MessageId[] = [];
+    const filed: MessageId[] = [];
+    let asked: MessageId | undefined;
 
     try {
       for (const [i, { text: part, card }] of chunks.entries()) {
@@ -1008,11 +1030,11 @@ const handlers: Handlers<typeof tools> = {
             ? await bot.api.sendRichMessage(chat_id, { markdown: keepLines(part) }, opts)
             : await bot.api.sendMessage(chat_id, part, { ...opts, ...parseMode });
 
-        said(thread, sent.message_id, part);
-        sentIds.push(sent.message_id);
+        said(thread, sent, part);
+        sentIds.push(idOf(thread, sent));
 
         if (buttons.length > 0 && last) {
-          asked = sent.message_id;
+          asked = idOf(thread, sent);
         }
       }
     } catch (error) {
@@ -1067,15 +1089,15 @@ const handlers: Handlers<typeof tools> = {
               }),
             };
 
-      said(thread, sent.message_id, captioned ? caption : `(file: ${basename(file)})`, {
+      said(thread, sent, captioned ? caption : `(file: ${basename(file)})`, {
         file: basename(file),
         ...held,
       });
-      sentIds.push(sent.message_id);
-      filed.push(sent.message_id);
+      sentIds.push(idOf(thread, sent));
+      filed.push(idOf(thread, sent));
 
       if (buttons.length > 0 && captioned) {
-        asked = sent.message_id;
+        asked = idOf(thread, sent);
       }
     }
 
@@ -1110,7 +1132,14 @@ const handlers: Handlers<typeof tools> = {
     const where = located(thread, args.message_id);
     const id = where.message;
     const question = questionAt(where);
-    const home = question?.thread ?? (where.chat_id === chat_id ? thread : where.chat_id);
+
+    const home =
+      question?.thread ??
+      (where.chat_id === chat_id || hub.said(`${where.chat_id}:${id}`)?.to === thread
+        ? thread
+        : where.chat_id);
+
+    const ref = idIn(home, where.chat_id, id);
     const text = args.text === undefined ? undefined : tappable(args.text);
     const { file } = args;
     const changes = text !== undefined || (file !== undefined && file !== "");
@@ -1132,7 +1161,7 @@ const handlers: Handlers<typeof tools> = {
       }
     }
 
-    if (home === thread && Number(ledger.pin(thread)?.message) === id && changes) {
+    if (home === thread && ref === Number(ledger.pin(thread)?.message) && changes) {
       if ((file !== undefined && file !== "") || text === undefined) {
         throw new Error("a status post is text: send the file in its own message");
       }
@@ -1156,7 +1185,7 @@ const handlers: Handlers<typeof tools> = {
         return `the poll is already answered (${question.answer.label}), so it stays as it is; its own text can't be edited, so reply with what changed`;
       }
 
-      await settleQuestion(home, id, "✓ Settled");
+      await settleQuestion(home, ref, "✓ Settled");
 
       return `settled the poll (id: ${id}); its own text can't be edited, so reply with what changed`;
     }
@@ -1208,13 +1237,13 @@ const handlers: Handlers<typeof tools> = {
     }
 
     if (text !== undefined) {
-      said(home, undefined, text, { edited: "true", message_id: String(id) });
-      ledger.edited(home, id, text);
+      said(home, undefined, text, { edited: "true", message_id: String(ref) });
+      ledger.edited(home, ref, text);
     }
 
     if (
       args.settled === true &&
-      !(await settleQuestion(home, Number(question?.message ?? id), "✓ Settled"))
+      !(await settleQuestion(home, question?.message ?? ref, "✓ Settled"))
     ) {
       return `${changes ? "edited, but " : ""}no question waits on message ${id}, so nothing was settled`;
     }
@@ -1223,11 +1252,11 @@ const handlers: Handlers<typeof tools> = {
   },
 
   delete_message: async (caller, args) => {
-    const id = Number(args.message_id);
-    await bot.api.deleteMessage(target(caller).chat_id, id);
-    await ledger.deleted(caller, id);
+    const { chat_id, message } = located(caller, args.message_id);
+    await bot.api.deleteMessage(chat_id, message);
+    await ledger.deleted(caller, idIn(caller, chat_id, message));
 
-    return `deleted (id: ${id})`;
+    return `deleted (id: ${args.message_id})`;
   },
 
   pin: async (caller, args) => {
@@ -1251,19 +1280,19 @@ const handlers: Handlers<typeof tools> = {
   },
 
   forward: async (caller, args) => {
-    const { thread, chat_id, extra } = at(caller, args.thread);
-    const id = Number(args.message_id);
-    const from = target(caller).chat_id;
-    const sent = await bot.api.forwardMessage(chat_id, from, id, extra);
-    said(thread, sent.message_id, hub.said(`${from}:${id}`)?.body ?? "(forwarded)", {
+    const { thread } = at(caller, args.thread);
+    const { chat_id, extra } = into(thread);
+    const from = located(caller, args.message_id);
+    const sent = await bot.api.forwardMessage(chat_id, from.chat_id, from.message, extra);
+    said(thread, sent, hub.said(`${from.chat_id}:${from.message}`)?.body ?? "(forwarded)", {
       forwarded: "true",
     });
 
-    return `forwarded to "${topicNames.get(thread) ?? hub.name(thread) ?? thread}" (id: ${sent.message_id})`;
+    return `forwarded to "${topicNames.get(thread) ?? hub.name(thread) ?? thread}" (id: ${idOf(thread, sent)})`;
   },
 
   poll: async (caller, args) => {
-    const { chat_id, extra } = target(caller);
+    const { chat_id, extra } = into(caller);
     const { question, options } = args;
     const shots = (args.files ?? []).map((file) => realpathSync(file));
 
@@ -1293,7 +1322,7 @@ const handlers: Handlers<typeof tools> = {
         : [];
 
     for (const [i, sent] of album.entries()) {
-      said(caller, sent.message_id, options[i] ?? "", { file: basename(shots[i] ?? "") });
+      said(caller, sent, options[i] ?? "", { file: basename(shots[i] ?? "") });
     }
 
     const sent = await bot.api.sendPoll(chat_id, question, options, {
@@ -1303,9 +1332,10 @@ const handlers: Handlers<typeof tools> = {
       allows_multiple_answers: args.multiple === true,
     });
 
-    said(caller, sent.message_id, question, { poll: options.join(" / ") });
+    said(caller, sent, question, { poll: options.join(" / ") });
 
-    const kept = join(KEPT_POLL_SHOTS_DIR, String(sent.message_id));
+    const id = idOf(caller, sent);
+    const kept = join(KEPT_POLL_SHOTS_DIR, String(id));
 
     if (shots.length > 0) {
       mkdirSync(kept, { recursive: true });
@@ -1318,18 +1348,19 @@ const handlers: Handlers<typeof tools> = {
       return copy;
     });
 
-    ledger.ask(caller, sent.message_id, question, options, {
+    ledger.ask(caller, id, question, options, {
       poll: sent.poll.id,
       multiple: args.multiple === true,
       ...(keep.length > 0 && { shots: keep }),
     });
 
-    return `sent poll (id: ${sent.message_id})`;
+    return `sent poll (id: ${id})`;
   },
 
   widget: async (caller, args) => {
     const html = readFileSync(args.file, "utf-8");
-    const { chat_id, topic: groupTopic, extra } = target(caller);
+    const groupTopic = target(caller).topic;
+    const { chat_id, extra } = into(caller);
 
     const widget = {
       html,
@@ -1420,7 +1451,7 @@ const handlers: Handlers<typeof tools> = {
     });
 
     return to === chat_id
-      ? `sent widget (id: ${sent.message_id})`
+      ? `sent widget (id: ${idIn(caller, to, sent.message_id)})`
       : home === undefined
         ? `sent widget to the owner's DM (id: telegram:${to}:${sent.message_id}), since Telegram shows widgets only in private chats for now; its requests still come here`
         : `sent widget to this topic's own topic in the owner's DM (id: telegram:${to}:${sent.message_id}, topic: https://t.me/${me()}/${home}), since Telegram shows widgets only in private chats; its requests, and what he says in that DM topic, come here`;
@@ -1529,7 +1560,8 @@ const handlers: Handlers<typeof tools> = {
   },
 
   handoff: async (caller, args) => {
-    const { chat_id, topic, extra } = target(caller);
+    const { chat_id, topic } = target(caller);
+    const there = into(caller);
     const { to } = args;
 
     const name =
@@ -1538,12 +1570,12 @@ const handlers: Handlers<typeof tools> = {
     const link = await move(hub, caller, to, name, args.channel);
 
     if (caller === MAIN) {
-      await bot.api.sendMessage(chat_id, `Continued in ${to}: ${link}`, extra);
+      await bot.api.sendMessage(there.chat_id, `Continued in ${to}: ${link}`, there.extra);
 
       return `a copy of this conversation continues in ${to}: ${link}. You stay here.`;
     }
 
-    await bot.api.sendMessage(chat_id, `Moved to ${to}: ${link}`, extra);
+    await bot.api.sendMessage(there.chat_id, `Moved to ${to}: ${link}`, there.extra);
 
     if (topic !== undefined) {
       await bot.api.closeForumTopic(chat_id, topic);
@@ -1566,12 +1598,12 @@ const callOrForget: Call = async (caller, tool, args) => {
   try {
     return await call(caller, tool, args);
   } catch (error) {
-    const { thread, chat_id } = at(caller, threadArgument.safeParse(args).data?.thread);
+    const { thread } = at(caller, threadArgument.safeParse(args).data?.thread);
 
-    if (gone(String(error)) && !thread.includes(":") && dmTopicWrittenInLast.has(chat_id)) {
-      wroteIn(chat_id, undefined);
+    if (gone(String(error)) && writtenIn.has(thread)) {
+      wroteIn(thread, undefined);
 
-      return await call(caller, tool, args);
+      return await callOrForget(caller, tool, args);
     }
 
     if (thread === MAIN || !thread.includes(":") || !gone(String(error))) {
@@ -1602,11 +1634,11 @@ function buttonsOf(options: string[]) {
 }
 
 // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Ledger.find is the ledger's own lookup, not Array#find
-const questionOf = (thread: string, message: number) => ledger.find(thread, message);
+const questionOf = (thread: string, message: MessageId) => ledger.find(thread, message);
 
 const drawing = new Map<string, Promise<void>>();
 
-async function redraw(thread: string, message: number): Promise<void> {
+async function redraw(thread: string, message: MessageId): Promise<void> {
   try {
     const question = questionOf(thread, message);
 
@@ -1614,10 +1646,10 @@ async function redraw(thread: string, message: number): Promise<void> {
       return;
     }
 
-    const { chat_id } = target(thread);
+    const { chat_id, message: id } = located(thread, String(message));
 
     if (question.poll === undefined) {
-      await bot.api.editMessageReplyMarkup(chat_id, message, {
+      await bot.api.editMessageReplyMarkup(chat_id, id, {
         reply_markup: question.answer
           ? only(answeredText(question.answer))
           : question.settled
@@ -1630,7 +1662,7 @@ async function redraw(thread: string, message: number): Promise<void> {
 
     if (question.settled || (question.answer && question.answer.via !== "telegram")) {
       // A poll can't take a vote from the bot (https://core.telegram.org/bots/api#stoppoll), so one answered elsewhere closes, and stays closed.
-      await bot.api.stopPoll(chat_id, message);
+      await bot.api.stopPoll(chat_id, id);
     }
   } catch (error) {
     process.stderr.write(
@@ -1639,7 +1671,7 @@ async function redraw(thread: string, message: number): Promise<void> {
   }
 }
 
-function drawInTurn(thread: string, message: number): Promise<void> {
+function drawInTurn(thread: string, message: MessageId): Promise<void> {
   const key = `${thread}:${message}`;
   const drawn = (drawing.get(key) ?? Promise.resolve()).then(() => redraw(thread, message));
 
@@ -1655,14 +1687,14 @@ const answeredText = ({ label, via }: { label: string; via: string }) => {
   return where === undefined ? `✓ ${label}` : `✓ Answered ${where}: ${label}`;
 };
 
-async function answerQuestion(thread: string, message: number, label: string, via: string) {
+async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
   const question = questionOf(thread, message);
 
   if (!question || question.answer) {
     return;
   }
 
-  const { chat_id } = target(thread);
+  const { chat_id } = located(thread, String(message));
 
   const answered = hub.deliver(
     thread,
@@ -1688,7 +1720,7 @@ async function answerQuestion(thread: string, message: number, label: string, vi
   }
 }
 
-async function settleQuestion(thread: string, message: number, note: string): Promise<boolean> {
+async function settleQuestion(thread: string, message: MessageId, note: string): Promise<boolean> {
   const question = questionOf(thread, message);
 
   if (!question || !waits(question)) {
@@ -1701,14 +1733,14 @@ async function settleQuestion(thread: string, message: number, note: string): Pr
   return true;
 }
 
-async function reopenQuestion(thread: string, message: number, via: string) {
+async function reopenQuestion(thread: string, message: MessageId, via: string) {
   const question = questionOf(thread, message);
 
   if (!question || !(question.answer || question.settled)) {
     return;
   }
 
-  const { chat_id } = target(thread);
+  const { chat_id } = located(thread, String(message));
   const taken = question.answer?.label;
 
   const reopened =
@@ -1865,17 +1897,17 @@ const hub = startHub({
   },
   questions: {
     answer: (thread, message, label, via) => {
-      void answerQuestion(thread, Number(message), label, via);
+      void answerQuestion(thread, asMessageId(message), label, via);
     },
     settle: (thread, message, note) => {
-      void settleQuestion(thread, Number(message), note);
+      void settleQuestion(thread, asMessageId(message), note);
     },
     reopen: (thread, message, via) => {
-      void reopenQuestion(thread, Number(message), via);
+      void reopenQuestion(thread, asMessageId(message), via);
     },
   },
   failed: (thread, reason) => {
-    const { chat_id, extra } = target(thread);
+    const { chat_id, extra } = into(thread);
     void bot.api
       .sendMessage(chat_id, `Couldn't start this topic's session: ${reason}`, extra)
       .catch(ignore);
@@ -1951,7 +1983,7 @@ async function slash(thread: string, text: string): Promise<boolean> {
     return false;
   }
 
-  const { chat_id, extra } = target(thread);
+  const { chat_id, extra } = into(thread);
   const answer = (reply: string) => bot.api.sendMessage(chat_id, reply, extra).then(() => true);
 
   if (name === "board" && board !== undefined) {
@@ -2210,8 +2242,9 @@ bot.on("callback_query:data", async (ctx) => {
   }
 
   const thread = threadOf(ctx);
+  const id = idOf(thread, message);
   const [, verdict, requestId] = /^perm:(allow|deny):([a-km-z]{5})$/u.exec(data) ?? [];
-  const question = verdict === undefined ? questionOf(thread, message.message_id) : undefined;
+  const question = verdict === undefined ? questionOf(thread, id) : undefined;
 
   if (!question) {
     try {
@@ -2224,7 +2257,7 @@ bot.on("callback_query:data", async (ctx) => {
   }
 
   if (verdict !== undefined && requestId !== undefined) {
-    asking.get(thread)?.delete(message.message_id);
+    asking.get(thread)?.delete(id);
 
     hub.answer(thread, requestId, verdict === "allow" ? "allow" : "deny");
 
@@ -2244,14 +2277,14 @@ bot.on("callback_query:data", async (ctx) => {
         user_id: String(ctx.from.id),
         ts: new Date().toISOString(),
         button: "true",
-        button_message_id: String(message.message_id),
+        button_message_id: String(id),
       },
     },
-    question && (() => ledger.answered(thread, message.message_id, label, "telegram")),
+    question && (() => ledger.answered(thread, id, label, "telegram")),
   );
 
   if (question) {
-    await drawInTurn(thread, message.message_id);
+    await drawInTurn(thread, id);
   }
 });
 
@@ -2313,7 +2346,7 @@ bot.on("poll_answer", (ctx) => {
       key: `poll:${poll_id}:${ctx.update.update_id}`,
       content: vote ? `(vote: ${vote})` : "(vote removed)",
       meta: {
-        chat_id: target(question.thread).chat_id,
+        chat_id: located(question.thread, String(question.message)).chat_id,
         user: user.username ?? String(user.id),
         user_id: String(user.id),
         ts: new Date().toISOString(),
@@ -2398,7 +2431,7 @@ const REPLY_FILE_KINDS = [
 ] as const;
 
 // Inside a topic, every message that isn't a reply points at the topic's first message, the one that says the topic was created. A reply to a message in another topic or chat comes as external_reply, with no text. https://core.telegram.org/bots/api#message
-async function replyMeta(msg: Context["msg"]): Promise<Record<string, string>> {
+async function replyMeta(msg: Context["msg"], thread: string): Promise<Record<string, string>> {
   const external = msg?.external_reply;
   const replied = external ? undefined : msg?.reply_to_message;
   const source = external ?? replied;
@@ -2408,9 +2441,8 @@ async function replyMeta(msg: Context["msg"]): Promise<Record<string, string>> {
   }
 
   const id = replied?.message_id ?? external?.message_id;
-
-  const known =
-    id === undefined ? undefined : hub.said(`${external?.chat?.id ?? msg.chat.id}:${id}`);
+  const chat = external?.chat?.id ?? msg.chat.id;
+  const known = id === undefined ? undefined : hub.said(`${chat}:${id}`);
 
   const text = replied?.text ?? replied?.caption ?? "";
 
@@ -2439,7 +2471,7 @@ async function replyMeta(msg: Context["msg"]): Promise<Record<string, string>> {
   const fileId = kind === undefined ? undefined : source[kind]?.file_id;
 
   return {
-    ...(id !== undefined && { reply_to_message_id: String(id) }),
+    ...(id !== undefined && { reply_to_message_id: String(idIn(thread, chat, id)) }),
     ...(user !== "" && { reply_to_user: user }),
     ...(replyText !== undefined && replyText !== "" && { reply_to_text: replyText }),
     ...(msg.quote !== undefined && { reply_to_quote: msg.quote.text }),
@@ -2511,7 +2543,6 @@ async function deliverInbound(parts: Part[]): Promise<void> {
   const thread = threadOf(ctx);
   const msgId = msg?.message_id;
   const chat_id = ctx.chat === undefined ? target(thread).chat_id : String(ctx.chat.id);
-  const elsewhere = chat_id !== target(thread).chat_id;
 
   sendTyping(thread);
 
@@ -2549,7 +2580,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
     meta: {
       chat_id,
       ...(msgId !== undefined && {
-        message_id: elsewhere ? `telegram:${chat_id}:${msgId}` : String(msgId),
+        message_id: String(idIn(thread, chat_id, msgId)),
       }),
       user,
       user_id: String(from.id),
@@ -2578,7 +2609,7 @@ async function deliverInbound(parts: Part[]): Promise<void> {
         "attachment_name",
         attachments.map((a) => a.name),
       ),
-      ...(await replyMeta(msg)),
+      ...(await replyMeta(msg, thread)),
       ...(ctx.editedMessage && { edited: "true" }),
       ...(msg?.forward_origin && { forwarded_from: senderOf(msg.forward_origin) }),
     },
@@ -2586,10 +2617,15 @@ async function deliverInbound(parts: Part[]): Promise<void> {
 
   hub.deliver(thread, nameOf(ctx, thread), message);
 
-  if (msgId !== undefined && !elsewhere) {
+  if (msgId !== undefined) {
     const replyTo = message.meta.reply_to_message_id ?? "";
 
-    ledger.heard(thread, msgId, content, replyTo === "" ? undefined : Number(replyTo));
+    ledger.heard(
+      thread,
+      idIn(thread, chat_id, msgId),
+      content,
+      replyTo === "" ? undefined : asMessageId(replyTo),
+    );
   }
 }
 
