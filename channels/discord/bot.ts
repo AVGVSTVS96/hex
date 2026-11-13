@@ -1121,6 +1121,21 @@ function serve(token: string) {
     return drawn;
   }
 
+  function quotable(ref: string): string | undefined {
+    const id = ref.replace(/^discord:/u, "");
+    const kept = /^\d+$/u.test(id) ? undefined : hub.said(id)?.meta;
+
+    const quoted =
+      kept === undefined
+        ? id
+        : (kept.button_message_id ??
+          kept.poll_message_id ??
+          kept.reaction_to_message_id ??
+          kept.message_id);
+
+    return quoted !== undefined && /^\d+$/u.test(quoted) ? quoted : undefined;
+  }
+
   async function answerQuestion(thread: string, message: MessageId, label: string, via: string) {
     const question = questionAt(thread, message);
 
@@ -1261,7 +1276,7 @@ function serve(token: string) {
       const { thread, ch } = await conversation(caller, args.thread);
       const access = loadAccess();
       const text = tappable(args.text);
-      const reply_to = args.reply_to;
+      const reply_to = args.reply_to === undefined ? undefined : quotable(args.reply_to);
       const files = sendable(args.files ?? []);
       const labels = args.buttons;
       const multiple = args.multiple === true;
