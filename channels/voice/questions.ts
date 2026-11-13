@@ -2,8 +2,8 @@ import { readFileSync, renameSync, statSync, watch, writeFileSync } from "node:f
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { held as filesIn, pictureId, statusPost, open as store } from "@hex/hub";
-import type { Question as Asked, MessageId, Pin, Thread } from "@hex/hub";
+import { pictures as picturesIn, statusPost, open as store, widthOverHeightOf } from "@hex/hub";
+import type { Question as Asked, MessageId, Picture, Pin, Thread } from "@hex/hub";
 import { z } from "zod";
 
 import { generalOf, isDm, projectOf } from "./activity.ts";
@@ -105,14 +105,12 @@ const CuratedSchema = z.object({
   undoing: z.literal(true).exactOptional(),
   from: z.array(SourceSchema).exactOptional(),
   refs: z.array(RefSchema).exactOptional(),
+  shows: z.array(RefSchema).exactOptional(),
 });
 
 export type Curated = z.infer<typeof CuratedSchema>;
 
-// oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name, as an option's
-export type Picture = { id: string; shape?: number };
-
-export type Question = Omit<Curated, "from" | "refs" | "options"> & {
+export type Question = Omit<Curated, "from" | "refs" | "options" | "shows"> & {
   options: Option[];
   multiple?: true;
   pictures?: Picture[];
@@ -1116,7 +1114,7 @@ export class Questions extends Changes {
         : {};
   }
 
-  private dress({ refs, from, options, ...question }: Curated): Question {
+  private dress({ refs, from, options, shows = [], ...question }: Curated): Question {
     const [app = "", ...thread] = question.task.split(":");
     const was = (refs ?? []).map(refId).filter((id) => id !== question.id);
 
@@ -1127,8 +1125,13 @@ export class Questions extends Changes {
     }
 
     const sentWith = refs?.map((ref) => this.asked(ref)).find((asked) => asked?.attached);
+
     const multiple = refs?.some((ref) => this.asked(ref)?.multiple === true) === true;
-    const pictures = sentWith ? this.pictures(sentWith) : [];
+
+    const pictures = this.pictures([
+      ...(sentWith?.attached?.map((message) => ({ thread: sentWith.thread, message })) ?? []),
+      ...shows,
+    ]);
 
     return {
       ...question,
@@ -1143,33 +1146,17 @@ export class Questions extends Changes {
     };
   }
 
-  private pictures({ thread, attached = [] }: Asked): Picture[] {
+  private pictures(messages: { thread: string; message: MessageId }[]): Picture[] {
     const db = store(this.state);
 
-    return attached.flatMap((message) => {
+    const all = messages.flatMap(({ thread, message }) => {
       // oxlint-disable-next-line unicorn/no-array-method-this-argument -- Store#find(thread, message) is not Array#find
       const row = db.messages.find(thread, message);
 
-      return row
-        ? filesIn(row).flatMap(({ type, path, dimensions }, at) => {
-            const [width = 0, height = 0] = (dimensions ?? "").split("x").map(Number);
-            const widthOverHeight = height > 0 ? width / height : widthOverHeightOf(path);
-
-            return type?.startsWith("image/") === true
-              ? [
-                  {
-                    id: pictureId(row.key, at),
-                    ...(widthOverHeight !== undefined &&
-                      widthOverHeight > 0 && {
-                        // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
-                        shape: widthOverHeight,
-                      }),
-                  },
-                ]
-              : [];
-          })
-        : [];
+      return row ? picturesIn(row) : [];
     });
+
+    return all.filter((picture, at) => all.findIndex((one) => one.id === picture.id) === at);
   }
 
   private places(from: Source[]): Place[] {
@@ -1338,50 +1325,6 @@ function withItsShot(option: CuratedOption, shown: Asked | undefined): Option {
     ? // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads an option's screenshot width over height by this name
       { ...option, shot, shape: widthOverHeight }
     : option;
-}
-
-const widthOverHeightOfEachFileVersion = new Map<string, number | undefined>();
-
-function widthOverHeightOf(file: string | undefined) {
-  if (file === undefined) {
-    return;
-  }
-
-  const version = `${file}@${statSync(file, { throwIfNoEntry: false })?.mtimeMs}`;
-
-  if (!widthOverHeightOfEachFileVersion.has(version)) {
-    widthOverHeightOfEachFileVersion.set(version, readWidthOverHeight(file));
-  }
-
-  return widthOverHeightOfEachFileVersion.get(version);
-}
-
-const PNG_SIGNATURE = 0x89_50_4e_47;
-
-function readWidthOverHeight(file: string) {
-  let bytes: Buffer;
-
-  try {
-    bytes = readFileSync(file);
-  } catch {
-    return;
-  }
-
-  if (bytes.readUInt32BE(0) === PNG_SIGNATURE) {
-    return bytes.readUInt32BE(16) / bytes.readUInt32BE(20);
-  }
-
-  for (
-    let at = 2;
-    bytes[at] === 0xff && at + 9 < bytes.length;
-    at += 2 + bytes.readUInt16BE(at + 2)
-  ) {
-    const marker = bytes[at + 1] ?? 0;
-
-    if (marker >= 0xc0 && marker <= 0xc3) {
-      return bytes.readUInt16BE(at + 7) / bytes.readUInt16BE(at + 5);
-    }
-  }
 }
 
 function refId({ app, thread, message }: Ref) {

@@ -22,7 +22,7 @@ import { STARTUP } from "./loaded.ts";
 import { endpoint, toolList } from "./mcp.ts";
 import type { ChannelServer, Line, Permission, ToolArguments } from "./mcp.ts";
 import { queue } from "./observe.ts";
-import { fileOnly, held as filesIn, pictureOf, pictures } from "./pictures.ts";
+import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { restarts } from "./restarts.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
@@ -259,7 +259,8 @@ export const engine: CallEngine = {};
 export type Turn = {
   from: "me" | "hex";
   text: string;
-  media?: { id: string; kind: string; file?: string }[];
+  // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
+  media?: { id: string; kind: string; file?: string; shape?: number }[];
 };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -401,8 +402,18 @@ export function carried(meta?: Record<string, string>): Turn["media"] {
   return meta?.media?.split("; ").map((entry, i) => {
     const [kind = "", id = ""] = entry.split(" ");
     const file = files[i];
+    const widthOverHeight = kind === "photo" ? widthOverHeightOf(file) : undefined;
 
-    return { id, kind, ...(present(file) && { file }) };
+    return {
+      id,
+      kind,
+      ...(present(file) && { file }),
+      ...(widthOverHeight !== undefined &&
+        widthOverHeight > 0 && {
+          // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads a picture's width over height by this name
+          shape: widthOverHeight,
+        }),
+    };
   });
 }
 
