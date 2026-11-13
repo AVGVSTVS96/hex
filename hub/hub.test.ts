@@ -1866,8 +1866,8 @@ test("a thread opened with a prompt, or as a fork, whose start failed starts aga
   expect(startedAgainFor("chat:10").at(-1)).toBe("carry on");
 });
 
-test("a thread whose starts keep failing says so in its chat with each message, and General hears of it once, at the third", async () => {
-  start({ main: "general", general: true });
+test("a thread whose starts keep failing says so in its chat with each message, and hex beside General hears of it once, at the third", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
   await launched();
   const general = await session("general");
   writeFileSync(
@@ -1881,11 +1881,12 @@ test("a thread whose starts keep failing says so in its chat with each message, 
   }
 
   expect(failures).toEqual(Array.from({ length: 4 }, () => ["chat:7", "exit 1 before init"]));
-  await until(() => general.received.length);
-  await Bun.sleep(50);
-  expect(heard(general.received).map((turn) => turn.content)).toEqual([
+  const run = await until(() => runs()[0]);
+  expect(run.args.at(-1)).toContain(
     '[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 3 times in a row: exit 1 before init. Its next message starts it again.',
-  ]);
+  );
+  expect(runs()).toHaveLength(1);
+  expect(general.received).toEqual([]);
 });
 
 test("General hears of a thread that keeps failing once its hub is there, even when that's after the third", async () => {
@@ -1919,10 +1920,10 @@ test("General hears of a thread that keeps failing once its hub is there, even w
   try {
     hub.deliver("chat:7", "Desk anchors", { ...message, content: "try 4" });
     await until(() => restsOf("chat:7") === 4);
-    await until(() => open(dir).messages.untaken("general").length);
+    await until(() => open(dir).messages.untaken("beside:general").length);
     expect(
       open(dir)
-        .messages.untaken("general")
+        .messages.untaken("beside:general")
         .map((row) => row.body),
     ).toEqual([
       '[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 4 times in a row: exit 1 before init. Its next message starts it again.',
@@ -4838,4 +4839,138 @@ test("an operation keeps its result across Stop events regardless of elapsed tim
   expect(await kept("no session", {})).toBe(true);
   expect(await kept("busy", { session: SESSION, busy: true })).toBe(true);
   expect(await kept("done", { session: SESSION })).toBe(true);
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A launcher whose -p runs wait for a file named go, then exit with the code it holds, logging their arguments and HEX_BESIDE; anything else goes to the fake claude.
+function besideLauncher() {
+  const launcher = join(dir, "launch");
+  writeFileSync(
+    launcher,
+    `#!/bin/sh
+[ "$1" = -p ] || exec claude "$@"
+jq -cn --arg beside "$HEX_BESIDE" '{beside: $beside, args: $ARGS.positional}' --args -- "$@" >> "${dir}/runs"
+while [ ! -f "${dir}/go" ]; do [ -d "${dir}" ] || exit 0; sleep 0.02; done
+exit "$(cat "${dir}/go")"
+`,
+  );
+  chmodSync(launcher, 0o755);
+
+  return launcher;
+}
+
+const Run = z.object({ beside: z.string(), args: z.array(z.string()) });
+
+function runs() {
+  return existsSync(join(dir, "runs"))
+    ? readFileSync(join(dir, "runs"), "utf-8")
+        .split("\n")
+        .slice(0, -1)
+        .map((each) => Run.parse(JSON.parse(each)))
+    : [];
+}
+
+function timed(key: string, to = "beside:general") {
+  open(dir).messages.deliver({
+    key,
+    to,
+    from: "schedule",
+    author: "prompt",
+    body: "[heartbeat] Hourly check",
+    meta: { user: "schedule", schedule: "heartbeat" },
+  });
+}
+
+test("a timer beside General runs in a session of its own, as hex in General's chat, and General's session never hears it", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  const general = await session("general");
+  timed("schedule:heartbeat@1");
+  const [run] = await until(() => runs().length > 0 && runs());
+  const args = run?.args ?? [];
+  expect(args.slice(0, 3)).toEqual(["-p", "--session-id", run?.beside ?? ""]);
+  expect(args.at(-1)).toStartWith('<channel source="telegram" key="schedule:heartbeat@1"');
+  expect(args.at(-1)).toContain("\n[heartbeat] Hourly check\n</channel>");
+  const { env, enabledPlugins } = settingsOf(args);
+  expect(enabledPlugins).toEqual({ "telegram@hex": true });
+  expect(env).toMatchObject({ HEX_CHANNEL: CHANNEL, HEX_THREAD: "general", HEX_MAIN: "1" });
+  expect(env.HEX_HUB).toBeUndefined();
+  open(dir).messages.take("schedule:heartbeat@1", run?.beside ?? "");
+  writeFileSync(join(dir, "go"), "0");
+  await Bun.sleep(200);
+  expect(general.received).toEqual([]);
+  expect(failures).toEqual([]);
+  expect(runs()).toHaveLength(1);
+});
+
+test("a session beside a thread speaks in its chat as itself, and is neither its inbound line nor its permission relay", async () => {
+  start({
+    main: "general",
+    general: true,
+    call: (thread) => {
+      hub.sent(thread, { content: "The landlord wrote." });
+
+      return Promise.resolve("sent");
+    },
+  });
+  await launched();
+  const general = await session("general");
+  const beside = http("general", { "x-hex-beside": "beside-1" });
+  await beside.initialize();
+  await beside.open();
+  await beside.rpc("tools/list");
+  await beside.call("reply", { text: "The landlord wrote." });
+  await beside.ask({ request_id: "abcde", tool_name: "Bash", description: "ls", input_preview: "{}" });
+  hub.deliver("general", "hex", { ...message, content: "and now?" });
+  await until(() => general.received.length);
+  expect(heard(general.received).map((turn) => turn.content)).toEqual(["and now?"]);
+  expect(beside.received).toEqual([]);
+  expect(prompts).toEqual([]);
+  expect(
+    open(dir)
+      .messages.said("general")
+      .find((row) => row.body === "The landlord wrote.")?.taken?.by,
+  ).toBe("beside-1");
+});
+
+test("a run beside a thread that never takes its row starts again once, then its chat hears why; one that took it and failed is said there too", async () => {
+  writeFileSync(join(dir, "go"), "1");
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  timed("schedule:heartbeat@1");
+  await until(() => failures.length);
+  expect(runs()).toHaveLength(2);
+  expect(failures).toEqual([
+    ["general", "[heartbeat] couldn't start beside this chat, 2 times: exit 1"],
+  ]);
+  rmSync(join(dir, "go"));
+  timed("schedule:heartbeat@2");
+  const run = await until(() => runs()[2]);
+  open(dir).messages.take("schedule:heartbeat@2", run.beside);
+  writeFileSync(join(dir, "go"), "1");
+  await until(() => failures.length === 2);
+  expect(failures[1]).toEqual(["general", "[heartbeat] ran beside this chat and failed: exit 1"]);
+});
+
+test("a job's news for a session beside a thread resumes that session once its run is over", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  timed("schedule:heartbeat@1");
+  const first = await until(() => runs()[0]);
+  open(dir).messages.take("schedule:heartbeat@1", first.beside);
+  open(dir).messages.deliver({
+    key: "job:mail@1",
+    to: first.beside,
+    from: "job",
+    author: "prompt",
+    body: "[job] mail ended: success (exit 0).",
+    meta: { user: "job" },
+  });
+  await Bun.sleep(100);
+  expect(runs()).toHaveLength(1);
+  writeFileSync(join(dir, "go"), "0");
+  const second = await until(() => runs()[1]);
+  expect(second.beside).toBe(first.beside);
+  expect(second.args.slice(0, 3)).toEqual(["-p", "--resume", first.beside]);
+  expect(second.args.at(-1)).toContain('key="job:mail@1"');
 });
