@@ -217,6 +217,9 @@ type Run = {
   // A message went to the running session after its last turn began: until a turn begins that takes it, a rest reported meanwhile is the turn before it ending.
   untaken?: boolean | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A message went to the session while it rested, so a turn is starting that its hook hasn't reported yet; under load that report can take seconds. Ends at the report, or at TURN_REPORTS_WITHIN for a message that ran no turn, like a copy the session already had.
+  starting?: Timer | undefined;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // asked: the session asked to start over (a call ended). stale: it started with what the hub no longer gives a session. underway: it's starting over, and its renewal waits for the new session.
   renew?: "asked" | "stale" | "underway" | undefined;
   rest?: Timer | undefined;
@@ -492,6 +495,7 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Claude Code shows nothing when Esc meets a turn with nothing left to interrupt, so a press gets this long to show in the transcript; a real one shows in under a second.
 const ESC_LANDS_WITHIN = 5000;
+const TURN_REPORTS_WITHIN = 60_000;
 
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1, 3, 7 and 15 seconds, then gives up for good. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 const LIMITS: Limits = {
@@ -846,6 +850,8 @@ export function startHub({
     state(thread, working, background);
     claim(thread);
     run.turn = working ? "busy" : background ? "background" : "done";
+    clock.clearTimeout(run.starting);
+    run.starting = undefined;
 
     if (working) {
       run.untaken = undefined;
@@ -1749,8 +1755,7 @@ export function startHub({
       if ((stale(thread) && !onCall.has(run)) || spent(thread)) {
         void refresh(thread, message);
       } else if (!heldForTheTurn(thread, message)) {
-        run.untaken = true;
-        run.phase.line.send({ type: "inbound", ...message });
+        handIn(thread, run.phase.line, message);
       }
 
       return;
@@ -1765,14 +1770,34 @@ export function startHub({
     void launch(thread, name);
   }
 
+  function handIn(thread: string, line: Line, message: Message) {
+    runOf(thread).untaken = true;
+    beginTurn(thread);
+    line.send({ type: "inbound", ...message });
+  }
+
+  function beginTurn(thread: string) {
+    const run = runOf(thread);
+
+    if (run.turn === "busy" || run.starting !== undefined) {
+      return;
+    }
+
+    run.starting = clock.setTimeout(() => {
+      run.starting = undefined;
+      letHeldGo(thread);
+    }, TURN_REPORTS_WITHIN);
+  }
+
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Claude Code labels a channel message that comes mid-turn as not from its user, so the owner's words wait for the session's next tool call, where hub/held.ts gives them as hook feedback, which Claude Code treats as the user's; the turn's end sends any still waiting (letHeldGo).
+  // Claude Code labels a channel message that comes mid-turn as not from its user, so the owner's words wait for the session's next tool call, where hub/held.ts gives them as hook feedback, which Claude Code treats as the user's; the turn's end sends any still waiting (letHeldGo). A turn counts from the message that starts it, not from its hook's report.
   function heldForTheTurn(thread: string, message: Message) {
     const { key } = message.meta;
     const session = current(thread);
+    const run = runOf(thread);
 
     return (
-      runOf(thread).turn === "busy" &&
+      (run.turn === "busy" || run.starting !== undefined) &&
       message.author === "owner" &&
       present(key) &&
       present(session) &&
@@ -1970,13 +1995,14 @@ export function startHub({
     }
 
     const working = fresh(thread)
-      ? run.turn === "busy" || (running !== undefined && running.status !== "idle")
+      ? run.turn === "busy" ||
+        run.starting !== undefined ||
+        (running !== undefined && running.status !== "idle")
       : running?.status === "busy";
 
     if (working && run.queue.length === 0) {
       if (!heldForTheTurn(thread, message)) {
-        run.untaken = true;
-        phase.line.send({ type: "inbound", ...message });
+        handIn(thread, phase.line, message);
       }
 
       return;
@@ -2047,6 +2073,13 @@ export function startHub({
 
     run.handed = new Set(given.flatMap((message) => message.meta.key ?? []));
     run.untaken = given.length > 0;
+    clock.clearTimeout(run.starting);
+    run.starting = undefined;
+
+    if (given.length > 0) {
+      beginTurn(thread);
+    }
+
     run.queue.length = 0;
     run.awaited = run.held.length > 0;
     rest(thread);
@@ -2677,6 +2710,7 @@ export function startHub({
       for (const run of runs.values()) {
         become(run, { is: "stopped" });
         clock.clearTimeout(run.rest);
+        clock.clearTimeout(run.starting);
         hangUp(run);
       }
     },

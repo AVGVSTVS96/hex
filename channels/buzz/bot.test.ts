@@ -593,17 +593,28 @@ exit 0
     sockets.push(socket);
     await once(socket, "connect");
 
+    async function ended() {
+      const ending = connect(join(state, "hub.sock"));
+      await once(ending, "connect");
+      ending.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`);
+      await once(ending, "close");
+    }
+
+    let answered = 0;
+
     return {
       send: (message: HubMessage) => socket.write(`${JSON.stringify(message)}\n`),
-      ended: async () => {
-        const ending = connect(join(state, "hub.sock"));
-        await once(ending, "connect");
-        ending.end(`${JSON.stringify({ type: "state", thread, busy: false })}\n`);
-        await once(ending, "close");
-      },
+      ended,
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // Waiting for more than came means the turns those started are over, as a session's Stop hook would say: the hub holds the owner's words for a turn until then.
       inbound: (count: number) =>
         until(() => {
           const lines = inbounds(line.received);
+
+          if (lines.length < count && lines.length > answered) {
+            answered = lines.length;
+            void ended();
+          }
 
           return lines.length >= count ? lines : undefined;
         }),
