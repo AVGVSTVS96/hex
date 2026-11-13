@@ -284,7 +284,6 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
     }
   },
   attachOldQuestionsTheirFiles,
-  sql("drop table if exists beats;"),
 ];
 
 function statusChangeTriggers({ table, thread }: (typeof STATUS_INPUTS)[number]) {
