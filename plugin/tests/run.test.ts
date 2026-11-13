@@ -56,10 +56,11 @@ function commit(hub: string, message: string) {
   return git("rev-parse", "HEAD");
 }
 
-function run() {
-  const env = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !name.startsWith("HEX_")),
-  );
+function run(extra: Record<string, string> = {}) {
+  const env = {
+    ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("HEX_"))),
+    ...extra,
+  };
 
   loop = Bun.spawn([join(hex, "bin/hex"), "run"], { env, stdout: "ignore", stderr: "pipe" });
 
@@ -119,6 +120,17 @@ test("the hub gets the env of the settings files over .env, so a setting changes
   run();
   await until(() => hubs().length === 1);
   expect(hubs()[0]).toMatch(/^start mark=settings loop=1 \d+$/u);
+});
+
+test("a hub started ahead of its turn waits until the file HEX_AHEAD names is gone", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  const ahead = join(home, "ahead");
+  writeFileSync(ahead, "");
+  run({ HEX_AHEAD: ahead });
+  await Bun.sleep(500);
+  expect(hubs()).toEqual([]);
+  rmSync(ahead);
+  await until(() => hubs().length === 1);
 });
 
 test("a stop waits for the hub to finish", async () => {
