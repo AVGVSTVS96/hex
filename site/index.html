@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>hex · The best personal assistant is already on your machine</title>
-<meta name="description" content="hex turns Claude Code into your personal assistant. It runs on your own machine, on the Claude plan you already pay for, and you reach it from Telegram, Discord, Buzz, T3 Code, iikb or a call.">
+<meta name="description" content="hex turns Claude Code into your personal assistant, on your own machine and the Claude plan you already pay for.">
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" content="#FAFAF9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#09090A" media="(prefers-color-scheme: dark)">
@@ -123,9 +123,9 @@
 
   <div class="wrap">
     <dl class="stats">
-      <div><dt>lines in hex's core</dt><dd>~16,000</dd></div>
+      <div><dt>lines in hex's core</dt><dd>~17,500</dd></div>
       <div><dt>clients ready to use</dt><dd>6</dd></div>
-      <div><dt>tests run per update</dt><dd>840+</dd></div>
+      <div><dt>extra on your plan</dt><dd>$0</dd></div>
     </dl>
   </div>
 </section>
@@ -162,7 +162,7 @@
     <header class="sec-head">
       <p class="eyebrow">how it works</p>
       <h2 id="how-title">One assistant.<br>A session for every thread.</h2>
-      <p class="sub">Every topic and thread is its own Claude Code session, and calls get one too. They all share one memory and one set of rules.</p>
+      <p class="sub">Every topic and thread is its own Claude Code session, with one shared memory.</p>
     </header>
 
     <div class="flow" data-flow>
@@ -180,7 +180,6 @@
       <div class="flow-mid">
         <div class="hub" data-hub>
           <span class="hub-k"><svg viewBox="0 0 2167 737" aria-hidden="true"><use href="#wordmark"/></svg>hub</span>
-          <b>one process</b>
           <small>a session per thread</small>
         </div>
         <div class="folder" data-folder>
@@ -208,7 +207,7 @@
           <div class="lane"><span>#dev › ci</span><i style="--a:30;--b:62"></i><em style="--a:62;--b:100"></em></div>
           <div class="lanes-axis"><span>working</span><span class="idle">stopped when idle</span></div>
         </div>
-        <figcaption><b>Threads run side by side.</b> An idle one stops after about an hour and picks back up when you write.</figcaption>
+        <figcaption><b>Threads run side by side.</b></figcaption>
       </figure>
       <figure class="tile">
         <svg class="viz tree" viewBox="0 0 280 120" aria-hidden="true">
@@ -219,7 +218,7 @@
           </g>
           <g class="tree-text"><text x="140" y="26">summary</text><text x="74" y="62">summary</text><text x="206" y="62">summary</text><text x="40" y="98">words</text><text x="108" y="98">words</text><text x="172" y="98">words</text><text x="240" y="98">now</text></g>
         </svg>
-        <figcaption><b>A DM never ends.</b> Logged word for word and folded into a summary tree, so nothing gets compacted away.</figcaption>
+        <figcaption><b>A DM never forgets.</b></figcaption>
       </figure>
       <figure class="tile">
         <div class="viz move" aria-hidden="true">
@@ -228,7 +227,7 @@
           <span class="move-app"><svg><use href="#i-dc"/></svg>#ramen-tonight</span>
           <span class="move-same">same session, same history</span>
         </div>
-        <figcaption><b>Threads move with you.</b> Ask, and the session moves to another app with its history.</figcaption>
+        <figcaption><b>Threads move with you.</b></figcaption>
       </figure>
     </div>
   </div>
@@ -239,7 +238,6 @@
     <header class="sec-head">
       <p class="eyebrow">clients</p>
       <h2 id="clients-title">Works with your client.</h2>
-      <p class="sub">Pick one that's ready, or tell your agent to build yours.</p>
     </header>
 
     <div class="bento clients">
@@ -254,7 +252,7 @@
           </div>
         </div>
         <h3><svg aria-hidden="true"><use href="#i-tg"/></svg>Telegram</h3>
-        <p>A group with topics. Every topic is its own session, and voice notes work with any speech-to-text service.</p>
+        <p>A topic for each thing you're doing. Voice notes too.</p>
       </article>
 
       <article class="card c-dc">
@@ -292,7 +290,7 @@
           </div>
         </div>
         <h3><svg aria-hidden="true"><use href="#i-dc"/></svg>Discord</h3>
-        <p>Tag it and it opens a thread to work in. Room for code and long answers.</p>
+        <p>Tag it and it opens a thread. Room for code and long answers.</p>
       </article>
 
       <article class="card c-bz">
@@ -353,7 +351,7 @@
           </div>
         </div>
         <h3><svg aria-hidden="true"><use href="#i-t3"/></svg>T3 Code</h3>
-        <p>Pick hex as the agent in any project. It works there with its memory and rules.</p>
+        <p>Pick hex as the agent in any project, memory and all.</p>
       </article>
 
       <article class="card c-kb">
@@ -371,14 +369,14 @@
           </div>
         </div>
         <h3><svg aria-hidden="true"><use href="#i-kb"/></svg>iikb</h3>
-        <p>An iOS keyboard. Its Chats open your Telegram threads with hex from inside any app.</p>
+        <p>An iOS keyboard with your hex chats, in any app.</p>
       </article>
 
       <article class="card c-own">
         <div class="own">
           <div class="own-text">
             <h3><svg aria-hidden="true"><use href="#i-plus"/></svg>Your own</h3>
-            <p>Have your agent build one. hex's Buzz client was built this way.</p>
+            <p>Ask hex to build one. Its Buzz client was built this way.</p>
             <div class="chips" role="group" aria-label="Pick an app">
               <button type="button" data-app data-name="Slack" data-unit="thread" aria-pressed="true">Slack</button>
               <button type="button" data-app data-name="WhatsApp" data-unit="chat" aria-pressed="false">WhatsApp</button>
@@ -401,7 +399,7 @@
     <header class="sec-head">
       <p class="eyebrow">widgets</p>
       <h2 id="widgets-title">Apps inside a message.</h2>
-      <p class="sub">Small live apps, right inside a Telegram message. These three are real. Tap them.</p>
+      <p class="sub">Live in Telegram. Tap them, they're real.</p>
     </header>
 
     <div class="bento widgets">
@@ -410,21 +408,21 @@
           <div class="wbub"><iframe data-widget="tasks" style="height:360px" sandbox="allow-scripts" title="A widget: a checklist of four tasks, three waiting"></iframe><p class="wcap">Three things need you today.<time>9:41</time></p></div>
         </div>
         <h3>A list you tick</h3>
-        <p>hex gets your tap and redraws the list in place.</p>
+        <p>Tick one, and hex knows it's done.</p>
       </article>
       <article class="card w-usage">
         <div class="card-viz wchat">
           <div class="wbub"><iframe data-widget="usage" style="height:347px" sandbox="allow-scripts" title="A widget: a week of usage by topic"></iframe><p class="wcap">Your week so far.<time>9:41</time></p></div>
         </div>
         <h3>A chart that stays current</h3>
-        <p>hex keeps it current in place, with no new message.</p>
+        <p>It updates in place, with no new message.</p>
       </article>
       <article class="card w-game">
         <div class="card-viz wchat">
           <div class="wbub"><iframe data-widget="game" style="height:395px" sandbox="allow-scripts" title="A widget: tic-tac-toe against hex"></iframe><p class="wcap">Tic-tac-toe. You play ×.<time>9:41</time></p></div>
         </div>
         <h3>A game against hex</h3>
-        <p>Your move goes to hex, and its move comes back in the same message.</p>
+        <p>hex plays back in the same message.</p>
       </article>
     </div>
     <template id="widget-tasks"><style>
@@ -560,9 +558,9 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
       <div class="voice-pipe" aria-label="How a call works">
         <div class="vp-node"><span class="vp-ico you"></span><div><b>You</b><small>talk, interrupt, change your mind</small></div></div>
         <div class="vp-wire"><i></i></div>
-        <div class="vp-node"><span class="vp-ico orb-mini"></span><div><b>Voice model</b><small>listens and talks back in real time</small></div></div>
-        <div class="vp-wire"><i></i><span>hands off what you asked</span></div>
-        <div class="vp-node vp-cc"><span class="vp-ico cc"><svg viewBox="0 0 16 16"><use href="#i-claude"/></svg></span><div><b>Claude Code</b><small>does the work, then tells the voice what to say</small></div></div>
+        <div class="vp-node"><span class="vp-ico orb-mini"></span><div><b>Voice model</b><small>talks back in real time</small></div></div>
+        <div class="vp-wire"><i></i></div>
+        <div class="vp-node vp-cc"><span class="vp-ico cc"><svg viewBox="0 0 16 16"><use href="#i-claude"/></svg></span><div><b>Claude Code</b><small>does the work</small></div></div>
         <ul class="vp-ways">
           <li>Browser</li><li>hex voice for iPhone</li><li>Phone calls, both ways</li><li>Discord voice</li>
         </ul>
@@ -615,7 +613,6 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
     <header class="sec-head">
       <p class="eyebrow">inside</p>
       <h2 id="inside-title">It remembers, keeps track, and asks first.</h2>
-      <p class="sub">The parts a personal assistant needs and Claude Code doesn't ship.</p>
     </header>
 
     <div class="bento inside">
@@ -630,7 +627,7 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
           </div>
         </div>
         <h3>Memory with a timeline</h3>
-        <p>A memory agent writes down what happened after every turn. Older memories fold into summaries and stay searchable word for word.</p>
+        <p>It remembers what happened and when, and finds any of it word for word.</p>
       </article>
 
       <article class="card i-task">
@@ -646,7 +643,7 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
           </div>
         </div>
         <h3>Tasks and questions</h3>
-        <p>What you ask is saved in your words and closed with proof. Questions wait for your answer, and you're reminded of the ones you missed.</p>
+        <p>What you ask for is kept in your words and closed with proof. Missed questions come back.</p>
       </article>
 
       <article class="card i-judge">
@@ -657,8 +654,8 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
             <div class="j-verdict"><span class="rev">↺ sent back</span><small>it adds a booking you didn't ask for</small></div>
           </div>
         </div>
-        <h3>Briefs checked against your words</h3>
-        <p>Before an agent or job starts, its brief is checked against what you asked. One that drifts goes back.</p>
+        <h3>Agents do what you asked</h3>
+        <p>A brief that drifts from your words goes back.</p>
       </article>
 
       <article class="card i-gate">
@@ -670,7 +667,7 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
           </div>
         </div>
         <h3>Asks before it sends</h3>
-        <p>Sending, replying or deleting through a connector waits for your yes. Secrets come by one-time link and never pass through the model.</p>
+        <p>Nothing is sent or deleted without your yes. Passwords never go through chat.</p>
       </article>
 
       <article class="card i-update">
@@ -679,25 +676,25 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
             <li><i></i><b>Pull</b><small>every morning</small></li>
             <li><i></i><b>Test</b><small>840+ tests</small></li>
             <li><i></i><b>Wait</b><small>until no session is busy</small></li>
-            <li><i></i><b>Ship</b><small>restart the hub</small></li>
-            <li class="back"><i></i><b>Roll back</b><small>if the hub won't start</small></li>
+            <li><i></i><b>Ship</b><small>restarts itself</small></li>
+            <li class="back"><i></i><b>Roll back</b><small>if it won't start</small></li>
           </ol>
         </div>
         <h3>Keeps itself up to date</h3>
-        <p>An update ships only after its tests pass and no session is busy, and rolls back if hex won't start on it.</p>
+        <p>Every morning, never mid-task.</p>
       </article>
 
       <article class="card i-more">
         <ul class="more" aria-label="Also included">
           <li><b>Ideas</b><span>researched on a schedule, back only with news</span></li>
-          <li><b>Schedules</b><span>a cron line and a prompt each</span></li>
-          <li><b>Jobs</b><span>long work that wakes its thread when done</span></li>
+          <li><b>Schedules</b><span>prompts that run on time</span></li>
+          <li><b>Jobs</b><span>long work that reports back</span></li>
           <li><b>Holds</b><span>pause threads until a time</span></li>
           <li><b>Connectors</b><span>every one on your Claude account</span></li>
           <li><b>A computer</b><span>optional cloud desktop with Chrome</span></li>
           <li><b>Any Claude model</b><span>pick one per role</span></li>
           <li><b><code>hex doctor</code></b><span>checks your setup, says how to fix it</span></li>
-          <li><b>Backups</b><span>of <code>hex.db</code>, every night</span></li>
+          <li><b>Backups</b><span>every night</span></li>
         </ul>
       </article>
     </div>
@@ -709,7 +706,6 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
     <header class="sec-head">
       <p class="eyebrow">yours</p>
       <h2 id="yours-title">Small enough to read.<br>Yours to change.</h2>
-      <p class="sub">Claude Code already does the hard part, so hex stays small.</p>
     </header>
 
     <figure class="size">
@@ -717,17 +713,17 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
       <ul class="bars">
         <li><b>OpenClaw</b><span class="bar"><i style="--v:5300069"></i></span><em>5.3 million</em></li>
         <li><b>Hermes Agent</b><span class="bar"><i style="--v:1597845"></i></span><em>1.6 million</em></li>
-        <li><b>NanoClaw</b><span class="bar"><i style="--v:49560"></i></span><em>49,560</em></li>
-        <li class="us"><b>hex</b><span class="bar"><i style="--v:16291"></i></span><em>16,291</em></li>
+        <li><b>NanoClaw</b><span class="bar"><i style="--v:49940"></i></span><em>49,940</em></li>
+        <li class="us"><b>hex</b><span class="bar"><i style="--v:17567"></i></span><em>17,567</em></li>
       </ul>
       <div class="zoom">
         <p class="size-k">zoomed in</p>
         <ul class="bars z">
-          <li><b>NanoClaw</b><span class="bar"><i style="--v:49560"></i></span><em>49,560</em></li>
-          <li class="us"><b>hex</b><span class="bar"><i style="--v:16291"></i><i class="conn" style="--v:22117"></i></span><em>16,291 <small>+ 22,117 in clients</small></em></li>
+          <li><b>NanoClaw</b><span class="bar"><i style="--v:49940"></i></span><em>49,940</em></li>
+          <li class="us"><b>hex</b><span class="bar"><i style="--v:17567"></i><i class="conn" style="--v:23730"></i></span><em>17,567 <small>+ 23,730 in clients</small></em></li>
         </ul>
       </div>
-      <p class="fine">Lines of what runs, without tests or docs. hex and NanoClaw counted Nov 2026, OpenClaw and Hermes Agent Oct 2026. NanoClaw's count leaves out its chat adapters, so hex's leaves out its clients.</p>
+      <p class="fine">Lines of code that runs, without tests or docs, counted Oct and Nov 2026. Like NanoClaw's, hex's count leaves out its chat clients.</p>
     </figure>
 
     <div class="own-grid">
@@ -744,14 +740,14 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
             <li class="hex"><code>.hex/</code><small>hex itself, updated every morning</small></li>
           </ul>
         </div>
-        <figcaption><b>A folder you own.</b> hex lives in <code>.hex/</code>. Everything else is yours.</figcaption>
+        <figcaption><b>A folder you own.</b></figcaption>
       </figure>
       <figure class="tile">
         <div class="askit" aria-hidden="true">
           <p class="a-you">no check-ins on weekends</p>
           <p class="a-hex"><span class="a-file"><svg viewBox="0 0 16 16"><use href="#i-file"/></svg>schedules.json</span><span class="a-diff"><span class="del">"cron": "45 8-22 * * *"</span><span class="add">"cron": "45 8-22 * * 1-5"</span></span><span class="a-ok"><svg viewBox="0 0 16 16"><use href="#i-check"/></svg>committed</span></p>
         </div>
-        <figcaption><b>Ask it to change itself.</b> It edits its rules and schedules, and commits each change.</figcaption>
+        <figcaption><b>Ask it to change itself.</b></figcaption>
       </figure>
       <figure class="tile">
         <svg class="viz forkd" viewBox="0 0 300 130" aria-hidden="true">
@@ -761,7 +757,7 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
           <g class="fk-w"><path d="M84 61h24" marker-end="url(#ah)"/><path d="M190 61h24" marker-end="url(#ah)"/><path class="pr" d="M150 80c0 30-106 30-106 2" marker-end="url(#ah)"/></g>
           <g class="fk-l"><text x="97" y="36">pull</text><text x="203" y="36">update</text><text x="97" y="124">pull request</text></g>
         </svg>
-        <figcaption><b>Fork it.</b> Change anything, and send back what works.</figcaption>
+        <figcaption><b>Fork it.</b></figcaption>
       </figure>
     </div>
 
@@ -776,7 +772,7 @@ $("n").onclick=function(){ask("n",-1)};W.onEvent("chatDataChanged",function(){pe
     <header class="sec-head center">
       <p class="eyebrow">install</p>
       <h2 id="install-title">Install with one prompt.</h2>
-      <p class="sub">Paste this into Claude Code. It asks when it needs you.</p>
+      <p class="sub">Paste this into Claude Code.</p>
     </header>
 
     <div class="term">

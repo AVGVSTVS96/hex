@@ -557,6 +557,7 @@ h1, h2, h3 { font-weight: 600; letter-spacing: -0.03em; text-wrap: balance; }
 .card h3 { display: flex; align-items: center; gap: 9px; padding: 4px 6px 0; font-size: 17px; letter-spacing: -0.015em; }
 .card h3 svg { width: 20px; height: 20px; }
 .card h3 + p { margin-top: -8px; }
+.inside .card > p { min-height: calc(3em + 6px); }
 .viz, .card-viz {
   position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--bg);
 }
