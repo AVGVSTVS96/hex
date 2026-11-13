@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
@@ -101,14 +102,11 @@ if (mode === "--ended") {
     process.exit(0);
   }
 
-  const record = join(records, `${unit}.json`);
+  const { session, started } = keptRecord(unit);
 
-  const session = existsSync(record)
-    ? WhatAJobNeedsToRunAgain.safeParse(JSON.parse(readFileSync(record, "utf-8"))).data?.session
-    : undefined;
+  rmSync(join(records, `${unit}.json`), { force: true });
 
-  rmSync(record, { force: true });
-
+  const output = await lastOutput(unit, started);
   const key = owner.slice(owner.indexOf(":") + 1);
 
   if (!store.threads.list().some(({ thread }) => thread === key)) {
@@ -120,22 +118,15 @@ if (mode === "--ended") {
   const result = process.env.SERVICE_RESULT ?? "unknown";
   const status = process.env.EXIT_STATUS ?? "?";
 
-  const invocation = process.env.INVOCATION_ID;
-  const output = isSet(invocation) ? await lastOutput(invocation) : "";
-
-  const printed = isSet(output)
-    ? `\nWhat it printed last:\n<output>\n${output}\n</output>`
-    : " It printed nothing.";
-
   const check = isSet(session)
-    ? `\nThat's the agent's own report, and its whole conversation is in \`${join(import.meta.dir, "hex")} log -- ${session}\`. Check what it says against the real thing (files, commits, links, what's live) before you pass any of it on.`
-    : "\nCheck what it shows against the real thing before you report it.";
+    ? `That's the agent's own account, not proof: check what it says against the real thing (files, commits, links, what's live) before you pass any of it on. Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``
+    : "Check what it shows against the real thing before you report it.";
 
   tell(
     unit,
     owner,
-    `ended: ${result} (exit ${status}).${printed}${check}`,
-    invocation ?? `${Date.now()}`,
+    `ended: ${result} (exit ${status}).\n${output}\n${check}`,
+    process.env.INVOCATION_ID ?? `${Date.now()}`,
   );
 } else if (mode === "--waiting") {
   const [unit = "", owner = "", readings = ""] = rest;
@@ -281,14 +272,47 @@ if (mode === "--ended") {
   );
 }
 
-async function lastOutput(invocation: string) {
-  const lines =
-    await $`journalctl --user _SYSTEMD_INVOCATION_ID=${invocation} -o cat --no-pager -n ${LINES_OF_OUTPUT}`
+function keptRecord(unit: string) {
+  const record = join(records, `${unit}.json`);
+
+  try {
+    const kept = WhatAJobNeedsToRunAgain.safeParse(JSON.parse(readFileSync(record, "utf-8")));
+
+    return { session: kept.data?.session, started: statSync(record).mtime };
+  } catch {
+    return { session: undefined, started: undefined };
+  }
+}
+
+async function lastOutput(unit: string, started?: Date) {
+  const since = started ? ["--since", `@${Math.floor(started.getTime() / 1000)}`] : [];
+  const everything = `journalctl --user -u ${unit} ${since.join(" ")} -o cat`;
+
+  const lines = (
+    await $`journalctl --user -u ${unit} ${since} -o cat --no-pager -n ${LINES_OF_OUTPUT + 1}`
       .nothrow()
       .quiet()
-      .text();
+      .text()
+  )
+    .trimEnd()
+    .split("\n")
+    .filter(Boolean);
 
-  return lines.trim().slice(-CHARACTERS_OF_OUTPUT);
+  if (lines.length === 0) {
+    return `No output of it could be read from its journal (\`${everything}\`).`;
+  }
+
+  const shown = lines.slice(-LINES_OF_OUTPUT);
+
+  while (shown.length > 1 && shown.join("\n").length > CHARACTERS_OF_OUTPUT) {
+    shown.shift();
+  }
+
+  const text = shown.join("\n").slice(-CHARACTERS_OF_OUTPUT);
+  const cut = shown.length < lines.length || text.length < shown.join("\n").length;
+  const earlier = cut ? `, the rest in \`${everything}\`` : "";
+
+  return `What it printed last${earlier}:\n<output>\n${text}\n</output>`;
 }
 
 function readdir(dir: string) {
