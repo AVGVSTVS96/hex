@@ -65,23 +65,23 @@ if [ "$(git rev-parse HEAD)" = "$incoming" ]; then
   tell "$(printf "$live" "$(git rev-parse --short HEAD)")"
   exit 0
 fi
-# The check gets a folder of its own outside hex's, where no agent takes it for a checkout to work in.
-cache=${XDG_CACHE_HOME:-$HOME/.cache}
-mkdir -p "$cache"
-check=$(mktemp -d "$cache/hex-check.XXXXXX")
+# The check gets a folder of its own outside hex's, where no agent takes it for a checkout to work in, laid out
+# like a hex folder, since tests write a state folder beside the checkout.
+check="${XDG_CACHE_HOME:-$HOME/.cache}/hex-check-$(printf %s "$hex" | cksum | cut -d' ' -f1)/.hex"
 clean() {
-  rm -rf "$check"
+  rm -rf "$(dirname "$check")"
   git worktree prune
 }
+clean
 trap clean EXIT
-trap 'exit 1' INT TERM
 git worktree add -q --detach "$check" "$incoming"
 # As a job, the update runs its check ahead of the other jobs, so a busy machine doesn't time its tests out.
 [ "$mode" != --when-quiet ] || systemctl --user set-property --runtime hex-update.service CPUWeight=10000 2>/dev/null || :
 passed=1
 output=$("$check/bin/check" 2>&1) || passed=
 if [ "$(git -C "$check" rev-parse HEAD)" != "$incoming" ] || ! git -C "$check" diff --quiet HEAD; then
-  echo "not updated: something changed the folder hex $(git rev-parse --short "$incoming") was checked in while its check ran, so the check doesn't count"
+  git -C "$check" status --short
+  echo "not updated: something changed the folder hex $(git rev-parse --short "$incoming") was checked in while its check ran (now at $(git -C "$check" rev-parse --short HEAD)), so the check doesn't count"
   [ "$mode" != --when-quiet ] || tell all "didn't ship: something changed the folder hex $(git rev-parse --short "$incoming") was checked in while its check ran, so hex stays on $before until an update checks it again"
   exit 1
 fi
