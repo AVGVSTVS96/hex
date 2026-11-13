@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { besideWhat } from "./beside.ts";
-import { clip, ROOM } from "./fit.ts";
+import { ROOM } from "./fit.ts";
 import { open, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
 
@@ -11,14 +11,22 @@ const Hook = z.object({
 });
 
 const KEY_ON_OPENING_CHANNEL_TAG = /^<channel source="[^"]*" key="([^"]+)"/u;
-const WORDS_A_MESSAGE_SHOWS = 400;
+const WORDS_A_MESSAGE_SHOWS = 600;
 
-const line = (row: Row & { job?: string }) =>
-  `- ${row.at.slice(0, 16).replace("T", " ")}Z${row.job === undefined ? "" : ` [${row.job}]`}: ${clip(row.body, WORDS_A_MESSAGE_SHOWS)}`;
+const words = (body: string) => {
+  const text = body.trim();
+  const shown =
+    text.length > WORDS_A_MESSAGE_SHOWS ? `${text.slice(0, WORDS_A_MESSAGE_SHOWS - 1)}…` : text;
+
+  return shown.replaceAll("\n", "\n  ");
+};
+
+const line = (row: Row & { job?: string; ended?: boolean }) =>
+  `- ${row.at.slice(0, 16).replace("T", " ")}Z${row.job === undefined ? "" : ` [${row.job}]`}${row.ended === true ? " (its last words, not sent)" : ""}: ${words(row.body)}`;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The newest that fit the room, oldest first.
-function newest(rows: (Row & { job?: string })[], room: number) {
+function newest(rows: (Row & { job?: string; ended?: boolean })[], room: number) {
   const shown: string[] = [];
   let left = room;
 
@@ -44,13 +52,22 @@ export function said(store: Store, thread: string, session: string, prompt = "")
   const row = key === undefined ? null : store.messages.get(key);
   const schedule = row?.meta?.schedule;
 
-  const earlier =
+  const runs =
     row !== null && besideWhat(row.to) !== undefined && schedule !== undefined
-      ? newest(store.messages.saidByEarlierRuns(row.to, thread, schedule, session), ROOM / 2)
+      ? store.messages.saidByEarlierRuns(row.to, thread, schedule, session)
       : [];
 
+  const earlier = newest(
+    runs.map((run) => ({ ...run, ended: run.to !== thread })),
+    ROOM / 2,
+  );
+
+  const shownAsRuns = new Set(runs.map((run) => run.key));
+
   const others = newest(
-    store.messages.saidByOthers(thread, session, since),
+    store.messages
+      .saidByOthers(thread, session, since)
+      .filter((each) => !shownAsRuns.has(each.key)),
     ROOM - earlier.join("\n").length,
   );
 
@@ -61,7 +78,7 @@ export function said(store: Store, thread: string, session: string, prompt = "")
       ? `Said in this chat by hex's other sessions${since === "" ? "" : " since your last turn"}, which the owner may be answering:\n${others.join("\n")}`
       : "",
     earlier.length > 0
-      ? `What earlier runs of [${schedule}] said in this chat, so you don't tell the owner again:\n${earlier.join("\n")}`
+      ? `What earlier runs of [${schedule}] said in this chat, and the last words each ended with, so you don't tell the owner again and go on from what they found:\n${earlier.join("\n")}`
       : "",
   ]
     .filter(Boolean)

@@ -55,7 +55,7 @@ let keepVariablesVerbatim: string[] | undefined;
 
 // Each claude command goes in the sessions slice, since `claude agents` and `claude --bg` start the supervisor that parents every session: https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell
 // There OOMPolicy=continue keeps one session's out-of-memory kill from ending the rest: https://www.freedesktop.org/software/systemd/man/latest/systemd.scope.html#OOMPolicy=
-function contained(command: string, args: string[]): [string, string[]] {
+export function contained(command: string, args: string[]): [string, string[]] {
   const slice = process.env.HEX_SESSIONS_SLICE;
 
   if (slice === undefined || slice === "") {

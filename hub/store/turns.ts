@@ -72,14 +72,14 @@ export class Turns {
     this.db.query("update turns set waiting = ? where session = ?").run(at, session);
   }
 
-  cut(thread: string, session?: string, at = now()): string[] {
+  cut(thread: string, session?: string, at = now(), running: string[] = []): string[] {
     return this.write(() => {
       const diedMidTurn = UnfinishedTurnRows.parse(
         this.db
           .query(
-            `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex'))`,
+            `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex')) and session not in (select value from json_each(?3))`,
           )
-          .all(thread, session ?? null),
+          .all(thread, session ?? null, JSON.stringify(running)),
       );
 
       return diedMidTurn.flatMap(({ session: died, handled }) => {

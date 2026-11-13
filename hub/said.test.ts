@@ -60,9 +60,46 @@ test("a timed job's run beside a thread is shown what its earlier runs said ther
     '<channel source="telegram" key="schedule:heartbeat@2" user="schedule">\n[heartbeat] Hourly check\n</channel>',
   );
 
-  expect(shown).toContain(
-    "What earlier runs of [heartbeat] said in this chat, so you don't tell the owner again:\n- ",
+  const [others = "", earlier = ""] = shown.split("What earlier runs of [heartbeat]");
+  expect(earlier).toContain("The landlord wrote about the lease");
+  expect(earlier).not.toContain("A job ended");
+  expect(others).toContain("[catch-up]: A job ended");
+  expect(others).not.toContain("The landlord");
+});
+
+test("an earlier run that said nothing leaves its last words for the next, and a message shows whole", () => {
+  prompted("schedule:heartbeat@1", "beside:general", "beat-1");
+  wrote("telegram:1", "**Catch-up**\n- mail: 2 new\n- jobs: none", "beat-1");
+  store.messages.deliver(
+    {
+      key: "terminal:1",
+      to: "beat-1",
+      from: "terminal",
+      author: "hex",
+      body: "Looked at mail and jobs: nothing new.",
+      meta: { unsent: "true" },
+    },
+    "beat-1",
   );
-  expect(shown.split("What earlier runs")[1]).toContain("The landlord wrote about the lease");
-  expect(shown.split("What earlier runs")[1]).not.toContain("A job ended");
+  prompted("schedule:heartbeat@2", "beside:general", "beat-2");
+
+  const shown = said(
+    store,
+    "general",
+    "beat-2",
+    '<channel source="telegram" key="schedule:heartbeat@2">',
+  );
+
+  expect(shown).toContain("**Catch-up**\n  - mail: 2 new\n  - jobs: none");
+  expect(shown).toContain("(its last words, not sent): Looked at mail and jobs: nothing new.");
+});
+
+test("a new session isn't shown its own thread's earlier sessions as others", () => {
+  store.messages.deliver(
+    { key: "telegram:9", to: "general", from: "telegram", author: "owner", body: "hi", meta: {} },
+    "general-before",
+  );
+  wrote("telegram:10", "Hello.", "general-before");
+
+  expect(said(store, "general", "general-after")).toBe("");
 });

@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
+import { closeSync, openSync, readFileSync, rmSync } from "node:fs";
 
-import { inherited } from "./claude.ts";
+import { contained, inherited } from "./claude.ts";
 import { local } from "./mcp.ts";
 import type { Row } from "./store.ts";
 
@@ -12,6 +13,8 @@ export const besideOf = (thread: string) => `${BESIDE}${thread}`;
 
 export const besideWhat = (address: string) =>
   address.startsWith(BESIDE) ? address.slice(BESIDE.length) : undefined;
+
+const WORDS_KEPT = 400;
 
 const attribute = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
 
@@ -28,85 +31,36 @@ export function prompt(app: string, row: Row, zone: string) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Runs a session to its end: as a systemd unit of its own where hex's sessions have a slice, so it outlives a hub restart and keeps its output in the journal, and otherwise as a child that does. Resolves with its exit code and, when it failed, its last words.
+// Runs a session to its end the way the hub runs every session it starts (contained), so it outlives a hub restart, with background agents it starts let finish. What it printed on stderr goes to log, and comes back as its last words.
 export function run(
   command: string[],
-  {
-    session,
-    cwd,
-    env,
-    name,
-  }: { session: string; cwd: string; env: Record<string, string>; name: string },
+  { cwd, env, log }: { cwd: string; env: Record<string, string>; log: string },
 ): Promise<{ code: number; said: string }> {
-  const slice = process.env.HEX_SESSIONS_SLICE;
-  const unit = `hex-beside-${session}`;
-  const passed = { ...env, CLAUDE_CODE_SESSION_NAME: name };
-
-  const [program = "", ...args] =
-    slice === undefined || slice === ""
-      ? command
-      : [
-          "systemd-run",
-          "--user",
-          "--wait",
-          "--quiet",
-          "--collect",
-          `--unit=${unit}`,
-          `--slice=${slice}`,
-          `--working-directory=${cwd}`,
-          ...["PATH", "CLAUDE_CONFIG_DIR"].flatMap((each) => {
-            const value = process.env[each];
-
-            return value === undefined || value === "" ? [] : ["-E", `${each}=${value}`];
-          }),
-          ...Object.entries(passed).flatMap(([each, value]) => ["-E", `${each}=${value}`]),
-          "--",
-          ...command,
-        ];
-
-  const journal = slice !== undefined && slice !== "";
+  const [program = "", ...args] = command;
+  const [contain, within] = contained(program, args);
+  const err = openSync(log, "w", 0o600);
 
   return new Promise((resolve) => {
-    const child = spawn(program, args, {
+    const said = () => {
+      try {
+        return readFileSync(log, "utf-8").trim().slice(-WORDS_KEPT);
+      } finally {
+        rmSync(log, { force: true });
+      }
+    };
+
+    const child = spawn(contain, within, {
       cwd,
-      env: { ...inherited(), ...passed },
-      stdio: ["ignore", "ignore", "pipe"],
+      env: { ...inherited(), CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...env },
+      stdio: ["ignore", "ignore", err],
     });
 
-    let said = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      said = (said + chunk.toString()).slice(-400);
-    });
+    closeSync(err);
     child.on("error", (error) => {
-      resolve({ code: 1, said: String(error) });
+      resolve({ code: 1, said: `${said()} ${String(error)}`.trim() });
     });
     child.on("close", (exit) => {
-      ended(exit ?? 1);
+      resolve({ code: exit ?? 1, said: said() });
     });
-
-    function ended(code: number) {
-      if (code === 0 || !journal) {
-        resolve({ code, said: said.trim() });
-
-        return;
-      }
-
-      const last = spawn(
-        "journalctl",
-        ["--user", "-u", unit, "-o", "cat", "-n", "4", "--no-pager"],
-        { stdio: ["ignore", "pipe", "ignore"] },
-      );
-
-      let out = "";
-      last.stdout.on("data", (chunk: Buffer) => {
-        out += chunk.toString();
-      });
-      last.on("error", () => {
-        resolve({ code, said: said.trim() });
-      });
-      last.on("close", () => {
-        resolve({ code, said: (out.trim() || said.trim()).slice(-400) });
-      });
-    }
   });
 }

@@ -1901,26 +1901,35 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each session running beside a thread, by the row it was started for, and the starts of each row that ended without taking it.
+  // Each session running beside a thread, by the row it was started for; the rows that wait for a turn to go through anywhere before they run again; the threads whose chat heard so; and each row's starts that ended without taking it.
   const besides = new Map<string, string>();
+  const besideWaits = new Set<string>();
+  const besideTold = new Set<string>();
   const besideStarts = new Map<string, number>();
   const BESIDE_STARTS_TRIED = 2;
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A row beside a thread starts a session of its own, as hex in the thread's chat: it takes the row itself, so one that never starts leaves it for another try, and a resumed one waits for its last run to end.
+  // A row beside a thread starts a session of its own, as hex in the thread's chat, which takes the row itself; one for a session that ran beside it resumes that session once its run is over. A client that shows only the turns its own messages start can't be spoken into from beside, so there the row goes to the thread.
   async function beside(row: Row & { beside: string; resume?: string }) {
     const thread = besideWhat(row.beside);
     const resumed = row.resume;
+    const known = thread === undefined ? undefined : threads.get(thread);
 
     if (
       closed ||
       thread === undefined ||
-      !threads.has(thread) ||
+      !known ||
+      besideWaits.has(row.key) ||
       [...besides.values()].includes(row.key) ||
       (resumed !== undefined &&
-        (besides.has(resumed) || kept((store) => sessionsRunning(store).has(resumed), true))) ||
-      (besideStarts.get(row.key) ?? 0) >= BESIDE_STARTS_TRIED
+        (besides.has(resumed) || kept((store) => sessionsRunning(store).has(resumed), true)))
     ) {
+      return;
+    }
+
+    if (clients.get(app)?.waits === true) {
+      kept((store) => store.messages.readdress(row.key, thread), false);
+
       return;
     }
 
@@ -1940,10 +1949,9 @@ export function startHub({
         besidePrompt(app, row, zoneOf(hexDir) ?? Temporal.Now.timeZoneId()),
       ],
       {
-        session,
         cwd: cwdOf(thread),
-        env: { HEX_BESIDE: session },
-        name: `${threads.get(thread)?.name ?? thread}/${job}`,
+        env: { HEX_BESIDE: session, CLAUDE_CODE_SESSION_NAME: `${known.name}/${job}` },
+        log: join(sessionsDir, `beside-${session}.log`),
       },
     );
 
@@ -1956,18 +1964,84 @@ export function startHub({
     const taken = kept((store) => store.messages.get(row.key)?.taken, undefined);
     const why = said === "" ? `exit ${code}` : `exit ${code}: ${said}`;
 
-    if (!taken) {
-      const tries = (besideStarts.get(row.key) ?? 0) + 1;
-      besideStarts.set(row.key, tries);
-      process.stderr.write(`hub: ${row.key} beside ${thread} didn't start (${why})\n`);
+    if (code === 0 && taken) {
+      turnsGoThrough();
 
-      if (tries >= BESIDE_STARTS_TRIED) {
-        failed(thread, `[${job}] couldn't start beside this chat, ${tries} times: ${why}`, true);
-      }
-    } else if (taken.by === session && code !== 0) {
-      failed(thread, `[${job}] ran beside this chat and failed: ${why}`, true);
+      return;
     }
 
+    if (!taken) {
+      startFailed(thread, row.key, job, why);
+    } else if (taken.by === session) {
+      runFailed(thread, session, row.key, job, why);
+    }
+
+    wake();
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A start that ended without taking its row tries once more after a turn goes through anywhere; one that fails then is taken by the hub, so no hub tries it again, and its chat hears why.
+  function startFailed(thread: string, key: string, job: string, why: string) {
+    const tries = (besideStarts.get(key) ?? 0) + 1;
+    besideStarts.set(key, tries);
+    process.stderr.write(`hub: ${key} beside ${thread} didn't start (${why})\n`);
+
+    if (tries < BESIDE_STARTS_TRIED) {
+      besideWaits.add(key);
+
+      return;
+    }
+
+    kept((store) => store.messages.take(key, "hub"), false);
+    failed(thread, `[${job}] couldn't start beside this chat, ${tries} times: ${why}`, true);
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A run that failed after taking its row, as on an API error, carries on once a turn goes through anywhere, as a thread's turn does, and its chat hears once a run there waits for that; one that fails again is left, and its chat hears that.
+  function runFailed(thread: string, session: string, key: string, job: string, why: string) {
+    const carry = `hub:beside:${session}:carry`;
+
+    if (key === carry) {
+      failed(
+        thread,
+        `[${job}] failed again beside this chat, so it won't run by itself again: ${why}`,
+        true,
+      );
+
+      return;
+    }
+
+    kept(
+      (store) =>
+        store.messages.deliver({
+          key: carry,
+          to: session,
+          from: "hub",
+          author: "prompt",
+          body: "[hub] Your last turn failed before it was done, and turns go through again now: carry on with it.",
+          meta: { user: "hub" },
+        }),
+      false,
+    );
+    besideWaits.add(carry);
+
+    if (!besideTold.has(thread)) {
+      besideTold.add(thread);
+      failed(
+        thread,
+        `[${job}] ran beside this chat and failed: ${why}\nIt carries on once turns go through again.`,
+        true,
+      );
+    }
+  }
+
+  function turnsGoThrough() {
+    if (besideWaits.size === 0 && besideTold.size === 0) {
+      return;
+    }
+
+    besideWaits.clear();
+    besideTold.clear();
     wake();
   }
 
@@ -2732,6 +2806,16 @@ export function startHub({
         revive();
       }
 
+      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+      // A run beside a thread cut off mid-turn (a reboot, or hex moved to another machine) gives back what it took, so it runs again.
+      kept((store) => {
+        const alive = [...sessionsRunning(store).keys()];
+
+        for (const thread of threads.keys()) {
+          store.turns.cut(besideOf(thread), undefined, undefined, alive);
+        }
+      }, undefined);
+
       wake();
     })();
   }
@@ -2809,6 +2893,7 @@ export function startHub({
       retries.delete(retry);
       answered.delete(retryCompactions);
       answered.delete(resumeStalled);
+      answered.delete(turnsGoThrough);
 
       if (generalHub === api) {
         generalHub = undefined;
@@ -2834,6 +2919,7 @@ export function startHub({
   retries.add(retry);
   answered.add(retryCompactions);
   answered.add(resumeStalled);
+  answered.add(turnsGoThrough);
 
   if (general && present(main)) {
     generalHub = api;
