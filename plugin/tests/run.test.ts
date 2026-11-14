@@ -122,6 +122,15 @@ test("a restart lets the hub finish before the next one starts, on the settings 
   expect(readFileSync(join(home, "state/hub.pid"), "utf-8").trim()).toBe(String(running.pid));
 });
 
+test("a restart where no hub runs starts none, so a machine that doesn't hold hex, like a standby twin, stays without one", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  const restart = Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
+  expect(restart.exitCode).toBe(0);
+  expect(restart.stderr.toString()).toContain("hex isn't running here");
+  await Bun.sleep(1000);
+  expect(hubs()).toEqual([]);
+});
+
 test("the hub gets the env of the settings files over .env, so a setting changes without touching .env", async () => {
   mkdirSync(join(home, ".claude"));
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ env: { MARK: "settings" } }));

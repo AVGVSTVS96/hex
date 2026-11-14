@@ -203,7 +203,12 @@ case "${1:-}" in
     while kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
     ;;
   restart)
-    running && pkill -HUP -P "$(cat "$pidfile")" -f hub/serve.ts || "$0" start
+    # A hub that isn't running may be off on purpose, as on a machine that doesn't hold hex, so a restart starts none.
+    if running; then
+      pkill -HUP -P "$(cat "$pidfile")" -f hub/serve.ts || :
+    else
+      echo "hex isn't running here, so nothing restarted; \`hex start\` starts it" >&2
+    fi
     ;;
   acp)
     exec bun "$hex/channels/t3/acp.ts" "$home/state/t3/acp.sock"
