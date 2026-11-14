@@ -70,6 +70,8 @@ fi
 # A DM turn skips the instruction files and a session away from the hex folder never reads them, so HEX.md's import of the wake reaches neither: it goes as a file Claude Code loads at start and after compacting.
 [ -n "${away:-}${chat:-}" ] && [ -z "${job:-}" ] && [ -s "$home/state/wake/CLAUDE.md" ] && set -- --add-dir "$home/state/wake" "$@"
 [ -n "${held:-}" ] && set -- --add-dir "$held" "$@"
+# A thread's general-purpose agent works from its brief, as a job does: Claude Code starts it without the instruction files and the wake, and bin/instructions hands it the instruction files.
+[ -n "${thread:-}" ] && set -- --agents "$("$hex/bin/instructions" agents)" "$@"
 # With several Claude accounts pooled by tokenmaxxing (github.com/anaclumos/tokenmaxxing), each session starts on the one with the most headroom left.
 [ -z "${CLAUDE_SECURESTORAGE_CONFIG_DIR+set}" ] && store=$(tokenmaxxing seat $$ 2>/dev/null) && export CLAUDE_SECURESTORAGE_CONFIG_DIR="$store"
 export CLAUDE_CODE_ADDITIONAL_DIRECTORIES_CLAUDE_MD=1 CLAUDE_CODE_SHELL="$shell"

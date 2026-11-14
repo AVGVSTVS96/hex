@@ -661,11 +661,11 @@ test("a fresh session starts from the chat: the launcher adds the system prompt 
 });
 
 test("a subagent of a chat turn gets the instruction files Claude Code skipped, in hook-sized parts that say their order", () => {
-  const part = (n: number, extra: Record<string, string> = {}) => {
+  const part = (n: number, extra: Record<string, string> = {}, agent = "Explore") => {
     const result = Bun.spawnSync(
-      [join(home, ".hex/bin/instructions"), String(n), ...(n === 3 ? ["last"] : [])],
+      [join(home, ".hex/bin/instructions"), String(n), ...(n === 4 ? ["last"] : [])],
       {
-        stdin: Buffer.from(JSON.stringify({ session_id: "s" })),
+        stdin: Buffer.from(JSON.stringify({ session_id: "s", agent_type: agent })),
         env: env({ TMPDIR: home, ...extra }),
       },
     );
@@ -698,9 +698,31 @@ test("a subagent of a chat turn gets the instruction files Claude Code skipped, 
       .map((text) => text.slice(text.indexOf("\n\n") + 2))
       .join(""),
   ).toBe(whole);
-  rules(600);
-  expect(part(3)).toContain(
+  rules(800);
+  expect(part(4)).toContain(
     `That's all the hooks can show. Read the files themselves and follow them: ${join(home, ".claude/CLAUDE.md")}, ${join(home, "AGENTS.md")}`,
   );
   expect(part(1, { HEX_FRESH: "" })).toBe("");
+});
+
+test("a topic's general-purpose agent, which Claude Code starts without the instruction files and the wake, gets the instruction files, and an agent that inherits them isn't handed them twice", () => {
+  const first = (agent: string, extra: Record<string, string> = {}) => {
+    const result = Bun.spawnSync([join(home, ".hex/bin/instructions"), "1"], {
+      stdin: Buffer.from(JSON.stringify({ session_id: "s", agent_type: agent })),
+      env: env({ TMPDIR: home, HEX_FRESH: "", ...extra }),
+    });
+
+    return result.stdout.toString();
+  };
+
+  const agents = Bun.spawnSync([join(home, ".hex/bin/instructions"), "agents"], { env: env() });
+
+  expect(JSON.parse(agents.stdout.toString())).toMatchObject({
+    "general-purpose": { omitClaudeMd: true },
+  });
+  expect(
+    Context.parse(JSON.parse(first("general-purpose"))).hookSpecificOutput.additionalContext,
+  ).toStartWith("Your instruction files.\n\nThe user's instruction files are below.");
+  expect(first("code-reviewer")).toBe("");
+  expect(first("general-purpose", { HEX_THREAD: "" })).toBe("");
 });

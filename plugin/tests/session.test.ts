@@ -236,6 +236,21 @@ test("a topic session, started by the hub, gets none of the chat or main additio
   expect(settings.env.HEX_THREAD).toBe("-100:5");
 });
 
+test("a topic session's general-purpose agent starts without the instruction files and the wake, and a job's agents start as before", async () => {
+  const { args } = await launch("plugin:telegram@hex", "-100:5");
+
+  expect(JSON.parse(flagValue(args, "--agents"))).toMatchObject({
+    "general-purpose": { omitClaudeMd: true },
+  });
+  Bun.spawnSync([join(home, ".hex/bin/session"), "-p", "build it"], {
+    cwd: home,
+    env: { ...process.env, HEX_OWNER: "telegram:-100:7" },
+  });
+  expect(Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")))).not.toContain(
+    "--agents",
+  );
+});
+
 test("a topic session loads its rules and wake from its own copy, which a resume keeps and a new session takes again", async () => {
   const wake = join(home, "state/wake/CLAUDE.md");
   const { args, file, settings } = await launch("plugin:telegram@hex", "-100:5");
