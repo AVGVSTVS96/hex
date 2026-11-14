@@ -65,6 +65,9 @@ link_of() {
   esac
 }
 
+# Whether a unit file is linked where systemd reads it: systemd skips a drop-in folder that's a link (stow folds one into a link to its repo).
+linked() { [ "$1" -ef "$2" ] && { [ "$(dirname "$1")" = "$units_dir" ] || [ ! -L "$(dirname "$1")" ]; }; }
+
 # The channels hex ships with a server of their own, for Claude Code's managed settings to allow.
 channels() { for mcp in "$hex"/channels/*/.mcp.json; do basename "$(dirname "$mcp")"; done; }
 
@@ -250,7 +253,9 @@ case "${1:-}" in
       for file; do
         [ -f "$file" ] || { echo "restore: there's no unit file at $file" >&2; exit 1; }
         link=$(link_of "$file")
-        if ! [ "$link" -ef "$file" ]; then
+        if ! linked "$link" "$file"; then
+          # The link would land in the repo a linked drop-in folder points at.
+          [ "$(dirname "$link")" = "$units_dir" ] || [ ! -L "$(dirname "$link")" ] || rm "$(dirname "$link")"
           # A file of the machine's own in its place gives way only when it says the same.
           [ ! -f "$link" ] || [ -L "$link" ] || [ "$(cat "$link")" = "$(cat "$file")" ] || { echo "restore: $link is a file of this machine's own, unlike $file: move it away and run restore again" >&2; exit 1; }
           mkdir -p "$(dirname "$link")"
@@ -325,7 +330,7 @@ case "${1:-}" in
       eval "set -- $(units)"
       for file; do
         link=$(link_of "$file") name=$(basename "$file")
-        if ! [ "$link" -ef "$file" ]; then
+        if ! linked "$link" "$file"; then
           fix "$name isn't linked from $file: run \`$hex/bin/hex restore\`"
         elif [ "$link" = "$units_dir/$name" ] && { systemctl --user -q is-failed "$name" || [ "$(systemctl --user show -p SubState --value "$name")" = auto-restart ]; }; then
           fix "$name failed: see \`journalctl --user -u $name\`"
