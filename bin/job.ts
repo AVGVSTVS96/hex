@@ -721,11 +721,9 @@ async function stillOnTheirMachines(units: string[], here: string) {
 }
 
 function keptNews(file: string) {
-  try {
-    return News.safeParse(JSON.parse(readFileSync(file, "utf-8"))).data;
-  } catch {
-    return;
-  }
+  const text = readFileSync(file, "utf-8");
+
+  return News.safeParse(text.startsWith("{") ? JSON.parse(text) : undefined).data;
 }
 
 function keptRecord(unit: string): Kept | undefined {
