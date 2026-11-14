@@ -53,7 +53,16 @@ export const tools = [
     name: "edit_message",
     description:
       "Edit a message the bot previously sent. Useful for interim progress updates. Edits don't trigger push notifications — send a new reply when a long task completes so the user's device pings.",
-    input: z.object({ message_id: z.string(), text: z.string() }),
+    input: z.object({
+      message_id: z.string(),
+      text: z.string().optional(),
+      settled: z
+        .boolean()
+        .describe(
+          "true once the question this message asked is answered or no longer stands: it stops waiting on the user. Works on any message, the user's own included; text is then optional.",
+        )
+        .optional(),
+    }),
   }),
   tool({
     name: "download_attachment",
