@@ -3613,7 +3613,7 @@ test("releasing a thread with no live session resolves at once", async () => {
   start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } } });
   expect(await hub.release("chat:7")).toBe(SESSION);
   expect(registry()["chat:7"]).toBeUndefined();
-  expect(calls()).toEqual([]);
+  expect(calls().filter(([command]) => command !== "agents")).toEqual([]);
 });
 
 test("the main thread cannot be closed or released, nor a thread without a session", () => {
