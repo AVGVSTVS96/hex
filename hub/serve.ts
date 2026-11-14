@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -36,7 +37,7 @@ syncInBackground();
 await listen();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that can't start back to it. General then hears about a rollback that brought this hub up, and this hub backs up hex.db each night (backup.ts).
+// Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that can't start back to it. General then hears about a rollback that brought this hub up, or that hex is back after bin/hex told it hex couldn't start (state/down), and this hub backs up hex.db each night (backup.ts).
 const hex = join(import.meta.dir, "..");
 
 const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "HEAD"])
@@ -46,6 +47,7 @@ const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "
 const home = hexDir();
 const state = join(home, "state");
 const rollback = join(state, "rollback");
+const down = join(state, "down");
 
 void (async () => {
   const general = await up;
@@ -62,20 +64,27 @@ void (async () => {
 
   nightly(state, home, main);
 
-  if (!existsSync(rollback)) {
-    return;
+  const tell = (what: string, body: string) =>
+    open(state).messages.deliver({
+      key: `hub:${what}@${Date.now()}`,
+      to: besideOf(main),
+      from: "hub",
+      author: "prompt",
+      body,
+      meta: { user: "hub" },
+    });
+
+  if (existsSync(down)) {
+    const since = new Date(Number(readFileSync(down, "utf-8")) * 1000);
+    const from = Number.isNaN(since.getTime()) ? "" : ` from ${since.toLocaleString()}`;
+    tell("back", `hex is back, on ${hostname()}: it couldn't start${from} until now.`);
+    rmSync(down);
   }
 
-  const body = readFileSync(rollback, "utf-8").trim();
-  open(state).messages.deliver({
-    key: `hub:rollback@${Date.now()}`,
-    to: besideOf(main),
-    from: "hub",
-    author: "prompt",
-    body,
-    meta: { user: "hub" },
-  });
-  rmSync(rollback);
+  if (existsSync(rollback)) {
+    tell("rollback", readFileSync(rollback, "utf-8").trim());
+    rmSync(rollback);
+  }
 })();
 
 const channels = join(hex, "channels");
