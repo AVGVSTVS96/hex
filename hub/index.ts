@@ -2,6 +2,8 @@ export { interrupted } from "./claude.ts";
 
 export { above } from "./fit.ts";
 
+export { besideOf } from "./beside.ts";
+
 export { fileOnly, held, pictureId, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 
 export type { Picture } from "./pictures.ts";
