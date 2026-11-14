@@ -339,6 +339,9 @@ if (mode === "--owner") {
     }
   }
 } else if (mode === "--resume") {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A machine that doesn't answer may only be cut off for a moment, with its jobs still running: only whatever moved hex away from it, which watched it go, says it's gone (--gone <machine>).
+  const gone = new Set(rest[0] === "--gone" ? rest.slice(1) : []);
   const here = hostname();
   const at = new Date().toISOString();
   const zone = zoneOf(hexDir());
@@ -419,6 +422,13 @@ if (mode === "--owner") {
     const there = elsewhereNow.get(recorded);
 
     if (there === "active") {
+      continue;
+    }
+
+    if (there === "down" && !gone.has(kept.machine ?? "")) {
+      console.error(
+        `job: ${kept.machine} doesn't answer, so ${recorded} is left to it until it's known to be gone`,
+      );
       continue;
     }
 
