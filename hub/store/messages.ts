@@ -354,6 +354,36 @@ export class Messages {
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // When a session of the thread other than this one last took a message there.
+  lastTakenIn(thread: string, session: string): string | undefined {
+    return (
+      TakenAtRow.parse(
+        this.db
+          .query(
+            `select max(taken_at) as at from messages indexed by sessions where "to" = ? and taken_by is not null and taken_by <> ? and author <> 'hex'`,
+          )
+          .get(thread, session),
+      ).at ?? undefined
+    );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A timed job catches up only its newest slot, so a stalled run of it beside a thread is left to a newer one, taken by the hub.
+  supersede(addresses: string[], at = now()) {
+    this.write(() => {
+      this.db
+        .query(
+          `update messages set taken_by = 'hub', taken_at = ?2 where key in (
+             select m.key from messages m indexed by untaken join json_each(?1) a on a.value = m."to"
+             where m.taken_at is null and json_extract(m.meta, '$.stalled') is not null
+             and exists (select 1 from messages n where n."to" = m."to" and n.n > m.n and json_extract(n.meta, '$.schedule') = json_extract(m.meta, '$.schedule'))
+           )`,
+        )
+        .run(JSON.stringify(addresses), at);
+    });
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // What hex said in the thread's chat since a time from sessions that aren't the thread's own (they took none of its messages), newest first, each with the job its writer ran beside the thread, if any.
   saidByOthers(thread: string, session: string, since = ""): (Row & { job?: string })[] {
     return JobRows.parse(

@@ -30,7 +30,9 @@ export function prompt(app: string, row: Row, zone: string) {
   return `<channel source="${app}"${attributes}>\n${row.body}\n</channel>`;
 }
 
-function lastWords(log: string) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// What a run printed last, where an API error says why it failed, and the log it was in is gone.
+export function lastWords(log: string) {
   try {
     return readFileSync(log, "utf-8").trim().slice(-WORDS_KEPT);
   } catch {
@@ -40,29 +42,42 @@ function lastWords(log: string) {
   }
 }
 
+export const jobOf = (row: Row) =>
+  row.meta?.schedule ?? row.meta?.job ?? row.meta?.user ?? "beside";
+
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Runs a session to its end the way the hub runs every session it starts (contained), so it outlives a hub restart, with background agents it starts let finish. What it printed on stderr goes to log, and comes back as its last words.
+// Runs a session to its end the way the hub runs every session it starts (contained), so it outlives a hub restart, with background agents it starts let finish. What it prints goes to log.
 export function run(
   command: string[],
   { cwd, env, log }: { cwd: string; env: Record<string, string>; log: string },
-): Promise<{ code: number; said: string }> {
+): Promise<number> {
   const [program = "", ...args] = command;
   const [contain, within] = contained(program, args);
-  const err = openSync(log, "w", 0o600);
+  const out = openSync(log, "w", 0o600);
 
   return new Promise((resolve) => {
     const child = spawn(contain, within, {
       cwd,
       env: { ...inherited(), CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: "0", ...env },
-      stdio: ["ignore", "ignore", err],
+      stdio: ["ignore", out, out],
     });
 
-    closeSync(err);
-    child.on("error", (error) => {
-      resolve({ code: 1, said: `${lastWords(log)} ${String(error)}`.trim() });
+    closeSync(out);
+    child.on("error", () => {
+      resolve(1);
     });
     child.on("close", (exit) => {
-      resolve({ code: exit ?? 1, said: lastWords(log) });
+      resolve(exit ?? 1);
+    });
+  });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Waits for a run another hub started, which this one isn't the parent of, to end.
+export function exited(pid: number): Promise<void> {
+  return new Promise((resolve) => {
+    spawn("tail", [`--pid=${pid}`, "-f", "/dev/null"], { stdio: "ignore" }).on("close", () => {
+      resolve();
     });
   });
 }

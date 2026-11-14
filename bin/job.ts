@@ -119,7 +119,7 @@ function tell(unit: string, owner: string, said: string, at: string) {
     from: "job",
     author: "prompt",
     body: [`[job] ${unit} ${said}`, from].filter(isSet).join("\n"),
-    meta: { user: "job" },
+    meta: { user: "job", job: unit },
   });
 }
 

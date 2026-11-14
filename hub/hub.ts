@@ -15,7 +15,15 @@ import { basename, join } from "node:path";
 
 import { z } from "zod";
 
-import { besideOf, besideWhat, prompt as besidePrompt, run as runBeside } from "./beside.ts";
+import {
+  besideOf,
+  besideWhat,
+  exited,
+  jobOf,
+  lastWords,
+  prompt as besidePrompt,
+  run as runBeside,
+} from "./beside.ts";
 import * as claude from "./claude.ts";
 import { clock } from "./clock.ts";
 import { holding } from "./holds.ts";
@@ -26,6 +34,7 @@ import { queue } from "./observe.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { restarts } from "./restarts.ts";
 import { running as sessionsRunning } from "./running.ts";
+import type { Session } from "./running.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
 import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
@@ -113,7 +122,6 @@ const HubRequestLine = z.discriminatedUnion("type", [
     said: z.string().optional(),
     taken: z.array(z.string()).optional(),
     session: z.string().optional(),
-    beside: z.string().optional(),
   }),
   z.object({
     type: z.literal("open"),
@@ -1880,11 +1888,10 @@ export function startHub({
       }
     }
 
-    for (const row of kept(
-      (store) => store.messages.beside([...threads.keys()].map(besideOf)),
-      [],
-    )) {
-      void beside(row);
+    for (const row of besideRows()) {
+      if (row.meta?.stalled === undefined) {
+        void beside(row);
+      }
     }
 
     const untaken = new Set(rows.map((row) => row.key));
@@ -1902,13 +1909,12 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each session running beside a thread, by the row it was started for; why the API failed one of them; the rows that wait for a turn to go through anywhere before they run again; the threads whose chat heard so; and each row's starts that ended without taking it.
+  // Each session running beside a thread, by the row it was started for.
   const besides = new Map<string, string>();
-  const besideRefused = new Map<string, string>();
-  const besideWaits = new Set<string>();
-  const besideTold = new Set<string>();
-  const besideStarts = new Map<string, number>();
-  const BESIDE_STARTS_TRIED = 2;
+
+  const besideAddresses = () => [...threads.keys()].map(besideOf);
+  const besideRows = () => kept((store) => store.messages.beside(besideAddresses()), []);
+  const besideLog = (session: string) => join(sessionsDir, `beside-${session}.log`);
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A row beside a thread starts a session of its own, as hex in the thread's chat, which takes the row itself; one for a session that ran beside it resumes that session once its run is over. A client that shows only the turns its own messages start can't be spoken into from beside, so there the row goes to the thread.
@@ -1921,7 +1927,6 @@ export function startHub({
       closed ||
       thread === undefined ||
       !known ||
-      besideWaits.has(row.key) ||
       [...besides.values()].includes(row.key) ||
       (resumed !== undefined &&
         (besides.has(resumed) || kept((store) => sessionsRunning(store).has(resumed), true)))
@@ -1936,11 +1941,10 @@ export function startHub({
     }
 
     const session = resumed ?? randomUUID();
-    const job = row.meta?.schedule ?? row.meta?.user ?? "beside";
     besides.set(session, row.key);
     writeBesideSettings(thread);
 
-    const { code, said } = await runBeside(
+    const code = await runBeside(
       [
         launcher,
         "-p",
@@ -1956,120 +1960,117 @@ export function startHub({
           HEX_CHANNEL: channel,
           HEX_THREAD: thread,
           HEX_BESIDE: session,
-          CLAUDE_CODE_SESSION_NAME: `${known.name}/${job}`,
+          CLAUDE_CODE_SESSION_NAME: `${known.name}/${jobOf(row)}`,
         },
-        log: join(sessionsDir, `beside-${session}.log`),
+        log: besideLog(session),
       },
     );
 
     besides.delete(session);
-    const refused = besideRefused.get(session);
-    besideRefused.delete(session);
+    besideEnded(thread, session, row.key, `exit ${code}`);
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A run beside a thread that saw its turn through is a turn that went through. One that didn't, as on an API error, waits for one to go through anywhere, as a thread's turn does, and its chat hears once while runs there wait; one that waited already is left, and its chat hears that.
+  function besideEnded(thread: string, session: string, key?: string, exit = "its session ended") {
+    const said = lastWords(besideLog(session));
 
     if (closed) {
       return;
     }
 
-    const taken = kept((store) => store.messages.get(row.key)?.taken, undefined);
-    const why = refused ?? (said === "" ? `exit ${code}` : `exit ${code}: ${said}`);
-
-    if (code === 0 && taken) {
-      besideWaits.clear();
-      besideTold.clear();
-    } else if (!taken) {
-      startFailed(thread, row.key, job, why);
-    } else if (taken.by === session) {
-      runFailed(thread, session, job, why);
-    }
-
-    wake();
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A start that ended without taking its row tries once more after a turn goes through anywhere; one that fails then is taken by the hub, so no hub tries it again, and its chat hears why.
-  function startFailed(thread: string, key: string, job: string, why: string) {
-    const tries = (besideStarts.get(key) ?? 0) + 1;
-    besideStarts.set(key, tries);
-    process.stderr.write(`hub: ${key} beside ${thread} didn't start (${why})\n`);
-
-    if (tries < BESIDE_STARTS_TRIED) {
-      besideWaits.add(key);
-
-      return;
-    }
-
-    kept((store) => store.messages.take(key, "hub"), false);
-    failed(thread, `[${job}] couldn't start beside this chat, ${tries} times: ${why}`, true);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A run that failed after taking its row, as on an API error, carries on once a turn goes through anywhere, as a thread's turn does, and its chat hears once a run there waits for that; one that fails again is left, and its chat hears that.
-  function runFailed(thread: string, session: string, job: string, why: string) {
-    const carryOn = `hub:beside:${session}:carry`;
-
-    if (kept((store) => store.messages.get(carryOn)?.taken?.by === session, false)) {
-      failed(
-        thread,
-        `[${job}] failed again beside this chat, so it won't run by itself again: ${why}`,
-        true,
-      );
-
-      return;
-    }
-
-    kept(
-      (store) =>
-        store.messages.deliver({
-          key: carryOn,
-          to: session,
-          from: "hub",
-          author: "prompt",
-          body: "[hub] Your last turn failed before it was done, and turns go through again now: carry on with it.",
-          meta: { user: job },
-        }),
-      false,
+    const waited = besideRows().some(
+      (row) => row.beside === besideOf(thread) && row.meta?.stalled !== undefined,
     );
-    besideWaits.add(carryOn);
 
-    if (!besideTold.has(thread)) {
-      besideTold.add(thread);
+    const { given, left } = kept((store) => store.turns.besideEnded(session, key), {
+      given: [],
+      left: [],
+    });
+
+    const why = said === "" ? exit : said;
+
+    for (const row of left) {
       failed(
         thread,
-        `[${job}] ran beside this chat and failed: ${why}\nIt carries on once turns go through again.`,
+        `[${jobOf(row)}] failed again beside this chat, so it won't run by itself again: ${why}`,
         true,
       );
     }
-  }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session beside a thread says how its turns end, never as the thread's own turn: one that went through lets what waits for that run, and one the API refused fails its run here when no hub waits on it to end, as after a hub restart.
-  function besideTurned(thread: string, session: string, turn: { failed: boolean; why: string }) {
-    if (!turn.failed) {
+    const [first] = given;
+
+    if (first && !waited) {
+      failed(
+        thread,
+        `[${jobOf(first)}] ran beside this chat and failed: ${why}\nIt carries on once turns go through again.`,
+        true,
+      );
+    }
+
+    if (!given.length && !left.length) {
       for (const each of answered) {
         each();
       }
-
-      return;
     }
 
-    if (besides.has(session)) {
-      besideRefused.set(session, turn.why);
-
-      return;
-    }
-
-    const ran = kept((store) => store.messages.ranFor(session), null);
-    runFailed(thread, session, ran?.meta?.schedule ?? ran?.meta?.user ?? "beside", turn.why);
+    wake();
   }
 
-  function turnsGoThrough() {
-    if (besideWaits.size === 0 && besideTold.size === 0) {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // One run that waits beside a thread, for each turn that goes through, so the runs an outage stopped don't all start at once.
+  function releaseBeside() {
+    kept((store) => {
+      store.messages.supersede(besideAddresses());
+    }, undefined);
+
+    const stalled = besideRows().filter((row) => row.meta?.stalled !== undefined);
+
+    if (stalled.some((row) => [...besides.values()].includes(row.key))) {
       return;
     }
 
-    besideWaits.clear();
-    besideTold.clear();
-    wake();
+    const [next] = stalled;
+
+    if (next) {
+      void beside(next);
+    }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // As the hub starts, a run beside a thread cut off with the machine gives back what it took, to run again; one that outlived the last hub is waited on to its end; and the logs of runs that ended go.
+  function besideStart() {
+    const alive = kept((store) => sessionsRunning(store), new Map<string, Session>());
+
+    kept((store) => {
+      for (const dead of store.turns.unfinishedBeside(besideAddresses(), [...alive.keys()])) {
+        store.turns.besideEnded(dead, undefined, undefined, false);
+      }
+    }, undefined);
+
+    for (const file of readdirSync(sessionsDir)) {
+      const session = /^beside-(.+)\.log$/u.exec(file)?.[1];
+
+      if (session !== undefined && !alive.has(session)) {
+        rmSync(join(sessionsDir, file), { force: true });
+      }
+    }
+
+    for (const run of alive.values()) {
+      const thread =
+        run.thread?.startsWith(`${app}:`) === true ? run.thread.slice(app.length + 1) : undefined;
+
+      if (run.beside !== undefined && thread !== undefined && threads.has(thread)) {
+        void waitBeside(thread, run);
+      }
+    }
+  }
+
+  async function waitBeside(thread: string, run: Session) {
+    besides.set(run.id, "");
+    await exited(run.pid);
+    besides.delete(run.id);
+    besideEnded(thread, run.id);
   }
 
   function writeBesideSettings(thread: string) {
@@ -2083,7 +2084,6 @@ export function startHub({
           HEX_PORT: String(port),
           HEX_TOKEN: token,
           HEX_STORE: storeDir,
-          HEX_HUB: socketPath,
           ...(general && thread === main && { HEX_MAIN: "1" }),
         },
       }),
@@ -2607,17 +2607,6 @@ export function startHub({
       case "state": {
         took(request.taken, request.session);
 
-        if (request.beside !== undefined) {
-          if (!request.busy) {
-            besideTurned(request.thread, request.beside, {
-              failed: request.failed === true,
-              why: request.said ?? request.error ?? "unknown",
-            });
-          }
-
-          return;
-        }
-
         const run = runOf(request.thread);
 
         if (request.failed === true) {
@@ -2845,16 +2834,7 @@ export function startHub({
         revive();
       }
 
-      // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-      // A run beside a thread cut off mid-turn (a reboot, or hex moved to another machine) gives back what it took, so it runs again.
-      kept((store) => {
-        const alive = [...sessionsRunning(store).keys()];
-
-        for (const thread of threads.keys()) {
-          store.turns.cut(besideOf(thread), undefined, undefined, alive);
-        }
-      }, undefined);
-
+      besideStart();
       wake();
     })();
   }
@@ -2932,7 +2912,7 @@ export function startHub({
       retries.delete(retry);
       answered.delete(retryCompactions);
       answered.delete(resumeStalled);
-      answered.delete(turnsGoThrough);
+      answered.delete(releaseBeside);
 
       if (generalHub === api) {
         generalHub = undefined;
@@ -2958,7 +2938,7 @@ export function startHub({
   retries.add(retry);
   answered.add(retryCompactions);
   answered.add(resumeStalled);
-  answered.add(turnsGoThrough);
+  answered.add(releaseBeside);
 
   if (general && present(main)) {
     generalHub = api;
