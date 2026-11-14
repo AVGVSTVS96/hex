@@ -313,6 +313,7 @@ async function archivedSince(
 const ANSWERED_IN = new Map([
   ["app", "in the app"],
   ["call", "on a call"],
+  ["pick", "by hex, on its own pick"],
 ]);
 
 const answeredIn = (via: string) => ANSWERED_IN.get(via) ?? via;

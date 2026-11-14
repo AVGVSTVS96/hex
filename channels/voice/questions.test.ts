@@ -2338,6 +2338,40 @@ test("what the check handed back to hex is listed as decided with its reason, an
   expect(verdict.settle).toEqual([]);
 });
 
+test("hex takes its own pick and lists it as decided; undo puts it back on the owner's list for good", async () => {
+  const id = `telegram:${DESK}:1`;
+  const bun = asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"]);
+  ledger([bun, asked(2, "Ship it?", ["Yes", "No"])]);
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: (why) => {
+      checks.push(why);
+    },
+    takesPicks: true,
+  });
+  await until(() => lines.length === 1);
+  expect(lines).toEqual([
+    { type: "answer", thread: DESK, message: 1, label: "bun (my pick)", via: "pick" },
+  ]);
+
+  ledger([
+    { ...bun, answer: { label: "bun", at: "", via: "pick" } },
+    asked(2, "Ship it?", ["Yes", "No"]),
+  ]);
+  await until(() => questions.view.decided.length === 1 && questions.view.asks.length === 1);
+  expect(questions.view.decided[0]).toMatchObject({ id, question: "bun or pnpm?", took: "bun" });
+  expect(questions.view.asks[0]).toMatchObject({ question: "Ship it?" });
+
+  await questions.undo(id, "app");
+  await until(() => lines.length === 2);
+  expect(lines.at(-1)).toEqual({ type: "reopen", thread: DESK, message: 1, via: "app" });
+  ledger([bun, asked(2, "Ship it?", ["Yes", "No"])]);
+  await until(() => questions.view.asks.length === 2 && questions.view.decided.length === 0);
+  await Bun.sleep(50);
+  expect(lines).toHaveLength(2);
+});
+
 test("General hears of the first failed check in a run of them, and of the first after one succeeds", () => {
   const store = open(state);
   store.threads.keep("telegram", { [GROUP]: { name: "hex" } });

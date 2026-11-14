@@ -1678,6 +1678,7 @@ const callOrForget: Call = async (caller, tool, args) => {
 const ANSWERED_IN = new Map([
   ["app", "in the app"],
   ["call", "on a call"],
+  ["pick", "by hex, on its own pick"],
 ]);
 
 function only(text: string) {
