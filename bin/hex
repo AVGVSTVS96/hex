@@ -192,6 +192,9 @@ case "${1:-}" in
     ;;
   deliver|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
+    # While hex runs on another machine, named by whatever moved it there, its commands run there.
+    where=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/hex/elsewhere" 2>/dev/null) && [ -n "$where" ] &&
+      exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "printf %s $(printf '%s\0' "$hex/bin/hex" "$@" | base64 -w0) | base64 -d | xargs -0 env --"
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;
   status)

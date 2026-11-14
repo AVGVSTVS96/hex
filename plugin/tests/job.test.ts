@@ -41,6 +41,8 @@ const env = Object.fromEntries(
   ),
 );
 
+env.XDG_STATE_HOME = join(home, "xdg");
+
 const session = { HEX_CHANNEL: "plugin:t3@hex", HEX_THREAD: "stray-key" };
 
 beforeAll(() => {
@@ -92,11 +94,26 @@ case "$1" in
   is-system-running) cat "${home}/system.txt" 2>/dev/null || echo running ;;
   --user) for unit; do :; done
     if [ "$2" = show ]; then grep -qx "$unit" "${home}/stopping.txt" 2>/dev/null && echo 7; exit 0; fi
-    grep -qx "$unit" "${home}/active.txt" 2>/dev/null ;;
+    grep -qx "$unit" "\${ACTIVE:-${home}/active.txt}" 2>/dev/null ;;
 esac
 `,
   );
   chmodSync(join(home, "fake/systemctl"), 0o755);
+  writeFileSync(
+    join(home, "fake/ssh"),
+    `#!/bin/sh
+prev=
+for arg; do host=$prev; prev=$arg; done
+echo "$host $prev" >> "${home}/ssh.log"
+case "$host" in
+  log-x) exit 0 ;;
+  twin-x) XDG_STATE_HOME="${home}/xdg-twin" HEX_STORE="${home}/twin" ACTIVE="${home}/twin-active.txt" exec sh -c "$prev" ;;
+  *) exit 255 ;;
+esac
+`,
+  );
+  chmodSync(join(home, "fake/ssh"), 0o755);
+  mkdirSync(join(home, "twin/jobs"), { recursive: true });
 });
 
 afterAll(() => {
@@ -756,8 +773,110 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
   const refused: unknown[] = told("%[job] refused stopped%");
   expect(refused).toEqual([containing("couldn't start again")]);
   const away: unknown[] = told("%[job] away stopped%");
-  expect(away).toEqual([
-    containing(`because hex moved from elsewhere to ${here}, and started over`),
-  ]);
+  expect(away).toEqual([containing(`because elsewhere went down, and started over`)]);
   expect(existsSync(join(jobs, "broken.json"))).toBe(true);
+});
+
+const fakes = () => ({ ...env, PATH: `${join(home, "fake")}:${env.PATH}` });
+const marker = join(home, "xdg/hex/elsewhere");
+
+const toldOn = (store: string, like: string) =>
+  z
+    .array(z.string())
+    .parse(
+      new Database(join(home, store, "hex.db"))
+        .query(`select body from messages where body like ? order by rowid`)
+        .values(like)
+        .flat(),
+    );
+
+test("on a machine hex moved away from, a job's end and hex's commands go to the machine hex runs on", () => {
+  mkdirSync(join(home, "xdg/hex"), { recursive: true });
+  writeFileSync(marker, "twin-x\n");
+  rmSync(join(home, "ssh.log"), { force: true });
+  open(join(home, "twin")).threads.keep("t3", { "stray-key": { name: "hex" } });
+  run(["leftover", "make", "all"], session);
+  end("leftover", finishedByItself);
+
+  const there: unknown[] = toldOn("twin", "%[job] leftover ended%");
+  expect(there).toEqual([containing("[job] leftover ended: unknown (exit 0)")]);
+  expect(told("%[job] leftover ended%")).toEqual([]);
+
+  writeFileSync(marker, "log-x\n");
+
+  const delivered = Bun.spawnSync(
+    [join(home, ".hex/bin/hex"), "deliver", "hex", "--to=stray-key", "from the server"],
+    { env: fakes() },
+  );
+
+  expect(delivered.exitCode).toBe(0);
+
+  const asked = readFileSync(join(home, "ssh.log"), "utf-8")
+    .trim()
+    .split("\n")
+    .map((line) => line.split(" "));
+
+  expect(asked.map(([host]) => host)).toEqual(["twin-x", "log-x"]);
+  expect(
+    Buffer.from(asked.at(-1)?.[3] ?? "", "base64")
+      .toString()
+      .split("\0"),
+  ).toEqual([
+    join(home, ".hex/bin/hex"),
+    "deliver",
+    "hex",
+    "--to=stray-key",
+    "from the server",
+    "",
+  ]);
+  rmSync(marker);
+});
+
+test("hex starting here leaves a job still running on the machine it left there, drops one that ended there, and starts one whose machine doesn't answer", () => {
+  const jobs = join(home, "state/jobs");
+  rmSync(jobs, { recursive: true, force: true });
+  mkdirSync(jobs, { recursive: true });
+  const config = join(home, "claude");
+
+  const record = (unit: string, machine: string) => {
+    writeFileSync(
+      join(jobs, `${unit}.json`),
+      JSON.stringify({
+        owner: "t3:stray-key",
+        cwd: home,
+        properties: [],
+        command: ["make", unit],
+        machine,
+      }),
+    );
+  };
+
+  record("kept", "twin-x");
+  record("finished", "twin-x");
+  record("lost", "dead-x");
+  record("cut", "twin-x");
+  writeFileSync(join(home, "twin/jobs/cut.json"), "{}");
+  writeFileSync(join(home, "twin-active.txt"), "kept\n");
+  mkdirSync(join(home, "xdg/hex"), { recursive: true });
+  writeFileSync(marker, "twin-x\n");
+
+  const started = resume(config);
+
+  expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
+    "cut",
+    "lost",
+  ]);
+  expect(existsSync(join(jobs, "kept.json"))).toBe(true);
+  expect(existsSync(join(jobs, "finished.json"))).toBe(false);
+  expect(existsSync(marker)).toBe(false);
+  expect(told("%[job] kept %")).toEqual([]);
+  expect(told("%[job] finished %")).toEqual([]);
+  const cut: unknown[] = told("%[job] cut stopped%");
+  expect(cut).toEqual([containing("[job] cut stopped because hex moved from twin-x to")]);
+  const lost: unknown[] = told("%[job] lost stopped%");
+  expect(lost).toEqual([
+    containing(
+      "[job] lost stopped because dead-x went down, and started over from the beginning as hex started again on",
+    ),
+  ]);
 });

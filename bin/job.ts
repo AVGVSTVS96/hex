@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 
 import { $ } from "bun";
@@ -28,6 +28,36 @@ import { zoneOf } from "../hub/zone.ts";
 const [mode, ...rest] = process.argv.slice(2);
 const store = open(stateDir());
 const records = join(stateDir(), "jobs");
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Names the machine hex runs on while it runs on another one, for this machine's jobs to reach it: whatever moved hex writes it, and hex starting here removes it.
+const whereHexRuns = join(
+  process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"),
+  "hex/elsewhere",
+);
+
+function elsewhere() {
+  const named = existsSync(whereHexRuns) ? readFileSync(whereHexRuns, "utf-8").trim() : "";
+
+  return isSet(named) ? named : undefined;
+}
+
+function onMachine(machine: string, command: string[]) {
+  const words = Buffer.from(command.join("\0")).toString("base64");
+
+  return Bun.spawnSync(
+    [
+      "ssh",
+      "-o",
+      "BatchMode=yes",
+      "-o",
+      "ConnectTimeout=5",
+      machine,
+      `printf %s ${words} | base64 -d | xargs -0 env --`,
+    ],
+    { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+  );
+}
 
 const WhatAJobNeedsToRunAgain = z.object({
   owner: z.string(),
@@ -115,6 +145,33 @@ function reportsTo(): string | undefined {
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A new session beside General learns from the job where its work came from.
 function tell(unit: string, owner: string, said: string, at: string) {
+  const there = elsewhere();
+
+  if (there !== undefined) {
+    const from = ["HEX_FROM", "HEX_FROM_AT"].flatMap((name) =>
+      isSet(process.env[name]) ? [`${name}=${process.env[name]}`] : [],
+    );
+
+    const sent = onMachine(there, [
+      "env",
+      ...from,
+      join(import.meta.dir, "job"),
+      "--tell",
+      unit,
+      owner,
+      said,
+      at,
+    ]);
+
+    if (sent.exitCode === 0) {
+      return;
+    }
+
+    console.error(
+      `job: ${unit}'s news didn't reach hex on ${there}: ${sent.stderr.toString().trim()}`,
+    );
+  }
+
   const to = store.threads.key(owner);
 
   const from =
@@ -203,9 +260,17 @@ if (mode === "--owner") {
     `${process.env.INVOCATION_ID ?? Date.now()}:waiting`,
   );
 } else if (mode === "--tell") {
-  const [unit = "", owner = "", said = ""] = rest;
+  const [unit = "", owner = "", said = "", at] = rest;
 
-  tell(unit, owner, said, `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`);
+  tell(unit, owner, said, at ?? `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`);
+} else if (mode === "--running") {
+  for (const unit of rest) {
+    if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) {
+      console.log(`active ${unit}`);
+    } else if (!existsSync(join(records, `${unit}.json`))) {
+      console.log(`gone ${unit}`);
+    }
+  }
 } else if (mode === "--resume") {
   const here = hostname();
   const at = new Date().toISOString();
@@ -221,7 +286,16 @@ if (mode === "--owner") {
       minute: "2-digit",
     });
 
-  for (const file of readdir(records).filter((name) => !name.includes(".sync-conflict-"))) {
+  rmSync(whereHexRuns, { force: true });
+
+  const files = readdir(records).filter((name) => !name.includes(".sync-conflict-"));
+
+  const elsewhereNow = stillOnTheirMachines(
+    files.map((file) => file.slice(0, -".json".length)),
+    here,
+  );
+
+  for (const file of files) {
     const recorded = file.slice(0, -".json".length);
 
     if ((await $`systemctl --user is-active --quiet ${recorded}`.nothrow()).exitCode === 0) {
@@ -232,6 +306,17 @@ if (mode === "--owner") {
 
     if (kept === undefined) {
       console.error(`job: ${file} can't be read, so ${recorded} isn't started again`);
+      continue;
+    }
+
+    const there = elsewhereNow.get(recorded);
+
+    if (there === "active") {
+      continue;
+    }
+
+    if (there === "gone") {
+      rmSync(join(records, file), { force: true });
       continue;
     }
 
@@ -251,7 +336,7 @@ if (mode === "--owner") {
 
     const fromElsewhere = isSet(kept.machine) && kept.machine !== here;
 
-    const moved = mark === "moved" || (mark === "" && fromElsewhere);
+    const moved = mark === "moved" || (mark === "" && fromElsewhere && there !== "down");
 
     const why = moved
       ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}${then}`
@@ -442,6 +527,47 @@ function valueAfter(args: string[], flag: RegExp) {
   const at = args.findIndex((arg) => flag.test(arg));
 
   return at === -1 ? undefined : args[at + 1];
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A job left running on the machine hex moved from carries on there, and one that ended there is done: its own machine says which, while it answers. One that doesn't answer went down with it.
+function stillOnTheirMachines(units: string[], here: string) {
+  const byMachine = Map.groupBy(
+    units.flatMap((unit) => {
+      const machine = keptRecord(unit)?.machine;
+
+      return isSet(machine) && machine !== here ? [{ unit, machine }] : [];
+    }),
+    ({ machine }) => machine,
+  );
+
+  const said = new Map<string, "active" | "gone" | "down">();
+
+  for (const [machine, theirs] of byMachine) {
+    const asked = onMachine(machine, [
+      join(import.meta.dir, "job"),
+      "--running",
+      ...theirs.map(({ unit }) => unit),
+    ]);
+
+    if (asked.exitCode !== 0) {
+      for (const { unit } of theirs) {
+        said.set(unit, "down");
+      }
+
+      continue;
+    }
+
+    for (const line of asked.stdout.toString().split("\n")) {
+      const [state, unit = ""] = line.split(" ");
+
+      if (state === "active" || state === "gone") {
+        said.set(unit, state);
+      }
+    }
+  }
+
+  return said;
 }
 
 function keptRecord(unit: string): Kept | undefined {
