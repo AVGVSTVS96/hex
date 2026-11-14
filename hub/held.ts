@@ -38,7 +38,7 @@ if (HEX_THREAD !== undefined && HEX_THREAD !== "" && session_id !== "" && agent_
       JSON.stringify({
         hookSpecificOutput: {
           hookEventName: hook_event_name,
-          additionalContext: `The user sent ${one ? "a new message" : "new messages"} while you were working:\n${rows.map((row) => tag(row, zone)).join("\n")}\n\nAddress ${one ? "it" : "them"} as you continue this turn.`,
+          additionalContext: `The user sent ${one ? "a new message" : "new messages"} while you were working:\n${rows.map((row) => tag(row, zone)).join("\n")}`,
         },
       }),
     );

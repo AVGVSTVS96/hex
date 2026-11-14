@@ -4248,7 +4248,7 @@ test("the owner's words that come while the session works reach it at its next t
     .parse(JSON.parse(await toolCall("chat:7")));
 
   expect(fed.hookSpecificOutput.additionalContext).toBe(
-    'The user sent a new message while you were working:\n<channel source="telegram" key="telegram:1:50" chat_id="1">\nuse the docs\n</channel>\n\nAddress it as you continue this turn.',
+    'The user sent a new message while you were working:\n<channel source="telegram" key="telegram:1:50" chat_id="1">\nuse the docs\n</channel>',
   );
   expect(open(dir).messages.get("telegram:1:50")?.taken?.by).toBe(SESSION);
 
