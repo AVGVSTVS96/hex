@@ -300,7 +300,13 @@ case "${1:-}" in
       [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = yes ] && ok "services run while you're logged out" \
         || fix "services stop when you log out: run \`sudo loginctl enable-linger $(id -un)\`"
     fi
-    running && ok "hub running (pid $(cat "$pidfile"))" || fix "the hub isn't running: run \`$hex/bin/hex restore\`"
+    if running; then
+      ok "hub running (pid $(cat "$pidfile"))"
+    elif systemd && [ "$(systemctl --user show -p Result --value hex.service)" = exec-condition ]; then
+      ok "hub waits: hex.service's ExecCondition keeps it off this machine"
+    else
+      fix "the hub isn't running: run \`$hex/bin/hex restore\`"
+    fi
     free=$(df -Pk "$home" | awk 'NR == 2 { print int($4 / 1048576) }')
     [ "${free:-0}" -ge 5 ] && ok "$free GB free on disk" || fix "only ${free:-0} GB free on disk: sessions and backups need room"
     [ "$problems" -eq 0 ] && echo "hex looks healthy" || { echo "$problems to fix"; exit 1; }

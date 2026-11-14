@@ -161,6 +161,18 @@ test("restore installs each channel that has a server, turned off, allows it, an
   expect(read(Config, "claude/.claude.json").projects[home]?.hasTrustDialogAccepted).toBe(true);
 });
 
+test("a hub that hex.service's ExecCondition keeps off this machine waits, and doctor says so", () => {
+  script(
+    join(bin, "systemctl"),
+    `case "$*" in *show-environment*) ;; *"-p Result"*) echo exec-condition ;; *"-q is-active"*) exit 3 ;; *is-active*) echo inactive; exit 3 ;; *is-failed*) exit 1 ;; esac`,
+  );
+  const run = restore();
+  expect(run.out).toContain(
+    "ok   hub waits: hex.service's ExecCondition keeps it off this machine",
+  );
+  expect(run.out).not.toContain("the hub isn't running");
+});
+
 test("restore stops at a line that doesn't make what it names", () => {
   owner({ install: { "~/never": "true" }, units: ["services/gone.service"] });
   const run = restore();
