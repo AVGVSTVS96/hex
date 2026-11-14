@@ -32,7 +32,17 @@ Answer ok when my words ask for this change, or it carries out one I asked for, 
 
 const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
-export type Verdict = z.infer<typeof Judged>;
+const Usage = z.object({
+  input_tokens: z.number(),
+  cache_creation_input_tokens: z.number(),
+  cache_read_input_tokens: z.number(),
+  output_tokens: z.number(),
+});
+
+export type Verdict = z.infer<typeof Judged> & {
+  usage?: z.infer<typeof Usage> | undefined;
+  usd?: number | undefined;
+};
 
 // claude --json-schema rejects the draft 2020-12 $schema zod emits by default: https://github.com/anthropics/claude-code/issues/80402
 const VERDICT_JSON_SCHEMA = z.toJSONSchema(Judged, { target: "draft-07" });
@@ -41,6 +51,8 @@ const ClaudeOutput = z.object({
   is_error: z.boolean().optional(),
   result: z.string().optional(),
   structured_output: Judged.optional(),
+  usage: Usage.optional().catch(undefined),
+  total_cost_usd: z.number().optional().catch(undefined),
 });
 
 const textOrNothing = z.string().optional().catch(undefined);
@@ -391,7 +403,7 @@ export async function judge(input: string, kind: Kind = "brief"): Promise<Verdic
     throw new Error(`claude exited ${code}: ${(result?.result ?? "").slice(0, 300)}`);
   }
 
-  return result.structured_output;
+  return { ...result.structured_output, usage: result.usage, usd: result.total_cost_usd };
 }
 
 const SentBack = z.object({
@@ -523,6 +535,7 @@ if (import.meta.main) {
         verdict: verdict === "failed" ? verdict : verdict.verdict,
         ...(through === true && { through }),
         notes: verdict === "failed" ? error : verdict.notes,
+        ...(verdict !== "failed" && { usage: verdict.usage, usd: verdict.usd }),
         brief: text.slice(0, 4000),
       };
 
