@@ -253,7 +253,7 @@ type Run = {
   // The starts that failed in a row since the thread's session last connected; retried: another session's start set one off since a message's last failed, told: General heard.
   failing?: { count: number; retried?: boolean; told?: boolean } | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Its last turn failed on the API, until a turn begins or goes through. waiting: the error clears on its own (a rate limit, a dropped connection), so it carries on at the next turn anywhere that goes through; resumed: the hub had it carry on, once; told: its chat heard it waits for its next message.
+  // Its last turn failed on the API, until a turn begins or goes through. waiting: the error clears without a word to this thread (a rate limit, a dropped connection, a login that works again), so it carries on at the next turn anywhere that goes through; resumed: the hub had it carry on, once; told: its chat heard it waits for its next message.
   stalled?: "waiting" | "resumed" | "told" | undefined;
   opening?: Opening | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -326,8 +326,14 @@ let generalHub: Hub | undefined;
 const TELL_GENERAL_AFTER_FAILED_STARTS = 3;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Claude Code's StopFailure errors that clear on their own or once an account has room again; a refused connection reaches the hook as server_error.
-const PASSING_API_ERRORS = new Set(["rate_limit", "overloaded", "server_error", "billing_error"]);
+// Claude Code's StopFailure errors that clear on their own, or once an account has room or the login works again; a refused connection reaches the hook as server_error.
+const PASSING_API_ERRORS = new Set([
+  "rate_limit",
+  "overloaded",
+  "server_error",
+  "billing_error",
+  "authentication_failed",
+]);
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Resolves with the hub serving General once General's session first connects to it: from then on, hex works on the code this process runs.
