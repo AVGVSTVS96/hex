@@ -3,7 +3,7 @@
 # settings.local.json, which win, the way Claude Code gives them to every session. A setting lives
 # in a settings file a session can change; .env keeps the secrets. A settings file that's empty
 # (mid-write) or doesn't parse sets settings_unread, so a caller can tell that apart from a setting that isn't there.
-[ -f "$home/.env" ] && { set -a; . "$home/.env" 2>/dev/null; set +a; }
+[ -f "$home/.env" ] && { set -a; command . "$home/.env" 2>/dev/null; set +a; }
 settings_unread=
 for settings in "$home/.claude/settings.json" "$home/.claude/settings.local.json"; do
   [ -f "$settings" ] || continue

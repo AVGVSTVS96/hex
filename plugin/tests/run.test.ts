@@ -231,6 +231,22 @@ test("hex that can't start tells General once, until a hub connects again", asyn
   );
 });
 
+test("a .env line that doesn't even parse still tells General, and a missing .env says so", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(
+    join(home, ".env"),
+    "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\nX=a(b)s3cret\n",
+  );
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(read()).toContain("chat_id=-100");
+  expect(read()).not.toContain("s3cret");
+  rmSync(join(home, ".env"));
+  const missing = run({ PATH });
+  expect(await missing.exited).toBe(1);
+  expect(await new Response(missing.stderr).text()).toContain("sets no TELEGRAM_BOT_TOKEN");
+});
+
 test("a notice that couldn't be sent is tried again at the next start", async () => {
   commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\nbroken line\n");
