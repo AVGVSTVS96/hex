@@ -82,11 +82,12 @@ case "${1:-}" in
     printf . >> "$home/state/hex.bell"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
-    # Jobs the machine going down stopped carry on, alongside the hub's start.
-    (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || :) &
     first= second= third=
     while :; do
       bun install --no-summary --cwd "$hex" >/dev/null || :
+      # Jobs a move or their machine going down stopped carry on, alongside each start of the hub, so a pass that failed
+      # is tried again; one whose unit runs is left alone.
+      (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) &
       # Read at every start, so a restart takes the settings as they are now.
       (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") &
       hub=$!
