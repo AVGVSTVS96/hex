@@ -4,7 +4,7 @@ import core from "ultracite/oxlint/core";
 
 export default defineConfig({
   extends: [core, antiSlop],
-  ignorePatterns: [...(core.ignorePatterns ?? []), "site/**", "media/**"],
+  ignorePatterns: [...(core.ignorePatterns ?? []), "site/**", "media/**", "watch/**"],
   jsPlugins: [{ name: "no-comments", specifier: "./tools/oxlint/no-comments.ts" }],
   options: { reportUnusedDisableDirectives: "error", typeAware: true },
   rules: {

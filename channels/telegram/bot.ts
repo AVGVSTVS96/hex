@@ -25,6 +25,7 @@ import {
   transcribe,
   typed,
   pictureOf,
+  pulse,
   EFFORTS,
   MODELS,
   Ledger,
@@ -2002,13 +2003,26 @@ const hub = startHub({
   },
 });
 
+let attempt = 0;
+
 // Each getUpdates confirms to Telegram every update before its offset, so it waits until hex.db has them on disk: https://core.telegram.org/bots/api#getupdates
 bot.api.config.use(async (previous, method, payload, signal) => {
-  if (method === "getUpdates") {
-    await hub.synced();
+  if (method !== "getUpdates") {
+    return await previous(method, payload, signal);
   }
 
-  return await previous(method, payload, signal);
+  await hub.synced();
+  const updates = await previous(method, payload, signal);
+
+  if (updates.ok) {
+    attempt = 0;
+  }
+
+  if (updates.ok || updates.error_code === 409) {
+    void pulse();
+  }
+
+  return updates;
 });
 
 const downloads = new Map<string, Promise<string>>();
@@ -2792,11 +2806,7 @@ async function setCommandMenu() {
   }
 }
 
-// A single ETIMEDOUT, ECONNRESET or DNS failure rejects bot.start(), and without this loop the bot goes deaf. https://grammy.dev/guide/errors
-let attempt = 0;
-
 const onStart = (info: { username: string }) => {
-  attempt = 0;
   process.stderr.write(`telegram hub: polling as @${info.username}\n`);
   polling = info.username;
   void setCommandMenu();
@@ -2809,6 +2819,7 @@ const onStart = (info: { username: string }) => {
   boarding ??= board?.start().catch(ignore);
 };
 
+// A single ETIMEDOUT, ECONNRESET or DNS failure rejects bot.start(), and without this loop the bot goes deaf. https://grammy.dev/guide/errors
 for (;;) {
   attempt++;
 

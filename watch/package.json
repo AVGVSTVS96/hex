@@ -1,0 +1,9 @@
+{
+  "name": "hex-watch",
+  "private": true,
+  "description": "Watches hex from outside its machines and tells you on Telegram when it is down, back, or running twice.",
+  "type": "module",
+  "dependencies": {
+    "apps": "0.0.1-beta.138"
+  }
+}
