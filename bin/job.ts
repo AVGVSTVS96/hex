@@ -356,12 +356,12 @@ if (mode === "--owner") {
   for (const file of existsSync(records)
     ? readdirSync(records).filter((name) => name.endsWith(".news"))
     : []) {
-    const news = News.safeParse(keptJson(join(records, file)));
+    const news = keptNews(join(records, file));
 
     rmSync(join(records, file));
 
-    if (news.success) {
-      const { unit, owner, said, at: sentAt, from } = news.data;
+    if (news !== undefined) {
+      const { unit, owner, said, at: sentAt, from } = news;
 
       const before = { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT };
       delete process.env.HEX_FROM;
@@ -376,7 +376,7 @@ if (mode === "--owner") {
 
       for (const [name, value] of Object.entries(before)) {
         if (value === undefined) {
-          delete process.env[name];
+          Reflect.deleteProperty(process.env, name);
         } else {
           process.env[name] = value;
         }
@@ -720,11 +720,11 @@ async function stillOnTheirMachines(units: string[], here: string) {
   return said;
 }
 
-function keptJson(file: string): unknown {
+function keptNews(file: string) {
   try {
-    return JSON.parse(readFileSync(file, "utf-8"));
+    return News.safeParse(JSON.parse(readFileSync(file, "utf-8"))).data;
   } catch {
-    return undefined;
+    return;
   }
 }
 
