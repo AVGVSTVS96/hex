@@ -402,12 +402,12 @@ finishes. The call's walk-through says the same.
 
 | Request | Answers |
 | --- | --- |
-| `GET /asks` | `{ version, asks, decided, stuck, fresh, check }`: each open question's `id`, `kind` (`pick`, `yesno`, `do`, `look`), `task` and `topic` (its thread), `question`, `context`, `options` (its answers: `label`, `pick`), `links` (pages it points to, which answer nothing: `label`, `url`), `tag`, and `places`, every place it was asked (each thread once, at its open question, pinned post or message), the ones that open first, each newest first; what the check handed back to hex in the last week (`decided`: the same fields, with when, and `why` it's hex's call); what's `stuck` (`title`, `why`, one `action`); what finished since you looked (`fresh`, with `read`); and the last check's time and counts |
+| `GET /asks` | `{ version, asks, decided, stuck, fresh, check }`: each open question's `id`, `kind` (`pick`, `yesno`, `do`, `look`), `task` and `topic` (its thread), `question`, `context`, `options` (its answers: `label`, `pick`), `links` (pages it points to, which answer nothing: `label`, `url`), `tag`, and `places`, every place it was asked (each thread once, at its open question, pinned post or message), the ones that open first, each newest first; what hex decided in the last week (`decided`: the same fields, with when and `why`: what the check handed back to hex, and with `VOICE_TAKES_PICKS=1` the questions hex answered with its own pick, `took`); what's `stuck` (`title`, `why`, one `action`); what finished since you looked (`fresh`, with `read`); and the last check's time and counts |
 | `GET /asks?after=<version>` | the same, once anything has changed (or after 25 seconds) |
 | `POST /asks/<id>/answer` | `{ "label": "..." }`: answers it |
 | `POST /asks/<id>/note` | `{ "text": "..." }`: tells its thread, leaving it open |
 | `POST /asks/<id>/dismiss` | puts it away as not needed |
-| `POST /asks/<id>/undo` | takes that answer or not needed back; on a `decided` one, puts it back on your list, tells its thread, and the check leaves it there |
+| `POST /asks/<id>/undo` | takes that answer or not needed back; on a `decided` one, puts it back on your list, tells its thread, and hex leaves it there |
 | `POST /stuck/<id>/act` | does its action: asks hex's General to fix it, or puts it away until it changes |
 | `POST /fresh/<id>/read` | marks a finished result read |
 | `POST /asks/talk` | during a call: Claude walks you through them, one card at a time |
@@ -457,6 +457,7 @@ them with hex) gets Claude walking the list in order.
    VOICE_PORT=8790    # the call page's local port
    VOICE_TOKEN=...    # if set, /session, /calls and /phone need "Authorization: Bearer <token>"
    VOICE_GRACE_SECONDS=120 # how long a dropped call waits to come back or carry on before it ends
+   VOICE_TAKES_PICKS=1 # hex answers its questions that have its pick (money ones excepted) with that pick, under `decided`
    OPENAI_BASE_URL=... # another endpoint that speaks OpenAI's live API; https://api.openai.com/v1 if unset
    OPENROUTER_API_KEY=... # lets the caller mute the voice, or call off a handoff, by saying so (see Muting); off if unset
    ```

@@ -3838,7 +3838,7 @@ export function serve(voiceHub: Hub, state: string) {
     activity.changed();
     chats.changed();
   });
-  yours = new Questions(state);
+  yours = new Questions(state, { takesPicks: env.VOICE_TAKES_PICKS === "1" });
   recover();
   followWorkPastCallsSentOut();
   void checkCredit();
