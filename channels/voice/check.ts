@@ -228,10 +228,14 @@ async function pass(state: string, why: string) {
 }
 
 export function handBack(state: string, back: Back[], threads: Record<string, string>) {
-  for (const { id, task, question, why } of back) {
+  for (const { id, task, question, why, from } of back) {
+    const source = from.find((ref) => ref.message !== undefined);
+
     if (task in threads) {
       openStore(state).messages.deliver({
-        key: `check:back:${id}`,
+        key: source
+          ? `check:back:${source.app}:${source.thread}:${source.message}`
+          : `check:back:${id}`,
         to: besideOf(task.slice(task.indexOf(":") + 1)),
         from: "check",
         author: "prompt",
