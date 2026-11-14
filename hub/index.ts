@@ -4,6 +4,8 @@ export { above } from "./fit.ts";
 
 export { besideOf } from "./beside.ts";
 
+export { pulse } from "./pulse.ts";
+
 export { fileOnly, held, pictureId, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 
 export type { Picture } from "./pictures.ts";

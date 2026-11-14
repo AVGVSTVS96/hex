@@ -133,3 +133,14 @@ What else hex needs on their machines goes in `~/hex/services.json`, in the shap
 ## Backups
 
 Every night at 3:00 on their clock, General's hub copies `state/hex.db` to `state/backups/hex-<date>.db`, and to `~/hex-backups` on hex's computer when `HEX_COMPUTER` names one, keeping the last seven in each place. A night that fails tells General. To bring one back: `~/hex/.hex/bin/hex stop`, copy it over `~/hex/state/hex.db`, delete `hex.db-wal` and `hex.db-shm` beside it, then `~/hex/.hex/bin/hex start`.
+
+## Watching from outside (optional)
+
+hex can't tell anyone it's down when its own machine is. `watch/` is a small [Executor](https://executor.sh) app that runs on Executor's servers: the hub sends it a signed pulse each minute, and it tells their Telegram group when the pulses stop for 4 minutes, when they start again, and when two machines run a hub at once.
+
+1. `npm i -g executor@beta`, `executor apps login`, then `executor apps create` from `~/hex/.hex/watch` and `executor apps deploy` its commit.
+2. In the app's page on Executor, connect a Telegram bot account with hex's bot token **(you)**, then finish the `pulse` webhook's setup there: it shows a callback URL and a signing secret.
+3. Set `HEX_PULSE_URL` to the callback URL and `HEX_PULSE_SECRET` to the secret in `.env`, and run `~/hex/.hex/bin/hex restart`.
+4. Enable the app's `watch` schedule, and point it at General with its `alertTo` tool: `{ "chat": "<HEX_MAIN_THREAD>", "thread": "" }`. Its `status` tool should list this machine within a minute.
+
+When a machine stops running hex for good, its `forget` tool drops it, so its silence doesn't read as an outage.

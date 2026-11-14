@@ -25,6 +25,7 @@ import {
   transcribe,
   typed,
   pictureOf,
+  pulse,
   EFFORTS,
   MODELS,
   Ledger,
@@ -2004,11 +2005,15 @@ const hub = startHub({
 
 // Each getUpdates confirms to Telegram every update before its offset, so it waits until hex.db has them on disk: https://core.telegram.org/bots/api#getupdates
 bot.api.config.use(async (previous, method, payload, signal) => {
-  if (method === "getUpdates") {
-    await hub.synced();
+  if (method !== "getUpdates") {
+    return await previous(method, payload, signal);
   }
 
-  return await previous(method, payload, signal);
+  await hub.synced();
+  const updates = await previous(method, payload, signal);
+  void pulse();
+
+  return updates;
 });
 
 const downloads = new Map<string, Promise<string>>();
