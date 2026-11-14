@@ -1496,7 +1496,7 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The transcript of a thread's saved session whose prompt cache has expired (an hour, or 5 minutes for a short one), when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
+  // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired (an hour, or 5 minutes for a short one) when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
   function expired(thread: string) {
     const session = savedOf(thread).session;
 
@@ -1504,11 +1504,17 @@ export function startHub({
       return;
     }
 
+    const file = claude.transcript(cwdOf(thread), session);
+
+    if (!claude.saved(session)) {
+      return file;
+    }
+
     const { sent: context, at, short } = claude.usage(cwdOf(thread), session);
     const cacheLife = short === true ? 5 * 60_000 : 60 * 60_000;
 
     return context > handoffAbove && at !== undefined && clock.now() - at > cacheLife
-      ? claude.transcript(cwdOf(thread), session)
+      ? file
       : undefined;
   }
 
@@ -1917,7 +1923,7 @@ export function startHub({
   const besideLog = (session: string) => join(sessionsDir, `beside-${session}.log`);
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A row beside a thread starts a session of its own, as hex in the thread's chat, which takes the row itself; one for a session that ran beside it resumes that session once its run is over. A client that shows only the turns its own messages start can't be spoken into from beside, so there the row goes to the thread.
+  // A row beside a thread starts a session of its own, as hex in the thread's chat, which takes the row itself; one for a session that ran beside it resumes that session once its run is over, where this machine has its conversation. A client that shows only the turns its own messages start can't be spoken into from beside, so there the row goes to the thread.
   async function beside(row: Row & { beside: string; resume?: string }) {
     const thread = besideWhat(row.beside);
     const resumed = row.resume;
@@ -1940,7 +1946,7 @@ export function startHub({
       return;
     }
 
-    const session = resumed ?? randomUUID();
+    const session = resumed !== undefined && claude.saved(resumed) ? resumed : randomUUID();
     besides.set(session, row.key);
     writeBesideSettings(thread);
 
@@ -1948,7 +1954,7 @@ export function startHub({
       [
         launcher,
         "-p",
-        ...(resumed === undefined ? ["--session-id", session] : ["--resume", session]),
+        ...(session === resumed ? ["--resume", session] : ["--session-id", session]),
         ...extra(thread),
         "--settings",
         besideSettingsOf(thread),

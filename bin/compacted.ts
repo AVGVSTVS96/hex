@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { existsSync } from "node:fs";
 import { basename, join } from "node:path";
 
 import { z } from "zod";
@@ -17,15 +18,19 @@ if (hubThreadOrTerminalSession === undefined || (hook.source !== "compact" && !h
   process.exit(0);
 }
 
+const hex = join(import.meta.dir, "hex");
+const thread = hubThreadOrTerminalSession;
+
 if (handoff) {
+  const session = basename(takesOverFrom, ".jsonl");
   console.log(
-    `You're continuing this thread from session ${basename(takesOverFrom, ".jsonl")}: ${takesOverFrom}`,
+    existsSync(takesOverFrom)
+      ? `You're continuing this thread from session ${session}: ${takesOverFrom}`
+      : `You're continuing this thread from session ${session}, whose transcript isn't on this machine: \`${hex} log -- '${thread}'\` has its messages.`,
   );
   process.exit(0);
 }
 
-const hex = join(import.meta.dir, "hex");
-const thread = hubThreadOrTerminalSession;
 const lead = `Your context was just compacted. These are the conversation's newest messages, word for word, from \`${hex} log\`; \`${hex} log -- '${thread}'\` has any before them, and the summary above has what you did in the turn in progress.`;
 
 const newestWholeMessagesThatFitAHook = Bun.spawnSync(
