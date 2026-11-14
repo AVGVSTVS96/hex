@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -42,9 +42,9 @@ async function oldHub() {
   return Number(new TextDecoder().decode(value));
 }
 
-test("a hub that finds the port held waits for it instead of exiting, which bin/hex would count as a failed start, and a stop ends it while it waits", async () => {
-  const port = await oldHub();
-
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A hub of its own, with no channel's token, so each channel that starts says it can't.
+function serve(port: number, extra: Record<string, string> = {}) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
       ([name]) => !name.startsWith("HEX_") && !name.endsWith("_TOKEN"),
@@ -58,22 +58,28 @@ test("a hub that finds the port held waits for it instead of exiting, which bin/
     ]),
   );
 
-  const waiting = Bun.spawn(["bun", join(import.meta.dir, "serve.ts")], {
-    env: { ...env, ...states, HEX_DIR: dir, HEX_PORT: String(port) },
+  const started = Bun.spawn(["bun", join(import.meta.dir, "serve.ts")], {
+    env: { ...env, ...states, HEX_DIR: dir, HEX_PORT: String(port), ...extra },
     stdout: "ignore",
     stderr: "pipe",
   });
 
-  hub = waiting;
-
-  let said = "";
+  hub = started;
+  const output = { said: "" };
   void (async () => {
-    for await (const chunk of waiting.stderr) {
-      said += new TextDecoder().decode(chunk);
+    for await (const chunk of started.stderr) {
+      output.said += new TextDecoder().decode(chunk);
     }
   })();
 
-  await until(() => said.includes(`port ${port} is in use`) || waiting.exitCode !== null);
+  return { started, output };
+}
+
+test("a hub that finds the port held waits for it instead of exiting, which bin/hex would count as a failed start, and a stop ends it while it waits", async () => {
+  const port = await oldHub();
+  const { started: waiting, output } = serve(port);
+
+  await until(() => output.said.includes(`port ${port} is in use`) || waiting.exitCode !== null);
   await Bun.sleep(1500);
   expect(waiting.exitCode).toBeNull();
   waiting.kill("SIGTERM");
@@ -95,4 +101,21 @@ test("the next hub listens once the one holding the port exits", async () => {
   } finally {
     await listener.stop(true);
   }
+});
+
+test("a hub started ahead of its turn says it's ready in the file HEX_AHEAD names, and starts its channels only once the file is gone", async () => {
+  const free = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = Number(free.port);
+  await free.stop(true);
+  const file = join(dir, "ahead");
+  writeFileSync(file, "");
+  const { started, output } = serve(port, { HEX_AHEAD: file });
+
+  await until(() => readFileSync(file, "utf-8") === "ready\n" || started.exitCode !== null);
+  await Bun.sleep(500);
+  expect(started.exitCode).toBeNull();
+  expect(output.said).not.toContain("TELEGRAM_BOT_TOKEN");
+  expect(readdirSync(dir)).toEqual(["ahead"]);
+  rmSync(file);
+  await until(() => output.said.includes("TELEGRAM_BOT_TOKEN"));
 });
