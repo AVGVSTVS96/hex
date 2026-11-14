@@ -6,7 +6,7 @@ hex runs wherever Claude Code does, on a machine that stays on: a home server, a
 
 ## 1. Check what's there
 
-`git`, `curl`, `jq` and `python3` must be on the `PATH`; install what's missing with the system package manager, after asking. Step 5 installs `bun` and Claude Code if they aren't there.
+`git`, `curl`, `jq` and `unzip` must be on the `PATH`; install what's missing with the system package manager, after asking. Step 5 installs `bun` and Claude Code if they aren't there.
 
 The person signs in to Claude Code by running `claude` once **(you)**, now or after step 5.
 

@@ -48,9 +48,9 @@ there() {
   esac
 }
 
-# The unit files the lists name, quoted for `eval set --`. A list's paths start from its own folder, or from home with ~/.
+# The unit files the lists name (or the one list given), quoted for `eval set --`. A list's paths start from its own folder, or from home with ~/.
 units() {
-  for list in $(lists); do
+  for list in ${1:-$(lists)}; do
     jq -r --arg dir "$(dirname "$list")/" --arg home "$HOME/" \
       '.units // [] | map(if startswith("/") then . elif startswith("~/") then $home + .[2:] else $dir + . end) | @sh' "$list"
   done | tr '\n' ' '
@@ -208,7 +208,7 @@ case "${1:-}" in
       | reduce $lists[] as $list ($current; . * ($list.managed // {}))
       | .channelsEnabled = true
       | .allowedChannelPlugins = (([$current, $lists[].managed] | map(.allowedChannelPlugins // []) | add) + $allowed | unique)')
-    if [ "$(printf '%s' "$wanted" | jq -S .)" != "$(printf '%s' "$current" | jq -S '.allowedChannelPlugins |= unique?')" ]; then
+    if [ "$(printf '%s' "$wanted" | jq -S .)" != "$(printf '%s' "$current" | jq -S '.allowedChannelPlugins |= (. // [] | unique)')" ]; then
       printf '%s\n' "$wanted" | sudo sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1"' sh "$managed"
       echo "wrote $managed"
     fi
@@ -239,7 +239,10 @@ case "${1:-}" in
       [ "$(loginctl show-user "$user" -p Linger --value 2>/dev/null)" = yes ] || loginctl enable-linger "$user" 2>/dev/null || sudo loginctl enable-linger "$user" || :
       starting() { systemctl --user is-active hex.service | grep -Eqx 'active|activating'; }
     else
-      echo "no systemd user manager here, so hex runs on its own: have the machine start it as it boots (INSTALL.md step 5)"
+      set --
+      [ ! -f "$home/services.json" ] || eval "set -- $(units "$home/services.json")"
+      names=$(for file; do basename "$file"; done | paste -sd' ' -)
+      echo "no systemd user manager here, so hex runs on its own${names:+, and your units don't run: $names}; have the machine start hex as it boots (INSTALL.md step 5)"
       "$hex/bin/hex" start
       starting() { :; }
     fi
@@ -253,7 +256,7 @@ case "${1:-}" in
     problems=0
     ok() { echo "ok   $1"; }
     fix() { echo "fix  $1"; problems=$((problems + 1)); }
-    for tool in git curl jq python3 bun claude; do
+    for tool in git curl jq bun claude; do
       command -v "$tool" >/dev/null && ok "$tool" || fix "$tool isn't on PATH (INSTALL.md step 1)"
     done
     if command -v claude >/dev/null && command -v jq >/dev/null; then
