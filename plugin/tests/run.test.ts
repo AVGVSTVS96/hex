@@ -211,10 +211,10 @@ test("a .env line that fails stops hex as failed before any hub or job starts, a
   expect(await running.exited).toBe(1);
   const printed = await new Response(running.stderr).text();
   expect(printed).toContain("hex can't start");
-  expect(printed).toContain(".env: line 3");
+  expect(printed).toMatch(/line 3 of .*\.env fails/u);
   expect(printed).not.toContain("s3cret");
   expect(read()).toContain("chat_id=-100");
-  expect(read()).toContain("a line of its settings fails as a command");
+  expect(read()).toContain("fails as a command");
   expect(read()).not.toContain("s3cret");
   expect(hubs()).toEqual([]);
 });
