@@ -196,7 +196,9 @@ if (!busy && session_id && answered) {
   }
 }
 
-if (given(HEX_HUB) && given(HEX_THREAD) && (!busy || !mayRunNoTurn)) {
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session beside the thread isn't the thread's own, so its turns are never the thread's state, whatever its settings say.
+if (given(HEX_HUB) && given(HEX_THREAD) && !given(HEX_BESIDE) && (!busy || !mayRunNoTurn)) {
   const socket = connect(HEX_HUB);
 
   socket
@@ -214,7 +216,6 @@ if (given(HEX_HUB) && given(HEX_THREAD) && (!busy || !mayRunNoTurn)) {
           }),
           ...(leftForTheHubToTake !== undefined && { taken: [leftForTheHubToTake] }),
           ...(session_id && { session: session_id }),
-          ...(given(HEX_BESIDE) && { beside: HEX_BESIDE }),
         })}\n`,
         () => {
           socket.destroy();

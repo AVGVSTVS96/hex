@@ -1097,6 +1097,42 @@ test("a thread stays working while a session it started runs, that session one o
   expect(found(shop()).running).toBe(false);
 });
 
+test("a session hex runs beside a thread neither makes the thread work nor runs outside any thread", async () => {
+  const run = Bun.spawn(["sleep", "30"], {
+    env: {
+      ...process.env,
+      HEX_CHANNEL: "plugin:telegram@hex",
+      HEX_THREAD: "-1001234567890:107",
+      HEX_BESIDE: "45454545-beside",
+    },
+  });
+
+  afterAll(() => {
+    run.kill();
+  });
+  await until(() =>
+    readFileSync(`/proc/${run.pid}/environ`, "utf-8").includes("HEX_BESIDE=45454545-beside"),
+  );
+  threads("telegram", {
+    ...telegram,
+    "-1001234567890:107": { name: "general", session: "46464646-general" },
+  });
+  job("46464646-general", { state: "done", detail: "answered", updatedAt: ago(1) });
+  running("46464646-general", "idle");
+  const general = () => board.get("telegram:-1001234567890:107");
+  await until(() => general()?.state === "done");
+  running("45454545-beside", "busy", run.pid, {
+    kind: "interactive",
+    name: "general/heartbeat",
+    startedAt: Date.now(),
+  });
+  await Bun.sleep(500);
+  expect(general()?.state).toBe("done");
+  expect(general()?.agents).toEqual([]);
+  expect(board.strays().map((one) => one.id)).not.toContain("45454545-beside");
+  expect(board.get("claude:45454545")).toBeUndefined();
+});
+
 test("a job's session works under the thread that owns it, wherever it runs, and one whose owner is gone is a run of its own, with what it launched", async () => {
   const owned = Bun.spawn(["sleep", "30"], {
     env: { ...process.env, HEX_OWNER: "telegram:-1001234567890:103" },

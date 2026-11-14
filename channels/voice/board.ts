@@ -638,12 +638,15 @@ export class Board extends Changes {
     }));
   }
 
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A session hex runs beside the thread does hex's own work there, not the owner's conversation, so it doesn't make the thread work.
   private started(thread: Thread) {
     const key = `${thread.app}:${thread.id}`;
 
     return [...this.sessions.values()].filter(
       (session) =>
         session.id !== thread.session &&
+        session.beside === undefined &&
         busy(session) &&
         this.owners.get(session.id) === key &&
         !this.handed.has(session.id),

@@ -46,17 +46,37 @@ function newest(rows: (Row & { job?: string; ended?: boolean })[], room: number)
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// What a thread's session is shown at its prompt: what hex's other sessions said in its chat since it was last shown, so it knows what the owner is answering; and for a timed job run beside the thread, what that job's earlier runs said there, so it tells the owner nothing twice.
+// What a thread's session is shown at its prompt: what hex's other sessions said in its chat since it was last shown, or for a new one since its thread's own sessions last took a message, or its job last ran there, so it knows what the owner is answering; and for a timed job run beside the thread, what that job's earlier runs said there, so it tells the owner nothing twice.
 export function said(store: Store, thread: string, session: string, prompt = ""): string {
-  const since = store.seen.get(session, "said");
+  const shown = store.seen.get(session, "said");
   const key = KEY_ON_OPENING_CHANNEL_TAG.exec(prompt)?.[1];
   const row = key === undefined ? null : store.messages.get(key);
   const schedule = row?.meta?.schedule;
 
+  const besideRun = row !== null && besideWhat(row.to) !== undefined;
+
   const runs =
-    row !== null && besideWhat(row.to) !== undefined && schedule !== undefined
+    besideRun && schedule !== undefined
       ? store.messages.saidByEarlierRuns(row.to, thread, schedule, session)
       : [];
+
+  const since =
+    shown === ""
+      ? besideRun
+        ? (runs[0]?.at ?? row.at)
+        : (store.messages.lastTakenIn(thread, session) ?? "")
+      : shown;
+
+  const from =
+    shown === ""
+      ? besideRun
+        ? runs.length > 0
+          ? ` since [${schedule}] last ran`
+          : " since your prompt came"
+        : since === ""
+          ? ""
+          : " since this chat's last turn"
+      : " since your last turn";
 
   const earlier = newest(
     runs.map((run) => ({ ...run, ended: run.to !== thread })),
@@ -76,7 +96,7 @@ export function said(store: Store, thread: string, session: string, prompt = "")
 
   return [
     others.length > 0
-      ? `Said in this chat by hex's other sessions${since === "" ? "" : " since your last turn"}, which the owner may be answering:\n${others.join("\n")}`
+      ? `Said in this chat by hex's other sessions${from}, which the owner may be answering:\n${others.join("\n")}`
       : "",
     earlier.length > 0
       ? `What earlier runs of [${schedule}] said in this chat, and the last words each ended with, so you don't tell the owner again and go on from what they found:\n${earlier.join("\n")}`

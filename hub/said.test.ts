@@ -49,6 +49,7 @@ test("General is shown what a session beside it told the owner since its last tu
 test("a timed job's run beside a thread is shown what its earlier runs said there, so it says nothing twice", () => {
   prompted("schedule:heartbeat@1", "beside:general", "beat-1");
   wrote("telegram:1", "The landlord wrote about the lease", "beat-1");
+  Bun.sleepSync(2);
   prompted("schedule:catch-up@1", "beside:general", "catch-1", "catch-up");
   wrote("telegram:2", "A job ended", "catch-1");
   prompted("schedule:heartbeat@2", "beside:general", "beat-2");
@@ -102,4 +103,51 @@ test("a new session isn't shown its own thread's earlier sessions as others", ()
   wrote("telegram:10", "Hello.", "general-before");
 
   expect(said(store, "general", "general-after")).toBe("");
+});
+
+test("a new session is shown only what came since its job last ran, or since its thread's own sessions last took a message", () => {
+  prompted("schedule:heartbeat@1", "beside:general", "beat-1");
+  wrote("telegram:1", "Old news from long ago", "beat-1");
+  store.messages.deliver({
+    key: "telegram:2",
+    to: "general",
+    from: "telegram",
+    author: "owner",
+    body: "Thanks",
+    meta: {},
+  });
+  store.messages.take("telegram:2", "general-1");
+  Bun.sleepSync(2);
+  wrote("telegram:3", "The build finished", "beat-1");
+  Bun.sleepSync(2);
+  prompted("schedule:once@1", "beside:general", "once-1", "once");
+
+  expect(
+    said(
+      store,
+      "general",
+      "once-1",
+      '<channel source="telegram" key="schedule:once@1" user="schedule">\n[once] Hourly check\n</channel>',
+    ),
+  ).toBe("");
+
+  const fresh = said(store, "general", "general-2");
+  expect(fresh).toContain("since this chat's last turn");
+  expect(fresh).toContain("The build finished");
+  expect(fresh).not.toContain("Old news");
+});
+
+test("what a job's report run said is named for the job", () => {
+  store.messages.deliver({
+    key: "job:mail@1",
+    to: "beside:general",
+    from: "job",
+    author: "prompt",
+    body: "[job] mail ended",
+    meta: { user: "job", job: "mail" },
+  });
+  store.messages.take("job:mail@1", "report-1");
+  wrote("telegram:1", "Two new mails", "report-1");
+
+  expect(said(store, "general", "general-session")).toContain("[mail]: Two new mails");
 });

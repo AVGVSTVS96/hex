@@ -72,14 +72,14 @@ export class Turns {
     this.db.query("update turns set waiting = ? where session = ?").run(at, session);
   }
 
-  cut(thread: string, session?: string, at = now(), running: string[] = []): string[] {
+  cut(thread: string, session?: string, at = now()): string[] {
     return this.write(() => {
       const diedMidTurn = UnfinishedTurnRows.parse(
         this.db
           .query(
-            `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex')) and session not in (select value from json_each(?3))`,
+            `select session, handled from turns where (began is not null and ended is null or waiting is not null) and (session = ?2 or session in (select distinct taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and author <> 'hex'))`,
           )
-          .all(thread, session ?? null, JSON.stringify(running)),
+          .all(thread, session ?? null),
       );
 
       return diedMidTurn.flatMap(({ session: died, handled }) => {
@@ -95,6 +95,62 @@ export class Turns {
         ).map(([key]) => key);
       });
     });
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A session beside a thread that ended without seeing its turn through gives back what it took, and its start row if it never took it: each waits for a turn to go through anywhere (stalled), and one that waited already is left, taken by the hub. A run cut off with the machine (stall false) gives its rows back to run again as they are.
+  besideEnded(
+    session: string,
+    start?: string,
+    at = now(),
+    stall = true,
+  ): { given: Row[]; left: Row[] } {
+    return this.write(() => {
+      const { handled } = this.get(session);
+
+      const rows = MessageRows.parse(
+        this.db
+          .query(
+            `select * from messages where taken_by = ?1 and author <> 'hex' and "from" <> 'terminal' and taken_at >= ?2 or key = ?3 and taken_at is null order by n`,
+          )
+          .all(session, handled ?? null, start ?? null),
+      );
+
+      const left = rows.filter((row) => stall && row.meta?.stalled !== undefined);
+      const given = rows.filter((row) => !left.includes(row));
+
+      for (const row of left) {
+        this.db
+          .query("update messages set taken_by = 'hub', taken_at = ? where key = ?")
+          .run(at, row.key);
+      }
+
+      for (const row of given) {
+        this.db
+          .query(
+            `update messages set taken_by = null, taken_at = null, meta = iif(?2, json_set(coalesce(meta, '{}'), '$.stalled', ?3), meta) where key = ?1`,
+          )
+          .run(row.key, stall, at);
+      }
+
+      this.handled(session, at);
+
+      return { given, left };
+    });
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Sessions beside any thread whose last turn didn't go through and that no longer run.
+  unfinishedBeside(running: string[]): string[] {
+    return KeyValues.parse(
+      this.db
+        .query(
+          `select session from turns where (began is not null and (ended is null or coalesce(handled, '') <= began) or waiting is not null)
+           and session in (select taken_by from messages indexed by sessions where "to" >= 'beside:' and "to" < 'beside;' and taken_by is not null)
+           and session not in (select value from json_each(?1))`,
+        )
+        .values(JSON.stringify(running)),
+    ).map(([session]) => session);
   }
 
   midTurn(thread: string): boolean {

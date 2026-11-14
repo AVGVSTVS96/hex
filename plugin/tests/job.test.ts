@@ -369,25 +369,25 @@ test("a job's end is kept for its owner's thread while no hub runs, by its id or
       to: "stray-key",
       from: "job",
       body: containing("[job] round3 ended: success (exit 0)."),
-      meta: JSON.stringify({ user: "job" }),
+      meta: JSON.stringify({ user: "job", job: "round3" }),
     },
     {
       to: "555",
       from: "job",
       body: containing("[job] older ended"),
-      meta: JSON.stringify({ user: "job" }),
+      meta: JSON.stringify({ user: "job", job: "older" }),
     },
     {
       to: "-100123:101",
       from: "job",
       body: containing("[job] topic ended"),
-      meta: JSON.stringify({ user: "job" }),
+      meta: JSON.stringify({ user: "job", job: "topic" }),
     },
     {
       to: "-100123:909",
       from: "job",
       body: containing("[job] early ended"),
-      meta: JSON.stringify({ user: "job" }),
+      meta: JSON.stringify({ user: "job", job: "early" }),
     },
   ]);
 });
