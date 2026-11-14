@@ -6,13 +6,12 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
-  readdirSync,
   readFileSync,
   rmSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { z } from "zod";
@@ -30,6 +29,9 @@ const HEX = join(import.meta.dir, "../..");
 const home = mkdtempSync(join(tmpdir(), "job-"));
 const job = join(home, ".hex/bin/job");
 const ran = join(home, "ran.json");
+const launches = join(home, "launches.jsonl");
+const folders = join(home, "folders.txt");
+const here = hostname();
 
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -74,7 +76,11 @@ beforeAll(() => {
   mkdirSync(join(home, "fake"));
   writeFileSync(
     join(home, "fake/systemd-run"),
-    `#!/bin/sh\njq -cn '$ARGS.positional' --args -- "$@" > "${ran}"\n`,
+    `#!/bin/sh
+case "$*" in *--unit=refused*) exit 1 ;; esac
+jq -cn '$ARGS.positional' --args -- "$@" | tee "${ran}" >> "${launches}"
+pwd >> "${folders}"
+`,
   );
   chmodSync(join(home, "fake/systemd-run"), 0o755);
   writeFileSync(
@@ -82,7 +88,9 @@ beforeAll(() => {
     `#!/bin/sh
 case "$1" in
   is-system-running) cat "${home}/system.txt" 2>/dev/null || echo running ;;
-  --user) for unit; do :; done; grep -qx "$unit" "${home}/active.txt" 2>/dev/null ;;
+  --user) for unit; do :; done
+    if [ "$2" = show ]; then grep -qx "$unit" "${home}/stopping.txt" 2>/dev/null && echo 7; exit 0; fi
+    grep -qx "$unit" "${home}/active.txt" 2>/dev/null ;;
 esac
 `,
   );
@@ -448,7 +456,51 @@ test("a job that runs already is refused, and what it printed so far is kept", (
   rmSync(join(home, "active.txt"));
 });
 
-test("a job the machine going down stopped carries on as hex starts: a claude job in its own conversation, any other job told to its owner", () => {
+const told = (like: string) =>
+  z
+    .array(z.string())
+    .parse(
+      new Database(join(home, "state/hex.db"))
+        .query(`select body from messages where "from" = 'job' and body like ? order by rowid`)
+        .values(like)
+        .flat(),
+    );
+
+function resume(config: string) {
+  rmSync(launches, { force: true });
+  rmSync(folders, { force: true });
+
+  const resumed = Bun.spawnSync(["bun", job, "--resume"], {
+    cwd: home,
+    env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, CLAUDE_CONFIG_DIR: config },
+    stderr: "pipe",
+  });
+
+  expect(resumed.exitCode).toBe(0);
+
+  const started = (existsSync(launches) ? readFileSync(launches, "utf-8") : "")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => Args.parse(JSON.parse(line)));
+
+  return new Map(
+    started.map((args) => [
+      args.find((arg) => arg.startsWith("--unit="))?.slice("--unit=".length),
+      args,
+    ]),
+  );
+}
+
+const stoppedByASignal = { EXIT_CODE: "killed", EXIT_STATUS: "TERM" };
+const finishedByItself = { EXIT_CODE: "exited", EXIT_STATUS: "0" };
+
+const end = (unit: string, how = stoppedByASignal) =>
+  Bun.spawnSync(["bun", job, "--ended", unit, "t3:stray-key"], {
+    env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, ...how },
+  });
+
+test("a job the machine going down stopped carries on as hex starts: a claude job in its own conversation, any other job from the beginning", () => {
   const jobs = join(home, "state/jobs");
   rmSync(jobs, { recursive: true, force: true });
   const config = join(home, "claude");
@@ -463,32 +515,21 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   run(["live", "make", "all"], session);
   writeFileSync(join(home, "active.txt"), "live\n");
   writeFileSync(join(home, "system.txt"), "stopping\n");
-
-  const end = (unit: string) =>
-    Bun.spawnSync(["bun", job, "--ended", unit, "t3:stray-key"], {
-      env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}` },
-    });
-
   end("make");
   expect(readFileSync(join(jobs, "make.json"), "utf-8")).toContain('"make","all"');
   rmSync(join(home, "system.txt"));
-  writeFileSync(join(home, "state/moving"), "");
-  end("make");
-  expect(readFileSync(join(jobs, "make.json"), "utf-8")).toContain('"make","all"');
-  rmSync(join(home, "state/moving"));
-  rmSync(ran, { force: true });
   writeFileSync(join(jobs, "atrium.log"), "before the machine went down\n");
+  writeFileSync(join(jobs, "make.log"), "halfway\n");
 
-  const resumed = Bun.spawnSync(["bun", job, "--resume"], {
-    cwd: home,
-    env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, CLAUDE_CONFIG_DIR: config },
-    stderr: "pipe",
-  });
+  const started = resume(config);
 
-  expect(resumed.exitCode).toBe(0);
-  const args = Args.parse(JSON.parse(readFileSync(ran, "utf-8")));
-  expect(args).toContain("--unit=atrium");
-  expect(args.slice(args.indexOf("--"), -1)).toEqual([
+  expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
+    "atrium",
+    "early",
+    "make",
+  ]);
+  const atrium = started.get("atrium") ?? [];
+  expect(atrium.slice(atrium.indexOf("--"), -1)).toEqual([
     "--",
     join(home, ".hex/bin/place"),
     "hex/atrium",
@@ -498,30 +539,192 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     "--resume",
     "s-1",
   ]);
-  expect(args.at(-1)).toContain("carry on");
+  expect(atrium.at(-1)).toContain(`because ${here} went down; hex runs on ${here} now`);
+  expect(atrium.at(-1)).toContain("carry on");
+  const early = started.get("early") ?? [];
+  const earlyArgs: unknown[] = early.slice(early.indexOf("--") + 2);
+  expect(earlyArgs).toEqual([
+    "hex/early",
+    "--session-id",
+    matching(/^[0-9a-f-]{36}$/u),
+    "-p",
+    "never saved",
+  ]);
+  expect(early).not.toContain("s-2");
+  const make = started.get("make") ?? [];
+  expect(make.slice(make.indexOf("--"))).toEqual(["--", "make", "all"]);
   expect(readFileSync(join(jobs, "atrium.log"), "utf-8")).toBe("before the machine went down\n");
-  expect(
-    readdirSync(jobs)
-      .filter((file) => file.endsWith(".json"))
-      .toSorted(),
-  ).toEqual(["atrium.json", "live.json"]);
+  expect(readFileSync(join(jobs, "make.log"), "utf-8")).toBe("halfway\n");
+  expect(readFileSync(join(jobs, "make.json"), "utf-8")).not.toContain("stopped");
 
-  const told: unknown[] = z
-    .array(z.string())
-    .parse(
-      new Database(join(home, "state/hex.db"))
-        .query(
-          `select body from messages where "from" = 'job' and key like 'job:%:%' and (body like '%resumed%' or body like '%hasn''t run%') order by rowid`,
-        )
-        .values()
-        .flat(),
-    )
-    .toSorted();
-
-  expect(told).toEqual([
-    containing("[job] atrium stopped when the machine went down, and resumed"),
-    containing("[job] early stopped"),
-    containing("[job] make stopped"),
+  const ends: unknown[] = told("%stopped because%").toSorted();
+  expect(ends).toEqual([
+    containing(
+      `[job] atrium stopped because ${here} went down, and carried on in its own conversation as hex started on ${here}`,
+    ),
+    containing(`[job] early stopped because ${here} went down, and started over`),
+    containing(
+      `[job] make stopped because ${here} shut down, and started over from the beginning as hex started on ${here}`,
+    ),
   ]);
   rmSync(join(home, "active.txt"));
+});
+
+test("jobs hex stopped to move to another machine carry on where it lands, a claude job resuming a conversation and a prompt piped in included, told as a move", () => {
+  const jobs = join(home, "state/jobs");
+  rmSync(jobs, { recursive: true, force: true });
+  const config = join(home, "claude");
+  mkdirSync(join(config, "projects/-pick"), { recursive: true });
+  writeFileSync(join(config, "projects/-pick/r-1.jsonl"), "{}\n");
+  run(["pick", "claude", "-p", "--resume", "r-1", "--model", "opus", "pick up"], session);
+  const project = mkdtempSync(join(home, "checks-"));
+  run(["checks", "./checks.sh", "--all"], session, project);
+  run(["done", "make", "all"], session);
+  run(["graceful", "./serve.sh"], session);
+  run(["over", "make", "all"], session);
+  const overRecord = readFileSync(join(jobs, "over.json"), "utf-8");
+  end("over", finishedByItself);
+  writeFileSync(join(jobs, "over.json"), overRecord);
+  run(["piped", "claude", "-p", "--model", "opus"], session, home, "Build the Usage tab.\n");
+  writeFileSync(join(home, "state/moving"), "");
+
+  const records = ["pick", "checks", "piped"].map((unit) => {
+    const before = readFileSync(join(jobs, `${unit}.json`), "utf-8");
+    end(unit);
+
+    return readFileSync(join(jobs, `${unit}.json`), "utf-8") === before;
+  });
+
+  expect(records).toEqual([true, true, true]);
+  end("done", finishedByItself);
+  expect(existsSync(join(jobs, "done.json"))).toBe(false);
+  writeFileSync(join(home, "stopping.txt"), "graceful\n");
+  end("graceful", finishedByItself);
+  rmSync(join(home, "stopping.txt"));
+  expect(existsSync(join(jobs, "graceful.json"))).toBe(true);
+
+  rmSync(join(home, "state/moving"));
+
+  const started = resume(config);
+
+  expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
+    "checks",
+    "graceful",
+    "pick",
+    "piped",
+  ]);
+  const pick = started.get("pick") ?? [];
+  expect(pick.slice(pick.indexOf("--") + 2, -1)).toEqual([
+    "hex/pick",
+    "-p",
+    "--model",
+    "opus",
+    "--resume",
+    "r-1",
+  ]);
+  expect(pick.at(-1)).toContain(`hex moved to ${here}`);
+  expect(pick.at(-1)).toContain("pick up");
+  const checks = started.get("checks") ?? [];
+  expect(checks.slice(checks.indexOf("--"))).toEqual(["--", "./checks.sh", "--all"]);
+  expect(readFileSync(folders, "utf-8").split("\n")).toContain(project);
+  const piped = started.get("piped") ?? [];
+  expect(Buffer.from(value(piped, "StandardInputData") ?? "", "base64").toString()).toBe(
+    "Build the Usage tab.\n",
+  );
+  expect(told("%hex moved to%")).toHaveLength(4);
+  expect(told("%went down%").filter((body) => /\b(pick|checks|piped)\b/u.test(body))).toEqual([]);
+  expect(told("%[job] done ended%")).toHaveLength(1);
+  expect(told("%[job] graceful ended%")).toEqual([]);
+  expect(told("%[job] over stopped%")).toEqual([]);
+
+  for (const time of [1, 2, 3]) {
+    writeFileSync(join(home, "state/moving"), "");
+    end("checks");
+    rmSync(join(home, "state/moving"));
+    expect([time, resume(config).has("checks")]).toEqual([time, time < 3]);
+  }
+
+  expect(told("%[job] checks stopped%").at(-1)).toContain("started over 3 times in the last hour");
+});
+
+test("a job that can't come back as it was is told to its owner, and a bad or conflicting record holds up no other job", () => {
+  const jobs = join(home, "state/jobs");
+  rmSync(jobs, { recursive: true, force: true });
+  const config = join(home, "claude");
+  mkdirSync(join(config, "projects/-older"), { recursive: true });
+  writeFileSync(join(config, "projects/-older/o-1.jsonl"), "{}\n");
+  run(["latest", "claude", "-p", "--continue", "go on"], session);
+  mkdirSync(jobs, { recursive: true });
+  writeFileSync(join(jobs, "broken.json"), "{");
+  writeFileSync(
+    join(jobs, "olden.json"),
+    JSON.stringify({
+      owner: "t3:stray-key",
+      cwd: home,
+      properties: [],
+      command: ["claude", "-p", "--resume", "o-1", "first words"],
+    }),
+  );
+  writeFileSync(join(jobs, "olden.sync-conflict-20261113-010055-ABC.json"), "{}");
+  const owned = { owner: "t3:stray-key", cwd: home, properties: [] };
+  writeFileSync(
+    join(jobs, "forked.json"),
+    JSON.stringify({
+      ...owned,
+      command: ["claude", "-p", "--resume", "o-1", "--fork-session", "x"],
+    }),
+  );
+  writeFileSync(
+    join(jobs, "twice.json"),
+    JSON.stringify({
+      ...owned,
+      command: ["make", "all"],
+      startedOver: [1, 2, 3].map((minutes) =>
+        new Date(Date.now() - minutes * 60_000).toISOString(),
+      ),
+    }),
+  );
+  writeFileSync(
+    join(jobs, "gone.json"),
+    JSON.stringify({ ...owned, command: ["claude", "-p", "--resume", "g-1", "x"] }),
+  );
+  writeFileSync(join(jobs, "refused.json"), JSON.stringify({ ...owned, command: ["make", "all"] }));
+  writeFileSync(
+    join(jobs, "away.json"),
+    JSON.stringify({ ...owned, command: ["make", "all"], machine: "elsewhere" }),
+  );
+
+  const started = resume(config);
+
+  expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
+    "away",
+    "olden",
+  ]);
+
+  const olden = started.get("olden") ?? [];
+  expect(olden.slice(olden.indexOf("--") + 2, -1)).toEqual(["hex/olden", "-p", "--resume", "o-1"]);
+
+  const left: unknown[] = told("%hasn't run since%")
+    .filter((body) => /\[job\] (latest|forked|twice|gone) /u.test(body))
+    .toSorted();
+
+  expect(left).toEqual([
+    containing(
+      "[job] forked stopped because the machine went down, and hasn't run since: it would",
+    ),
+    containing(
+      `[job] gone stopped because the machine went down, and hasn't run since: the conversation it resumes isn't on ${here}`,
+    ),
+    containing("[job] latest stopped"),
+    containing(
+      "[job] twice stopped because the machine went down, and hasn't run since: it started over 3 times",
+    ),
+  ]);
+  const refused: unknown[] = told("%[job] refused stopped%");
+  expect(refused).toEqual([containing("couldn't start again")]);
+  const away: unknown[] = told("%[job] away stopped%");
+  expect(away).toEqual([
+    containing(`because hex moved from elsewhere to ${here}, and started over`),
+  ]);
+  expect(existsSync(join(jobs, "broken.json"))).toBe(true);
 });
