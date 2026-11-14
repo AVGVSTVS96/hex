@@ -795,10 +795,10 @@ const toldOn = (store: string, like: string) =>
 
 test("on a machine hex moved away from, a job's end and hex's commands go to the machine hex runs on", () => {
   mkdirSync(join(home, "xdg/hex"), { recursive: true });
+  run(["leftover", "make", "all"], session);
   writeFileSync(marker, "twin-x\n");
   rmSync(join(home, "ssh.log"), { force: true });
   open(join(home, "twin")).threads.keep("t3", { "stray-key": { name: "hex" } });
-  run(["leftover", "make", "all"], session);
   end("leftover", finishedByItself);
 
   const there: unknown[] = toldOn("twin", "%[job] leftover ended%");
@@ -820,6 +820,23 @@ test("on a machine hex moved away from, a job's end and hex's commands go to the
     .map((line) => line.split(" "));
 
   expect(asked.map(([host]) => host)).toEqual(["twin-x", "log-x"]);
+
+  const started = Bun.spawnSync(["bun", job, "later", "make", "all"], {
+    env: { ...fakes(), ...session },
+    cwd: home,
+  });
+
+  expect(started.exitCode).toBe(0);
+  expect(
+    Buffer.from(
+      readFileSync(join(home, "ssh.log"), "utf-8").trim().split("\n").at(-1)?.split(" ")[3] ?? "",
+      "base64",
+    )
+      .toString()
+      .split("\0")
+      .slice(-5),
+  ).toEqual([home, job, "later", "make", "all"]);
+  expect(existsSync(join(home, "state/jobs/later.json"))).toBe(false);
   expect(
     Buffer.from(asked.at(-1)?.[3] ?? "", "base64")
       .toString()
@@ -837,8 +854,8 @@ test("on a machine hex moved away from, a job's end and hex's commands go to the
 
 test("a job's end waits out a move, and one that can't reach hex is kept until hex starts somewhere", async () => {
   mkdirSync(join(home, "xdg/hex"), { recursive: true });
-  writeFileSync(marker, "");
   run(["mid", "make", "all"], session);
+  writeFileSync(marker, "");
 
   const ending = Bun.spawn(["bun", job, "--ended", "mid", "t3:stray-key"], {
     env: { ...fakes(), ...finishedByItself },
@@ -850,8 +867,8 @@ test("a job's end waits out a move, and one that can't reach hex is kept until h
 
   expect(toldOn("twin", "%[job] mid ended%")).toHaveLength(1);
 
-  writeFileSync(marker, "dead-x\n");
   run(["far", "make", "all"], session);
+  writeFileSync(marker, "dead-x\n");
   end("far", finishedByItself);
   rmSync(marker);
 

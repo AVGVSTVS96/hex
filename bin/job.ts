@@ -57,9 +57,10 @@ async function whereHexIs() {
 }
 
 const TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE = 3;
+const STOPPING_SETTLES_WITHIN_MS = 15_000;
 const SSH_CANT_REACH_IT = 255;
 
-async function onMachine(machine: string, command: string[]) {
+async function onMachine(machine: string, command: string[], input = "") {
   const words = Buffer.from(command.join("\0")).toString("base64");
 
   for (let tried = 1; ; tried++) {
@@ -73,7 +74,7 @@ async function onMachine(machine: string, command: string[]) {
         machine,
         `printf %s ${words} | base64 -d | xargs -0 env --`,
       ],
-      { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+      { stdin: Buffer.from(input), stdout: "pipe", stderr: "pipe", timeout: 30_000 },
     );
 
     if (asked.exitCode !== SSH_CANT_REACH_IT || tried === TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE) {
@@ -313,7 +314,16 @@ if (mode === "--owner") {
   );
 } else if (mode === "--running") {
   for (const unit of rest) {
-    const state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+    let state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+
+    for (
+      let waited = 0;
+      state === "deactivating" && waited < STOPPING_SETTLES_WITHIN_MS;
+      waited += 500
+    ) {
+      await Bun.sleep(500);
+      state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+    }
 
     if (["active", "activating", "deactivating", "reloading"].includes(state)) {
       console.log(`active ${unit}`);
@@ -336,7 +346,9 @@ if (mode === "--owner") {
       minute: "2-digit",
     });
 
-  for (const file of readdirSync(records).filter((name) => name.endsWith(".news"))) {
+  for (const file of existsSync(records)
+    ? readdirSync(records).filter((name) => name.endsWith(".news"))
+    : []) {
     const news = News.safeParse(JSON.parse(readFileSync(join(records, file), "utf-8")));
 
     rmSync(join(records, file));
@@ -481,7 +493,7 @@ if (mode === "--owner") {
 
     await tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
-} else {
+} else if ((await whereHexIs()) === "here") {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
   const jobOwner = given ?? reportsTo();
   const after = given === undefined ? rest : rest.slice(1);
@@ -557,6 +569,38 @@ if (mode === "--owner") {
 
   store.seen.unshow(`job:${mode}`, "stopped");
   process.exitCode = await launch(mode, kept, startArgs(kept), input, true);
+} else {
+  const there = await whereHexIs();
+
+  if (there === "moving") {
+    console.error("job: hex is moving between machines; start the job again in a minute");
+    process.exit(1);
+  }
+
+  const asWhoStartedIt = Object.entries(process.env).flatMap(([name, value]) =>
+    name.startsWith("HEX_") && isSet(value) ? [`${name}=${value}`] : [],
+  );
+
+  const started = await onMachine(
+    there,
+    [
+      "env",
+      ...asWhoStartedIt,
+      "sh",
+      "-c",
+      'cd "$1" && shift && exec "$@"',
+      "sh",
+      process.cwd(),
+      join(import.meta.dir, "job"),
+      ...(isSet(mode) ? [mode] : []),
+      ...rest,
+    ],
+    await stdinThatEnds(),
+  );
+
+  process.stdout.write(started.stdout);
+  process.stderr.write(started.stderr);
+  process.exit(started.exitCode ?? 1);
 }
 
 function conversationToResumeBy(command: string[]) {
