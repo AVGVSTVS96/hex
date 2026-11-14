@@ -488,9 +488,15 @@ const told = (like: string) =>
         .flat(),
     );
 
-function resume(config: string) {
+function resume(config: string, ...gone: string[]) {
   rmSync(launches, { force: true });
   rmSync(folders, { force: true });
+  writeFileSync(launches, "");
+
+  if (gone.length > 0) {
+    mkdirSync(join(home, "xdg/hex"), { recursive: true });
+    writeFileSync(join(home, "xdg/hex/gone"), `${gone.join("\n")}\n`);
+  }
 
   const resumed = Bun.spawnSync(["bun", job, "--resume"], {
     cwd: home,
@@ -747,7 +753,7 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
     JSON.stringify({ ...owned, command: ["make", "all"], machine: "elsewhere" }),
   );
 
-  const started = resume(config);
+  const started = resume(config, "elsewhere");
 
   expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
     "away",
@@ -939,12 +945,18 @@ test("hex starting here leaves a job still running on the machine it left there,
   record("cut", "twin-x");
   writeFileSync(join(home, "twin/jobs/cut.json"), "{}");
   writeFileSync(join(home, "twin-active.txt"), "kept\n");
-  const started = resume(config);
+  const first = resume(config);
 
-  expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
-    "cut",
-    "lost",
-  ]);
+  expect([...first.keys()]).toEqual(["cut"]);
+  expect(existsSync(join(jobs, "lost.json"))).toBe(true);
+  expect(told("%[job] lost stopped%")).toEqual([]);
+
+  rmSync(join(jobs, "cut.json"));
+
+  const started = resume(config, "dead-x");
+
+  expect([...started.keys()]).toEqual(["lost"]);
+  expect(existsSync(join(home, "xdg/hex/gone"))).toBe(false);
   expect(existsSync(join(jobs, "kept.json"))).toBe(true);
   expect(existsSync(join(jobs, "finished.json"))).toBe(false);
   expect(told("%[job] kept %")).toEqual([]);
