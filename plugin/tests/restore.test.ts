@@ -185,7 +185,7 @@ test("a hub that hex.service's ExecCondition keeps off this machine waits, and d
   expect(run.out).not.toContain("the hub isn't running");
 });
 
-test("a folder other than ~/hex gets a drop-in that has hex.service run it", () => {
+test("a folder other than ~/hex gets a drop-in that has hex.service run it, gone once it moves to ~/hex", () => {
   renameSync(home, join(root, "assistant"));
   home = join(root, "assistant");
   hex = join(home, ".hex");
@@ -193,6 +193,12 @@ test("a folder other than ~/hex gets a drop-in that has hex.service run it", () 
   expect(readFileSync(join(root, "config/systemd/user/hex.service.d/folder.conf"), "utf-8")).toBe(
     `[Service]\nExecStart=\nExecStart="${hex}/bin/hex" run\n`,
   );
+
+  renameSync(home, join(root, "hex"));
+  home = join(root, "hex");
+  hex = join(home, ".hex");
+  restore();
+  expect(existsSync(join(root, "config/systemd/user/hex.service.d/folder.conf"))).toBe(false);
 });
 
 test("a unit file of the machine's own gives way only when it says the same", () => {

@@ -195,10 +195,10 @@ case "${1:-}" in
     bun install --no-summary --cwd "$hex" >/dev/null
     "$hex/bin/hex" init >/dev/null
     # hex turns each channel on in its own sessions only, so it's installed turned off.
-    marketplaces=$(claude plugin marketplace list --json)
-    if ! printf '%s\n' "$marketplaces" | jq -e --arg path "$hex/channels" 'any(.[]; .name == "hex" and .path == $path)' >/dev/null; then
+    marketplace=$(claude plugin marketplace list --json | jq -r '.[] | select(.name == "hex") | .path // "elsewhere"')
+    if ! [ "$marketplace" -ef "$hex/channels" ]; then
       # One brought over from another machine points at its hex.
-      ! printf '%s\n' "$marketplaces" | jq -e 'any(.[]; .name == "hex")' >/dev/null || claude plugin marketplace remove hex >/dev/null
+      [ -z "$marketplace" ] || claude plugin marketplace remove hex >/dev/null
       claude plugin marketplace add "$hex/channels" >/dev/null
     fi
     installed=$(claude plugin list --json)
@@ -226,7 +226,7 @@ case "${1:-}" in
       for file; do
         [ -f "$file" ] || { echo "restore: there's no unit file at $file" >&2; exit 1; }
         link=$(link_of "$file")
-        if [ "$link" != "$file" ]; then
+        if ! [ "$link" -ef "$file" ]; then
           # A file of the machine's own in its place gives way only when it says the same.
           [ ! -f "$link" ] || [ -L "$link" ] || cmp -s "$link" "$file" || { echo "restore: $link is a file of this machine's own, unlike $file: move it away and run restore again" >&2; exit 1; }
           mkdir -p "$(dirname "$link")"
@@ -238,6 +238,8 @@ case "${1:-}" in
       if [ "$hex" != "$HOME/hex/.hex" ]; then
         mkdir -p "$units_dir/hex.service.d"
         printf '[Service]\nExecStart=\nExecStart="%s/bin/hex" run\n' "$hex" > "$units_dir/hex.service.d/folder.conf"
+      else
+        rm -f "$units_dir/hex.service.d/folder.conf"
       fi
       systemctl --user daemon-reload
       # A hub started by hand gives way to its unit.
@@ -299,7 +301,7 @@ case "${1:-}" in
       eval "set -- $(units)"
       for file; do
         link=$(link_of "$file") name=$(basename "$file")
-        if [ "$link" != "$file" ] && [ "$(readlink "$link")" != "$file" ]; then
+        if ! [ "$link" -ef "$file" ]; then
           fix "$name isn't linked from $file: run \`$hex/bin/hex restore\`"
         elif [ "$link" = "$units_dir/$name" ] && { systemctl --user -q is-failed "$name" || [ "$(systemctl --user show -p SubState --value "$name")" = auto-restart ]; }; then
           fix "$name failed: see \`journalctl --user -u $name\`"

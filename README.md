@@ -139,7 +139,7 @@ Your agent does the setup. You only do the parts nobody else can: create a bot w
 └── .hex/                           hex itself: this repo
     ├── HEX.md                      how it works
     ├── bin/
-    │   ├── hex                     init, start, stop, restart, status, doctor; run keeps the hub up; acp connects T3 Code; deliver wakes a thread; task, hold and log
+    │   ├── hex                     init, restore (sets a machine up from services.json), start, stop, restart, status, doctor; run keeps the hub up; acp connects T3 Code; deliver wakes a thread; task, hold and log
     │   ├── session                 how the hub starts each session
     │   ├── chat                        logs a DM, compresses it, and builds what its next session sees
     │   ├── wake                    loads your profile and its memory as each session starts and after a compaction
