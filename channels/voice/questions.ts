@@ -9,7 +9,7 @@ import { z } from "zod";
 import { generalOf, isDm, projectOf } from "./activity.ts";
 import type { Sent } from "./call.ts";
 import { Changes } from "./changes.ts";
-import { before, Check, final } from "./check.ts";
+import { before, Check, final, HANDED_BACK } from "./check.ts";
 import { linkAt, Links } from "./links.ts";
 import { caption, meta as mediaMeta } from "./media.ts";
 import type { Item } from "./media.ts";
@@ -153,9 +153,12 @@ const CheckFile = z.object({
 
 export type CheckResult = z.infer<typeof CheckFile>;
 
+export type HandedBackToHex = Question & { decided: string; why: string };
+
 export type View = {
   version: number;
   asks: Question[];
+  decided: HandedBackToHex[];
   stuck: (Stuck & { sent?: string })[];
   fresh: (Fresh & { read: boolean })[];
   check: { at: string; why: string; fixed: number; flagged: number } | null;
@@ -173,6 +176,7 @@ const MarksFile = z.object({
   dismissed: z.record(z.string(), z.string()).exactOptional(),
   read: z.record(z.string(), z.string()).exactOptional(),
   reopened: z.record(z.string(), ReopenedSchema).exactOptional(),
+  kept: z.record(z.string(), z.string()).exactOptional(),
 });
 
 type Marks = Required<z.infer<typeof MarksFile>>;
@@ -197,13 +201,15 @@ const WHERE = new Map([
 ]);
 
 const NOT_NEEDED = "Not needed";
+const BACK = "Back to hex";
+const DECIDED_MS = 7 * 24 * 60 * 60_000;
 
 const PICK = /\s*[([]?\s*(?:←\s*)?(?:(?:my|hex[’']s) pick)\s*[)\]]?/iu;
 
 type CallPlace = { stamp: string; title: string | undefined; started: string | undefined };
 
 export class Questions extends Changes {
-  view: Omit<View, "version"> = { asks: [], stuck: [], fresh: [], check: null };
+  view: Omit<View, "version"> = { asks: [], decided: [], stuck: [], fresh: [], check: null };
   counts = new Changes();
   private ledgers = new Map<string, Asked[]>();
   private readonly threads = new Map<string, Thread>();
@@ -580,6 +586,11 @@ export class Questions extends Changes {
       }
 
       const curated = this.result?.asks.find((question) => question.id === id);
+
+      const handedBack = new Set(
+        refs.filter((ref) => this.asked(ref)?.settled?.note.startsWith(BACK) === true),
+      );
+
       const failed: unknown[] = [];
       const stuck: Ref[] = [];
       const reopened: Ref[] = [];
@@ -622,6 +633,23 @@ export class Questions extends Changes {
           ...(question !== undefined && { question }),
           at: now(),
         };
+      }
+
+      for (const ref of reopened.filter((one) => handedBack.has(one))) {
+        const question = this.asked(ref);
+        const thread = `${ref.app}:${ref.thread}`;
+
+        this.marks.kept[refId(ref)] = now();
+
+        try {
+          await this.tell(
+            thread,
+            `(took back from you: this needs me after all) ${question ? fromLedger(ref.app, question).question : ""}`,
+            via,
+          );
+        } catch (error) {
+          failed.push(error);
+        }
       }
 
       const said = new Set<string>();
@@ -892,7 +920,11 @@ export class Questions extends Changes {
       return WHERE.has(asked.answer.via);
     }
 
-    return !asked.settled || /^✓ (Answered|Not needed)/u.test(asked.settled.note);
+    return (
+      !asked.settled ||
+      /^✓ (Answered|Not needed)/u.test(asked.settled.note) ||
+      asked.settled.note.startsWith(BACK)
+    );
   }
 
   private sent(thread: string, settled: number) {
@@ -1026,6 +1058,34 @@ export class Questions extends Changes {
       ];
     });
 
+    const recently = new Date(Date.now() - DECIDED_MS).toISOString();
+
+    const decided = [...this.ledgers]
+      .flatMap(([app, ledger]) =>
+        ledger.flatMap((question) => {
+          const { settled } = question;
+
+          if (settled?.note.startsWith(BACK) !== true || settled.at < recently) {
+            return [];
+          }
+
+          const id = refId({ app, thread: question.thread, message: question.message });
+          const told = store(this.state).messages.get(`check:back:${id}`)?.body;
+
+          return [
+            {
+              ...this.dress(fromLedger(app, question)),
+              decided: settled.at,
+              why:
+                told?.startsWith(HANDED_BACK) === true
+                  ? reasonOf(told.slice(HANDED_BACK.length))
+                  : sentence(settled.note.slice(BACK.length).replace(/^:\s*/u, "")),
+            },
+          ];
+        }),
+      )
+      .toSorted((a, b) => b.decided.localeCompare(a.decided));
+
     const raw = [...this.ledgers].flatMap(([app, ledger]) =>
       ledger
         .filter((question) => !question.answer && !question.settled && !used.has(refId(question)))
@@ -1053,6 +1113,7 @@ export class Questions extends Changes {
         ...reopened,
         ...raw.filter((question) => question.at <= checked),
       ],
+      decided,
       stuck,
       fresh: this.t3.fresh.map((item) => ({ ...item, read: filled(this.marks.read[item.id]) })),
       check: this.result
@@ -1070,7 +1131,9 @@ export class Questions extends Changes {
     }
 
     const moved =
-      view.asks.length !== this.view.asks.length || view.stuck.length !== this.view.stuck.length;
+      view.asks.length !== this.view.asks.length ||
+      view.decided.length !== this.view.decided.length ||
+      view.stuck.length !== this.view.stuck.length;
 
     this.view = view;
     this.changed();
@@ -1261,6 +1324,7 @@ export class Questions extends Changes {
     marks.sent = recent(marks.sent);
     marks.dismissed = recent(marks.dismissed);
     marks.read = recent(marks.read);
+    marks.kept = recent(marks.kept);
 
     marks.answers = Object.fromEntries(
       Object.entries(marks.answers).filter(([, answer]) => answer.at >= since || final(answer)),
@@ -1326,6 +1390,16 @@ function withItsShot(option: CuratedOption, shown: Asked | undefined): Option {
     ? // oxlint-disable-next-line anti-slop/no-shape-in-symbol-names -- hex voice reads an option's screenshot width over height by this name
       { ...option, shot, shape: widthOverHeight }
     : option;
+}
+
+function reasonOf(handedBack: string) {
+  const end = handedBack.indexOf(". ");
+
+  return end === -1 ? handedBack : handedBack.slice(end + 2);
+}
+
+function sentence(words: string) {
+  return words === "" ? "" : `${words[0]?.toUpperCase()}${words.slice(1)}.`;
 }
 
 function refId({ app, thread, message }: Ref) {
@@ -1405,6 +1479,7 @@ function readMarks(file: string): Marks {
     dismissed: marks.dismissed ?? {},
     read: marks.read ?? {},
     reopened: marks.reopened ?? {},
+    kept: marks.kept ?? {},
   };
 }
 

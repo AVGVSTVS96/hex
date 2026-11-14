@@ -402,12 +402,12 @@ finishes. The call's walk-through says the same.
 
 | Request | Answers |
 | --- | --- |
-| `GET /asks` | `{ version, asks, stuck, fresh, check }`: each open question's `id`, `kind` (`pick`, `yesno`, `do`, `look`), `task` and `topic` (its thread), `question`, `context`, `options` (its answers: `label`, `pick`), `links` (pages it points to, which answer nothing: `label`, `url`), `tag`, and `places`, every place it was asked (each thread once, at its open question, pinned post or message), the ones that open first, each newest first; what's `stuck` (`title`, `why`, one `action`); what finished since you looked (`fresh`, with `read`); and the last check's time and counts |
+| `GET /asks` | `{ version, asks, decided, stuck, fresh, check }`: each open question's `id`, `kind` (`pick`, `yesno`, `do`, `look`), `task` and `topic` (its thread), `question`, `context`, `options` (its answers: `label`, `pick`), `links` (pages it points to, which answer nothing: `label`, `url`), `tag`, and `places`, every place it was asked (each thread once, at its open question, pinned post or message), the ones that open first, each newest first; what the check handed back to hex in the last week (`decided`: the same fields, with when, and `why` it's hex's call); what's `stuck` (`title`, `why`, one `action`); what finished since you looked (`fresh`, with `read`); and the last check's time and counts |
 | `GET /asks?after=<version>` | the same, once anything has changed (or after 25 seconds) |
 | `POST /asks/<id>/answer` | `{ "label": "..." }`: answers it |
 | `POST /asks/<id>/note` | `{ "text": "..." }`: tells its thread, leaving it open |
 | `POST /asks/<id>/dismiss` | puts it away as not needed |
-| `POST /asks/<id>/undo` | takes that answer or not needed back |
+| `POST /asks/<id>/undo` | takes that answer or not needed back; on a `decided` one, puts it back on your list, tells its thread, and the check leaves it there |
 | `POST /stuck/<id>/act` | does its action: asks hex's General to fix it, or puts it away until it changes |
 | `POST /fresh/<id>/read` | marks a finished result read |
 | `POST /asks/talk` | during a call: Claude walks you through them, one card at a time |

@@ -1842,6 +1842,7 @@ test("the check's fingerprint takes in the answers it reads, and stays the same 
     open: [],
     closed: [],
     answered,
+    kept: [],
     pins: [],
     pictures: [],
     calls: [],
@@ -2252,6 +2253,89 @@ test("an ask the owner's rules give to hex leaves their list, its open question 
   expect(told).toHaveLength(1);
   expect(told[0]).toContain("bun or pnpm for the monorepos?");
   expect(told[0]).toContain("A tool pick that doesn't change what they get.");
+});
+
+test("what the check handed back to hex is listed as decided with its reason, and undo puts it back on the owner's list for good", async () => {
+  const ref = { app: "telegram", thread: DESK, message: 1 };
+  const id = `telegram:${DESK}:1`;
+
+  const back = {
+    id: "check:monorepo-pm",
+    task: `telegram:${DESK}`,
+    question: "bun or pnpm for the monorepos?",
+    why: "A tool pick that doesn't change what they get.",
+    from: [ref],
+  };
+
+  handBack(state, [back], { [`telegram:${DESK}`]: "desk" });
+  ledger([
+    asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"], {
+      settled: { note: "Back to hex: its call", at: new Date().toISOString() },
+    }),
+    asked(2, "Ship it?", ["Yes", "No"], {
+      settled: { note: "Back to hex: its call", at: "2026-01-01T00:00:00.000Z" },
+    }),
+    asked(3, "Delete the old screenshots?", ["Yes", "No"], {
+      settled: {
+        note: "Back to hex: trash is its job",
+        at: new Date(Date.now() - 60_000).toISOString(),
+      },
+    }),
+  ]);
+  questions = new Questions(state, {
+    t3Database: "/nonexistent",
+    t3Home: "/nonexistent",
+    check: (why) => {
+      checks.push(why);
+    },
+  });
+  await until(() => questions.view.decided.length === 2);
+  expect(questions.view.asks).toEqual([]);
+  expect(
+    questions.view.decided.map(({ id: decided, question, why }) => ({ decided, question, why })),
+  ).toEqual([
+    {
+      decided: id,
+      question: "bun or pnpm?",
+      why: "A tool pick that doesn't change what they get.",
+    },
+    {
+      decided: `telegram:${DESK}:3`,
+      question: "Delete the old screenshots?",
+      why: "Trash is its job.",
+    },
+  ]);
+
+  await questions.undo(id, "app");
+  await until(() => lines.length === 2);
+  expect(lines).toEqual([
+    { type: "reopen", thread: DESK, message: 1, via: "app" },
+    {
+      type: "inbound",
+      thread: DESK,
+      content: "(took back from you: this needs me after all) bun or pnpm?",
+      author: "owner",
+      meta: { user: "hex app" },
+    },
+  ]);
+  ledger([asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"])]);
+  await until(() => questions.view.asks.length === 1 && questions.view.decided.length === 0);
+  expect(questions.view.asks[0]).toMatchObject({ id, topic: "desk" });
+
+  const kept = Object.keys(
+    z
+      .object({ kept: z.record(z.string(), z.string()) })
+      .parse(JSON.parse(readFileSync(join(state, "voice", "marks.json"), "utf-8"))).kept,
+  );
+
+  const verdict = vet(
+    { asks: [], settle: [], back: [back], fixed: [], flagged: [], stuck: [] },
+    { telegram: [asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"])] },
+    { threads: { [`telegram:${DESK}`]: "desk" }, calls: [], kept },
+  );
+
+  expect(verdict.back).toEqual([]);
+  expect(verdict.settle).toEqual([]);
 });
 
 test("General hears of the first failed check in a run of them, and of the first after one succeeds", () => {
