@@ -1080,8 +1080,8 @@ export class Questions extends Changes {
 
     const recently = new Date(Date.now() - DECIDED_MS).toISOString();
 
-    const decided = [...this.ledgers]
-      .flatMap(([app, ledger]) =>
+    const decided = [
+      ...[...this.ledgers].flatMap(([app, ledger]) =>
         ledger.flatMap((question) => {
           const { settled } = question;
 
@@ -1103,9 +1103,9 @@ export class Questions extends Changes {
             },
           ];
         }),
-      )
-      .concat(this.tookOnItsPick(recently))
-      .toSorted((a, b) => b.decided.localeCompare(a.decided));
+      ),
+      ...this.tookOnItsPick(recently),
+    ].toSorted((a, b) => b.decided.localeCompare(a.decided));
 
     const raw = [...this.ledgers].flatMap(([app, ledger]) =>
       ledger
