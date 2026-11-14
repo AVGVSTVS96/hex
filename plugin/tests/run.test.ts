@@ -85,6 +85,8 @@ beforeEach(() => {
     copyFileSync(join(BIN, script), join(hex, "bin", script));
   }
 
+  copyFileSync(join(BIN, "../hub/ahead.ts"), join(hex, "hub/ahead.ts"));
+
   writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nMARK=1\n");
   git("init", "-q", "-b", "main");
 });
@@ -105,7 +107,7 @@ test("a restart lets the hub finish before the next one starts, on the settings 
   writeFileSync(
     join(hex, "bin/hex.new"),
     readFileSync(join(hex, "bin/hex"), "utf-8").replace(
-      "echo $$ >",
+      "export HEX_DIR=",
       (line) => `export LOOP=2; ${line}`,
     ),
   );
@@ -129,15 +131,18 @@ test("the hub gets the env of the settings files over .env, so a setting changes
   expect(hubs()[0]).toMatch(/^start mark=settings loop=1 \d+$/u);
 });
 
-test("a hub started ahead of its turn waits until the file HEX_AHEAD names is gone", async () => {
+test("hex started ahead of its turn starts its hub at once, which waits itself, and takes over the rest once the file HEX_AHEAD names is gone", async () => {
   commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   const ahead = join(home, "ahead");
   writeFileSync(ahead, "");
   run({ HEX_AHEAD: ahead });
-  await Bun.sleep(500);
-  expect(hubs()).toEqual([]);
-  rmSync(ahead);
   await until(() => hubs().length === 1);
+  await Bun.sleep(500);
+  expect(existsSync(join(home, "state/hub.pid"))).toBe(false);
+  expect(existsSync(join(home, "state/hex.bell"))).toBe(false);
+  rmSync(ahead);
+  await until(() => existsSync(join(home, "state/hub.pid")));
+  expect(hubs()).toHaveLength(1);
 });
 
 test("a stop waits for the hub to finish", async () => {

@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { ahead } from "./ahead.ts";
 import { nightly } from "./backup.ts";
 import { besideOf } from "./beside.ts";
 import { clients, free, listen, up } from "./hub.ts";
@@ -32,14 +33,28 @@ for (const signal of ["SIGHUP", "SIGTERM", "SIGINT"] as const) {
   process.on(signal, () => void hangUpSignOffAndExit(signal));
 }
 
+const hex = join(import.meta.dir, "..");
+const channels = join(hex, "channels");
+
+const Marketplace = z.object({ plugins: z.array(z.object({ source: z.string() })) });
+
+const { plugins } = Marketplace.parse(
+  JSON.parse(readFileSync(join(channels, ".claude-plugin/marketplace.json"), "utf-8")),
+);
+
+const sources = plugins.map((plugin) => join(channels, plugin.source));
+const waiting = process.env.HEX_AHEAD;
+
+if (waiting !== undefined && waiting !== "") {
+  await ahead(waiting, sources);
+}
+
 syncInBackground();
 
 await listen();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that can't start back to it. General then hears about a rollback that brought this hub up, or that hex is back after bin/hex told it hex couldn't start (state/down.<host>), and this hub backs up hex.db each night (backup.ts).
-const hex = join(import.meta.dir, "..");
-
 const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "HEAD"])
   .stdout.toString()
   .trim();
@@ -87,12 +102,4 @@ void (async () => {
   }
 })();
 
-const channels = join(hex, "channels");
-
-const Marketplace = z.object({ plugins: z.array(z.object({ source: z.string() })) });
-
-const { plugins } = Marketplace.parse(
-  JSON.parse(readFileSync(join(channels, ".claude-plugin/marketplace.json"), "utf-8")),
-);
-
-await Promise.all(plugins.map((plugin) => import(join(channels, plugin.source, "bot.ts"))));
+await Promise.all(sources.map((source) => import(join(source, "bot.ts"))));

@@ -132,23 +132,27 @@ case "${1:-}" in
     # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
     export HEX_STARTUP="$hex"
     export TELEGRAM_STATE_DIR="$home/state/telegram" DISCORD_STATE_DIR="$home/state/discord" BUZZ_STATE_DIR="$home/state/buzz" T3_STATE_DIR="$home/state/t3"
-    # Started ahead of its turn, while hex still runs on another machine that's handing it over, hex is ready here but
-    # waits until the file HEX_AHEAD names is gone, so the handover only waits for hex.db and the hub's start.
-    [ -z "${HEX_AHEAD:-}" ] || bun -e 'import { existsSync, watch } from "node:fs"; import { dirname } from "node:path"; const file = process.argv.at(-1) ?? ""; await new Promise<void>((resolve) => { const watcher = watch(dirname(file), () => { if (!existsSync(file)) { watcher.close(); resolve(); } }); if (!existsSync(file)) { watcher.close(); resolve(); } });' "$HEX_AHEAD"
-    echo $$ > "$pidfile"
-    # Apps following hex with `hex watch` read it again as it starts, as after a restore of hex.db.
-    printf . >> "$home/state/hex.bell"
     # A stop ends the hub the way a restart does, once no call is live, and waits for it to exit.
     trap '[ -z "${hub:-}" ] || { kill -TERM "$hub" 2>/dev/null; wait "$hub"; }; rm -f "$pidfile"; exit 0' INT TERM
-    first= second= third=
-    while :; do
+    start() {
       bun install --no-summary --cwd "$hex" >/dev/null || :
-      # Jobs a move or their machine going down stopped carry on, alongside each start of the hub, so a pass that failed
-      # is tried again; one whose unit runs is left alone.
-      (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) &
       # Read at every start, so a restart takes the settings as they are now.
       (. "$hex/bin/settings"; exec bun "$hex/hub/serve.ts") &
       hub=$!
+    }
+    # Started ahead of its turn, while hex still runs on another machine that's handing it over, the hub gets ready and
+    # waits (hub/ahead.ts), and so does the rest of hex here, until the file HEX_AHEAD names is gone.
+    start
+    [ -z "${HEX_AHEAD:-}" ] || bun "$hex/hub/ahead.ts" "$HEX_AHEAD"
+    echo $$ > "$pidfile"
+    # Apps following hex with `hex watch` read it again as it starts, as after a restore of hex.db.
+    printf . >> "$home/state/hex.bell"
+    first= second= third=
+    while :; do
+      [ -n "$hub" ] || start
+      # Jobs a move or their machine going down stopped carry on, alongside each start of the hub, so a pass that failed
+      # is tried again; one whose unit runs is left alone.
+      (. "$hex/bin/settings"; bun "$hex/bin/job" --resume || echo "hex: jobs that were stopped didn't resume; the hub's next start tries again" >&2) &
       if wait "$hub"; then
         hub=
         # A restart: go on as the bin/hex on disk now, which an update may have changed.
