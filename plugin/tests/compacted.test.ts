@@ -105,27 +105,16 @@ test("brings back the end of a message too long for a hook on its own", () => {
   expect(out).not.toContain("start");
 });
 
-test("a new session taking over a thread gets its status post, newest messages and where the rest is", () => {
+test("a new session taking over a thread gets the session it continues from, and nothing else", () => {
   kept("42", [
     ["owner", "ship it"],
     ["hex", "shipped"],
   ]);
-  open(join(home, "state")).pins.pinned({
-    app: "telegram",
-    thread: "42",
-    message: 7,
-    text: "scope",
-    note: "**desk**: 1. anchors ✓ 2. legs",
-  });
-  const transcript = "/projects/hex/old.jsonl";
+  const transcript = "/projects/hex/0d1e2f3a-0000-4000-8000-000000000000.jsonl";
   const out = hook({ HEX_THREAD: "42", HEX_HANDOFF: transcript }, "startup");
-  expect(out).toContain("You're a new session taking over this thread");
-  expect(out).toContain("**desk**: 1. anchors ✓ 2. legs");
-  expect(out).toContain(transcript);
-  expect(out).toContain(
-    `\`${join(home, ".hex/bin")}/hex log -- '42'\` has the messages before these`,
+  expect(out).toBe(
+    `You're continuing this thread from session 0d1e2f3a-0000-4000-8000-000000000000: ${transcript}\n`,
   );
-  expect(out).toContain("## hex · telegram · 42 · 2026-10-06 16:01 · [telegram:1]\n\nshipped");
 });
 
 test("a session that starts without taking over, or resumes, gets nothing from it", () => {
