@@ -62,9 +62,15 @@ function run(extra: Record<string, string> = {}) {
     ...extra,
   };
 
-  loop = Bun.spawn([join(hex, "bin/hex"), "run"], { env, stdout: "ignore", stderr: "pipe" });
+  const spawned = Bun.spawn([join(hex, "bin/hex"), "run"], {
+    env,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
 
-  return loop;
+  loop = spawned;
+
+  return spawned;
 }
 
 beforeEach(() => {
@@ -174,4 +180,18 @@ test("a commit whose hub can't start goes back to the last one General connected
     `not updated: hex ${bad.slice(0, 7)} couldn't start here`,
   );
   expect(git("rev-parse", "HEAD")).toBe(good);
+}, 20_000);
+
+test("a .env line that fails stops hex as failed, before any hub or job starts", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEADERS=x-a: b\n");
+  const running = run();
+  expect(await running.exited).toBe(1);
+  expect(await new Response(running.stderr).text()).toContain("hex can't start");
+  expect(hubs()).toEqual([]);
 });
+
+test("a hub that can't start, with no earlier hex to go back to, stops hex as failed", async () => {
+  commit("process.exit(1)\n", "a hub that crashes");
+  expect(await run().exited).toBe(1);
+}, 20_000);

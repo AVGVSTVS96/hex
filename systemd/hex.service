@@ -7,6 +7,9 @@ Environment=HEX_SESSIONS_SLICE=hex-sessions.slice
 ExecStart=%h/hex/.hex/bin/hex run
 Restart=always
 RestartSec=3
+# A hex that keeps failing waits longer between tries, so the unit shows as down, not active, until it starts.
+RestartSteps=5
+RestartMaxDelaySec=1min
 # A stop waits for a live call to end, the way a restart does.
 TimeoutStopSec=30min
 MemoryMax=2G
