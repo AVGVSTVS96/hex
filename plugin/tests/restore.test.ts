@@ -10,6 +10,7 @@ import {
   readlinkSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -210,6 +211,25 @@ test("a unit file of the machine's own gives way only when it says the same", ()
   expect(run.err).toContain(`${units}/hex-sessions.slice is a file of this machine's own`);
   expect(readlinkSync(join(units, "hex.service"))).toBe(join(hex, "systemd/hex.service"));
   expect(readFileSync(join(units, "hex-sessions.slice"), "utf-8")).toBe("[Slice]\nMemoryMax=1G\n");
+});
+
+test("a drop-in folder that's a link to another repo, which systemd skips, becomes a real one, and that repo stays as it was", () => {
+  mkdirSync(join(home, "services/mail.service.d"), { recursive: true });
+  writeFileSync(join(home, "services/mail.service.d/holder.conf"), "[Service]\n");
+  owner({ units: ["services/mail.service.d/holder.conf"] });
+  const dotfiles = join(root, "dotfiles/mail.service.d");
+  mkdirSync(dotfiles, { recursive: true });
+  writeFileSync(join(dotfiles, "holder.conf"), "[Service]\n");
+  const units = join(root, "config/systemd/user");
+  mkdirSync(units, { recursive: true });
+  symlinkSync(dotfiles, join(units, "mail.service.d"));
+
+  restore();
+  expect(lstatSync(join(units, "mail.service.d")).isDirectory()).toBe(true);
+  expect(readlinkSync(join(units, "mail.service.d/holder.conf"))).toBe(
+    join(home, "services/mail.service.d/holder.conf"),
+  );
+  expect(lstatSync(join(dotfiles, "holder.conf")).isFile()).toBe(true);
 });
 
 test("a channel that doesn't install stops restore, and a marketplace of another hex's is replaced", () => {
