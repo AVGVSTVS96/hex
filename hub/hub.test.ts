@@ -232,6 +232,12 @@ function start(
     );
   }
 
+  for (const { session: kept, cwd } of Object.values(options.registry ?? {})) {
+    if (kept !== undefined) {
+      saved(kept, cwd);
+    }
+  }
+
   if (options.agents) {
     writeFileSync(join(dir, "agents"), JSON.stringify(options.agents));
   }
@@ -1779,13 +1785,14 @@ test("a session that fails to start is reported with its reason, and the next me
 });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A launcher whose resumes fail as Claude Code fails one of a session no project folder has.
+// A launcher whose resumes fail as Claude Code fails one of a session no project folder has, its conversation in hex's folder gone as it resumes.
 function forgetting() {
   const launcher = join(dir, "launch");
+  const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/gu, "-"));
   writeFileSync(
     launcher,
     `#!/bin/sh
-case "$*" in *--resume*) echo "backgrounded · jobgone1 · test"; exit 0;; esac
+case "$*" in *--resume*) rm -rf '${project}'; echo "backgrounded · jobgone1 · test"; exit 0;; esac
 exec claude "$@"
 `,
   );
@@ -1799,7 +1806,22 @@ exec claude "$@"
   return launcher;
 }
 
-test("a thread whose session Claude Code no longer has starts a new one, which hears why when it connects", async () => {
+test("a thread whose session's conversation no project folder has, as after hex is restored on a new machine, starts a new session that takes over from hex.db", async () => {
+  start({ registry: { "chat:7": { name: "Desk anchors", session: SESSION } }, agents: [] });
+  rmSync(join(dir, "projects"), { recursive: true });
+  hub.deliver("chat:7", "Desk anchors", message);
+  const args = await launched();
+  expect(args).not.toContain("--resume");
+  expect(settingsOf(args).env.HEX_HANDOFF).toEndWith(`/${SESSION}.jsonl`);
+  saved("2c3d4e5f-0000-4000-8000-000000000000");
+  const { received } = await session("chat:7", "2c3d4e5f-0000-4000-8000-000000000000");
+  await until(() => received.length);
+  expect(received).toEqual([inbound(message)]);
+  await until(() => registry()["chat:7"]?.session === "2c3d4e5f-0000-4000-8000-000000000000");
+  expect(failures).toEqual([]);
+});
+
+test("a thread whose session's conversation vanishes as it resumes starts a new one, which hears why when it connects", async () => {
   start({
     launcher: forgetting(),
     registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
@@ -4965,9 +4987,31 @@ test("a job's news for a session beside a thread resumes that session once its r
   });
   await Bun.sleep(100);
   expect(runs()).toHaveLength(1);
+  saved(first.beside);
   writeFileSync(join(dir, "go"), "0");
   const second = await until(() => runs()[1]);
   expect(second.beside).toBe(first.beside);
   expect(second.args.slice(0, 3)).toEqual(["-p", "--resume", first.beside]);
+  expect(second.args.at(-1)).toContain('key="job:mail@1"');
+});
+
+test("a job's news for a session beside a thread whose conversation this machine doesn't have starts a new session for it", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  timed("schedule:heartbeat@1");
+  const first = await until(() => runs()[0]);
+  open(dir).messages.take("schedule:heartbeat@1", first.beside);
+  open(dir).messages.deliver({
+    key: "job:mail@1",
+    to: first.beside,
+    from: "job",
+    author: "prompt",
+    body: "[job] mail ended: success (exit 0).",
+    meta: { user: "job" },
+  });
+  writeFileSync(join(dir, "go"), "0");
+  const second = await until(() => runs()[1]);
+  expect(second.beside).not.toBe(first.beside);
+  expect(second.args.slice(0, 3)).toEqual(["-p", "--session-id", second.beside]);
   expect(second.args.at(-1)).toContain('key="job:mail@1"');
 });

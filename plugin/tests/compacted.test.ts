@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -110,10 +110,20 @@ test("a new session taking over a thread gets the session it continues from, and
     ["owner", "ship it"],
     ["hex", "shipped"],
   ]);
-  const transcript = "/projects/hex/0d1e2f3a-0000-4000-8000-000000000000.jsonl";
+  const transcript = join(home, "0d1e2f3a-0000-4000-8000-000000000000.jsonl");
+  writeFileSync(transcript, "{}\n");
   const out = hook({ HEX_THREAD: "42", HEX_HANDOFF: transcript }, "startup");
   expect(out).toBe(
     `You're continuing this thread from session 0d1e2f3a-0000-4000-8000-000000000000: ${transcript}\n`,
+  );
+});
+
+test("a new session taking over from one whose transcript isn't on this machine gets where the thread's messages are", () => {
+  kept("42", [["owner", "ship it"]]);
+  const transcript = join(home, "0d1e2f3a-0000-4000-8000-000000000000.jsonl");
+  const out = hook({ HEX_THREAD: "42", HEX_HANDOFF: transcript }, "startup");
+  expect(out).toBe(
+    `You're continuing this thread from session 0d1e2f3a-0000-4000-8000-000000000000, whose transcript isn't on this machine: \`${join(home, ".hex/bin")}/hex log -- '42'\` has its messages.\n`,
   );
 });
 
