@@ -56,6 +56,9 @@ beforeAll(() => {
     "hub/running.ts",
     "hub/claude.ts",
     "hub/until.ts",
+    "hub/beside.ts",
+    "hub/origin.ts",
+    "hub/mcp.ts",
   ]) {
     cpSync(join(HEX, file), join(home, ".hex", file), { dereference: true, recursive: true });
   }
@@ -121,6 +124,40 @@ test("a job a hex session starts is its thread's, in that session's own app, and
   expect(value(args, "CLAUDE_CODE_SESSION_NAME")).toBe("hex/round3");
   expect(value(args, "ExecStopPost")).toEndWith("job --ended round3 t3:stray-key");
   expect(run(["round3", "stray-key", "claude"], session).args).toContain("HEX_OWNER=t3:stray-key");
+});
+
+test("a job General or a session beside a thread starts reports beside it, so General's conversation stays the owner's", async () => {
+  const general = { HEX_CHANNEL: "plugin:telegram@hex", HEX_THREAD: "-100123:101" };
+  expect(value(run(["mail", "make"], { ...general, HEX_MAIN: "1" }).args, "HEX_OWNER")).toBe(
+    "telegram:beside:-100123:101",
+  );
+  const besideIt = run(["mail", "claude", "-p", "go"], { ...general, HEX_BESIDE: "b-1" }).args;
+  expect(value(besideIt, "HEX_OWNER")).toBe("telegram:b-1");
+
+  const owner = Bun.spawnSync(["bun", job, "--owner"], {
+    env: { ...env, ...general, HEX_BESIDE: "b-1" },
+  });
+
+  expect(owner.stdout.toString()).toBe("telegram:b-1\n");
+
+  await Bun.spawn(["bun", job, "--ended", "mail", "telegram:beside:-100123:101"], {
+    env: {
+      ...env,
+      SERVICE_RESULT: "success",
+      EXIT_STATUS: "0",
+      HEX_FROM: "telegram:-100123:101",
+      HEX_FROM_AT: new Date().toISOString(),
+    },
+    stderr: "pipe",
+  }).exited;
+
+  const told = open(join(home, "state"))
+    .messages.untaken()
+    .find((row) => row.key.startsWith("job:mail@"));
+
+  expect(told?.to).toBe("beside:-100123:101");
+  expect(told?.body).toContain("This work comes from my conversation in orchard");
+  open(join(home, "state")).db.run("delete from messages where key = ?", [told?.key ?? ""]);
 });
 
 test("an agent job goes to a machine with room, from the folder it was started from", () => {

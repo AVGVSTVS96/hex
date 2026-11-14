@@ -53,6 +53,16 @@ const MessageRow = z
 
 export const MessageRows = z.array(MessageRow);
 
+const withColumns = <Columns extends z.ZodObject>(columns: Columns) =>
+  z.array(
+    z
+      .record(z.string(), z.unknown())
+      .transform((raw) => ({ row: MessageRow.parse(raw), ...columns.parse(raw) })),
+  );
+
+const BesideRows = withColumns(z.object({ beside: z.string(), resume: TextOrNull }));
+const JobRows = withColumns(z.object({ job: TextOrNull }));
+
 const TakenAtRow = z.object({ at: TextOrNull });
 const TakerRow = z.object({ taken_by: z.string(), taken_at: z.string() }).nullable();
 const LastRow = z.object({ last: z.number().nullable() });
@@ -309,6 +319,81 @@ export class Messages {
             .all(JSON.stringify([thread].flat()));
 
     return MessageRows.parse(rows);
+  }
+
+  readdress(key: string, to: string): boolean {
+    return this.write(
+      () =>
+        this.db
+          .query('update messages set "to" = ? where key = ? and taken_at is null')
+          .run(to, key).changes === 1,
+    );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Untaken rows for sessions beside threads: to a beside address, for a new session, or to a session that took one, which takes it as it resumes.
+  beside(addresses: string[]): (Row & { beside: string; resume?: string })[] {
+    const rows = BesideRows.parse(
+      this.db
+        .query(
+          `select * from (
+             select m.*, iif(beside.value is null, (select b."to" from messages b indexed by taken where b.taken_by = m."to" and b."to" in (select value from json_each(?1)) limit 1), m."to") as beside,
+               iif(beside.value is null, m."to", null) as resume
+             from messages m indexed by untaken left join json_each(?1) beside on beside.value = m."to"
+             where m.taken_at is null
+           ) where beside is not null order by n`,
+        )
+        .all(JSON.stringify(addresses)),
+    );
+
+    return rows.map(({ row, beside, resume }) => ({
+      ...row,
+      beside,
+      ...(resume !== null && { resume }),
+    }));
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What hex said in the thread's chat since a time from sessions that aren't the thread's own (they took none of its messages), newest first, each with the job its writer ran beside the thread, if any.
+  saidByOthers(thread: string, session: string, since = ""): (Row & { job?: string })[] {
+    return JobRows.parse(
+      this.db
+        .query(
+          `select m.*, (select coalesce(json_extract(b.meta, '$.schedule'), json_extract(b.meta, '$.user')) from messages b indexed by taken where b.taken_by = m.taken_by and b."to" like 'beside:%' order by b.n limit 1) as job
+           from messages m indexed by said where m."to" = ?1 and m.at > ?3 and m.author = 'hex' and m.taken_by is not ?2
+           and json_extract(m.meta, '$.unsent') is null and json_extract(m.meta, '$.failed') is null
+           and not exists (select 1 from messages t indexed by sessions where t."to" = ?1 and t.taken_by = m.taken_by and t.author <> 'hex')
+           order by m.at desc, m.n desc limit 200`,
+        )
+        .all(thread, session, since),
+    ).map(({ row, job }) => ({ ...row, ...(job !== null && { job }) }));
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // What the earlier runs of a timed job beside a thread said in its chat, and the last words each ended with, newest first.
+  saidByEarlierRuns(beside: string, thread: string, schedule: string, session: string): Row[] {
+    return MessageRows.parse(
+      this.db
+        .query(
+          `select * from messages indexed by taken where author = 'hex'
+           and taken_by in (select taken_by from messages indexed by sessions where "to" = ?1 and taken_by is not null and taken_by <> ?4 and json_extract(meta, '$.schedule') = ?3)
+           and ("to" = taken_by or "to" = ?2 and json_extract(meta, '$.unsent') is null and json_extract(meta, '$.failed') is null)
+           order by at desc, n desc limit 50`,
+        )
+        .all(beside, thread, schedule, session),
+    );
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // The row a session beside a thread was first started for.
+  ranFor(session: string): Row | null {
+    return MessageRow.nullable().parse(
+      this.db
+        .query(
+          `select * from messages indexed by taken where taken_by = ? and "to" like 'beside:%' order by taken_at limit 1`,
+        )
+        .get(session),
+    );
   }
 
   mark(thread: string): string {

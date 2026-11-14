@@ -3,8 +3,9 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { besideOf } from "./beside.ts";
 import { clip } from "./fit.ts";
-import type { IdeaJob, Job } from "./schedule.ts";
+import type { IdeaJob } from "./schedule.ts";
 import { hexDir, open } from "./store.ts";
 import { render } from "./tasks.ts";
 
@@ -13,8 +14,6 @@ const CALL = 10 * 60_000;
 const PAST_FINDINGS_GIVEN = 5;
 
 const SYSTEM = `You keep one of my ideas moving while it waits on me. Below are my words for it, what to look into, and what your last checks found. Look for what's new since then: on the web, and in what's happened here when the idea touches it (\`.hex/bin/hex log -- '<thread>'\` prints a thread's conversation; pipe it to rg). When there's something I'd want to hear, answer news: true with a finding of a line or two and its links. Otherwise answer news: false, with what you looked at as the finding, so the next check goes further.`;
-
-const JOB = `You run one of my timed jobs as a check, on your own: only your answer reaches the thread the job belongs to. Look into what the job asks; acting on what you find is the thread's. When there's something the thread should act on or tell me, answer news: true with a finding it can act on alone: what's new, with its links and ids, and what the job says to do about it. Where the job says to message me, that message is your finding, and where it says what to answer when there's nothing, answer news: false, with what you looked at as the finding. Anything the job needs that you couldn't reach is news.`;
 
 const SCHEMA = {
   type: "object",
@@ -56,7 +55,7 @@ const CheckSchema = z.object({
 
 export type Check = z.infer<typeof CheckSchema>;
 
-async function spawnCheck(helper: string, command: string[], input: string): Promise<Found> {
+export async function look(input: string): Promise<Found> {
   const env = {
     ...Object.fromEntries(
       Object.entries(process.env).filter(
@@ -64,12 +63,25 @@ async function spawnCheck(helper: string, command: string[], input: string): Pro
       ),
     ),
     CLAUDE_CODE_ENTRYPOINT: "hex",
-    HEX_HELPER: helper,
+    HEX_HELPER: "ideas",
   };
 
   const run = Bun.spawn(
     [
-      ...command,
+      "claude",
+      "-p",
+      "--safe-mode",
+      "--model",
+      MODEL,
+      "--tools",
+      "WebSearch,WebFetch,Bash",
+      "--allowedTools",
+      "WebSearch",
+      "WebFetch",
+      "Bash(.hex/bin/hex log:*)",
+      "Bash(rg:*)",
+      "--system-prompt",
+      SYSTEM,
       "--effort",
       "low",
       "--json-schema",
@@ -104,54 +116,20 @@ async function spawnCheck(helper: string, command: string[], input: string): Pro
   };
 }
 
-export const look = (input: string) =>
-  spawnCheck(
-    "ideas",
-    [
-      "claude",
-      "-p",
-      "--safe-mode",
-      "--model",
-      MODEL,
-      "--tools",
-      "WebSearch,WebFetch,Bash",
-      "--allowedTools",
-      "WebSearch",
-      "WebFetch",
-      "Bash(.hex/bin/hex log:*)",
-      "Bash(rg:*)",
-      "--system-prompt",
-      SYSTEM,
-    ],
-    input,
-  );
+export function checks(state: string, idea?: string): Check[] {
+  let kept: Check[];
 
-export const see = (input: string) =>
-  spawnCheck(
-    "schedule",
-    [join(import.meta.dir, "..", "bin", "session"), "-p", "--append-system-prompt", JOB],
-    input,
-  );
-
-function kept(state: string, file: string): Check[] {
   try {
-    return readFileSync(join(state, file), "utf-8")
+    kept = readFileSync(join(state, "ideas.jsonl"), "utf-8")
       .split("\n")
       .filter((line) => line !== "")
       .map((line) => CheckSchema.parse(JSON.parse(line)));
   } catch {
     return [];
   }
-}
 
-export function checks(state: string, idea?: string): Check[] {
-  return kept(state, "ideas.jsonl").filter(
-    (check) => idea === undefined || idea === "" || check.idea === idea,
-  );
+  return kept.filter((check) => idea === undefined || idea === "" || check.idea === idea);
 }
-
-export const jobChecks = (state: string, name: string) =>
-  kept(state, "checks.jsonl").filter((check) => check.schedule === name);
 
 export async function research(
   state: string,
@@ -164,7 +142,8 @@ export async function research(
   const store = open(state);
   const id = job.idea;
   const task = store.tasks.get(id);
-  const to = job.thread ?? task?.owner ?? main;
+  const owner = job.thread ?? task?.owner ?? main;
+  const to = owner === main ? besideOf(main) : owner;
   const record: Check = { at: new Date().toISOString(), schedule: name, idea: id };
 
   if (!task || task.status === "done" || task.status === "dropped") {
@@ -227,65 +206,18 @@ export async function research(
   appendFileSync(join(state, "ideas.jsonl"), `${JSON.stringify(record)}\n`);
 }
 
-export async function watch(
-  state: string,
-  name: string,
-  job: Job,
-  main: string,
-  minute: number,
-  check = see,
-) {
-  const store = open(state);
-  const to = job.thread ?? main;
-  const record: Check = { at: new Date().toISOString(), schedule: name };
-
-  const past = jobChecks(state, name)
-    .filter((earlier) => earlier.finding !== undefined && earlier.finding !== "")
-    .slice(-PAST_FINDINGS_GIVEN);
-
-  record.input = [
-    `[${name}] ${job.prompt}`,
-    `It belongs to the thread ${store.threads.names()[store.threads.key(to)] ?? to}: \`.hex/bin/hex log -- '${to}'\` prints its conversation.`,
-    past.length
-      ? `What the last checks found:\n${past.map((earlier) => `- ${earlier.at.slice(0, 16)}Z${earlier.news === true ? ", told the thread" : ""}: ${earlier.finding}`).join("\n")}`
-      : "This is its first check.",
-    `It's now ${record.at.slice(0, 16)}Z.`,
-  ].join("\n\n");
-
-  try {
-    Object.assign(record, await check(record.input));
-
-    if (record.news === true) {
-      store.scheduler.fire(name, minute, to, `[${name}] News from its check: ${record.finding}`);
-    }
-  } catch (error) {
-    record.error = String(error);
-    store.scheduler.fire(
-      name,
-      minute,
-      to,
-      `[${name}] ${job.prompt}\n\n(Its check couldn't run, so it runs here this time: ${clip(record.error, 300)})`,
-    );
-  }
-
-  appendFileSync(join(state, "checks.jsonl"), `${JSON.stringify(record)}\n`);
-}
-
 const busy = new Set<string>();
 let oneCheckAtATime = Promise.resolve();
 
-export function study(state: string, name: string, job: Job, main: string, slot?: number) {
+export function study(state: string, name: string, job: IdeaJob, main: string, slot?: number) {
   if (busy.has(name)) {
     return;
   }
 
-  const { idea } = job;
+  const dueOrNeverChecked =
+    slot !== undefined || !checks(state).some((check) => check.schedule === name);
 
-  const dueOrIdeaNeverChecked =
-    slot !== undefined ||
-    (idea !== undefined && !checks(state).some((check) => check.schedule === name));
-
-  if (!dueOrIdeaNeverChecked) {
+  if (!dueOrNeverChecked) {
     return;
   }
 
@@ -298,9 +230,7 @@ export function study(state: string, name: string, job: Job, main: string, slot?
     await previous;
 
     try {
-      await (idea === undefined
-        ? watch(state, name, job, main, minute)
-        : research(state, name, { ...job, idea }, main, minute));
+      await research(state, name, job, main, minute);
     } catch (error) {
       process.stderr.write(`hub: ${name}'s check failed: ${String(error)}\n`);
     } finally {

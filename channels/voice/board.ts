@@ -201,11 +201,8 @@ type Follower = {
   said: Step[];
 };
 
-type HeartbeatTurn = { began: string; until?: string; after?: string };
-
 const TAIL = 256 * 1024;
 
-const lineWrittenAt = new WeakMap<Step, string>();
 const LATELY = 5;
 const STEPS = 24;
 const AGENT_STEPS = 12;
@@ -241,7 +238,6 @@ const APPS = new Map([
 ]);
 
 const WORK = new Set(["agent", "workflow"]);
-const RUNS = new Set([...WORK, "shell", "monitor"]);
 
 const TOLD = new Map<string, Agent["state"]>([
   ["completed", "done"],
@@ -275,11 +271,9 @@ export class Board extends Changes {
   private readonly stops: Stop[] = [];
   private tracks: Record<string, Turn[]>;
   private saving: ReturnType<typeof setTimeout> | undefined;
-  private beaten = "";
   private linked = "";
   private closed = "";
   private readonly groups = new Map<string, Run>();
-  private beats = new Map<string, HeartbeatTurn[]>();
 
   private readonly state: string;
   private readonly hexDir: string;
@@ -304,15 +298,13 @@ export class Board extends Changes {
           this.mark("threads");
         }
 
-        const beaten = open(state).turns.beaten();
         const linked = JSON.stringify(open(state).tasks.agentTasks());
         const closed = JSON.stringify(this.closedTasks());
 
-        if (beaten !== this.beaten || linked !== this.linked || closed !== this.closed) {
+        if (linked !== this.linked || closed !== this.closed) {
           this.schedule();
         }
 
-        this.beaten = beaten;
         this.linked = linked;
         this.closed = closed;
       }),
@@ -472,7 +464,6 @@ export class Board extends Changes {
     this.own();
     this.watchJobs();
     this.stale = { threads: false, sessions: false };
-    this.beats = open(this.state).turns.everyBeat();
     const since = new Date(Date.now() - KEEP).toISOString();
 
     const threads = this.threads
@@ -727,37 +718,16 @@ export class Board extends Changes {
   }
 
   private run(thread: Thread): Run {
-    const { job: current, timeline: currentTimeline } = hasText(thread.session)
+    const { job, timeline } = hasText(thread.session)
       ? this.job(thread.session)
       : { job: undefined, timeline: [] };
 
-    let job = current;
-    let timeline = currentTimeline;
     const session = hasText(thread.session) ? this.sessions.get(thread.session) : undefined;
     const started = this.started(thread);
     const handed = this.links.delegations(thread.app, thread.id);
     const out = handed.filter((one) => !HANDED[one.status]);
-    const beats = hasText(thread.session) ? (this.beats.get(thread.session) ?? []) : [];
-    const beat = this.heartbeatsBegan(thread, beats, session);
-
-    const earlier =
-      beat !== undefined &&
-      job?.fan?.some(
-        (fan) => RUNS.has(fan.kind) && !hasTime(fan.doneAt) && (fan.startedAt ?? 0) < beat,
-      ) === true;
-
-    if (beat !== undefined && job?.state !== "blocked") {
-      ({ job, timeline } = asHeartbeatFound(job, timeline, beat, earlier));
-    }
-
-    const beating = beat !== undefined && !earlier;
-
-    const outside = (at: string) =>
-      !beats.some((one) => at >= one.began && (!hasText(one.until) || at < one.until));
-
-    const ours = (step: Step) => outside(lineWrittenAt.get(step) ?? step.at);
     const known = STATES.get(job?.state ?? "");
-    const live = (busy(session) && !beating) || started.length > 0 || out.length > 0;
+    const live = busy(session) || started.length > 0 || out.length > 0;
     let state: State = live ? "working" : (known ?? "idle");
 
     if (!live && ((state === "working" && !session) || job?.detail?.startsWith("(idle") === true)) {
@@ -767,7 +737,7 @@ export class Board extends Changes {
     const lately = timeline
       .filter(
         (entry): entry is Entry & { detail: string } =>
-          hasText(entry.text) && hasText(entry.detail) && outside(entry.at),
+          hasText(entry.text) && hasText(entry.detail),
       )
       .slice(-LATELY)
       .toReversed()
@@ -811,7 +781,7 @@ export class Board extends Changes {
     const steps =
       state === "working"
         ? this.newestStepsFirst(key).filter(
-            (step) => ours(step) && (step.end ?? step.at) >= thisStretchWithRoomForALateBusyStatus,
+            (step) => (step.end ?? step.at) >= thisStretchWithRoomForALateBusyStatus,
           )
         : [];
 
@@ -824,7 +794,7 @@ export class Board extends Changes {
 
     const said =
       state === "working"
-        ? this.followers.get(key)?.said.findLast((step) => step.at >= since && ours(step))
+        ? this.followers.get(key)?.said.findLast((step) => step.at >= since)
         : undefined;
 
     const detail = job?.state !== "stopped" && hasText(job?.detail) ? plain(job.detail) : undefined;
@@ -840,9 +810,7 @@ export class Board extends Changes {
             ...(job?.fan ?? [])
               .filter(
                 (fan) =>
-                  WORK.has(fan.kind) &&
-                  (!hasTime(fan.doneAt) || fan.doneAt >= Date.parse(since)) &&
-                  !(beat !== undefined && (fan.startedAt ?? 0) >= beat),
+                  WORK.has(fan.kind) && (!hasTime(fan.doneAt) || fan.doneAt >= Date.parse(since)),
               )
               .map((fan) => this.subagent(key, fan)),
             ...started.map((one) =>
@@ -871,7 +839,7 @@ export class Board extends Changes {
       where: where(thread),
       place: this.place(thread),
       state,
-      running: session?.status === "busy" && !beating,
+      running: session?.status === "busy",
       line: oneLine(line),
       ...(needs !== undefined && { needs }),
       since,
@@ -1066,53 +1034,6 @@ export class Board extends Changes {
       lately: [],
       track: this.track(id, busyness(agents)),
     };
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  /* Heartbeats begin when Claude Code marks the session busy while a heartbeat waits as its only
-     message, and last until a prompt that isn't one comes, or Claude Code marks it busy again for
-     a message that isn't one. */
-  private heartbeatsBegan(thread: Thread, beats: HeartbeatTurn[], session?: Session) {
-    const heartbeatsSinceLastPrompt = beats.slice(
-      beats.findLastIndex((beat) => hasText(beat.after)) + 1,
-    );
-
-    const flipped = session ? (session.updated ?? session.started) : 0;
-    const first = heartbeatsSinceLastPrompt[0];
-    const last = heartbeatsSinceLastPrompt.at(-1);
-
-    const busyAgainForAnotherMessage =
-      hasText(last?.until) &&
-      session?.status === "busy" &&
-      flipped > Date.parse(last.until) &&
-      this.untaken(thread).some((row) => row.meta?.schedule !== "heartbeat");
-
-    if (first !== undefined && !busyAgainForAnotherMessage) {
-      return Date.parse(first.began);
-    }
-
-    if (session?.status !== "busy") {
-      return;
-    }
-
-    const { began, ended } = open(this.state).turns.get(session.id);
-
-    if (
-      (!hasText(began) || (hasText(ended) && Date.parse(began) < flipped)) &&
-      this.onlyAHeartbeatWaits(thread)
-    ) {
-      return flipped;
-    }
-  }
-
-  private untaken(thread: Thread) {
-    return open(this.state).messages.untaken(thread.id);
-  }
-
-  private onlyAHeartbeatWaits(thread: Thread) {
-    const waiting = this.untaken(thread);
-
-    return waiting.length > 0 && waiting.every((row) => row.meta?.schedule === "heartbeat");
   }
 
   private track(id: string, timelineClaudeCodeStartsOverOnRenew: Entry[]) {
@@ -1389,7 +1310,6 @@ export class Board extends Changes {
 
       if (did?.kind === "say" && hasText(did.text)) {
         const say = { ...did, at };
-        lineWrittenAt.set(say, at);
         follower.said = [...follower.said, say].slice(-follower.keep);
       }
 
@@ -1410,7 +1330,6 @@ export class Board extends Changes {
         ...(hasText(did.id) && { state: "running" as const }),
       };
 
-      lineWrittenAt.set(next, at);
       follower.steps.push(next);
 
       if (follower.steps.length > follower.keep) {
@@ -1679,31 +1598,6 @@ function toldOf(entry: TranscriptLine): [string, Told] | undefined {
         },
       ]
     : undefined;
-}
-
-function asHeartbeatFound(job: Job | undefined, timeline: Entry[], from: number, working: boolean) {
-  const kept = timeline.filter((entry) => Date.parse(entry.at) < from);
-
-  const last = working
-    ? kept.at(-1)
-    : kept.findLast((entry) => entry.state !== "working" || hasText(entry.text));
-
-  if (!job || !last) {
-    return {
-      job: job && { ...job, state: undefined, detail: undefined, needs: undefined },
-      timeline: kept,
-    };
-  }
-
-  return {
-    job: {
-      ...job,
-      state: last.state,
-      detail: last.detail,
-      needs: last.state === "blocked" ? job.needs : undefined,
-    },
-    timeline: kept,
-  };
 }
 
 function settled(steps: Step[]) {

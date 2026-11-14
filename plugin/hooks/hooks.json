@@ -109,7 +109,8 @@
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 2" },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 3" },
           { "type": "command", "command": "\"${CLAUDE_PLUGIN_ROOT}\"/../bin/rules 4 last" },
-          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" }
+          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/tasks.ts" },
+          { "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}\"/../hub/said.ts" }
         ]
       }
     ],

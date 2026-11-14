@@ -17,7 +17,9 @@ import { basename, join } from "node:path";
 import { $ } from "bun";
 import { z } from "zod";
 
+import { besideOf, besideWhat } from "../hub/beside.ts";
 import { saved } from "../hub/claude.ts";
+import { origin } from "../hub/origin.ts";
 import { served } from "../hub/running.ts";
 import { open, stateDir } from "../hub/store.ts";
 
@@ -84,18 +86,55 @@ function openThreadIdByKeyOrId(word: string): string | undefined {
   return found && `${found.app}:${key}`;
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Where a job's news goes: the session beside a thread that started it, which resumes for it; for General's own work, a new session beside General, so its conversation stays the owner's; otherwise the thread that started it.
+function reportsTo(): string | undefined {
+  const app = process.env.HEX_CHANNEL?.match(/^plugin:([^@]+)/u)?.[1];
+  const { HEX_BESIDE, HEX_MAIN, HEX_THREAD } = process.env;
+
+  if (app !== undefined && isSet(HEX_BESIDE)) {
+    return `${app}:${HEX_BESIDE}`;
+  }
+
+  if (app !== undefined && isSet(HEX_MAIN) && isSet(HEX_THREAD)) {
+    return `${app}:${besideOf(HEX_THREAD)}`;
+  }
+
+  return served();
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A new session beside General learns from the job where its work came from.
 function tell(unit: string, owner: string, said: string, at: string) {
+  const to = store.threads.key(owner);
+
+  const from =
+    besideWhat(to) === undefined
+      ? undefined
+      : origin(store, process.env.HEX_FROM, process.env.HEX_FROM_AT);
+
   store.messages.deliver({
     key: `job:${unit}@${at}`,
-    to: owner.slice(owner.indexOf(":") + 1),
+    to,
     from: "job",
     author: "prompt",
-    body: `[job] ${unit} ${said}`,
+    body: [`[job] ${unit} ${said}`, from].filter(isSet).join("\n"),
     meta: { user: "job" },
   });
 }
 
-if (mode === "--ended") {
+function nameOf(owner: string) {
+  const key = store.threads.key(owner);
+
+  const ran = store.messages.ranFor(key);
+  const thread = besideWhat(key) ?? (ran === null ? undefined : besideWhat(ran.to)) ?? key;
+
+  return store.threads.names()[thread] ?? thread;
+}
+
+if (mode === "--owner") {
+  console.log(reportsTo() ?? "");
+} else if (mode === "--ended") {
   const [unit = "", owner = ""] = rest;
   const hexMovingToAnotherMachine = existsSync(join(stateDir(), "moving"));
 
@@ -112,9 +151,10 @@ if (mode === "--ended") {
   rmSync(join(records, `${unit}.json`), { force: true });
 
   const output = lastOutput(unit);
-  const key = owner.slice(owner.indexOf(":") + 1);
+  const key = store.threads.key(owner);
+  const thread = besideWhat(key) ?? key;
 
-  if (!store.threads.list().some(({ thread }) => thread === key)) {
+  if (!store.messages.took(key) && !store.threads.list().some((each) => each.thread === thread)) {
     console.error(
       `job: ${unit} ended, but no app has the thread ${owner} yet; its end waits there`,
     );
@@ -188,7 +228,7 @@ if (mode === "--ended") {
   }
 } else {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
-  const jobOwner = given ?? served();
+  const jobOwner = given ?? reportsTo();
   const after = given === undefined ? rest : rest.slice(1);
   const [first = "", ...afterFirst] = after;
   const task = after.length > 1 && /^t-\d+$/u.test(first) ? first : undefined;
@@ -237,10 +277,9 @@ if (mode === "--ended") {
       ]
     : [];
 
-  const startedInThread = served({
-    HEX_CHANNEL: process.env.HEX_CHANNEL,
-    HEX_THREAD: process.env.HEX_THREAD,
-  });
+  const startedInThread = isSet(process.env.HEX_BESIDE)
+    ? reportsTo()
+    : served({ HEX_CHANNEL: process.env.HEX_CHANNEL, HEX_THREAD: process.env.HEX_THREAD });
 
   const conversationThatStartedIt = isSet(startedInThread)
     ? { HEX_FROM: startedInThread, HEX_FROM_AT: new Date().toISOString() }
@@ -406,7 +445,7 @@ async function launch(
   }
 
   const agent = basename(kept.command[0] ?? "") === "claude";
-  const name = `${store.threads.names()[store.threads.key(kept.owner)] ?? store.threads.key(kept.owner)}/${unit}`;
+  const name = `${nameOf(kept.owner)}/${unit}`;
   const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command;
   const roomToStopItsThreadOnAnotherMachineFirst = agent ? ["-p", "TimeoutStopSec=90s"] : [];
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];

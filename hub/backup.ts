@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { besideOf } from "./beside.ts";
 import { open } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
@@ -119,7 +120,7 @@ export function nightly(storeDir: string, hexDir: string, main: string): () => v
         const body = `[backup] hex couldn't back up state/hex.db for ${day}: ${error instanceof Error ? error.message : String(error)}. The next try is at 3:00.`;
         open(storeDir).messages.deliver({
           key: `backup:failed@${day}`,
-          to: main,
+          to: besideOf(main),
           from: "backup",
           author: "prompt",
           body,

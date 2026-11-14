@@ -23,6 +23,7 @@ export type Session = {
   thread?: string | undefined;
   parent?: string;
   helper?: string;
+  beside?: string;
   began?: string;
   ended?: string;
 };
@@ -102,6 +103,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
     // A background session runs with the supervisor's environment, not its dispatcher's, so its thread comes from its settings' env: https://code.claude.com/docs/en/agent-view#llm-gateway
     const env = kind === "bg" ? launched(respawnFlags) : environ(pid);
     const helper = nonEmpty(env.HEX_HELPER);
+    const beside = nonEmpty(env.HEX_BESIDE);
     sessions.set(id, {
       id,
       pid,
@@ -115,6 +117,7 @@ export function running(store: Store, claude = CLAUDE): Map<string, Session> {
       ...(updated !== undefined && { updated }),
       thread: served(env),
       ...(helper !== undefined && { helper }),
+      ...(beside !== undefined && { beside }),
       ...store.turns.get(id),
     });
   }

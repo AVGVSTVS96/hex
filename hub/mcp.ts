@@ -89,7 +89,7 @@ export type Payload =
 export type Line = { send: (payload: Payload) => void };
 
 type Hooks = {
-  call: (thread: string, tool: string, args: ToolArguments) => Promise<string>;
+  call: (thread: string, tool: string, args: ToolArguments, beside?: string) => Promise<string>;
   permission: (thread: string, request: Permission) => void;
   open: (thread: string, line: Line) => void;
   close: (thread: string, line: Line) => void;
@@ -154,6 +154,14 @@ function result(id: RpcId, value: Answer) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session hex runs beside a thread says its own id here: it speaks in the thread's chat, and is neither its inbound line nor its permission relay.
+function besideOf(request: Request) {
+  const session = request.headers.get("x-hex-beside");
+
+  return session === null || session === "" ? undefined : session;
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A channel over MCP's Streamable HTTP transport, for sessions whose plugin's .mcp.json points here with their binding and the hub's token in headers. Every session id is taken as it comes, so a session that connected before the hub restarted carries on where it was without initializing again.
 export function endpoint(
   name: string,
@@ -195,13 +203,14 @@ export function endpoint(
     args: ToolArguments,
     gone: AbortSignal,
     id: string,
+    beside?: string,
   ): Promise<Result> {
     if (gone.aborted) {
       return failure(`${toolName} didn't run: you stopped waiting before the hub read it`);
     }
 
     if (reads(toolName, args) || thread === undefined) {
-      return await call(thread, toolName, args);
+      return await call(thread, toolName, args, beside);
     }
 
     const scope = `${channel}:${thread}`;
@@ -224,7 +233,7 @@ export function endpoint(
         ));
     }
 
-    const answer = call(thread, toolName, args)
+    const answer = call(thread, toolName, args, beside)
       .then((answered) => {
         store.operations.finish(scope, id, JSON.stringify(answered));
 
@@ -243,6 +252,7 @@ export function endpoint(
     thread: string | undefined,
     toolName: string,
     args: ToolArguments,
+    beside?: string,
   ): Promise<Result> {
     try {
       if (thread === undefined) {
@@ -251,7 +261,9 @@ export function endpoint(
         );
       }
 
-      return { content: [{ type: "text", text: await hooks.call(thread, toolName, args) }] };
+      return {
+        content: [{ type: "text", text: await hooks.call(thread, toolName, args, beside) }],
+      };
     } catch (error) {
       return {
         content: [
@@ -398,10 +410,11 @@ export function endpoint(
     }
 
     const thread = threadOf(request);
+    const beside = besideOf(request);
     const session = request.headers.get("mcp-session-id");
 
     if (request.method === "GET") {
-      return stream(thread, session);
+      return stream(beside === undefined ? thread : undefined, session);
     }
 
     if (request.method === "DELETE") {
@@ -432,6 +445,7 @@ export function endpoint(
       if (
         method === "notifications/claude/channel/permission_request" &&
         thread !== undefined &&
+        beside === undefined &&
         asked.success
       ) {
         hooks.permission(thread, asked.data);
@@ -442,7 +456,10 @@ export function endpoint(
 
     if (method === "initialize") {
       const opened = crypto.randomUUID();
-      starting.set(opened, { is: "initialized" });
+
+      if (beside === undefined) {
+        starting.set(opened, { is: "initialized" });
+      }
 
       const capabilities = {
         tools: { listChanged: true },
@@ -497,7 +514,14 @@ export function endpoint(
 
       return result(
         id,
-        await once(thread, asked.data.name, asked.data.arguments ?? {}, request.signal, operation),
+        await once(
+          thread,
+          asked.data.name,
+          asked.data.arguments ?? {},
+          request.signal,
+          operation,
+          beside,
+        ),
       );
     }
 

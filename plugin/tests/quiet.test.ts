@@ -135,3 +135,27 @@ test("bin/quiet leaves out the turn of each session that asked for an update, no
   expect(next.exitCode).toBeNull();
   next.kill();
 });
+
+test("bin/quiet waits on a session running beside a thread, though it runs outside Claude's daemon", async () => {
+  rmSync(sessions, { recursive: true, force: true });
+  mkdirSync(sessions, { recursive: true });
+  const beside = Bun.spawn(["sleep", "30"], { env: { ...process.env, HEX_BESIDE: "beside-1" } });
+  writeFileSync(
+    join(sessions, "1.json"),
+    JSON.stringify({
+      pid: beside.pid,
+      sessionId: "beside-1",
+      name: "hex/heartbeat",
+      kind: "interactive",
+      status: "busy",
+      statusUpdatedAt: Date.now() - 1000,
+    }),
+  );
+  store.turns.turned("beside-1", true);
+  const quiet = startQuiet();
+  await until(() => quiet.said());
+  expect(quiet.said()).toBe("waiting on: hex/heartbeat\n");
+  store.turns.turned("beside-1", false);
+  expect(await quiet.exited).toBe(0);
+  beside.kill();
+});

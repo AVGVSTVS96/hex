@@ -152,6 +152,32 @@ test("a session whose process runs under another's works for what that one works
   expect(serving(found(sessions, "cccccccc-2"), held, sessions)).toBeUndefined();
 });
 
+test("a session hex runs beside a thread works for that thread, and says it runs beside it", async () => {
+  const run = Bun.spawn(["sleep", "30"], {
+    env: {
+      ...process.env,
+      HEX_CHANNEL: "plugin:telegram@hex",
+      HEX_THREAD: "-100:103",
+      HEX_BESIDE: "eeeeeeee-1",
+      HEX_OWNER: "",
+    },
+  });
+
+  afterAll(() => {
+    run.kill();
+  });
+  await until(() =>
+    readFileSync(`/proc/${run.pid}/environ`, "utf-8").includes("HEX_BESIDE=eeeeeeee-1"),
+  );
+  record("beside", { pid: run.pid, sessionId: "eeeeeeee-1", status: "busy", startedAt: 1 });
+  const sessions = running(store, claude);
+  expect(sessions.get("eeeeeeee-1")).toMatchObject({
+    thread: "telegram:-100:103",
+    beside: "eeeeeeee-1",
+  });
+  expect(serving(found(sessions, "eeeeeeee-1"), new Map(), sessions)).toBe("telegram:-100:103");
+});
+
 test("a background session works for the thread its job's settings name, before any thread holds it", () => {
   writeFileSync(
     join(claude, "thread-settings.json"),

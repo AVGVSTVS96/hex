@@ -81,11 +81,6 @@ const Initialized = z.object({
 
 const Declined = z.object({ error: z.object({ code: z.number() }) });
 
-function anyString(): string {
-  // oxlint-disable-next-line typescript/no-unsafe-return -- bun types its asymmetric matchers as any
-  return expect.any(String);
-}
-
 function matching(pattern: RegExp): string {
   // oxlint-disable-next-line typescript/no-unsafe-return -- bun types its asymmetric matchers as any
   return expect.stringMatching(pattern);
@@ -314,9 +309,6 @@ const respawns = () => calls().filter((each) => each[0] === "respawn");
 
 const restsOf = (thread: string) =>
   states.filter(([each, busy]) => each === thread && !busy).length;
-
-const minutesIntoNovember = (minutes: number) =>
-  new Date(Date.parse("2026-11-01T00:00:00.000Z") + minutes * 60_000).toISOString();
 
 const SeenLine = z.looseObject({});
 
@@ -1894,8 +1886,8 @@ test("a thread opened with a prompt, or as a fork, whose start failed starts aga
   expect(startedAgainFor("chat:10").at(-1)).toBe("carry on");
 });
 
-test("a thread whose starts keep failing says so in its chat with each message, and General hears of it once, at the third", async () => {
-  start({ main: "general", general: true });
+test("a thread whose starts keep failing says so in its chat with each message, and hex beside General hears of it once, at the third", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
   await launched();
   const general = await session("general");
   writeFileSync(
@@ -1909,11 +1901,12 @@ test("a thread whose starts keep failing says so in its chat with each message, 
   }
 
   expect(failures).toEqual(Array.from({ length: 4 }, () => ["chat:7", "exit 1 before init"]));
-  await until(() => general.received.length);
-  await Bun.sleep(50);
-  expect(heard(general.received).map((turn) => turn.content)).toEqual([
+  const run = await until(() => runs()[0]);
+  expect(run.args.at(-1)).toContain(
     '[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 3 times in a row: exit 1 before init. Its next message starts it again.',
-  ]);
+  );
+  expect(runs()).toHaveLength(1);
+  expect(general.received).toEqual([]);
 });
 
 test("General hears of a thread that keeps failing once its hub is there, even when that's after the third", async () => {
@@ -1947,10 +1940,10 @@ test("General hears of a thread that keeps failing once its hub is there, even w
   try {
     hub.deliver("chat:7", "Desk anchors", { ...message, content: "try 4" });
     await until(() => restsOf("chat:7") === 4);
-    await until(() => open(dir).messages.untaken("general").length);
+    await until(() => open(dir).messages.untaken("beside:general").length);
     expect(
       open(dir)
-        .messages.untaken("general")
+        .messages.untaken("beside:general")
         .map((row) => row.body),
     ).toEqual([
       '[hub] hex couldn\'t start the session of telegram thread "Desk anchors" 4 times in a row: exit 1 before init. Its next message starts it again.',
@@ -4511,190 +4504,6 @@ test("a channel tag in a message's own words takes nothing", async () => {
   expect(store.messages.get("schedule:heartbeat@2026-10-18T21:45Z")?.taken).toBeUndefined();
 });
 
-test("a heartbeat that opens its session's turn is kept until that turn ends or another prompt comes, and one inside a turn isn't", async () => {
-  const store = open(dir);
-
-  const prompt = async (key: string, from: string, body: string, meta?: Record<string, string>) => {
-    store.messages.deliver({
-      key,
-      to: "chat:7",
-      from,
-      author: from === "telegram" ? "owner" : "prompt",
-      body,
-      ...(meta && { meta }),
-    });
-
-    const hook = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
-      env: { ...process.env, HEX_STORE: dir },
-      stdin: new Blob([
-        JSON.stringify({
-          prompt: `<channel source="plugin:telegram:telegram" key="${key}">\n${body}\n</channel>`,
-          session_id: SESSION,
-        }),
-      ]),
-    });
-
-    expect(await hook.exited).toBe(0);
-  };
-
-  const beat = (slot: string) =>
-    prompt(`schedule:heartbeat@${slot}`, "schedule", "[heartbeat] Hourly check", {
-      user: "schedule",
-      schedule: "heartbeat",
-    });
-
-  await beat("2026-11-03T12:45Z");
-  const [first] = store.turns.beats(SESSION);
-
-  if (first === undefined) {
-    throw new Error("the heartbeat began no beat");
-  }
-
-  expect(first).toEqual({ began: anyString() });
-  await beat("2026-11-03T12:46Z");
-  expect(store.turns.beats(SESSION)).toEqual([first]);
-  store.turns.turned(SESSION, false);
-  expect(store.turns.beats(SESSION)).toEqual([{ began: first.began, until: anyString() }]);
-  expect(store.turns.beats(SESSION)[0]?.until).toBe(store.turns.get(SESSION).ended);
-  await beat("2026-11-03T13:45Z");
-  const [, second] = store.turns.beats(SESSION);
-
-  if (second === undefined) {
-    throw new Error("the next heartbeat began no beat");
-  }
-
-  expect(second).toEqual({ began: anyString() });
-  store.turns.turned(SESSION, false, first.began);
-  expect(store.turns.beats(SESSION)[1]).toEqual(second);
-  await Bun.sleep(5);
-  await prompt("telegram:1:50", "telegram", "ship it");
-  const after = store.turns.get(SESSION).began;
-
-  if (after === undefined) {
-    throw new Error("the prompt began no turn");
-  }
-
-  expect(store.turns.beats(SESSION)).toEqual([
-    { began: first.began, until: anyString(), after },
-    { began: second.began, until: after, after },
-  ]);
-  await beat("2026-11-03T14:45Z");
-  expect(store.turns.beats(SESSION)).toHaveLength(2);
-});
-
-test("hex.db counts a heartbeat from the busy flip after its turn's end, keeps a run's first beat a week on, and drops one a real prompt began before", () => {
-  const store = open(dir);
-
-  store.turns.turned("beat-a", true, minutesIntoNovember(0));
-  store.turns.turned("beat-a", false, minutesIntoNovember(1));
-  store.turns.turned(
-    "beat-a",
-    true,
-    minutesIntoNovember(60),
-    true,
-    Date.parse(minutesIntoNovember(59.9)),
-  );
-  expect(store.turns.beats("beat-a")).toEqual([{ began: minutesIntoNovember(59.9) }]);
-  store.turns.turned("beat-a", false, minutesIntoNovember(61));
-  store.turns.turned(
-    "beat-a",
-    true,
-    minutesIntoNovember(8 * 24 * 60),
-    true,
-    Date.parse(minutesIntoNovember(8 * 24 * 60 - 0.1)),
-  );
-  expect(store.turns.beats("beat-a").map((beat) => beat.began)).toEqual([
-    minutesIntoNovember(59.9),
-    minutesIntoNovember(8 * 24 * 60 - 0.1),
-  ]);
-  store.turns.turned("beat-b", false, minutesIntoNovember(0));
-  store.turns.turned("beat-b", true, minutesIntoNovember(2), true);
-  store.turns.turned("beat-b", true, minutesIntoNovember(1.5));
-  expect(store.turns.beats("beat-b")).toEqual([]);
-});
-
-test("a task the heartbeat started reports back inside the heartbeat, and one started before it ends the run", async () => {
-  const store = open(dir);
-  const claude = mkdtempSync(join(tmpdir(), "hex-claude-"));
-  const jobs = join(claude, "jobs", "job99999");
-  mkdirSync(jobs, { recursive: true });
-
-  const hook = async (prompt: string) => {
-    const run = Bun.spawn(["bun", join(import.meta.dir, "state.ts"), "busy"], {
-      env: { ...process.env, HEX_STORE: dir, CLAUDE_CONFIG_DIR: claude },
-      stdin: new Blob([JSON.stringify({ prompt, session_id: SESSION })]),
-    });
-
-    expect(await run.exited).toBe(0);
-  };
-
-  const told = (task: string) =>
-    hook(
-      `<task-notification>\n<task-id>${task}</task-id>\n<status>completed</status>\n</task-notification>`,
-    );
-
-  store.messages.deliver({
-    key: "schedule:heartbeat@2026-11-03T12:45Z",
-    to: "chat:7",
-    from: "schedule",
-    author: "prompt",
-    body: "[heartbeat] Hourly check",
-    meta: { user: "schedule", schedule: "heartbeat" },
-  });
-  await hook(
-    '<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-11-03T12:45Z">\n[heartbeat] Hourly check\n</channel>',
-  );
-  const [beat] = store.turns.beats(SESSION);
-
-  if (beat === undefined) {
-    throw new Error("the heartbeat began no beat");
-  }
-
-  writeFileSync(
-    join(jobs, "state.json"),
-    JSON.stringify({
-      sessionId: SESSION,
-      fan: [
-        { id: "early", kind: "agent", startedAt: Date.parse(beat.began) - 60_000 },
-        { id: "own", kind: "shell", startedAt: Date.parse(beat.began) + 1000 },
-      ],
-    }),
-  );
-  store.turns.turned(SESSION, false);
-  await Bun.sleep(5);
-  await told("own");
-  expect(store.turns.beats(SESSION).map((one) => one.after)).toEqual([undefined, undefined]);
-  store.turns.turned(SESSION, false);
-  await Bun.sleep(5);
-  store.messages.deliver({
-    key: "schedule:heartbeat@2026-11-03T13:45Z",
-    to: "chat:7",
-    from: "schedule",
-    author: "prompt",
-    body: "[heartbeat] Hourly check",
-    meta: { user: "schedule", schedule: "heartbeat" },
-  });
-  await hook(
-    '<channel source="plugin:telegram:telegram" key="schedule:heartbeat@2026-11-03T13:45Z">\n[heartbeat] Hourly check\n</channel>',
-  );
-  store.turns.turned(SESSION, false);
-  await Bun.sleep(5);
-  await told("own");
-  expect(store.turns.beats(SESSION).map((one) => one.after)).toEqual([
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-  ]);
-  store.turns.turned(SESSION, false);
-  await Bun.sleep(5);
-  await told("early");
-  expect(
-    store.turns.beats(SESSION).every((one) => one.after !== undefined && one.after !== ""),
-  ).toBe(true);
-  rmSync(claude, { recursive: true });
-});
-
 test("a session started before hex kept messages has the hub take them for it", async () => {
   start();
   open(dir).messages.deliver({
@@ -4866,4 +4675,253 @@ test("an operation keeps its result across Stop events regardless of elapsed tim
   expect(await kept("no session", {})).toBe(true);
   expect(await kept("busy", { session: SESSION, busy: true })).toBe(true);
   expect(await kept("done", { session: SESSION })).toBe(true);
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A launcher whose -p runs wait for a file named go, then exit with the code it holds, logging their arguments and HEX_BESIDE; anything else goes to the fake claude.
+function besideLauncher() {
+  const launcher = join(dir, "launch");
+  writeFileSync(
+    launcher,
+    `#!/bin/sh
+[ "$1" = -p ] || exec claude "$@"
+jq -cn --arg beside "$HEX_BESIDE" '{beside: $beside, args: $ARGS.positional}' --args -- "$@" >> "${dir}/runs"
+while [ ! -f "${dir}/go" ]; do [ -d "${dir}" ] || exit 0; sleep 0.02; done
+exit "$(cat "${dir}/go")"
+`,
+  );
+  chmodSync(launcher, 0o755);
+
+  return launcher;
+}
+
+const Run = z.object({ beside: z.string(), args: z.array(z.string()) });
+
+function runs() {
+  return existsSync(join(dir, "runs"))
+    ? readFileSync(join(dir, "runs"), "utf-8")
+        .split("\n")
+        .slice(0, -1)
+        .map((each) => Run.parse(JSON.parse(each)))
+    : [];
+}
+
+function timed(key: string, to = "beside:general") {
+  open(dir).messages.deliver({
+    key,
+    to,
+    from: "schedule",
+    author: "prompt",
+    body: "[heartbeat] Hourly check",
+    meta: { user: "schedule", schedule: "heartbeat" },
+  });
+}
+
+test("a timer beside General runs in a session of its own, as hex in General's chat, and General's session never hears it", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  const general = await session("general");
+  timed("schedule:heartbeat@1");
+  const run = await until(() => runs()[0]);
+  const args = run?.args ?? [];
+  expect(args.slice(0, 3)).toEqual(["-p", "--session-id", run?.beside ?? ""]);
+  expect(args.at(-1)).toStartWith('<channel source="telegram" key="schedule:heartbeat@1"');
+  expect(args.at(-1)).toContain("\n[heartbeat] Hourly check\n</channel>");
+  const { env, enabledPlugins } = settingsOf(args);
+  expect(enabledPlugins).toEqual({ "telegram@hex": true });
+  expect(env).toMatchObject({ HEX_CHANNEL: CHANNEL, HEX_THREAD: "general", HEX_MAIN: "1" });
+  expect(env.HEX_HUB).toBe(join(dir, "hub.sock"));
+  open(dir).messages.take("schedule:heartbeat@1", run?.beside ?? "");
+  writeFileSync(join(dir, "go"), "0");
+  await Bun.sleep(200);
+  expect(general.received).toEqual([]);
+  expect(failures).toEqual([]);
+  expect(runs()).toHaveLength(1);
+});
+
+test("a session beside a thread speaks in its chat as itself, and is neither its inbound line nor its permission relay", async () => {
+  start({
+    main: "general",
+    general: true,
+    call: (thread) => {
+      hub.sent(thread, { content: "The landlord wrote." });
+
+      return Promise.resolve("sent");
+    },
+  });
+  await launched();
+  const general = await session("general");
+  const beside = http("general", { "x-hex-beside": "beside-1" });
+  await beside.initialize();
+  await beside.open();
+  await beside.rpc("tools/list");
+  await beside.call("reply", { text: "The landlord wrote." });
+  await beside.ask({
+    request_id: "abcde",
+    tool_name: "Bash",
+    description: "ls",
+    input_preview: "{}",
+  });
+  hub.deliver("general", "hex", { ...message, content: "and now?" });
+  await until(() => general.received.length);
+  expect(heard(general.received).map((turn) => turn.content)).toEqual(["and now?"]);
+  expect(beside.received).toEqual([]);
+  expect(prompts).toEqual([]);
+  expect(
+    open(dir)
+      .messages.said("general")
+      .find((row) => row.body === "The landlord wrote.")?.taken?.by,
+  ).toBe("beside-1");
+});
+
+const aTurnGoesThrough = () => sendToHub({ type: "state", thread: "chat:7", busy: false });
+
+test("a run beside a thread that never takes its row starts again once a turn goes through, then its chat hears why, once, and the hub takes it", async () => {
+  writeFileSync(join(dir, "go"), "1");
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  timed("schedule:heartbeat@1");
+  await until(() => runs().length === 1);
+  await Bun.sleep(200);
+  expect(runs()).toHaveLength(1);
+  expect(failures).toEqual([]);
+  await aTurnGoesThrough();
+  await until(() => failures.length);
+  expect(runs()).toHaveLength(2);
+  expect(failures).toEqual([
+    ["general", "[heartbeat] couldn't start beside this chat, 2 times: exit 1"],
+  ]);
+  expect(open(dir).messages.get("schedule:heartbeat@1")?.taken?.by).toBe("hub");
+});
+
+const refused = (by: string) =>
+  sendToHub({
+    type: "state",
+    thread: "general",
+    busy: false,
+    failed: true,
+    error: "server_error",
+    said: "API Error: Connection refused",
+    session: by,
+    beside: by,
+  });
+
+test("a run beside a thread that fails after taking its row carries on once a turn goes through, its chat hearing once with the API's words, and is left if it fails again", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  timed("schedule:heartbeat@1");
+  const run = await until(() => runs()[0]);
+  open(dir).messages.take("schedule:heartbeat@1", run.beside);
+  await refused(run.beside);
+  await Bun.sleep(100);
+  expect(failures).toEqual([]);
+  writeFileSync(join(dir, "go"), "1");
+  await until(() => failures.length);
+  expect(failures).toEqual([
+    [
+      "general",
+      "[heartbeat] ran beside this chat and failed: API Error: Connection refused\nIt carries on once turns go through again.",
+    ],
+  ]);
+  await Bun.sleep(200);
+  expect(runs()).toHaveLength(1);
+  rmSync(join(dir, "go"));
+  await aTurnGoesThrough();
+  const again = await until(() => runs()[1]);
+  expect(again.args.slice(0, 3)).toEqual(["-p", "--resume", run.beside]);
+  expect(again.args.at(-1)).toContain(`key="hub:beside:${run.beside}:carry"`);
+  open(dir).messages.take(`hub:beside:${run.beside}:carry`, run.beside);
+  writeFileSync(join(dir, "go"), "1");
+  await until(() => failures.length === 2);
+  expect(failures[1]?.[1]).toStartWith("[heartbeat] failed again beside this chat");
+  await aTurnGoesThrough();
+  await Bun.sleep(200);
+  expect(runs()).toHaveLength(2);
+});
+
+test("a run beside a thread cut off mid-turn with the machine runs again as the hub starts", async () => {
+  const store = open(dir);
+  store.messages.deliver({
+    key: "schedule:once@1",
+    to: "beside:general",
+    from: "schedule",
+    author: "prompt",
+    body: "[once] Remind me",
+    meta: { user: "schedule", schedule: "once" },
+  });
+  store.turns.turned("dead-beside", true, "2026-01-01T00:00:00.000Z");
+  store.messages.take("schedule:once@1", "dead-beside");
+  start({ main: "general", general: true, launcher: besideLauncher(), agents: [] });
+  const run = await until(() => runs()[0]);
+  expect(run.args.at(-1)).toContain('key="schedule:once@1"');
+  expect(run.beside).not.toBe("dead-beside");
+});
+
+test("a run beside a thread that outlived the hub fails when the API refuses its turn, and carries on once a turn goes through", async () => {
+  const store = open(dir);
+  timed("schedule:heartbeat@1");
+  store.messages.take("schedule:heartbeat@1", "outlived");
+  start({ main: "general", general: true, launcher: besideLauncher(), agents: [] });
+  await launched();
+  await refused("outlived");
+  await until(() => failures.length);
+  expect(failures).toEqual([
+    [
+      "general",
+      "[heartbeat] ran beside this chat and failed: API Error: Connection refused\nIt carries on once turns go through again.",
+    ],
+  ]);
+  expect(runs()).toEqual([]);
+  await aTurnGoesThrough();
+  const again = await until(() => runs()[0]);
+  expect(again.args.slice(0, 3)).toEqual(["-p", "--resume", "outlived"]);
+  expect(again.args.at(-1)).toContain('key="hub:beside:outlived:carry"');
+});
+
+test("a turn beside a thread is never the thread's own", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  const general = await session("general");
+  await sendToHub({ type: "state", thread: "general", busy: true, session: "b", beside: "b" });
+  await sendToHub({ type: "state", thread: "general", busy: false, session: "b", beside: "b" });
+  await Bun.sleep(100);
+  expect(states.filter(([thread]) => thread === "general")).toEqual([]);
+  expect(general.received).toEqual([]);
+});
+
+test("a client that shows only its own turns can't be spoken into from beside, so its thread takes the row", async () => {
+  clients.set("telegram", { hub, waits: true, place: () => Promise.reject(new Error("no")) });
+
+  try {
+    start({ main: "general", general: true, launcher: besideLauncher() });
+    await launched();
+    timed("schedule:heartbeat@1");
+    await until(() => open(dir).messages.get("schedule:heartbeat@1")?.to === "general");
+    expect(runs()).toEqual([]);
+  } finally {
+    clients.delete("telegram");
+  }
+});
+
+test("a job's news for a session beside a thread resumes that session once its run is over", async () => {
+  start({ main: "general", general: true, launcher: besideLauncher() });
+  await launched();
+  timed("schedule:heartbeat@1");
+  const first = await until(() => runs()[0]);
+  open(dir).messages.take("schedule:heartbeat@1", first.beside);
+  open(dir).messages.deliver({
+    key: "job:mail@1",
+    to: first.beside,
+    from: "job",
+    author: "prompt",
+    body: "[job] mail ended: success (exit 0).",
+    meta: { user: "job" },
+  });
+  await Bun.sleep(100);
+  expect(runs()).toHaveLength(1);
+  writeFileSync(join(dir, "go"), "0");
+  const second = await until(() => runs()[1]);
+  expect(second.beside).toBe(first.beside);
+  expect(second.args.slice(0, 3)).toEqual(["-p", "--resume", first.beside]);
+  expect(second.args.at(-1)).toContain('key="job:mail@1"');
 });

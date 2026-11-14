@@ -7,6 +7,7 @@
       "headers": {
         "X-Hex-Channel": "${HEX_CHANNEL}",
         "X-Hex-Thread": "${HEX_THREAD}",
+        "X-Hex-Beside": "${HEX_BESIDE:-}",
         "Authorization": "Bearer ${HEX_TOKEN}"
       }
     }
