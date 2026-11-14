@@ -2338,10 +2338,42 @@ test("what the check handed back to hex is listed as decided with its reason, an
   expect(verdict.settle).toEqual([]);
 });
 
-test("hex takes its own pick and lists it as decided; undo puts it back on the owner's list for good", async () => {
-  const id = `telegram:${DESK}:1`;
+test("hex takes its own pick on what the check vetted and lists it as decided; undo puts it back on the owner's list for good", async () => {
+  const id = "check:bun";
   const bun = asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"]);
-  ledger([bun, asked(2, "Ship it?", ["Yes", "No"])]);
+  const email = asked(3, "Send the email?", ["Send (my pick)", "Hold"]);
+  const unvetted = asked(4, "Tabs or spaces?", ["Tabs (my pick)", "Spaces"]);
+
+  const vetted = (ask: string, message: number, question: string, options: string[]) => ({
+    id: ask,
+    kind: "pick",
+    task: `telegram:${DESK}`,
+    at: "",
+    question,
+    options: options.map((label) => ({
+      label: label.replace(" (my pick)", ""),
+      value: label,
+      ...(label.includes("(my pick)") && { pick: true }),
+    })),
+    refs: [{ app: "telegram", thread: DESK, message }],
+  });
+
+  writeFileSync(
+    join(state, "voice", "check.json"),
+    JSON.stringify({
+      at: "",
+      why: "",
+      read: {},
+      fixed: [],
+      flagged: [],
+      stuck: [],
+      asks: [
+        vetted(id, 1, "bun or pnpm?", ["bun (my pick)", "pnpm"]),
+        { ...vetted("check:email", 3, "Send the email?", ["Send (my pick)", "Hold"]), sends: true },
+      ],
+    }),
+  );
+  ledger([bun, asked(2, "Ship it?", ["Yes", "No"]), email, unvetted]);
   questions = new Questions(state, {
     t3Database: "/nonexistent",
     t3Home: "/nonexistent",
@@ -2358,16 +2390,22 @@ test("hex takes its own pick and lists it as decided; undo puts it back on the o
   ledger([
     { ...bun, answer: { label: "bun", at: "", via: "pick" } },
     asked(2, "Ship it?", ["Yes", "No"]),
+    email,
+    unvetted,
   ]);
-  await until(() => questions.view.decided.length === 1 && questions.view.asks.length === 1);
-  expect(questions.view.decided[0]).toMatchObject({ id, question: "bun or pnpm?", took: "bun" });
-  expect(questions.view.asks[0]).toMatchObject({ question: "Ship it?" });
+  await until(() => questions.view.decided.length === 1 && questions.view.asks.length === 3);
+  expect(questions.view.decided[0]).toMatchObject({ question: "bun or pnpm?", took: "bun" });
+  expect(questions.view.asks.map((ask) => ask.question).toSorted()).toEqual([
+    "Send the email?",
+    "Ship it?",
+    "Tabs or spaces?",
+  ]);
 
   await questions.undo(id, "app");
   await until(() => lines.length === 2);
   expect(lines.at(-1)).toEqual({ type: "reopen", thread: DESK, message: 1, via: "app" });
-  ledger([bun, asked(2, "Ship it?", ["Yes", "No"])]);
-  await until(() => questions.view.asks.length === 2 && questions.view.decided.length === 0);
+  ledger([bun, asked(2, "Ship it?", ["Yes", "No"]), email, unvetted]);
+  await until(() => questions.view.asks.length === 4 && questions.view.decided.length === 0);
   await Bun.sleep(50);
   expect(lines).toHaveLength(2);
 });

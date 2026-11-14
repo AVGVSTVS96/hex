@@ -102,6 +102,7 @@ const CuratedSchema = z.object({
   options: z.array(OptionSchema),
   links: z.array(LinkSchema).exactOptional(),
   tag: z.string().exactOptional(),
+  sends: z.literal(true).exactOptional(),
   was: z.array(z.string()).exactOptional(),
   partly: z.string().exactOptional(),
   undoing: z.literal(true).exactOptional(),
@@ -1200,13 +1201,17 @@ export class Questions extends Changes {
     const yours = (ask: Question) =>
       [ask.id, ...(ask.was ?? [])].some((id) => filled(this.marks.kept[id]));
 
+    const vetted = new Set((this.result?.asks ?? []).map((ask) => ask.id));
+
     for (const ask of asks) {
       const picks = ask.options.filter((option) => option.pick === true);
 
       if (
         picks.length === 0 ||
         (picks.length > 1 && ask.multiple !== true) ||
+        !vetted.has(ask.id) ||
         ask.tag === MONEY ||
+        ask.sends === true ||
         ask.partly !== undefined ||
         ask.undoing === true ||
         yours(ask) ||
