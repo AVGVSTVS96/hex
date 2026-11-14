@@ -62,6 +62,7 @@ beforeEach(() => {
     `${log}\ncase "$*" in *--json*) echo '[]' ;; auth*) echo '{}' ;; esac`,
   );
   script(join(bin, "sudo"), `${log}\ncat > ${root}/managed.json`);
+  script(join(bin, "bun"), log);
 });
 
 afterEach(() => {
@@ -137,6 +138,7 @@ test("restore installs what's missing once, links the units of both lists, and e
     join(home, "services/hex.service.d/vault.conf"),
   );
   expect(calls()).toContain("systemctl --user enable --now hex.service mail.service\n");
+  expect(calls()).toContain(`bun install --no-summary --cwd ${hex}\n`);
   expect(calls()).toContain("loginctl enable-linger");
 });
 
