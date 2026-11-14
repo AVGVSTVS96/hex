@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   utimesSync,
@@ -96,7 +97,7 @@ case "$1" in
   is-system-running) cat "${home}/system.txt" 2>/dev/null || echo running ;;
   --user) for unit; do :; done
     if [ "$2" = show ]; then grep -qx "$unit" "${home}/stopping.txt" 2>/dev/null && echo 7; exit 0; fi
-    grep -qx "$unit" "\${ACTIVE:-${home}/active.txt}" 2>/dev/null ;;
+    if grep -qx "$unit" "\${ACTIVE:-${home}/active.txt}" 2>/dev/null; then echo active; else echo inactive; exit 3; fi ;;
 esac
 `,
   );
@@ -834,6 +835,39 @@ test("on a machine hex moved away from, a job's end and hex's commands go to the
   rmSync(marker);
 });
 
+test("a job's end waits out a move, and one that can't reach hex is kept until hex starts somewhere", async () => {
+  mkdirSync(join(home, "xdg/hex"), { recursive: true });
+  writeFileSync(marker, "");
+  run(["mid", "make", "all"], session);
+
+  const ending = Bun.spawn(["bun", job, "--ended", "mid", "t3:stray-key"], {
+    env: { ...fakes(), ...finishedByItself },
+  });
+
+  await Bun.sleep(1500);
+  writeFileSync(marker, "twin-x\n");
+  await ending.exited;
+
+  expect(toldOn("twin", "%[job] mid ended%")).toHaveLength(1);
+
+  writeFileSync(marker, "dead-x\n");
+  run(["far", "make", "all"], session);
+  end("far", finishedByItself);
+  rmSync(marker);
+
+  expect(told("%[job] far ended%")).toEqual([]);
+  expect(
+    readdirSync(join(home, "state/jobs")).filter((file) => file.startsWith("far@")),
+  ).toHaveLength(1);
+
+  resume(join(home, "claude"));
+
+  expect(told("%[job] far ended%")).toHaveLength(1);
+  expect(readdirSync(join(home, "state/jobs")).filter((file) => file.startsWith("far@"))).toEqual(
+    [],
+  );
+});
+
 test("hex runs, and updates, on the machine it was moved to, not on the one it left", () => {
   mkdirSync(join(home, "xdg/hex"), { recursive: true });
   writeFileSync(marker, "log-x\n");
@@ -845,7 +879,7 @@ test("hex runs, and updates, on the machine it was moved to, not on the one it l
   });
 
   expect(started.exitCode).toBe(1);
-  expect(started.stderr.toString()).toContain("hex runs on log-x now");
+  expect(started.stderr.toString()).toContain("hex runs on another machine now");
 
   const asked = Bun.spawnSync([join(home, ".hex/bin/hex"), "tasks"], {
     env: { ...fakes(), HEX_THREAD: "stray-key", HEX_OWNER: "t3:stray-key" },

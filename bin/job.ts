@@ -36,10 +36,24 @@ const whereHexRuns = join(
   "hex/elsewhere",
 );
 
-function elsewhere() {
-  const named = existsSync(whereHexRuns) ? readFileSync(whereHexRuns, "utf-8").trim() : "";
+const HOW_LONG_A_MOVE_IS_WAITED_FOR_MS = 60_000;
 
-  return isSet(named) ? named : undefined;
+async function whereHexIs() {
+  for (let waited = 0; existsSync(whereHexRuns); waited += 500) {
+    const named = readFileSync(whereHexRuns, "utf-8").trim();
+
+    if (isSet(named)) {
+      return named;
+    }
+
+    if (waited >= HOW_LONG_A_MOVE_IS_WAITED_FOR_MS) {
+      return "moving";
+    }
+
+    await Bun.sleep(500);
+  }
+
+  return "here";
 }
 
 const TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE = 3;
@@ -155,32 +169,50 @@ function reportsTo(): string | undefined {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A new session beside General learns from the job where its work came from.
+const News = z.object({
+  unit: z.string(),
+  owner: z.string(),
+  said: z.string(),
+  at: z.string(),
+  from: z.array(z.string()),
+});
+
+const startedBy = () =>
+  ["HEX_FROM", "HEX_FROM_AT"].flatMap((name) =>
+    isSet(process.env[name]) ? [`${name}=${process.env[name]}`] : [],
+  );
+
 async function tell(unit: string, owner: string, said: string, at: string) {
-  const there = elsewhere();
+  const there = await whereHexIs();
 
-  if (there !== undefined) {
-    const from = ["HEX_FROM", "HEX_FROM_AT"].flatMap((name) =>
-      isSet(process.env[name]) ? [`${name}=${process.env[name]}`] : [],
-    );
+  if (there !== "here") {
+    const sent =
+      there === "moving"
+        ? undefined
+        : await onMachine(there, [
+            "env",
+            ...startedBy(),
+            join(import.meta.dir, "job"),
+            "--tell",
+            unit,
+            owner,
+            said,
+            at,
+          ]);
 
-    const sent = await onMachine(there, [
-      "env",
-      ...from,
-      join(import.meta.dir, "job"),
-      "--tell",
-      unit,
-      owner,
-      said,
-      at,
-    ]);
-
-    if (sent.exitCode === 0) {
+    if (sent?.exitCode === 0) {
       return;
     }
 
-    console.error(
-      `job: ${unit}'s news didn't reach hex on ${there}: ${sent.stderr.toString().trim()}`,
+    writeFileSync(
+      join(records, `${unit}@${Bun.hash(at)}.news`),
+      JSON.stringify({ unit, owner, said, at, from: startedBy() }),
     );
+    console.error(
+      `job: ${unit}'s news waits in ${records} for hex to start somewhere: ${sent?.stderr.toString().trim() ?? "hex is still moving"}`,
+    );
+
+    return;
   }
 
   const to = store.threads.key(owner);
@@ -281,7 +313,9 @@ if (mode === "--owner") {
   );
 } else if (mode === "--running") {
   for (const unit of rest) {
-    if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) {
+    const state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+
+    if (["active", "activating", "deactivating", "reloading"].includes(state)) {
       console.log(`active ${unit}`);
     } else if (!existsSync(join(records, `${unit}.json`))) {
       console.log(`gone ${unit}`);
@@ -301,6 +335,23 @@ if (mode === "--owner") {
       hour: "numeric",
       minute: "2-digit",
     });
+
+  for (const file of readdirSync(records).filter((name) => name.endsWith(".news"))) {
+    const news = News.safeParse(JSON.parse(readFileSync(join(records, file), "utf-8")));
+
+    rmSync(join(records, file));
+
+    if (news.success) {
+      const { unit, owner, said, at: sentAt, from } = news.data;
+
+      for (const pair of from) {
+        const [name = "", ...value] = pair.split("=");
+        process.env[name] = value.join("=");
+      }
+
+      await tell(unit, owner, said, sentAt);
+    }
+  }
 
   const files = readdir(records).filter((name) => !name.includes(".sync-conflict-"));
 
