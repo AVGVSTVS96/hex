@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { z } from "zod";
+
 import { ROOM } from "../hub/fit.ts";
 import { WAKE } from "../hub/loaded.ts";
 import { loaded } from "./identity";
@@ -25,6 +27,16 @@ export const files = () => [
     kind: "project instructions, checked into the codebase",
   })),
 ];
+
+export const briefedAgents = {
+  "general-purpose": {
+    description:
+      "General-purpose agent for researching, searching and multi-step work. It starts from your brief and the instruction files, without your memory.",
+    prompt:
+      "You are a subagent of hex, my assistant: one of its sessions started you for one piece of its work, and its message is your brief. Do what it asks in full and check it, then report what you did and found in a few lines; that session reads your report and tells me. Your memory isn't loaded: work from your brief and your instruction files, which follow it, and leave `memo` to the session that started you.",
+    omitClaudeMd: true,
+  },
+};
 
 export const rules = () => Object.fromEntries(files().map((file) => [file.path, file.text]));
 
@@ -97,11 +109,21 @@ function handToASubagentClaudeCodeSkippedThemFor(n: number, last: boolean) {
   );
 }
 
+const Starting = z.object({ agent_type: z.string().catch("") });
+
+async function claudeCodeSkippedThemForTheStartingAgent() {
+  const { agent_type } = Starting.parse(JSON.parse((await Bun.stdin.text()) || "{}"));
+
+  return isSet(process.env.HEX_FRESH) || agent_type in briefedAgents;
+}
+
 if (import.meta.main) {
   const [command, flag] = process.argv.slice(2);
 
   if (command === "paths") {
     console.log(JSON.stringify(files().map((file) => file.path)));
+  } else if (command === "agents") {
+    console.log(JSON.stringify(briefedAgents));
   } else if (command === "hold") {
     if (flag === undefined) {
       throw new Error("instructions hold <dir>");
@@ -110,7 +132,7 @@ if (import.meta.main) {
     hold(flag);
   } else if (command === undefined || command === "") {
     console.log(rendered());
-  } else if (isSet(process.env.HEX_FRESH) && isSet(process.env.HEX_THREAD)) {
+  } else if (isSet(process.env.HEX_THREAD) && (await claudeCodeSkippedThemForTheStartingAgent())) {
     handToASubagentClaudeCodeSkippedThemFor(Number(command), flag === "last");
   }
 }
