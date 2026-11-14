@@ -235,8 +235,10 @@ if (mode === "--owner") {
 
     const ranOn = kept.machine ?? "the machine";
 
+    const fromElsewhere = isSet(kept.machine) && kept.machine !== here;
+
     const why =
-      mark === "moved"
+      mark === "moved" || (mark === "" && fromElsewhere)
         ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}`
         : mark === "shutdown"
           ? `${ranOn} shut down`

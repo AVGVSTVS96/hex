@@ -723,6 +723,8 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
   const refused: unknown[] = told("%[job] refused stopped%");
   expect(refused).toEqual([containing("couldn't start again")]);
   const away: unknown[] = told("%[job] away stopped%");
-  expect(away).toEqual([containing(`because elsewhere went down, and started over`)]);
+  expect(away).toEqual([
+    containing(`because hex moved from elsewhere to ${here}, and started over`),
+  ]);
   expect(existsSync(join(jobs, "broken.json"))).toBe(true);
 });
