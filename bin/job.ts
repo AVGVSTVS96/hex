@@ -22,7 +22,8 @@ import { besideOf, besideWhat } from "../hub/beside.ts";
 import { saved } from "../hub/claude.ts";
 import { origin } from "../hub/origin.ts";
 import { served } from "../hub/running.ts";
-import { open, stateDir } from "../hub/store.ts";
+import { hexDir, open, stateDir } from "../hub/store.ts";
+import { zoneOf } from "../hub/zone.ts";
 
 const [mode, ...rest] = process.argv.slice(2);
 const store = open(stateDir());
@@ -208,6 +209,17 @@ if (mode === "--owner") {
 } else if (mode === "--resume") {
   const here = hostname();
   const at = new Date().toISOString();
+  const zone = zoneOf(hexDir());
+
+  const when = (time: string) =>
+    new Date(time).toLocaleString("en-US", {
+      timeZone: zone,
+      timeZoneName: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
 
   for (const file of readdir(records).filter((name) => !name.includes(".sync-conflict-"))) {
     const recorded = file.slice(0, -".json".length);
@@ -225,7 +237,9 @@ if (mode === "--owner") {
 
     rmSync(join(records, file));
 
-    const mark = StoppedBecause.catch("").parse(store.seen.get(`job:${recorded}`, "stopped"));
+    const stop = store.seen.getWithTime(`job:${recorded}`, "stopped");
+    const mark = StoppedBecause.catch("").parse(stop?.record);
+    const then = stop === null || mark === "" ? "" : ` at ${when(stop.at)}`;
 
     store.seen.unshow(`job:${recorded}`, "stopped");
 
@@ -237,12 +251,15 @@ if (mode === "--owner") {
 
     const fromElsewhere = isSet(kept.machine) && kept.machine !== here;
 
-    const why =
-      mark === "moved" || (mark === "" && fromElsewhere)
-        ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}`
-        : mark === "shutdown"
-          ? `${ranOn} shut down`
-          : `${ranOn} went down`;
+    const moved = mark === "moved" || (mark === "" && fromElsewhere);
+
+    const why = moved
+      ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}${then}`
+      : mark === "shutdown"
+        ? `${ranOn} shut down${then}`
+        : `${ranOn} went down`;
+
+    const where = moved ? "there" : `as hex started again on ${here} at ${when(at)}`;
 
     const resumes = valueAfter(kept.command, /^(--resume|-r)$/u);
     const forks = kept.command.includes("--fork-session");
@@ -288,7 +305,7 @@ if (mode === "--owner") {
           ...flags,
           "--resume",
           session ?? "",
-          `You were stopped in the middle of your work because ${why}; hex runs on ${here} now. This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.${firstPrompt}`,
+          `You were stopped in the middle of your work because ${why}; hex runs on ${here} now (${when(at)}). This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.${firstPrompt}`,
         ]
       : undefined;
 
@@ -308,8 +325,8 @@ if (mode === "--owner") {
     const said =
       started === 0
         ? conversation
-          ? `carried on in its own conversation as hex started on ${here}.`
-          : `started over from the beginning as hex started on ${here}: ${command}`
+          ? `carried on in its own conversation ${where}.`
+          : `started over from the beginning ${where}: ${command}`
         : `couldn't start again on ${here}. Start it again if its work still needs doing: ${command}`;
 
     tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
