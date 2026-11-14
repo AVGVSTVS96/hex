@@ -191,6 +191,7 @@ case "${1:-}" in
       done
     done
     cd "$home"
+    bun install --no-summary --cwd "$hex" >/dev/null
     "$hex/bin/hex" init >/dev/null
     # hex turns each channel on in its own sessions only, so it's installed turned off.
     claude plugin marketplace list --json | jq -e 'any(.[]; .name == "hex")' >/dev/null || claude plugin marketplace add "$hex/channels" >/dev/null
@@ -291,7 +292,7 @@ case "${1:-}" in
         link=$(link_of "$file") name=$(basename "$file")
         if [ "$(readlink "$link")" != "$file" ]; then
           fix "$name isn't linked from $file: run \`$hex/bin/hex restore\`"
-        elif [ "$link" = "$units_dir/$name" ] && systemctl --user -q is-failed "$name"; then
+        elif [ "$link" = "$units_dir/$name" ] && { systemctl --user -q is-failed "$name" || [ "$(systemctl --user show -p SubState --value "$name")" = auto-restart ]; }; then
           fix "$name failed: see \`journalctl --user -u $name\`"
         fi
       done
