@@ -32,6 +32,7 @@ const ran = join(home, "ran.json");
 const launches = join(home, "launches.jsonl");
 const folders = join(home, "folders.txt");
 const here = hostname();
+const clockTime = String.raw`[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s[AP]M [A-Z][A-Za-z0-9+:-]+`;
 
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -53,6 +54,7 @@ beforeAll(() => {
     "hub/tasks.ts",
     "hub/schedule.ts",
     "hub/clock.ts",
+    "hub/zone.ts",
     "hub/store.ts",
     "hub/store",
     "hub/running.ts",
@@ -559,12 +561,20 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
 
   const ends: unknown[] = told("%stopped because%").toSorted();
   expect(ends).toEqual([
-    containing(
-      `[job] atrium stopped because ${here} went down, and carried on in its own conversation as hex started on ${here}`,
+    matching(
+      new RegExp(
+        `^\\[job\\] atrium stopped because ${here} went down, and carried on in its own conversation as hex started again on ${here} at ${clockTime}\\.$`,
+        "u",
+      ),
     ),
-    containing(`[job] early stopped because ${here} went down, and started over`),
     containing(
-      `[job] make stopped because ${here} shut down, and started over from the beginning as hex started on ${here}`,
+      `[job] early stopped because ${here} went down, and started over from the beginning as hex started again on ${here} at`,
+    ),
+    matching(
+      new RegExp(
+        `^\\[job\\] make stopped because ${here} shut down at ${clockTime}, and started over from the beginning as hex started again on ${here} at ${clockTime}: make all$`,
+        "u",
+      ),
     ),
   ]);
   rmSync(join(home, "active.txt"));
@@ -622,7 +632,12 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
     "--resume",
     "r-1",
   ]);
-  expect(pick.at(-1)).toContain(`hex moved to ${here}`);
+  expect(pick.at(-1)).toMatch(
+    new RegExp(
+      `hex moved to ${here} at ${clockTime}; hex runs on ${here} now \\(${clockTime}\\)`,
+      "u",
+    ),
+  );
   expect(pick.at(-1)).toContain("pick up");
   const checks = started.get("checks") ?? [];
   expect(checks.slice(checks.indexOf("--"))).toEqual(["--", "./checks.sh", "--all"]);
@@ -632,6 +647,24 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
     "Build the Usage tab.\n",
   );
   expect(told("%hex moved to%")).toHaveLength(4);
+  const pickTold: unknown[] = told("%[job] pick stopped%");
+  expect(pickTold).toEqual([
+    matching(
+      new RegExp(
+        `^\\[job\\] pick stopped because hex moved to ${here} at ${clockTime}, and carried on in its own conversation there\\.$`,
+        "u",
+      ),
+    ),
+  ]);
+  const checksTold: unknown[] = told("%[job] checks stopped%");
+  expect(checksTold[0]).toEqual(
+    matching(
+      new RegExp(
+        `at ${clockTime}, and started over from the beginning there: \\./checks\\.sh --all$`,
+        "u",
+      ),
+    ),
+  );
   expect(told("%went down%").filter((body) => /\b(pick|checks|piped)\b/u.test(body))).toEqual([]);
   expect(told("%[job] done ended%")).toHaveLength(1);
   expect(told("%[job] graceful ended%")).toEqual([]);
