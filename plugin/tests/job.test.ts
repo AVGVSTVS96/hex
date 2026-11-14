@@ -493,14 +493,16 @@ function resume(config: string, ...gone: string[]) {
   rmSync(folders, { force: true });
   writeFileSync(launches, "");
 
-  const resumed = Bun.spawnSync(
-    ["bun", job, "--resume", ...(gone.length > 0 ? ["--gone", ...gone] : [])],
-    {
-      cwd: home,
-      env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, CLAUDE_CONFIG_DIR: config },
-      stderr: "pipe",
-    },
-  );
+  if (gone.length > 0) {
+    mkdirSync(join(home, "xdg/hex"), { recursive: true });
+    writeFileSync(join(home, "xdg/hex/gone"), `${gone.join("\n")}\n`);
+  }
+
+  const resumed = Bun.spawnSync(["bun", job, "--resume"], {
+    cwd: home,
+    env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, CLAUDE_CONFIG_DIR: config },
+    stderr: "pipe",
+  });
 
   expect(resumed.exitCode).toBe(0);
 
@@ -954,6 +956,7 @@ test("hex starting here leaves a job still running on the machine it left there,
   const started = resume(config, "dead-x");
 
   expect([...started.keys()]).toEqual(["lost"]);
+  expect(existsSync(join(home, "xdg/hex/gone"))).toBe(false);
   expect(existsSync(join(jobs, "kept.json"))).toBe(true);
   expect(existsSync(join(jobs, "finished.json"))).toBe(false);
   expect(told("%[job] kept %")).toEqual([]);

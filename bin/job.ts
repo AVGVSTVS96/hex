@@ -38,6 +38,10 @@ const whereHexRuns = join(
 
 const HOW_LONG_A_MOVE_IS_WAITED_FOR_MS = 60_000;
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A machine that doesn't answer may only be cut off for a moment, with its jobs still running: only whatever moved hex away from it, which watched it go, names it here, one machine a line, for the next resume to carry its jobs on.
+const machinesGone = join(whereHexRuns, "../gone");
+
 async function whereHexIs() {
   for (let waited = 0; existsSync(whereHexRuns); waited += 500) {
     const named = readFileSync(whereHexRuns, "utf-8").trim();
@@ -339,9 +343,12 @@ if (mode === "--owner") {
     }
   }
 } else if (mode === "--resume") {
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A machine that doesn't answer may only be cut off for a moment, with its jobs still running: only whatever moved hex away from it, which watched it go, says it's gone (--gone <machine>).
-  const gone = new Set(rest[0] === "--gone" ? rest.slice(1) : []);
+  const gone = new Set(
+    existsSync(machinesGone) ? readFileSync(machinesGone, "utf-8").split("\n").filter(isSet) : [],
+  );
+
+  rmSync(machinesGone, { force: true });
+
   const here = hostname();
   const at = new Date().toISOString();
   const zone = zoneOf(hexDir());
