@@ -31,6 +31,43 @@ roll_back() {
   echo "$note" > "$home/state/rollback"
 }
 
+managed=/etc/claude-code/managed-settings.json
+[ "$(uname)" = Darwin ] && managed="/Library/Application Support/ClaudeCode/managed-settings.json"
+managed=${HEX_MANAGED_SETTINGS:-$managed}
+units_dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
+systemd() { systemctl --user show-environment >/dev/null 2>&1; }
+
+# What a machine needs to run hex: hex's own services.json, then the owner's, in their hex folder.
+lists() { echo "$hex/services.json"; [ ! -f "$home/services.json" ] || echo "$home/services.json"; }
+
+# A thing a list installs: a command on PATH, or a path.
+there() {
+  case $1 in
+    "~/"*) [ -e "$HOME/${1#"~/"}" ] ;;
+    */*) [ -e "$1" ] ;;
+    *) command -v "$1" >/dev/null ;;
+  esac
+}
+
+# The unit files the lists name (or the one list given), quoted for `eval set --`. A list's paths start from its own folder, or from home with ~/.
+units() {
+  for list in ${1:-$(lists)}; do
+    jq -r --arg dir "$(dirname "$list")/" --arg home "$HOME/" \
+      '.units // [] | map(if startswith("/") then . elif startswith("~/") then $home + .[2:] else $dir + . end) | @sh' "$list"
+  done | tr '\n' ' '
+}
+
+# Where a unit file is linked: a drop-in, in a folder named for its unit (<unit>.d), goes in a real folder of that name.
+link_of() {
+  case $(basename "$(dirname "$1")") in
+    *.d) echo "$units_dir/$(basename "$(dirname "$1")")/$(basename "$1")" ;;
+    *) echo "$units_dir/$(basename "$1")" ;;
+  esac
+}
+
+# The channels hex ships with a server of their own, for Claude Code's managed settings to allow.
+channels() { for mcp in "$hex"/channels/*/.mcp.json; do basename "$(dirname "$mcp")"; done; }
+
 # hex that can't start tells General itself, straight through Telegram, since no hub runs to send it. Once per
 # machine, until a hub connects there again (state/down.<host>) and says it's back.
 down() {
@@ -161,12 +198,101 @@ case "${1:-}" in
         END { done() }'
     fi
     ;;
+  restore)
+    PATH=$HOME/.local/bin:$HOME/.bun/bin:$PATH
+    missing=
+    for tool in git curl jq python3; do command -v "$tool" >/dev/null || missing="$missing $tool"; done
+    [ -z "$missing" ] || { echo "restore: install$missing with the system's package manager first (INSTALL.md step 1)" >&2; exit 1; }
+    # Each thing a list installs is made by its line when it's missing.
+    for list in $(lists); do
+      cd "$(dirname "$list")"
+      eval "set -- $(jq -r '.install // {} | to_entries | map(.key, .value) | @sh' "$list")"
+      while [ $# -gt 0 ]; do
+        need=$1 how=$2
+        shift 2
+        there "$need" && continue
+        echo "installing $need"
+        sh -c "$how" </dev/null && there "$need" || { echo "restore: \`$how\` didn't make $need" >&2; exit 1; }
+      done
+    done
+    cd "$home"
+    bun install --no-summary --cwd "$hex" >/dev/null
+    "$hex/bin/hex" init >/dev/null
+    # hex turns each channel on in its own sessions only, so it's installed turned off.
+    marketplace=$(claude plugin marketplace list --json | jq -r '.[] | select(.name == "hex") | .path // "elsewhere"')
+    if ! [ "$marketplace" -ef "$hex/channels" ]; then
+      # One brought over from another machine points at its hex.
+      [ -z "$marketplace" ] || claude plugin marketplace remove hex >/dev/null
+      claude plugin marketplace add "$hex/channels" >/dev/null
+    fi
+    installed=$(claude plugin list --json)
+    for channel in $(channels); do
+      printf '%s\n' "$installed" | jq -e --arg id "$channel@hex" 'any(.[]; .id == $id)' >/dev/null && continue
+      claude plugin install "$channel@hex" >/dev/null && claude plugin disable "$channel@hex" >/dev/null || { echo "restore: the $channel channel didn't install" >&2; exit 1; }
+      echo "installed the $channel channel"
+    done
+    # Claude Code's managed settings: what's there, with the lists' own, and every channel of hex allowed.
+    current=$(cat "$managed" 2>/dev/null) || current='{}'
+    allowed=$(channels | jq -R '{ plugin: ., marketplace: "hex" }' | jq -s .)
+    wanted=$(lists | xargs jq -s --argjson current "$current" --argjson allowed "$allowed" '
+      . as $lists
+      | reduce $lists[] as $list ($current; . * ($list.managed // {}))
+      | .channelsEnabled = true
+      | .allowedChannelPlugins = (([$current, $lists[].managed] | map(.allowedChannelPlugins // []) | add) + $allowed | unique)')
+    if [ "$(printf '%s' "$wanted" | jq -S .)" != "$(printf '%s' "$current" | jq -S '.allowedChannelPlugins |= (. // [] | unique)')" ]; then
+      printf '%s\n' "$wanted" | sudo sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1"' sh "$managed"
+      echo "wrote $managed"
+    fi
+    "$hex/bin/trust" "$home"
+    if systemd; then
+      enable=
+      eval "set -- $(units)"
+      for file; do
+        [ -f "$file" ] || { echo "restore: there's no unit file at $file" >&2; exit 1; }
+        link=$(link_of "$file")
+        if ! [ "$link" -ef "$file" ]; then
+          # A file of the machine's own in its place gives way only when it says the same.
+          [ ! -f "$link" ] || [ -L "$link" ] || [ "$(cat "$link")" = "$(cat "$file")" ] || { echo "restore: $link is a file of this machine's own, unlike $file: move it away and run restore again" >&2; exit 1; }
+          mkdir -p "$(dirname "$link")"
+          ln -sfn "$file" "$link"
+        fi
+        [ "$link" != "$units_dir/$(basename "$file")" ] || ! grep -q '^\[Install\]' "$file" || enable="$enable $(basename "$file")"
+      done
+      # hex.service runs ~/hex; a folder elsewhere gets a drop-in that runs it instead.
+      if [ "$hex" != "$HOME/hex/.hex" ]; then
+        mkdir -p "$units_dir/hex.service.d"
+        printf '[Service]\nExecStart=\nExecStart="%s/bin/hex" run\n' "$hex" > "$units_dir/hex.service.d/folder.conf"
+      else
+        rm -f "$units_dir/hex.service.d/folder.conf"
+      fi
+      systemctl --user daemon-reload
+      # A hub started by hand gives way to its unit.
+      systemctl --user -q is-active hex.service || "$hex/bin/hex" stop
+      # A unit that won't start is doctor's to report.
+      systemctl --user enable --now $enable || :
+      # Services keep running once the user logs out, and start as the machine boots.
+      user=$(id -un)
+      [ "$(loginctl show-user "$user" -p Linger --value 2>/dev/null)" = yes ] || loginctl enable-linger "$user" 2>/dev/null || sudo loginctl enable-linger "$user" || :
+      starting() { systemctl --user is-active hex.service | grep -Eqx 'active|activating'; }
+    else
+      set --
+      [ ! -f "$home/services.json" ] || eval "set -- $(units "$home/services.json")"
+      names=$(for file; do basename "$file"; done | paste -sd' ' -)
+      echo "no systemd user manager here, so hex runs on its own${names:+, and your units don't run: $names}; have the machine start hex as it boots (INSTALL.md step 5)"
+      "$hex/bin/hex" start
+      starting() { :; }
+    fi
+    # The hub writes its pid as it starts.
+    tries=0
+    while ! running && [ $((tries += 1)) -le 30 ] && starting; do sleep 1; done
+    exec "$hex/bin/hex" doctor
+    ;;
   doctor)
     shell_path
     problems=0
     ok() { echo "ok   $1"; }
     fix() { echo "fix  $1"; problems=$((problems + 1)); }
-    for tool in git curl jq bun claude; do
+    for tool in git curl jq python3 bun claude; do
       command -v "$tool" >/dev/null && ok "$tool" || fix "$tool isn't on PATH (INSTALL.md step 1)"
     done
     if command -v claude >/dev/null && command -v jq >/dev/null; then
@@ -179,7 +305,7 @@ case "${1:-}" in
         ok "Claude signed in${days:+, for $days more days}"
       fi
       [ "$(jq -r --arg home "$home" '.projects[$home].hasTrustDialogAccepted' "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json" 2>/dev/null)" = true ] \
-        && ok "$home is trusted" || fix "$home isn't trusted: run \`cd $home && claude\`, trust it, /exit (INSTALL.md step 6)"
+        && ok "$home is trusted" || fix "$home isn't trusted: run \`$hex/bin/hex restore\`"
       plugins=$(claude plugin list --json 2>/dev/null) || plugins='[]'
     fi
     (. "$hex/bin/settings"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && curl -sf -m 10 "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/getMe" >/dev/null) \
@@ -187,22 +313,41 @@ case "${1:-}" in
     (. "$hex/bin/settings"; [ -n "${HEX_MAIN_THREAD:-}" ]) && ok "HEX_MAIN_THREAD is set" || fix "HEX_MAIN_THREAD isn't set in $home/.env (INSTALL.md step 4)"
     jq -e '.allowFrom | length > 0' "$home/state/telegram/access.json" >/dev/null 2>&1 \
       && ok "Telegram access list" || fix "nobody may talk to hex: write $home/state/telegram/access.json (INSTALL.md step 4)"
-    managed=/etc/claude-code/managed-settings.json
-    [ "$(uname)" = Darwin ] && managed="/Library/Application Support/ClaudeCode/managed-settings.json"
-    for channel in telegram discord buzz t3; do
+    for channel in $(channels); do
       printf '%s\n' "${plugins:-[]}" | jq -e --arg id "$channel@hex" 'any(.[]; .id == $id)' >/dev/null || continue
       jq -e --arg plugin "$channel" '.channelsEnabled == true and any(.allowedChannelPlugins[]?; .plugin == $plugin and .marketplace == "hex")' "$managed" >/dev/null 2>&1 \
-        && ok "$channel channel installed and allowed" || fix "$managed doesn't allow the $channel@hex channel (INSTALL.md step 5)"
+        && ok "$channel channel installed and allowed" || fix "$managed doesn't allow the $channel@hex channel: run \`$hex/bin/hex restore\`"
     done
-    printf '%s\n' "${plugins:-[]}" | jq -e 'any(.[]; .id == "telegram@hex")' >/dev/null || fix "the Telegram channel isn't installed: \`claude plugin install telegram@hex\` (INSTALL.md step 5)"
+    printf '%s\n' "${plugins:-[]}" | jq -e 'any(.[]; .id == "telegram@hex")' >/dev/null || fix "the Telegram channel isn't installed: run \`$hex/bin/hex restore\`"
     [ -d "$home/memory" ] && ok "memory in $home/memory" || fix "no memory folder: run \`$hex/bin/hex init\`"
-    running && ok "hub running (pid $(cat "$pidfile"))" || fix "the hub isn't running: \`$hex/bin/hex start\` (INSTALL.md step 7)"
+    if systemd; then
+      before=$problems
+      eval "set -- $(units)"
+      for file; do
+        link=$(link_of "$file") name=$(basename "$file")
+        if ! [ "$link" -ef "$file" ]; then
+          fix "$name isn't linked from $file: run \`$hex/bin/hex restore\`"
+        elif [ "$link" = "$units_dir/$name" ] && { systemctl --user -q is-failed "$name" || [ "$(systemctl --user show -p SubState --value "$name")" = auto-restart ]; }; then
+          fix "$name failed: see \`journalctl --user -u $name\`"
+        fi
+      done
+      [ "$problems" -gt "$before" ] || ok "$# unit files linked, none failed"
+      [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = yes ] && ok "services run while you're logged out" \
+        || fix "services stop when you log out: run \`sudo loginctl enable-linger $(id -un)\`"
+    fi
+    if running; then
+      ok "hub running (pid $(cat "$pidfile"))"
+    elif systemd && [ "$(systemctl --user show -p Result --value hex.service)" = exec-condition ]; then
+      ok "hub waits: hex.service's ExecCondition keeps it off this machine"
+    else
+      fix "the hub isn't running: run \`$hex/bin/hex restore\`"
+    fi
     free=$(df -Pk "$home" | awk 'NR == 2 { print int($4 / 1048576) }')
     [ "${free:-0}" -ge 5 ] && ok "$free GB free on disk" || fix "only ${free:-0} GB free on disk: sessions and backups need room"
     [ "$problems" -eq 0 ] && echo "hex looks healthy" || { echo "$problems to fix"; exit 1; }
     ;;
   *)
-    echo "usage: hex init|start|stop|restart|status|doctor|run|acp|deliver|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch" >&2
+    echo "usage: hex init|restore|start|stop|restart|status|doctor|run|acp|deliver|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch" >&2
     exit 2
     ;;
 esac
