@@ -2157,6 +2157,34 @@ test("a turn that fails on the API is told in its chat once, carries on once ano
   expect(stuck.received).toHaveLength(2);
 });
 
+test("a turn that fails on a login that stopped working carries on once a turn goes through again, with no new message", async () => {
+  start();
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  const stuck = await session("chat:7");
+  await until(() => stuck.received.length);
+  const expired = "Failed to authenticate: OAuth session expired";
+
+  await stuck.send({
+    type: "state",
+    thread: "chat:7",
+    busy: false,
+    failed: true,
+    error: "authentication_failed",
+    said: expired,
+  });
+  expect(failures).toEqual([["chat:7", `${expired}\nIt carries on once turns go through again.`]]);
+
+  hub.open("chat:8", "OpenAI");
+  await until(() => bgStarts().length === 2);
+  const other = await session("chat:8", "1b2c3d4e-0000-4000-8000-000000000000");
+  await other.send({ type: "state", thread: "chat:8", busy: false });
+  await until(() => stuck.received.length === 2);
+  expect(heard(stuck.received)[1]?.content).toStartWith(
+    "[hub] Your last turn here failed on the API",
+  );
+});
+
 test("a turn that fails for good is told in its chat, and waits for its next message", async () => {
   start();
   hub.deliver("chat:7", "Desk anchors", message);
