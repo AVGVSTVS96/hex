@@ -36,7 +36,7 @@ const WhatAJobNeedsToRunAgain = z.object({
   session: z.string().optional(),
   input: z.array(z.string()).optional(),
   machine: z.string().optional(),
-  startedOver: z.boolean().optional(),
+  startedOver: z.array(z.string()).optional(),
 });
 
 const StoppedBecause = z.enum(["moved", "shutdown", "ended", ""]);
@@ -44,6 +44,8 @@ const StoppedBecause = z.enum(["moved", "shutdown", "ended", ""]);
 type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 
 const LINES_OF_OUTPUT = 40;
+const STARTS_OVER_THAT_MEAN_IT_STOPS_ITSELF = 3;
+const WITHIN_MS = 60 * 60 * 1000;
 const CHARACTERS_OF_OUTPUT = 4000;
 const BYTES_READ_FOR_THE_END = 64 * 1024;
 const LOGS_KEPT_FOR_THEIR_THREADS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -143,7 +145,11 @@ if (mode === "--owner") {
 } else if (mode === "--ended") {
   const [unit = "", owner = ""] = rest;
 
-  const finishedByItself = process.env.EXIT_CODE === "exited" && process.env.EXIT_STATUS === "0";
+  const stopAsked =
+    (await $`systemctl --user show -p Job --value ${unit}`.nothrow().text()).trim() !== "";
+
+  const finishedByItself =
+    process.env.EXIT_CODE === "exited" && process.env.EXIT_STATUS === "0" && !stopAsked;
 
   const stopped = finishedByItself
     ? "ended"
@@ -228,13 +234,13 @@ if (mode === "--owner") {
     }
 
     const ranOn = kept.machine ?? "the machine";
-    const movedHere = mark === "moved" || (isSet(kept.machine) && kept.machine !== here);
 
-    const why = movedHere
-      ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}`
-      : mark === "shutdown"
-        ? `${ranOn} shut down`
-        : `${ranOn} went down`;
+    const why =
+      mark === "moved"
+        ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}`
+        : mark === "shutdown"
+          ? `${ranOn} shut down`
+          : `${ranOn} went down`;
 
     const resumes = valueAfter(kept.command, /^(--resume|-r)$/u);
     const forks = kept.command.includes("--fork-session");
@@ -244,13 +250,19 @@ if (mode === "--owner") {
     const conversation = agent && isSet(session) && saved(session);
     const command = kept.command.join(" ");
 
+    const startsOver = (kept.startedOver ?? []).filter(
+      (time) => Date.parse(at) - Date.parse(time) < WITHIN_MS,
+    );
+
     const leftToItsOwner = conversation
       ? undefined
       : agent && (continues || !isSet(session))
         ? "it would continue the folder's latest conversation, which is another one now"
-        : kept.startedOver === true
-          ? "it had already started over once, and starting it again could repeat what stopped it"
-          : undefined;
+        : agent && isSet(resumes) && !forks
+          ? `the conversation it resumes isn't on ${here}`
+          : startsOver.length >= STARTS_OVER_THAT_MEAN_IT_STOPS_ITSELF
+            ? `it started over ${startsOver.length} times in the last hour, so it may be what stops it`
+            : undefined;
 
     if (leftToItsOwner !== undefined) {
       tell(
@@ -276,12 +288,18 @@ if (mode === "--owner") {
           session ?? "",
           `You were stopped in the middle of your work because ${why}; hex runs on ${here} now. This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.${firstPrompt}`,
         ]
-      : startArgs(kept);
+      : undefined;
+
+    const over: Kept = { ...kept, startedOver: [...startsOver, at] };
+
+    if (agent) {
+      over.session = crypto.randomUUID();
+    }
 
     const started = await launch(
       recorded,
-      conversation ? kept : { ...kept, startedOver: true },
-      args,
+      conversation ? kept : over,
+      args ?? startArgs(over),
       conversation ? [] : (kept.input ?? []),
     );
 

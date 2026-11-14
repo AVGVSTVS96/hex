@@ -88,7 +88,9 @@ pwd >> "${folders}"
     `#!/bin/sh
 case "$1" in
   is-system-running) cat "${home}/system.txt" 2>/dev/null || echo running ;;
-  --user) for unit; do :; done; grep -qx "$unit" "${home}/active.txt" 2>/dev/null ;;
+  --user) for unit; do :; done
+    if [ "$2" = show ]; then grep -qx "$unit" "${home}/stopping.txt" 2>/dev/null && echo 7; exit 0; fi
+    grep -qx "$unit" "${home}/active.txt" 2>/dev/null ;;
 esac
 `,
   );
@@ -540,13 +542,15 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   expect(atrium.at(-1)).toContain(`because ${here} went down; hex runs on ${here} now`);
   expect(atrium.at(-1)).toContain("carry on");
   const early = started.get("early") ?? [];
-  expect(early.slice(early.indexOf("--") + 2)).toEqual([
+  const earlyArgs: unknown[] = early.slice(early.indexOf("--") + 2);
+  expect(earlyArgs).toEqual([
     "hex/early",
     "--session-id",
-    "s-2",
+    matching(/^[0-9a-f-]{36}$/u),
     "-p",
     "never saved",
   ]);
+  expect(early).not.toContain("s-2");
   const make = started.get("make") ?? [];
   expect(make.slice(make.indexOf("--"))).toEqual(["--", "make", "all"]);
   expect(readFileSync(join(jobs, "atrium.log"), "utf-8")).toBe("before the machine went down\n");
@@ -576,6 +580,7 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   const project = mkdtempSync(join(home, "checks-"));
   run(["checks", "./checks.sh", "--all"], session, project);
   run(["done", "make", "all"], session);
+  run(["graceful", "./serve.sh"], session);
   run(["over", "make", "all"], session);
   const overRecord = readFileSync(join(jobs, "over.json"), "utf-8");
   end("over", finishedByItself);
@@ -593,6 +598,10 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   expect(records).toEqual([true, true, true]);
   end("done", finishedByItself);
   expect(existsSync(join(jobs, "done.json"))).toBe(false);
+  writeFileSync(join(home, "stopping.txt"), "graceful\n");
+  end("graceful", finishedByItself);
+  rmSync(join(home, "stopping.txt"));
+  expect(existsSync(join(jobs, "graceful.json"))).toBe(true);
 
   rmSync(join(home, "state/moving"));
 
@@ -600,6 +609,7 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
 
   expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
     "checks",
+    "graceful",
     "pick",
     "piped",
   ]);
@@ -621,16 +631,20 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   expect(Buffer.from(value(piped, "StandardInputData") ?? "", "base64").toString()).toBe(
     "Build the Usage tab.\n",
   );
-  expect(told("%hex moved to%")).toHaveLength(3);
+  expect(told("%hex moved to%")).toHaveLength(4);
   expect(told("%went down%").filter((body) => /\b(pick|checks|piped)\b/u.test(body))).toEqual([]);
   expect(told("%[job] done ended%")).toHaveLength(1);
+  expect(told("%[job] graceful ended%")).toEqual([]);
   expect(told("%[job] over stopped%")).toEqual([]);
 
-  writeFileSync(join(home, "state/moving"), "");
-  end("checks");
-  rmSync(join(home, "state/moving"));
-  expect(resume(config).has("checks")).toBe(false);
-  expect(told("%[job] checks stopped%").at(-1)).toContain("had already started over once");
+  for (const time of [1, 2, 3]) {
+    writeFileSync(join(home, "state/moving"), "");
+    end("checks");
+    rmSync(join(home, "state/moving"));
+    expect([time, resume(config).has("checks")]).toEqual([time, time < 3]);
+  }
+
+  expect(told("%[job] checks stopped%").at(-1)).toContain("started over 3 times in the last hour");
 });
 
 test("a job that can't come back as it was is told to its owner, and a bad or conflicting record holds up no other job", () => {
@@ -662,7 +676,17 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
   );
   writeFileSync(
     join(jobs, "twice.json"),
-    JSON.stringify({ ...owned, command: ["make", "all"], startedOver: true }),
+    JSON.stringify({
+      ...owned,
+      command: ["make", "all"],
+      startedOver: [1, 2, 3].map((minutes) =>
+        new Date(Date.now() - minutes * 60_000).toISOString(),
+      ),
+    }),
+  );
+  writeFileSync(
+    join(jobs, "gone.json"),
+    JSON.stringify({ ...owned, command: ["claude", "-p", "--resume", "g-1", "x"] }),
   );
   writeFileSync(join(jobs, "refused.json"), JSON.stringify({ ...owned, command: ["make", "all"] }));
   writeFileSync(
@@ -681,21 +705,24 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
   expect(olden.slice(olden.indexOf("--") + 2, -1)).toEqual(["hex/olden", "-p", "--resume", "o-1"]);
 
   const left: unknown[] = told("%hasn't run since%")
-    .filter((body) => /\[job\] (latest|forked|twice) /u.test(body))
+    .filter((body) => /\[job\] (latest|forked|twice|gone) /u.test(body))
     .toSorted();
 
   expect(left).toEqual([
     containing(
       "[job] forked stopped because the machine went down, and hasn't run since: it would",
     ),
+    containing(
+      `[job] gone stopped because the machine went down, and hasn't run since: the conversation it resumes isn't on ${here}`,
+    ),
     containing("[job] latest stopped"),
-    containing("[job] twice stopped because the machine went down, and hasn't run since: it had"),
+    containing(
+      "[job] twice stopped because the machine went down, and hasn't run since: it started over 3 times",
+    ),
   ]);
   const refused: unknown[] = told("%[job] refused stopped%");
   expect(refused).toEqual([containing("couldn't start again")]);
   const away: unknown[] = told("%[job] away stopped%");
-  expect(away).toEqual([
-    containing(`because hex moved from elsewhere to ${here}, and started over`),
-  ]);
+  expect(away).toEqual([containing(`because elsewhere went down, and started over`)]);
   expect(existsSync(join(jobs, "broken.json"))).toBe(true);
 });
