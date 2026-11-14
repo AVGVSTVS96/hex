@@ -260,7 +260,7 @@ test("a turn logs the user, replies, tool calls and results, and agents' reports
       attachment: {
         type: "hook_additional_context",
         content: [
-          `The user sent a new message while you were working:\n<channel source="telegram" key="telegram:${THREAD}:11" chat_id="${THREAD}" message_id="11" user="victor">\nand the docs\n</channel>\n\nAddress it as you continue this turn.`,
+          `The user sent a new message while you were working:\n<channel source="telegram" key="telegram:${THREAD}:11" chat_id="${THREAD}" message_id="11" user="victor">\nand the docs\n</channel>`,
         ],
         hookEvent: "PostToolUse",
       },
