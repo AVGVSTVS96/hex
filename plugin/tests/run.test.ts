@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -182,16 +183,87 @@ test("a commit whose hub can't start goes back to the last one General connected
   expect(git("rev-parse", "HEAD")).toBe(good);
 }, 20_000);
 
-test("a .env line that fails stops hex as failed, before any hub or job starts", async () => {
+const curlThatRecordsWhatGeneralIsTold = () => {
+  const bin = join(home, "fake-bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "curl"),
+    `#!/bin/sh\ncat >> "${home}/told"\nprintf '%s\\n' "$@" >> "${home}/told"\n`,
+    {
+      mode: 0o755,
+    },
+  );
+
+  return {
+    PATH: `${bin}:${process.env.PATH}`,
+    read: () => (existsSync(join(home, "told")) ? readFileSync(join(home, "told"), "utf-8") : ""),
+  };
+};
+
+test("a .env line that fails stops hex as failed before any hub or job starts, and tells General which line, never what it says", async () => {
   commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
-  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEADERS=x-a: b\n");
-  const running = run();
+  writeFileSync(
+    join(home, ".env"),
+    "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\nHEADERS=x-key: s3cret\n",
+  );
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+  const running = run({ PATH });
   expect(await running.exited).toBe(1);
-  expect(await new Response(running.stderr).text()).toContain("hex can't start");
+  const printed = await new Response(running.stderr).text();
+  expect(printed).toContain("hex can't start");
+  expect(printed).toMatch(/line 3 of .*\.env fails/u);
+  expect(printed).not.toContain("s3cret");
+  expect(read()).toContain("chat_id=-100");
+  expect(read()).toContain("fails as a command");
+  expect(read()).not.toContain("s3cret");
   expect(hubs()).toEqual([]);
 });
 
-test("a hub that can't start, with no earlier hex to go back to, stops hex as failed", async () => {
+test("hex that can't start tells General once, until a hub connects again", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\nbroken line\n");
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(read().match(/sendMessage/gu)).toHaveLength(1);
+  expect(readdirSync(join(home, "state")).filter((file) => file.startsWith("down."))).toHaveLength(
+    1,
+  );
+});
+
+test("a .env line that doesn't even parse still tells General, and a missing .env says so", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(
+    join(home, ".env"),
+    "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\nX=a(b)s3cret\n",
+  );
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(read()).toContain("chat_id=-100");
+  expect(read()).not.toContain("s3cret");
+  rmSync(join(home, ".env"));
+  const missing = run({ PATH });
+  expect(await missing.exited).toBe(1);
+  expect(await new Response(missing.stderr).text()).toContain("sets no TELEGRAM_BOT_TOKEN");
+});
+
+test("a notice that couldn't be sent is tried again at the next start", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\nbroken line\n");
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+  writeFileSync(join(home, "fake-bin/curl"), `#!/bin/sh\necho tried >> "${home}/told"\nexit 7\n`, {
+    mode: 0o755,
+  });
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(read().match(/tried/gu)).toHaveLength(2);
+  expect(readdirSync(join(home, "state")).filter((file) => file.startsWith("down."))).toEqual([]);
+});
+
+test("a hub that can't start, with no earlier hex to go back to, stops hex as failed and tells General", async () => {
   commit("process.exit(1)\n", "a hub that crashes");
-  expect(await run().exited).toBe(1);
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\n");
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(read()).toContain("its hub exited three times within a minute");
 }, 20_000);
