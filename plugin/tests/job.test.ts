@@ -780,6 +780,11 @@ test("a job that can't come back as it was is told to its owner, and a bad or co
   expect(existsSync(join(jobs, "broken.json"))).toBe(true);
 });
 
+const forwarded = (logged: string) =>
+  Buffer.from(/printf %s (\S+)/u.exec(logged)?.[1] ?? "", "base64")
+    .toString()
+    .split("\0");
+
 const fakes = () => ({ ...env, PATH: `${join(home, "fake")}:${env.PATH}` });
 const marker = join(home, "xdg/hex/elsewhere");
 
@@ -828,20 +833,12 @@ test("on a machine hex moved away from, a job's end and hex's commands go to the
 
   expect(started.exitCode).toBe(0);
   expect(
-    Buffer.from(
-      readFileSync(join(home, "ssh.log"), "utf-8").trim().split("\n").at(-1)?.split(" ")[3] ?? "",
-      "base64",
-    )
-      .toString()
-      .split("\0")
-      .slice(-5),
+    forwarded(readFileSync(join(home, "ssh.log"), "utf-8").trim().split("\n").at(-1) ?? "").slice(
+      -5,
+    ),
   ).toEqual([home, job, "later", "make", "all"]);
   expect(existsSync(join(home, "state/jobs/later.json"))).toBe(false);
-  expect(
-    Buffer.from(asked.at(-1)?.[3] ?? "", "base64")
-      .toString()
-      .split("\0"),
-  ).toEqual([
+  expect(forwarded(asked.at(-1)?.join(" ") ?? "")).toEqual([
     join(home, ".hex/bin/hex"),
     "deliver",
     "hex",
@@ -907,11 +904,7 @@ test("hex runs, and updates, on the machine it was moved to, not on the one it l
   const line = readFileSync(join(home, "ssh.log"), "utf-8").trim().split(" ");
 
   expect(line[0]).toBe("log-x");
-  expect(
-    Buffer.from(line[3] ?? "", "base64")
-      .toString()
-      .split("\0"),
-  ).toEqual([
+  expect(forwarded(line.join(" "))).toEqual([
     "HEX_THREAD=stray-key",
     "HEX_OWNER=t3:stray-key",
     join(home, ".hex/bin/hex"),
@@ -964,4 +957,60 @@ test("hex starting here leaves a job still running on the machine it left there,
       "[job] lost stopped because dead-x went down, and started over from the beginning as hex started again on",
     ),
   ]);
+});
+
+test("a job that ended isn't started again from a stale copy of its record, nor started while it runs on the other machine, and one started from the machine hex left keeps its piped prompt", () => {
+  const jobs = join(home, "state/jobs");
+  rmSync(jobs, { recursive: true, force: true });
+  run(["done2", "make", "all"], session);
+  const copy = readFileSync(join(jobs, "done2.json"), "utf-8");
+  end("done2", finishedByItself);
+  writeFileSync(join(jobs, "done2.json"), copy);
+  new Database(join(home, "state/hex.db")).run("delete from seen");
+
+  expect(resume(join(home, "claude")).has("done2")).toBe(false);
+  expect(existsSync(join(jobs, "done2.json"))).toBe(false);
+
+  writeFileSync(
+    join(jobs, "elsewhere2.json"),
+    JSON.stringify({
+      owner: "t3:stray-key",
+      cwd: home,
+      properties: [],
+      command: ["make"],
+      machine: "twin-x",
+    }),
+  );
+  writeFileSync(join(home, "twin-active.txt"), "elsewhere2\n");
+
+  const twice = Bun.spawnSync(["bun", job, "elsewhere2", "make", "all"], {
+    env: { ...fakes(), ...session },
+    cwd: home,
+    stderr: "pipe",
+  });
+
+  expect(twice.exitCode).toBe(1);
+  expect(twice.stderr.toString()).toContain("already runs on twin-x");
+
+  mkdirSync(join(home, "xdg/hex"), { recursive: true });
+  writeFileSync(marker, "twin-x\n");
+  rmSync(launches, { force: true });
+
+  const piped = Bun.spawnSync(["bun", job, "prompted", "claude", "-p", "--model", "opus"], {
+    env: { ...fakes(), ...session },
+    cwd: home,
+    stdin: Buffer.from("Build the Usage tab.\n"),
+  });
+
+  rmSync(marker);
+  expect(piped.exitCode).toBe(0);
+  expect(existsSync(join(home, "twin/jobs/prompted.json"))).toBe(true);
+
+  const launched = Args.parse(
+    JSON.parse(readFileSync(launches, "utf-8").trim().split("\n").at(-1) ?? "[]"),
+  );
+
+  expect(Buffer.from(value(launched, "StandardInputData") ?? "", "base64").toString()).toBe(
+    "Build the Usage tab.\n",
+  );
 });

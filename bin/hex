@@ -220,7 +220,7 @@ case "${1:-}" in
         eval "value=\${$name:-}"
         [ -z "$value" ] || set -- "$name=$value" "$@"
       done
-      exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "printf %s $(printf '%s\0' "$@" | base64 -w0) | base64 -d | xargs -0 env --"
+      exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "bash -c 'mapfile -d \"\" -t a < <(printf %s $(printf '%s\0' "$@" | base64 -w0) | base64 -d); exec \"\${a[@]}\"'"
     fi
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
     ;;

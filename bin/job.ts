@@ -72,7 +72,7 @@ async function onMachine(machine: string, command: string[], input = "") {
         "-o",
         "ConnectTimeout=5",
         machine,
-        `printf %s ${words} | base64 -d | xargs -0 env --`,
+        `bash -c 'mapfile -d "" -t a < <(printf %s ${words} | base64 -d); exec "\${a[@]}"'`,
       ],
       { stdin: Buffer.from(input), stdout: "pipe", stderr: "pipe", timeout: 30_000 },
     );
@@ -93,6 +93,7 @@ const WhatAJobNeedsToRunAgain = z.object({
   session: z.string().optional(),
   input: z.array(z.string()).optional(),
   machine: z.string().optional(),
+  started: z.string().optional(),
   startedOver: z.array(z.string()).optional(),
 });
 
@@ -267,7 +268,13 @@ if (mode === "--owner") {
     process.exit(0);
   }
 
-  const session = keptRecord(unit)?.session ?? "";
+  const ended = keptRecord(unit);
+
+  if (isSet(ended?.started)) {
+    writeFileSync(join(records, `${unit}.ended`), ended.started);
+  }
+
+  const session = ended?.session ?? "";
 
   rmSync(join(records, `${unit}.json`), { force: true });
 
@@ -383,6 +390,17 @@ if (mode === "--owner") {
 
     if (kept === undefined) {
       console.error(`job: ${file} can't be read, so ${recorded} isn't started again`);
+      continue;
+    }
+
+    const endedFile = join(records, `${recorded}.ended`);
+
+    if (
+      isSet(kept.started) &&
+      existsSync(endedFile) &&
+      readFileSync(endedFile, "utf-8") === kept.started
+    ) {
+      rmSync(join(records, file), { force: true });
       continue;
     }
 
@@ -807,7 +825,20 @@ async function launch(
     process.exit(1);
   }
 
+  const before = keptRecord(unit)?.machine;
+
+  if (
+    fresh &&
+    isSet(before) &&
+    before !== hostname() &&
+    (await stillOnTheirMachines([unit], hostname())).get(unit) === "active"
+  ) {
+    console.error(`job: ${unit} already runs on ${before}`);
+    process.exit(1);
+  }
+
   mkdirSync(records, { recursive: true });
+  rmSync(join(records, `${unit}.ended`), { force: true });
 
   const keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns = join(
     records,
@@ -816,7 +847,10 @@ async function launch(
 
   const record = keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns;
 
-  writeFileSync(record, JSON.stringify({ ...kept, machine: hostname() }));
+  writeFileSync(
+    record,
+    JSON.stringify({ ...kept, machine: hostname(), started: new Date().toISOString() }),
+  );
 
   const log = join(records, `${unit}.log`);
 
