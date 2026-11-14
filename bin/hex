@@ -33,6 +33,7 @@ roll_back() {
 
 managed=/etc/claude-code/managed-settings.json
 [ "$(uname)" = Darwin ] && managed="/Library/Application Support/ClaudeCode/managed-settings.json"
+managed=${HEX_MANAGED_SETTINGS:-$managed}
 units_dir=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 systemd() { systemctl --user show-environment >/dev/null 2>&1; }
 
@@ -194,11 +195,16 @@ case "${1:-}" in
     bun install --no-summary --cwd "$hex" >/dev/null
     "$hex/bin/hex" init >/dev/null
     # hex turns each channel on in its own sessions only, so it's installed turned off.
-    claude plugin marketplace list --json | jq -e 'any(.[]; .name == "hex")' >/dev/null || claude plugin marketplace add "$hex/channels" >/dev/null
+    marketplaces=$(claude plugin marketplace list --json)
+    if ! printf '%s\n' "$marketplaces" | jq -e --arg path "$hex/channels" 'any(.[]; .name == "hex" and .path == $path)' >/dev/null; then
+      # One brought over from another machine points at its hex.
+      ! printf '%s\n' "$marketplaces" | jq -e 'any(.[]; .name == "hex")' >/dev/null || claude plugin marketplace remove hex >/dev/null
+      claude plugin marketplace add "$hex/channels" >/dev/null
+    fi
     installed=$(claude plugin list --json)
     for channel in $(channels); do
       printf '%s\n' "$installed" | jq -e --arg id "$channel@hex" 'any(.[]; .id == $id)' >/dev/null && continue
-      claude plugin install "$channel@hex" >/dev/null && claude plugin disable "$channel@hex" >/dev/null
+      claude plugin install "$channel@hex" >/dev/null && claude plugin disable "$channel@hex" >/dev/null || { echo "restore: the $channel channel didn't install" >&2; exit 1; }
       echo "installed the $channel channel"
     done
     # Claude Code's managed settings: what's there, with the lists' own, and every channel of hex allowed.
@@ -213,23 +219,26 @@ case "${1:-}" in
       printf '%s\n' "$wanted" | sudo sh -c 'mkdir -p "$(dirname "$1")" && cat > "$1"' sh "$managed"
       echo "wrote $managed"
     fi
-    # The trust a person gives the hex folder in Claude Code's first prompt there.
-    config=$(readlink -f "${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json")
-    if ! jq -e --arg home "$home" '.projects[$home].hasTrustDialogAccepted' "$config" >/dev/null 2>&1; then
-      trusted=$({ cat "$config" 2>/dev/null || echo '{}'; } | jq --arg home "$home" '.projects[$home].hasTrustDialogAccepted = true')
-      (umask 077 && printf '%s\n' "$trusted" > "$config.hex.$$") && mv "$config.hex.$$" "$config"
-      echo "trusted $home"
-    fi
+    "$hex/bin/trust" "$home"
     if systemd; then
       enable=
       eval "set -- $(units)"
       for file; do
         [ -f "$file" ] || { echo "restore: there's no unit file at $file" >&2; exit 1; }
         link=$(link_of "$file")
-        mkdir -p "$(dirname "$link")"
-        ln -sfn "$file" "$link"
+        if [ "$link" != "$file" ]; then
+          # A file of the machine's own in its place gives way only when it says the same.
+          [ ! -f "$link" ] || [ -L "$link" ] || cmp -s "$link" "$file" || { echo "restore: $link is a file of this machine's own, unlike $file: move it away and run restore again" >&2; exit 1; }
+          mkdir -p "$(dirname "$link")"
+          ln -sfn "$file" "$link"
+        fi
         [ "$link" != "$units_dir/$(basename "$file")" ] || ! grep -q '^\[Install\]' "$file" || enable="$enable $(basename "$file")"
       done
+      # hex.service runs ~/hex; a folder elsewhere gets a drop-in that runs it instead.
+      if [ "$hex" != "$HOME/hex/.hex" ]; then
+        mkdir -p "$units_dir/hex.service.d"
+        printf '[Service]\nExecStart=\nExecStart="%s/bin/hex" run\n' "$hex" > "$units_dir/hex.service.d/folder.conf"
+      fi
       systemctl --user daemon-reload
       # A hub started by hand gives way to its unit.
       systemctl --user -q is-active hex.service || "$hex/bin/hex" stop
@@ -290,7 +299,7 @@ case "${1:-}" in
       eval "set -- $(units)"
       for file; do
         link=$(link_of "$file") name=$(basename "$file")
-        if [ "$(readlink "$link")" != "$file" ]; then
+        if [ "$link" != "$file" ] && [ "$(readlink "$link")" != "$file" ]; then
           fix "$name isn't linked from $file: run \`$hex/bin/hex restore\`"
         elif [ "$link" = "$units_dir/$name" ] && { systemctl --user -q is-failed "$name" || [ "$(systemctl --user show -p SubState --value "$name")" = auto-restart ]; }; then
           fix "$name failed: see \`journalctl --user -u $name\`"

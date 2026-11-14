@@ -79,15 +79,15 @@ With systemd, hex runs as the units it ships (`hex.service`, and `hex-sessions.s
 
   It ends with `cua-driver doctor`, which should be all `[ok  ]`. If the push fails right after `create`, run it again. Add `- Agent computer: Sprite hex-computer` to `~/hex/AGENTS.md`, and set `"HEX_COMPUTER": "hex-computer"` in the `env` of `~/hex/.claude/settings.json` so hex can sign in there with its vault. They can watch its screen from a machine with the `sprite` CLI: `sprite proxy -s hex-computer 6080`, then http://localhost:6080/vnc.html.
 - **The vault** is [enclave](https://github.com/AVGVSTVS96/enclave) and works with nothing to set up: hex sends a link, they fill it in, and it's saved encrypted in `~/.enclave/`. The key that opens it is `~/.enclave/key.json`; tell them to back it up somewhere safe. The link goes through a relay enclave hosts, which only ever sees encrypted data; enclave's README shows how to run their own. Then use the `vault` skill to bring in the password manager they already use, and set up passkeys on the computer if they have one.
-- **Discord (optional):** a second app for deeper work. Tag the bot in any channel and it opens a thread with its own session. Ask them to create an application at https://discord.com/developers/applications, turn on **Message Content Intent** under Bot, copy the bot token, and invite the bot to their server with the `bot` scope and the Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Attach Files and Add Reactions permissions **(you)**. Then set `DISCORD_BOT_TOKEN` in `.env`, write their Discord user id to `~/hex/state/discord/access.json` as `{ "allowFrom": ["<user id>"] }`, run `claude plugin install discord@hex` and `claude plugin disable discord@hex`, then `~/hex/.hex/bin/hex restart`.
+- **Discord (optional):** a second app for deeper work. Tag the bot in any channel and it opens a thread with its own session. Ask them to create an application at https://discord.com/developers/applications, turn on **Message Content Intent** under Bot, copy the bot token, and invite the bot to their server with the `bot` scope and the Send Messages, Send Messages in Threads, Create Public Threads, Manage Threads, Read Message History, Attach Files and Add Reactions permissions **(you)**. Then set `DISCORD_BOT_TOKEN` in `.env`, write their Discord user id to `~/hex/state/discord/access.json` as `{ "allowFrom": ["<user id>"] }`, then run `~/hex/.hex/bin/hex restart`.
 - **Buzz (optional):** [Buzz](https://github.com/block/buzz) is a workspace where people and agents share channels; hex joins as an agent and works like it does in Discord. Buzz Desktop deploys it through a provider that writes hex's Buzz key over SSH, so the computer running Buzz Desktop must reach this machine with `ssh` and a key, no password. Build the provider for that computer (`bun-darwin-arm64` for an Apple silicon Mac, `bun-darwin-x64`, `bun-linux-x64`) and copy it into its `~/.local/bin`:
 
   ```sh
   bun build --compile --target=bun-darwin-arm64 ~/hex/.hex/channels/buzz/provider.ts --outfile /tmp/buzz-backend-hex
   ```
 
-  Run `claude plugin install buzz@hex` and `claude plugin disable buzz@hex` here. Then ask them to create an agent named hex in Buzz Desktop, pick **hex** as where it runs with this machine's SSH destination (like `user@host`), deploy it, and add it to the channels they want it in **(you)**. Deploying writes `~/hex/state/buzz/.env` and restarts the hub. Tag hex in a channel to check it answers.
-- **T3 Code (optional):** if they run [T3 Code](https://github.com/pingdotgg/t3code) on this machine, hex can be one of its agents, working in whatever project a thread is in. Run `claude plugin install t3@hex` and `claude plugin disable t3@hex`, then add hex to T3 as a local ACP agent whose command is `~/hex/.hex/bin/hex acp`, under `providerInstances` in `~/.t3/userdata/settings.json` (T3 picks it up without a restart):
+  Then ask them to create an agent named hex in Buzz Desktop, pick **hex** as where it runs with this machine's SSH destination (like `user@host`), deploy it, and add it to the channels they want it in **(you)**. Deploying writes `~/hex/state/buzz/.env` and restarts the hub. Tag hex in a channel to check it answers.
+- **T3 Code (optional):** if they run [T3 Code](https://github.com/pingdotgg/t3code) on this machine, hex can be one of its agents, working in whatever project a thread is in. Add hex to T3 as a local ACP agent whose command is `~/hex/.hex/bin/hex acp`, under `providerInstances` in `~/.t3/userdata/settings.json` (T3 picks it up without a restart):
 
   ```json
   "hex": { "driver": "acpRegistry", "displayName": "hex", "config": { "source": "local", "commandPath": "/home/<user>/hex/.hex/bin/hex", "commandArgs": ["acp"] } }
@@ -107,18 +107,18 @@ Ask them to say hi in General. hex should answer within a few seconds. Then show
 
 ## Moving hex
 
-Everything hex knows lives in four places: hex itself (`.hex/`, this repo), their folder (`~/hex`, a git repo of its own), `state/hex.db`, and the vault (`~/.enclave`). On a new machine, with hex stopped on the old one: clone their folder to `~/hex` and hex into `~/hex/.hex`, copy over `state/hex.db`, `.env` and the vault, then run `~/hex/.hex/bin/hex restore`.
+Everything hex knows lives in four places: hex itself (`.hex/`, this repo), their folder (`~/hex`, a git repo of its own), `state/` (`hex.db`, and who may talk to hex: each channel's `access.json`), and the vault (`~/.enclave`). On a new machine, with hex stopped on the old one: clone their folder to `~/hex` and hex into `~/hex/.hex`, copy over `state/hex.db`, `state/*/access.json`, `.env` and the vault, then run `~/hex/.hex/bin/hex restore`.
 
 What else hex needs on their machines goes in `~/hex/services.json`, in the shape of hex's own `.hex/services.json`:
 
 ```json
 {
   "install": {
-    "litestream": "curl -fsSL https://github.com/benbjohnson/litestream/releases/download/v0.5.18/litestream-0.5.18-linux-x86_64.tar.gz | tar -xz -C ~/.local/bin litestream",
-    "~/Developer/pages": "git clone https://github.com/<them>/pages ~/Developer/pages"
+    "rclone": "curl -fsSL https://rclone.org/install.sh | sudo bash",
+    "~/notes": "git clone https://github.com/<them>/notes ~/notes"
   },
-  "units": ["services/hex-db.service", "services/hex.service.d/vault.conf"],
-  "managed": { "cleanupPeriodDays": 36500 }
+  "units": ["services/backup.timer", "services/backup.service", "services/hex.service.d/env.conf"],
+  "managed": { "cleanupPeriodDays": 90 }
 }
 ```
 

@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -37,7 +38,14 @@ beforeEach(() => {
   mkdirSync(join(hex, "vendor"));
   mkdirSync(bin);
 
-  for (const path of ["defaults", "systemd", "services.json", "bin/hex", "bin/settings"]) {
+  for (const path of [
+    "defaults",
+    "systemd",
+    "services.json",
+    "bin/hex",
+    "bin/settings",
+    "bin/trust",
+  ]) {
     cpSync(join(HEX, path), join(hex, path), { recursive: true });
   }
 
@@ -63,6 +71,9 @@ beforeEach(() => {
   );
   script(join(bin, "sudo"), `${log}\ncat > ${root}/managed.json`);
   script(join(bin, "bun"), log);
+  const claudeWroteItsConfigAsItFirstRan = join(root, "claude/.claude.json");
+  mkdirSync(join(root, "claude"));
+  writeFileSync(claudeWroteItsConfigAsItFirstRan, "{}");
 });
 
 afterEach(() => {
@@ -82,10 +93,11 @@ function restore() {
       CLAUDE_CONFIG_DIR: join(root, "claude"),
       PATH: `${bin}:${process.env.PATH}`,
       SHELL: "/bin/sh",
+      HEX_MANAGED_SETTINGS: join(root, "managed.json"),
     },
   });
 
-  return { out: run.stdout.toString(), err: run.stderr.toString() };
+  return { out: run.stdout.toString(), err: run.stderr.toString(), code: run.exitCode };
 }
 
 const calls = () => readFileSync(join(root, "calls"), "utf-8");
@@ -171,6 +183,40 @@ test("a hub that hex.service's ExecCondition keeps off this machine waits, and d
     "ok   hub waits: hex.service's ExecCondition keeps it off this machine",
   );
   expect(run.out).not.toContain("the hub isn't running");
+});
+
+test("a folder other than ~/hex gets a drop-in that has hex.service run it", () => {
+  renameSync(home, join(root, "assistant"));
+  home = join(root, "assistant");
+  hex = join(home, ".hex");
+  restore();
+  expect(readFileSync(join(root, "config/systemd/user/hex.service.d/folder.conf"), "utf-8")).toBe(
+    `[Service]\nExecStart=\nExecStart="${hex}/bin/hex" run\n`,
+  );
+});
+
+test("a unit file of the machine's own gives way only when it says the same", () => {
+  const units = join(root, "config/systemd/user");
+  mkdirSync(units, { recursive: true });
+  writeFileSync(join(units, "hex.service"), readFileSync(join(hex, "systemd/hex.service")));
+  writeFileSync(join(units, "hex-sessions.slice"), "[Slice]\nMemoryMax=1G\n");
+  const run = restore();
+  expect(run.err).toContain(`${units}/hex-sessions.slice is a file of this machine's own`);
+  expect(readlinkSync(join(units, "hex.service"))).toBe(join(hex, "systemd/hex.service"));
+  expect(readFileSync(join(units, "hex-sessions.slice"), "utf-8")).toBe("[Slice]\nMemoryMax=1G\n");
+});
+
+test("a channel that doesn't install stops restore, and a marketplace of another hex's is replaced", () => {
+  script(
+    join(bin, "claude"),
+    `echo "claude $*" >> ${root}/calls\ncase "$*" in "plugin marketplace list --json") echo '[{"name":"hex","path":"/elsewhere/.hex/channels"}]' ;; *--json*) echo '[]' ;; "plugin install telegram@hex") exit 1 ;; esac`,
+  );
+  const run = restore();
+  expect(calls()).toContain(
+    `claude plugin marketplace remove hex\nclaude plugin marketplace add ${hex}/channels\n`,
+  );
+  expect(run.err).toContain("restore: the telegram channel didn't install");
+  expect(run.code).toBe(1);
 });
 
 test("restore stops at a line that doesn't make what it names", () => {
