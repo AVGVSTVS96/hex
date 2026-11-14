@@ -231,7 +231,7 @@ case "${1:-}" in
         link=$(link_of "$file")
         if ! [ "$link" -ef "$file" ]; then
           # A file of the machine's own in its place gives way only when it says the same.
-          [ ! -f "$link" ] || [ -L "$link" ] || cmp -s "$link" "$file" || { echo "restore: $link is a file of this machine's own, unlike $file: move it away and run restore again" >&2; exit 1; }
+          [ ! -f "$link" ] || [ -L "$link" ] || [ "$(cat "$link")" = "$(cat "$file")" ] || { echo "restore: $link is a file of this machine's own, unlike $file: move it away and run restore again" >&2; exit 1; }
           mkdir -p "$(dirname "$link")"
           ln -sfn "$file" "$link"
         fi
