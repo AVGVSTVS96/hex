@@ -256,7 +256,7 @@ case "${1:-}" in
     problems=0
     ok() { echo "ok   $1"; }
     fix() { echo "fix  $1"; problems=$((problems + 1)); }
-    for tool in git curl jq bun claude; do
+    for tool in git curl jq python3 bun claude; do
       command -v "$tool" >/dev/null && ok "$tool" || fix "$tool isn't on PATH (INSTALL.md step 1)"
     done
     if command -v claude >/dev/null && command -v jq >/dev/null; then
