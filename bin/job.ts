@@ -12,7 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { hostname } from "node:os";
+import { homedir, hostname } from "node:os";
 import { basename, join } from "node:path";
 
 import { $ } from "bun";
@@ -29,6 +29,62 @@ const [mode, ...rest] = process.argv.slice(2);
 const store = open(stateDir());
 const records = join(stateDir(), "jobs");
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Names the machine hex runs on while it runs on another one, for this machine's jobs to reach it: whatever moved hex there writes it once hex serves there, and removes it as it brings hex back.
+const whereHexRuns = join(
+  process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"),
+  "hex/elsewhere",
+);
+
+const HOW_LONG_A_MOVE_IS_WAITED_FOR_MS = 60_000;
+
+async function whereHexIs() {
+  for (let waited = 0; existsSync(whereHexRuns); waited += 500) {
+    const named = readFileSync(whereHexRuns, "utf-8").trim();
+
+    if (isSet(named)) {
+      return named;
+    }
+
+    if (waited >= HOW_LONG_A_MOVE_IS_WAITED_FOR_MS) {
+      return "moving";
+    }
+
+    await Bun.sleep(500);
+  }
+
+  return "here";
+}
+
+const TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE = 3;
+const STOPPING_SETTLES_WITHIN_MS = 15_000;
+const SSH_CANT_REACH_IT = 255;
+
+async function onMachine(machine: string, command: string[], input = "") {
+  const words = Buffer.from(command.join("\0")).toString("base64");
+
+  for (let tried = 1; ; tried++) {
+    const asked = Bun.spawnSync(
+      [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=5",
+        machine,
+        `bash -c 'mapfile -d "" -t a < <(printf %s ${words} | base64 -d); exec "\${a[@]}"'`,
+      ],
+      { stdin: Buffer.from(input), stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+    );
+
+    if (asked.exitCode !== SSH_CANT_REACH_IT || tried === TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE) {
+      return asked;
+    }
+
+    await Bun.sleep(2000);
+  }
+}
+
 const WhatAJobNeedsToRunAgain = z.object({
   owner: z.string(),
   cwd: z.string(),
@@ -37,6 +93,7 @@ const WhatAJobNeedsToRunAgain = z.object({
   session: z.string().optional(),
   input: z.array(z.string()).optional(),
   machine: z.string().optional(),
+  started: z.string().optional(),
   startedOver: z.array(z.string()).optional(),
 });
 
@@ -114,7 +171,52 @@ function reportsTo(): string | undefined {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A new session beside General learns from the job where its work came from.
-function tell(unit: string, owner: string, said: string, at: string) {
+const News = z.object({
+  unit: z.string(),
+  owner: z.string(),
+  said: z.string(),
+  at: z.string(),
+  from: z.array(z.string()),
+});
+
+const startedBy = () =>
+  ["HEX_FROM", "HEX_FROM_AT"].flatMap((name) =>
+    isSet(process.env[name]) ? [`${name}=${process.env[name]}`] : [],
+  );
+
+async function tell(unit: string, owner: string, said: string, at: string) {
+  const there = await whereHexIs();
+
+  if (there !== "here") {
+    const sent =
+      there === "moving"
+        ? undefined
+        : await onMachine(there, [
+            "env",
+            ...startedBy(),
+            join(import.meta.dir, "job"),
+            "--tell",
+            unit,
+            owner,
+            said,
+            at,
+          ]);
+
+    if (sent?.exitCode === 0) {
+      return;
+    }
+
+    writeFileSync(
+      join(records, `${unit}@${Bun.hash(at)}.news`),
+      JSON.stringify({ unit, owner, said, at, from: startedBy() }),
+    );
+    console.error(
+      `job: ${unit}'s news waits in ${records} for hex to start somewhere: ${sent?.stderr.toString().trim() ?? "hex is still moving"}`,
+    );
+
+    return;
+  }
+
   const to = store.threads.key(owner);
 
   const from =
@@ -166,7 +268,13 @@ if (mode === "--owner") {
     process.exit(0);
   }
 
-  const session = keptRecord(unit)?.session ?? "";
+  const ended = keptRecord(unit);
+
+  if (isSet(ended?.started)) {
+    writeFileSync(join(records, `${unit}.ended`), ended.started);
+  }
+
+  const session = ended?.session ?? "";
 
   rmSync(join(records, `${unit}.json`), { force: true });
 
@@ -187,7 +295,7 @@ if (mode === "--owner") {
     ? `That's the agent's own account, not proof: check what it says against the real thing (files, commits, links, what's live) before you pass any of it on. Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``
     : "Check what it shows against the real thing before you report it.";
 
-  tell(
+  await tell(
     unit,
     owner,
     `ended: ${result} (exit ${status}).\n${output}\n${check}`,
@@ -196,16 +304,40 @@ if (mode === "--owner") {
 } else if (mode === "--waiting") {
   const [unit = "", owner = "", readings = ""] = rest;
 
-  tell(
+  await tell(
     unit,
     owner,
     `waits for room: no machine has a free slot and room right now. It starts by itself once one does.${readings}`,
     `${process.env.INVOCATION_ID ?? Date.now()}:waiting`,
   );
 } else if (mode === "--tell") {
-  const [unit = "", owner = "", said = ""] = rest;
+  const [unit = "", owner = "", said = "", at] = rest;
 
-  tell(unit, owner, said, `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`);
+  await tell(
+    unit,
+    owner,
+    said,
+    at ?? `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`,
+  );
+} else if (mode === "--running") {
+  for (const unit of rest) {
+    let state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+
+    for (
+      let waited = 0;
+      state === "deactivating" && waited < STOPPING_SETTLES_WITHIN_MS;
+      waited += 500
+    ) {
+      await Bun.sleep(500);
+      state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+    }
+
+    if (["active", "activating", "deactivating", "reloading"].includes(state)) {
+      console.log(`active ${unit}`);
+    } else if (!existsSync(join(records, `${unit}.json`))) {
+      console.log(`gone ${unit}`);
+    }
+  }
 } else if (mode === "--resume") {
   const here = hostname();
   const at = new Date().toISOString();
@@ -221,7 +353,45 @@ if (mode === "--owner") {
       minute: "2-digit",
     });
 
-  for (const file of readdir(records).filter((name) => !name.includes(".sync-conflict-"))) {
+  for (const file of existsSync(records)
+    ? readdirSync(records).filter((name) => name.endsWith(".news"))
+    : []) {
+    const news = keptNews(join(records, file));
+
+    rmSync(join(records, file));
+
+    if (news !== undefined) {
+      const { unit, owner, said, at: sentAt, from } = news;
+
+      const before = { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT };
+      delete process.env.HEX_FROM;
+      delete process.env.HEX_FROM_AT;
+
+      for (const pair of from) {
+        const [name = "", ...value] = pair.split("=");
+        process.env[name] = value.join("=");
+      }
+
+      await tell(unit, owner, said, sentAt);
+
+      for (const [name, value] of Object.entries(before)) {
+        if (value === undefined) {
+          Reflect.deleteProperty(process.env, name);
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
+  }
+
+  const files = readdir(records).filter((name) => !name.includes(".sync-conflict-"));
+
+  const elsewhereNow = await stillOnTheirMachines(
+    files.map((file) => file.slice(0, -".json".length)),
+    here,
+  );
+
+  for (const file of files) {
     const recorded = file.slice(0, -".json".length);
 
     if ((await $`systemctl --user is-active --quiet ${recorded}`.nothrow()).exitCode === 0) {
@@ -232,6 +402,28 @@ if (mode === "--owner") {
 
     if (kept === undefined) {
       console.error(`job: ${file} can't be read, so ${recorded} isn't started again`);
+      continue;
+    }
+
+    const endedFile = join(records, `${recorded}.ended`);
+
+    if (
+      isSet(kept.started) &&
+      existsSync(endedFile) &&
+      readFileSync(endedFile, "utf-8") === kept.started
+    ) {
+      rmSync(join(records, file), { force: true });
+      continue;
+    }
+
+    const there = elsewhereNow.get(recorded);
+
+    if (there === "active") {
+      continue;
+    }
+
+    if (there === "gone") {
+      rmSync(join(records, file), { force: true });
       continue;
     }
 
@@ -251,7 +443,7 @@ if (mode === "--owner") {
 
     const fromElsewhere = isSet(kept.machine) && kept.machine !== here;
 
-    const moved = mark === "moved" || (mark === "" && fromElsewhere);
+    const moved = mark === "moved" || (mark === "" && fromElsewhere && there !== "down");
 
     const why = moved
       ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}${then}`
@@ -284,7 +476,7 @@ if (mode === "--owner") {
             : undefined;
 
     if (leftToItsOwner !== undefined) {
-      tell(
+      await tell(
         recorded,
         kept.owner,
         `stopped because ${why}, and hasn't run since: ${leftToItsOwner}. Start it again if its work still needs doing: ${command}`,
@@ -329,9 +521,9 @@ if (mode === "--owner") {
           : `started over from the beginning ${where}: ${command}`
         : `couldn't start again on ${here}. Start it again if its work still needs doing: ${command}`;
 
-    tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
+    await tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
-} else {
+} else if ((await whereHexIs()) === "here") {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
   const jobOwner = given ?? reportsTo();
   const after = given === undefined ? rest : rest.slice(1);
@@ -407,6 +599,38 @@ if (mode === "--owner") {
 
   store.seen.unshow(`job:${mode}`, "stopped");
   process.exitCode = await launch(mode, kept, startArgs(kept), input, true);
+} else {
+  const there = await whereHexIs();
+
+  if (there === "moving") {
+    console.error("job: hex is moving between machines; start the job again in a minute");
+    process.exit(1);
+  }
+
+  const asWhoStartedIt = Object.entries(process.env).flatMap(([name, value]) =>
+    name.startsWith("HEX_") && isSet(value) ? [`${name}=${value}`] : [],
+  );
+
+  const started = await onMachine(
+    there,
+    [
+      "env",
+      ...asWhoStartedIt,
+      "sh",
+      "-c",
+      'cd "$1" && shift && exec "$@"',
+      "sh",
+      process.cwd(),
+      join(import.meta.dir, "job"),
+      ...(isSet(mode) ? [mode] : []),
+      ...rest,
+    ],
+    await stdinThatEnds(),
+  );
+
+  process.stdout.write(started.stdout);
+  process.stderr.write(started.stderr);
+  process.exit(started.exitCode ?? 1);
 }
 
 function conversationToResumeBy(command: string[]) {
@@ -442,6 +666,64 @@ function valueAfter(args: string[], flag: RegExp) {
   const at = args.findIndex((arg) => flag.test(arg));
 
   return at === -1 ? undefined : args[at + 1];
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A job left running on the machine hex moved from carries on there, and one that ended there is done: its own machine says which, while it answers. One that doesn't answer went down with it.
+async function stillOnTheirMachines(units: string[], here: string) {
+  const byMachine = Map.groupBy(
+    units.flatMap((unit) => {
+      const machine = keptRecord(unit)?.machine;
+
+      return isSet(machine) && machine !== here ? [{ unit, machine }] : [];
+    }),
+    ({ machine }) => machine,
+  );
+
+  const said = new Map<string, "active" | "gone" | "down">();
+
+  for (const [machine, theirs] of byMachine) {
+    const asked = await onMachine(machine, [
+      join(import.meta.dir, "job"),
+      "--running",
+      ...theirs.map(({ unit }) => unit),
+    ]);
+
+    if (asked.exitCode === SSH_CANT_REACH_IT) {
+      for (const { unit } of theirs) {
+        said.set(unit, "down");
+      }
+
+      continue;
+    }
+
+    if (asked.exitCode !== 0) {
+      for (const { unit } of theirs) {
+        said.set(unit, "active");
+      }
+
+      console.error(
+        `job: ${machine} couldn't say what still runs there, so its jobs are left to it`,
+      );
+      continue;
+    }
+
+    for (const line of asked.stdout.toString().split("\n")) {
+      const [state, unit = ""] = line.split(" ");
+
+      if (state === "active" || state === "gone") {
+        said.set(unit, state);
+      }
+    }
+  }
+
+  return said;
+}
+
+function keptNews(file: string) {
+  const text = readFileSync(file, "utf-8");
+
+  return News.safeParse(text.startsWith("{") ? JSON.parse(text) : undefined).data;
 }
 
 function keptRecord(unit: string): Kept | undefined {
@@ -561,7 +843,20 @@ async function launch(
     process.exit(1);
   }
 
+  const before = keptRecord(unit)?.machine;
+
+  if (
+    fresh &&
+    isSet(before) &&
+    before !== hostname() &&
+    (await stillOnTheirMachines([unit], hostname())).get(unit) === "active"
+  ) {
+    console.error(`job: ${unit} already runs on ${before}`);
+    process.exit(1);
+  }
+
   mkdirSync(records, { recursive: true });
+  rmSync(join(records, `${unit}.ended`), { force: true });
 
   const keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns = join(
     records,
@@ -570,7 +865,10 @@ async function launch(
 
   const record = keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns;
 
-  writeFileSync(record, JSON.stringify({ ...kept, machine: hostname() }));
+  writeFileSync(
+    record,
+    JSON.stringify({ ...kept, machine: hostname(), started: new Date().toISOString() }),
+  );
 
   const log = join(records, `${unit}.log`);
 

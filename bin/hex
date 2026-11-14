@@ -4,6 +4,22 @@ hex=$(cd "$(dirname "$0")/.." && pwd)
 home=$(cd "$hex/.." && pwd)
 pidfile="$home/state/hub.pid"
 
+# Whatever moves hex to another machine says so in this machine's own state, for the jobs it leaves here: the file is
+# empty while hex moves, then names the machine hex runs on. elsewhere prints that machine once the move is done, and
+# fails with 1 while hex runs here, or 2 if it's still moving after a minute.
+marker=${XDG_STATE_HOME:-$HOME/.local/state}/hex/elsewhere
+elsewhere() {
+  waited=0
+  while [ -e "$marker" ]; do
+    where=$(cat "$marker" 2>/dev/null) || where=
+    [ -z "$where" ] || { echo "$where"; return 0; }
+    [ "$waited" -lt 120 ] || return 2
+    sleep 0.5
+    waited=$((waited + 1))
+  done
+  return 1
+}
+
 running() {
   [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null
 }
@@ -122,6 +138,8 @@ case "${1:-}" in
     echo "hex is set up in $home"
     ;;
   run)
+    # Only whatever moved hex away brings it back: it starts hex ahead of its turn.
+    if [ -e "$marker" ] && [ -z "${HEX_AHEAD:-}" ]; then echo "hex runs on another machine now ($marker), so it starts here only once it's moved back" >&2; exit 1; fi
     shell_path
     # In a shell of its own, so a line of .env that fails stops the check the way it would stop the hub. Only where it
     # failed is told, since the shell's error quotes the line, which may be a secret.
@@ -192,7 +210,22 @@ case "${1:-}" in
     ;;
   deliver|task|tasks|hold|holds|questions|pins|threads|thread|running|message|profile|log|recall|watch)
     export MEMORY_DIR="${MEMORY_DIR:-$home/memory}"
+    # While hex runs on another machine, its commands run there, as whoever ran them here.
+    moved=0
+    where=$(elsewhere) || moved=$?
+    [ "$moved" != 2 ] || { echo "hex is moving between machines; try again in a minute" >&2; exit 1; }
+    if [ "$moved" = 0 ]; then
+      set -- "$hex/bin/hex" "$@"
+      for name in HEX_OWNER HEX_THREAD HEX_CHANNEL HEX_MAIN HEX_BESIDE HEX_HELPER; do
+        eval "value=\${$name:-}"
+        [ -z "$value" ] || set -- "$name=$value" "$@"
+      done
+      exec ssh -o BatchMode=yes -o ConnectTimeout=5 "$where" "bash -c 'mapfile -d \"\" -t a < <(printf %s $(printf '%s\0' "$@" | base64 -w0) | base64 -d); exec \"\${a[@]}\"'"
+    fi
     exec bun "$hex/hub/cli.ts" "$home/state" "$@"
+    ;;
+  elsewhere)
+    elsewhere
     ;;
   status)
     if running; then echo "hub: running (pid $(cat "$pidfile"))"; else echo "hub: stopped"; fi
