@@ -68,6 +68,21 @@ link_of() {
 # The channels hex ships with a server of their own, for Claude Code's managed settings to allow.
 channels() { for mcp in "$hex"/channels/*/.mcp.json; do basename "$(dirname "$mcp")"; done; }
 
+# hex that can't start tells General itself, straight through Telegram, since no hub runs to send it. Once per
+# machine, until a hub connects there again (state/down.<host>) and says it's back.
+down() {
+  echo "$1" >&2
+  marker="$home/state/down.$(uname -n)"
+  [ ! -e "$marker" ] || return 0
+  (
+    set +eu
+    . "$hex/bin/settings"
+    [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${HEX_MAIN_THREAD:-}" ] &&
+      printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" |
+      curl -sf -m 10 -o /dev/null -K - --data-urlencode "chat_id=$HEX_MAIN_THREAD" --data-urlencode "text=$1 General hears here once it's back."
+  ) && date +%s > "$marker" || :
+}
+
 case "${1:-}" in
   init)
     for file in AGENTS.md SOUL.md PROACTIVE.md schedules.json; do
@@ -105,8 +120,14 @@ case "${1:-}" in
     ;;
   run)
     shell_path
-    # In a shell of its own, so a line of .env that fails stops the check the way it would stop the hub.
-    home="$home" sh -eu -c '. "$1"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]' sh "$hex/bin/settings" || { echo "hex can't start: $home/.env doesn't load, or sets no TELEGRAM_BOT_TOKEN" >&2; exit 1; }
+    # In a shell of its own, so a line of .env that fails stops the check the way it would stop the hub. Only where it
+    # failed is told, since the shell's error quotes the line, which may be a secret.
+    home="$home" sh -eu -c '. "$1"; [ -n "${TELEGRAM_BOT_TOKEN:-}" ]' sh "$hex/bin/settings" || {
+      line=$([ ! -f "$home/.env" ] || sh -eu -c 'set -a; . "$1"' sh "$home/.env" 2>&1 >/dev/null | sed -n 's/^[^:]*: \(line \)*\([0-9][0-9]*\):.*/\2/p' | head -n 1)
+      if [ -n "$line" ]; then why="line $line of $home/.env fails as a command"; else why="$home/.env sets no TELEGRAM_BOT_TOKEN"; fi
+      down "hex can't start on $(uname -n): $why."
+      exit 1
+    }
     export HEX_DIR="$home" HEX_LAUNCHER="$hex/bin/session" HEX_NAME="${HEX_NAME:-hex}"
     # The hex whose plugin and launcher sessions start from: a change to what they read only at start renews them at their next rest.
     export HEX_STARTUP="$hex"
@@ -138,7 +159,7 @@ case "${1:-}" in
       first=$second second=$third third=$(date +%s)
       if [ -n "$first" ] && [ $((third - first)) -le 60 ]; then
         # With nothing to go back to, hex stops as failed, for its service manager to see and act on.
-        roll_back || { echo "hex's hub exited three times within a minute, and there's no earlier hex to go back to" >&2; rm -f "$pidfile"; exit 1; }
+        roll_back || { down "hex can't start on $(uname -n): its hub exited three times within a minute, and there's no earlier hex to go back to. What it printed is in the hub's log (state/hub.log, or the journal of the unit that runs hex)."; rm -f "$pidfile"; exit 1; }
         first= second= third=
       fi
       sleep 3

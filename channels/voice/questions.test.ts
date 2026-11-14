@@ -11,7 +11,7 @@ import type { Pin, Question, NewRow } from "@hex/hub";
 import { until } from "@hex/hub/testing";
 import { z } from "zod";
 
-import { before, digest, failed, vet } from "./check.ts";
+import { before, digest, failed, handBack, vet } from "./check.ts";
 import { caption, meta as mediaMeta } from "./media.ts";
 import type { Item } from "./media.ts";
 import { Questions, fromLedger } from "./questions.ts";
@@ -1530,6 +1530,7 @@ test("a check’s verdict is held to the ledger: real open refs and buttons only
 
   const verdict = vet(
     {
+      back: [],
       asks: [
         {
           id: "twilio",
@@ -1591,6 +1592,7 @@ test("a closed thread's open question stays a check's ref, so answering the ques
 
   const verdict = vet(
     {
+      back: [],
       asks: [
         {
           id: "music",
@@ -1806,7 +1808,14 @@ test("an answered ask the check lists again without buttons is flagged, not list
   const signedIn = { label: "Done", at: "2026-10-13T12:00:00.000Z", via: "app" };
 
   const verdict = vet(
-    { asks: [ask, { ...ask, id: "check:other" }], settle: [], fixed: [], flagged: [], stuck: [] },
+    {
+      asks: [ask, { ...ask, id: "check:other" }],
+      settle: [],
+      back: [],
+      fixed: [],
+      flagged: [],
+      stuck: [],
+    },
     {},
     {
       threads: {},
@@ -1864,6 +1873,7 @@ test("a check's links keep only what opens a page or an app on the phone", () =>
 
   const verdict = vet(
     {
+      back: [],
       asks: [
         {
           id: "read",
@@ -2195,6 +2205,51 @@ test("a check's ask names the ids its questions were listed under before it took
   ]);
 });
 
+test("an ask the owner's rules give to hex leaves their list, its open question settles, and its thread gets it back once", () => {
+  const ledgers = { telegram: [asked(1, "bun or pnpm?", ["bun (my pick)", "pnpm"])] };
+  const ref = { app: "telegram", thread: DESK, message: 1 };
+
+  const verdict = vet(
+    {
+      asks: [],
+      settle: [],
+      back: [
+        {
+          id: "monorepo-pm",
+          task: `telegram:${DESK}`,
+          question: "bun or pnpm for the monorepos?",
+          why: "A tool pick that doesn't change what they get.",
+          from: [ref, { app: "telegram", thread: "-100999" }],
+        },
+      ],
+      fixed: [],
+      flagged: [],
+      stuck: [],
+    },
+    ledgers,
+    { threads: { [`telegram:${DESK}`]: "desk" }, calls: [] },
+  );
+
+  expect(verdict.asks).toEqual([]);
+  expect(verdict.settle).toEqual([{ ...ref, note: "Back to hex: its call" }]);
+  expect(verdict.back).toMatchObject([{ id: "check:monorepo-pm", from: [ref] }]);
+
+  const store = open(state);
+  handBack(state, verdict.back, { [`telegram:${DESK}`]: "desk" });
+  handBack(state, verdict.back, { [`telegram:${DESK}`]: "desk" });
+
+  const told = store.db
+    .query<{ body: string }, [string]>(
+      `select body from messages where "to" = ? and "from" = 'check'`,
+    )
+    .all(`beside:${DESK}`)
+    .map((row) => row.body);
+
+  expect(told).toHaveLength(1);
+  expect(told[0]).toContain("bun or pnpm for the monorepos?");
+  expect(told[0]).toContain("A tool pick that doesn't change what they get.");
+});
+
 test("General hears of the first failed check in a run of them, and of the first after one succeeds", () => {
   const store = open(state);
   store.threads.keep("telegram", { [GROUP]: { name: "hex" } });
@@ -2235,6 +2290,7 @@ test("an ask stays only while a place still asks it: an open question, an open t
 
   const verdict = vet(
     {
+      back: [],
       asks: [
         ask("question", old, [{ app: "telegram", thread: DESK, message: 1 }]),
         ask("pin", old, [{ app: "telegram", thread: DESK, message: 50 }]),
@@ -2276,6 +2332,7 @@ test("a check's ask keeps why hex picks and what each option does, for the app's
 
   const verdict = vet(
     {
+      back: [],
       asks: [
         {
           id: "standby",

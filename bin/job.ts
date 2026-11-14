@@ -12,6 +12,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { hostname } from "node:os";
 import { basename, join } from "node:path";
 
 import { $ } from "bun";
@@ -21,7 +22,8 @@ import { besideOf, besideWhat } from "../hub/beside.ts";
 import { saved } from "../hub/claude.ts";
 import { origin } from "../hub/origin.ts";
 import { served } from "../hub/running.ts";
-import { open, stateDir } from "../hub/store.ts";
+import { hexDir, open, stateDir } from "../hub/store.ts";
+import { zoneOf } from "../hub/zone.ts";
 
 const [mode, ...rest] = process.argv.slice(2);
 const store = open(stateDir());
@@ -33,11 +35,18 @@ const WhatAJobNeedsToRunAgain = z.object({
   properties: z.array(z.string()),
   command: z.array(z.string()),
   session: z.string().optional(),
+  input: z.array(z.string()).optional(),
+  machine: z.string().optional(),
+  startedOver: z.array(z.string()).optional(),
 });
+
+const StoppedBecause = z.enum(["moved", "shutdown", "ended", ""]);
 
 type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
 
 const LINES_OF_OUTPUT = 40;
+const STARTS_OVER_THAT_MEAN_IT_STOPS_ITSELF = 3;
+const WITHIN_MS = 60 * 60 * 1000;
 const CHARACTERS_OF_OUTPUT = 4000;
 const BYTES_READ_FOR_THE_END = 64 * 1024;
 const LOGS_KEPT_FOR_THEIR_THREADS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -136,17 +145,28 @@ if (mode === "--owner") {
   console.log(reportsTo() ?? "");
 } else if (mode === "--ended") {
   const [unit = "", owner = ""] = rest;
-  const hexMovingToAnotherMachine = existsSync(join(stateDir(), "moving"));
 
-  const keepTheRecordToResumeWhereverHexStartsNext =
-    hexMovingToAnotherMachine ||
-    (await $`systemctl is-system-running`.nothrow().text()).trim() === "stopping";
+  const stopAsked =
+    (await $`systemctl --user show -p Job --value ${unit}`.nothrow().text()).trim() !== "";
 
-  if (keepTheRecordToResumeWhereverHexStartsNext) {
+  const finishedByItself =
+    process.env.EXIT_CODE === "exited" && process.env.EXIT_STATUS === "0" && !stopAsked;
+
+  const stopped = finishedByItself
+    ? "ended"
+    : existsSync(join(stateDir(), "moving"))
+      ? "moved"
+      : (await $`systemctl is-system-running`.nothrow().text()).trim() === "stopping"
+        ? "shutdown"
+        : "ended";
+
+  store.seen.show(`job:${unit}`, "stopped", stopped);
+
+  if (stopped !== "ended") {
     process.exit(0);
   }
 
-  const session = keptSession(unit);
+  const session = keptRecord(unit)?.session ?? "";
 
   rmSync(join(records, `${unit}.json`), { force: true });
 
@@ -187,44 +207,129 @@ if (mode === "--owner") {
 
   tell(unit, owner, said, `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`);
 } else if (mode === "--resume") {
-  const booted = (await $`uptime -s`.nothrow().text()).trim();
+  const here = hostname();
+  const at = new Date().toISOString();
+  const zone = zoneOf(hexDir());
 
-  for (const file of readdir(records)) {
+  const when = (time: string) =>
+    new Date(time).toLocaleString("en-US", {
+      timeZone: zone,
+      timeZoneName: "short",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+    });
+
+  for (const file of readdir(records).filter((name) => !name.includes(".sync-conflict-"))) {
     const recorded = file.slice(0, -".json".length);
 
     if ((await $`systemctl --user is-active --quiet ${recorded}`.nothrow()).exitCode === 0) {
       continue;
     }
 
-    const kept = WhatAJobNeedsToRunAgain.parse(
-      JSON.parse(readFileSync(join(records, file), "utf-8")),
-    );
+    const kept = keptRecord(recorded);
+
+    if (kept === undefined) {
+      console.error(`job: ${file} can't be read, so ${recorded} isn't started again`);
+      continue;
+    }
 
     rmSync(join(records, file));
 
-    if (isSet(kept.session) && saved(kept.session)) {
-      const prompt = `The machine this job runs on went down (it came back up at ${booted}) and stopped you in the middle of your work. This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.`;
+    const stop = store.seen.getWithTime(`job:${recorded}`, "stopped");
+    const mark = StoppedBecause.catch("").parse(stop?.record);
+    const then = stop === null || mark === "" ? "" : ` at ${when(stop.at)}`;
 
-      await launch(recorded, kept, [
-        ...flags(kept.command.slice(1)),
-        "--resume",
-        kept.session,
-        prompt,
-      ]);
-      tell(
-        recorded,
-        kept.owner,
-        `stopped when the machine went down, and resumed its own conversation as it came back up (${booted}).`,
-        `${booted}:resumed`,
-      );
-    } else {
-      tell(
-        recorded,
-        kept.owner,
-        `stopped when the machine went down, and hasn't run since (it came back up at ${booted}). Start it again if its work still needs doing: ${kept.command.join(" ")}`,
-        `${booted}:stopped`,
-      );
+    store.seen.unshow(`job:${recorded}`, "stopped");
+
+    if (mark === "ended") {
+      continue;
     }
+
+    const ranOn = kept.machine ?? "the machine";
+
+    const fromElsewhere = isSet(kept.machine) && kept.machine !== here;
+
+    const moved = mark === "moved" || (mark === "" && fromElsewhere);
+
+    const why = moved
+      ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}${then}`
+      : mark === "shutdown"
+        ? `${ranOn} shut down${then}`
+        : `${ranOn} went down`;
+
+    const where = moved ? "there" : `as hex started again on ${here} at ${when(at)}`;
+
+    const resumes = valueAfter(kept.command, /^(--resume|-r)$/u);
+    const forks = kept.command.includes("--fork-session");
+    const continues = kept.command.some((arg) => /^(--continue|-c)$/u.test(arg));
+    const session = kept.session ?? (forks ? undefined : resumes);
+    const agent = basename(kept.command[0] ?? "") === "claude";
+    const conversation = agent && isSet(session) && saved(session);
+    const command = kept.command.join(" ");
+
+    const startsOver = (kept.startedOver ?? []).filter(
+      (time) => Date.parse(at) - Date.parse(time) < WITHIN_MS,
+    );
+
+    const leftToItsOwner = conversation
+      ? undefined
+      : agent && (continues || !isSet(session))
+        ? "it would continue the folder's latest conversation, which is another one now"
+        : agent && isSet(resumes) && !forks
+          ? `the conversation it resumes isn't on ${here}`
+          : startsOver.length >= STARTS_OVER_THAT_MEAN_IT_STOPS_ITSELF
+            ? `it started over ${startsOver.length} times in the last hour, so it may be what stops it`
+            : undefined;
+
+    if (leftToItsOwner !== undefined) {
+      tell(
+        recorded,
+        kept.owner,
+        `stopped because ${why}, and hasn't run since: ${leftToItsOwner}. Start it again if its work still needs doing: ${command}`,
+        `${at}:again`,
+      );
+      continue;
+    }
+
+    const { flags, prompt } = partsOf(kept.command.slice(1), kept.input);
+
+    const firstPrompt =
+      isSet(resumes) && isSet(prompt)
+        ? `\n\nThis job started by resuming this conversation with the prompt below; if you hadn't taken it up yet, do it now:\n\n${prompt}`
+        : "";
+
+    const args = conversation
+      ? [
+          ...flags,
+          "--resume",
+          session ?? "",
+          `You were stopped in the middle of your work because ${why}; hex runs on ${here} now (${when(at)}). This is the same conversation; anything you had running, like background shells or agents, is gone. Check what's already done, then carry on to the end of your task.${firstPrompt}`,
+        ]
+      : undefined;
+
+    const over: Kept = { ...kept, startedOver: [...startsOver, at] };
+
+    if (agent) {
+      over.session = crypto.randomUUID();
+    }
+
+    const started = await launch(
+      recorded,
+      conversation ? kept : over,
+      args ?? startArgs(over),
+      conversation ? [] : (kept.input ?? []),
+    );
+
+    const said =
+      started === 0
+        ? conversation
+          ? `carried on in its own conversation ${where}.`
+          : `started over from the beginning ${where}: ${command}`
+        : `couldn't start again on ${here}. Start it again if its work still needs doing: ${command}`;
+
+    tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
 } else {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
@@ -253,17 +358,10 @@ if (mode === "--owner") {
     );
   }
 
-  const chosen = command.includes("--session-id")
-    ? command[command.indexOf("--session-id") + 1]
-    : undefined;
+  const session = agent ? conversationToResumeBy(command) : undefined;
 
-  const ownIdToResumeBy =
-    agent && !command.some((arg) => /^(--resume|-r|--continue|-c)$/u.test(arg))
-      ? (chosen ?? crypto.randomUUID())
-      : undefined;
-
-  if (isSet(ownIdToResumeBy) && task !== undefined) {
-    store.tasks.addAgents(task, [ownIdToResumeBy]);
+  if (isSet(session) && task !== undefined) {
+    store.tasks.addAgents(task, [session]);
   } else if (task !== undefined) {
     console.error(`job: only a claude job's session can be linked to ${task}`);
   }
@@ -299,31 +397,60 @@ if (mode === "--owner") {
     command,
   };
 
-  if (ownIdToResumeBy !== undefined) {
-    kept.session = ownIdToResumeBy;
+  if (session !== undefined) {
+    kept.session = session;
   }
 
-  await launch(
-    mode,
-    kept,
-    [
-      ...(isSet(ownIdToResumeBy) ? ["--session-id", ownIdToResumeBy] : []),
-      ...command
-        .slice(1)
-        .filter((arg, at, args) => arg !== "--session-id" && args[at - 1] !== "--session-id"),
-    ],
-    input,
-    true,
-  );
+  if (input.length > 0) {
+    kept.input = input;
+  }
+
+  store.seen.unshow(`job:${mode}`, "stopped");
+  process.exitCode = await launch(mode, kept, startArgs(kept), input, true);
 }
 
-function keptSession(unit: string) {
-  try {
-    const kept: unknown = JSON.parse(readFileSync(join(records, `${unit}.json`), "utf-8"));
+function conversationToResumeBy(command: string[]) {
+  const chosen = valueAfter(command, /^--session-id$/u);
+  const resumed = valueAfter(command, /^(--resume|-r)$/u);
 
-    return WhatAJobNeedsToRunAgain.safeParse(kept).data?.session ?? "";
+  if (isSet(chosen)) {
+    return chosen;
+  }
+
+  if (command.includes("--fork-session")) {
+    return crypto.randomUUID();
+  }
+
+  if (isSet(resumed)) {
+    return resumed;
+  }
+
+  return command.some((arg) => /^(--continue|-c)$/u.test(arg)) ? undefined : crypto.randomUUID();
+}
+
+function startArgs({ command, session }: Kept) {
+  const args = command
+    .slice(1)
+    .filter((arg, at, all) => arg !== "--session-id" && all[at - 1] !== "--session-id");
+
+  const itsOwnConversationAlready = valueAfter(command, /^(--resume|-r)$/u) === session;
+
+  return isSet(session) && !itsOwnConversationAlready ? ["--session-id", session, ...args] : args;
+}
+
+function valueAfter(args: string[], flag: RegExp) {
+  const at = args.findIndex((arg) => flag.test(arg));
+
+  return at === -1 ? undefined : args[at + 1];
+}
+
+function keptRecord(unit: string): Kept | undefined {
+  try {
+    return WhatAJobNeedsToRunAgain.parse(
+      JSON.parse(readFileSync(join(records, `${unit}.json`), "utf-8")),
+    );
   } catch {
-    return "";
+    return undefined;
   }
 }
 
@@ -388,30 +515,38 @@ function readdir(dir: string) {
   }
 }
 
-function flags(args: string[]) {
-  const theOnlyFlagsWithoutAValue =
-    /^(-p|--print|--verbose|--dangerously-skip-permissions|--fork-session)$/u;
+function partsOf(args: string[], input: string[] = []) {
+  const theOnlyFlagsWithoutAValue = /^(-p|--print|--verbose|--dangerously-skip-permissions)$/u;
+  const whichConversation = /^(--session-id|--resume|-r)$/u;
+  const startsAnotherConversation = /^(--fork-session|--continue|-c)$/u;
 
-  const kept: string[] = [];
+  const flags: string[] = [];
+  const words: string[] = [];
 
   for (let at = 0; at < args.length; at++) {
     const arg = args[at] ?? "";
 
     if (!arg.startsWith("-")) {
-      continue;
-    }
-
-    if (arg === "--session-id") {
+      words.push(arg);
+    } else if (whichConversation.test(arg)) {
       at++;
+    } else if (startsAnotherConversation.test(arg)) {
+      continue;
     } else if (theOnlyFlagsWithoutAValue.test(arg) || arg.includes("=")) {
-      kept.push(arg);
+      flags.push(arg);
     } else {
       at++;
-      kept.push(arg, args[at] ?? "");
+      flags.push(arg, args[at] ?? "");
     }
   }
 
-  return kept;
+  const piped = input.find((property) => property.startsWith("StandardInputData="));
+
+  if (piped !== undefined) {
+    words.push(Buffer.from(piped.slice("StandardInputData=".length), "base64").toString());
+  }
+
+  return { flags, prompt: words.join("\n\n") };
 }
 
 async function launch(
@@ -435,7 +570,7 @@ async function launch(
 
   const record = keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns;
 
-  writeFileSync(record, JSON.stringify(kept));
+  writeFileSync(record, JSON.stringify({ ...kept, machine: hostname() }));
 
   const log = join(records, `${unit}.log`);
 
@@ -451,14 +586,15 @@ async function launch(
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];
 
   const started =
-    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`.nothrow();
+    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`
+      .cwd(existsSync(kept.cwd) ? kept.cwd : process.cwd())
+      .nothrow();
 
-  if (started.exitCode === 0) {
-    return;
+  if (started.exitCode !== 0) {
+    rmSync(record, { force: true });
   }
 
-  rmSync(record, { force: true });
-  process.exit(started.exitCode);
+  return started.exitCode;
 }
 
 function verbatimPastSystemdsVariableExpansion(arg: string) {
