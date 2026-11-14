@@ -21,7 +21,8 @@ const attribute = (value: string) => value.replaceAll("&", "&amp;").replaceAll('
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // The row as Claude Code shows a channel's message, key first, so the session's prompt hook takes it (hub/state.ts).
 export function prompt(app: string, row: Row, zone: string) {
-  const meta = local({ key: row.key, ...row.meta, ts: row.at }, zone);
+  const { stalled: _stalled, ...shown } = row.meta ?? {};
+  const meta = local({ key: row.key, ...shown, ts: row.at }, zone);
 
   const attributes = Object.entries(meta)
     .map(([name, value]) => ` ${name}="${attribute(value)}"`)
@@ -73,11 +74,15 @@ export function run(
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Waits for a run another hub started, which this one isn't the parent of, to end.
-export function exited(pid: number): Promise<void> {
+// Waits for a run another hub started, which this one isn't the parent of, to end: true once it has, false where this system's tail can't wait on a process (GNU's can, BusyBox's can't), so the run is left to the next hub start.
+export function exited(pid: number): Promise<boolean> {
   return new Promise((resolve) => {
-    spawn("tail", [`--pid=${pid}`, "-f", "/dev/null"], { stdio: "ignore" }).on("close", () => {
-      resolve();
-    });
+    spawn("tail", [`--pid=${pid}`, "-f", "/dev/null"], { stdio: "ignore" })
+      .on("error", () => {
+        resolve(false);
+      })
+      .on("close", (code) => {
+        resolve(code === 0);
+      });
   });
 }

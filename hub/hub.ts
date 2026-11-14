@@ -1909,8 +1909,8 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Each session running beside a thread, by the row it was started for.
-  const besides = new Map<string, string>();
+  // Each session running beside a thread, by the row it was started for, if this hub started it.
+  const besides = new Map<string, string | undefined>();
 
   const besideAddresses = () => [...threads.keys()].map(besideOf);
   const besideRows = () => kept((store) => store.messages.beside(besideAddresses()), []);
@@ -2043,7 +2043,7 @@ export function startHub({
     const alive = kept((store) => sessionsRunning(store), new Map<string, Session>());
 
     kept((store) => {
-      for (const dead of store.turns.unfinishedBeside(besideAddresses(), [...alive.keys()])) {
+      for (const dead of store.turns.unfinishedBeside([...alive.keys()])) {
         store.turns.besideEnded(dead, undefined, undefined, false);
       }
     }, undefined);
@@ -2060,17 +2060,24 @@ export function startHub({
       const thread =
         run.thread?.startsWith(`${app}:`) === true ? run.thread.slice(app.length + 1) : undefined;
 
-      if (run.beside !== undefined && thread !== undefined && threads.has(thread)) {
+      if (
+        run.beside !== undefined &&
+        thread !== undefined &&
+        (thread === main || threads.has(thread))
+      ) {
         void waitBeside(thread, run);
       }
     }
   }
 
   async function waitBeside(thread: string, run: Session) {
-    besides.set(run.id, "");
-    await exited(run.pid);
+    besides.set(run.id, undefined);
+    const ended = await exited(run.pid);
     besides.delete(run.id);
-    besideEnded(thread, run.id);
+
+    if (ended) {
+      besideEnded(thread, run.id);
+    }
   }
 
   function writeBesideSettings(thread: string) {
@@ -2834,12 +2841,12 @@ export function startHub({
         revive();
       }
 
-      besideStart();
       wake();
     })();
   }
 
   const unwatch = kept((store) => store.watch(wake), ignore);
+  besideStart();
   const unschedule = general && present(main) ? schedule(storeDir, hexDir, main) : ignore;
   const unhold = general && present(main) ? holding(storeDir) : ignore;
 

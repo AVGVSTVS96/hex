@@ -133,24 +133,23 @@ export class Turns {
           .run(row.key, stall, at);
       }
 
-      this.turned(session, false, at);
-      this.db.query("update turns set waiting = null where session = ?").run(session);
+      this.handled(session, at);
 
       return { given, left };
     });
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Sessions beside these addresses whose last turn didn't go through and that no longer run.
-  unfinishedBeside(addresses: string[], running: string[]): string[] {
+  // Sessions beside any thread whose last turn didn't go through and that no longer run.
+  unfinishedBeside(running: string[]): string[] {
     return KeyValues.parse(
       this.db
         .query(
           `select session from turns where (began is not null and (ended is null or coalesce(handled, '') <= began) or waiting is not null)
-           and session in (select taken_by from messages indexed by sessions where "to" in (select value from json_each(?1)) and taken_by is not null)
-           and session not in (select value from json_each(?2))`,
+           and session in (select taken_by from messages indexed by sessions where "to" >= 'beside:' and "to" < 'beside;' and taken_by is not null)
+           and session not in (select value from json_each(?1))`,
         )
-        .values(JSON.stringify(addresses), JSON.stringify(running)),
+        .values(JSON.stringify(running)),
     ).map(([session]) => session);
   }
 

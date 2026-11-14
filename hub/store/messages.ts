@@ -389,7 +389,7 @@ export class Messages {
     return JobRows.parse(
       this.db
         .query(
-          `select m.*, (select coalesce(json_extract(b.meta, '$.schedule'), json_extract(b.meta, '$.user')) from messages b indexed by taken where b.taken_by = m.taken_by and b."to" like 'beside:%' order by b.n limit 1) as job
+          `select m.*, (select coalesce(json_extract(b.meta, '$.schedule'), json_extract(b.meta, '$.job'), json_extract(b.meta, '$.user')) from messages b indexed by taken where b.taken_by = m.taken_by and b."to" like 'beside:%' order by b.n limit 1) as job
            from messages m indexed by said where m."to" = ?1 and m.at > ?3 and m.author = 'hex' and m.taken_by is not ?2
            and json_extract(m.meta, '$.unsent') is null and json_extract(m.meta, '$.failed') is null
            and not exists (select 1 from messages t indexed by sessions where t."to" = ?1 and t.taken_by = m.taken_by and t.author <> 'hex')

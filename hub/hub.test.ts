@@ -3732,6 +3732,46 @@ test("a session's stop hook names its session, and says when the turn failed", a
   ]);
 });
 
+test("a session beside a thread never reports its turns as the thread's, even with a hub in its settings", async () => {
+  const socket = join(dir, "state.sock");
+  const received: string[] = [];
+
+  const server = createServer((client) => {
+    client.on("data", (chunk) => {
+      received.push(String(chunk));
+    });
+  }).listen(socket);
+
+  for (const hook_event_name of ["UserPromptSubmit", "StopFailure"]) {
+    const hook = Bun.spawn(
+      [
+        "bun",
+        join(import.meta.dir, "state.ts"),
+        hook_event_name === "StopFailure" ? "idle" : "busy",
+      ],
+      {
+        env: {
+          ...process.env,
+          HEX_HUB: socket,
+          HEX_THREAD: "t1",
+          HEX_BESIDE: SESSION,
+          HEX_STORE: dir,
+          MEMORY_DIR: "",
+        },
+        stdin: new Blob([
+          JSON.stringify({ hook_event_name, session_id: SESSION, error: "authentication_failed" }),
+        ]),
+      },
+    );
+
+    expect(await hook.exited).toBe(0);
+  }
+
+  await Bun.sleep(100);
+  server.close();
+  expect(received).toEqual([]);
+});
+
 test("a turn's hook tells the hub and goes, without waiting for a stalled hub to hang up", async () => {
   const socket = join(dir, "state.sock");
   const received: object[] = [];
@@ -4842,6 +4882,7 @@ test("runs beside a thread the API refused tell its chat once, in the API's word
   const third = await until(() => runs()[2]);
   expect(third.args.slice(0, 2)).toEqual(["-p", "--session-id"]);
   expect(third.args.at(-1)).toContain('key="schedule:heartbeat@1"');
+  expect(third.args.at(-1)).not.toContain("stalled");
   await aTurnGoesThrough();
   await Bun.sleep(200);
   expect(runs()).toHaveLength(3);
@@ -4869,7 +4910,7 @@ test("runs beside a thread that wait for a turn to go through still wait after a
   expect(open(dir).messages.get("schedule:catch-up@2")?.taken).toBeUndefined();
 });
 
-test("a run beside a thread cut off with the machine, mid-turn or as its turn failed, runs again as the hub starts, and the logs of ended runs go", async () => {
+test("a run beside a thread cut off with the machine, mid-turn or as its turn failed, runs again as the hub starts, even before Claude's daemon answers, and the logs of ended runs go", async () => {
   const store = open(dir);
   const minuteAgo = new Date(Date.now() - 60_000).toISOString();
   timed("schedule:once@1", {}, "once");
@@ -4881,7 +4922,13 @@ test("a run beside a thread cut off with the machine, mid-turn or as its turn fa
   store.turns.turned("failed-beside", false, new Date().toISOString());
   mkdirSync(join(dir, "sessions"), { recursive: true });
   writeFileSync(join(dir, "sessions", "beside-dead-beside.log"), "API Error");
-  start({ main: "general", general: true, launcher: besideLauncher(), agents: [] });
+  writeFileSync(join(dir, "down"), "");
+  start({
+    main: "general",
+    general: true,
+    launcher: besideLauncher(),
+    registry: { general: { name: "General", session: SESSION } },
+  });
   expect((await ranFor("schedule:once@1")).beside).not.toBe("dead-beside");
   expect((await ranFor("schedule:twice@1")).beside).not.toBe("failed-beside");
   expect(existsSync(join(dir, "sessions", "beside-dead-beside.log"))).toBe(false);

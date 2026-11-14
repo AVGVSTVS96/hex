@@ -136,3 +136,18 @@ test("a new session is shown only what came since its job last ran, or since its
   expect(fresh).toContain("The build finished");
   expect(fresh).not.toContain("Old news");
 });
+
+test("what a job's report run said is named for the job", () => {
+  store.messages.deliver({
+    key: "job:mail@1",
+    to: "beside:general",
+    from: "job",
+    author: "prompt",
+    body: "[job] mail ended",
+    meta: { user: "job", job: "mail" },
+  });
+  store.messages.take("job:mail@1", "report-1");
+  wrote("telegram:1", "Two new mails", "report-1");
+
+  expect(said(store, "general", "general-session")).toContain("[mail]: Two new mails");
+});
