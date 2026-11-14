@@ -2236,7 +2236,11 @@ test("an ask the owner's rules give to hex leaves their list, its open question 
 
   const store = open(state);
   handBack(state, verdict.back, { [`telegram:${DESK}`]: "desk" });
-  handBack(state, verdict.back, { [`telegram:${DESK}`]: "desk" });
+  handBack(
+    state,
+    verdict.back.map((item) => ({ ...item, id: "check:monorepo-tool" })),
+    { [`telegram:${DESK}`]: "desk" },
+  );
 
   const told = store.db
     .query<{ body: string }, [string]>(
