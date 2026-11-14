@@ -18,7 +18,6 @@ import { above, held, open as openStore, pictures as picturesIn, shown } from "@
 import type { Question as Asked, MessageId, Row, Store } from "@hex/hub";
 import { z } from "zod";
 
-import { rendered } from "../../bin/instructions";
 import { generalOf, holdsEveryProject, nameOf } from "./activity.ts";
 import { savedCall } from "./calls.ts";
 import type { Answer, CheckResult, Curated, Ref, Source } from "./questions.ts";
@@ -553,7 +552,7 @@ function claude(input: string, hexDir: string, state: string) {
     "Read,Grep,Glob",
     "--safe-mode",
     "--append-system-prompt",
-    rendered(),
+    Bun.spawnSync([join(hexDir, ".hex", "bin", "instructions")]).stdout.toString(),
     "--no-session-persistence",
     "--add-dir",
     hexDir,
