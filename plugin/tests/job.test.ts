@@ -32,7 +32,7 @@ const ran = join(home, "ran.json");
 const launches = join(home, "launches.jsonl");
 const folders = join(home, "folders.txt");
 const here = hostname();
-const time = String.raw`[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s[AP]M [A-Z][A-Za-z0-9+:-]+`;
+const clockTime = String.raw`[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s[AP]M [A-Z][A-Za-z0-9+:-]+`;
 
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -563,7 +563,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
   expect(ends).toEqual([
     matching(
       new RegExp(
-        `^\\[job\\] atrium stopped because ${here} went down, and carried on in its own conversation as hex started again on ${here} at ${time}\\.$`,
+        `^\\[job\\] atrium stopped because ${here} went down, and carried on in its own conversation as hex started again on ${here} at ${clockTime}\\.$`,
         "u",
       ),
     ),
@@ -572,7 +572,7 @@ test("a job the machine going down stopped carries on as hex starts: a claude jo
     ),
     matching(
       new RegExp(
-        `^\\[job\\] make stopped because ${here} shut down at ${time}, and started over from the beginning as hex started again on ${here} at ${time}: make all$`,
+        `^\\[job\\] make stopped because ${here} shut down at ${clockTime}, and started over from the beginning as hex started again on ${here} at ${clockTime}: make all$`,
         "u",
       ),
     ),
@@ -633,7 +633,10 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
     "r-1",
   ]);
   expect(pick.at(-1)).toMatch(
-    new RegExp(`hex moved to ${here} at ${time}; hex runs on ${here} now \\(${time}\\)`, "u"),
+    new RegExp(
+      `hex moved to ${here} at ${clockTime}; hex runs on ${here} now \\(${clockTime}\\)`,
+      "u",
+    ),
   );
   expect(pick.at(-1)).toContain("pick up");
   const checks = started.get("checks") ?? [];
@@ -648,7 +651,7 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   expect(pickTold).toEqual([
     matching(
       new RegExp(
-        `^\\[job\\] pick stopped because hex moved to ${here} at ${time}, and carried on in its own conversation there\\.$`,
+        `^\\[job\\] pick stopped because hex moved to ${here} at ${clockTime}, and carried on in its own conversation there\\.$`,
         "u",
       ),
     ),
@@ -657,7 +660,7 @@ test("jobs hex stopped to move to another machine carry on where it lands, a cla
   expect(checksTold[0]).toEqual(
     matching(
       new RegExp(
-        `at ${time}, and started over from the beginning there: \\./checks\\.sh --all$`,
+        `at ${clockTime}, and started over from the beginning there: \\./checks\\.sh --all$`,
         "u",
       ),
     ),
