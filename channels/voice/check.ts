@@ -37,6 +37,7 @@ type Known = {
   calls: { id: string }[];
   pins?: Ref[];
   answered?: Record<string, Pick<Answer, "label" | "at">>;
+  kept?: string[];
 };
 
 const filled = (text: string | undefined) => text !== undefined && text !== "";
@@ -62,6 +63,7 @@ const markedAnswers = z.object({
       }),
     )
     .optional(),
+  kept: z.record(z.string(), z.string()).optional(),
 });
 
 const previousPass = z.object({
@@ -188,6 +190,7 @@ async function pass(state: string, why: string) {
     calls: records.calls,
     pins: records.pins.map(({ pin }) => pin),
     answered: records.answered,
+    kept: records.kept,
   });
 
   handBack(state, verdict.back, records.threads);
@@ -227,6 +230,9 @@ async function pass(state: string, why: string) {
   renameSync(`${file}.tmp`, file);
 }
 
+export const HANDED_BACK =
+  "[check] Off the owner's Needs you list and back to you, since their rules make it yours to decide or do: ";
+
 export function handBack(state: string, back: Back[], threads: Record<string, string>) {
   for (const { id, task, question, why, from } of back) {
     const source = from.find((ref) => ref.message !== undefined);
@@ -239,7 +245,7 @@ export function handBack(state: string, back: Back[], threads: Record<string, st
         to: besideOf(task.slice(task.indexOf(":") + 1)),
         from: "check",
         author: "prompt",
-        body: `[check] Off the owner's Needs you list and back to you, since their rules make it yours to decide or do: ${question}. ${why}`,
+        body: `${HANDED_BACK}${question}. ${why}`,
         meta: { user: "check" },
       });
     }
@@ -343,7 +349,8 @@ function gather(state: string) {
       waiting: call.waiting ?? [],
     }));
 
-  const answers = json(join(state, "voice", "marks.json"), markedAnswers)?.answers ?? {};
+  const marks = json(join(state, "voice", "marks.json"), markedAnswers);
+  const answers = marks?.answers ?? {};
 
   const answered = Object.fromEntries(
     Object.entries(answers).flatMap(([id, answer]) =>
@@ -369,6 +376,7 @@ function gather(state: string) {
     open,
     closed,
     answered,
+    kept: Object.keys(marks?.kept ?? {}),
     pins,
     pictures,
     calls,
@@ -433,7 +441,7 @@ export function digest({ open, closed, answered, pins, calls, t3 }: ReturnType<t
 }
 
 function prompt(
-  { ledgers: _ledgers, previous, ...records }: ReturnType<typeof gather>,
+  { ledgers: _ledgers, kept: _kept, previous, ...records }: ReturnType<typeof gather>,
   hexDir: string,
 ) {
   const ids = {
@@ -621,7 +629,7 @@ function claude(input: string, hexDir: string, state: string) {
 export function vet(
   verdict: Verdict,
   ledgers: Record<string, Asked[]>,
-  { threads, calls, pins = [], answered = {} }: Known,
+  { threads, calls, pins = [], answered = {}, kept = [] }: Known,
 ): Verdict {
   const find = (ref: { app: string; thread: string; message: MessageId | undefined }) =>
     ledgers[ref.app]?.find(
@@ -697,11 +705,19 @@ export function vet(
       .map((ref) => `${ref.app} ${ref.thread} ${ref.message}`),
   );
 
-  const back = verdict.back.map(({ id, from, ...rest }) => ({
-    ...rest,
-    id: id.startsWith("check:") ? id : `check:${id}`,
-    from: from.filter(real),
-  }));
+  const takenBackByTheOwner = new Set(kept);
+
+  const back = verdict.back
+    .map(({ id, from, ...rest }) => ({
+      ...rest,
+      id: id.startsWith("check:") ? id : `check:${id}`,
+      from: from.filter(real),
+    }))
+    .filter(({ from }) =>
+      from.every(
+        ({ app, thread, message }) => !takenBackByTheOwner.has(`${app}:${thread}:${message}`),
+      ),
+    );
 
   const backRefs = back.flatMap(({ from }) =>
     from.flatMap(({ app, thread, message }) =>
