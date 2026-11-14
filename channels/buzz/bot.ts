@@ -12,7 +12,7 @@ import {
 import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
 
-import { startHub, clients, begin, move, tappable, title, dispatch } from "@hex/hub";
+import { startHub, clients, begin, move, tappable, title, dispatch, Ledger } from "@hex/hub";
 import type { Handlers, Message, Turn } from "@hex/hub";
 import { decode } from "nostr-tools/nip19";
 import { finalizeEvent } from "nostr-tools/pure";
@@ -27,6 +27,8 @@ import { connectRelay, nostrEvent } from "./relay.ts";
 
 const STATE_DIR =
   process.env.BUZZ_STATE_DIR ?? join(homedir(), ".claude", "channels", "hex", "buzz");
+
+const ledger = new Ledger(STATE_DIR, "buzz");
 
 const ACCESS_FILE = join(STATE_DIR, "access.json");
 const ENV_FILE = join(STATE_DIR, ".env");
@@ -1128,6 +1130,18 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
       return "reaction removed";
     },
     edit_message: async (caller, args) => {
+      if (args.settled === true) {
+        ledger.settled(caller, args.message_id, "✓ Settled");
+      }
+
+      if (args.text === undefined) {
+        if (args.settled !== true) {
+          throw new Error("edit_message needs text or settled");
+        }
+
+        return `settled ${args.message_id}`;
+      }
+
       const target = await message(caller, args.message_id);
 
       if (target.pubkey !== me) {
@@ -1232,6 +1246,17 @@ function serve(url: string, secretKey: Uint8Array, authTag: z.output<typeof auth
         thread,
         `${turn === true ? "This thread's last turn failed" : "Couldn't start this thread's session"}: ${reason}`,
       ).catch(() => null);
+    },
+    questions: {
+      answer: (thread, key, label, via) => {
+        ledger.answered(thread, key, label, via);
+      },
+      settle: (thread, key, note) => {
+        ledger.settled(thread, key, note);
+      },
+      reopen: (thread, key) => {
+        ledger.reopened(thread, key);
+      },
     },
     hexDir: process.env.HEX_DIR,
     launcher: process.env.HEX_LAUNCHER,
