@@ -31,7 +31,7 @@ const HANDOVER = 2 * MINUTE;
 const RECENT = 1.5 * MINUTE;
 
 type Machine = { machine: string; first_at: number; last_at: number };
-type Told = { down: number; twice: number; chat: string; thread: string };
+type Told = { down: number; twice: number; chat: string; thread: string; checked: number };
 
 const minutes = (ms: number) => `${Math.max(1, Math.round(ms / MINUTE))} min`;
 
@@ -113,12 +113,14 @@ const check = mutation(
     const machines = ctx.sql
       .exec<Machine>("SELECT machine, first_at, last_at FROM machines ORDER BY last_at DESC")
       .toArray();
-    const told = ctx.sql.exec<Told>("SELECT down, twice, chat, thread FROM told").one();
+    const told = ctx.sql.exec<Told>("SELECT down, twice, chat, thread, checked FROM told").one();
+    ctx.sql.exec("UPDATE told SET checked = ?", now);
+    const watched = now - told.checked <= DOWN_AFTER;
     const [latest] = machines;
     if (!latest || !told.chat) return "no pulse or no chat yet";
 
     const quiet = now - latest.last_at;
-    if (quiet > DOWN_AFTER && !told.down) {
+    if (quiet > DOWN_AFTER && !told.down && watched) {
       await tell(
         ctx,
         told,
@@ -145,7 +147,8 @@ const check = mutation(
       );
       ctx.sql.exec("UPDATE told SET twice = 1");
     } else if (machines.filter((m) => now - m.last_at < RECENT).length < 2 && told.twice) {
-      await tell(ctx, told, `Only one hex hub runs again, on ${latest.machine}.`);
+      if (quiet < RECENT)
+        await tell(ctx, told, `Only one hex hub runs again, on ${latest.machine}.`);
       ctx.sql.exec("UPDATE told SET twice = 0");
     }
     return quiet > DOWN_AFTER ? "down" : "up";
@@ -167,7 +170,7 @@ const alertTo = mutation(
 const forget = mutation(
   {
     description:
-      "Forget a machine that no longer runs hex, such as a retired one or a drill, so its silence doesn't read as hex being down.",
+      "Forget a machine that no longer runs hex, such as a retired one or a drill, so status stops listing it.",
     input: object({ machine: string({ minLength: 1 }) }),
   },
   async (ctx: MutationContext<typeof requirements>, { machine }) => {
