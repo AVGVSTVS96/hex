@@ -37,7 +37,7 @@ syncInBackground();
 await listen();
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that can't start back to it. General then hears about a rollback that brought this hub up, or that hex is back after bin/hex told it hex couldn't start (state/down), and this hub backs up hex.db each night (backup.ts).
+// Once General connects, hex works on the commit this hub runs, and bin/hex rolls a later one that can't start back to it. General then hears about a rollback that brought this hub up, or that hex is back after bin/hex told it hex couldn't start (state/down.<host>), and this hub backs up hex.db each night (backup.ts).
 const hex = join(import.meta.dir, "..");
 
 const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "HEAD"])
@@ -47,7 +47,7 @@ const commit = Bun.spawnSync(["git", "-C", hex, "rev-parse", "-q", "--verify", "
 const home = hexDir();
 const state = join(home, "state");
 const rollback = join(state, "rollback");
-const down = join(state, "down");
+const down = join(state, `down.${hostname()}`);
 
 void (async () => {
   const general = await up;

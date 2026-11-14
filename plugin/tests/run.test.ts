@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -185,9 +186,13 @@ test("a commit whose hub can't start goes back to the last one General connected
 const curlThatRecordsWhatGeneralIsTold = () => {
   const bin = join(home, "fake-bin");
   mkdirSync(bin);
-  writeFileSync(join(bin, "curl"), `#!/bin/sh\nprintf '%s\\n' "$@" >> "${home}/told"\n`, {
-    mode: 0o755,
-  });
+  writeFileSync(
+    join(bin, "curl"),
+    `#!/bin/sh\ncat >> "${home}/told"\nprintf '%s\\n' "$@" >> "${home}/told"\n`,
+    {
+      mode: 0o755,
+    },
+  );
 
   return {
     PATH: `${bin}:${process.env.PATH}`,
@@ -221,7 +226,22 @@ test("hex that can't start tells General once, until a hub connects again", asyn
   expect(await run({ PATH }).exited).toBe(1);
   expect(await run({ PATH }).exited).toBe(1);
   expect(read().match(/sendMessage/gu)).toHaveLength(1);
-  expect(existsSync(join(home, "state/down"))).toBe(true);
+  expect(readdirSync(join(home, "state")).filter((file) => file.startsWith("down."))).toHaveLength(
+    1,
+  );
+});
+
+test("a notice that couldn't be sent is tried again at the next start", async () => {
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nHEX_MAIN_THREAD=-100\nbroken line\n");
+  const { PATH, read } = curlThatRecordsWhatGeneralIsTold();
+  writeFileSync(join(home, "fake-bin/curl"), `#!/bin/sh\necho tried >> "${home}/told"\nexit 7\n`, {
+    mode: 0o755,
+  });
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(await run({ PATH }).exited).toBe(1);
+  expect(read().match(/tried/gu)).toHaveLength(2);
+  expect(readdirSync(join(home, "state")).filter((file) => file.startsWith("down."))).toEqual([]);
 });
 
 test("a hub that can't start, with no earlier hex to go back to, stops hex as failed and tells General", async () => {
