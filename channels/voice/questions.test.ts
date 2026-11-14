@@ -2242,7 +2242,7 @@ test("an ask the owner's rules give to hex leaves their list, its open question 
     .query<{ body: string }, [string]>(
       `select body from messages where "to" = ? and "from" = 'check'`,
     )
-    .all(DESK)
+    .all(`beside:${DESK}`)
     .map((row) => row.body);
 
   expect(told).toHaveLength(1);

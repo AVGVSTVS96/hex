@@ -14,7 +14,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { above, held, open as openStore, pictures as picturesIn, shown } from "@hex/hub";
+import { above, besideOf, held, open as openStore, pictures as picturesIn, shown } from "@hex/hub";
 import type { Question as Asked, MessageId, Row, Store } from "@hex/hub";
 import { z } from "zod";
 
@@ -232,7 +232,7 @@ export function handBack(state: string, back: Back[], threads: Record<string, st
     if (task in threads) {
       openStore(state).messages.deliver({
         key: `check:back:${id}`,
-        to: task.slice(task.indexOf(":") + 1),
+        to: besideOf(task.slice(task.indexOf(":") + 1)),
         from: "check",
         author: "prompt",
         body: `[check] Off the owner's Needs you list and back to you, since their rules make it yours to decide or do: ${question}. ${why}`,
