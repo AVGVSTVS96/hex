@@ -30,7 +30,7 @@ const store = open(stateDir());
 const records = join(stateDir(), "jobs");
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Names the machine hex runs on while it runs on another one, for this machine's jobs to reach it: whatever moved hex writes it, and hex starting here removes it.
+// Names the machine hex runs on while it runs on another one, for this machine's jobs to reach it: whatever moved hex there writes it once hex serves there, and removes it as it brings hex back.
 const whereHexRuns = join(
   process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"),
   "hex/elsewhere",
@@ -42,21 +42,32 @@ function elsewhere() {
   return isSet(named) ? named : undefined;
 }
 
-function onMachine(machine: string, command: string[]) {
+const TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE = 3;
+const SSH_CANT_REACH_IT = 255;
+
+async function onMachine(machine: string, command: string[]) {
   const words = Buffer.from(command.join("\0")).toString("base64");
 
-  return Bun.spawnSync(
-    [
-      "ssh",
-      "-o",
-      "BatchMode=yes",
-      "-o",
-      "ConnectTimeout=5",
-      machine,
-      `printf %s ${words} | base64 -d | xargs -0 env --`,
-    ],
-    { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000 },
-  );
+  for (let tried = 1; ; tried++) {
+    const asked = Bun.spawnSync(
+      [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=5",
+        machine,
+        `printf %s ${words} | base64 -d | xargs -0 env --`,
+      ],
+      { stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout: 30_000 },
+    );
+
+    if (asked.exitCode !== SSH_CANT_REACH_IT || tried === TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE) {
+      return asked;
+    }
+
+    await Bun.sleep(2000);
+  }
 }
 
 const WhatAJobNeedsToRunAgain = z.object({
@@ -144,7 +155,7 @@ function reportsTo(): string | undefined {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A new session beside General learns from the job where its work came from.
-function tell(unit: string, owner: string, said: string, at: string) {
+async function tell(unit: string, owner: string, said: string, at: string) {
   const there = elsewhere();
 
   if (there !== undefined) {
@@ -152,7 +163,7 @@ function tell(unit: string, owner: string, said: string, at: string) {
       isSet(process.env[name]) ? [`${name}=${process.env[name]}`] : [],
     );
 
-    const sent = onMachine(there, [
+    const sent = await onMachine(there, [
       "env",
       ...from,
       join(import.meta.dir, "job"),
@@ -244,7 +255,7 @@ if (mode === "--owner") {
     ? `That's the agent's own account, not proof: check what it says against the real thing (files, commits, links, what's live) before you pass any of it on. Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``
     : "Check what it shows against the real thing before you report it.";
 
-  tell(
+  await tell(
     unit,
     owner,
     `ended: ${result} (exit ${status}).\n${output}\n${check}`,
@@ -253,7 +264,7 @@ if (mode === "--owner") {
 } else if (mode === "--waiting") {
   const [unit = "", owner = "", readings = ""] = rest;
 
-  tell(
+  await tell(
     unit,
     owner,
     `waits for room: no machine has a free slot and room right now. It starts by itself once one does.${readings}`,
@@ -262,7 +273,12 @@ if (mode === "--owner") {
 } else if (mode === "--tell") {
   const [unit = "", owner = "", said = "", at] = rest;
 
-  tell(unit, owner, said, at ?? `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`);
+  await tell(
+    unit,
+    owner,
+    said,
+    at ?? `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`,
+  );
 } else if (mode === "--running") {
   for (const unit of rest) {
     if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) {
@@ -286,11 +302,9 @@ if (mode === "--owner") {
       minute: "2-digit",
     });
 
-  rmSync(whereHexRuns, { force: true });
-
   const files = readdir(records).filter((name) => !name.includes(".sync-conflict-"));
 
-  const elsewhereNow = stillOnTheirMachines(
+  const elsewhereNow = await stillOnTheirMachines(
     files.map((file) => file.slice(0, -".json".length)),
     here,
   );
@@ -369,7 +383,7 @@ if (mode === "--owner") {
             : undefined;
 
     if (leftToItsOwner !== undefined) {
-      tell(
+      await tell(
         recorded,
         kept.owner,
         `stopped because ${why}, and hasn't run since: ${leftToItsOwner}. Start it again if its work still needs doing: ${command}`,
@@ -414,7 +428,7 @@ if (mode === "--owner") {
           : `started over from the beginning ${where}: ${command}`
         : `couldn't start again on ${here}. Start it again if its work still needs doing: ${command}`;
 
-    tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
+    await tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
 } else {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
@@ -531,7 +545,7 @@ function valueAfter(args: string[], flag: RegExp) {
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A job left running on the machine hex moved from carries on there, and one that ended there is done: its own machine says which, while it answers. One that doesn't answer went down with it.
-function stillOnTheirMachines(units: string[], here: string) {
+async function stillOnTheirMachines(units: string[], here: string) {
   const byMachine = Map.groupBy(
     units.flatMap((unit) => {
       const machine = keptRecord(unit)?.machine;
@@ -544,17 +558,28 @@ function stillOnTheirMachines(units: string[], here: string) {
   const said = new Map<string, "active" | "gone" | "down">();
 
   for (const [machine, theirs] of byMachine) {
-    const asked = onMachine(machine, [
+    const asked = await onMachine(machine, [
       join(import.meta.dir, "job"),
       "--running",
       ...theirs.map(({ unit }) => unit),
     ]);
 
-    if (asked.exitCode !== 0) {
+    if (asked.exitCode === SSH_CANT_REACH_IT) {
       for (const { unit } of theirs) {
         said.set(unit, "down");
       }
 
+      continue;
+    }
+
+    if (asked.exitCode !== 0) {
+      for (const { unit } of theirs) {
+        said.set(unit, "active");
+      }
+
+      console.error(
+        `job: ${machine} couldn't say what still runs there, so its jobs are left to it`,
+      );
       continue;
     }
 

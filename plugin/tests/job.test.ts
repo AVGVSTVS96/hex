@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { afterAll, beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, setDefaultTimeout, test } from "bun:test";
 import {
   chmodSync,
   cpSync,
@@ -33,6 +33,8 @@ const launches = join(home, "launches.jsonl");
 const folders = join(home, "folders.txt");
 const here = hostname();
 const clockTime = String.raw`[A-Z][a-z]{2} \d{1,2}, \d{1,2}:\d{2}\s[AP]M [A-Z][A-Za-z0-9+:-]+`;
+
+setDefaultTimeout(30_000);
 
 const env = Object.fromEntries(
   Object.entries(process.env).filter(
@@ -832,6 +834,42 @@ test("on a machine hex moved away from, a job's end and hex's commands go to the
   rmSync(marker);
 });
 
+test("hex runs, and updates, on the machine it was moved to, not on the one it left", () => {
+  mkdirSync(join(home, "xdg/hex"), { recursive: true });
+  writeFileSync(marker, "log-x\n");
+  rmSync(join(home, "ssh.log"), { force: true });
+
+  const started = Bun.spawnSync([join(home, ".hex/bin/hex"), "run"], {
+    env: fakes(),
+    stderr: "pipe",
+  });
+
+  expect(started.exitCode).toBe(1);
+  expect(started.stderr.toString()).toContain("hex runs on log-x now");
+
+  const asked = Bun.spawnSync([join(home, ".hex/bin/hex"), "tasks"], {
+    env: { ...fakes(), HEX_THREAD: "stray-key", HEX_OWNER: "t3:stray-key" },
+  });
+
+  expect(asked.exitCode).toBe(0);
+
+  const line = readFileSync(join(home, "ssh.log"), "utf-8").trim().split(" ");
+
+  expect(line[0]).toBe("log-x");
+  expect(
+    Buffer.from(line[3] ?? "", "base64")
+      .toString()
+      .split("\0"),
+  ).toEqual([
+    "HEX_THREAD=stray-key",
+    "HEX_OWNER=t3:stray-key",
+    join(home, ".hex/bin/hex"),
+    "tasks",
+    "",
+  ]);
+  rmSync(marker);
+});
+
 test("hex starting here leaves a job still running on the machine it left there, drops one that ended there, and starts one whose machine doesn't answer", () => {
   const jobs = join(home, "state/jobs");
   rmSync(jobs, { recursive: true, force: true });
@@ -857,9 +895,6 @@ test("hex starting here leaves a job still running on the machine it left there,
   record("cut", "twin-x");
   writeFileSync(join(home, "twin/jobs/cut.json"), "{}");
   writeFileSync(join(home, "twin-active.txt"), "kept\n");
-  mkdirSync(join(home, "xdg/hex"), { recursive: true });
-  writeFileSync(marker, "twin-x\n");
-
   const started = resume(config);
 
   expect([...started.keys()].toSorted((a = "", b = "") => a.localeCompare(b))).toEqual([
@@ -868,7 +903,6 @@ test("hex starting here leaves a job still running on the machine it left there,
   ]);
   expect(existsSync(join(jobs, "kept.json"))).toBe(true);
   expect(existsSync(join(jobs, "finished.json"))).toBe(false);
-  expect(existsSync(marker)).toBe(false);
   expect(told("%[job] kept %")).toEqual([]);
   expect(told("%[job] finished %")).toEqual([]);
   const cut: unknown[] = told("%[job] cut stopped%");
