@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { exited, jobOf, lastWords, run } from "./beside.ts";
+import { jobOf, lastWords, run } from "./beside.ts";
+import { exited } from "./claude.ts";
 import { open } from "./store.ts";
 
 let dir: string;
@@ -47,21 +48,6 @@ test("a run is waited on by its process id alone, as one another hub started is"
   other.kill();
   await waiting;
   expect(ended).toBe(true);
-});
-
-test("where tail can't wait on a process, a run isn't taken for ended", async () => {
-  const bin = join(dir, "bin");
-  mkdirSync(bin);
-  writeFileSync(join(bin, "tail"), "#!/bin/sh\necho 'tail: unrecognized option' >&2\nexit 1\n");
-  chmodSync(join(bin, "tail"), 0o755);
-  const path = process.env.PATH;
-  process.env.PATH = `${bin}:${path ?? ""}`;
-
-  try {
-    expect(await exited(process.pid)).toBe(false);
-  } finally {
-    process.env.PATH = path;
-  }
 });
 
 function found<T>(value: T | null): T {

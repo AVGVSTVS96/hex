@@ -18,7 +18,6 @@ import { z } from "zod";
 import {
   besideOf,
   besideWhat,
-  exited,
   jobOf,
   lastWords,
   prompt as besidePrompt,
@@ -37,7 +36,7 @@ import { running as sessionsRunning } from "./running.ts";
 import type { Session } from "./running.ts";
 import { schedule } from "./schedule.ts";
 import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
-import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
+import type { Author, Kept, MessageId, NewRow, Row, Store } from "./store.ts";
 import { zoneOf } from "./zone.ts";
 
 export { dispatch, tool } from "./mcp.ts";
@@ -173,30 +172,10 @@ export type Limits = {
 };
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// from: the session the thread continues as a fork with its first message, until it has its own.
-type Saved = Settings & {
-  name: string;
-  session?: string | undefined;
-  from?: string | undefined;
-  cwd?: string | undefined;
-  launched?: string | undefined;
-};
+// fork: the session the thread continues as a fork with its first message, until it has its own.
+type Saved = Omit<Kept, "link">;
 
 type Timer = ReturnType<typeof setTimeout>;
-
-type SessionEnv = {
-  HEX_CHANNEL: string;
-  HEX_THREAD: string;
-  HEX_HUB: string;
-  HEX_PORT: string;
-  HEX_TOKEN: string;
-  HEX_STORE: string;
-  MCP_TIMEOUT?: string;
-  HEX_MAIN?: string;
-  HEX_FRESH?: string;
-  HEX_HANDOFF?: string;
-  HEX_HELD?: string;
-};
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Where a thread's session stands. launching: the hub started or restarted it and waits for its channel, so one that ends first failed to start. recovering: it runs without its channel, which Claude Code may still bring back. Either wait ends at its deadline.
@@ -750,7 +729,7 @@ export function startHub({
   const plugin = channel.replace(/^plugin:/u, "");
   const path = `/${plugin.split("@")[0]}`;
   const app = path.slice(1);
-  let db: Store | undefined;
+  const db = open(storeDir);
   const threads: Map<string, Saved> = openThreads();
   mkdirSync(sessionsDir, { recursive: true, mode: 0o700 });
   save();
@@ -763,18 +742,12 @@ export function startHub({
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The app's open threads, from hex.db: the hub starts only once it can read them, so no save closes threads it never loaded.
   function openThreads(): Map<string, Saved> {
-    db ??= open(storeDir);
-
     return new Map(
       db.threads
         .list({ app, open: true })
-        .map(({ app: _app, open: _open, link: _link, thread, fork, model, ...known }) => [
+        .map(({ app: _app, open: _open, link: _link, thread, model, ...known }) => [
           thread,
-          {
-            ...known,
-            ...(present(model) && { model: family(model) }),
-            ...(present(fork) && { from: fork }),
-          },
+          { ...known, ...(present(model) && { model: family(model) }) },
         ]),
     );
   }
@@ -785,19 +758,7 @@ export function startHub({
     store.threads.keep(
       app,
       Object.fromEntries(
-        [...saved].map(([thread, known]) => [
-          thread,
-          {
-            name: known.name,
-            ...(known.session !== undefined && { session: known.session }),
-            ...(known.cwd !== undefined && { cwd: known.cwd }),
-            ...(known.model !== undefined && { model: known.model }),
-            ...(known.effort !== undefined && { effort: known.effort }),
-            ...(known.launched !== undefined && { launched: known.launched }),
-            ...(known.from !== undefined && { fork: known.from }),
-            ...withLink(thread),
-          },
-        ]),
+        [...saved].map(([thread, known]) => [thread, { ...known, ...withLink(thread) }]),
       ),
     );
   }
@@ -1231,7 +1192,7 @@ export function startHub({
   }
 
   function follow(thread: string, name: string, session: string, cwd?: string) {
-    threads.set(thread, { name, from: session, ...(present(cwd) && { cwd }) });
+    threads.set(thread, { name, fork: session, ...(present(cwd) && { cwd }) });
     save();
   }
 
@@ -1390,32 +1351,18 @@ export function startHub({
     launched: ReturnType<typeof claude.settingsOf> = {},
     takesOverFrom?: string,
   ) {
-    const env: SessionEnv = {
+    const env = {
       HEX_CHANNEL: channel,
       HEX_THREAD: thread,
       HEX_HUB: socketPath,
       HEX_PORT: String(port),
       HEX_TOKEN: token,
       HEX_STORE: storeDir,
+      ...(connect && { MCP_TIMEOUT: String(connect) }),
+      ...(general && thread === main && { HEX_MAIN: "1" }),
+      ...(fresh(thread) ? { HEX_FRESH: "1" } : { HEX_HELD: heldOf(thread) }),
+      ...(present(takesOverFrom) && { HEX_HANDOFF: takesOverFrom }),
     };
-
-    if (connect) {
-      env.MCP_TIMEOUT = String(connect);
-    }
-
-    if (general && thread === main) {
-      env.HEX_MAIN = "1";
-    }
-
-    if (fresh(thread)) {
-      env.HEX_FRESH = "1";
-    } else {
-      env.HEX_HELD = heldOf(thread);
-    }
-
-    if (present(takesOverFrom)) {
-      env.HEX_HANDOFF = takesOverFrom;
-    }
 
     writeFileSync(
       settingsOf(thread),
@@ -1468,7 +1415,7 @@ export function startHub({
       save();
     }
 
-    const source = fork ?? (present(known.session) ? undefined : known.from);
+    const source = fork ?? (present(known.session) ? undefined : known.fork);
 
     const resumeArgs = present(source)
       ? ["--resume", source, "--fork-session"]
@@ -1633,7 +1580,7 @@ export function startHub({
     if (
       !known ||
       !present(session) ||
-      ![known.session, known.from, run.opening?.fork].includes(session) ||
+      ![known.session, known.fork, run.opening?.fork].includes(session) ||
       claude.saved(session)
     ) {
       return false;
@@ -1668,8 +1615,8 @@ export function startHub({
       delete known.session;
     }
 
-    if (known.from === session) {
-      delete known.from;
+    if (known.fork === session) {
+      delete known.fork;
     }
 
     if (run.opening?.fork === session) {
@@ -1685,8 +1632,6 @@ export function startHub({
   // The store while it opens and writes; without it the hub goes on from memory, as it did before it had one, so a failing disk never leaves hex deaf.
   function kept<T>(use: (store: Store) => T, otherwise: T): T {
     try {
-      db ??= open(storeDir);
-
       return use(db);
     } catch (error) {
       process.stderr.write(
@@ -1780,7 +1725,7 @@ export function startHub({
       hold(thread, message);
       void (async () => {
         await ending;
-        resume(thread, name);
+        resume(thread);
       })();
 
       return;
@@ -2084,12 +2029,9 @@ export function startHub({
 
   async function waitBeside(thread: string, run: Session) {
     besides.set(run.id, undefined);
-    const ended = await exited(run.pid);
+    await claude.exited(run.pid);
     besides.delete(run.id);
-
-    if (ended) {
-      besideEnded(thread, run.id);
-    }
+    besideEnded(thread, run.id);
   }
 
   function writeBesideSettings(thread: string) {
@@ -2184,18 +2126,12 @@ export function startHub({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Messages that came while the thread's session was stopping resume it once it's gone, unless a restart already took them.
-  function resume(thread: string, name: string) {
+  function resume(thread: string) {
     const run = runOf(thread);
 
-    if (!run.queue.length || run.leaving) {
-      return;
+    if (run.queue.length && !run.leaving) {
+      void cycle(thread);
     }
-
-    if (run.phase.is === "live" || run.phase.is === "recovering") {
-      become(run, { is: "stopped" });
-    }
-
-    void launch(thread, name);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -2510,7 +2446,7 @@ export function startHub({
     }
 
     known.session = run.unsaved;
-    delete known.from;
+    delete known.fork;
     run.unsaved = undefined;
     save();
   }
@@ -2591,7 +2527,7 @@ export function startHub({
       open: welcome,
       close: drop,
     },
-    (db ??= open(storeDir)),
+    db,
     () => zoneOf(hexDir) ?? Temporal.Now.timeZoneId(),
   );
 

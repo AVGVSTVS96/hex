@@ -72,17 +72,3 @@ export function run(
     });
   });
 }
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Waits for a run another hub started, which this one isn't the parent of, to end: true once it has, false where this system's tail can't wait on a process (GNU's can, BusyBox's can't), so the run is left to the next hub start.
-export function exited(pid: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    spawn("tail", [`--pid=${pid}`, "-f", "/dev/null"], { stdio: "ignore" })
-      .on("error", () => {
-        resolve(false);
-      })
-      .on("close", (code) => {
-        resolve(code === 0);
-      });
-  });
-}
