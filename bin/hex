@@ -6,12 +6,13 @@ pidfile="$home/state/hub.pid"
 
 # Whatever moves hex to another machine says so in this machine's own state, for the jobs it leaves here: the file is
 # empty while hex moves, then names the machine hex runs on. elsewhere prints that machine once the move is done, and
-# fails with 1 while hex runs here, or 2 if it's still moving after a minute.
+# fails with 1 while hex runs here, or 2 if it's still moving after a minute. A file naming this machine means here.
 marker=${XDG_STATE_HOME:-$HOME/.local/state}/hex/elsewhere
 elsewhere() {
   waited=0
   while [ -e "$marker" ]; do
     where=$(cat "$marker" 2>/dev/null) || where=
+    [ "$where" != "$(uname -n)" ] || return 1
     [ -z "$where" ] || { echo "$where"; return 0; }
     [ "$waited" -lt 120 ] || return 2
     sleep 0.5
@@ -91,15 +92,15 @@ channels() { for mcp in "$hex"/channels/*/.mcp.json; do basename "$(dirname "$mc
 # machine, until a hub connects there again (state/down.<host>) and says it's back.
 down() {
   echo "$1" >&2
-  marker="$home/state/down.$(uname -n)"
-  [ ! -e "$marker" ] || return 0
+  told="$home/state/down.$(uname -n)"
+  [ ! -e "$told" ] || return 0
   (
     set +eu
     . "$hex/bin/settings"
     [ -n "${TELEGRAM_BOT_TOKEN:-}" ] && [ -n "${HEX_MAIN_THREAD:-}" ] &&
       printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$TELEGRAM_BOT_TOKEN" |
       curl -sf -m 10 -o /dev/null -K - --data-urlencode "chat_id=$HEX_MAIN_THREAD" --data-urlencode "text=$1 General hears here once it's back."
-  ) && date +%s > "$marker" || :
+  ) && date +%s > "$told" || :
 }
 
 case "${1:-}" in
@@ -139,7 +140,7 @@ case "${1:-}" in
     ;;
   run)
     # Only whatever moved hex away brings it back: it starts hex ahead of its turn.
-    if [ -e "$marker" ] && [ -z "${HEX_AHEAD:-}" ]; then echo "hex runs on another machine now ($marker), so it starts here only once it's moved back" >&2; exit 1; fi
+    if [ -e "$marker" ] && [ "$(cat "$marker" 2>/dev/null)" != "$(uname -n)" ] && [ -z "${HEX_AHEAD:-}" ]; then echo "hex runs on another machine now ($marker), so it starts here only once it's moved back" >&2; exit 1; fi
     shell_path
     # In a shell of its own, so a line of .env that fails stops the check the way it would stop the hub. Only where it
     # failed is told, since the shell's error quotes the line, which may be a secret.

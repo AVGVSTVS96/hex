@@ -10,13 +10,14 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { hostname, tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
 import { z } from "zod";
 
 import { open, Store } from "./store.ts";
 import type { NewRow } from "./store.ts";
+import { appendOnlyMigrations } from "./store/migrations.ts";
 import { until } from "./until.ts";
 
 let dir: string;
@@ -1147,11 +1148,11 @@ test("an older question gets the file messages hex sent right with it, and nothi
     store.questions.ask({ app: "telegram", thread, message: id, text, options: ["Yes", "No"] });
   }
 
-  const version = z
-    .object({ user_version: z.number() })
-    .parse(store.db.query("pragma user_version").get());
+  const attaching = appendOnlyMigrations.findIndex(
+    ({ name }) => name === "attachOldQuestionsTheirFiles",
+  );
 
-  store.db.run(`pragma user_version = ${String(version.user_version - 1)}`);
+  store.db.run(`pragma user_version = ${String(attaching)}`);
   store.db.close();
 
   const after = new Store(dir);
@@ -1953,4 +1954,58 @@ test("a process that writes and exits leaves the WAL to the processes still usin
     new DataView(readFileSync(join(dir, "hex.db-shm")).buffer).getUint32(16, true),
   ).toBeGreaterThan(0);
   expect(store.messages.get("telegram:-100:5:2")).not.toBeNull();
+});
+
+test("each job's record from before hex.db kept them carries in once, with how it stopped, and an ended or unreadable one stays out", () => {
+  const tableThenCarry =
+    appendOnlyMigrations.findIndex(({ name }) => name === "carryJobRecords") - 1;
+
+  const store = new Store(dir);
+  store.db.run("drop table jobs");
+  store.db.run(`pragma user_version = ${String(tableThenCarry)}`);
+  store.seen.show("job:moved", "stopped", "moved");
+  store.seen.show("job:finished", "stopped", "ended");
+  store.db.close();
+
+  const jobs = join(dir, "jobs");
+  const spec = { owner: "t3:stray-key", cwd: "/work", properties: [], command: ["make", "all"] };
+  mkdirSync(jobs);
+
+  for (const unit of ["moved", "finished", "plain", "closed"]) {
+    writeFileSync(
+      join(jobs, `${unit}.json`),
+      JSON.stringify({
+        ...spec,
+        machine: unit === "plain" ? undefined : "twin-x",
+        started: `2026-11-15T10:0${String(unit.length)}:00.000Z`,
+      }),
+    );
+  }
+
+  writeFileSync(join(jobs, "closed.ended"), "2026-11-15T11:00:00.000Z");
+  writeFileSync(join(jobs, "broken.json"), "{");
+  writeFileSync(join(jobs, "plain.sync-conflict-20261113-010055-ABC.json"), "{}");
+
+  const after = new Store(dir);
+
+  const [moved, plain, ...more] = after.jobs.list();
+
+  expect(moved).toMatchObject({
+    unit: "moved",
+    machine: "twin-x",
+    run: "2026-11-15T10:05:00.000Z",
+    spec,
+  });
+  expect(moved?.stopped?.why).toBe("moved");
+  expect(plain).toEqual({
+    unit: "plain",
+    machine: hostname(),
+    run: "2026-11-15T10:05:00.000Z",
+    spec,
+    stopped: undefined,
+  });
+  expect(more).toEqual([]);
+  expect(after.seen.get("job:moved", "stopped")).toBe("");
+  expect(after.seen.get("job:finished", "stopped")).toBe("");
+  expect(existsSync(join(jobs, "plain.json"))).toBe(true);
 });
