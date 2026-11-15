@@ -56,6 +56,8 @@ export { loaded } from "./loaded.ts";
 
 export { owners } from "./notes.ts";
 
+export { ready } from "./ready.ts";
+
 export { CLAUDE, busy, ownership, running } from "./running.ts";
 
 export type { Session } from "./running.ts";

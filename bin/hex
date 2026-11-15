@@ -313,14 +313,14 @@ case "${1:-}" in
         rm -f "$units_dir/hex.service.d/folder.conf"
       fi
       systemctl --user daemon-reload
+      starting() { systemctl --user is-active hex.service | grep -Eqx 'active|activating'; }
       # A hub started by hand gives way to its unit.
-      systemctl --user -q is-active hex.service || "$hex/bin/hex" stop
-      # A unit that won't start is doctor's to report.
-      systemctl --user enable --now $enable || :
+      starting || "$hex/bin/hex" stop
+      # A unit that won't start is doctor's to report, and hex.service is active only once its hub serves.
+      systemctl --user enable --now --no-block $enable || :
       # Services keep running once the user logs out, and start as the machine boots.
       user=$(id -un)
       [ "$(loginctl show-user "$user" -p Linger --value 2>/dev/null)" = yes ] || loginctl enable-linger "$user" 2>/dev/null || sudo loginctl enable-linger "$user" || :
-      starting() { systemctl --user is-active hex.service | grep -Eqx 'active|activating'; }
     else
       set --
       [ ! -f "$home/services.json" ] || eval "set -- $(units "$home/services.json")"

@@ -150,9 +150,30 @@ test("restore installs what's missing once, links the units of both lists, and e
   expect(readlinkSync(join(units, "hex.service.d/vault.conf"))).toBe(
     join(home, "services/hex.service.d/vault.conf"),
   );
-  expect(calls()).toContain("systemctl --user enable --now hex.service mail.service\n");
+  expect(calls()).toContain("systemctl --user enable --now --no-block hex.service mail.service\n");
   expect(calls()).toContain(`bun install --no-summary --cwd ${hex}\n`);
   expect(calls()).toContain("loginctl enable-linger");
+});
+
+test("restore leaves the hub of a hex.service still starting to it, without waiting for it to serve", () => {
+  script(
+    join(bin, "systemctl"),
+    `case "$*" in *show-environment*) ;; *"is-active hex.service"*) echo activating; exit 3 ;; *is-failed*) exit 1 ;; esac`,
+  );
+
+  const hub = Number(
+    Bun.spawnSync(["sh", "-c", "sleep 60 >/dev/null 2>&1 & echo $!"]).stdout.toString(),
+  );
+
+  mkdirSync(join(home, "state"), { recursive: true });
+  writeFileSync(join(home, "state/hub.pid"), `${hub}\n`);
+
+  try {
+    restore();
+    expect(() => process.kill(hub, 0)).not.toThrow();
+  } finally {
+    process.kill(hub, "SIGKILL");
+  }
 });
 
 test("restore installs each channel that has a server, turned off, allows it, and trusts the folder", () => {

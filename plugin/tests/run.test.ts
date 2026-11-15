@@ -85,7 +85,9 @@ beforeEach(() => {
     copyFileSync(join(BIN, script), join(hex, "bin", script));
   }
 
-  copyFileSync(join(BIN, "../hub/ahead.ts"), join(hex, "hub/ahead.ts"));
+  for (const module of ["ahead.ts", "ready.ts"]) {
+    copyFileSync(join(BIN, "../hub", module), join(hex, "hub", module));
+  }
 
   writeFileSync(join(home, ".env"), "TELEGRAM_BOT_TOKEN=test\nMARK=1\n");
   git("init", "-q", "-b", "main");

@@ -26,6 +26,7 @@ import {
   typed,
   pictureOf,
   pulse,
+  ready,
   EFFORTS,
   MODELS,
   Ledger,
@@ -2809,6 +2810,7 @@ async function setCommandMenu() {
 const onStart = (info: { username: string }) => {
   process.stderr.write(`telegram hub: polling as @${info.username}\n`);
   polling = info.username;
+  ready();
   void setCommandMenu();
   hub.save();
   keeping ??= ledger.keep(post, (thread, error) => {
