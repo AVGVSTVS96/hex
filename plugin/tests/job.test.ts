@@ -97,6 +97,7 @@ case "$1" in
   is-system-running) cat "${home}/system.txt" 2>/dev/null || echo running ;;
   --user) for unit; do :; done
     if [ "$2" = show ]; then grep -qx "$unit" "${home}/stopping.txt" 2>/dev/null && echo 7; exit 0; fi
+    if grep -qx "$unit" "${home}/ending.txt" 2>/dev/null; then echo deactivating; exit 3; fi
     if grep -qx "$unit" "\${ACTIVE:-${home}/active.txt}" 2>/dev/null; then echo active; else echo inactive; exit 3; fi ;;
 esac
 `,
@@ -536,6 +537,21 @@ const end = (unit: string, how = stoppedByASignal) =>
   Bun.spawnSync(["bun", job, "--ended", unit, "t3:stray-key"], {
     env: { ...env, PATH: `${join(home, "fake")}:${env.PATH}`, ...how },
   });
+
+test("a job whose end is still on its way as hex starts is left to it, with its record", () => {
+  const jobs = join(home, "state/jobs");
+  rmSync(jobs, { recursive: true, force: true });
+  run(["ending", "make", "all"], session);
+  writeFileSync(join(home, "ending.txt"), "ending\n");
+
+  const started = resume(join(home, "claude"));
+
+  rmSync(join(home, "ending.txt"));
+  expect([...started.keys()]).toEqual([]);
+  expect(told("[job] ending stopped%")).toEqual([]);
+  expect(existsSync(join(jobs, "ending.json"))).toBe(true);
+  rmSync(jobs, { recursive: true, force: true });
+});
 
 test("a job the machine going down stopped carries on as hex starts: a claude job in its own conversation, any other job from the beginning", () => {
   const jobs = join(home, "state/jobs");
