@@ -22,7 +22,8 @@ import { besideOf, besideWhat } from "../hub/beside.ts";
 import { saved } from "../hub/claude.ts";
 import { origin } from "../hub/origin.ts";
 import { served } from "../hub/running.ts";
-import { hexDir, open, stateDir } from "../hub/store.ts";
+import { hexDir, open, stateDir, StopReasonColumn } from "../hub/store.ts";
+import type { Job, JobSpec, StopReason } from "../hub/store.ts";
 import { zoneOf } from "../hub/zone.ts";
 
 const [mode, ...rest] = process.argv.slice(2);
@@ -42,15 +43,19 @@ const HOW_LONG_A_MOVE_IS_WAITED_FOR_MS = 60_000;
 // A machine that doesn't answer may only be cut off for a moment, with its jobs still running: only whatever moved hex away from it, which watched it go, names it here, one machine a line, for the next resume to carry its jobs on.
 const machinesGone = join(whereHexRuns, "../gone");
 
-async function whereHexIs() {
+async function whereHexIs(waitOutAMove = HOW_LONG_A_MOVE_IS_WAITED_FOR_MS) {
   for (let waited = 0; existsSync(whereHexRuns); waited += 500) {
     const named = readFileSync(whereHexRuns, "utf-8").trim();
+
+    if (named === hostname()) {
+      return "here";
+    }
 
     if (isSet(named)) {
       return named;
     }
 
-    if (waited >= HOW_LONG_A_MOVE_IS_WAITED_FOR_MS) {
+    if (waited >= waitOutAMove) {
       return "moving";
     }
 
@@ -93,21 +98,53 @@ async function onMachine(machine: string, command: string[], input = "") {
   }
 }
 
-const WhatAJobNeedsToRunAgain = z.object({
-  owner: z.string(),
-  cwd: z.string(),
-  properties: z.array(z.string()),
-  command: z.array(z.string()),
-  session: z.string().optional(),
-  input: z.array(z.string()).optional(),
-  machine: z.string().optional(),
-  started: z.string().optional(),
-  startedOver: z.array(z.string()).optional(),
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// How each job this machine ran last stopped, kept on this machine alone: hex.db hears it from here as the job ends, and asks here when it couldn't.
+const outcomes = join(whereHexRuns, "../jobs");
+
+const OutcomeJson = z.object({
+  run: z.string(),
+  stopped: z.enum(["ended", ...StopReasonColumn.options]),
+  at: z.string(),
 });
 
-const StoppedBecause = z.enum(["moved", "shutdown", "ended", ""]);
+type Outcome = z.infer<typeof OutcomeJson>;
 
-type Kept = z.infer<typeof WhatAJobNeedsToRunAgain>;
+function outcomeOf(unit: string, run?: string): Outcome | undefined {
+  try {
+    const kept = OutcomeJson.parse(JSON.parse(readFileSync(join(outcomes, unit), "utf-8")));
+
+    if (run === undefined || kept.run === run || kept.run === "") {
+      return kept;
+    }
+
+    const aLaterRunStartedHereSoThisOneIsOver = kept.run > run;
+
+    return aLaterRunStartedHereSoThisOneIsOver ? { ...kept, stopped: "ended" } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+type Now =
+  | { state: "active" | "ended" | "down" | "unknown" }
+  | { state: "stopped"; stop: NonNullable<Job["stopped"]> };
+
+async function nowHere(unit: string, run: string): Promise<Now> {
+  if (RUNS_OR_STILL_ENDS.has(await stateOf(unit))) {
+    return { state: "active" };
+  }
+
+  const outcome = outcomeOf(unit, run);
+
+  if (outcome === undefined) {
+    return { state: "unknown" };
+  }
+
+  return outcome.stopped === "ended"
+    ? { state: "ended" }
+    : { state: "stopped", stop: { why: outcome.stopped, at: outcome.at } };
+}
 
 const LINES_OF_OUTPUT = 40;
 const STARTS_OVER_THAT_MEAN_IT_STOPS_ITSELF = 3;
@@ -178,21 +215,24 @@ function reportsTo(): string | undefined {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A new session beside General learns from the job where its work came from.
+// A new session beside General learns from the job where its work came from. News of a job's end closes its run in hex.db wherever it lands.
 const News = z.object({
   unit: z.string(),
   owner: z.string(),
   said: z.string(),
   at: z.string(),
   from: z.array(z.string()),
+  ends: z.object({ machine: z.string(), run: z.string() }).optional(),
 });
+
+type Ends = z.infer<typeof News>["ends"];
 
 const startedBy = () =>
   ["HEX_FROM", "HEX_FROM_AT"].flatMap((name) =>
     isSet(process.env[name]) ? [`${name}=${process.env[name]}`] : [],
   );
 
-async function tell(unit: string, owner: string, said: string, at: string) {
+async function tell(unit: string, owner: string, said: string, at: string, ends?: Ends) {
   const there = await whereHexIs();
 
   if (there !== "here") {
@@ -208,21 +248,27 @@ async function tell(unit: string, owner: string, said: string, at: string) {
             owner,
             said,
             at,
+            ...(ends === undefined ? [] : [ends.machine, ends.run]),
           ]);
 
     if (sent?.exitCode === 0) {
       return;
     }
 
+    mkdirSync(records, { recursive: true });
     writeFileSync(
       join(records, `${unit}@${Bun.hash(at)}.news`),
-      JSON.stringify({ unit, owner, said, at, from: startedBy() }),
+      JSON.stringify({ unit, owner, said, at, from: startedBy(), ends }),
     );
     console.error(
       `job: ${unit}'s news waits in ${records} for hex to start somewhere: ${sent?.stderr.toString().trim() ?? "hex is still moving"}`,
     );
 
     return;
+  }
+
+  if (ends !== undefined) {
+    store.jobs.ended(unit, ends.machine, ends.run);
   }
 
   const to = store.threads.key(owner);
@@ -242,6 +288,26 @@ async function tell(unit: string, owner: string, said: string, at: string) {
   });
 }
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A job that stopped without ending tells hex.db, wherever hex runs; one that can't reach it, or stops as hex moves, leaves the next resume to ask this machine, so a move never waits on its jobs.
+async function toldStopped(unit: string, run: string, why: StopReason, at: string) {
+  const there = await whereHexIs(0);
+
+  if (there === "here") {
+    store.jobs.stopped(unit, hostname(), run, why, at);
+  } else if (there !== "moving") {
+    await onMachine(there, [
+      join(import.meta.dir, "job"),
+      "--stopped",
+      unit,
+      hostname(),
+      run,
+      why,
+      at,
+    ]);
+  }
+}
+
 function nameOf(owner: string) {
   const key = store.threads.key(owner);
 
@@ -254,7 +320,7 @@ function nameOf(owner: string) {
 if (mode === "--owner") {
   console.log(reportsTo() ?? "");
 } else if (mode === "--ended") {
-  const [unit = "", owner = ""] = rest;
+  const [unit = "", owner = "", run = "", session = ""] = rest;
 
   const stopAsked =
     (await $`systemctl --user show -p Job --value ${unit}`.nothrow().text()).trim() !== "";
@@ -270,21 +336,15 @@ if (mode === "--owner") {
         ? "shutdown"
         : "ended";
 
-  store.seen.show(`job:${unit}`, "stopped", stopped);
+  const at = new Date().toISOString();
+
+  mkdirSync(outcomes, { recursive: true });
+  writeFileSync(join(outcomes, unit), JSON.stringify({ run, stopped, at }));
 
   if (stopped !== "ended") {
+    await toldStopped(unit, run, stopped, at);
     process.exit(0);
   }
-
-  const ended = keptRecord(unit);
-
-  if (isSet(ended?.started)) {
-    writeFileSync(join(records, `${unit}.ended`), ended.started);
-  }
-
-  const session = ended?.session ?? "";
-
-  rmSync(join(records, `${unit}.json`), { force: true });
 
   const output = lastOutput(unit);
   const key = store.threads.key(owner);
@@ -309,6 +369,7 @@ if (mode === "--owner") {
     owner,
     `ended: ${result} (exit ${status}).\n${output}\n${check}`,
     process.env.INVOCATION_ID ?? `${Date.now()}`,
+    { machine: hostname(), run },
   );
 } else if (mode === "--waiting") {
   const [unit = "", owner = "", readings = ""] = rest;
@@ -320,16 +381,22 @@ if (mode === "--owner") {
     `${process.env.INVOCATION_ID ?? Date.now()}:waiting`,
   );
 } else if (mode === "--tell") {
-  const [unit = "", owner = "", said = "", at] = rest;
+  const [unit = "", owner = "", said = "", at, machine, run] = rest;
 
   await tell(
     unit,
     owner,
     said,
     at ?? `${process.env.INVOCATION_ID ?? Date.now()}:${Bun.hash(said)}`,
+    machine === undefined || run === undefined ? undefined : { machine, run },
   );
+} else if (mode === "--stopped") {
+  const [unit = "", machine = "", run = "", why, at] = rest;
+
+  store.jobs.stopped(unit, machine, run, StopReasonColumn.parse(why), at);
 } else if (mode === "--running") {
-  for (const unit of rest) {
+  for (const asked of rest) {
+    const [unit = "", run] = asked.split("=");
     let state = await stateOf(unit);
 
     for (
@@ -341,18 +408,33 @@ if (mode === "--owner") {
       state = await stateOf(unit);
     }
 
+    const outcome = outcomeOf(unit, run);
+
     if (RUNS_OR_STILL_ENDS.has(state)) {
       console.log(`active ${unit}`);
-    } else if (!existsSync(join(records, `${unit}.json`))) {
+    } else if (outcome?.stopped === "ended") {
       console.log(`gone ${unit}`);
+    } else if (outcome !== undefined) {
+      console.log(`stopped ${unit} ${outcome.stopped} ${outcome.at}`);
     }
   }
 } else if (mode === "--resume") {
+  if ((await whereHexIs()) !== "here") {
+    console.error("job: hex runs on another machine, so its jobs carry on from there");
+    process.exit(0);
+  }
+
   const gone = new Set(
     existsSync(machinesGone) ? readFileSync(machinesGone, "utf-8").split("\n").filter(isSet) : [],
   );
 
   rmSync(machinesGone, { force: true });
+
+  for (const file of existsSync(records) ? readdirSync(records) : []) {
+    if (/\.(json|ended)$/u.test(file)) {
+      rmSync(join(records, file), { force: true });
+    }
+  }
 
   const here = hostname();
   const at = new Date().toISOString();
@@ -376,7 +458,7 @@ if (mode === "--owner") {
     rmSync(join(records, file));
 
     if (news !== undefined) {
-      const { unit, owner, said, at: sentAt, from } = news;
+      const { unit, owner, said, at: sentAt, from, ends } = news;
 
       const before = { HEX_FROM: process.env.HEX_FROM, HEX_FROM_AT: process.env.HEX_FROM_AT };
       delete process.env.HEX_FROM;
@@ -387,7 +469,7 @@ if (mode === "--owner") {
         process.env[name] = value.join("=");
       }
 
-      await tell(unit, owner, said, sentAt);
+      await tell(unit, owner, said, sentAt, ends);
 
       for (const [name, value] of Object.entries(before)) {
         if (value === undefined) {
@@ -399,79 +481,38 @@ if (mode === "--owner") {
     }
   }
 
-  const files = readdir(records).filter((name) => !name.includes(".sync-conflict-"));
+  const jobs = store.jobs.list();
+  const elsewhereNow = await stillOnTheirMachines(jobs.filter(({ machine }) => machine !== here));
 
-  const elsewhereNow = await stillOnTheirMachines(
-    files.map((file) => file.slice(0, -".json".length)),
-    here,
-  );
+  for (const job of jobs) {
+    const { unit, machine, run, spec: kept } = job;
+    const now = machine === here ? await nowHere(unit, run) : elsewhereNow.get(unit);
 
-  for (const file of files) {
-    const recorded = file.slice(0, -".json".length);
-
-    if (RUNS_OR_STILL_ENDS.has(await stateOf(recorded))) {
+    if (now?.state === "active") {
       continue;
     }
 
-    const kept = keptRecord(recorded);
-
-    if (kept === undefined) {
-      console.error(`job: ${file} can't be read, so ${recorded} isn't started again`);
+    if (now?.state === "ended") {
+      store.jobs.ended(unit, machine, run);
       continue;
     }
 
-    const endedFile = join(records, `${recorded}.ended`);
-
-    if (
-      isSet(kept.started) &&
-      existsSync(endedFile) &&
-      readFileSync(endedFile, "utf-8") === kept.started
-    ) {
-      rmSync(join(records, file), { force: true });
-      continue;
-    }
-
-    const there = elsewhereNow.get(recorded);
-
-    if (there === "active") {
-      continue;
-    }
-
-    if (there === "down" && !gone.has(kept.machine ?? "")) {
+    if (now?.state === "down" && job.stopped === undefined && !gone.has(machine)) {
       console.error(
-        `job: ${kept.machine} doesn't answer, so ${recorded} is left to it until it's known to be gone`,
+        `job: ${machine} doesn't answer, so ${unit} is left to it until it's known to be gone`,
       );
       continue;
     }
 
-    if (there === "gone") {
-      rmSync(join(records, file), { force: true });
-      continue;
-    }
-
-    rmSync(join(records, file));
-
-    const stop = store.seen.getWithTime(`job:${recorded}`, "stopped");
-    const mark = StoppedBecause.catch("").parse(stop?.record);
-    const then = stop === null || mark === "" ? "" : ` at ${when(stop.at)}`;
-
-    store.seen.unshow(`job:${recorded}`, "stopped");
-
-    if (mark === "ended") {
-      continue;
-    }
-
-    const ranOn = kept.machine ?? "the machine";
-
-    const fromElsewhere = isSet(kept.machine) && kept.machine !== here;
-
-    const moved = mark === "moved" || (mark === "" && fromElsewhere && there !== "down");
+    const stop = job.stopped ?? (now?.state === "stopped" ? now.stop : undefined);
+    const then = stop === undefined ? "" : ` at ${when(stop.at)}`;
+    const moved = stop?.why === "moved";
 
     const why = moved
-      ? `hex moved${isSet(kept.machine) && kept.machine !== here ? ` from ${kept.machine}` : ""} to ${here}${then}`
-      : mark === "shutdown"
-        ? `${ranOn} shut down${then}`
-        : `${ranOn} went down`;
+      ? `hex moved${machine === here ? "" : ` from ${machine}`} to ${here}${then}`
+      : stop?.why === "shutdown"
+        ? `${machine} shut down${then}`
+        : `${machine} went down`;
 
     const where = moved ? "there" : `as hex started again on ${here} at ${when(at)}`;
 
@@ -498,8 +539,9 @@ if (mode === "--owner") {
             : undefined;
 
     if (leftToItsOwner !== undefined) {
+      store.jobs.ended(unit, machine, run);
       await tell(
-        recorded,
+        unit,
         kept.owner,
         `stopped because ${why}, and hasn't run since: ${leftToItsOwner}. Start it again if its work still needs doing: ${command}`,
         `${at}:again`,
@@ -523,14 +565,14 @@ if (mode === "--owner") {
         ]
       : undefined;
 
-    const over: Kept = { ...kept, startedOver: [...startsOver, at] };
+    const over: JobSpec = { ...kept, startedOver: [...startsOver, at] };
 
     if (agent) {
       over.session = crypto.randomUUID();
     }
 
     const started = await launch(
-      recorded,
+      unit,
       conversation ? kept : over,
       args ?? startArgs(over),
       conversation ? [] : (kept.input ?? []),
@@ -543,7 +585,7 @@ if (mode === "--owner") {
           : `started over from the beginning ${where}: ${command}`
         : `couldn't start again on ${here}. Start it again if its work still needs doing: ${command}`;
 
-    await tell(recorded, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
+    await tell(unit, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
 } else if ((await whereHexIs()) === "here") {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
@@ -604,7 +646,7 @@ if (mode === "--owner") {
     ...Object.entries(conversationThatStartedIt).flatMap(([name, value]) => passed(name, value)),
   ];
 
-  const kept: Kept = {
+  const kept: JobSpec = {
     owner: jobOwner,
     cwd: process.cwd(),
     properties: env,
@@ -619,7 +661,6 @@ if (mode === "--owner") {
     kept.input = input;
   }
 
-  store.seen.unshow(`job:${mode}`, "stopped");
   process.exitCode = await launch(mode, kept, startArgs(kept), input, true);
 } else {
   const there = await whereHexIs();
@@ -674,7 +715,7 @@ function conversationToResumeBy(command: string[]) {
   return command.some((arg) => /^(--continue|-c)$/u.test(arg)) ? undefined : crypto.randomUUID();
 }
 
-function startArgs({ command, session }: Kept) {
+function startArgs({ command, session }: JobSpec) {
   const args = command
     .slice(1)
     .filter((arg, at, all) => arg !== "--session-id" && all[at - 1] !== "--session-id");
@@ -691,29 +732,20 @@ function valueAfter(args: string[], flag: RegExp) {
 }
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A job left running on the machine hex moved from carries on there, and one that ended there is done: its own machine says which, while it answers. One that doesn't answer went down with it.
-async function stillOnTheirMachines(units: string[], here: string) {
-  const byMachine = Map.groupBy(
-    units.flatMap((unit) => {
-      const machine = keptRecord(unit)?.machine;
+// A job left running on the machine hex moved from carries on there, and one that ended there is done: its own machine says which, from its own record of the run, while it answers.
+async function stillOnTheirMachines(jobs: Pick<Job, "unit" | "machine" | "run">[]) {
+  const said = new Map<string, Now>();
 
-      return isSet(machine) && machine !== here ? [{ unit, machine }] : [];
-    }),
-    ({ machine }) => machine,
-  );
-
-  const said = new Map<string, "active" | "gone" | "down">();
-
-  for (const [machine, theirs] of byMachine) {
+  for (const [machine, theirs] of Map.groupBy(jobs, (job) => job.machine)) {
     const asked = await onMachine(machine, [
       join(import.meta.dir, "job"),
       "--running",
-      ...theirs.map(({ unit }) => unit),
+      ...theirs.map(({ unit, run }) => `${unit}=${run}`),
     ]);
 
     if (asked.exitCode === SSH_CANT_REACH_IT) {
       for (const { unit } of theirs) {
-        said.set(unit, "down");
+        said.set(unit, { state: "down" });
       }
 
       continue;
@@ -721,7 +753,7 @@ async function stillOnTheirMachines(units: string[], here: string) {
 
     if (asked.exitCode !== 0) {
       for (const { unit } of theirs) {
-        said.set(unit, "active");
+        said.set(unit, { state: "active" });
       }
 
       console.error(
@@ -731,10 +763,15 @@ async function stillOnTheirMachines(units: string[], here: string) {
     }
 
     for (const line of asked.stdout.toString().split("\n")) {
-      const [state, unit = ""] = line.split(" ");
+      const [state, unit = "", why, at = ""] = line.split(" ");
+      const stopped = StopReasonColumn.safeParse(why);
 
-      if (state === "active" || state === "gone") {
-        said.set(unit, state);
+      if (state === "active") {
+        said.set(unit, { state: "active" });
+      } else if (state === "gone") {
+        said.set(unit, { state: "ended" });
+      } else if (state === "stopped" && stopped.success) {
+        said.set(unit, { state: "stopped", stop: { why: stopped.data, at } });
       }
     }
   }
@@ -746,16 +783,6 @@ function keptNews(file: string) {
   const text = readFileSync(file, "utf-8");
 
   return News.safeParse(text.startsWith("{") ? JSON.parse(text) : undefined).data;
-}
-
-function keptRecord(unit: string): Kept | undefined {
-  try {
-    return WhatAJobNeedsToRunAgain.parse(
-      JSON.parse(readFileSync(join(records, `${unit}.json`), "utf-8")),
-    );
-  } catch {
-    return undefined;
-  }
 }
 
 function lastOutput(unit: string) {
@@ -802,20 +829,12 @@ function endOf(path: string) {
 function pruneOldLogs() {
   for (const file of readdirSync(records).filter((each) => each.endsWith(".log"))) {
     const log = join(records, file);
-    const running = existsSync(log.replace(/\.log$/u, ".json"));
+    const running = store.jobs.get(file.replace(/\.log$/u, "")) !== undefined;
     const written = statSync(log, { throwIfNoEntry: false })?.mtimeMs ?? Date.now();
 
     if (!running && Date.now() - written > LOGS_KEPT_FOR_THEIR_THREADS_MS) {
       rmSync(log, { force: true });
     }
-  }
-}
-
-function readdir(dir: string) {
-  try {
-    return readdirSync(dir).filter((file) => file.endsWith(".json"));
-  } catch {
-    return [];
   }
 }
 
@@ -855,7 +874,7 @@ function partsOf(args: string[], input: string[] = []) {
 
 async function launch(
   unit: string,
-  kept: Kept,
+  kept: JobSpec,
   args: string[],
   input: string[] = [],
   fresh = false,
@@ -865,32 +884,22 @@ async function launch(
     process.exit(1);
   }
 
-  const before = keptRecord(unit)?.machine;
+  const before = store.jobs.get(unit);
 
   if (
     fresh &&
-    isSet(before) &&
-    before !== hostname() &&
-    (await stillOnTheirMachines([unit], hostname())).get(unit) === "active"
+    before !== undefined &&
+    before.machine !== hostname() &&
+    (await stillOnTheirMachines([before])).get(unit)?.state === "active"
   ) {
-    console.error(`job: ${unit} already runs on ${before}`);
+    console.error(`job: ${unit} already runs on ${before.machine}`);
     process.exit(1);
   }
 
   mkdirSync(records, { recursive: true });
-  rmSync(join(records, `${unit}.ended`), { force: true });
 
-  const keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns = join(
-    records,
-    `${unit}.json`,
-  );
-
-  const record = keptBeforeItsUnitStartsSinceAShortJobCanEndBeforeSystemdRunReturns;
-
-  writeFileSync(
-    record,
-    JSON.stringify({ ...kept, machine: hostname(), started: new Date().toISOString() }),
-  );
+  const startedAt = new Date().toISOString();
+  store.jobs.started(unit, hostname(), startedAt, kept);
 
   const log = join(records, `${unit}.log`);
 
@@ -906,12 +915,12 @@ async function launch(
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];
 
   const started =
-    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopAndTellItsThread} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`
+    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopAndTellItsThread} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} ${["--ended", unit, kept.owner, startedAt, kept.session].filter(isSet).join(" ")}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`
       .cwd(existsSync(kept.cwd) ? kept.cwd : process.cwd())
       .nothrow();
 
   if (started.exitCode !== 0) {
-    rmSync(record, { force: true });
+    store.jobs.ended(unit, hostname(), startedAt);
   }
 
   return started.exitCode;

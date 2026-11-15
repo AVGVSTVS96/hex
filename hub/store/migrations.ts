@@ -1,11 +1,13 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, renameSync, statSync } from "node:fs";
+import { hostname } from "node:os";
 import { basename, join } from "node:path";
 
 import { z } from "zod";
 
 import { above } from "../fit.ts";
 import { fromJson, MessageIdColumn } from "./db.ts";
+import { JobSpecJson, StopReasonColumn } from "./jobs.ts";
 import { AuthorColumn } from "./messages.ts";
 import type { Messages } from "./messages.ts";
 import type { Pins } from "./pins.ts";
@@ -284,7 +286,71 @@ export const appendOnlyMigrations: ((store: Migrating) => void)[] = [
     }
   },
   attachOldQuestionsTheirFiles,
+  sql(`create table if not exists jobs (unit text primary key, machine text not null, run text not null, spec text not null check (json_valid(spec)),
+    stopped text check (stopped in ('moved', 'shutdown')), stopped_at text check (stopped_at ${SORTABLE_UTC}));`),
+  carryJobRecords,
 ];
+
+const JobRecord = JobSpecJson.extend({
+  machine: z.string().optional(),
+  started: z.string().optional(),
+});
+
+const MarkRow = z.object({ record: z.string(), at: z.string() }).nullable();
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Before hex.db kept them, each job's record was a file in state/jobs, with a stop mark in seen and a file for its last end: a job that ended or can't be read is left out. The files stay for the resume where hex runs to remove, since they sync to the other machine, whose hex.db may take them in first.
+function carryJobRecords({ db, dir }: Migrating) {
+  const records = join(dir, "jobs");
+
+  for (const file of existsSync(records) ? readdirSync(records) : []) {
+    if (!file.endsWith(".json") || file.includes(".sync-conflict-")) {
+      continue;
+    }
+
+    const unit = file.slice(0, -".json".length);
+    const ended = join(records, `${unit}.ended`);
+    const record = jobRecordIn(join(records, file));
+
+    const mark = MarkRow.parse(
+      db
+        .query("select record, at from seen where session = ? and kind = 'stopped'")
+        .get(`job:${unit}`),
+    );
+
+    const done =
+      mark?.record === "ended" ||
+      (record?.started !== undefined &&
+        existsSync(ended) &&
+        readFileSync(ended, "utf-8") === record.started);
+
+    if (record !== undefined && !done) {
+      const { machine = hostname(), started = "", ...spec } = record;
+      const stopped = StopReasonColumn.safeParse(mark?.record).data;
+
+      db.query(
+        "insert or ignore into jobs (unit, machine, run, spec, stopped, stopped_at) values (?, ?, ?, ?, ?, ?)",
+      ).run(
+        unit,
+        machine,
+        started,
+        JSON.stringify(spec),
+        stopped ?? null,
+        stopped === undefined ? null : (mark?.at ?? null),
+      );
+    }
+
+    db.query("delete from seen where session = ? and kind = 'stopped'").run(`job:${unit}`);
+  }
+}
+
+function jobRecordIn(file: string): z.infer<typeof JobRecord> | undefined {
+  try {
+    return JobRecord.safeParse(JSON.parse(readFileSync(file, "utf-8"))).data;
+  } catch {
+    return undefined;
+  }
+}
 
 function statusChangeTriggers({ table, thread }: (typeof STATUS_INPUTS)[number]) {
   const touch = (row: string) =>

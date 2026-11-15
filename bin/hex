@@ -6,12 +6,13 @@ pidfile="$home/state/hub.pid"
 
 # Whatever moves hex to another machine says so in this machine's own state, for the jobs it leaves here: the file is
 # empty while hex moves, then names the machine hex runs on. elsewhere prints that machine once the move is done, and
-# fails with 1 while hex runs here, or 2 if it's still moving after a minute.
+# fails with 1 while hex runs here, or 2 if it's still moving after a minute. A file naming this machine means here.
 marker=${XDG_STATE_HOME:-$HOME/.local/state}/hex/elsewhere
 elsewhere() {
   waited=0
   while [ -e "$marker" ]; do
     where=$(cat "$marker" 2>/dev/null) || where=
+    [ "$where" != "$(uname -n)" ] || return 1
     [ -z "$where" ] || { echo "$where"; return 0; }
     [ "$waited" -lt 120 ] || return 2
     sleep 0.5

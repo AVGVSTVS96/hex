@@ -8,6 +8,7 @@ import { z } from "zod";
 
 import type { Core } from "./store/db.ts";
 import { Holds } from "./store/holds.ts";
+import { Jobs } from "./store/jobs.ts";
 import { Leases } from "./store/leases.ts";
 import { Messages } from "./store/messages.ts";
 import { appendOnlyMigrations } from "./store/migrations.ts";
@@ -26,6 +27,10 @@ import { Turns } from "./store/turns.ts";
 export type { MessageId } from "./store/db.ts";
 
 export type { Held, Hold, NewHold } from "./store/holds.ts";
+
+export { StopReasonColumn } from "./store/jobs.ts";
+
+export type { Job, JobSpec, StopReason } from "./store/jobs.ts";
 
 export { asked, isAuthor, replied, sent, shown, spoken } from "./store/messages.ts";
 
@@ -64,6 +69,7 @@ export class Store {
   readonly threads: Threads;
   readonly pins: Pins;
   readonly holds: Holds;
+  readonly jobs: Jobs;
   readonly turns: Turns;
   readonly profiles: Profiles;
   readonly seen: Seen;
@@ -101,6 +107,7 @@ export class Store {
     this.threads = new Threads(core);
     this.pins = new Pins(core);
     this.holds = new Holds(core, this.messages);
+    this.jobs = new Jobs(core);
     this.turns = new Turns(core);
     this.profiles = new Profiles(core);
     this.seen = new Seen(core);
