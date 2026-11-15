@@ -2207,66 +2207,133 @@ test("a turn that fails for good is told in its chat, and waits for its next mes
   expect(stuck.received).toHaveLength(1);
 });
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A session that took the message, began its turn, and then sits as Claude lists it, its job record saying what it needs.
-async function pausedOn(needs: string, status = "waiting") {
-  const line = await session("chat:7");
-  await until(() => line.received.length);
-  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
-  fold(line.received);
-  await line.send({ type: "state", thread: "chat:7", busy: true });
-  writeFileSync(join(dir, "agents"), JSON.stringify([{ sessionId: SESSION, pid: EXITED, status }]));
-  await job("job12345", { state: "working", sessionId: SESSION, needs });
-  await settled();
-
-  return line;
-}
-
 const REFUSED = "choose: retry on fallback model or edit prompt";
 
-test("a turn Claude Code pauses on its terminal is told in its chat once, in its words, and the next message starts the session again with only that message", async () => {
-  start({ reconnect: 50 });
-  hub.deliver("chat:7", "Desk anchors", message);
-  await launched();
-  const line = await pausedOn("send a prompt to start", "idle");
-  expect(failures).toEqual([]);
+const REFUSAL = [
+  "─".repeat(60),
+  " Session paused",
+  " Fable 5.2's safeguards flagged this message. Our intentionally broad safeguards can sometimes flag legitimate tasks.",
+  "",
+  " ❯ 1. Switch to Opus 4.8",
+  "   2. Edit prompt and retry with Fable 5.2",
+].join("\n");
 
+const CHOICES = ["Switch to Opus 4.8", "Edit prompt and retry with Fable 5.2"];
+
+const ASKED =
+  "Fable 5.2's safeguards flagged this message. Your message got no answer. What should it do?";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Claude Code pausing the session on a dialog, as Claude lists it and its job record says.
+function pauses(jobId = "job12345", needs = REFUSED) {
+  writeFileSync(join(dir, "dialog"), REFUSAL);
   writeFileSync(
     join(dir, "agents"),
     JSON.stringify([{ sessionId: SESSION, pid: EXITED, status: "waiting" }]),
   );
-  await job("job12345", { state: "working", sessionId: SESSION, needs: REFUSED });
-  await until(() => failures.length);
+
+  return job(jobId, { state: "working", sessionId: SESSION, needs });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session that took the message and began its turn.
+async function turning(thread: string) {
+  const line = await session(thread);
+  await until(() => line.received.length);
+  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  fold(line.received);
+  await line.send({ type: "state", thread, busy: true });
+
+  return line;
+}
+
+test("a turn Claude Code pauses on a dialog puts the dialog's choices to its chat once, a tap answers it in the session, and the session carries on there with what waited and its reply", async () => {
+  const told: [string, string, unknown][] = [];
+  start({
+    call: (thread, name, toolArgs) => {
+      told.push([thread, name, toolArgs]);
+
+      return Promise.resolve("sent");
+    },
+  });
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  const line = await turning("chat:7");
+  await pauses();
+  await until(() => told.length);
   await job("job12345", { state: "working", sessionId: SESSION, needs: REFUSED });
   await settled();
-  expect(failures).toEqual([
-    [
-      "chat:7",
-      `Claude Code paused it to ask its terminal "${REFUSED}", so your message got no answer.\nIts next message starts it again.`,
-    ],
-  ]);
+  expect(told).toEqual([["chat:7", "reply", { text: ASKED, buttons: CHOICES }]]);
+  expect(failures).toEqual([]);
   expect(states.at(-1)).toEqual(["chat:7", false]);
+  expect(open(dir).turns.get(SESSION).ended).toBeDefined();
 
-  hub.deliver("chat:7", "Desk anchors", { ...message, content: "and now?" });
-  expect(await until(() => calls().find((each) => each[0] === "stop"))).toEqual([
-    "stop",
-    SESSION.slice(0, 8),
-  ]);
-  line.close();
-  await time.lapse(50);
-  await until(() => bgStarts().length === 2);
-  const next = await session("chat:7");
-  await until(() => next.received.length);
-  expect(heard(next.received).map(({ content }) => content)).toEqual(["and now?"]);
+  hub.deliver("chat:7", "Desk anchors", { ...message, content: "hello?" });
+  hub.deliver("chat:7", "Desk anchors", { ...message, content: CHOICES[1] ?? "" });
+  await until(() =>
+    readFileSync(join(dir, "pressed"), { flag: "a+", encoding: "utf-8" }).endsWith("\r"),
+  );
+  expect(readFileSync(join(dir, "pressed"), "utf-8")).toBe("\u001B[B\r");
   expect(line.received).toHaveLength(1);
+
+  rmSync(join(dir, "dialog"));
+  writeFileSync(
+    join(dir, "agents"),
+    JSON.stringify([{ sessionId: SESSION, pid: EXITED, status: "busy" }]),
+  );
+  await job("job12345", { state: "working", sessionId: SESSION });
+  await until(() => line.received.length === 2);
+  expect(heard(line.received)[1]?.content).toBe("hello?");
+  await line.call("reply", { text: "Jamming needs a transmitter on the drone's control band." });
+  expect(told.at(-1)?.[2]).toEqual({
+    text: "Jamming needs a transmitter on the drone's control band.",
+  });
+  fold(line.received);
+  expect(open(dir).messages.untaken("chat:7")).toEqual([]);
+  expect(bgStarts()).toHaveLength(1);
 });
 
-test("a turn Claude Code paused on its terminal isn't given to the thread's next session when the paused one ends", async () => {
+test("a session already paused on a dialog when the hub connects to it, its owner's message unanswered, has its choices put to the chat", async () => {
+  const told: unknown[] = [];
+  bound("chat:7");
+  open(dir).messages.deliver({
+    key: "telegram:1:5",
+    to: "chat:7",
+    from: "telegram",
+    author: "owner",
+    body: "jamming?",
+    meta: {},
+  });
+  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  open(dir).messages.take("telegram:1:5", SESSION);
+  writeFileSync(join(dir, "dialog"), REFUSAL);
+  writeFileSync(
+    join(dir, "jobs", SESSION.slice(0, 8), "state.json"),
+    JSON.stringify({ state: "working", sessionId: SESSION, needs: REFUSED }),
+  );
+  start({
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    agents: [{ sessionId: SESSION, pid: EXITED, status: "waiting" }],
+    call: (_, name, toolArgs) => {
+      told.push([name, toolArgs]);
+
+      return Promise.resolve("sent");
+    },
+  });
+  const line = await session("chat:7");
+  await until(() => told.length);
+  expect(told).toEqual([["reply", { text: ASKED, buttons: CHOICES }]]);
+  expect(line.received).toEqual([]);
+  expect(bgStarts()).toEqual([]);
+});
+
+test("a turn Claude Code paused on a dialog isn't given to the thread's next session when the paused one ends", async () => {
   start({ reconnect: 50 });
   hub.deliver("chat:7", "Desk anchors", message);
   await launched();
-  const line = await pausedOn(REFUSED);
-  await until(() => failures.length);
+  const line = await turning("chat:7");
+  await pauses();
+  await until(() => open(dir).turns.get(SESSION).ended);
   writeFileSync(join(dir, "agents"), "[]");
   line.close();
   await time.lapse(50);

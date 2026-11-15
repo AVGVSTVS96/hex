@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "catalog:",
+    "@xterm/headless": "6.0.0",
     "zod": "catalog:"
   }
 }

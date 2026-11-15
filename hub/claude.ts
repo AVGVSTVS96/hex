@@ -14,6 +14,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+import { Terminal } from "@xterm/headless";
 import { z } from "zod";
 
 import { sleep } from "./clock.ts";
@@ -361,6 +362,183 @@ export function interrupt(
       finish(interruptedSince(file, from) ? "interrupted" : "exited");
     });
   });
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A choice Claude Code shows a paused session's terminal: what it says, its numbered options, and the one its cursor is on.
+export type Dialog = { said: string; options: string[]; at: number };
+
+const OPTION = /^\s*(❯)?\s*(\d+)\.\s+(.+?)\s*$/u;
+const RULE = /^\s*─{3,}/u;
+const SENTENCE = /^.+?[.?!](?=\s|$)/u;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The last numbered list on the screen with a cursor on it, and the text above it back to the rule the dialog opens under, its title first.
+export function dialogOn(screen: string[]): Dialog | undefined {
+  const last = screen.findLastIndex((line) => OPTION.exec(line)?.[2] === "1");
+
+  if (last === -1) {
+    return undefined;
+  }
+
+  const options: string[] = [];
+  let at: number | undefined;
+
+  for (const line of screen.slice(last)) {
+    const [, cursor, number, label] = OPTION.exec(line) ?? [];
+
+    if (number !== String(options.length + 1) || label === undefined) {
+      break;
+    }
+
+    if (cursor !== undefined) {
+      at = options.length;
+    }
+
+    options.push(label);
+  }
+
+  if (at === undefined) {
+    return undefined;
+  }
+
+  const top = screen.slice(0, last).findLastIndex((line) => RULE.test(line));
+  const [title = "", ...body] = screen.slice(top + 1, last).flatMap((line) => line.trim() || []);
+  const text = body.join(" ");
+
+  return { said: SENTENCE.exec(text)?.[0] ?? (text || title), options, at };
+}
+
+const COLS = 120;
+const ROWS = 40;
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Attaches to a background session and shows look its screen after each redraw, until look says it's done, the attach ends, or until aborts. write: keys to the session.
+function onScreen(
+  session: string,
+  look: (screen: string[], write: (keys: string) => void) => boolean,
+  until: AbortSignal,
+): Promise<void> {
+  const terminal = new Terminal({ cols: COLS, rows: ROWS, allowProposedApi: true });
+
+  const shown = () => {
+    const buffer = terminal.buffer.active;
+
+    return Array.from(
+      { length: buffer.length },
+      (_, row) => buffer.getLine(row)?.translateToString(true) ?? "",
+    );
+  };
+
+  return new Promise((resolve) => {
+    let attach: ReturnType<typeof Bun.spawn> | undefined;
+    let attached = "";
+    let over = false;
+
+    const finish = () => {
+      if (over) {
+        return;
+      }
+
+      over = true;
+      until.removeEventListener("abort", finish);
+      attach?.kill("SIGHUP");
+      attach?.terminal?.close();
+      terminal.dispose();
+      resolve();
+    };
+
+    try {
+      const [command, args] = contained("claude", ["attach", short(session)]);
+      attach = Bun.spawn([command, ...args], {
+        env: inherited(),
+        terminal: {
+          cols: COLS,
+          rows: ROWS,
+          data: (pty, output) => {
+            if (!KEYS_REACH_SESSION_AFTER_ATTACHING_LINE.test(attached)) {
+              attached += Buffer.from(output).toString("latin1");
+            }
+
+            terminal.write(output, () => {
+              if (
+                !over &&
+                KEYS_REACH_SESSION_AFTER_ATTACHING_LINE.test(attached) &&
+                look(shown(), (keys) => {
+                  pty.write(keys);
+                })
+              ) {
+                finish();
+              }
+            });
+          },
+        },
+      });
+    } catch {
+      finish();
+
+      return;
+    }
+
+    until.addEventListener("abort", finish);
+    void attach.exited.finally(finish);
+  });
+}
+
+// No shell command reads or answers a background session's dialog (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), so the hub attaches as a terminal would.
+export async function dialog(session: string, until: AbortSignal): Promise<Dialog | undefined> {
+  let seen: Dialog | undefined;
+
+  await onScreen(
+    session,
+    (screen) => {
+      seen = dialogOn(screen);
+
+      return seen !== undefined;
+    },
+    until,
+  );
+
+  return seen;
+}
+
+const DOWN = "\u001B[B";
+const UP = "\u001B[A";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// Moves the dialog's cursor to the option and presses Enter, done once the dialog leaves the screen. Whether the option was there to press.
+export async function choose(session: string, option: string, until: AbortSignal) {
+  let pressed: string | undefined;
+
+  await onScreen(
+    session,
+    (screen, write) => {
+      const shown = dialogOn(screen);
+
+      if (pressed !== undefined) {
+        return shown?.options.join("\n") !== pressed;
+      }
+
+      if (!shown) {
+        return false;
+      }
+
+      const to = shown.options.indexOf(option);
+
+      if (to === -1) {
+        return true;
+      }
+
+      pressed = shown.options.join("\n");
+      const moves = to - shown.at;
+      write(`${(moves > 0 ? DOWN : UP).repeat(Math.abs(moves))}\r`);
+
+      return false;
+    },
+    until,
+  );
+
+  return pressed !== undefined;
 }
 
 function sizeOf(file: string): number | undefined {

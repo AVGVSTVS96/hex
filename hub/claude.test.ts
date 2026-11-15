@@ -4,7 +4,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { start } from "./claude.ts";
+import { dialogOn, start } from "./claude.ts";
 import { noClaude } from "./testing.ts";
 
 const scopes =
@@ -42,3 +42,24 @@ test.skipIf(!scopes)(
     }
   },
 );
+
+test("a dialog on a session's screen is the numbered list its cursor is on, under the first sentence of what it says; a list in the conversation isn't one", () => {
+  const conversation = ["● Two ways:", "  1. Wire it", "  2. Flash it", "────────", "❯ "];
+  expect(dialogOn(conversation)).toBeUndefined();
+  expect(
+    dialogOn([
+      ...conversation.slice(0, 3),
+      "────────",
+      " Session paused",
+      " You've used your plan's limit. It resets at 5pm,",
+      " or extra usage carries on now.",
+      "",
+      "   1. Continue on usage credits",
+      " ❯ 2. Switch models",
+    ]),
+  ).toEqual({
+    said: "You've used your plan's limit.",
+    options: ["Continue on usage credits", "Switch models"],
+    at: 1,
+  });
+});
