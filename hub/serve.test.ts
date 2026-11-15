@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -47,7 +55,7 @@ async function oldHub() {
 function serve(port: number, extra: Record<string, string> = {}) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
-      ([name]) => !name.startsWith("HEX_") && !name.endsWith("_TOKEN"),
+      ([name]) => !name.startsWith("HEX_") && !name.endsWith("_TOKEN") && name !== "NOTIFY_SOCKET",
     ),
   );
 
@@ -118,4 +126,32 @@ test("a hub started ahead of its turn says it's ready in the file HEX_AHEAD name
   expect(readdirSync(dir)).toEqual(["ahead"]);
   rmSync(file);
   await until(() => output.said.includes("TELEGRAM_BOT_TOKEN"));
+});
+
+test("a hub that systemd started ahead of its turn tells it it's ready as it says so in the file, so the start returns while it waits", async () => {
+  const free = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response() });
+  const port = Number(free.port);
+  await free.stop(true);
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "systemd-notify"),
+    `#!/bin/sh\necho "$NOTIFY_SOCKET $*" > "${dir}/told"\n`,
+    {
+      mode: 0o755,
+    },
+  );
+  const file = join(dir, "ahead");
+  writeFileSync(file, "");
+
+  const { started } = serve(port, {
+    HEX_AHEAD: file,
+    NOTIFY_SOCKET: join(dir, "notify"),
+    PATH: `${bin}:${process.env.PATH}`,
+  });
+
+  expect(await until(() => existsSync(join(dir, "told")) || started.exitCode !== null)).toBe(true);
+  expect(readFileSync(join(dir, "told"), "utf-8")).toBe(`${join(dir, "notify")} --ready\n`);
+  expect(readFileSync(file, "utf-8")).toBe("ready\n");
+  expect(started.exitCode).toBeNull();
 });

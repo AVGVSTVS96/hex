@@ -2,6 +2,9 @@
 Description=hex: the hub, which keeps General running and starts a session per thread
 
 [Service]
+# Active once the hub, which bin/hex starts, polls Telegram, or started ahead (HEX_AHEAD), is ready to take over.
+Type=notify
+NotifyAccess=all
 Environment=PATH=%h/.local/bin:%h/.bun/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HEX_SESSIONS_SLICE=hex-sessions.slice
 ExecStart=%h/hex/.hex/bin/hex run

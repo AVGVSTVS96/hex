@@ -4,6 +4,7 @@ import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import * as hub from "@hex/hub";
 import { clients, open, pictureId } from "@hex/hub";
 import { connect as connectSession, noClaude, until } from "@hex/hub/testing";
 import * as grammy from "grammy";
@@ -280,6 +281,10 @@ class Bot extends grammy.Bot {
 
 void mock.module("grammy", () => ({ ...grammy, Bot }));
 
+const ready = mock();
+
+void mock.module("@hex/hub", () => ({ ...hub, ready }));
+
 const state = mkdtempSync(join(tmpdir(), "telegram-"));
 
 const SLOW_SETUP = 30_000;
@@ -411,6 +416,10 @@ test("closing a thread list entry that isn't a topic forgets it, instead of fail
     'forgot "stray": it isn\'t a topic, so there was nothing to close in Telegram',
   );
   await until(() => !("stray-key" in saved()));
+});
+
+test("once it polls Telegram, hex tells systemd it serves", () => {
+  expect(ready).toHaveBeenCalled();
 });
 
 test("the bot asks Telegram for reactions, button taps, poll votes and widget requests", () => {
