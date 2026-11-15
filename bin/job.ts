@@ -292,8 +292,9 @@ if (mode === "--owner") {
     );
   }
 
-  const result = process.env.SERVICE_RESULT ?? "unknown";
+  const service = process.env.SERVICE_RESULT ?? "unknown";
   const status = process.env.EXIT_STATUS ?? "?";
+  const result = service === "success" && process.env.EXIT_CODE === "killed" ? "stopped" : service;
 
   const check = isSet(session)
     ? `That's the agent's own account, not proof: check what it says against the real thing (files, commits, links, what's live) before you pass any of it on. Its conversation, if it ran here: \`${join(import.meta.dir, "hex")} log -- ${session}\``

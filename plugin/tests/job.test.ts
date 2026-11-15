@@ -488,6 +488,15 @@ const told = (like: string) =>
         .flat(),
     );
 
+test("a job that was killed ends as stopped, not as a success", async () => {
+  await Bun.spawn(["bun", job, "--ended", "axed", "t3:stray-key"], {
+    env: { ...env, SERVICE_RESULT: "success", EXIT_CODE: "killed", EXIT_STATUS: "TERM" },
+  }).exited;
+
+  const ends: unknown[] = told("[job] axed ended%");
+  expect(ends).toEqual([containing("[job] axed ended: stopped (exit TERM).")]);
+});
+
 function resume(config: string, ...gone: string[]) {
   rmSync(launches, { force: true });
   rmSync(folders, { force: true });
