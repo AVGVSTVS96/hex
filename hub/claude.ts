@@ -50,6 +50,82 @@ export function inherited(): Record<string, string | undefined> {
   );
 }
 
+const SpentTokens = z.object({
+  input_tokens: z.number(),
+  cache_creation_input_tokens: z.number(),
+  cache_read_input_tokens: z.number(),
+  output_tokens: z.number(),
+});
+
+export type Tokens = z.infer<typeof SpentTokens>;
+
+const Printed = z.object({
+  is_error: z.boolean().optional(),
+  result: z.string().optional(),
+  structured_output: z.unknown().optional(),
+  usage: SpentTokens.optional().catch(undefined),
+  total_cost_usd: z.number().optional().catch(undefined),
+});
+
+type Question<T> = {
+  helper: string;
+  input: string;
+  flags: string[];
+  schema: z.ZodType<T>;
+  cwd: string;
+  timeout?: number;
+};
+
+// claude --json-schema rejects the draft 2020-12 $schema zod emits by default: https://github.com/anthropics/claude-code/issues/80402
+export async function ask<T>({ helper, input, flags, schema, cwd, timeout }: Question<T>) {
+  const { $schema: _draft, ...jsonSchema } = z.toJSONSchema(schema, { io: "input" });
+
+  const child = Bun.spawn(
+    [
+      "claude",
+      "-p",
+      "--safe-mode",
+      ...flags,
+      "--json-schema",
+      JSON.stringify(jsonSchema),
+      "--output-format",
+      "json",
+      "--no-session-persistence",
+    ],
+    {
+      cwd,
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([name]) => !name.startsWith("HEX_") && !name.startsWith("CLAUDECODE"),
+          ),
+        ),
+        CLAUDE_CODE_ENTRYPOINT: "hex",
+        HEX_HELPER: helper,
+      },
+      stdin: new Blob([input]),
+      stdout: "pipe",
+      stderr: "pipe",
+      ...(timeout !== undefined && { timeout }),
+    },
+  );
+
+  const [out, err, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+
+  const printed = Printed.safeParse(JSON.parse(out || "{}")).data;
+  const answer = schema.safeParse(printed?.structured_output);
+
+  if (code !== 0 || printed === undefined || printed.is_error === true || !answer.success) {
+    throw new Error(`claude exited ${code}: ${printed?.result?.slice(0, 500) ?? err.slice(-500)}`);
+  }
+
+  return { answer: answer.data, usage: printed.usage, usd: printed.total_cost_usd };
+}
+
 // systemd 254 added --expand-environment and plans to expand ${VARIABLE}s in a scope's command by default: https://github.com/systemd/systemd/blob/v254/NEWS
 let keepVariablesVerbatim: string[] | undefined;
 

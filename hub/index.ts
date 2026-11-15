@@ -1,4 +1,4 @@
-export { interrupted } from "./claude.ts";
+export { ask, interrupted } from "./claude.ts";
 
 export { above } from "./fit.ts";
 
