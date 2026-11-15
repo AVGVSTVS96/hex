@@ -309,8 +309,20 @@ test("a time reads the way notes write it, on the owner’s clock", () => {
   expect(clock("2026-10-20T19:05:00.000Z", "America/Los_Angeles")).toBe("Oct 20 12:05pm");
 });
 
-test("a turn that took no message still gets a pass from its reply, and a retry writes no note twice", async () => {
+test("a turn with no message of the owner's gets no pass, and its messages are done", async () => {
   await observe(dir, "s", { ask: answering([]), memo });
+  const store = open(dir);
+  store.messages.deliver(
+    { key: "terminal:job", to: "s", from: "terminal", author: "hex", body: "Backup ran." },
+    "s",
+  );
+  const asked: string[] = [];
+  expect(await observe(dir, "s", { ask: answering(asked), memo })).toEqual([]);
+  expect(asked).toEqual([]);
+  expect(store.messages.observe("s", new Date().toISOString())).toEqual([]);
+});
+
+test("a retry writes no note twice", async () => {
   open(dir).messages.deliver(
     {
       key: "terminal:answer",
@@ -334,7 +346,6 @@ test("a turn that took no message still gets a pass from its reply, and a retry 
 });
 
 test("an app session's last words in its terminal reach the pass as what the owner doesn't see", async () => {
-  await observe(dir, "s", { ask: answering([]), memo });
   open(dir).messages.deliver(
     {
       key: "terminal:summed",

@@ -96,7 +96,7 @@ export async function observe(
     let wrong = "";
     let reasons = "";
 
-    if (taken.length > 0) {
+    if (rows.length > 0) {
       const zone = zoneOf(hexDir()) ?? Temporal.Now.timeZoneId();
       const threads = store.threads.names();
       const place = taken[0]?.to ?? thread;

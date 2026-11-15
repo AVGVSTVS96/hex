@@ -30,7 +30,7 @@ stops to ask for a compression, that's the memory agent's to do, so work from
 
 ### While working: memories are recorded for you
 
-After each turn, hex's memory agent reads what was said and done,
+After each turn that holds a message of mine, hex's memory agent reads what was said and done,
 records what's worth keeping, so each thing is recorded once, and does the
 compressions its notes make due. Leave `memo note` to it.
 
