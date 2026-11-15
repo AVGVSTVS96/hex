@@ -947,7 +947,8 @@ try {
         console.log(
           rows
             .map(({ id, status, name, cwd, thread, state: doing, detail, needs, behind: old }) => {
-              const now = doing === "blocked" && filled(needs) ? needs : detail;
+              const now =
+                (doing === "blocked" || status === "waiting") && filled(needs) ? needs : detail;
 
               return `${status} ${id.slice(0, 8)} ${name ?? ""}${filled(cwd) && cwd !== home ? ` in ${cwd}` : ""}${filled(thread) ? ` · ${names.get(thread) ?? thread} (${thread})` : ""}${old ? ` · started on an older hex (${old.from.slice(0, 7)}), ${old.changed.join(", ")} changed since` : ""}${filled(doing) ? ` · ${doing}${filled(now) ? `: ${now.replaceAll(/\s+/gu, " ")}` : ""}` : ""}`;
             })

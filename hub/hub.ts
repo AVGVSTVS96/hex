@@ -178,7 +178,7 @@ type Saved = Omit<Kept, "link">;
 type Timer = ReturnType<typeof setTimeout>;
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Where a thread's session stands. launching: the hub started or restarted it and waits for its channel, so one that ends first failed to start. recovering: it runs without its channel, which Claude Code may still bring back. Either wait ends at its deadline.
+// Where a thread's session stands. launching: the hub started or restarted it and waits for its channel, so one that ends first failed to start. recovering: it runs without its channel, which Claude Code may still bring back. Either wait ends at its deadline. watch: on Claude's job record of the session.
 type Phase =
   | { is: "stopped" }
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -192,7 +192,7 @@ type Phase =
       again?: boolean | undefined;
     }
   | { is: "recovering"; deadline?: Timer | undefined; again?: boolean | undefined }
-  | { is: "live"; line: Line };
+  | { is: "live"; line: Line; watch?: FSWatcher };
 
 type Run = {
   phase: Phase;
@@ -234,6 +234,9 @@ type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Its last turn failed on the API, until a turn begins or goes through. waiting: the error clears without a word to this thread (a rate limit, a dropped connection, a login that works again), so it carries on at the next turn anywhere that goes through; resumed: the hub had it carry on, once; told: its chat heard it waits for its next message.
   stalled?: "waiting" | "resumed" | "told" | undefined;
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Claude Code paused the session on a choice for someone at its terminal, so it takes no message until it starts over.
+  paused?: boolean | undefined;
   opening?: Opening | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The kept messages the client was told wait for a session, by key, until one takes them.
@@ -808,7 +811,7 @@ export function startHub({
   function become(run: Run, phase: Phase) {
     const was = run.phase;
 
-    if (was.is === "launching") {
+    if (was.is === "launching" || was.is === "live") {
       was.watch?.close();
     }
 
@@ -1474,17 +1477,19 @@ export function startHub({
   function watchJob(thread: string, job: string) {
     const phase = runOf(thread).phase;
 
-    if (phase.is !== "launching") {
+    if (phase.is === "launching") {
+      phase.job = job;
+      recover(thread);
+    } else if (phase.is !== "live") {
       return;
     }
 
-    phase.job = job;
-    recover(thread);
-
     const check = () => {
-      const { state: status, detail } = claude.record(job);
+      const { state: status, detail, needs } = claude.record(job);
 
-      if (status === "failed") {
+      if (phase.is === "live") {
+        void pause(thread, phase, needs);
+      } else if (status === "failed") {
         fail(
           thread,
           detail === undefined || detail === "" ? "the session failed to start" : detail,
@@ -1496,10 +1501,43 @@ export function startHub({
       phase.watch = claude.watchJob(job, check);
       check();
     } catch {
-      process.stderr.write(
-        `hub: no job record for ${job}, so a failed start of ${thread} can't be seen\n`,
-      );
+      process.stderr.write(`hub: no job record for ${job}, so ${thread}'s session can't be seen\n`);
     }
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Claude Code can pause a session mid-turn on a choice only someone at its terminal makes, like a reply its model's safeguards stopped or a permission prompt, and no hook says so. Its job record says what it needs, so the chat hears that once from the hub, and the turn ends in hex's record, so what went unanswered isn't given to a new session to pause on again; the choice stays the owner's. The session keeps running, with any agents it started, until the thread's next message starts it over.
+  async function pause(thread: string, phase: Phase, needs: string | undefined) {
+    const run = runOf(thread);
+    const session = current(thread);
+
+    const running =
+      present(needs) && present(session) ? await claude.agent(session, serving) : undefined;
+
+    if (run.phase !== phase) {
+      return;
+    }
+
+    run.paused = running?.status === "waiting";
+
+    if (
+      !run.paused ||
+      !present(session) ||
+      !kept((store) => store.turns.unanswered(session).length > 0, false)
+    ) {
+      return;
+    }
+
+    process.stderr.write(`hub: ${thread}'s session paused mid-turn: ${needs}\n`);
+    kept((store) => {
+      store.turns.handled(session);
+    }, undefined);
+    setState(thread, false);
+    failed(
+      thread,
+      `Claude Code paused it to ask its terminal "${needs}", so your message got no answer.\nIts next message starts it again.`,
+      true,
+    );
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1732,7 +1770,7 @@ export function startHub({
     }
 
     if (run.phase.is === "live") {
-      if ((stale(thread) && !onCall.has(run)) || spent(thread)) {
+      if ((stale(thread) && !onCall.has(run)) || spent(thread) || run.paused === true) {
         void refresh(thread, message);
       } else if (!heldForTheTurn(thread, message)) {
         handIn(thread, run.phase.line, message);
@@ -2149,7 +2187,7 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Delivers a message to a fresh start of the thread's session, so it gets new launch arguments or, in a fresh thread, a new session; a session still working, on its turn or on background agents, keeps running and takes it as it is, unless earlier messages already wait for the new start. A session that took over while Claude was asked gets the message as any message would.
+  // Delivers a message to a fresh start of the thread's session, so it gets new launch arguments or, in a fresh thread, a new session; a session still working, on its turn or on background agents, keeps running and takes it as it is, unless earlier messages already wait for the new start or Claude Code paused it on its terminal. A session that took over while Claude was asked gets the message as any message would.
   async function refresh(thread: string, message: Message) {
     const run = runOf(thread);
     const phase = run.phase;
@@ -2161,11 +2199,13 @@ export function startHub({
       return;
     }
 
-    const working = fresh(thread)
-      ? run.turn === "busy" ||
-        run.starting !== undefined ||
-        (running !== undefined && running.status !== "idle")
-      : running?.status === "busy";
+    const working =
+      running?.status !== "waiting" &&
+      (fresh(thread)
+        ? run.turn === "busy" ||
+          run.starting !== undefined ||
+          (running !== undefined && running.status !== "idle")
+        : running?.status === "busy");
 
     if (working && run.queue.length === 0) {
       if (!heldForTheTurn(thread, message)) {
@@ -2209,6 +2249,7 @@ export function startHub({
     become(run, { is: "live", line });
     run.failing = undefined;
     run.opening = undefined;
+    run.paused = undefined;
 
     if (general && thread === main) {
       reached(api);
@@ -2226,6 +2267,12 @@ export function startHub({
 
     if (present(id)) {
       note(thread, id);
+    }
+
+    const record = job ?? current(thread)?.slice(0, 8);
+
+    if (present(record)) {
+      watchJob(thread, record);
     }
 
     kept((store) => store.messages.letHeldGo(thread), []);

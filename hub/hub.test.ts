@@ -2207,6 +2207,74 @@ test("a turn that fails for good is told in its chat, and waits for its next mes
   expect(stuck.received).toHaveLength(1);
 });
 
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A session that took the message, began its turn, and then sits as Claude lists it, its job record saying what it needs.
+async function pausedOn(needs: string, status = "waiting") {
+  const line = await session("chat:7");
+  await until(() => line.received.length);
+  open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
+  fold(line.received);
+  await line.send({ type: "state", thread: "chat:7", busy: true });
+  writeFileSync(join(dir, "agents"), JSON.stringify([{ sessionId: SESSION, pid: EXITED, status }]));
+  await job("job12345", { state: "working", sessionId: SESSION, needs });
+  await settled();
+
+  return line;
+}
+
+const REFUSED = "choose: retry on fallback model or edit prompt";
+
+test("a turn Claude Code pauses on its terminal is told in its chat once, in its words, and the next message starts the session again with only that message", async () => {
+  start({ reconnect: 50 });
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  const line = await pausedOn("send a prompt to start", "idle");
+  expect(failures).toEqual([]);
+
+  writeFileSync(
+    join(dir, "agents"),
+    JSON.stringify([{ sessionId: SESSION, pid: EXITED, status: "waiting" }]),
+  );
+  await job("job12345", { state: "working", sessionId: SESSION, needs: REFUSED });
+  await until(() => failures.length);
+  await job("job12345", { state: "working", sessionId: SESSION, needs: REFUSED });
+  await settled();
+  expect(failures).toEqual([
+    [
+      "chat:7",
+      `Claude Code paused it to ask its terminal "${REFUSED}", so your message got no answer.\nIts next message starts it again.`,
+    ],
+  ]);
+  expect(states.at(-1)).toEqual(["chat:7", false]);
+
+  hub.deliver("chat:7", "Desk anchors", { ...message, content: "and now?" });
+  expect(await until(() => calls().find((each) => each[0] === "stop"))).toEqual([
+    "stop",
+    SESSION.slice(0, 8),
+  ]);
+  line.close();
+  await time.lapse(50);
+  await until(() => bgStarts().length === 2);
+  const next = await session("chat:7");
+  await until(() => next.received.length);
+  expect(heard(next.received).map(({ content }) => content)).toEqual(["and now?"]);
+  expect(line.received).toHaveLength(1);
+});
+
+test("a turn Claude Code paused on its terminal isn't given to the thread's next session when the paused one ends", async () => {
+  start({ reconnect: 50 });
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  const line = await pausedOn(REFUSED);
+  await until(() => failures.length);
+  writeFileSync(join(dir, "agents"), "[]");
+  line.close();
+  await time.lapse(50);
+  await settled();
+  expect(open(dir).messages.untaken("chat:7")).toEqual([]);
+  expect(bgStarts()).toHaveLength(1);
+});
+
 test("threads an outage stalled carry on one for each turn that goes through", async () => {
   start();
 
