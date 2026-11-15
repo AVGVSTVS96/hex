@@ -96,9 +96,7 @@ export async function ask<T>({ helper, input, flags, schema, cwd, timeout }: Que
       cwd,
       env: {
         ...Object.fromEntries(
-          Object.entries(process.env).filter(
-            ([name]) => !name.startsWith("HEX_") && !name.startsWith("CLAUDECODE"),
-          ),
+          Object.entries(inherited()).filter(([name]) => !name.startsWith("CLAUDECODE")),
         ),
         CLAUDE_CODE_ENTRYPOINT: "hex",
         HEX_HELPER: helper,

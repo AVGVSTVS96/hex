@@ -152,7 +152,7 @@ test("news of an idea General owns goes beside General, not into its conversatio
   expect(sent()).toMatchObject([{ to: "beside:general" }]);
 });
 
-test("a look asks claude in hex's folder with the web and hex's log, no session or hex variables, and returns its finding and cost", async () => {
+test("a look asks claude in hex's folder with the web and hex's log, no session, hex variables or bot tokens, and returns its finding and cost", async () => {
   using claude = fakeClaude(
     {
       structured_output: { news: true, finding: "It shipped: https://example.com/live" },
@@ -164,7 +164,7 @@ test("a look asks claude in hex's folder with the web and hex's log, no session 
       },
       total_cost_usd: 0.04,
     },
-    { env: { HEX_DIR: dir } },
+    { env: { HEX_DIR: dir, TELEGRAM_BOT_TOKEN: "secret", BUZZ_SECRET: "secret" } },
   );
 
   expect(await look("Is GPT Live 1.1 on the API yet?")).toEqual({
@@ -195,7 +195,9 @@ test("a look asks claude in hex's folder with the web and hex's log, no session 
     helper: "ideas",
     entrypoint: "hex",
   });
-  expect(call?.env.filter((name) => /^(?:HEX_|CLAUDECODE)/u.test(name))).toEqual(["HEX_HELPER"]);
+  expect(call?.env.filter((name) => /^(?:HEX_|CLAUDECODE|BUZZ_)|_BOT_TOKEN$/u.test(name))).toEqual([
+    "HEX_HELPER",
+  ]);
 });
 
 test("a look whose claude fails throws", async () => {
