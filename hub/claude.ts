@@ -767,7 +767,7 @@ export function refused(file: string): Refusal | undefined {
   };
 }
 
-const Printed = z.object({ session_id: z.string(), stop_reason: z.string().nullish() });
+const PrintedSession = z.object({ session_id: z.string(), stop_reason: z.string().nullish() });
 
 const REWOUND =
   "[hub] The message after this point was stopped by the model's safety filter, so this conversation goes on without it, and its sender was told. Reply only: ok";
@@ -802,7 +802,7 @@ export function rewind(
         argv,
         { cwd, env: inherited(), timeout: 5 * 60_000 },
         (error, stdout) => {
-          const copy = error ? undefined : parsed(Printed, stdout);
+          const copy = error ? undefined : parsed(PrintedSession, stdout);
           resolve(copy?.stop_reason === "refusal" ? undefined : copy?.session_id);
         },
       );

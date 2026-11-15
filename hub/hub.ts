@@ -1477,9 +1477,15 @@ export function startHub({
 
     runOf(thread).unsaved = undefined;
 
-    known.session = present(refusal.at)
+    const copy = present(refusal.at)
       ? await claude.rewind(cwdOf(thread), session, refusal.at, chosen(thread))
       : undefined;
+
+    if (present(copy)) {
+      known.session = copy;
+    } else {
+      delete known.session;
+    }
 
     process.stderr.write(
       `hub: ${thread}'s session ${session} ended on a refused turn, so it goes on ${present(known.session) ? `from ${known.session}, a copy that ends before it` : "in a new session"}\n`,
