@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { asked, brief, check, ruleEdit } from "./intent.ts";
+import { asked, brief, check, judge, ruleEdit } from "./intent.ts";
 import type { Kind, Verdict } from "./intent.ts";
 import { open } from "./store.ts";
 import type { Store } from "./store.ts";
+import { fakeClaude, flags } from "./testing.ts";
 
 const ok = (): Promise<Verdict> => Promise.resolve({ verdict: "ok", notes: "" });
 
@@ -382,4 +383,62 @@ test("a change to the rules is checked against the owner's words, apart from bri
   ).toMatchObject({
     kind: "brief",
   });
+});
+
+const usage = {
+  input_tokens: 3,
+  cache_creation_input_tokens: 5,
+  cache_read_input_tokens: 7,
+  output_tokens: 11,
+};
+
+test("the judge asks claude in hex's folder, with no tools, session or hex variables, and returns its verdict and cost", async () => {
+  using claude = fakeClaude(
+    {
+      structured_output: { verdict: "revise", notes: "It drops the deadline." },
+      usage,
+      total_cost_usd: 0.02,
+    },
+    { env: { HEX_DIR: dir } },
+  );
+
+  expect(await judge("The brief.", "rules")).toEqual({
+    verdict: "revise",
+    notes: "It drops the deadline.",
+    usage,
+    usd: 0.02,
+  });
+
+  const [call] = claude.calls();
+  const { "--system-prompt": system, "--json-schema": schema, ...rest } = flags(call?.argv ?? []);
+
+  expect(rest).toEqual({
+    "-p": [],
+    "--safe-mode": [],
+    "--model": ["opus"],
+    "--effort": ["medium"],
+    "--tools": [""],
+    "--output-format": ["json"],
+    "--no-session-persistence": [],
+  });
+  expect(system).toHaveLength(1);
+  expect(JSON.parse(schema?.[0] ?? "")).toMatchObject({ required: ["verdict", "notes"] });
+  expect(call).toMatchObject({
+    stdin: "The brief.",
+    cwd: realpathSync(dir),
+    helper: "intent",
+    entrypoint: "hex",
+  });
+  expect(call?.env.filter((name) => /^(?:HEX_|CLAUDECODE)/u.test(name))).toEqual(["HEX_HELPER"]);
+});
+
+test("a judge whose claude fails throws", async () => {
+  using _claude = fakeClaude({ is_error: true, result: "API Error: 529 Overloaded" }, { code: 1 });
+
+  expect(
+    await judge("The brief.").then(
+      () => "answered",
+      () => "threw",
+    ),
+  ).toBe("threw");
 });
