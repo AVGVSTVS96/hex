@@ -63,6 +63,10 @@ async function whereHexIs() {
 const TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE = 3;
 const STOPPING_SETTLES_WITHIN_MS = 15_000;
 const SSH_CANT_REACH_IT = 255;
+const RUNS_OR_STILL_ENDS = new Set(["active", "activating", "deactivating", "reloading"]);
+
+const stateOf = async (unit: string) =>
+  (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
 
 async function onMachine(machine: string, command: string[], input = "") {
   const words = Buffer.from(command.join("\0")).toString("base64");
@@ -326,7 +330,7 @@ if (mode === "--owner") {
   );
 } else if (mode === "--running") {
   for (const unit of rest) {
-    let state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+    let state = await stateOf(unit);
 
     for (
       let waited = 0;
@@ -334,10 +338,10 @@ if (mode === "--owner") {
       waited += 500
     ) {
       await Bun.sleep(500);
-      state = (await $`systemctl --user is-active ${unit}`.nothrow().text()).trim();
+      state = await stateOf(unit);
     }
 
-    if (["active", "activating", "deactivating", "reloading"].includes(state)) {
+    if (RUNS_OR_STILL_ENDS.has(state)) {
       console.log(`active ${unit}`);
     } else if (!existsSync(join(records, `${unit}.json`))) {
       console.log(`gone ${unit}`);
@@ -405,7 +409,7 @@ if (mode === "--owner") {
   for (const file of files) {
     const recorded = file.slice(0, -".json".length);
 
-    if ((await $`systemctl --user is-active --quiet ${recorded}`.nothrow()).exitCode === 0) {
+    if (RUNS_OR_STILL_ENDS.has(await stateOf(recorded))) {
       continue;
     }
 
@@ -898,11 +902,11 @@ async function launch(
   const agent = basename(kept.command[0] ?? "") === "claude";
   const name = `${nameOf(kept.owner)}/${unit}`;
   const run = agent ? [`${import.meta.dir}/place`, name, ...args] : kept.command;
-  const roomToStopItsThreadOnAnotherMachineFirst = agent ? ["-p", "TimeoutStopSec=90s"] : [];
+  const roomToStopAndTellItsThread = ["-p", "TimeoutStopSec=90s"];
   const givesWayToTheAgentsLikeWhatTheyRun = agent ? [] : ["-p", "Nice=10"];
 
   const started =
-    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopItsThreadOnAnotherMachineFirst} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`
+    await $`systemd-run --user --unit=${unit} --slice=hex-jobs.slice --working-directory=${kept.cwd} ${input} ${roomToStopAndTellItsThread} ${givesWayToTheAgentsLikeWhatTheyRun} --collect -p ${`StandardOutput=append:${log}`} -p ${`StandardError=append:${log}`} ${kept.properties} -E CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 -E HEX_OWNER=${kept.owner} -E CLAUDE_CODE_SESSION_NAME=${name} -p ${verbatimPastSystemdsVariableExpansion(`ExecStopPost=${process.execPath} ${join(import.meta.dir, "job")} --ended ${unit} ${kept.owner}`)} -- ${run.map(verbatimPastSystemdsVariableExpansion)}`
       .cwd(existsSync(kept.cwd) ? kept.cwd : process.cwd())
       .nothrow();
 
