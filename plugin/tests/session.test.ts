@@ -53,6 +53,7 @@ beforeEach(() => {
       env: {
         HEX_MAIN_MODEL: "claude-opus-5-5",
         HEX_ORCHESTRATOR_MODEL: "fable",
+        HEX_ORCHESTRATOR_EFFORT: "high",
         HEX_VOICE_MODEL: "haiku",
         MEMORY_DIR: join(home, "memory"),
       },
@@ -202,16 +203,30 @@ test("General, started by the hub, runs the main model", async () => {
   expect(args).not.toContain("--system-prompt-file");
 });
 
-test("a topic session orchestrates on its own model, its agents run the folder's, and a model it picked wins", async () => {
+test("a topic session orchestrates on its own model and effort, its agents run the folder's, and a model or effort it picked wins", async () => {
   const { args, file, settings } = await launch("plugin:telegram@hex", "-100:5");
   expect(flagValue(args, "--model")).toBe("fable");
+  expect(flagValue(args, "--effort")).toBe("high");
   expect(settings.env.CLAUDE_CODE_SUBAGENT_MODEL).toBe("opus");
-  Bun.spawnSync([join(home, ".hex/bin/session"), "--bg", "--model", "haiku", "--settings", file], {
-    cwd: home,
-    env: process.env,
-  });
+  Bun.spawnSync(
+    [
+      join(home, ".hex/bin/session"),
+      "--bg",
+      "--model",
+      "haiku",
+      "--effort",
+      "low",
+      "--settings",
+      file,
+    ],
+    {
+      cwd: home,
+      env: process.env,
+    },
+  );
   const picked = Args.parse(JSON.parse(readFileSync(join(home, "launched"), "utf-8")));
   expect(picked[picked.lastIndexOf("--model") + 1]).toBe("haiku");
+  expect(picked[picked.lastIndexOf("--effort") + 1]).toBe("low");
 });
 
 test("a voice session, started by the hub, runs HEX_VOICE_MODEL on the 1-hour cache, and reads the rules and memory itself instead of a chat view", async () => {

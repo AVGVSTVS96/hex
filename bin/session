@@ -59,10 +59,11 @@ done
 # Claude Code takes auto and bypassPermissions only from user, managed or flag settings, so the hex folder's mode goes as a flag.
 mode=$(jq -r '.permissions.defaultMode // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "$mode" ] && set -- --permission-mode "$mode" "$@"
-# A thread's session, and the main one above it, can run a stronger model than the hex folder's; a model the thread picked comes later and wins.
+# A thread's session, and the main one above it, can run a stronger model and effort than the hex folder's; a model or effort the thread picked comes later and wins.
 [ -n "${main:-}" ] && model=$(jq -r '.env.HEX_MAIN_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -z "${model:-}" ] && [ -n "${thread:-}" ] && [ -z "${voice:-}" ] && model=$(jq -r '.env.HEX_ORCHESTRATOR_MODEL // empty' "$home/.claude/settings.json" 2>/dev/null)
 [ -n "${model:-}" ] && set -- --model "$model" "$@"
+[ -n "${thread:-}" ] && [ -z "${voice:-}" ] && effort=$(jq -r '.env.HEX_ORCHESTRATOR_EFFORT // empty' "$home/.claude/settings.json" 2>/dev/null) && [ -n "$effort" ] && set -- --effort "$effort" "$@"
 if [ -n "${chat:-}" ]; then
   # The chat's prompt replaces Claude Code's, which names each background job's own folder and so would end the cache before the view.
   system=$(env $chat "$hex/bin/chat" turn) || exit

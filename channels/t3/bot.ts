@@ -570,7 +570,11 @@ function options(thread: string): SessionConfigOption[] {
   const model = chosen.model ?? fromSettings ?? MODELS[0]?.value ?? "opus";
 
   const effort =
-    chosen.effort ?? EFFORTS.find((each) => each.value === defaults.effortLevel)?.value ?? "medium";
+    chosen.effort ??
+    EFFORTS.find(
+      (each) => each.value === (defaults.env?.HEX_ORCHESTRATOR_EFFORT ?? defaults.effortLevel),
+    )?.value ??
+    "medium";
 
   return [
     {
@@ -592,7 +596,11 @@ function options(thread: string): SessionConfigOption[] {
   ];
 }
 
-const hexSettings = z.object({ model: z.string().optional(), effortLevel: z.string().optional() });
+const hexSettings = z.object({
+  model: z.string().optional(),
+  effortLevel: z.string().optional(),
+  env: z.object({ HEX_ORCHESTRATOR_EFFORT: z.string().optional() }).optional(),
+});
 
 function settings(): z.infer<typeof hexSettings> {
   try {
