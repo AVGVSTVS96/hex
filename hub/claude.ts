@@ -683,6 +683,143 @@ export function saved(session: string) {
   }
 }
 
+const LinkedEntry = z.object({
+  type: z.string().optional(),
+  uuid: z.string(),
+  parentUuid: z.string().nullish(),
+  message: z
+    .object({
+      content: z.unknown().optional(),
+      stop_reason: z.string().nullish(),
+      stop_details: z.object({ category: z.string().optional() }).nullish(),
+    })
+    .optional(),
+});
+
+type Linked = z.infer<typeof LinkedEntry>;
+
+const REFUSAL = '"stop_reason":"refusal"';
+const KEY = /<channel [^>]*\bkey="([^"]+)"/gu;
+
+const keysIn = (entry: Linked) =>
+  entry.type === "user"
+    ? Texts.parse(entry.message?.content).flatMap((text) =>
+        [...text.matchAll(KEY)].flatMap(([, key]) => key ?? []),
+      )
+    : [];
+
+export type Refusal = { category?: string | undefined; at?: string | undefined };
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The model's safeguards refused the transcript's last reply: what for, and the last message before the ones that turn was given first came in, where the conversation goes on without them. Claude Code keeps a refused turn's messages when it carries on past one, so they can come back turn after turn; with none before them, nothing of the conversation stays.
+export function refused(file: string): Refusal | undefined {
+  let text: string;
+
+  try {
+    text = readFileSync(file, "utf-8");
+  } catch {
+    return undefined;
+  }
+
+  if (!text.slice(-NEWEST_BYTES).includes(REFUSAL)) {
+    return undefined;
+  }
+
+  const entries = new Map<string, Linked>();
+  let last: Linked | undefined;
+
+  for (const line of text.split("\n")) {
+    const entry = parsed(LinkedEntry, line);
+
+    if (entry) {
+      entries.set(entry.uuid, entry);
+      last = entry.type === "assistant" ? entry : last;
+    }
+  }
+
+  if (last?.message?.stop_reason !== "refusal") {
+    return undefined;
+  }
+
+  const chain: Linked[] = [];
+
+  for (
+    let entry = entries.get(last.parentUuid ?? "");
+    entry && chain.length < entries.size;
+    entry = entries.get(entry.parentUuid ?? "")
+  ) {
+    chain.unshift(entry);
+  }
+
+  const begun = chain.findLastIndex((entry) => entry.type === "assistant") + 1;
+  const given = new Set(chain.slice(begun).flatMap(keysIn));
+
+  const first =
+    given.size === 0
+      ? begun
+      : chain.findIndex((entry) => keysIn(entry).some((key) => given.has(key)));
+
+  return {
+    category: last.message.stop_details?.category,
+    at: chain
+      .slice(0, first)
+      .findLast((entry) => entry.type === "user" || entry.type === "assistant")?.uuid,
+  };
+}
+
+const PrintedSession = z.object({ session_id: z.string(), stop_reason: z.string().nullish() });
+
+const REWOUND =
+  "[hub] The message after this point was stopped by the model's safety filter, so this conversation goes on without it, and its sender was told. Reply only: ok";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A copy of the session's conversation up to the message at, as a new session. Claude Code cuts a conversation only in print mode, so the copy takes one turn there, saying why, with no tools or MCP servers; it's refused again when what stays was what the safeguards flagged.
+export function rewind(
+  cwd: string,
+  session: string,
+  at: string,
+  args: string[],
+): Promise<string | undefined> {
+  const [command, argv] = contained("claude", [
+    "-p",
+    "--resume",
+    session,
+    "--fork-session",
+    "--resume-session-at",
+    at,
+    "--strict-mcp-config",
+    "--tools",
+    "",
+    "--output-format",
+    "json",
+    ...args,
+  ]);
+
+  return tracked(
+    new Promise((resolve) => {
+      const child = execFile(
+        command,
+        argv,
+        { cwd, env: inherited(), timeout: 5 * 60_000 },
+        (error, stdout) => {
+          const copy = error ? undefined : parsed(PrintedSession, stdout);
+          resolve(copy?.stop_reason === "refusal" ? undefined : copy?.session_id);
+        },
+      );
+
+      child.stdin?.end(REWOUND);
+    }),
+  );
+}
+
+function parsed<T>(schema: z.ZodType<T>, line: string): T | undefined {
+  try {
+    return schema.safeParse(JSON.parse(line)).data;
+  } catch {
+    return undefined;
+  }
+}
+
 const COMPACTION_FAILED = "Error during compaction";
 const NEWEST_BYTES = 2 ** 20;
 
