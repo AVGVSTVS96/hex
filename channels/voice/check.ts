@@ -14,7 +14,15 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { above, besideOf, held, open as openStore, pictures as picturesIn, shown } from "@hex/hub";
+import {
+  above,
+  ask,
+  besideOf,
+  held,
+  open as openStore,
+  pictures as picturesIn,
+  shown,
+} from "@hex/hub";
 import type { Question as Asked, MessageId, Row, Store } from "@hex/hub";
 import { z } from "zod";
 
@@ -532,14 +540,6 @@ const verdictOfThePass: z.ZodType<Verdict> = z.object({
   ),
 });
 
-const { $schema: _schema, ...SCHEMA } = z.toJSONSchema(verdictOfThePass, { io: "input" });
-
-const claudeResult = z.object({
-  is_error: z.boolean().optional(),
-  result: z.string().optional(),
-  structured_output: z.unknown(),
-});
-
 function messages(hexDir: string) {
   try {
     const run = Bun.spawnSync([join(hexDir, ".hex", "bin", "hex"), "log"]);
@@ -550,28 +550,7 @@ function messages(hexDir: string) {
   }
 }
 
-function claude(input: string, hexDir: string, state: string) {
-  const args = [
-    "-p",
-    "--model",
-    MODEL,
-    "--effort",
-    "medium",
-    "--output-format",
-    "json",
-    "--json-schema",
-    JSON.stringify(SCHEMA),
-    "--tools",
-    "Read,Grep,Glob",
-    "--safe-mode",
-    "--append-system-prompt",
-    Bun.spawnSync([join(hexDir, ".hex", "bin", "instructions")]).stdout.toString(),
-    "--no-session-persistence",
-    "--add-dir",
-    hexDir,
-    join(homedir(), ".claude", "projects"),
-  ];
-
+async function claude(input: string, hexDir: string, state: string) {
   const cwd = mkdtempSync(join(tmpdir(), "hex-check-"));
   writeFileSync(join(cwd, "messages.md"), messages(hexDir));
   writeFileSync(
@@ -579,52 +558,31 @@ function claude(input: string, hexDir: string, state: string) {
     JSON.stringify(openStore(state).threads.list(), null, 1),
   );
 
-  return new Promise<Verdict>((resolve, reject) => {
-    const env = {
-      ...Object.fromEntries(
-        Object.entries(process.env).filter(
-          ([name]) => !name.startsWith("HEX_") && !name.startsWith("CLAUDECODE"),
-        ),
-      ),
-      CLAUDE_CODE_ENTRYPOINT: "hex",
-      HEX_HELPER: "check",
-    };
-
-    const child = spawn("claude", args, { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
-    let out = "";
-    let err = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      out += chunk.toString();
+  try {
+    const { answer } = await ask({
+      helper: "check",
+      input,
+      flags: [
+        "--model",
+        MODEL,
+        "--effort",
+        "medium",
+        "--tools",
+        "Read,Grep,Glob",
+        "--append-system-prompt",
+        Bun.spawnSync([join(hexDir, ".hex", "bin", "instructions")]).stdout.toString(),
+        "--add-dir",
+        hexDir,
+        join(homedir(), ".claude", "projects"),
+      ],
+      schema: verdictOfThePass,
+      cwd,
     });
-    child.stderr.on("data", (chunk: Buffer) => {
-      err += chunk.toString();
-    });
-    child.on("error", reject);
-    child.on("close", (code) => {
-      rmSync(cwd, { recursive: true, force: true });
 
-      try {
-        const result = claudeResult.parse(JSON.parse(out));
-
-        if (
-          result.is_error === true ||
-          result.structured_output === undefined ||
-          result.structured_output === null
-        ) {
-          throw new Error(result.result ?? "no result");
-        }
-
-        resolve(verdictOfThePass.parse(result.structured_output));
-      } catch (error) {
-        reject(
-          new Error(
-            `the check's claude exited ${String(code)}: ${String(error)} ${err.slice(-500)}`,
-          ),
-        );
-      }
-    });
-    child.stdin.end(input);
-  });
+    return answer;
+  } finally {
+    rmSync(cwd, { recursive: true, force: true });
+  }
 }
 
 export function vet(

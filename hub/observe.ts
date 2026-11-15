@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import * as claude from "./claude.ts";
 import { cut, holds, keysOf, owners, problems, quotesOf, verdict } from "./notes.ts";
 import { hexDir, open, replied, shown, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
@@ -46,12 +47,6 @@ const PASS = z.object({ session: z.string(), by: z.string(), thread: z.string().
 
 export type Pass = z.infer<typeof PASS>;
 
-const CLAUDE_RESULT = z.object({
-  is_error: z.boolean().optional(),
-  result: z.string().optional(),
-  structured_output: z.unknown(),
-});
-
 const SUMMARY = z.object({ line: z.string() });
 
 type Look = {
@@ -73,7 +68,7 @@ const whose = (row: Row) =>
 export async function observe(
   state: string,
   session: string,
-  { ask = claude, memo = MEMO, by = new Date().toISOString(), thread }: Look = {},
+  { ask = remember, memo = MEMO, by = new Date().toISOString(), thread }: Look = {},
 ) {
   const recall = (pattern: string) =>
     Bun.spawnSync([memo, "recall", pattern], {
@@ -261,74 +256,23 @@ export function clock(at: string, zone: string) {
 
 const escape = (text: string) => text.replaceAll(/[.*+?^${}()|[\]\\]/gu, "\\$&");
 
-async function callWithNoTools<T>(
+const callWithNoTools = <T>(
   input: string,
   system: string,
   effort: "high" | "low",
-  output: z.ZodType<T>,
-) {
-  const env = {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([name]) => !name.startsWith("HEX_") && !name.startsWith("CLAUDECODE"),
-      ),
-    ),
-    CLAUDE_CODE_ENTRYPOINT: "hex",
-    HEX_HELPER: "memory",
-  };
+  schema: z.ZodType<T>,
+) =>
+  claude.ask({
+    helper: "memory",
+    input,
+    flags: ["--model", MODEL, "--effort", effort, "--tools", "", "--system-prompt", system],
+    schema,
+    cwd: hexDir(),
+    timeout: CALL_TIMEOUT,
+  });
 
-  const run = Bun.spawn(
-    [
-      "claude",
-      "-p",
-      "--safe-mode",
-      "--model",
-      MODEL,
-      "--effort",
-      effort,
-      "--tools",
-      "",
-      "--json-schema",
-      JSON.stringify(z.toJSONSchema(output, { target: "draft-07" })),
-      "--system-prompt",
-      system,
-      "--output-format",
-      "json",
-      "--no-session-persistence",
-    ],
-    {
-      cwd: hexDir(),
-      env,
-      stdin: new Blob([input]),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: CALL_TIMEOUT,
-    },
-  );
-
-  const [out, err, code] = await Promise.all([
-    new Response(run.stdout).text(),
-    new Response(run.stderr).text(),
-    run.exited,
-  ]);
-
-  const result = CLAUDE_RESULT.parse(JSON.parse(out || "{}"));
-
-  if (code !== 0 || result.is_error === true) {
-    throw new Error(`claude exited ${code}: ${result.result ?? err.slice(-500)}`);
-  }
-
-  return { answer: output.safeParse(result.structured_output).data, result: result.result };
-}
-
-async function claude(input: string): Promise<Answer> {
-  const { answer, result } = await callWithNoTools(input, SYSTEM, "high", ANSWER);
-
-  if (!answer) {
-    throw new Error(`claude answered without the schema: ${String(result)}`);
-  }
-
-  return answer;
+async function remember(input: string): Promise<Answer> {
+  return (await callWithNoTools(input, SYSTEM, "high", ANSWER)).answer;
 }
 
 // OptMem leaves due compressions to whoever writes a note, and only this agent writes notes: https://github.com/VictorTaelin/OptMem/blob/1fb164cf39028047781f72ac3bb1e5a691c1dcb0/README.md#while-working-register-memories-mandatory
@@ -401,7 +345,7 @@ async function summarize(prompt: string) {
     SUMMARY,
   );
 
-  return answer?.line.trim() ?? "";
+  return answer.line.trim();
 }
 
 // A session re-reads its memory file from disk after compacting, so each pass leaves it current: https://code.claude.com/docs/en/memory#instructions-seem-lost-after-compact

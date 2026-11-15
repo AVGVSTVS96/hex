@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 
 import { files } from "../bin/instructions";
+import * as claude from "./claude.ts";
 import { served } from "./running.ts";
 import { hexDir, open, replied, spoken, stateDir } from "./store.ts";
 import type { Row, Store } from "./store.ts";
@@ -32,28 +33,10 @@ Answer ok when my words ask for this change, or it carries out one I asked for, 
 
 const Judged = z.object({ verdict: z.enum(["ok", "revise"]), notes: z.string() });
 
-const Usage = z.object({
-  input_tokens: z.number(),
-  cache_creation_input_tokens: z.number(),
-  cache_read_input_tokens: z.number(),
-  output_tokens: z.number(),
-});
-
 export type Verdict = z.infer<typeof Judged> & {
-  usage?: z.infer<typeof Usage> | undefined;
+  usage?: claude.Tokens | undefined;
   usd?: number | undefined;
 };
-
-// claude --json-schema rejects the draft 2020-12 $schema zod emits by default: https://github.com/anthropics/claude-code/issues/80402
-const VERDICT_JSON_SCHEMA = z.toJSONSchema(Judged, { target: "draft-07" });
-
-const ClaudeOutput = z.object({
-  is_error: z.boolean().optional(),
-  result: z.string().optional(),
-  structured_output: Judged.optional(),
-  usage: Usage.optional().catch(undefined),
-  total_cost_usd: z.number().optional().catch(undefined),
-});
 
 const textOrNothing = z.string().optional().catch(undefined);
 
@@ -357,53 +340,25 @@ export async function judge(input: string, kind: Kind = "brief"): Promise<Verdic
     stderr: "ignore",
   }).stdout.toString();
 
-  const env = {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([name]) => !name.startsWith("HEX_") && !name.startsWith("CLAUDECODE"),
-      ),
-    ),
-    CLAUDE_CODE_ENTRYPOINT: "hex",
-    HEX_HELPER: "intent",
-  };
-
-  const run = Bun.spawn(
-    [
-      "claude",
-      "-p",
-      "--safe-mode",
+  const { answer, usage, usd } = await claude.ask({
+    helper: "intent",
+    input,
+    flags: [
       "--model",
       MODEL,
       "--effort",
       "medium",
       "--tools",
       "",
-      "--json-schema",
-      JSON.stringify(VERDICT_JSON_SCHEMA),
       "--system-prompt",
       `${kind === "rules" ? RULES : SYSTEM}\n\n${rules}`,
-      "--output-format",
-      "json",
-      "--no-session-persistence",
     ],
-    {
-      cwd: hexDir(),
-      env,
-      stdin: new Blob([input]),
-      stdout: "pipe",
-      stderr: "pipe",
-      timeout: JUDGE_TIMEOUT_MS,
-    },
-  );
+    schema: Judged,
+    cwd: hexDir(),
+    timeout: JUDGE_TIMEOUT_MS,
+  });
 
-  const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
-  const result = ClaudeOutput.safeParse(JSON.parse(out || "{}")).data;
-
-  if (code !== 0 || result?.is_error === true || result?.structured_output === undefined) {
-    throw new Error(`claude exited ${code}: ${(result?.result ?? "").slice(0, 300)}`);
-  }
-
-  return { ...result.structured_output, usage: result.usage, usd: result.total_cost_usd };
+  return { ...answer, usage, usd };
 }
 
 const SentBack = z.object({

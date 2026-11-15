@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -14,6 +15,8 @@ import { join } from "node:path";
 import { clock, drain, nap, observe, record, within } from "./observe.ts";
 import type { Answer, Pass } from "./observe.ts";
 import { open } from "./store.ts";
+import { fakeClaude, flags } from "./testing.ts";
+import type { Reply } from "./testing.ts";
 
 let dir: string;
 const none: Answer = { notes: [], profile: null };
@@ -521,4 +524,71 @@ test("a commit that fails leaves memory unstaged, so no one else's commit sweeps
 
   expect(git("rev-list", "--count", "--all")).toBe("0");
   expect(git("diff", "--cached", "--name-only")).toBe("");
+});
+
+async function askedWithNoTools<T>(
+  reply: Reply,
+  effort: string,
+  required: string[],
+  pass: () => Promise<T>,
+) {
+  using claude = fakeClaude(reply, { env: { HEX_DIR: dir } });
+  const result = await pass();
+  const [call, ...more] = claude.calls();
+  const { "--system-prompt": system, "--json-schema": schema, ...rest } = flags(call?.argv ?? []);
+
+  expect(more).toEqual([]);
+  expect(rest).toEqual({
+    "-p": [],
+    "--safe-mode": [],
+    "--model": ["sonnet"],
+    "--effort": [effort],
+    "--tools": [""],
+    "--output-format": ["json"],
+    "--no-session-persistence": [],
+  });
+  expect(system).toHaveLength(1);
+  expect(JSON.parse(schema?.[0] ?? "")).toMatchObject({ required });
+  expect(call).toMatchObject({ cwd: realpathSync(dir), helper: "memory", entrypoint: "hex" });
+  expect(call?.env.filter((name) => /^(?:HEX_|CLAUDECODE)/u.test(name))).toEqual(["HEX_HELPER"]);
+
+  return { result, stdin: call?.stdin };
+}
+
+test("the memory agent asks claude over a turn in hex's folder, with no tools, session or hex variables, and writes the notes it answers", async () => {
+  const note =
+    'Oct 19 11:31pm: ships "on fridays only, my team reviews thursdays" [telegram:-100:50]';
+
+  const asked = await askedWithNoTools(
+    { structured_output: { notes: [note], profile: null } },
+    "high",
+    ["notes", "profile"],
+    () => observe(dir, "s", { memo }),
+  );
+
+  expect(asked.result).toEqual([note]);
+  expect(noted()).toEqual([note]);
+  expect(asked.stdin).toContain("[telegram:-100:50]");
+});
+
+test("the memory agent asks claude for a compression memo wants, with no tools, session or hex variables", async () => {
+  const napper = join(dir, "napper");
+  writeFileSync(
+    napper,
+    `#!/bin/sh
+[ -z "$2" ] && { [ -f "${dir}/napped" ] && echo 'Nothing left to compress.' || printf 'Compress memories #0-1 into one line.\\n\\n  #0 a\\n  #1 b\\n\\nRun: memo nap 0-1 "<your line>"\\n'; exit 0; }
+printf '%s %s\\n' "$2" "$3" > "${dir}/napped"
+`,
+  );
+  chmodSync(napper, 0o755);
+
+  const asked = await askedWithNoTools(
+    { structured_output: { line: " a and b " } },
+    "low",
+    ["line"],
+    () => nap(napper),
+  );
+
+  expect(readFileSync(join(dir, "napped"), "utf-8")).toBe("0-1 a and b\n");
+  expect(asked.stdin).toStartWith("Compress memories #0-1");
 });

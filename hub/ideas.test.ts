@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { checks, research } from "./ideas.ts";
+import { checks, look, research } from "./ideas.ts";
 import type { Found } from "./ideas.ts";
 import { open, Store } from "./store.ts";
+import { fakeClaude, flags } from "./testing.ts";
 
 let dir: string;
 
@@ -149,4 +150,61 @@ test("news of an idea General owns goes beside General, not into its conversatio
   );
 
   expect(sent()).toMatchObject([{ to: "beside:general" }]);
+});
+
+test("a look asks claude in hex's folder with the web and hex's log, no session or hex variables, and returns its finding and cost", async () => {
+  using claude = fakeClaude(
+    {
+      structured_output: { news: true, finding: "It shipped: https://example.com/live" },
+      usage: {
+        input_tokens: 3,
+        cache_creation_input_tokens: 5,
+        cache_read_input_tokens: 7,
+        output_tokens: 11,
+      },
+      total_cost_usd: 0.04,
+    },
+    { env: { HEX_DIR: dir } },
+  );
+
+  expect(await look("Is GPT Live 1.1 on the API yet?")).toEqual({
+    news: true,
+    finding: "It shipped: https://example.com/live",
+    tokens: 26,
+    cost: 0.04,
+  });
+
+  const [call] = claude.calls();
+  const { "--system-prompt": system, "--json-schema": schema, ...rest } = flags(call?.argv ?? []);
+
+  expect(rest).toEqual({
+    "-p": [],
+    "--safe-mode": [],
+    "--model": ["opus"],
+    "--effort": ["low"],
+    "--tools": ["WebSearch,WebFetch,Bash"],
+    "--allowedTools": ["WebSearch", "WebFetch", "Bash(.hex/bin/hex log:*)", "Bash(rg:*)"],
+    "--output-format": ["json"],
+    "--no-session-persistence": [],
+  });
+  expect(system).toHaveLength(1);
+  expect(JSON.parse(schema?.[0] ?? "")).toMatchObject({ required: ["news", "finding"] });
+  expect(call).toMatchObject({
+    stdin: "Is GPT Live 1.1 on the API yet?",
+    cwd: realpathSync(dir),
+    helper: "ideas",
+    entrypoint: "hex",
+  });
+  expect(call?.env.filter((name) => /^(?:HEX_|CLAUDECODE)/u.test(name))).toEqual(["HEX_HELPER"]);
+});
+
+test("a look whose claude fails throws", async () => {
+  using _claude = fakeClaude({ is_error: true, result: "API Error: 529 Overloaded" }, { code: 1 });
+
+  expect(
+    await look("Is GPT Live 1.1 on the API yet?").then(
+      () => "answered",
+      () => "threw",
+    ),
+  ).toBe("threw");
 });

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 
 import { besideOf } from "./beside.ts";
+import * as claude from "./claude.ts";
 import { clip } from "./fit.ts";
 import type { IdeaJob } from "./schedule.ts";
 import { hexDir, open } from "./store.ts";
@@ -15,28 +16,7 @@ const PAST_FINDINGS_GIVEN = 5;
 
 const SYSTEM = `You keep one of my ideas moving while it waits on me. Below are my words for it, what to look into, and what your last checks found. Look for what's new since then: on the web, and in what's happened here when the idea touches it (\`.hex/bin/hex log -- '<thread>'\` prints a thread's conversation; pipe it to rg). When there's something I'd want to hear, answer news: true with a finding of a line or two and its links. Otherwise answer news: false, with what you looked at as the finding, so the next check goes further.`;
 
-const SCHEMA = {
-  type: "object",
-  properties: { news: { type: "boolean" }, finding: { type: "string" } },
-  required: ["news", "finding"],
-};
-
 const Answer = z.object({ news: z.boolean(), finding: z.string() });
-
-const ClaudeResult = z.object({
-  is_error: z.boolean().optional(),
-  result: z.string().optional(),
-  structured_output: z.unknown(),
-  total_cost_usd: z.number().optional(),
-  usage: z
-    .object({
-      input_tokens: z.number().default(0),
-      output_tokens: z.number().default(0),
-      cache_read_input_tokens: z.number().default(0),
-      cache_creation_input_tokens: z.number().default(0),
-    })
-    .optional(),
-});
 
 export type Found = z.infer<typeof Answer> & { tokens?: number; cost?: number | undefined };
 
@@ -56,21 +36,10 @@ const CheckSchema = z.object({
 export type Check = z.infer<typeof CheckSchema>;
 
 export async function look(input: string): Promise<Found> {
-  const env = {
-    ...Object.fromEntries(
-      Object.entries(process.env).filter(
-        ([name]) => !name.startsWith("HEX_") && !name.startsWith("CLAUDECODE"),
-      ),
-    ),
-    CLAUDE_CODE_ENTRYPOINT: "hex",
-    HEX_HELPER: "ideas",
-  };
-
-  const run = Bun.spawn(
-    [
-      "claude",
-      "-p",
-      "--safe-mode",
+  const { answer, usage, usd } = await claude.ask({
+    helper: "ideas",
+    input,
+    flags: [
       "--model",
       MODEL,
       "--tools",
@@ -84,35 +53,23 @@ export async function look(input: string): Promise<Found> {
       SYSTEM,
       "--effort",
       "low",
-      "--json-schema",
-      JSON.stringify(SCHEMA),
-      "--output-format",
-      "json",
-      "--no-session-persistence",
     ],
-    { cwd: hexDir(), env, stdin: new Blob([input]), stdout: "pipe", stderr: "pipe", timeout: CALL },
-  );
-
-  const [out, code] = await Promise.all([new Response(run.stdout).text(), run.exited]);
-  const result = ClaudeResult.parse(JSON.parse(out === "" ? "{}" : out));
-
-  const answer = Answer.safeParse(result.structured_output);
-
-  if (code !== 0 || result.is_error === true || !answer.success) {
-    throw new Error(`claude exited ${code}: ${(result.result ?? "").slice(0, 300)}`);
-  }
+    schema: Answer,
+    cwd: hexDir(),
+    timeout: CALL,
+  });
 
   const {
     input_tokens = 0,
     output_tokens = 0,
     cache_read_input_tokens = 0,
     cache_creation_input_tokens = 0,
-  } = result.usage ?? {};
+  } = usage ?? {};
 
   return {
-    ...answer.data,
+    ...answer,
     tokens: input_tokens + output_tokens + cache_read_input_tokens + cache_creation_input_tokens,
-    cost: result.total_cost_usd,
+    cost: usd,
   };
 }
 
