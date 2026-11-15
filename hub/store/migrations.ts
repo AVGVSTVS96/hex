@@ -322,7 +322,7 @@ function carryJobRecords({ db, dir }: Migrating) {
       mark?.record === "ended" ||
       (record?.started !== undefined &&
         existsSync(ended) &&
-        readFileSync(ended, "utf-8") === record.started);
+        readFileSync(ended, "utf-8") >= record.started);
 
     if (record !== undefined && !done) {
       const { machine = hostname(), started = "", ...spec } = record;

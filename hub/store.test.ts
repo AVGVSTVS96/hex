@@ -1982,7 +1982,7 @@ test("each job's record from before hex.db kept them carries in once, with how i
     );
   }
 
-  writeFileSync(join(jobs, "closed.ended"), "2026-11-15T10:06:00.000Z");
+  writeFileSync(join(jobs, "closed.ended"), "2026-11-15T11:00:00.000Z");
   writeFileSync(join(jobs, "broken.json"), "{");
   writeFileSync(join(jobs, "plain.sync-conflict-20261113-010055-ABC.json"), "{}");
 

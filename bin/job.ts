@@ -67,6 +67,7 @@ async function whereHexIs(waitOutAMove = HOW_LONG_A_MOVE_IS_WAITED_FOR_MS) {
 
 const TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE = 3;
 const STOPPING_SETTLES_WITHIN_MS = 15_000;
+const A_RESUME_TAKES_A_JOB_ON_WITHIN_MS = 2 * 60 * 1000;
 const SSH_CANT_REACH_IT = 255;
 const RUNS_OR_STILL_ENDS = new Set(["active", "activating", "deactivating", "reloading"]);
 
@@ -114,7 +115,9 @@ function outcomeOf(unit: string, run?: string): Outcome | undefined {
   try {
     const kept = OutcomeJson.parse(JSON.parse(readFileSync(join(outcomes, unit), "utf-8")));
 
-    if (run === undefined || kept.run === run || kept.run === "") {
+    const endedBeforeRunsWereKeptButAfterThisOneStarted = kept.run === "" && kept.at >= (run ?? "");
+
+    if (run === undefined || kept.run === run || endedBeforeRunsWereKeptButAfterThisOneStarted) {
       return kept;
     }
 
@@ -414,7 +417,9 @@ if (mode === "--owner") {
       console.log(`active ${unit}`);
     } else if (outcome?.stopped === "ended") {
       console.log(`gone ${unit}`);
-    } else if (outcome !== undefined) {
+    } else if (outcome === undefined) {
+      console.log(`unknown ${unit}`);
+    } else {
       console.log(`stopped ${unit} ${outcome.stopped} ${outcome.at}`);
     }
   }
@@ -424,11 +429,19 @@ if (mode === "--owner") {
     process.exit(0);
   }
 
+  const holder = `${hostname()}:${process.pid}`;
+
+  const stillResuming = () =>
+    store.leases.take("jobs-resume", holder, A_RESUME_TAKES_A_JOB_ON_WITHIN_MS);
+
+  if (!stillResuming()) {
+    console.error("job: another resume is carrying jobs on already");
+    process.exit(0);
+  }
+
   const gone = new Set(
     existsSync(machinesGone) ? readFileSync(machinesGone, "utf-8").split("\n").filter(isSet) : [],
   );
-
-  rmSync(machinesGone, { force: true });
 
   for (const file of existsSync(records) ? readdirSync(records) : []) {
     if (/\.(json|ended)$/u.test(file)) {
@@ -485,26 +498,47 @@ if (mode === "--owner") {
   const elsewhereNow = await stillOnTheirMachines(jobs.filter(({ machine }) => machine !== here));
 
   for (const job of jobs) {
+    stillResuming();
+
     const { unit, machine, run, spec: kept } = job;
     const now = machine === here ? await nowHere(unit, run) : elsewhereNow.get(unit);
+    const command = kept.command.join(" ");
 
-    if (now?.state === "active") {
+    if (now === undefined) {
+      console.error(`job: ${machine} said nothing of ${unit}, so it's left to it`);
       continue;
     }
 
-    if (now?.state === "ended") {
+    if (now.state === "active") {
+      continue;
+    }
+
+    if (now.state === "ended") {
       store.jobs.ended(unit, machine, run);
       continue;
     }
 
-    if (now?.state === "down" && job.stopped === undefined && !gone.has(machine)) {
+    const stillThere = job.stopped === undefined && !gone.has(machine);
+
+    if (now.state === "down" && stillThere) {
       console.error(
         `job: ${machine} doesn't answer, so ${unit} is left to it until it's known to be gone`,
       );
       continue;
     }
 
-    const stop = job.stopped ?? (now?.state === "stopped" ? now.stop : undefined);
+    if (now.state === "unknown" && stillThere && machine !== here) {
+      store.jobs.ended(unit, machine, run);
+      await tell(
+        unit,
+        kept.owner,
+        `stopped on ${machine} without a word of how, and ${machine} is up, so it isn't started again on ${here}. Start it again if its work still needs doing: ${command}`,
+        `${at}:again`,
+      );
+      continue;
+    }
+
+    const stop = job.stopped ?? (now.state === "stopped" ? now.stop : undefined);
     const then = stop === undefined ? "" : ` at ${when(stop.at)}`;
     const moved = stop?.why === "moved";
 
@@ -522,7 +556,6 @@ if (mode === "--owner") {
     const session = kept.session ?? (forks ? undefined : resumes);
     const agent = basename(kept.command[0] ?? "") === "claude";
     const conversation = agent && isSet(session) && saved(session);
-    const command = kept.command.join(" ");
 
     const startsOver = (kept.startedOver ?? []).filter(
       (time) => Date.parse(at) - Date.parse(time) < WITHIN_MS,
@@ -587,6 +620,16 @@ if (mode === "--owner") {
 
     await tell(unit, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
+
+  const stillGone = new Set(store.jobs.list().map(({ machine }) => machine)).intersection(gone);
+
+  if (stillGone.size === 0) {
+    rmSync(machinesGone, { force: true });
+  } else {
+    writeFileSync(machinesGone, `${[...stillGone].join("\n")}\n`);
+  }
+
+  store.leases.release("jobs-resume", holder);
 } else if ((await whereHexIs()) === "here") {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
   const jobOwner = given ?? reportsTo();
@@ -770,6 +813,8 @@ async function stillOnTheirMachines(jobs: Pick<Job, "unit" | "machine" | "run">[
         said.set(unit, { state: "active" });
       } else if (state === "gone") {
         said.set(unit, { state: "ended" });
+      } else if (state === "unknown") {
+        said.set(unit, { state: "unknown" });
       } else if (state === "stopped" && stopped.success) {
         said.set(unit, { state: "stopped", stop: { why: stopped.data, at } });
       }
@@ -881,7 +926,8 @@ async function launch(
 ) {
   if ((await $`systemctl --user is-active --quiet ${unit}`.nothrow()).exitCode === 0) {
     console.error(`job: ${unit} already runs`);
-    process.exit(1);
+
+    return 1;
   }
 
   const before = store.jobs.get(unit);
@@ -890,10 +936,11 @@ async function launch(
     fresh &&
     before !== undefined &&
     before.machine !== hostname() &&
-    (await stillOnTheirMachines([before])).get(unit)?.state === "active"
+    ["active", undefined].includes((await stillOnTheirMachines([before])).get(unit)?.state)
   ) {
-    console.error(`job: ${unit} already runs on ${before.machine}`);
-    process.exit(1);
+    console.error(`job: ${unit} already runs on ${before.machine}, or it can't say it doesn't`);
+
+    return 1;
   }
 
   mkdirSync(records, { recursive: true });

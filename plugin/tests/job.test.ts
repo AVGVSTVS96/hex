@@ -1107,10 +1107,58 @@ test("a marker that names this machine means hex runs here", () => {
 
   const { code } = run(["self", "make", "all"], session);
   const where = Bun.spawnSync([join(home, ".hex/bin/hex"), "elsewhere"], { env: fakes() });
+  const hub = Bun.spawnSync([join(home, ".hex/bin/hex"), "run"], { env: fakes(), stderr: "pipe" });
 
   rmSync(marker);
   expect(code).toBe(0);
   expect(jobsOn().get("self")?.machine).toBe(here);
   expect(existsSync(join(home, "ssh.log"))).toBe(false);
   expect(where.exitCode).toBe(1);
+  expect(hub.stderr.toString()).not.toContain("hex runs on another machine");
+  expect(hub.stderr.toString()).toContain("can't start");
+});
+
+test("a job its machine knows nothing of isn't started again while that machine is up, and a gone machine stays gone until its jobs are settled", () => {
+  noJobs();
+  const config = join(home, "claude");
+  const runStarted = "2026-11-15T10:00:00.000Z";
+  writeFileSync(join(home, "twin-active.txt"), "busy\n");
+
+  for (const unit of ["dropped", "busy"]) {
+    jobsOn().started(unit, "twin-x", runStarted, spec(["make", unit]));
+  }
+
+  jobsOn().started("crashed", here, runStarted, spec(["make", "crashed"]));
+  mkdirSync(join(home, "xdg/hex/jobs"), { recursive: true });
+  writeFileSync(
+    join(home, "xdg/hex/jobs/crashed"),
+    JSON.stringify({ run: "", stopped: "ended", at: "2026-11-15T09:00:00.000Z" }),
+  );
+
+  expect([...resume(config).keys()]).toEqual(["crashed"]);
+  expect(jobsOn().get("dropped")).toBeUndefined();
+  const dropped: unknown[] = told("%[job] dropped stopped%");
+  expect(dropped).toEqual([
+    containing("[job] dropped stopped on twin-x without a word of how, and twin-x is up"),
+  ]);
+
+  jobsOn().ended("crashed", here, "");
+
+  expect([...resume(config, "twin-x").keys()]).toEqual([]);
+  expect(jobsOn().get("busy")?.machine).toBe("twin-x");
+  expect(readFileSync(join(home, "xdg/hex/gone"), "utf-8")).toBe("twin-x\n");
+  rmSync(join(home, "xdg/hex/gone"));
+  rmSync(join(home, "twin-active.txt"));
+});
+
+test("only one resume carries jobs on at a time", () => {
+  noJobs();
+  jobsOn().started("waiting", here, "2026-11-15T10:00:00.000Z", spec(["make", "all"]));
+  open(join(home, "state")).leases.take("jobs-resume", "another", 60_000);
+
+  const started = resume(join(home, "claude"));
+
+  open(join(home, "state")).leases.release("jobs-resume", "another");
+  expect([...started.keys()]).toEqual([]);
+  expect(resume(join(home, "claude")).has("waiting")).toBe(true);
 });
