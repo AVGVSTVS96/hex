@@ -496,10 +496,6 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
 const ESC_LANDS_WITHIN = 5000;
 const TURN_REPORTS_WITHIN = 60_000;
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Claude Code draws a session's screen within a second of an attach, so one that shows no dialog in this long has none to read or answer.
-const DIALOG_SHOWS_WITHIN = 10_000;
-
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1, 3, 7 and 15 seconds, then gives up for good. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 const LIMITS: Limits = {
   idleStop: 54 * 60_000,
@@ -1297,14 +1293,17 @@ export function startHub({
     return env?.HEX_CHANNEL === channel ? env.HEX_THREAD : undefined;
   }
 
-  function extra(thread: string) {
+  function chosen(thread: string) {
     const { model, effort } = savedOf(thread);
 
     return [
       ...(present(model) ? ["--model", model] : []),
       ...(present(effort) ? ["--effort", effort] : []),
-      ...args(thread),
     ];
+  }
+
+  function extra(thread: string) {
+    return [...chosen(thread), ...args(thread)];
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1391,6 +1390,11 @@ export function startHub({
     daemonChecked?: Promise<void>,
   ) {
     const known = savedOf(thread);
+
+    if (!present(fork)) {
+      await rewound(thread);
+    }
+
     const takesOverFrom = present(prompt) || present(fork) ? undefined : expired(thread);
     writeSettings(thread, {}, takesOverFrom);
 
@@ -1456,6 +1460,34 @@ export function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A saved session whose last reply the model's safeguards refused would be resumed into the same refusal, so the thread goes on, on its own model, from a copy of the conversation that ends before what that turn was given, or from a new session when nothing came before it or the copy fails.
+  async function rewound(thread: string) {
+    const known = savedOf(thread);
+    const session = current(thread);
+
+    if (!present(session) || fresh(thread)) {
+      return;
+    }
+
+    const refusal = claude.refused(claude.transcript(cwdOf(thread), session));
+
+    if (!refusal) {
+      return;
+    }
+
+    runOf(thread).unsaved = undefined;
+
+    known.session = present(refusal.at)
+      ? await claude.rewind(cwdOf(thread), session, refusal.at, chosen(thread))
+      : undefined;
+
+    process.stderr.write(
+      `hub: ${thread}'s session ${session} ended on a refused turn, so it goes on ${present(known.session) ? `from ${known.session}, a copy that ends before it` : "in a new session"}\n`,
+    );
+    save();
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The transcript of a thread's saved session that a new session takes over from instead of resuming: one this machine doesn't have, like after a restore from hex.db, or one whose prompt cache has expired (an hour, or 5 minutes for a short one) when it holds more than a new session costs to start and catch up. A start with a prompt, like /compact, needs the old conversation itself, so it resumes.
   function expired(thread: string) {
     const session = savedOf(thread).session;
@@ -1509,8 +1541,7 @@ export function startHub({
     }
   }
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Claude Code can pause a session mid-turn on a choice for someone at its terminal, like a reply its model's safeguards stopped or a permission prompt, and no hook says so: its job record says it needs something and Claude lists it as waiting. The turn ends in hex's record, so what went unanswered isn't given to another session to pause on again, and the chat gets the dialog's own choices to tap, since the choice is the owner's. The session keeps running, with any agents it started, and what else comes for it waits until the dialog is answered.
+  // Claude Code can pause a session mid-turn on a choice for someone at its terminal, like a reply its model's safeguards stopped or a permission prompt, and no hook says so: its job record says it needs something and Claude lists it as waiting. The turn ends in hex's record, so what went unanswered isn't given to another session to pause on again, and the chat hears why. No shell command answers the dialog (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), and its choices are a terminal's: another model, which the owner's settings can rule out, or editing the prompt in the terminal. So the session keeps running, with any agents it started, until the thread's next message starts it again, past a refused turn when the safeguards stopped it (rewound).
   async function pause(thread: string, phase: Phase, needs: string | undefined) {
     const run = runOf(thread);
     const session = current(thread);
@@ -1544,82 +1575,16 @@ export function startHub({
       store.turns.handled(session);
     }, undefined);
     setState(thread, false);
-    const choices = await onDialog((until) => claude.dialog(session, until));
+    const refusal = claude.refused(claude.transcript(cwdOf(thread), session));
+    const { model } = savedOf(thread);
 
-    if (!choices) {
-      failed(
-        thread,
-        `Claude Code paused it to ask its terminal "${needs}", so your message got no answer.\nIts next message starts it again.`,
-        true,
-      );
-
-      return;
-    }
-
-    const text = `${choices.said} Your message got no answer. What should it do?`;
-
-    try {
-      await caller.run("hub", () => call(thread, "reply", { text, buttons: choices.options }));
-    } catch {
-      failed(
-        thread,
-        `${text}\n${choices.options.map((option, at) => `${at + 1}. ${option}`).join("\n")}`,
-        true,
-      );
-    }
-  }
-
-  function onDialog<T>(read: (until: AbortSignal) => Promise<T>): Promise<T> {
-    const deadline = new AbortController();
-
-    const timer = clock.setTimeout(() => {
-      deadline.abort();
-    }, DIALOG_SHOWS_WITHIN);
-
-    return read(AbortSignal.any([deadline.signal, closing.signal])).finally(() => {
-      clock.clearTimeout(timer);
-    });
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A message for a paused session: one of its dialog's choices, by its words or number, answers the dialog; anything else waits until the dialog is answered. One whose dialog can't be read starts the session again.
-  async function answer(thread: string, message: Message) {
-    const session = current(thread);
-
-    const choices = present(session)
-      ? await onDialog((until) => claude.dialog(session, until))
-      : undefined;
-
-    if (!present(session) || !choices) {
-      void refresh(thread, message);
-
-      return;
-    }
-
-    const said = message.content.trim().replace(/^\(vote: (.*)\)$/u, "$1");
-
-    const option =
-      choices.options.find((each) => each.toLowerCase() === said.toLowerCase()) ??
-      choices.options[Number(said) - 1];
-
-    if (option === undefined) {
-      hold(thread, message);
-
-      return;
-    }
-
-    if (!(await onDialog((until) => claude.choose(session, option, until)))) {
-      hold(thread, message);
-
-      return;
-    }
-
-    process.stderr.write(`hub: ${thread}'s owner chose "${option}" in its session's dialog\n`);
-    const { key } = message.meta;
-
-    if (present(key)) {
-      kept((store) => store.messages.take(key, "hub"), false);
-    }
+    failed(
+      thread,
+      refusal
+        ? `the model's safety filter flagged your message${present(refusal.category) ? ` as ${refusal.category}` : ""}, so it got no answer. Your next message starts this topic again from just before it, still on ${model ?? "the same model"}, with the flagged message left out: send what you need in other words.`
+        : `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
+      true,
+    );
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1852,9 +1817,7 @@ export function startHub({
     }
 
     if (run.phase.is === "live") {
-      if (run.paused === true) {
-        void answer(thread, message);
-      } else if ((stale(thread) && !onCall.has(run)) || spent(thread)) {
+      if (run.paused === true || (stale(thread) && !onCall.has(run)) || spent(thread)) {
         void refresh(thread, message);
       } else if (!heldForTheTurn(thread, message)) {
         handIn(thread, run.phase.line, message);

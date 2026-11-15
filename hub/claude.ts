@@ -14,7 +14,6 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { Terminal } from "@xterm/headless";
 import { z } from "zod";
 
 import { sleep } from "./clock.ts";
@@ -364,183 +363,6 @@ export function interrupt(
   });
 }
 
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// A choice Claude Code shows a paused session's terminal: what it says, its numbered options, and the one its cursor is on.
-export type Dialog = { said: string; options: string[]; at: number };
-
-const OPTION = /^\s*(❯)?\s*(\d+)\.\s+(.+?)\s*$/u;
-const RULE = /^\s*─{3,}/u;
-const SENTENCE = /^.+?[.?!](?=\s|$)/u;
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// The last numbered list on the screen with a cursor on it, and the text above it back to the rule the dialog opens under, its title first.
-export function dialogOn(screen: string[]): Dialog | undefined {
-  const last = screen.findLastIndex((line) => OPTION.exec(line)?.[2] === "1");
-
-  if (last === -1) {
-    return undefined;
-  }
-
-  const options: string[] = [];
-  let at: number | undefined;
-
-  for (const line of screen.slice(last)) {
-    const [, cursor, number, label] = OPTION.exec(line) ?? [];
-
-    if (number !== String(options.length + 1) || label === undefined) {
-      break;
-    }
-
-    if (cursor !== undefined) {
-      at = options.length;
-    }
-
-    options.push(label);
-  }
-
-  if (at === undefined) {
-    return undefined;
-  }
-
-  const top = screen.slice(0, last).findLastIndex((line) => RULE.test(line));
-  const [title = "", ...body] = screen.slice(top + 1, last).flatMap((line) => line.trim() || []);
-  const text = body.join(" ");
-
-  return { said: SENTENCE.exec(text)?.[0] ?? (text || title), options, at };
-}
-
-const COLS = 120;
-const ROWS = 40;
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Attaches to a background session and shows look its screen after each redraw, until look says it's done, the attach ends, or until aborts. write: keys to the session.
-function onScreen(
-  session: string,
-  look: (screen: string[], write: (keys: string) => void) => boolean,
-  until: AbortSignal,
-): Promise<void> {
-  const terminal = new Terminal({ cols: COLS, rows: ROWS, allowProposedApi: true });
-
-  const shown = () => {
-    const buffer = terminal.buffer.active;
-
-    return Array.from(
-      { length: buffer.length },
-      (_, row) => buffer.getLine(row)?.translateToString(true) ?? "",
-    );
-  };
-
-  return new Promise((resolve) => {
-    let attach: ReturnType<typeof Bun.spawn> | undefined;
-    let attached = "";
-    let over = false;
-
-    const finish = () => {
-      if (over) {
-        return;
-      }
-
-      over = true;
-      until.removeEventListener("abort", finish);
-      attach?.kill("SIGHUP");
-      attach?.terminal?.close();
-      terminal.dispose();
-      resolve();
-    };
-
-    try {
-      const [command, args] = contained("claude", ["attach", short(session)]);
-      attach = Bun.spawn([command, ...args], {
-        env: inherited(),
-        terminal: {
-          cols: COLS,
-          rows: ROWS,
-          data: (pty, output) => {
-            if (!KEYS_REACH_SESSION_AFTER_ATTACHING_LINE.test(attached)) {
-              attached += Buffer.from(output).toString("latin1");
-            }
-
-            terminal.write(output, () => {
-              if (
-                !over &&
-                KEYS_REACH_SESSION_AFTER_ATTACHING_LINE.test(attached) &&
-                look(shown(), (keys) => {
-                  pty.write(keys);
-                })
-              ) {
-                finish();
-              }
-            });
-          },
-        },
-      });
-    } catch {
-      finish();
-
-      return;
-    }
-
-    until.addEventListener("abort", finish);
-    void attach.exited.finally(finish);
-  });
-}
-
-// No shell command reads or answers a background session's dialog (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), so the hub attaches as a terminal would.
-export async function dialog(session: string, until: AbortSignal): Promise<Dialog | undefined> {
-  let seen: Dialog | undefined;
-
-  await onScreen(
-    session,
-    (screen) => {
-      seen = dialogOn(screen);
-
-      return seen !== undefined;
-    },
-    until,
-  );
-
-  return seen;
-}
-
-const DOWN = "\u001B[B";
-const UP = "\u001B[A";
-
-// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-// Moves the dialog's cursor to the option and presses Enter, done once the dialog leaves the screen. Whether the option was there to press.
-export async function choose(session: string, option: string, until: AbortSignal) {
-  let pressed: string | undefined;
-
-  await onScreen(
-    session,
-    (screen, write) => {
-      const shown = dialogOn(screen);
-
-      if (pressed !== undefined) {
-        return shown?.options.join("\n") !== pressed;
-      }
-
-      if (!shown) {
-        return false;
-      }
-
-      const to = shown.options.indexOf(option);
-
-      if (to === -1) {
-        return true;
-      }
-
-      pressed = shown.options.join("\n");
-      const moves = to - shown.at;
-      write(`${(moves > 0 ? DOWN : UP).repeat(Math.abs(moves))}\r`);
-
-      return false;
-    },
-    until,
-  );
-
-  return pressed !== undefined;
-}
-
 function sizeOf(file: string): number | undefined {
   try {
     return statSync(file).size;
@@ -858,6 +680,143 @@ export function saved(session: string) {
     );
   } catch (error) {
     return SystemError.safeParse(error).data?.code !== "ENOENT";
+  }
+}
+
+const LinkedEntry = z.object({
+  type: z.string().optional(),
+  uuid: z.string(),
+  parentUuid: z.string().nullish(),
+  message: z
+    .object({
+      content: z.unknown().optional(),
+      stop_reason: z.string().nullish(),
+      stop_details: z.object({ category: z.string().optional() }).nullish(),
+    })
+    .optional(),
+});
+
+type Linked = z.infer<typeof LinkedEntry>;
+
+const REFUSAL = '"stop_reason":"refusal"';
+const KEY = /<channel [^>]*\bkey="([^"]+)"/gu;
+
+const keysIn = (entry: Linked) =>
+  entry.type === "user"
+    ? Texts.parse(entry.message?.content).flatMap((text) =>
+        [...text.matchAll(KEY)].flatMap(([, key]) => key ?? []),
+      )
+    : [];
+
+export type Refusal = { category?: string | undefined; at?: string | undefined };
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The model's safeguards refused the transcript's last reply: what for, and the last message before the ones that turn was given first came in, where the conversation goes on without them. Claude Code keeps a refused turn's messages when it carries on past one, so they can come back turn after turn; with none before them, nothing of the conversation stays.
+export function refused(file: string): Refusal | undefined {
+  let text: string;
+
+  try {
+    text = readFileSync(file, "utf-8");
+  } catch {
+    return undefined;
+  }
+
+  if (!text.slice(-NEWEST_BYTES).includes(REFUSAL)) {
+    return undefined;
+  }
+
+  const entries = new Map<string, Linked>();
+  let last: Linked | undefined;
+
+  for (const line of text.split("\n")) {
+    const entry = parsed(LinkedEntry, line);
+
+    if (entry) {
+      entries.set(entry.uuid, entry);
+      last = entry.type === "assistant" ? entry : last;
+    }
+  }
+
+  if (last?.message?.stop_reason !== "refusal") {
+    return undefined;
+  }
+
+  const chain: Linked[] = [];
+
+  for (
+    let entry = entries.get(last.parentUuid ?? "");
+    entry && chain.length < entries.size;
+    entry = entries.get(entry.parentUuid ?? "")
+  ) {
+    chain.unshift(entry);
+  }
+
+  const begun = chain.findLastIndex((entry) => entry.type === "assistant") + 1;
+  const given = new Set(chain.slice(begun).flatMap(keysIn));
+
+  const first =
+    given.size === 0
+      ? begun
+      : chain.findIndex((entry) => keysIn(entry).some((key) => given.has(key)));
+
+  return {
+    category: last.message.stop_details?.category,
+    at: chain
+      .slice(0, first)
+      .findLast((entry) => entry.type === "user" || entry.type === "assistant")?.uuid,
+  };
+}
+
+const Printed = z.object({ session_id: z.string(), stop_reason: z.string().nullish() });
+
+const REWOUND =
+  "[hub] The message after this point was stopped by the model's safety filter, so this conversation goes on without it, and its sender was told. Reply only: ok";
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A copy of the session's conversation up to the message at, as a new session. Claude Code cuts a conversation only in print mode, so the copy takes one turn there, saying why, with no tools or MCP servers; it's refused again when what stays was what the safeguards flagged.
+export function rewind(
+  cwd: string,
+  session: string,
+  at: string,
+  args: string[],
+): Promise<string | undefined> {
+  const [command, argv] = contained("claude", [
+    "-p",
+    "--resume",
+    session,
+    "--fork-session",
+    "--resume-session-at",
+    at,
+    "--strict-mcp-config",
+    "--tools",
+    "",
+    "--output-format",
+    "json",
+    ...args,
+  ]);
+
+  return tracked(
+    new Promise((resolve) => {
+      const child = execFile(
+        command,
+        argv,
+        { cwd, env: inherited(), timeout: 5 * 60_000 },
+        (error, stdout) => {
+          const copy = error ? undefined : parsed(Printed, stdout);
+          resolve(copy?.stop_reason === "refusal" ? undefined : copy?.session_id);
+        },
+      );
+
+      child.stdin?.end(REWOUND);
+    }),
+  );
+}
+
+function parsed<T>(schema: z.ZodType<T>, line: string): T | undefined {
+  try {
+    return schema.safeParse(JSON.parse(line)).data;
+  } catch {
+    return undefined;
   }
 }
 

@@ -144,6 +144,7 @@ trap 'jq -cn "\\$ARGS.positional" --args -- "$@" >> "${dir}/calls"' EXIT
 [ "$1" = "--version" ] && echo "2.1.0 (Claude Code)"
 [ "$1 $2" = "daemon run" ] && rm -f "${dir}/down"
 [ "$1" = "--bg" ] && echo "backgrounded · job12345 · test"
+[ "$1" = "-p" ] && cat > "${dir}/rewound" && echo '{}' > "${dir}/projects/$(pwd | sed 's/[^a-zA-Z0-9]/-/g')/rewound-session.jsonl" && echo '{"session_id":"rewound-session","stop_reason":"end_turn"}'
 ${ATTACH}
 [ "$1" = "stop" ] && [ -f "${dir}/agents" ] && jq -c --arg id "$2" 'map(select(.sessionId | startswith($id) | not))' "${dir}/agents" > "${dir}/agents.next" && mv "${dir}/agents.next" "${dir}/agents"
 exit 0
@@ -2209,24 +2210,45 @@ test("a turn that fails for good is told in its chat, and waits for its next mes
 
 const REFUSED = "choose: retry on fallback model or edit prompt";
 
-const REFUSAL = [
-  "─".repeat(60),
-  " Session paused",
-  " Fable 5.2's safeguards flagged this message. Our intentionally broad safeguards can sometimes flag legitimate tasks.",
-  "",
-  " ❯ 1. Switch to Opus 4.8",
-  "   2. Edit prompt and retry with Fable 5.2",
-].join("\n");
+const FLAGGED =
+  "the model's safety filter flagged your message as cyber, so it got no answer. Your next message starts this topic again from just before it, still on fable, with the flagged message left out: send what you need in other words.";
 
-const CHOICES = ["Switch to Opus 4.8", "Edit prompt and retry with Fable 5.2"];
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// The session's transcript: a turn that went through, then one whose reply the model's safeguards refused, or with first, only the refused one.
+function refused(first = false) {
+  const project = join(dir, "projects", join(dir, "hex").replaceAll(/[^a-zA-Z0-9]/gu, "-"));
+  mkdirSync(project, { recursive: true });
 
-const ASKED =
-  "Fable 5.2's safeguards flagged this message. Your message got no answer. What should it do?";
+  const entries = [
+    ...(first
+      ? []
+      : [
+          { type: "user", uuid: "u1", parentUuid: null, message: { content: "drones?" } },
+          { type: "assistant", uuid: "a1", parentUuid: "u1", message: { content: "Plenty." } },
+        ]),
+    {
+      type: "user",
+      uuid: "u2",
+      parentUuid: first ? null : "a1",
+      message: { content: '<channel source="telegram" key="telegram:1:5">jamming?</channel>' },
+    },
+    {
+      type: "assistant",
+      uuid: "a2",
+      parentUuid: "u2",
+      message: { content: [], stop_reason: "refusal", stop_details: { category: "cyber" } },
+    },
+  ];
+
+  writeFileSync(
+    join(project, `${SESSION}.jsonl`),
+    entries.map((entry) => JSON.stringify(entry)).join("\n"),
+  );
+}
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Claude Code pausing the session on a dialog, as Claude lists it and its job record says.
 function pauses(jobId = "job12345", needs = REFUSED) {
-  writeFileSync(join(dir, "dialog"), REFUSAL);
   writeFileSync(
     join(dir, "agents"),
     JSON.stringify([{ sessionId: SESSION, pid: EXITED, status: "waiting" }]),
@@ -2247,54 +2269,100 @@ async function turning(thread: string) {
   return line;
 }
 
-test("a turn Claude Code pauses on a dialog puts the dialog's choices to its chat once, a tap answers it in the session, and the session carries on there with what waited and its reply", async () => {
-  const told: [string, string, unknown][] = [];
-  start({
-    call: (thread, name, toolArgs) => {
-      told.push([thread, name, toolArgs]);
+const rewinds = () => calls().filter((each) => each[0] === "-p");
 
-      return Promise.resolve("sent");
-    },
-  });
-  hub.deliver("chat:7", "Desk anchors", message);
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// A message for the paused session, which stops it; Claude still lists it until the hub's wait for its channel runs out, and then it starts again.
+async function restarts(content: string) {
+  hub.deliver("chat:7", "Desk anchors", { ...message, content });
+  await until(() => calls().some((each) => each[0] === "stop"));
+  await settled();
+  writeFileSync(
+    join(dir, "agents"),
+    JSON.stringify([{ sessionId: NEXT, pid: process.pid, status: "busy" }]),
+  );
+  await time.lapse(50);
+  await until(() => bgStarts().length === 2);
+}
+
+test("a turn the model's safeguards refuse is told once in its chat, and its next message starts the topic on its model from a copy of the conversation that ends before it, which takes only that message", async () => {
+  start({ reconnect: 50 });
+  hub.deliver("chat:7", "Desk anchors", { ...message, content: "jamming?" });
   await launched();
+  hub.configure("chat:7", { model: "fable" });
   const line = await turning("chat:7");
+  refused();
   await pauses();
-  await until(() => told.length);
+  await until(() => failures.length);
   await job("job12345", { state: "working", sessionId: SESSION, needs: REFUSED });
   await settled();
-  expect(told).toEqual([["chat:7", "reply", { text: ASKED, buttons: CHOICES }]]);
-  expect(failures).toEqual([]);
+  expect(failures).toEqual([["chat:7", FLAGGED]]);
   expect(states.at(-1)).toEqual(["chat:7", false]);
   expect(open(dir).turns.get(SESSION).ended).toBeDefined();
 
-  hub.deliver("chat:7", "Desk anchors", { ...message, content: "hello?" });
-  hub.deliver("chat:7", "Desk anchors", { ...message, content: CHOICES[1] ?? "" });
-  await until(() =>
-    readFileSync(join(dir, "pressed"), { flag: "a+", encoding: "utf-8" }).endsWith("\r"),
-  );
-  expect(readFileSync(join(dir, "pressed"), "utf-8")).toBe("\u001B[B\r");
-  expect(line.received).toHaveLength(1);
+  await restarts("what bands do drones use?");
+  expect(calls().find((each) => each[0] === "stop")).toEqual(["stop", SESSION.slice(0, 8)]);
 
-  rmSync(join(dir, "dialog"));
-  writeFileSync(
-    join(dir, "agents"),
-    JSON.stringify([{ sessionId: SESSION, pid: EXITED, status: "busy" }]),
-  );
-  await job("job12345", { state: "working", sessionId: SESSION });
-  await until(() => line.received.length === 2);
-  expect(heard(line.received)[1]?.content).toBe("hello?");
-  await line.call("reply", { text: "Jamming needs a transmitter on the drone's control band." });
-  expect(told.at(-1)?.[2]).toEqual({
-    text: "Jamming needs a transmitter on the drone's control band.",
-  });
-  fold(line.received);
-  expect(open(dir).messages.untaken("chat:7")).toEqual([]);
-  expect(bgStarts()).toHaveLength(1);
+  expect(rewinds()).toEqual([
+    [
+      "-p",
+      "--resume",
+      SESSION,
+      "--fork-session",
+      "--resume-session-at",
+      "a1",
+      "--strict-mcp-config",
+      "--tools",
+      "",
+      "--output-format",
+      "json",
+      "--model",
+      "fable",
+    ],
+  ]);
+
+  expect(bgStarts()[1]).toContain("rewound-session");
+  expect(bgStarts()[1]?.slice(bgStarts()[1]?.indexOf("--model"))).toContain("fable");
+  const next = await session("chat:7", NEXT);
+  await until(() => next.received.length);
+  expect(heard(next.received).map(({ content }) => content)).toEqual(["what bands do drones use?"]);
+  expect(line.received).toHaveLength(1);
+  expect(failures.filter(([, why]) => why === FLAGGED)).toHaveLength(1);
 });
 
-test("a session already paused on a dialog when the hub connects to it, its owner's message unanswered, has its choices put to the chat", async () => {
-  const told: unknown[] = [];
+test("a refused turn that was its conversation's first starts the topic in a new session, with no copy and nothing taken over", async () => {
+  start({ reconnect: 50 });
+  hub.deliver("chat:7", "Desk anchors", { ...message, content: "jamming?" });
+  await launched();
+  await turning("chat:7");
+  refused(true);
+  await pauses();
+  await until(() => failures.length);
+  await restarts("what bands do drones use?");
+  expect(rewinds()).toEqual([]);
+  expect(bgStarts()[1]).not.toContain("--resume");
+  expect(bgStarts()[1]).not.toContain(SESSION);
+});
+
+test("a session paused on a question for its terminal, not a refusal, is told in plain words once, and its next message starts it again", async () => {
+  const needs = "Answer the permission prompt in the terminal to continue";
+  start({ reconnect: 50 });
+  hub.deliver("chat:7", "Desk anchors", message);
+  await launched();
+  await turning("chat:7");
+  await pauses("job12345", needs);
+  await until(() => failures.length);
+  expect(failures).toEqual([
+    [
+      "chat:7",
+      `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
+    ],
+  ]);
+  await restarts("again");
+  expect(rewinds()).toEqual([]);
+});
+
+test("a session already paused on a refusal when the hub connects to it, its owner's message unanswered, has its chat told, by the job record under the session's short id", async () => {
   bound("chat:7");
   open(dir).messages.deliver({
     key: "telegram:1:5",
@@ -2306,23 +2374,18 @@ test("a session already paused on a dialog when the hub connects to it, its owne
   });
   open(dir).turns.turned(SESSION, true, "2026-01-01T00:00:00.000Z");
   open(dir).messages.take("telegram:1:5", SESSION);
-  writeFileSync(join(dir, "dialog"), REFUSAL);
   writeFileSync(
     join(dir, "jobs", SESSION.slice(0, 8), "state.json"),
     JSON.stringify({ state: "working", sessionId: SESSION, needs: REFUSED }),
   );
   start({
-    registry: { "chat:7": { name: "Desk anchors", session: SESSION } },
+    registry: { "chat:7": { name: "Desk anchors", session: SESSION, model: "fable" } },
     agents: [{ sessionId: SESSION, pid: EXITED, status: "waiting" }],
-    call: (_, name, toolArgs) => {
-      told.push([name, toolArgs]);
-
-      return Promise.resolve("sent");
-    },
   });
+  refused();
   const line = await session("chat:7");
-  await until(() => told.length);
-  expect(told).toEqual([["reply", { text: ASKED, buttons: CHOICES }]]);
+  await until(() => failures.length);
+  expect(failures).toEqual([["chat:7", FLAGGED]]);
   expect(line.received).toEqual([]);
   expect(bgStarts()).toEqual([]);
 });
