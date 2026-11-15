@@ -1118,7 +1118,7 @@ test("a marker that names this machine means hex runs here", () => {
   expect(hub.stderr.toString()).toContain("can't start");
 });
 
-test("a job its machine knows nothing of isn't started again while that machine is up, and a gone machine stays gone until its jobs are settled", () => {
+test("a job its machine knows nothing of isn't started again while that machine is up, and a gone machine that answers is gone no more", () => {
   noJobs();
   const config = join(home, "claude");
   const runStarted = "2026-11-15T10:00:00.000Z";
@@ -1146,19 +1146,25 @@ test("a job its machine knows nothing of isn't started again while that machine 
 
   expect([...resume(config, "twin-x").keys()]).toEqual([]);
   expect(jobsOn().get("busy")?.machine).toBe("twin-x");
-  expect(readFileSync(join(home, "xdg/hex/gone"), "utf-8")).toBe("twin-x\n");
-  rmSync(join(home, "xdg/hex/gone"));
+  expect(existsSync(join(home, "xdg/hex/gone"))).toBe(false);
   rmSync(join(home, "twin-active.txt"));
 });
 
-test("only one resume carries jobs on at a time", () => {
+test("only one resume carries jobs on at a time, and one that was killed holds up none after it", () => {
   noJobs();
+  rmSync(join(home, "xdg/hex"), { recursive: true, force: true });
+  expect(resume(join(home, "claude")).size).toBe(0);
   jobsOn().started("waiting", here, "2026-11-15T10:00:00.000Z", spec(["make", "all"]));
-  open(join(home, "state")).leases.take("jobs-resume", "another", 60_000);
+  mkdirSync(join(home, "xdg/hex"), { recursive: true });
+  writeFileSync(join(home, "xdg/hex/resuming"), String(process.pid));
 
   const started = resume(join(home, "claude"));
 
-  open(join(home, "state")).leases.release("jobs-resume", "another");
   expect([...started.keys()]).toEqual([]);
+
+  const killed = Bun.spawnSync(["true"]).pid;
+  writeFileSync(join(home, "xdg/hex/resuming"), String(killed));
+
   expect(resume(join(home, "claude")).has("waiting")).toBe(true);
+  expect(existsSync(join(home, "xdg/hex/resuming"))).toBe(false);
 });

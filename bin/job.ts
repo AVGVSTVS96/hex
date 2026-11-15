@@ -42,6 +42,7 @@ const HOW_LONG_A_MOVE_IS_WAITED_FOR_MS = 60_000;
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // A machine that doesn't answer may only be cut off for a moment, with its jobs still running: only whatever moved hex away from it, which watched it go, names it here, one machine a line, for the next resume to carry its jobs on.
 const machinesGone = join(whereHexRuns, "../gone");
+const resuming = join(whereHexRuns, "../resuming");
 
 async function whereHexIs(waitOutAMove = HOW_LONG_A_MOVE_IS_WAITED_FOR_MS) {
   for (let waited = 0; existsSync(whereHexRuns); waited += 500) {
@@ -67,7 +68,6 @@ async function whereHexIs(waitOutAMove = HOW_LONG_A_MOVE_IS_WAITED_FOR_MS) {
 
 const TRIES_BEFORE_A_MACHINE_COUNTS_AS_GONE = 3;
 const STOPPING_SETTLES_WITHIN_MS = 15_000;
-const A_RESUME_TAKES_A_JOB_ON_WITHIN_MS = 2 * 60 * 1000;
 const SSH_CANT_REACH_IT = 255;
 const RUNS_OR_STILL_ENDS = new Set(["active", "activating", "deactivating", "reloading"]);
 
@@ -429,12 +429,7 @@ if (mode === "--owner") {
     process.exit(0);
   }
 
-  const holder = `${hostname()}:${process.pid}`;
-
-  const stillResuming = () =>
-    store.leases.take("jobs-resume", holder, A_RESUME_TAKES_A_JOB_ON_WITHIN_MS);
-
-  if (!stillResuming()) {
+  if (!resumesAlone()) {
     console.error("job: another resume is carrying jobs on already");
     process.exit(0);
   }
@@ -498,8 +493,6 @@ if (mode === "--owner") {
   const elsewhereNow = await stillOnTheirMachines(jobs.filter(({ machine }) => machine !== here));
 
   for (const job of jobs) {
-    stillResuming();
-
     const { unit, machine, run, spec: kept } = job;
     const now = machine === here ? await nowHere(unit, run) : elsewhereNow.get(unit);
     const command = kept.command.join(" ");
@@ -621,15 +614,8 @@ if (mode === "--owner") {
     await tell(unit, kept.owner, `stopped because ${why}, and ${said}`, `${at}:again`);
   }
 
-  const stillGone = new Set(store.jobs.list().map(({ machine }) => machine)).intersection(gone);
-
-  if (stillGone.size === 0) {
-    rmSync(machinesGone, { force: true });
-  } else {
-    writeFileSync(machinesGone, `${[...stillGone].join("\n")}\n`);
-  }
-
-  store.leases.release("jobs-resume", holder);
+  rmSync(machinesGone, { force: true });
+  rmSync(resuming, { force: true });
 } else if ((await whereHexIs()) === "here") {
   const given = rest.length > 1 ? openThreadIdByKeyOrId(rest[0] ?? "") : undefined;
   const jobOwner = given ?? reportsTo();
@@ -737,6 +723,40 @@ if (mode === "--owner") {
   process.stdout.write(started.stdout);
   process.stderr.write(started.stderr);
   process.exit(started.exitCode ?? 1);
+}
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+// One resume at a time on this machine, kept outside hex.db so it never travels with it: a resume that was killed leaves its pid, which no longer runs, and the next one takes over.
+function resumesAlone() {
+  mkdirSync(join(resuming, ".."), { recursive: true });
+
+  for (let tries = 0; tries < 2; tries++) {
+    try {
+      writeFileSync(resuming, String(process.pid), { flag: "wx" });
+
+      return true;
+    } catch {
+      const pid = Number(readFileSync(resuming, "utf-8"));
+
+      if (Number.isInteger(pid) && pid > 0 && stillRuns(pid)) {
+        return false;
+      }
+
+      rmSync(resuming, { force: true });
+    }
+  }
+
+  return false;
+}
+
+function stillRuns(pid: number) {
+  try {
+    process.kill(pid, 0);
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function conversationToResumeBy(command: string[]) {
