@@ -962,7 +962,7 @@ export function startHub({
     threads.open(thread, { name, session, ...(present(cwd) && { cwd }) });
 
     if (present(prompt)) {
-      void sessions.launch(thread, name, { prompt });
+      sessions.launch(thread, name, { prompt });
     }
   }
 
@@ -1071,7 +1071,7 @@ export function startHub({
 
     waiting.hold(thread, message);
     sessions.waitedOn(thread);
-    void sessions.launch(thread, name);
+    sessions.launch(thread, name);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1403,7 +1403,7 @@ export function startHub({
       run.renew = undefined;
     }
 
-    sessions.track(thread, was);
+    sessions.track(thread, was, line);
     const given = waiting.connected(thread, line);
     turns.connected(thread, given.length > 0);
     waiting.drain(thread);
@@ -1438,8 +1438,6 @@ export function startHub({
     }
 
     waiting.markAll(thread);
-
-    sessions.recover(thread);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1567,9 +1565,7 @@ export function startHub({
       }
 
       case "open": {
-        void sessions.launch(request.thread, request.name, {
-          ...(request.prompt !== undefined && { prompt: request.prompt }),
-        });
+        sessions.launch(request.thread, request.name, { prompt: request.prompt });
 
         return;
       }
@@ -1744,10 +1740,12 @@ export function startHub({
       effort: threads.get(thread)?.effort,
     }),
     register: threads.register,
-    open: (thread: string, name: string, prompt?: string, cwd?: string) =>
-      void sessions.launch(thread, name, { prompt, cwd }),
-    fork: (thread: string, name: string, session: string, prompt: string, cwd?: string) =>
-      void sessions.launch(thread, name, { prompt, fork: session, cwd }),
+    open: (thread: string, name: string, prompt?: string, cwd?: string) => {
+      sessions.launch(thread, name, { prompt, cwd });
+    },
+    fork: (thread: string, name: string, session: string, prompt: string, cwd?: string) => {
+      sessions.launch(thread, name, { prompt, fork: session, cwd });
+    },
     main,
     fresh,
     renewal,

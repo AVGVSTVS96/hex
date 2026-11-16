@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+
 import * as claude from "./claude.ts";
 import type { Failed } from "./failing.ts";
 import type { Keep } from "./kept.ts";
@@ -41,22 +43,19 @@ export function sessionPauses({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // still: the live session the job record spoke of is still the thread's once Claude has answered.
-  async function check(
+  // Runs as work of the live session the job record spoke of, so one that ended while Claude answered isn't acted on.
+  const check = Effect.fn("check")(function* check(
     thread: string,
     line: Line,
     needs: string | undefined,
-    still: () => boolean,
   ) {
     const pause = pauses.of(thread);
     const session = threads.current(thread);
 
     const running =
-      present(needs) && present(session) ? await claude.agent(session, serving) : undefined;
-
-    if (!still()) {
-      return;
-    }
+      present(needs) && present(session)
+        ? yield* Effect.promise(() => claude.agent(session, serving))
+        : undefined;
 
     const was = pause.paused;
     pause.paused = running?.status === "waiting";
@@ -90,7 +89,7 @@ export function sessionPauses({
         : `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
       true,
     );
-  }
+  });
 
   function connected(thread: string) {
     pauses.of(thread).paused = undefined;
