@@ -20,6 +20,8 @@ import type { tools } from "./channel.ts";
 import { Chats } from "./chat.ts";
 import type { Where } from "./chat.ts";
 import { PORT, STATE_DIR, env } from "./env.ts";
+import { Feed } from "./feed.ts";
+import type { Entry } from "./feed.ts";
 import { Ideas } from "./ideas.ts";
 import { jev } from "./jev.ts";
 import { counted, line, Media } from "./media.ts";
@@ -79,6 +81,7 @@ const activity = new Changes();
 const follows = new Map<string, () => void>();
 let board: Board;
 let yours: Questions;
+let feed: Feed;
 let chats: Chats;
 let media: Media;
 let ideas: Ideas;
@@ -1467,7 +1470,35 @@ function ago(at: string) {
     return "just now";
   }
 
-  return minutes < 90 ? `${minutes} minutes ago` : `${Math.round(minutes / 60)} hours ago`;
+  if (minutes < 90) {
+    return `${minutes} minutes ago`;
+  }
+
+  const hours = Math.round(minutes / 60);
+
+  return hours < 48 ? `${hours} hours ago` : `${Math.round(hours / 24)} days ago`;
+}
+
+const FEED_KINDS = {
+  done: "a task hex finished",
+  found: "news an idea check found",
+  decided: "a question hex decided itself",
+} satisfies Record<Entry["kind"], string>;
+
+function feedTopic(entry: Entry): Topic {
+  const said = [
+    `It's ${FEED_KINDS[entry.kind]}, ${entry.opens} in ${entry.topic || "hex"}: ${entry.title}`,
+    entry.body,
+    ...entry.links.map((link) => `${link.label}: ${link.url}`),
+  ]
+    .filter(filled)
+    .join("\n");
+
+  return {
+    id: `feed:${entry.id}`,
+    claude: `The caller started it with Discuss on an entry in the Feed. ${said}`,
+    voice: `The caller tapped Discuss on an entry in the Feed, so name it now in a sentence, with how long ago it was, then listen: Assistant checks what's new. ${said}\nIt came ${ago(entry.at)}.`,
+  };
 }
 
 function halfDone({ partly, undoing }: Question) {
@@ -3341,6 +3372,12 @@ function topicOf(about?: string): Topic | undefined {
     return walkTopic(yours.view.asks);
   }
 
+  const entry = about?.startsWith("feed:") === true ? feed.find(about.slice(5)) : undefined;
+
+  if (entry) {
+    return feedTopic(entry);
+  }
+
   const run = filled(about) ? board.get(about) : undefined;
 
   return run && runTopic(run);
@@ -3379,6 +3416,35 @@ async function showSummary(url: URL, runs: Board, questions: Questions) {
     ...runs.summary,
     yours: questions.view.asks.length + questions.view.stuck.length + unasked,
   });
+}
+
+async function showFeed(url: URL) {
+  const after = url.searchParams.get("after");
+  const before = Number(url.searchParams.get("before"));
+
+  if (after !== null && after !== "") {
+    await feed.changes(Number(after), 25_000);
+  }
+
+  return Response.json({
+    version: feed.version,
+    ...feed.stretch(Number.isFinite(before) && before > 0 ? before : undefined),
+  });
+}
+
+function feedRoutes(request: Request, url: URL) {
+  if (url.pathname === "/feed" && request.method === "GET") {
+    return showFeed(url);
+  }
+
+  const [, id] = /^\/feed\/([^/]+)\/talk$/u.exec(url.pathname) ?? [];
+  const entry = filled(id) ? feed.find(decodeURIComponent(id)) : undefined;
+
+  if (entry && request.method === "POST") {
+    return talkAbout(feedTopic(entry));
+  }
+
+  return new Response("404", { status: 404 });
 }
 
 async function showQuestions(url: URL, questions: Questions) {
@@ -3854,6 +3920,10 @@ function routes(request: Request) {
     return runRoutes(request, new URL(request.url));
   }
 
+  if (pathname === "/feed" || pathname.startsWith("/feed/")) {
+    return feedRoutes(request, new URL(request.url));
+  }
+
   if (/^\/(asks|stuck|fresh)(\/|$)/u.test(pathname)) {
     return questionRoutes(request, new URL(request.url));
   }
@@ -3919,6 +3989,17 @@ export function serve(voiceHub: Hub, state: string) {
   });
   yours = new Questions(state, { takesPicks: env.VOICE_TAKES_PICKS === "1" });
   ideas = new Ideas(state);
+  feed = new Feed(state, {
+    closedSince: (from) => board.closedSince(from),
+    decided: () => yours.view.decided,
+    runs: () => board.runs,
+  });
+  board.listen(() => {
+    feed.check();
+  });
+  yours.listen(() => {
+    feed.check();
+  });
   recover();
   followWorkPastCallsSentOut();
   void checkCredit();

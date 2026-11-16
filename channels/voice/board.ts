@@ -488,7 +488,11 @@ export class Board extends Changes {
     runs.sort(
       (a, b) => ORDER.indexOf(a.state) - ORDER.indexOf(b.state) || b.at.localeCompare(a.at),
     );
-    const finished = this.finish(runs);
+
+    const finished = this.finish(runs, dayAgo()).map((task) => ({
+      ...task,
+      proof: oneLine(task.proof),
+    }));
 
     if (
       JSON.stringify(runs) === JSON.stringify(this.runs) &&
@@ -948,7 +952,11 @@ export class Board extends Changes {
     return fresh;
   }
 
-  private finish(runs: Run[]): Finished[] {
+  closedSince(since: string): Finished[] {
+    return this.finish(this.runs, since);
+  }
+
+  private finish(runs: Run[], since: string): Finished[] {
     const store = open(this.state);
     const all = store.threads.list();
     const general = generalOf(all);
@@ -956,7 +964,7 @@ export class Board extends Changes {
     const generalOrDM = (row?: Stored) =>
       !row || ["General", "DM"].includes(where(threadOf(row, general)));
 
-    return this.closedTasks().flatMap((task) => {
+    return store.tasks.finished(since).flatMap((task) => {
       if (task.closed === undefined) {
         return [];
       }
@@ -985,7 +993,7 @@ export class Board extends Changes {
         title: task.title,
         topic,
         app: thread?.app ?? "hex",
-        proof: oneLine(plain(task.proof ?? "")),
+        proof: plain(task.proof ?? ""),
         at: task.closed,
         ...(run && { run: run.id }),
         ...(hasText(thread?.link) && { link: thread.link }),
@@ -994,7 +1002,7 @@ export class Board extends Changes {
   }
 
   private closedTasks() {
-    return open(this.state).tasks.finished(new Date(Date.now() - DAY).toISOString());
+    return open(this.state).tasks.finished(dayAgo());
   }
 
   private projectRun(id: string, agents: Agent[]): Run {
@@ -1342,6 +1350,10 @@ export class Board extends Changes {
 
     this.schedule();
   }
+}
+
+function dayAgo() {
+  return new Date(Date.now() - DAY).toISOString();
 }
 
 function home(task: { owner: string; project?: string }, runs: Run[], workedIn?: Run) {

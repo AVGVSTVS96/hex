@@ -469,7 +469,7 @@ export function linkAt(app: string, link: string | undefined, message?: MessageI
     return `${link}/${message}`;
   }
 
-  if (app === "telegram" && link.startsWith("https://t.me/c/")) {
+  if (app === "telegram" && link.startsWith("https://t.me/c/") && /^\d+$/u.test(String(message))) {
     return `${link.replace(/\/1$/u, "")}/${message}`;
   }
 
