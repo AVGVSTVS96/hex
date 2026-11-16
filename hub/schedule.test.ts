@@ -210,6 +210,7 @@ test("a job needs a prompt and a cron or an at it can read", () => {
     "0 0 0 * *",
     "0 0 * 13 *",
     "0 0 * * 8",
+    "@daily",
   ]) {
     expect(() => parse(JSON.stringify({ a: { cron, prompt: "x" } }))).toThrow(
       `a: ${JSON.stringify(cron)} is not a five-field cron expression`,
@@ -262,6 +263,17 @@ test("a check job runs beside its thread, where a job with a thread runs in it",
 
   expect(open(dir).messages.get(`schedule:mail@${slot}`)?.to).toBe("beside:topic");
   expect(open(dir).messages.get(`schedule:standup@${slot}`)?.to).toBe("topic");
+});
+
+test("a daily cron fires once on the day clocks skip its minute, and once on the day they repeat it", () => {
+  const zone = "America/Los_Angeles";
+  const ahead = { cron: "30 2 * * *", prompt: "Ahead" };
+  const back = { cron: "30 1 * * *", prompt: "Back" };
+
+  expect(nextRun(ahead, zone, utc(2027, 3, 14, 8))).toBe(utc(2027, 3, 14, 10) + 30);
+  expect(nextRun(ahead, zone, utc(2027, 3, 14, 10) + 30)).toBe(utc(2027, 3, 15, 9) + 30);
+  expect(nextRun(back, zone, utc(2027, 11, 7, 7))).toBe(utc(2027, 11, 7, 8) + 30);
+  expect(nextRun(back, zone, utc(2027, 11, 7, 8) + 30)).toBe(utc(2027, 11, 8, 9) + 30);
 });
 
 test("a job's next run is the next minute it would fire, on the owner's clock", () => {
