@@ -332,9 +332,22 @@ test("a channel that doesn't install stops restore, and a marketplace of another
   expect(run.code).toBe(1);
 });
 
-test("restore stops at a line that doesn't make what it names", () => {
-  owner({ install: { "~/never": "true" }, units: ["services/gone.service"] });
+test("a line that doesn't make what it names fails restore, once the lines and units after it are set up", () => {
+  mkdirSync(join(home, "services"));
+  writeFileSync(
+    join(home, "services/mail.service"),
+    "[Service]\n\n[Install]\nWantedBy=default.target\n",
+  );
+  owner({
+    install: { "~/never": "true", "~/after": "touch ~/after" },
+    units: ["services/mail.service"],
+  });
   const run = restore();
   expect(run.err).toContain("restore: `true` didn't make ~/never");
-  expect(existsSync(join(root, "calls"))).toBe(false);
+  expect(existsSync(join(root, "after"))).toBe(true);
+  expect(readlinkSync(join(root, "config/systemd/user/mail.service"))).toBe(
+    join(home, "services/mail.service"),
+  );
+  expect(calls()).toContain("systemctl --user enable --now --no-block hex.service mail.service\n");
+  expect(run.code).toBe(1);
 });
