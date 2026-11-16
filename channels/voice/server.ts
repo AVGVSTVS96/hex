@@ -20,6 +20,7 @@ import type { tools } from "./channel.ts";
 import { Chats } from "./chat.ts";
 import type { Where } from "./chat.ts";
 import { PORT, STATE_DIR, env } from "./env.ts";
+import { Ideas } from "./ideas.ts";
 import { jev } from "./jev.ts";
 import { counted, line, Media } from "./media.ts";
 import type { Item } from "./media.ts";
@@ -80,6 +81,7 @@ let board: Board;
 let yours: Questions;
 let chats: Chats;
 let media: Media;
+let ideas: Ideas;
 
 const IDENTITY = (() => {
   try {
@@ -3607,6 +3609,79 @@ function runRoutes(request: Request, url: URL) {
   }
 }
 
+const IdeaBody = z.object({
+  text: z.string().default(""),
+  key: z.string().optional(),
+  day: z.number().default(0),
+});
+
+// oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+/* The owner's ideas: the list and one idea, each held until it changes, and what the app does with
+   one. Starting one tells its thread to work on it, keeping it again says never mind, and the
+   owner's words on it go to its thread as theirs. */
+async function ideaRoutes(request: Request, url: URL) {
+  const [, id, verb] = /^\/ideas(?:\/(t-\d+)(?:\/(\w+))?)?$/u.exec(url.pathname) ?? [];
+  const after = url.searchParams.get("after");
+
+  if (request.method === "GET" && !filled(verb)) {
+    if (after !== null && after !== "") {
+      await ideas.changes(Number(after), 25_000);
+    }
+
+    if (!filled(id)) {
+      return Response.json({ version: ideas.version, ideas: ideas.list() });
+    }
+
+    const one = ideas.one(id);
+
+    return one
+      ? Response.json({ version: ideas.version, ...one })
+      : new Response("404", { status: 404 });
+  }
+
+  if (request.method !== "POST" || !filled(id)) {
+    return new Response("404", { status: 404 });
+  }
+
+  const body = IdeaBody.safeParse((await request.json().catch(() => null)) ?? {});
+  const { text, key, day } = body.success ? body.data : { text: "", key: "", day: 0 };
+
+  return await done(async () => {
+    const idea = ideas.get(id);
+
+    const toThread = async (words: string, named = `app-${id}-${Date.now()}`) => {
+      const run = board.find(ideas.one(id)?.thread ?? "");
+
+      if (!run) {
+        throw new Error(`${id}'s thread can't be reached from here; write to it in its own app.`);
+      }
+
+      await chats.send(run, words, ChatKey.parse(named));
+    };
+
+    if (verb === "seen") {
+      ideas.seen(id);
+    } else if (verb === "start") {
+      ideas.status(id, "open");
+      await toThread(`Start on my idea ${id}, “${idea.title}”: it's a task now, so work on it.`);
+    } else if (verb === "keep") {
+      if (ideas.status(id, "idea") === "open") {
+        await toThread(`Never mind starting ${id}, “${idea.title}”: keep it as an idea for now.`);
+      }
+    } else if (verb === "drop") {
+      ideas.status(id, "dropped");
+    } else if (verb === "stop") {
+      ideas.stop(id);
+    } else if (verb === "look") {
+      ideas.look(id, day);
+    } else if (verb === "add" && text.trim() !== "") {
+      await toThread(`On my idea ${id}, “${idea.title}”: ${text.trim()}`, key);
+    } else {
+      throw new Error(verb === "add" ? CHAT_FIELD_PROBLEMS.text : `Ideas can't ${verb ?? ""}`);
+    }
+  });
+}
+
 async function showPage(url: URL, runs: Board, key: string) {
   const read = () => {
     const found = runs.find(key);
@@ -3783,6 +3858,10 @@ function routes(request: Request) {
     return questionRoutes(request, new URL(request.url));
   }
 
+  if (pathname === "/ideas" || pathname.startsWith("/ideas/")) {
+    return ideaRoutes(request, new URL(request.url));
+  }
+
   if (pathname === "/media" && request.method === "POST") {
     return upload(request);
   }
@@ -3839,6 +3918,7 @@ export function serve(voiceHub: Hub, state: string) {
     chats.changed();
   });
   yours = new Questions(state, { takesPicks: env.VOICE_TAKES_PICKS === "1" });
+  ideas = new Ideas(state);
   recover();
   followWorkPastCallsSentOut();
   void checkCredit();
