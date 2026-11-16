@@ -81,8 +81,8 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function restore() {
-  const run = Bun.spawnSync([join(hex, "bin/hex"), "restore"], {
+function restore(command = "restore") {
+  const run = Bun.spawnSync([join(hex, "bin/hex"), command], {
     env: {
       ...Object.fromEntries(
         Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
@@ -153,6 +153,17 @@ test("restore installs what's missing once, links the units of both lists, and e
   expect(calls()).toContain("systemctl --user enable --now --no-block hex.service mail.service\n");
   expect(calls()).toContain(`bun install --no-summary --cwd ${hex}\n`);
   expect(calls()).toContain("loginctl enable-linger");
+});
+
+test("link links the units a release adds, a drop-in for a slice of systemd's own included, and reloads systemd", () => {
+  restore("link");
+
+  const units = join(root, "config/systemd/user");
+  expect(readlinkSync(join(units, "session.slice.d/hex.conf"))).toBe(
+    join(hex, "systemd/session.slice.d/hex.conf"),
+  );
+  expect(calls()).toContain("systemctl --user daemon-reload\n");
+  expect(calls()).not.toContain("enable");
 });
 
 test("restore turns on systemd-oomd where the machine has it off, and doctor says when it's still off", () => {

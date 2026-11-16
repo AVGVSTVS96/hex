@@ -106,8 +106,8 @@ bun install --cwd "$hex" --silent
 (. "$hex/bin/settings"; wake) || :
 
 unit=$(systemctl --user show -P FragmentPath hex.service 2>/dev/null || :)
-if [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] && ! git diff --quiet "$before" HEAD -- systemd; then
-  systemctl --user daemon-reload
+if [ -n "$unit" ] && [ "$(readlink -f "$unit")" = "$hex/systemd/hex.service" ] && ! git diff --quiet "$before" HEAD -- systemd services.json; then
+  "$hex/bin/hex" link
   systemctl --user restart --no-block hex.service
 else
   "$hex/bin/hex" restart

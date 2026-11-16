@@ -18,7 +18,8 @@ RestartMaxDelaySec=1min
 # A stop waits for a live call to end, the way a restart does.
 TimeoutStopSec=30min
 MemoryMax=2G
-# The hub answers every channel, so it runs ahead of everything else on the machine when the CPU or disk is short.
+# The hub answers every channel, so it runs ahead of everything else on the machine when the CPU or disk is short
+# (session.slice.d/hex.conf).
 Slice=session.slice
 CPUWeight=1000
 OOMPolicy=continue
