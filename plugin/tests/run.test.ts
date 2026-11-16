@@ -124,6 +124,46 @@ test("a restart lets the hub finish before the next one starts, on the settings 
   expect(readFileSync(join(home, "state/hub.pid"), "utf-8").trim()).toBe(String(running.pid));
 });
 
+const DOOR_THAT_SAYS_IT_STARTED = `import { appendFileSync } from 'fs'
+appendFileSync(process.argv[2] + '/doors', process.pid + '\\n')
+setInterval(() => {}, 1000)
+`;
+
+const doors = () =>
+  existsSync(join(home, "state/doors"))
+    ? readFileSync(join(home, "state/doors"), "utf-8").trim().split("\n").map(Number)
+    : [];
+
+const alive = (pid = 0) => {
+  try {
+    return process.kill(pid, 0);
+  } catch {
+    return false;
+  }
+};
+
+test("iikb's door starts with hex, stays up through the hub's restarts, gives way only to a door whose file changed, and stops with hex", async () => {
+  const door = join(hex, "channels/iikb/door.ts");
+  mkdirSync(join(hex, "channels/iikb"), { recursive: true });
+  writeFileSync(door, DOOR_THAT_SAYS_IT_STARTED);
+  commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
+  const running = run();
+  await until(() => hubs().length === 1 && doors().length === 1);
+  Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
+  await until(() => hubs().length === 3);
+  await Bun.sleep(300);
+  expect(doors()).toHaveLength(1);
+  expect(alive(doors()[0])).toBe(true);
+  writeFileSync(door, `${DOOR_THAT_SAYS_IT_STARTED}\n`);
+  Bun.spawnSync([join(hex, "bin/hex"), "restart"]);
+  await until(() => hubs().length === 5 && doors().length === 2);
+  expect(alive(doors()[0])).toBe(false);
+  expect(alive(doors()[1])).toBe(true);
+  running.kill("SIGTERM");
+  expect(await running.exited).toBe(0);
+  await until(() => !alive(doors()[1]));
+});
+
 test("a restart where no hub runs starts none, so a machine that doesn't hold hex, like a standby twin, stays without one", async () => {
   commit(HUB_THAT_WAITS_OUT_A_CALL_AS_IT_STOPS, "a hub");
   const restart = Bun.spawnSync([join(hex, "bin/hex"), "restart"]);

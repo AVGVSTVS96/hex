@@ -5241,3 +5241,23 @@ test("a job's news for a session beside a thread whose conversation this machine
   expect(second.args.slice(0, 3)).toEqual(["-p", "--session-id", second.beside]);
   expect(second.args.at(-1)).toContain('key="job:mail@1"');
 });
+
+test("a channel that shows another's threads waits for that client to join, and goes on at once when it's already here", async () => {
+  let joined = false;
+
+  const waiting = (async () => {
+    await clients.joined("elsewhere");
+    joined = true;
+  })();
+
+  await Bun.sleep(10);
+  expect(joined).toBe(false);
+
+  try {
+    clients.set("elsewhere", { hub, place: () => Promise.resolve({ thread: "", link: "" }) });
+    await waiting;
+    await clients.joined("elsewhere");
+  } finally {
+    clients.delete("elsewhere");
+  }
+});
