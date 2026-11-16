@@ -35,6 +35,7 @@ import { asked, isAuthor, open, replied, shown, spoken, stateDir as storeOf } fr
 import type { Author, MessageId, NewRow, Row, Store } from "./store.ts";
 import { openThreads } from "./threads.ts";
 import { wentThrough, whenThrough } from "./through.ts";
+import { sessionTurns } from "./turns.ts";
 import { zoneOf } from "./zone.ts";
 
 export { dispatch, tool } from "./mcp.ts";
@@ -173,15 +174,6 @@ type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The kept messages the hub has passed on since its session's channel last connected.
   handed: Set<string>;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // From the session's hooks; background: its turn ended with agents still working.
-  turn: "busy" | "background" | "done";
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A message went to the running session after its last turn began: until a turn begins that takes it, a rest reported meanwhile is the turn before it ending.
-  untaken?: boolean | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A message went to the session while it rested, so a turn is starting that its hook hasn't reported yet; under load that report can take seconds. Ends at the report, or at TURN_REPORTS_WITHIN for a message that ran no turn, like a copy the session already had.
-  starting?: Timer | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // asked: the session asked to start over (a call ended). stale: it started with what the hub no longer gives a session. underway: it's starting over, and its renewal waits for the new session.
   renew?: "asked" | "stale" | "underway" | undefined;
@@ -480,7 +472,6 @@ export async function transcribe(recording: () => Promise<string>): Promise<stri
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
 // Claude Code shows nothing when Esc meets a turn with nothing left to interrupt, so a press gets this long to show in the transcript; a real one shows in under a second.
 const ESC_LANDS_WITHIN = 5000;
-const TURN_REPORTS_WITHIN = 60_000;
 
 // Claude Code keeps a conversation in the prompt cache for an hour after its last request, and compacts a background session only when told to. It retries a dropped HTTP server at about 0, 1, 3, 7 and 15 seconds, then gives up for good. https://docs.claude.com/en/docs/build-with-claude/prompt-caching
 const LIMITS: Limits = {
@@ -642,6 +633,7 @@ export function startHub({
   const db = open(storeDir);
   const kept = keeping(db, storeDir);
   const threads = openThreads({ app, db, kept, hexDir, link });
+  const turns = sessionTurns({ overdue: letHeldGo });
 
   const files = sessionFiles({
     stateDir,
@@ -685,7 +677,6 @@ export function startHub({
           phase: { is: "stopped" },
           queue: [],
           handed: new Set(),
-          turn: "done",
           held: [],
           waiting: new Map(),
         }),
@@ -713,25 +704,28 @@ export function startHub({
     return run.phase.is === "launching" || run.phase.is === "live";
   }
 
-  function setState(thread: string, working: boolean, background = false) {
-    const run = runOf(thread);
-    state(thread, working, background);
+  function turnBegan(thread: string) {
+    state(thread, true, false);
     threads.claim(thread);
-    run.turn = working ? "busy" : background ? "background" : "done";
-    clock.clearTimeout(run.starting);
-    run.starting = undefined;
+    turns.began(thread);
+    rest(thread);
+    letGo(thread);
+  }
 
-    if (working) {
-      run.untaken = undefined;
-    } else {
-      letHeldGo(thread);
-    }
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // A held message let go can start a session, and with it a turn, so what follows reads the turn as it is then.
+  function turnEnded(thread: string, background = false) {
+    const run = runOf(thread);
+    state(thread, false, background);
+    threads.claim(thread);
+    turns.ended(thread, background);
+    letHeldGo(thread);
 
-    if (run.turn === "done" && (run.renew === "asked" || run.renew === "stale")) {
+    if (turns.of(thread).is === "done" && (run.renew === "asked" || run.renew === "stale")) {
       void renew(thread, run.renew === "asked");
     }
 
-    rest(thread, run.turn === "done");
+    rest(thread, turns.of(thread).is === "done");
     letGo(thread);
   }
 
@@ -739,6 +733,7 @@ export function startHub({
   // A thread renews at its next rest: the main thread and a fresh thread start over as soon as the process exits, any other when its next message resumes it. A keep (a call started) cancels it. When the session asked for it, a rest the Stop hook reported with no agents working is taken as it is: Claude's own status lags the hook and counts a running shell as busy, so checking it could put the renew off for good, and a session that asked is done with what its shells were for.
   async function renew(thread: string, rested = false) {
     const run = runOf(thread);
+    const turn = turns.of(thread);
     const session = threads.current(thread);
 
     if (!present(session)) {
@@ -749,8 +744,8 @@ export function startHub({
 
     if (
       !(run.renew === "asked" || run.renew === "stale") ||
-      run.turn === "busy" ||
-      run.untaken === true ||
+      turn.is === "busy" ||
+      turn.untaken === true ||
       onCall.has(run) ||
       (!rested && running?.status === "busy")
     ) {
@@ -770,8 +765,10 @@ export function startHub({
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A renew is on its way while the thread's session winds down its turn or restarts, but not while it waits on background agents, which can take as long as they like.
-  function pending(run: Run) {
-    return run.renew === "underway" || (!!run.renew && run.turn !== "background");
+  function pending(thread: string) {
+    const run = runOf(thread);
+
+    return run.renew === "underway" || (!!run.renew && turns.of(thread).is !== "background");
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -779,7 +776,7 @@ export function startHub({
   function renewal(thread: string): Promise<void> {
     const run = runOf(thread);
 
-    if (!pending(run)) {
+    if (!pending(thread)) {
       return Promise.resolve();
     }
 
@@ -791,7 +788,7 @@ export function startHub({
   function letGo(thread: string) {
     const run = runOf(thread);
 
-    if (pending(run)) {
+    if (pending(thread)) {
       return;
     }
 
@@ -807,7 +804,7 @@ export function startHub({
     clock.clearTimeout(run.rest);
     run.rest = undefined;
 
-    if (run.turn === "busy" || run.phase.is !== "live") {
+    if (turns.of(thread).is === "busy" || run.phase.is !== "live") {
       return;
     }
 
@@ -857,10 +854,11 @@ export function startHub({
   // At a rest the Stop hook reported with no agents working, Claude's own status still says busy for about a second, so a session that filled up on that turn hands over without asking it.
   async function handOff(thread: string, rested = false) {
     const run = runOf(thread);
+    const turn = turns.of(thread);
     run.rest = undefined;
     const running = await claude.agent(threads.current(thread) ?? "", serving);
 
-    if (running && run.turn !== "busy" && (rested || running.status === "idle") && spent(thread)) {
+    if (running && turn.is !== "busy" && (rested || running.status === "idle") && spent(thread)) {
       void cycle(thread, running);
     }
   }
@@ -869,6 +867,7 @@ export function startHub({
   // The Stop hook ends a turn, but background tasks keep a session busy past it, so Claude's own status decides; a busy session reports idle again when it's done. A big conversation compacts first, while its cache is warm: resumed after the cache expires, it would be written to the cache whole again.
   async function stopIfIdle(thread: string) {
     const run = runOf(thread);
+    const turn = turns.of(thread);
     run.rest = undefined;
     const session = threads.current(thread);
 
@@ -878,7 +877,7 @@ export function startHub({
 
     const running = await claude.agent(session, serving);
 
-    if (run.turn === "busy" || running?.status === "busy" || run.paused === true) {
+    if (turn.is === "busy" || running?.status === "busy" || run.paused === true) {
       return;
     }
 
@@ -925,7 +924,7 @@ export function startHub({
         failedAt === undefined ||
         failedAt < run.compacting ||
         !resting ||
-        run.turn === "busy" ||
+        turns.of(thread).is === "busy" ||
         run.ending ||
         run.leaving ||
         onCall.has(run)
@@ -1016,6 +1015,7 @@ export function startHub({
     become(run, { is: "stopped" });
     clock.clearTimeout(run.rest);
     runs.delete(thread);
+    turns.forget(thread);
     files.forget(thread);
     leaving(session);
   }
@@ -1054,7 +1054,7 @@ export function startHub({
     threads.claim(thread);
 
     if ((present(prompt) && !quiet) || run.queue.length > 0) {
-      setState(thread, true);
+      turnBegan(thread);
     }
 
     const phase: Phase = { is: "launching", again };
@@ -1196,7 +1196,7 @@ export function startHub({
     kept((store) => {
       store.turns.handled(session);
     }, undefined);
-    setState(thread, false);
+    turnEnded(thread);
     const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
     const { model } = threads.of(thread);
 
@@ -1272,7 +1272,7 @@ export function startHub({
       );
     }
 
-    setState(thread, false);
+    turnEnded(thread);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1437,22 +1437,8 @@ export function startHub({
   }
 
   function handIn(thread: string, line: Line, message: Message) {
-    runOf(thread).untaken = true;
-    beginTurn(thread);
+    turns.handed(thread);
     line.send({ type: "inbound", ...message });
-  }
-
-  function beginTurn(thread: string) {
-    const run = runOf(thread);
-
-    if (run.turn === "busy" || run.starting !== undefined) {
-      return;
-    }
-
-    run.starting = clock.setTimeout(() => {
-      run.starting = undefined;
-      letHeldGo(thread);
-    }, TURN_REPORTS_WITHIN);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
@@ -1460,10 +1446,9 @@ export function startHub({
   function heldForTheTurn(thread: string, message: Message) {
     const { key } = message.meta;
     const session = threads.current(thread);
-    const run = runOf(thread);
 
     return (
-      (run.turn === "busy" || run.starting !== undefined) &&
+      turns.active(thread) &&
       message.author === "owner" &&
       present(key) &&
       present(session) &&
@@ -1761,7 +1746,7 @@ export function startHub({
   // One thread for each turn that goes through, so the threads an outage stalled don't all hit the API in the same moment.
   function resumeStalled() {
     for (const [thread, run] of runs) {
-      if (run.stalled !== "waiting" || run.turn === "busy") {
+      if (run.stalled !== "waiting" || turns.of(thread).is === "busy") {
         continue;
       }
 
@@ -1829,9 +1814,7 @@ export function startHub({
     const working =
       running?.status !== "waiting" &&
       (fresh(thread)
-        ? run.turn === "busy" ||
-          run.starting !== undefined ||
-          (running !== undefined && running.status !== "idle")
+        ? turns.active(thread) || (running !== undefined && running.status !== "idle")
         : running?.status === "busy");
 
     if (working && run.queue.length === 0) {
@@ -1911,14 +1894,7 @@ export function startHub({
     }
 
     run.handed = new Set(given.flatMap((message) => message.meta.key ?? []));
-    run.untaken = given.length > 0;
-    clock.clearTimeout(run.starting);
-    run.starting = undefined;
-
-    if (given.length > 0) {
-      beginTurn(thread);
-    }
-
+    turns.connected(thread, given.length > 0);
     run.queue.length = 0;
     run.awaited = run.held.length > 0;
     rest(thread);
@@ -1950,7 +1926,7 @@ export function startHub({
     }
 
     become(run, { is: "recovering" });
-    setState(thread, false);
+    turnEnded(thread);
 
     if (run.leaving) {
       forget(thread, run.leaving);
@@ -2109,7 +2085,7 @@ export function startHub({
       run.awaited !== true &&
       present(session) &&
       run.phase.is === "live" &&
-      run.turn === "done" &&
+      turns.of(thread).is === "done" &&
       !run.handed.size &&
       warmFor(thread) === undefined &&
       !kept((store) => store.messages.took(session), true)
@@ -2205,7 +2181,11 @@ export function startHub({
           run.stalled = undefined;
         }
 
-        setState(request.thread, request.busy, request.background === true);
+        if (request.busy) {
+          turnBegan(request.thread);
+        } else {
+          turnEnded(request.thread, request.background === true);
+        }
 
         if (!request.busy && request.failed !== true) {
           wentThrough("turn");
@@ -2294,10 +2274,10 @@ export function startHub({
   }
 
   async function press(thread: string): Promise<void> {
-    const run = runOf(thread);
+    const turn = turns.of(thread);
     const session = threads.current(thread);
 
-    if (!present(session) || run.turn === "background") {
+    if (!present(session) || turn.is === "background") {
       return;
     }
 
@@ -2307,7 +2287,7 @@ export function startHub({
       return;
     }
 
-    if (run.turn === "done" && agent.state !== "working") {
+    if (turn.is === "done" && agent.state !== "working") {
       return;
     }
 
@@ -2343,13 +2323,13 @@ export function startHub({
       kept((store) => {
         store.turns.handled(session, pressed);
       }, undefined);
-      setState(thread, false, true);
+      turnEnded(thread, true);
 
       if (
         (await claude.listing(session))?.state !== "working" &&
-        runOf(thread).turn === "background"
+        turns.of(thread).is === "background"
       ) {
-        setState(thread, false);
+        turnEnded(thread);
       }
 
       return;
@@ -2521,10 +2501,10 @@ export function startHub({
 
       closing.abort();
 
-      for (const run of runs.values()) {
+      for (const [thread, run] of runs) {
         become(run, { is: "stopped" });
         clock.clearTimeout(run.rest);
-        clock.clearTimeout(run.starting);
+        turns.close(thread);
         hangUp(run);
       }
     },
