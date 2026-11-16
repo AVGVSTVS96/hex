@@ -1231,14 +1231,14 @@ test("a thread's sessions cut short mid-turn give back what they took since last
   store.turns.turned("s-2", true, "2026-10-21T10:00:00.000Z");
   store.messages.take("telegram:unsaved", "s-2");
   expect(store.turns.midTurn("7")).toBe(true);
-  expect(store.turns.cut("7").toSorted()).toEqual(["telegram:open", "telegram:unsaved"]);
+  expect(store.turns.cut("7").given.toSorted()).toEqual(["telegram:open", "telegram:unsaved"]);
   expect(store.messages.untaken("7").map((row) => row.key)).toEqual([
     "telegram:open",
     "telegram:unsaved",
   ]);
   expect(store.turns.get("s-1").ended).toBeDefined();
   expect(store.turns.midTurn("7")).toBe(false);
-  expect(store.turns.cut("7")).toEqual([]);
+  expect(store.turns.cut("7").given).toEqual([]);
   give("failed");
   store.turns.turned("s-3", true, "2026-10-21T10:00:00.000Z");
   store.messages.take("telegram:failed", "s-3");
@@ -1249,7 +1249,74 @@ test("a thread's sessions cut short mid-turn give back what they took since last
   store.turns.handled("s-4");
   give("old");
   store.messages.take("telegram:old", "s-0");
-  expect(store.turns.cut("7")).toEqual([]);
+  expect(store.turns.cut("7").given).toEqual([]);
+});
+
+test("a session cut short after turns that ended with its background agents working gives back only what it took since the last of them, however often it is cut: nothing while it waits or in a turn an agent's report began, and a turn's own messages", async () => {
+  const store = new Store(dir);
+
+  const turn = async (key: string) => {
+    store.messages.deliver({
+      key: `telegram:${key}`,
+      to: "7",
+      from: "telegram",
+      author: "owner",
+      body: key,
+      meta: {},
+    });
+    store.turns.turned("s-1", true);
+    store.messages.take(`telegram:${key}`, "s-1");
+    await Bun.sleep(2);
+  };
+
+  const waitOnAgents = async () => {
+    store.turns.turned("s-1", false);
+    store.turns.waitsOnAgents("s-1");
+    await Bun.sleep(2);
+  };
+
+  await turn("start the agents");
+  await waitOnAgents();
+  await turn("a question meanwhile");
+  await waitOnAgents();
+  expect(store.turns.midTurn("7")).toBe(true);
+  expect(store.turns.cut("7", "s-1")).toEqual({ given: [], waited: true });
+  expect(store.turns.midTurn("7")).toBe(false);
+  expect(store.turns.cut("7", "s-1")).toEqual({ given: [], waited: false });
+
+  await turn("the hub's line");
+
+  expect(store.turns.cut("7", "s-1")).toEqual({
+    given: ["telegram:the hub's line"],
+    waited: false,
+  });
+
+  await turn("the hub's line");
+  store.turns.handled("s-1");
+  await turn("start more agents");
+  await waitOnAgents();
+  store.turns.turned("s-1", true);
+  expect(store.turns.cut("7", "s-1")).toEqual({ given: [], waited: true });
+
+  await turn("and more");
+  await waitOnAgents();
+  await turn("cut off in this turn");
+
+  expect(store.turns.cut("7", "s-1")).toEqual({
+    given: ["telegram:cut off in this turn"],
+    waited: true,
+  });
+
+  await turn("cut off in this turn");
+
+  expect(store.turns.cut("7", "s-1")).toEqual({
+    given: ["telegram:cut off in this turn"],
+    waited: false,
+  });
+
+  expect(store.messages.untaken("7").map((row) => row.key)).toEqual([
+    "telegram:cut off in this turn",
+  ]);
 });
 
 test("a session that only posted in a thread, as General does opening a topic, isn't one of its sessions: cutting the thread leaves that session's turn and what it took alone", () => {
@@ -1276,7 +1343,7 @@ test("a session that only posted in a thread, as General does opening a topic, i
     "general-1",
   );
   expect(store.turns.midTurn("topic")).toBe(false);
-  expect(store.turns.cut("topic")).toEqual([]);
+  expect(store.turns.cut("topic").given).toEqual([]);
   expect(store.messages.untaken("general")).toEqual([]);
   expect(store.turns.midTurn("general")).toBe(true);
 });

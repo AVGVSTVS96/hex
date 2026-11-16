@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+
 import type { Keep } from "./kept.ts";
 import type { Line } from "./mcp.ts";
 import { present } from "./present.ts";
@@ -77,23 +79,49 @@ export function messagesWaiting({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. Only for a thread none of whose sessions runs.
+  // A session that died mid-turn ran no Stop hook, so its turn ends in hex's record of it here, and what it took without answering waits for the thread's next session. One that had started background agents lost any still working, so the hub's own line waits for the next session too, and starts it when nothing else does. Only for a thread none of whose sessions runs.
   function cut(thread: string, session: string | undefined) {
-    const given = new Set(kept((store) => store.turns.cut(thread, session), []));
+    const { given, waited } = kept((store) => store.turns.cut(thread, session), {
+      given: [],
+      waited: false,
+    });
 
-    if (!given.size) {
+    if (waited) {
+      agentsEnded(thread);
+    }
+
+    if (!given.length) {
       return;
     }
 
     process.stderr.write(
-      `hub: ${thread}'s session ended without answering ${given.size} of its messages, so the thread's next session gets them\n`,
+      `hub: ${thread}'s session ended without answering ${given.length} of its messages, so the thread's next session gets them\n`,
     );
 
     for (const message of forNext(thread)) {
-      if (given.has(message.meta.key ?? "")) {
+      if (given.includes(message.meta.key ?? "")) {
         mark(thread, message);
       }
     }
+  }
+
+  function agentsEnded(thread: string) {
+    process.stderr.write(
+      `hub: ${thread}'s session was cut short with background agents started, so the thread's next session is told\n`,
+    );
+
+    kept(
+      (store) =>
+        store.messages.deliver({
+          key: `hub:${thread}:agents-ended@${randomUUID()}`,
+          to: thread,
+          from: "hub",
+          author: "prompt",
+          body: "[hub] This thread's session was cut short after it started background agents, and any still working ended with it. Check what they finished, then carry on.",
+          meta: { user: "hub" },
+        }),
+      false,
+    );
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
