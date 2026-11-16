@@ -30,7 +30,6 @@ import {
   mirror,
   move,
   say,
-  stamp,
   startHub,
   tappable,
   tool,
@@ -39,6 +38,7 @@ import {
 } from "./hub.ts";
 import type { Call, ChannelServer, Hub, HubLine, Message, Permission } from "./hub.ts";
 import { pictureId } from "./pictures.ts";
+import { stamp } from "./start.ts";
 import { open } from "./store.ts";
 import type { Author } from "./store.ts";
 import { ATTACH, hangUpAll, http as channelLine, port } from "./testing.ts";
@@ -1783,6 +1783,23 @@ test("a session that fails to start is reported with its reason, and the next me
   ]);
   hub.deliver("chat:7", "Desk anchors", message);
   await until(() => calls().filter((each) => each[0] === "--bg").length === 2);
+});
+
+test("a start that fails before its session launches, as on a settings file it can't write, is reported, and the next message starts it", async () => {
+  start();
+  const settings = join(dir, "sessions", "chat%3A7.json");
+  mkdirSync(settings);
+  hub.deliver("chat:7", "Desk anchors", message);
+  await until(() => failures.length);
+  expect(failures).toEqual([["chat:7", matching(/chat%3A7\.json/u)]]);
+  expect(states).toEqual([
+    ["chat:7", true],
+    ["chat:7", false],
+  ]);
+  expect(bgStarts()).toEqual([]);
+  rmSync(settings, { recursive: true });
+  hub.deliver("chat:7", "Desk anchors", { ...message, content: "again" });
+  await launched();
 });
 
 // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
