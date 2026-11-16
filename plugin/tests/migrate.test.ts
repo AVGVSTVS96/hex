@@ -180,3 +180,35 @@ test("migrate adds scratch/ to .gitignore once, after a last line that has no ne
   migrate();
   expect(read(".gitignore")).toBe(has);
 });
+
+const stub = (file: string, body: string) => {
+  writeFileSync(file, `#!/bin/sh\n${body}\n`);
+  chmodSync(file, 0o755);
+};
+
+test("migrate links hex's units where hex runs as hex.service from this hex, and leaves other machines alone", () => {
+  const stubs = join(home, "stubs");
+  mkdirSync(stubs);
+  mkdirSync(join(hex, "systemd"));
+  writeFileSync(join(hex, "systemd/hex.service"), "");
+
+  stub(join(hex, "bin/hex"), `echo "$@" >> "${join(home, "linked")}"`);
+
+  const run = (fragment: string) => {
+    stub(join(stubs, "systemctl"), `echo "${fragment}"`);
+    wrote("state/migrated", "7\n");
+
+    const ran = Bun.spawnSync([join(hex, "bin/migrate")], {
+      env: { ...process.env, PATH: `${stubs}:${process.env.PATH}` },
+    });
+
+    expect(ran.stderr.toString()).toBe("");
+    expect(read("state/migrated")).toBe("8\n");
+  };
+
+  run(join(home, "elsewhere/hex.service"));
+  expect(() => read("linked")).toThrow();
+
+  run(join(hex, "systemd/hex.service"));
+  expect(read("linked")).toBe("link\n");
+});
