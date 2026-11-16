@@ -99,7 +99,8 @@ export class Store {
     openDatabases.add(this.db);
     this.db.run("pragma busy_timeout = 30000");
     retryWhileBusy(() => this.db.run("pragma journal_mode = wal"));
-    this.db.run("pragma synchronous = full");
+    // synchronous = full flushes the WAL inside the commit, under the write lock every other process waits on: https://www.sqlite.org/pragma.html#pragma_synchronous
+    this.db.run("pragma synchronous = normal");
     this.db.run("pragma foreign_keys = on");
 
     const core: Core = { db: this.db, write: (fn) => this.write(fn) };
@@ -154,6 +155,11 @@ export class Store {
     if (this.changes() !== before) {
       this.committed += 1;
       this.syncer?.postMessage(this.committed);
+
+      if (this.syncer === undefined) {
+        this.flush();
+      }
+
       appendFileSync(this.bell, ".");
     }
 
@@ -165,7 +171,6 @@ export class Store {
       return;
     }
 
-    this.db.run("pragma synchronous = normal");
     this.db.run("pragma wal_autocheckpoint = 0");
     this.startSyncer();
   }
@@ -211,11 +216,7 @@ export class Store {
     this.syncer = syncer;
   }
 
-  private waitForTheDisk() {
-    this.syncer = undefined;
-    this.db.run("pragma synchronous = full");
-    this.db.run("pragma wal_autocheckpoint = 1000");
-
+  private flush() {
     const wal = openSync(join(this.dir, "hex.db-wal"), "r");
 
     try {
@@ -225,6 +226,12 @@ export class Store {
     }
 
     this.onDisk = this.committed;
+  }
+
+  private waitForTheDisk() {
+    this.syncer = undefined;
+    this.db.run("pragma wal_autocheckpoint = 1000");
+    this.flush();
 
     for (const each of this.waiting) {
       each.resolve();

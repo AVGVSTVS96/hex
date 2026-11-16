@@ -19,6 +19,8 @@ const db = new Database(path);
 
 db.run("pragma busy_timeout = 30000");
 
+db.run("pragma synchronous = normal");
+
 let asked = 0;
 let scheduled = false;
 

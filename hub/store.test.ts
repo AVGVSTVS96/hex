@@ -1999,10 +1999,39 @@ test("if its sync thread ends, a store waits for the disk on every write again a
   await waiting;
   await until(
     () =>
-      z.object({ synchronous: z.literal(2) }).safeParse(store.db.query("pragma synchronous").get())
-        .success,
+      z
+        .object({ wal_autocheckpoint: z.literal(1000) })
+        .safeParse(store.db.query("pragma wal_autocheckpoint").get()).success,
   );
+  store.messages.deliver({ ...message, key: "telegram:-100:5:2" });
   await store.synced();
+});
+
+test("while a store flushes a write to disk, another process can write", () => {
+  const store = new Store(dir);
+  expect(store.db.query("pragma synchronous").get()).toEqual({ synchronous: 1 });
+
+  const writesElsewhere: number[] = [];
+  // oxlint-disable-next-line dot-notation -- the flush after the commit is what this test is about
+  const flush = store["flush"].bind(store);
+  // oxlint-disable-next-line dot-notation -- the flush after the commit is what this test is about
+  store["flush"] = () => {
+    const { exitCode } = Bun.spawnSync([
+      process.execPath,
+      "-e",
+      `const { Database } = await import("bun:sqlite");
+      const db = new Database(${JSON.stringify(join(dir, "hex.db"))});
+      db.run("begin immediate");
+      db.run("commit");
+      db.close();`,
+    ]);
+
+    writesElsewhere.push(exitCode);
+    flush();
+  };
+
+  store.messages.deliver(message);
+  expect(writesElsewhere).toEqual([0]);
 });
 
 test("a process that writes and exits leaves the WAL to the processes still using it", () => {
