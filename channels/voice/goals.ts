@@ -208,23 +208,19 @@ export class Goals extends Changes {
     writeFileSync(join(this.hexDir, SCHEDULES), `${JSON.stringify(jobs, null, 2)}\n`);
   }
 
-  private goals(): Goal[] {
+  goal(id: string): Goal | undefined {
+    return this.goals((task) => task.id === id)[0];
+  }
+
+  private goals(keep = recent()): Goal[] {
     const store = open(this.state);
     const runs = this.board.runs;
     const threads = store.threads.list();
     const general = generalOf(threads);
     const asks = this.questions.view.asks;
     const links = Object.entries(store.tasks.agentTasks());
-    const reached = new Date(Date.now() - 7 * DAY).toISOString();
-    const dropped = new Date(Date.now() - DAY).toISOString();
 
-    const tasks = store.tasks
-      .list({ status: ["open", "done", "dropped"] })
-      .filter(
-        (task) =>
-          task.status === "open" ||
-          (task.closed ?? "") >= (task.status === "done" ? reached : dropped),
-      );
+    const tasks = store.tasks.list({ status: ["open", "done", "dropped"] }).filter(keep);
 
     const runOf = (task: Task) => {
       const id = home(task, runs);
@@ -368,6 +364,14 @@ const CLOCK = (hour: number, minute: number) =>
   minute === 0
     ? HOURS(hour)
     : `${hour % 12 === 0 ? 12 : hour % 12}:${String(minute).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`;
+
+function recent() {
+  const reached = new Date(Date.now() - 7 * DAY).toISOString();
+  const dropped = new Date(Date.now() - DAY).toISOString();
+
+  return (task: Task) =>
+    task.status === "open" || (task.closed ?? "") >= (task.status === "done" ? reached : dropped);
+}
 
 const WEEKDAYS = [
   "Sunday",
