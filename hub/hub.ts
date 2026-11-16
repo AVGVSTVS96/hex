@@ -1,5 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
 import { basename, join } from "node:path";
 
 import { z } from "zod";
@@ -27,6 +25,7 @@ import { sessionRests } from "./rest.ts";
 import { restarts } from "./restarts.ts";
 import { threadRuns } from "./runs.ts";
 import { schedule } from "./schedule.ts";
+import { wordsSent } from "./sent.ts";
 import { threadSessions } from "./sessions.ts";
 import { hubSocket } from "./socket.ts";
 import type { Questions } from "./socket.ts";
@@ -34,7 +33,7 @@ import { stalledTurns } from "./stalls.ts";
 import { sessionStarts } from "./start.ts";
 import { sessionStops } from "./stops.ts";
 import { asked, open, replied, shown, spoken, stateDir as storeOf } from "./store.ts";
-import type { NewRow, Store } from "./store.ts";
+import type { Store } from "./store.ts";
 import { openThreads } from "./threads.ts";
 import { wentThrough, whenThrough } from "./through.ts";
 import { sessionTurns } from "./turns.ts";
@@ -451,9 +450,6 @@ export async function startHub({
     tellAfter,
   } = { ...LIMITS, ...limits };
 
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // The session that made the tool call in progress.
-  const caller = new AsyncLocalStorage<string | undefined>();
   const socketPath = join(stateDir, "hub.sock");
   const runs = threadRuns();
   const calls = threadCalls(runs);
@@ -489,6 +485,7 @@ export async function startHub({
   });
 
   started = true;
+  const words = wordsSent({ threads, owing, app });
   const turns = sessionTurns({ overdue: (thread) => void inbox.letHeldGo(thread) });
   const waiting = messagesWaiting({ runs, kept, waits });
 
@@ -701,25 +698,6 @@ export async function startHub({
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // What hex said in a thread, kept as its session sent it: a reply, a post, a failed send with meta.failed. The session that wrote it has it already, so it wakes nothing.
-  async function sent(
-    thread: string,
-    { key, content, meta = {} }: Partial<Message> & { content: string },
-  ) {
-    const row: NewRow = {
-      key: `${app}:${key ?? randomUUID()}`,
-      to: thread,
-      from: app,
-      author: "hex",
-      body: content,
-      meta,
-    };
-
-    const by = caller.getStore() ?? threads.current(thread) ?? "hub";
-    await must({ kind: "deliver", row, by }, false);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A session's channel connected over HTTP: its session is the one the hub started, or the one Claude reports running for the thread. One that only reconnects still owes a renew it asked for. One that reconnects while it's being stopped gets nothing, since what it took would end with it. It's live at once, and is given what waits for it once that's read (waiting.catchUp), unless its line is gone by then.
   async function welcome(thread: string, line: Line) {
     const was = sessions.connected(thread, line);
@@ -779,7 +757,7 @@ export async function startHub({
       // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
       // A tool can send into another thread: what it sends there is still its caller's session's words.
       call: (thread, tool, toolArgs, by) =>
-        caller.run(by ?? threads.current(thread), () => call(thread, tool, toolArgs)),
+        words.callingAs(by ?? threads.current(thread), () => call(thread, tool, toolArgs)),
       permission: (thread, request) => permission?.(thread, request),
       open: (thread, line) => void welcome(thread, line),
       close: (thread, line) => void drop(thread, line),
@@ -828,8 +806,8 @@ export async function startHub({
 
   const api = {
     deliver: inbox.deliver,
-    sent,
-    said: (key: string) => kept((store) => store.messages.latest(`${app}:${key}`), null),
+    sent: words.sent,
+    said: words.said,
     command: sessions.restart,
     configure,
     settings: (thread: string): Settings => ({
