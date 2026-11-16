@@ -1,12 +1,12 @@
 import { until } from "./until.ts";
 
-type Handle = ReturnType<typeof setTimeout>;
+export type Timer = ReturnType<typeof setTimeout>;
 
 export const clock = {
   now: () => Date.now(),
-  setTimeout: <A extends unknown[]>(run: (...args: A) => void, ms: number, ...args: A): Handle =>
+  setTimeout: <A extends unknown[]>(run: (...args: A) => void, ms: number, ...args: A): Timer =>
     setTimeout(run, ms, ...args),
-  clearTimeout: (timer: Handle | undefined) => {
+  clearTimeout: (timer: Timer | undefined) => {
     clearTimeout(timer);
   },
 };
@@ -18,7 +18,7 @@ export const sleep = (ms: number) =>
 
 const wall = { ...clock };
 
-function inertHandle(): Handle {
+function inertHandle(): Timer {
   const handle = setTimeout(() => {
     clearTimeout(handle);
   }, 0);
@@ -30,7 +30,7 @@ function inertHandle(): Handle {
 
 export function manual(settled: () => Promise<void>) {
   let now = Date.now();
-  const timers = new Map<Handle, { at: number; ms: number; run: () => void }>();
+  const timers = new Map<Timer, { at: number; ms: number; run: () => void }>();
   Object.assign(clock, {
     now: () => now,
     setTimeout: (run: (...args: unknown[]) => void, ms: number, ...args: unknown[]) => {
@@ -45,7 +45,7 @@ export function manual(settled: () => Promise<void>) {
 
       return handle;
     },
-    clearTimeout: (timer: Handle | undefined) => {
+    clearTimeout: (timer: Timer | undefined) => {
       if (timer !== undefined) {
         timers.delete(timer);
       }

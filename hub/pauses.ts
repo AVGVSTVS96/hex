@@ -1,0 +1,100 @@
+import * as claude from "./claude.ts";
+import type { Failed } from "./failing.ts";
+import type { Keep } from "./kept.ts";
+import type { Line } from "./mcp.ts";
+import { present } from "./present.ts";
+import type { Runs } from "./runs.ts";
+import type { Threads } from "./threads.ts";
+import type { sessionTurns } from "./turns.ts";
+import type { MessagesWaiting } from "./waiting.ts";
+
+type Pause = {
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // Claude Code paused the session on a choice for someone at its terminal, so it takes no message until it starts over.
+  paused?: boolean | undefined;
+};
+
+// Claude Code can pause a session mid-turn on a choice for someone at its terminal, like a reply its model's safeguards stopped or a permission prompt, and no hook says so: its job record says it needs something and Claude lists it as waiting. The turn ends in hex's record, so what went unanswered isn't given to another session to pause on again, and the chat hears why. No shell command answers the dialog (https://code.claude.com/docs/en/agent-view#manage-sessions-from-the-shell), and its choices are a terminal's: another model, which the owner's settings can rule out, or editing the prompt in the terminal. So the session keeps running, with any agents it started, until the thread's next message starts it again, past a refused turn when the safeguards stopped it (rewound).
+export function sessionPauses({
+  runs,
+  threads,
+  waiting,
+  turns,
+  kept,
+  serving,
+  turnEnded,
+  failed,
+}: {
+  runs: Runs;
+  threads: Threads;
+  waiting: MessagesWaiting;
+  turns: ReturnType<typeof sessionTurns>;
+  kept: Keep;
+  serving: () => boolean;
+  turnEnded: (thread: string) => void;
+  failed: Failed;
+}) {
+  const pauses = runs.part((): Pause => ({}));
+
+  function of(thread: string): Readonly<Pause> {
+    return pauses.of(thread);
+  }
+
+  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
+  // still: the live session the job record spoke of is still the thread's once Claude has answered.
+  async function check(
+    thread: string,
+    line: Line,
+    needs: string | undefined,
+    still: () => boolean,
+  ) {
+    const pause = pauses.of(thread);
+    const session = threads.current(thread);
+
+    const running =
+      present(needs) && present(session) ? await claude.agent(session, serving) : undefined;
+
+    if (!still()) {
+      return;
+    }
+
+    const was = pause.paused;
+    pause.paused = running?.status === "waiting";
+
+    if (was === true && !pause.paused) {
+      for (const message of waiting.drain(thread)) {
+        turns.handIn(thread, line, message);
+      }
+    }
+
+    if (
+      !pause.paused ||
+      !present(session) ||
+      !kept((store) => store.turns.unanswered(session).length > 0, false)
+    ) {
+      return;
+    }
+
+    process.stderr.write(`hub: ${thread}'s session paused mid-turn: ${needs}\n`);
+    kept((store) => {
+      store.turns.handled(session);
+    }, undefined);
+    turnEnded(thread);
+    const refusal = claude.refused(claude.transcript(threads.cwd(thread), session));
+    const { model } = threads.of(thread);
+
+    failed(
+      thread,
+      refusal
+        ? `the model's safety filter flagged your message${present(refusal.category) ? ` as ${refusal.category}` : ""}, so it got no answer. Your next message starts this topic again from just before it, still on ${model ?? "the same model"}, with the flagged message left out: send what you need in other words.`
+        : `its session stopped on a question only its terminal can answer ("${needs}"), so your message got no answer. Your next message starts it again.`,
+      true,
+    );
+  }
+
+  function connected(thread: string) {
+    pauses.of(thread).paused = undefined;
+  }
+
+  return { of, check, connected };
+}
