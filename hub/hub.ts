@@ -32,6 +32,7 @@ import { ordered } from "./ordered.ts";
 import { sessionPauses } from "./pauses.ts";
 import { fileOnly, held as filesIn, pictureOf, pictures, widthOverHeightOf } from "./pictures.ts";
 import { present } from "./present.ts";
+import { threadRenewals } from "./renewals.ts";
 import { sessionRests } from "./rest.ts";
 import { restarts } from "./restarts.ts";
 import { live } from "./running.ts";
@@ -166,15 +167,8 @@ export type Limits = {
 
 type Run = {
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // asked: the session asked to start over (a call ended). stale: it started with what the hub no longer gives a session. underway: it's starting over, and its renewal waits for the new session.
-  renew?: "asked" | "stale" | "underway" | undefined;
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // The owner's Stop pressing Esc in the session, until the transcript shows it landed.
   interrupting?: Promise<void> | undefined;
-  held: (() => void)[];
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A call waited for the session now connected to start, so it is as new as the call.
-  awaited?: boolean | undefined;
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // Its last turn failed on the API, until a turn begins or goes through. waiting: the error clears without a word to this thread (a rate limit, a dropped connection, a login that works again), so it carries on at the next turn anywhere that goes through; resumed: the hub had it carry on, once; told: its chat heard it waits for its next message.
   stalled?: "waiting" | "resumed" | "told" | undefined;
@@ -689,7 +683,9 @@ export async function startHub({
     reconnect,
     turnBegan,
     turnEnded,
-    startFailed,
+    startFailed: (thread) => {
+      renewals.startFailed(thread);
+    },
   });
 
   const rests = sessionRests({
@@ -710,7 +706,23 @@ export async function startHub({
     forget,
   });
 
-  const hubRuns = runs.part((): Run => ({ held: [] }));
+  const renewals = threadRenewals({
+    runs,
+    threads,
+    turns,
+    waiting,
+    sessions,
+    starts,
+    stops,
+    rests,
+    calls,
+    kept,
+    serving,
+    main,
+    fresh,
+  });
+
+  const hubRuns = runs.part((): Run => ({}));
   const runOf = hubRuns.of;
 
   function turnBegan(thread: string) {
@@ -718,101 +730,19 @@ export async function startHub({
     threads.claim(thread);
     turns.began(thread);
     rests.rest(thread);
-    letGo(thread);
+    renewals.letGo(thread);
   }
 
   // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
   // A held message let go can start a session, and with it a turn, so what follows reads the turn as it is then.
   async function turnEnded(thread: string, background = false) {
-    const run = runOf(thread);
     state(thread, false, background);
     threads.claim(thread);
     turns.ended(thread, background);
     await letHeldGo(thread);
-
-    if (turns.of(thread).is === "done" && (run.renew === "asked" || run.renew === "stale")) {
-      void renew(thread, run.renew === "asked");
-    }
-
+    renewals.atRest(thread);
     rests.rest(thread, turns.of(thread).is === "done");
-    letGo(thread);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A thread renews at its next rest: the main thread and a fresh thread start over as soon as the process exits, any other when its next message resumes it. A keep (a call started) cancels it. When the session asked for it, a rest the Stop hook reported with no agents working is taken as it is: Claude's own status lags the hook and counts a running shell as busy, so checking it could put the renew off for good, and a session that asked is done with what its shells were for.
-  async function renew(thread: string, rested = false) {
-    const run = runOf(thread);
-    const voice = calls.of(thread);
-    const turn = turns.of(thread);
-    const session = threads.current(thread);
-
-    if (!present(session)) {
-      return;
-    }
-
-    const running = await claude.agent(session, serving);
-
-    if (
-      !(run.renew === "asked" || run.renew === "stale") ||
-      turn.is === "busy" ||
-      turn.untaken === true ||
-      voice.on ||
-      (!rested && running?.status === "busy")
-    ) {
-      return;
-    }
-
-    run.renew = running && (thread === main || fresh(thread)) ? "underway" : undefined;
-
-    if (run.renew) {
-      void sessions.cycle(thread, running);
-    } else {
-      void stops.stop(thread);
-    }
-
-    letGo(thread);
-  }
-
-  function startFailed(thread: string) {
-    const run = runOf(thread);
-
-    if (run.renew === "underway") {
-      run.renew = undefined;
-    }
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A renew is on its way while the thread's session winds down its turn or restarts, but not while it waits on background agents, which can take as long as they like.
-  function pending(thread: string) {
-    const run = runOf(thread);
-
-    return run.renew === "underway" || (!!run.renew && turns.of(thread).is !== "background");
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // Resolves once the thread's renew is through (its new session connected) or off, right away when none is on its way, so a voice call can wait for the new session.
-  function renewal(thread: string): Promise<void> {
-    const run = runOf(thread);
-
-    if (!pending(thread)) {
-      return Promise.resolve();
-    }
-
-    return new Promise((resolve) => {
-      run.held.push(resolve);
-    });
-  }
-
-  function letGo(thread: string) {
-    const run = runOf(thread);
-
-    if (pending(thread)) {
-      return;
-    }
-
-    for (const resolve of run.held.splice(0)) {
-      resolve();
-    }
+    renewals.letGo(thread);
   }
 
   function forget(thread: string, leaving: (session: string) => void) {
@@ -1413,12 +1343,7 @@ export async function startHub({
       reached(api);
     }
 
-    const run = runOf(thread);
-
-    if (run.renew !== "asked") {
-      run.renew = undefined;
-    }
-
+    renewals.connecting(thread);
     sessions.track(thread, was, line);
     const read = await waiting.catchUp(thread, line);
     const { phase } = sessions.of(thread);
@@ -1429,15 +1354,9 @@ export async function startHub({
 
     const given = waiting.connected(thread, line, read);
     turns.connected(thread, given.length > 0);
-    run.awaited = run.held.length > 0;
+    renewals.noteAwaited(thread);
     rests.rest(thread);
-    letGo(thread);
-
-    if (starts.stale(thread)) {
-      run.renew = "stale";
-      void renew(thread);
-    }
-
+    renewals.connected(thread);
     sessions.noteRunning(thread, line);
 
     if (was.is === "launching") {
@@ -1460,55 +1379,6 @@ export async function startHub({
     }
 
     await waiting.markAll(thread);
-  }
-
-  // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
-  // A thread is on a call from its keep until its renew, which starts the next call in a new session. That session starts when the last call ends and can wait hours for the next, so a call that finds it still waiting for its first message starts it over, reading memory as it is now, unless a call waited for it to start. The stop comes first, so a message meanwhile waits for the new session, and the call is on once that session connects, so a restart that never gets there doesn't hold up the hub's own. Resolves once the session the call runs in is connected.
-  async function keep(thread: string) {
-    const run = runOf(thread);
-    const callOn = calls.joining(thread);
-
-    if (run.renew !== "underway") {
-      run.renew = undefined;
-    }
-
-    const session = threads.current(thread);
-
-    const untouched = () =>
-      run.awaited !== true &&
-      threads.current(thread) === session &&
-      sessions.of(thread).phase.is === "live" &&
-      turns.of(thread).is === "done" &&
-      !waiting.of(thread).handed.size &&
-      rests.warmFor(thread) === undefined;
-
-    if (
-      present(session) &&
-      untouched() &&
-      !(await kept((store) => store.messages.took(session), true)) &&
-      untouched()
-    ) {
-      run.renew = "underway";
-      void stops.stop(thread).then(() => sessions.cycle(thread));
-      await renewal(thread);
-      callOn();
-
-      return;
-    }
-
-    callOn();
-    letGo(thread);
-    await renewal(thread);
-  }
-
-  function renewAsked(thread: string) {
-    const run = runOf(thread);
-
-    if (run.renew !== "underway") {
-      run.renew = "asked";
-    }
-
-    calls.hangUp(thread);
   }
 
   const serve = endpoint(
@@ -1797,8 +1667,8 @@ export async function startHub({
     },
     main,
     fresh,
-    renewal,
-    keep,
+    renewal: renewals.renewal,
+    keep: renewals.keep,
     adrift: calls.drift,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // Once what this hub and every other in the process wrote can't be lost.
@@ -1806,7 +1676,7 @@ export async function startHub({
       await landed();
       await owing.synced();
     },
-    renew: renewAsked,
+    renew: renewals.renewAsked,
     session: threads.current,
     // oxlint-disable-next-line no-comments/no-comments -- a fact the code can't show
     // A turn cut short, which runs no Stop hook, queues its memory pass here.
